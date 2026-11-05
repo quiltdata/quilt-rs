@@ -27,6 +27,8 @@ use crate::engine::fswatcher;
 use crate::engine::fswatcher::SharedFsWatcherSettings;
 use crate::engine::model::Model;
 use crate::engine::navigation::Navigations;
+use crate::engine::needs_you;
+use crate::engine::needs_you::NeedsYou;
 use crate::engine::oauth::OAuthState;
 use crate::engine::publish_settings;
 use crate::engine::publish_settings::SharedPublishSettings;
@@ -131,13 +133,8 @@ impl Services {
             events.clone(),
         ))));
 
-        // Telemetry wraps the UI reporter rather than replacing it: the
-        // engine's outcomes reach the window exactly as before, and telemetry
-        // observes them on the way past.
-        let reporter: Arc<dyn StatusReporter> = Arc::new(TelemetryReporter::wrapping(
-            Arc::new(SinkEventReporter::new(events.clone(), Arc::clone(&toasts))),
-            Arc::clone(&telemetry),
-        ));
+        let needs_you = Arc::new(NeedsYou::default());
+        let reporter = reporter(&events, &toasts, &needs_you, &telemetry);
         let (watcher, tray_status) = Watcher::spawn(
             data_dir.clone(),
             Arc::clone(&model),
@@ -146,8 +143,10 @@ impl Services {
             publish_settings.clone(),
             reporter.clone(),
             last_change,
+            Arc::clone(&needs_you),
         );
         autopull::activity::spawn_forwarder(events.clone(), watcher.subscribe_activity());
+        needs_you::spawn_forwarder(events.clone(), needs_you.subscribe());
         fswatcher::spawn(
             Arc::clone(&model),
             watcher.shared_arc(),
@@ -178,6 +177,25 @@ impl Services {
             tray_status,
         }))
     }
+}
+
+/// The watcher's reporter. Telemetry wraps the UI reporter rather than
+/// replacing it: the engine's outcomes reach the window exactly as before, and
+/// telemetry observes them on the way past.
+fn reporter(
+    events: &EventSink,
+    toasts: &Arc<ToastCenter>,
+    needs_you: &Arc<NeedsYou>,
+    telemetry: &Arc<Telemetry>,
+) -> Arc<dyn StatusReporter> {
+    Arc::new(TelemetryReporter::wrapping(
+        Arc::new(SinkEventReporter::new(
+            events.clone(),
+            Arc::clone(toasts),
+            Arc::clone(needs_you),
+        )),
+        Arc::clone(telemetry),
+    ))
 }
 
 #[cfg(test)]

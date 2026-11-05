@@ -1597,11 +1597,11 @@ fn pause_banner(message: Option<String>, dismissed: RwSignal<Option<String>>) ->
 
 /// Ask the backend again when the watcher reports news about **this** package.
 ///
-/// Renders nothing; it exists for the two subscriptions, which are dropped with
+/// Renders nothing; it exists for the subscriptions, which are dropped with
 /// it. Its own component so they are registered once rather than rebuilt with a
 /// payload — `main_page`'s `PackageStatusListener` for the same reason.
 ///
-/// # Two streams, because one of them cannot see a pause
+/// # Three streams, because the status one cannot see a pause
 ///
 /// `package-status-changed` carries a fingerprint of the observation — the
 /// upstream state, the newer revision and the changed paths — and
@@ -1609,20 +1609,11 @@ fn pause_banner(message: Option<String>, dismissed: RwSignal<Option<String>>) ->
 /// none of them: a workflow rejection or a
 /// refused role stops syncing over a tree that has not changed, so the status
 /// stream reports the same observation and the fingerprint rule correctly calls
-/// it old news. `autosync-paused` is the only thing that says a pause happened,
-/// so the header would never learn of one without it.
+/// it old news. `autosync-paused` says a pause happened and
+/// `autosync-pause-cleared` says one ended, on every route that clears it:
+/// re-enabling autosync clears every pause while moving nothing.
 ///
-/// # What is still missed, and why it is not fixed here
-///
-/// Nothing announces a pause **clearing**. `Watcher::clear_paused` drops the
-/// entry and notifies the tray, and emits no event, so the page learns a pause
-/// is over only from the next status event whose fingerprint differs. For the
-/// ordinary case that is enough — a pull that resolves a conflict rewrites the
-/// tree, and the filesystem watcher reports it — but re-enabling autosync clears
-/// every pause while moving nothing, and this page would keep the stale answer
-/// until something else moved. That is an engine gap, not a page one.
-///
-/// # Both filters are on the namespace
+/// # Every filter is on the namespace
 ///
 /// One route serves every package and the watcher reports all of them, so
 /// without the filter this page would refetch on every other package's news.
@@ -1657,9 +1648,18 @@ fn PackageEventListener(reload: Trigger) -> impl IntoView {
             }
         },
     );
+    let cleared = crate::engine::listen::<commands::PauseClearedEvent>(
+        commands::AUTOSYNC_PAUSE_CLEARED_EVENT,
+        move |event| {
+            if is_ours(&event.namespace) {
+                watch.nudge();
+            }
+        },
+    );
     on_cleanup(move || {
         drop(status);
         drop(paused);
+        drop(cleared);
     });
 }
 

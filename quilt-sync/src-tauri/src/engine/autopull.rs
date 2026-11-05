@@ -15,6 +15,9 @@ use crate::engine::autopull::status::SyncTrayAggregator;
 use crate::engine::commands::RoleCache;
 use crate::engine::model::Model;
 use crate::engine::model::QuiltModel;
+use crate::engine::needs_you::Kind;
+use crate::engine::needs_you::NeedsYou;
+use crate::engine::needs_you::Subject;
 use crate::engine::publish_settings::SharedPublishSettings;
 use crate::engine::telemetry::prelude::*;
 
@@ -127,6 +130,7 @@ pub(crate) struct WatcherInner {
     pub refusals: tokio::sync::Mutex<()>,
     pub reporter: Arc<dyn StatusReporter>,
     pub aggregator: Arc<SyncTrayAggregator>,
+    pub needs_you: Arc<NeedsYou>,
     pub clocks: Clocks,
     pub last_change: last_change::LastChange,
     /// The folder watcher's walks, which the tick reuses for the packages it
@@ -142,6 +146,15 @@ impl WatcherInner {
     pub(crate) fn reschedule_publish(&self) {
         self.clocks.publish_timer.notify_one();
         self.reporter.report_autosync_changed();
+    }
+
+    /// A pause on `namespace` was cleared: announce it and leave the set.
+    /// Refused access leaves too; a read or a pass still refused enters again.
+    pub(crate) fn unpaused(&self, namespace: &Namespace) {
+        let package = Subject::package(namespace);
+        self.needs_you.leave(&package, Kind::Paused);
+        self.needs_you.leave(&package, Kind::NoAccess);
+        self.reporter.report_pause_cleared(namespace);
     }
 }
 
@@ -217,11 +230,18 @@ impl Watcher {
         self.inner.aggregator.subscribe_activity()
     }
 
+    /// What needs the reader.
+    #[must_use]
+    pub fn needs_you(&self) -> &Arc<NeedsYou> {
+        &self.inner.needs_you
+    }
+
     /// Spawn the background tick task and return a handle.
     ///
     /// The tasks share the services' `Model` and `RoleCache`: a private
     /// `RoleCache` would keep naming the role the user switched away from,
     /// since `switch_role` invalidates only the shared one.
+    #[allow(clippy::too_many_arguments, reason = "the parts the watcher shares")]
     pub fn spawn(
         data_dir: std::path::PathBuf,
         model: Arc<Model>,
@@ -230,6 +250,7 @@ impl Watcher {
         publish_settings: SharedPublishSettings,
         reporter: Arc<dyn StatusReporter>,
         last_change: last_change::LastChange,
+        needs_you: Arc<NeedsYou>,
     ) -> (Self, watch::Receiver<SyncTrayStatus>) {
         let (tx, rx) = watch::channel(SyncTrayStatus::default());
         let aggregator = Arc::new(SyncTrayAggregator::new(tx));
@@ -252,6 +273,7 @@ impl Watcher {
             refusals: tokio::sync::Mutex::default(),
             reporter,
             aggregator,
+            needs_you,
             clocks: Clocks::default(),
             walks: crate::engine::autopull::watched::WatchedWalks::default(),
             last_change,
@@ -320,9 +342,12 @@ impl Watcher {
     /// explicit action (push / pull / commit / publish / reset / set
     /// remote) that resolves the underlying conflict.
     pub async fn clear_paused(&self, namespace: &Namespace) {
-        self.inner.paused.write().await.remove(namespace);
+        let was_paused = self.inner.paused.write().await.remove(namespace).is_some();
         self.inner.login_blocked.write().await.remove(namespace);
         self.inner.aggregator.note_cleared(namespace);
+        if was_paused {
+            self.inner.unpaused(namespace);
+        }
         self.inner.reschedule_publish();
     }
 
@@ -372,6 +397,7 @@ impl Watcher {
         let mut event = PackageStatusEvent::from_status(namespace, status);
         event.fingerprint = format!("unpaused;{}", event.fingerprint);
         self.inner.reporter.report_status(namespace, event);
+        self.inner.unpaused(namespace);
         self.inner.reschedule_publish();
         true
     }
@@ -383,12 +409,15 @@ impl Watcher {
         let mut login_blocked = self.inner.login_blocked.write().await;
         let namespaces: BTreeSet<Namespace> =
             paused.keys().chain(login_blocked.keys()).cloned().collect();
-        paused.clear();
+        let unpaused: Vec<Namespace> = std::mem::take(&mut *paused).into_keys().collect();
         login_blocked.clear();
         drop(paused);
         drop(login_blocked);
         for ns in &namespaces {
             self.inner.aggregator.note_cleared(ns);
+        }
+        for ns in &unpaused {
+            self.inner.unpaused(ns);
         }
         self.inner.reschedule_publish();
     }
@@ -420,6 +449,7 @@ impl Watcher {
         drop(paused);
         for namespace in &cleared {
             self.inner.aggregator.note_cleared(namespace);
+            self.inner.unpaused(namespace);
         }
         self.inner.reschedule_publish();
     }
@@ -547,6 +577,7 @@ impl Watcher {
                 refusals: tokio::sync::Mutex::default(),
                 reporter,
                 aggregator,
+                needs_you: Arc::default(),
                 clocks: Clocks::default(),
                 walks: crate::engine::autopull::watched::WatchedWalks::default(),
                 last_change: last_change::LastChange::new(
@@ -753,6 +784,7 @@ pub(crate) fn inner_for_tests(settings: AutosyncSettings) -> WatcherInner {
         refusals: tokio::sync::Mutex::default(),
         reporter: Arc::new(reporter::LogReporter),
         aggregator: Arc::new(status::SyncTrayAggregator::new(tx)),
+        needs_you: Arc::default(),
         clocks: Clocks::default(),
         walks: crate::engine::autopull::watched::WatchedWalks::default(),
         last_change: last_change::LastChange::new(
@@ -871,6 +903,7 @@ mod tests {
             ns.clone(),
             tick::BackoffState {
                 next_attempt: std::time::Instant::now() + Duration::from_secs(60),
+                failing_since: std::time::Instant::now(),
                 consecutive_failures: 3,
                 error: "Sign in to quilt.test".to_string(),
             },
@@ -982,6 +1015,32 @@ mod tests {
         let paused = watcher.snapshot().await.paused;
         assert_eq!(paused.len(), 1, "only the denial should clear: {paused:?}");
         assert_eq!(paused[0].namespace.to_string(), diverged.to_string());
+    }
+
+    /// Every route that clears a pause announces it, once per package it
+    /// unpauses, and the package leaves the needs-you set.
+    #[tokio::test]
+    async fn every_pause_clear_is_announced_and_leaves_the_set() {
+        let reporter = Arc::new(reporter::test_support::RecordingReporter::default());
+        let watcher = Watcher::new_for_test(reporter.clone());
+        let a: Namespace = ("acme", "a").into();
+        let b: Namespace = ("acme", "b").into();
+        let c: Namespace = ("acme", "c").into();
+        watcher.pause(&a, None, PausedReason::Diverged).await;
+        let denied = PausedReason::RoleDenied {
+            role: "ReadOnly".to_string(),
+        };
+        watcher.pause(&b, None, denied).await;
+        watcher.pause(&c, None, PausedReason::PendingCommit).await;
+        assert_eq!(watcher.needs_you().get().len(), 3);
+
+        watcher.clear_paused(&a).await;
+        watcher.clear_paused(&a).await;
+        watcher.clear_role_denied_pauses().await;
+        watcher.clear_all_paused().await;
+
+        assert_eq!(*reporter.pause_cleared.lock().unwrap(), vec![a, b, c]);
+        assert!(watcher.needs_you().get().is_empty(), "every pause cleared");
     }
 
     #[tokio::test]
@@ -1370,6 +1429,7 @@ mod tests {
             ns.clone(),
             tick::BackoffState {
                 next_attempt: std::time::Instant::now() + Duration::from_secs(30),
+                failing_since: std::time::Instant::now(),
                 consecutive_failures: 1,
                 error: "Could not reach S3".to_string(),
             },
@@ -1396,6 +1456,7 @@ mod tests {
             ns.clone(),
             tick::BackoffState {
                 next_attempt: std::time::Instant::now(),
+                failing_since: std::time::Instant::now(),
                 consecutive_failures: 1,
                 error: "Could not reach S3".to_string(),
             },
@@ -1422,6 +1483,7 @@ mod tests {
             ns.clone(),
             tick::BackoffState {
                 next_attempt: std::time::Instant::now(),
+                failing_since: std::time::Instant::now(),
                 consecutive_failures: 1,
                 error: "Could not reach S3".to_string(),
             },
@@ -1444,6 +1506,7 @@ mod tests {
             ns.clone(),
             tick::BackoffState {
                 next_attempt: std::time::Instant::now(),
+                failing_since: std::time::Instant::now(),
                 consecutive_failures: 1,
                 error: "Could not reach S3".to_string(),
             },

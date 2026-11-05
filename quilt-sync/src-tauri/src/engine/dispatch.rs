@@ -25,6 +25,7 @@ use crate::engine::design_settings::Design;
 use crate::engine::desktop::{Desktop, ForeignHandler, NOT_AVAILABLE};
 use crate::engine::log_settings::LogLevel;
 use crate::engine::navigation::Navigation;
+use crate::engine::needs_you::Entry as NeedsYouEntry;
 use crate::engine::quilt::flow::PullPreview;
 use crate::engine::services::Services;
 use crate::engine::tasks::settings::TaskSettings;
@@ -206,6 +207,7 @@ commands! {
         patch_autosync_settings(patch: AutosyncPatch) -> ();
         get_autosync_snapshot() -> WatcherSnapshot;
         get_autopull_activity() -> Option<AutopullActivity>;
+        get_needs_you() -> Vec<NeedsYouEntry>;
         update_fswatcher_settings(enabled: bool) -> ();
         update_log_settings(level: LogLevel) -> ();
         update_experimental_settings(entire_package_sync: Option<bool>, agent_tasks: Option<bool>) -> ();

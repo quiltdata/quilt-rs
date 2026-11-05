@@ -21,6 +21,15 @@
 
 ## [v0.27.1-dev]
 
+### Added
+
+- When syncing stops until you act, such as a conflict or an expired sign-in, QuiltSync posts a system notification while its window is not in front. Clicking it opens the page that fixes it, and Settings can turn it off (<https://github.com/quiltdata/quilt-rs/pull/PR>)
+- The tray icon shows a dot while something needs you, and its tooltip says how many (<https://github.com/quiltdata/quilt-rs/pull/PR>)
+
+### Fixed
+
+- The package page drops its paused band as soon as the pause clears, also when autosync is turned back on (<https://github.com/quiltdata/quilt-rs/pull/PR>)
+
 ### Changed
 
 - The settings page's *Saved* shows for 1.5 seconds, as long as *Copied* does (<https://github.com/quiltdata/quilt-rs/pull/1310>)

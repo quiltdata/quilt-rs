@@ -24,6 +24,7 @@ pub mod lock;
 pub mod log_settings;
 pub mod model;
 pub mod navigation;
+pub mod needs_you;
 pub mod notify;
 pub mod oauth;
 pub mod publish_settings;

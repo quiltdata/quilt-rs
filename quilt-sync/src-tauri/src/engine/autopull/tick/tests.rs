@@ -68,6 +68,7 @@ fn make_inner(settings: AutosyncSettings) -> WatcherInner {
         last_change: LastChange::new(
             crate::engine::quilt::state_store::PackageStateStore::in_memory(),
         ),
+        needs_you: Arc::default(),
     }
 }
 
@@ -82,6 +83,7 @@ fn enabled() -> AutosyncSettings {
             ..PushSettings::default()
         },
         close_to_tray: false,
+        notify_needs_you: true,
     }
 }
 
@@ -486,6 +488,7 @@ async fn run_once_behind_and_clean_pulls_and_emits_up_to_date() -> Result<(), Er
         last_change: crate::engine::autopull::last_change::LastChange::new(
             crate::engine::quilt::state_store::PackageStateStore::in_memory(),
         ),
+        needs_you: Arc::default(),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -592,6 +595,7 @@ async fn a_stored_whole_package_scope_reaches_the_background_pull() -> Result<()
         last_change: crate::engine::autopull::last_change::LastChange::new(
             crate::engine::quilt::state_store::PackageStateStore::in_memory(),
         ),
+        needs_you: Arc::default(),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -680,6 +684,7 @@ async fn a_pull_reports_what_it_brought() -> Result<(), Error> {
         last_change: crate::engine::autopull::last_change::LastChange::new(
             crate::engine::quilt::state_store::PackageStateStore::in_memory(),
         ),
+        needs_you: Arc::default(),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -792,6 +797,7 @@ async fn behind_with_kept_changes_pulls() -> Result<(), Error> {
         last_change: crate::engine::autopull::last_change::LastChange::new(
             crate::engine::quilt::state_store::PackageStateStore::in_memory(),
         ),
+        needs_you: Arc::default(),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -908,6 +914,7 @@ async fn behind_trivially_resolved_reports_clean() -> Result<(), Error> {
         last_change: crate::engine::autopull::last_change::LastChange::new(
             crate::engine::quilt::state_store::PackageStateStore::in_memory(),
         ),
+        needs_you: Arc::default(),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -1010,6 +1017,7 @@ async fn behind_clean_update_ignores_stale_pre_pull_changes() -> Result<(), Erro
         last_change: crate::engine::autopull::last_change::LastChange::new(
             crate::engine::quilt::state_store::PackageStateStore::in_memory(),
         ),
+        needs_you: Arc::default(),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -1167,6 +1175,7 @@ async fn behind_blocked_pauses() -> Result<(), Error> {
         last_change: crate::engine::autopull::last_change::LastChange::new(
             crate::engine::quilt::state_store::PackageStateStore::in_memory(),
         ),
+        needs_you: Arc::default(),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -1243,6 +1252,7 @@ async fn run_once_login_required_bumps_backoff() -> Result<(), Error> {
         last_change: crate::engine::autopull::last_change::LastChange::new(
             crate::engine::quilt::state_store::PackageStateStore::in_memory(),
         ),
+        needs_you: Arc::default(),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -1264,7 +1274,62 @@ async fn run_once_login_required_bumps_backoff() -> Result<(), Error> {
     let logins = reporter.logins.lock().unwrap();
     assert_eq!(logins.len(), 1);
     assert_eq!(logins[0].as_ref(), Some(&host));
+
+    // The host, not the package, needs the reader.
+    let entered: Vec<_> = inner
+        .needs_you
+        .get()
+        .into_iter()
+        .map(|e| (e.subject, e.cause))
+        .collect();
+    assert_eq!(
+        entered,
+        vec![(
+            crate::engine::needs_you::Subject::Host { host },
+            crate::engine::needs_you::Cause::SignIn { expired: true }
+        )]
+    );
     Ok(())
+}
+
+/// A publish that has kept failing for an hour needs the reader; with
+/// publishing off it does not.
+#[tokio::test]
+async fn a_publish_failing_for_an_hour_needs_you() {
+    use crate::engine::needs_you::{Kind, PUBLISH_FAILING_AFTER};
+    let ns: Namespace = ("acme", "demo").into();
+    let inner = WatcherInner {
+        last_change: crate::engine::autopull::last_change::LastChange::changed_for_test(
+            &ns,
+            Duration::from_secs(60),
+        )
+        .await,
+        ..make_inner(enabled())
+    };
+    let run = |push_enabled| PassSettings {
+        publish: PublishSettings::default(),
+        wait: Duration::from_secs(300),
+        pull_enabled: true,
+        push_enabled,
+        tasks: None,
+    };
+    let err = Error::General("offline".to_string());
+    let kinds = || -> Vec<Kind> {
+        inner
+            .needs_you
+            .get()
+            .iter()
+            .map(|e| e.cause.kind())
+            .collect()
+    };
+
+    let not_yet = PUBLISH_FAILING_AFTER.saturating_sub(Duration::from_secs(1));
+    note_publish_failing(&inner, &ns, &run(true), not_yet, &err).await;
+    assert!(kinds().is_empty(), "not an hour yet");
+    note_publish_failing(&inner, &ns, &run(true), PUBLISH_FAILING_AFTER, &err).await;
+    assert_eq!(kinds(), [Kind::PublishFailing]);
+    note_publish_failing(&inner, &ns, &run(false), PUBLISH_FAILING_AFTER, &err).await;
+    assert!(kinds().is_empty(), "nothing will publish");
 }
 
 /// A no-action tick (up-to-date, local changes, nothing to pull or publish)
@@ -1406,6 +1471,7 @@ async fn conflict_emit_carries_stable_fingerprint() -> Result<(), Error> {
         last_change: crate::engine::autopull::last_change::LastChange::new(
             crate::engine::quilt::state_store::PackageStateStore::in_memory(),
         ),
+        needs_you: Arc::default(),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;

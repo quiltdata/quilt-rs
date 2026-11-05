@@ -100,6 +100,7 @@ fn main() -> ExitCode {
         }))
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             // Registers the schemes from tauri.conf.json at runtime. macOS
@@ -154,6 +155,7 @@ fn main() -> ExitCode {
             match tray::TrayController::install(
                 app.handle(),
                 services.tray_status.clone(),
+                services.watcher.needs_you().subscribe(),
                 engine.link.clone(),
             ) {
                 Ok(controller) => {
@@ -166,6 +168,7 @@ fn main() -> ExitCode {
                 }
             }
 
+            desktop::needs_you::spawn(app.handle(), &services);
             uri::setup_deep_link_handler(app.handle());
             // Holds the data folder's lock for the life of the app.
             app.manage(engine);

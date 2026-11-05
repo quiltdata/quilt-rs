@@ -153,6 +153,8 @@ async fn drive(state: &mut ReactorState, model: &impl QuiltModel, inner: &Watche
                     // Re-enabling later should be able to surface the
                     // inotify-limit toast again if the limit still applies.
                     state.last_reconcile_error_kind = None;
+                    // Turned off, it is not failing.
+                    state.reporter.report_subscriber_recovered();
                 }
             }
             Some(namespace) = walks.next(), if !walks.is_empty() => {
@@ -361,6 +363,7 @@ async fn reconcile_from_model(
     {
         Ok(()) => {
             state.last_reconcile_error_kind = None;
+            state.reporter.report_subscriber_recovered();
         }
         Err(err) => {
             let kind = err.kind_str();

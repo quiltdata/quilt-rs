@@ -23,6 +23,7 @@ use super::MAIN;
 use super::show_window;
 use crate::engine::autopull::SyncTrayStatus;
 use crate::engine::autopull::TrayMode;
+use crate::engine::needs_you::Entry;
 use crate::engine::quit::QuitAction;
 use crate::engine::services::Services;
 
@@ -55,6 +56,7 @@ impl TrayController {
     pub fn install(
         app: &AppHandle,
         status_rx: watch::Receiver<SyncTrayStatus>,
+        needs_you_rx: watch::Receiver<Vec<Entry>>,
         link: String,
     ) -> Result<Self, TrayError> {
         let open_item = MenuItem::with_id(app, MENU_ID_OPEN, "Open Quilt", true, None::<&str>)?;
@@ -64,6 +66,10 @@ impl TrayController {
         let menu = Menu::with_items(app, &[&open_item, &browser_item, &quit_item])?;
 
         let icon = load_tray_icon(app)?;
+        let icons = Icons {
+            dotted: with_dot(&icon),
+            plain: icon.clone(),
+        };
         let tray = TrayIconBuilder::new()
             .icon(icon)
             .menu(&menu)
@@ -94,7 +100,7 @@ impl TrayController {
             })
             .build(app)?;
 
-        let listener = spawn_status_listener(tray.clone(), status_rx);
+        let listener = spawn_status_listener(tray.clone(), icons, status_rx, needs_you_rx);
         let _ = open_item;
         let _ = browser_item;
         let _ = quit_item;
@@ -118,20 +124,57 @@ fn load_tray_icon(app: &AppHandle) -> Result<Image<'static>, TrayError> {
     Ok(image)
 }
 
+/// The tray's two images: the logo, and the logo with the needs-you dot.
+struct Icons {
+    plain: Image<'static>,
+    dotted: Image<'static>,
+}
+
 fn spawn_status_listener(
     tray: TrayIcon,
+    icons: Icons,
     mut status_rx: watch::Receiver<SyncTrayStatus>,
+    mut needs_you_rx: watch::Receiver<Vec<Entry>>,
 ) -> async_runtime::JoinHandle<()> {
     async_runtime::spawn(async move {
-        // Apply the initial state once before waiting for changes.
-        apply_status(&tray, &status_rx.borrow());
-        while status_rx.changed().await.is_ok() {
-            apply_status(&tray, &status_rx.borrow());
+        let mut dotted = false;
+        loop {
+            let need_you = needs_you_rx.borrow_and_update().len();
+            if dotted != (need_you > 0) {
+                dotted = need_you > 0;
+                let icon = if dotted { &icons.dotted } else { &icons.plain };
+                let _ = tray.set_icon(Some(icon.clone()));
+            }
+            let tooltip = tooltip(need_you, &status_rx.borrow_and_update());
+            let _ = tray.set_tooltip(Some(&tooltip));
+            tokio::select! {
+                changed = status_rx.changed() => if changed.is_err() { break },
+                changed = needs_you_rx.changed() => if changed.is_err() { break },
+            }
         }
     })
 }
 
-fn apply_status(tray: &TrayIcon, status: &SyncTrayStatus) {
+/// The logo with an amber dot in its top-right corner.
+fn with_dot(icon: &Image<'_>) -> Image<'static> {
+    const AMBER: [u8; 4] = [0xF5, 0x9E, 0x0B, 0xFF];
+    let (width, height) = (icon.width(), icon.height());
+    let side = f64::from(width.min(height));
+    let radius = side * 0.22;
+    let (cx, cy) = (f64::from(width) - radius, radius);
+    let mut rgba = icon.rgba().to_vec();
+    for (at, pixel) in rgba.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+        let at = u32::try_from(at).unwrap_or(u32::MAX);
+        let (x, y) = (f64::from(at % width) + 0.5, f64::from(at / width) + 0.5);
+        if (x - cx).hypot(y - cy) <= radius {
+            pixel.copy_from_slice(&AMBER);
+        }
+    }
+    Image::new_owned(rgba, width, height)
+}
+
+/// The tooltip: how many things need the reader, then the sync status.
+fn tooltip(need_you: usize, status: &SyncTrayStatus) -> String {
     // The tray image is a single Quilt logo; the per-mode signal lives
     // in the tooltip so the icon stays recognisable across themes.
     let label = match status.mode {
@@ -140,7 +183,15 @@ fn apply_status(tray: &TrayIcon, status: &SyncTrayStatus) {
         TrayMode::Paused => "Quilt — paused",
         TrayMode::Error => "Quilt — error",
     };
-    let mut tooltip = label.to_string();
+    let mut tooltip = String::new();
+    match need_you {
+        0 => {}
+        1 => tooltip.push_str("1 needs you\n"),
+        n => {
+            let _ = writeln!(tooltip, "{n} need you");
+        }
+    }
+    tooltip.push_str(label);
     if status.pending_changes > 0 {
         let _ = write!(
             tooltip,
@@ -151,7 +202,7 @@ fn apply_status(tray: &TrayIcon, status: &SyncTrayStatus) {
     if let Some(error) = status.error.as_deref() {
         let _ = write!(tooltip, "\n{error}");
     }
-    let _ = tray.set_tooltip(Some(&tooltip));
+    tooltip
 }
 
 /// Event the window listens for to raise the prompt; a browser tab doesn't.
@@ -239,4 +290,25 @@ fn install_close_handler(app: &AppHandle) {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_tooltip_leads_with_what_needs_you() {
+        let status = SyncTrayStatus::default();
+        assert_eq!(tooltip(0, &status), "Quilt — idle");
+        assert_eq!(tooltip(2, &status), "2 need you\nQuilt — idle");
+    }
+
+    #[test]
+    fn the_dot_sits_in_the_top_right_corner() {
+        let icon = Image::new_owned(vec![0; 10 * 10 * 4], 10, 10);
+        let dotted = with_dot(&icon);
+        let pixel = |x: usize, y: usize| &dotted.rgba()[(y * 10 + x) * 4..][..4];
+        assert_eq!(pixel(8, 1), [0xF5, 0x9E, 0x0B, 0xFF]);
+        assert_eq!(pixel(1, 8), [0, 0, 0, 0]);
+    }
 }

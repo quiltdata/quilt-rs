@@ -12,6 +12,7 @@ use tauri::WebviewWindowBuilder;
 
 pub mod commands;
 pub mod link_handler;
+pub mod needs_you;
 pub mod tray;
 pub mod uri;
 

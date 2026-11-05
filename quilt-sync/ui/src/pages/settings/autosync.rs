@@ -81,6 +81,7 @@ fn AutosyncSettingsPopup(
     let pull_interval_secs = RwSignal::new(current.pull_interval_secs.to_string());
     let idle_timeout_secs = RwSignal::new(current.idle_timeout_secs.to_string());
     let close_to_tray = RwSignal::new(current.close_to_tray);
+    let notify_needs_you = current.notify_needs_you;
     let parse_error = RwSignal::new(None::<String>);
     let saving = RwSignal::new(false);
 
@@ -114,6 +115,7 @@ fn AutosyncSettingsPopup(
             pull_interval_secs: pull_interval,
             idle_timeout_secs: idle_timeout,
             close_to_tray: close_to_tray.get_untracked(),
+            notify_needs_you,
         };
         leptos::task::spawn_local(async move {
             match commands::update_autosync_settings(settings).await {

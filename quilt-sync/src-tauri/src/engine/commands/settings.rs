@@ -45,12 +45,17 @@ impl From<PublishSettings> for PublishSettingsData {
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+#[allow(clippy::struct_excessive_bools, reason = "one field per toggle")]
 pub struct AutosyncSettingsData {
     pub pull_enabled: bool,
     pub push_enabled: bool,
     pub pull_interval_secs: u64,
     pub idle_timeout_secs: u64,
     pub close_to_tray: bool,
+    /// Read only: a full write keeps what is stored, since only the v2
+    /// settings page has the control, and it saves by patch.
+    #[serde(default)]
+    pub notify_needs_you: bool,
 }
 
 impl From<AutosyncSettings> for AutosyncSettingsData {
@@ -62,6 +67,7 @@ impl From<AutosyncSettings> for AutosyncSettingsData {
             pull_interval_secs: s.pull.focused_secs,
             idle_timeout_secs: s.push.idle_timeout_secs,
             close_to_tray: s.close_to_tray,
+            notify_needs_you: s.notify_needs_you,
         }
     }
 }
@@ -95,6 +101,7 @@ fn merge_autosync_settings_data(
             idle_timeout_secs: incoming.idle_timeout_secs,
         },
         close_to_tray: incoming.close_to_tray,
+        notify_needs_you: current.notify_needs_you,
     }
     .normalised()
 }
@@ -113,6 +120,7 @@ pub struct AutosyncPatch {
     pub pull_interval_secs: Option<u64>,
     pub idle_timeout_secs: Option<u64>,
     pub close_to_tray: Option<bool>,
+    pub notify_needs_you: Option<bool>,
 }
 
 impl AutosyncPatch {
@@ -136,6 +144,9 @@ impl AutosyncPatch {
         }
         if let Some(on) = self.close_to_tray {
             next.close_to_tray = on;
+        }
+        if let Some(on) = self.notify_needs_you {
+            next.notify_needs_you = on;
         }
         Ok(next.normalised())
     }
@@ -678,6 +689,12 @@ pub async fn get_autopull_activity(
     Ok(watcher.activity())
 }
 
+/// What needs the reader now, for a window that mounts; it then follows the
+/// `needs-you` event.
+pub async fn get_needs_you(s: &Services) -> Result<Vec<crate::engine::needs_you::Entry>, String> {
+    Ok(s.watcher.needs_you().get())
+}
+
 pub async fn update_fswatcher_settings(s: &Services, enabled: bool) -> Result<(), String> {
     let _writing = s.settings_writes.lock().await;
     let fswatcher_settings = &s.fswatcher_settings;
@@ -840,6 +857,7 @@ mod tests {
                 idle_timeout_secs: 22,
             },
             close_to_tray: false,
+            notify_needs_you: true,
         };
         let data = AutosyncSettingsData::from(s);
         assert!(data.pull_enabled);
@@ -866,6 +884,7 @@ mod tests {
                 idle_timeout_secs: 30,
             },
             close_to_tray: false,
+            notify_needs_you: true,
         };
         initial.save(dir.path()).await?;
 
@@ -875,6 +894,7 @@ mod tests {
             pull_interval_secs: 7,
             idle_timeout_secs: 9,
             close_to_tray: false,
+            notify_needs_you: true,
         };
         let merged = merge_autosync_settings_data(&initial, &incoming);
 
@@ -928,6 +948,7 @@ mod tests {
             pull_interval_secs: 30,
             idle_timeout_secs: 0,
             close_to_tray: false,
+            notify_needs_you: true,
         };
         assert!(validate_autosync_settings_data(&bad).is_err());
     }
@@ -940,6 +961,7 @@ mod tests {
             pull_interval_secs: 1,
             idle_timeout_secs: 1,
             close_to_tray: false,
+            notify_needs_you: true,
         };
         assert!(validate_autosync_settings_data(&ok).is_ok());
     }
@@ -971,6 +993,7 @@ mod tests {
                 idle_timeout_secs: 45,
             },
             close_to_tray: true,
+            notify_needs_you: true,
         };
         let next = AutosyncPatch {
             pull_enabled: Some(true),
@@ -1003,6 +1026,7 @@ mod tests {
                 idle_timeout_secs: 300,
             },
             close_to_tray: false,
+            notify_needs_you: true,
         };
         let next = AutosyncPatch {
             pull_interval_secs: Some(180),
@@ -1034,6 +1058,7 @@ mod tests {
             pull_interval_secs: Some(60),
             idle_timeout_secs: Some(120),
             close_to_tray: Some(true),
+            notify_needs_you: None,
         }
         .apply(&AutosyncSettings::default())
         .unwrap();
@@ -1109,6 +1134,7 @@ mod tests {
                     ..Default::default()
                 },
                 close_to_tray: false,
+                notify_needs_you: true,
             }
         }
         assert!(clears_pauses(&enabled(false, false), &enabled(true, false)));
@@ -1144,6 +1170,7 @@ mod tests {
             pull_interval_secs: 30,
             idle_timeout_secs: 60,
             close_to_tray: true,
+            notify_needs_you: true,
         };
         let merged = merge_autosync_settings_data(&initial, &incoming);
         assert!(merged.close_to_tray);

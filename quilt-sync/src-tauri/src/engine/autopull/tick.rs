@@ -24,6 +24,10 @@ use crate::engine::autopull::watched::WatchedWalks;
 use crate::engine::commands::RoleCache;
 use crate::engine::model;
 use crate::engine::model::QuiltModel;
+use crate::engine::needs_you::Cause;
+use crate::engine::needs_you::Kind;
+use crate::engine::needs_you::PUBLISH_FAILING_AFTER;
+use crate::engine::needs_you::Subject;
 use crate::engine::publish_settings::PublishSettings;
 use crate::engine::quilt;
 use crate::engine::quilt::flow::PullOutcome;
@@ -722,6 +726,8 @@ async fn walk_locked<M: QuiltModel>(
 #[derive(Debug, Clone)]
 pub(crate) struct BackoffState {
     pub next_attempt: Instant,
+    /// When this run of failures began.
+    pub failing_since: Instant,
     pub consecutive_failures: u32,
     /// What the last attempt failed on, for the Autosync card.
     pub error: String,
@@ -749,6 +755,7 @@ fn bump_backoff(
 ) {
     let entry = backoff.entry(namespace.clone()).or_insert(BackoffState {
         next_attempt: now,
+        failing_since: now,
         consecutive_failures: 0,
         error: String::new(),
     });
@@ -818,6 +825,10 @@ pub(crate) async fn run_once(
         .await
         .retain(|ns| current.contains(ns));
     inner.aggregator.retain_namespaces(&current);
+    inner.needs_you.retain(|entry| match &entry.subject {
+        Subject::Package { namespace } => current.contains(namespace),
+        Subject::Host { .. } | Subject::App => true,
+    });
 
     // Snapshot publish settings once per tick so we don't reacquire the
     // RwLock per package. Same lifetime for `wait`, which is
@@ -964,6 +975,11 @@ pub(crate) async fn sync_package(
         Ok(outcome) => {
             inner.backoff.write().await.remove(&namespace);
             inner.login_blocked.write().await.remove(&namespace);
+            // It synced: its session, its bucket and its publish all worked.
+            let package = Subject::package(&namespace);
+            inner.needs_you.session_works(origin);
+            inner.needs_you.leave(&package, Kind::NoAccess);
+            inner.needs_you.leave(&package, Kind::PublishFailing);
             if let Some(message) = outcome.published.as_deref() {
                 inner.reporter.report_published(&namespace, origin, message);
             }
@@ -1017,6 +1033,7 @@ pub(crate) async fn sync_package(
                 block
             };
             inner.reporter.report_login_required(host.as_ref(), block);
+            inner.needs_you.session_failed(host.as_ref(), true);
             inner.aggregator.note_login_required(&namespace, host);
         }
         Err(WatchError::Conflict(reason)) => {
@@ -1039,13 +1056,20 @@ pub(crate) async fn sync_package(
                 inner.reporter.report_autosync_changed();
                 return Pass::Done;
             }
-            bump_backoff(
-                &mut *inner.backoff.write().await,
-                &namespace,
-                now,
-                err.to_string(),
-            );
+            let failing_since = {
+                let mut backoff = inner.backoff.write().await;
+                bump_backoff(&mut backoff, &namespace, now, err.to_string());
+                backoff[&namespace].failing_since
+            };
             warn!("autosync: transient error for {namespace}: {err}");
+            note_publish_failing(
+                inner,
+                &namespace,
+                run,
+                now.saturating_duration_since(failing_since),
+                &err,
+            )
+            .await;
             // Transient: don't touch the aggregator's error map — a
             // network blip should not flip the tray to Error. The
             // next tick either clears or escalates.
@@ -1053,6 +1077,29 @@ pub(crate) async fn sync_package(
     }
     inner.reporter.report_autosync_changed();
     Pass::Done
+}
+
+/// A publish that has kept failing for [`PUBLISH_FAILING_AFTER`] needs the
+/// reader; one with nothing left to publish, or publishing off, does not.
+async fn note_publish_failing(
+    inner: &WatcherInner,
+    namespace: &Namespace,
+    run: &PassSettings,
+    failing_for: Duration,
+    err: &Error,
+) {
+    let package = Subject::package(namespace);
+    let to_publish = run.push_enabled && inner.last_change.get(namespace).await.is_some();
+    if !to_publish {
+        inner.needs_you.leave(&package, Kind::PublishFailing);
+    } else if failing_for >= PUBLISH_FAILING_AFTER {
+        inner.needs_you.enter(
+            package,
+            Cause::PublishFailing {
+                error: err.to_string(),
+            },
+        );
+    }
 }
 
 /// Whether the package's catalog is no longer `origin`, the one this pass
@@ -1088,6 +1135,9 @@ pub(crate) async fn pause(
         .write()
         .await
         .insert(namespace.clone(), reason.clone());
+    inner
+        .needs_you
+        .enter(Subject::package(namespace), Cause::of_pause(&reason));
     inner
         .reporter
         .report_paused(namespace, origin, reason.clone());

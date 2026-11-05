@@ -16,10 +16,13 @@ use crate::engine::autopull::PausedReason;
 use crate::engine::autopull::Watcher;
 use crate::engine::commands::RoleCache;
 use crate::engine::commands::main_page::PackageStateDto;
-use crate::engine::commands::main_page::{conflict_files, session_state, unexplained_pause};
+use crate::engine::commands::main_page::{
+    conflict_files, read_blocked, read_worked, session_state, unexplained_pause,
+};
 use crate::engine::commands::package_entries::{EntryList, entry_list};
 use crate::engine::error::Error;
 use crate::engine::model;
+use crate::engine::needs_you::NeedsYou;
 use crate::engine::notify::Notify;
 use crate::engine::quilt;
 use crate::engine::quilt::lineage::UpstreamState;
@@ -610,7 +613,7 @@ pub async fn get_package_page_data(
     // says a package stopped syncing.
     let paused = watcher.paused_reason(&namespace).await;
 
-    get_package_page_data_from_model(m, roles, &namespace, paused.as_ref())
+    get_package_page_data_from_model(m, roles, &namespace, paused.as_ref(), watcher.needs_you())
         .await
         .map_err(|e| e.to_frontend_string())
 }
@@ -620,6 +623,7 @@ async fn get_package_page_data_from_model(
     roles: &RoleCache,
     namespace: &quilt_uri::Namespace,
     paused: Option<&PausedReason>,
+    needs_you: &NeedsYou,
 ) -> Result<PackagePageData, Error> {
     let installed = m.get_installed_package(namespace).await?.ok_or_else(|| {
         Error::from(quilt::InstallPackageError::NotInstalled(
@@ -646,6 +650,10 @@ async fn get_package_page_data_from_model(
         .remote_uri
         .as_ref()
         .map(quilt_uri::S3PackageUri::from);
+    let origin = lineage
+        .remote_uri
+        .as_ref()
+        .and_then(|remote| remote.origin.as_ref());
 
     let mut role_switch = None;
     // A blocked read is a state, not an error: the page still draws, and the
@@ -694,6 +702,10 @@ async fn get_package_page_data_from_model(
         }
     };
 
+    match status_read {
+        Ok(_) => read_worked(needs_you, namespace, origin, paused),
+        Err(_) => read_blocked(needs_you, namespace, origin, &state),
+    }
     // A blocked read counts from tracking alone.
     let status = status_read.as_ref().ok();
     let newer = status.and_then(newer_revision);
@@ -1190,7 +1202,14 @@ mod tests {
 
     async fn read(model: &crate::engine::model::MockQuiltModel) -> Result<PackagePageData, Error> {
         let ns: quilt_uri::Namespace = NS.try_into().unwrap();
-        get_package_page_data_from_model(model, &RoleCache::default(), &ns, None).await
+        get_package_page_data_from_model(
+            model,
+            &RoleCache::default(),
+            &ns,
+            None,
+            &crate::engine::needs_you::NeedsYou::default(),
+        )
+        .await
     }
 
     /// Diverged on disk: the remote at `b`, the registry's latest `l`, and a
@@ -1311,9 +1330,15 @@ mod tests {
     ) -> PackagePageData {
         let m = mock_one_package(status);
         let ns: quilt_uri::Namespace = NS.try_into().unwrap();
-        get_package_page_data_from_model(&m, roles, &ns, paused)
-            .await
-            .expect("a blocked read is a state, not an error")
+        get_package_page_data_from_model(
+            &m,
+            roles,
+            &ns,
+            paused,
+            &crate::engine::needs_you::NeedsYou::default(),
+        )
+        .await
+        .expect("a blocked read is a state, not an error")
     }
 
     async fn header_state(
@@ -2940,10 +2965,16 @@ mod tests {
         );
         let roles = RoleCache::default();
         let ns: quilt_uri::Namespace = NS.try_into().unwrap();
-        let header = get_package_page_data_from_model(&m, &roles, &ns, None)
-            .await
-            .expect("a denial is a state, not an error")
-            .header;
+        let header = get_package_page_data_from_model(
+            &m,
+            &roles,
+            &ns,
+            None,
+            &crate::engine::needs_you::NeedsYou::default(),
+        )
+        .await
+        .expect("a denial is a state, not an error")
+        .header;
 
         assert_eq!(
             header.state,
@@ -2980,10 +3011,16 @@ mod tests {
         );
         let roles = RoleCache::default();
         let ns: quilt_uri::Namespace = NS.try_into().unwrap();
-        let header = get_package_page_data_from_model(&m, &roles, &ns, None)
-            .await
-            .expect("a denial is a state")
-            .header;
+        let header = get_package_page_data_from_model(
+            &m,
+            &roles,
+            &ns,
+            None,
+            &crate::engine::needs_you::NeedsYou::default(),
+        )
+        .await
+        .expect("a denial is a state")
+        .header;
 
         assert_eq!(
             header.state,
@@ -3009,10 +3046,16 @@ mod tests {
             .returning(|_| Err(Error::General("role query unavailable".to_string())));
         let roles = RoleCache::default();
         let ns: quilt_uri::Namespace = NS.try_into().unwrap();
-        let header = get_package_page_data_from_model(&m, &roles, &ns, None)
-            .await
-            .expect("a failed remedy read is never a page error")
-            .header;
+        let header = get_package_page_data_from_model(
+            &m,
+            &roles,
+            &ns,
+            None,
+            &crate::engine::needs_you::NeedsYou::default(),
+        )
+        .await
+        .expect("a failed remedy read is never a page error")
+        .header;
 
         assert_eq!(
             header.state,
@@ -3031,9 +3074,15 @@ mod tests {
         m.expect_refresh_roles().times(0);
         let roles = RoleCache::default();
         let ns: quilt_uri::Namespace = NS.try_into().unwrap();
-        let page = get_package_page_data_from_model(&m, &roles, &ns, None)
-            .await
-            .expect("a settled read");
+        let page = get_package_page_data_from_model(
+            &m,
+            &roles,
+            &ns,
+            None,
+            &crate::engine::needs_you::NeedsYou::default(),
+        )
+        .await
+        .expect("a settled read");
 
         assert_eq!(page.header.state, PackageStateDto::Latest);
         assert!(page.header.role_switch.is_none());

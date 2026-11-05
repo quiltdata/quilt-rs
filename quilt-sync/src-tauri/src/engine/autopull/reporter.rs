@@ -9,6 +9,10 @@ use quilt_uri::Namespace;
 use crate::engine::autopull::PausedReason;
 use crate::engine::autopull::pull_toast::ReportToast;
 use crate::engine::events::EventSink;
+use crate::engine::needs_you::Cause;
+use crate::engine::needs_you::Kind;
+use crate::engine::needs_you::NeedsYou;
+use crate::engine::needs_you::Subject;
 use crate::engine::quilt;
 use crate::engine::telemetry::Telemetry;
 use crate::engine::telemetry::event::{
@@ -38,6 +42,8 @@ pub const LOGIN_REQUIRED_EVENT: &str = "autosync-login-required";
 pub const SUBSCRIBER_ERROR_EVENT: &str = "fswatcher-subscriber-error";
 pub const PUBLISHED_EVENT: &str = "autosync-published";
 pub const PAUSED_EVENT: &str = "autosync-paused";
+/// Sent on every clear of a pause, with the namespace.
+pub const PAUSE_CLEARED_EVENT: &str = "autosync-pause-cleared";
 /// Tells the window a package's autosync state may have changed, so it reads
 /// the main page's watcher payload again. No payload.
 pub const AUTOSYNC_CHANGED_EVENT: &str = "autosync-changed";
@@ -231,6 +237,13 @@ pub struct PublishedEvent {
 /// surfaces as `status = "error"` and a Login affordance in the UI) from
 /// "remote refused this push" (which is `status = "paused"` and renders a
 /// neutral banner showing `message`).
+/// The `autosync-pause-cleared` payload.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PauseClearedEvent {
+    pub namespace: Namespace,
+}
+
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PausedEvent {
@@ -342,6 +355,15 @@ pub trait StatusReporter: Send + Sync + 'static {
     /// a commit or a settings change. Without a default, for the same reason
     /// as [`Self::report_pulled`].
     fn report_autosync_changed(&self);
+
+    /// A pause on `namespace` was cleared, by whatever route. Without a
+    /// default, for the same reason as [`Self::report_pulled`].
+    fn report_pause_cleared(&self, namespace: &Namespace);
+
+    /// The file watcher's reconciliation subscribed again after a
+    /// [subscriber error](Self::report_subscriber_error). Without a default,
+    /// for the same reason as [`Self::report_pulled`].
+    fn report_subscriber_recovered(&self);
 }
 
 /// Stderr/log-only reporter. Used in tests where no Tauri runtime is
@@ -352,6 +374,12 @@ pub struct LogReporter;
 
 impl StatusReporter for LogReporter {
     fn report_autosync_changed(&self) {}
+
+    fn report_pause_cleared(&self, namespace: &Namespace) {
+        info!("autosync: pause cleared namespace={namespace}");
+    }
+
+    fn report_subscriber_recovered(&self) {}
 
     fn report_pulled(&self, namespace: &Namespace, toast: ReportToast) {
         info!(
@@ -477,11 +505,21 @@ impl StatusReporter for TelemetryReporter {
     fn report_autosync_changed(&self) {
         self.inner.report_autosync_changed();
     }
+
+    fn report_pause_cleared(&self, namespace: &Namespace) {
+        self.inner.report_pause_cleared(namespace);
+    }
+
+    fn report_subscriber_recovered(&self) {
+        self.inner.report_subscriber_recovered();
+    }
 }
 
 pub struct SinkEventReporter {
     events: EventSink,
     toasts: Arc<ToastCenter>,
+    /// Takes the file watcher's failure, the one cause only this seam hears.
+    needs_you: Arc<NeedsYou>,
     logged: SeenFingerprints,
 }
 
@@ -513,10 +551,11 @@ impl SeenFingerprints {
 }
 
 impl SinkEventReporter {
-    pub fn new(events: EventSink, toasts: Arc<ToastCenter>) -> Self {
+    pub fn new(events: EventSink, toasts: Arc<ToastCenter>, needs_you: Arc<NeedsYou>) -> Self {
         Self {
             events,
             toasts,
+            needs_you,
             logged: SeenFingerprints::default(),
         }
     }
@@ -567,7 +606,27 @@ impl StatusReporter for SinkEventReporter {
             "fswatcher: kind={} namespace={:?} message={}",
             event.kind, event.namespace, event.message
         );
+        self.needs_you.enter(
+            Subject::App,
+            Cause::Watcher {
+                message: event.message.clone(),
+            },
+        );
         self.events.emit(SUBSCRIBER_ERROR_EVENT, &event);
+    }
+
+    fn report_subscriber_recovered(&self) {
+        self.needs_you.leave(&Subject::App, Kind::Watcher);
+    }
+
+    fn report_pause_cleared(&self, namespace: &Namespace) {
+        info!("autosync: pause cleared namespace={namespace}");
+        self.events.emit(
+            PAUSE_CLEARED_EVENT,
+            PauseClearedEvent {
+                namespace: namespace.clone(),
+            },
+        );
     }
 
     fn report_pulled(&self, namespace: &Namespace, toast: ReportToast) {
@@ -1055,6 +1114,30 @@ mod tests {
 }
 
 #[cfg(test)]
+mod needs_you_tests {
+    use super::*;
+
+    /// The file watcher's failure enters the set, and its next reconcile
+    /// that subscribes again leaves it.
+    #[test]
+    fn the_file_watcher_needs_you_until_it_subscribes_again() {
+        let needs_you = Arc::new(NeedsYou::default());
+        let toasts = Arc::new(ToastCenter::new(Box::new(
+            crate::engine::toast::SinkToastEmitter::new(EventSink::new()),
+        )));
+        let reporter = SinkEventReporter::new(EventSink::new(), toasts, Arc::clone(&needs_you));
+        reporter.report_subscriber_error(SubscriberErrorEvent {
+            kind: "inotify_limit".to_string(),
+            message: "no space".to_string(),
+            namespace: None,
+        });
+        assert_eq!(needs_you.get()[0].cause.kind(), Kind::Watcher);
+        reporter.report_subscriber_recovered();
+        assert!(needs_you.get().is_empty(), "the watcher subscribed again");
+    }
+}
+
+#[cfg(test)]
 pub(crate) mod test_support {
     use std::sync::Mutex;
 
@@ -1078,9 +1161,17 @@ pub(crate) mod test_support {
         pub pulled: Mutex<Vec<(Namespace, ReportToast)>>,
         /// How many times the window was told a state may have changed.
         pub autosync_changed: std::sync::atomic::AtomicUsize,
+        /// Each pause clear, in order.
+        pub pause_cleared: Mutex<Vec<Namespace>>,
     }
 
     impl StatusReporter for RecordingReporter {
+        fn report_pause_cleared(&self, namespace: &Namespace) {
+            self.pause_cleared.lock().unwrap().push(namespace.clone());
+        }
+
+        fn report_subscriber_recovered(&self) {}
+
         fn report_autosync_changed(&self) {
             self.autosync_changed
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
