@@ -44,6 +44,7 @@
 
 - `QUILT_DOMAIN` moves QuiltSync's data folder, as it does for the `quilt` CLI (<https://github.com/quiltdata/quilt-rs/pull/1279>)
 - On Linux, QuiltSync no longer needs OpenSSL (<https://github.com/quiltdata/quilt-rs/pull/1288>)
+- QuiltSync opens only `https` and `mailto` links (<https://github.com/quiltdata/quilt-rs/pull/1315>)
 
 ### Fixed
 

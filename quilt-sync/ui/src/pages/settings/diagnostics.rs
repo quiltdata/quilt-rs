@@ -145,16 +145,9 @@ pub(super) fn DiagnosticsSection(
                         <code>{move || zip_path.get().unwrap_or_default()}</code>
                         <buttons::Reveal
                             on_click=move |_| {
-                                if let Some(path) = zip_path.get_untracked() {
-                                    leptos::task::spawn_local(async move {
-                                        let sep = path.rfind('/').or_else(|| path.rfind('\\'));
-                                        let dir = match sep {
-                                            Some(i) if i > 0 => path[..i].to_string(),
-                                            _ => path,
-                                        };
-                                        let _ = commands::open_in_web_browser(dir).await;
-                                    });
-                                }
+                                leptos::task::spawn_local(async move {
+                                    let _ = commands::reveal_diagnostic_logs().await;
+                                });
                             }
                             small=true
                             link=true
