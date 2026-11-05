@@ -591,7 +591,7 @@ mod tests {
                 .iter()
                 .map(|(name, size)| {
                     let row = quilt::manifest::ManifestRow {
-                        logical_key: std::path::PathBuf::from(name),
+                        logical_key: quilt::LogicalKey::new(name).unwrap(),
                         size: *size,
                         ..Default::default()
                     };
@@ -683,7 +683,7 @@ mod tests {
         use std::path::PathBuf;
 
         let row = |path: &String| quilt::manifest::ManifestRow {
-            logical_key: PathBuf::from(path),
+            logical_key: quilt::LogicalKey::new(path).unwrap(),
             size: 1,
             ..Default::default()
         };

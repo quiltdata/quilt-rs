@@ -86,7 +86,8 @@ pub async fn install_paths(
     if paths.len() == 1 && left == 0 {
         let path = &paths[0];
         info!("Installed {:?}", path);
-        model.reveal_in_file_browser(namespace, path).await?;
+        let key = quilt::LogicalKey::new(path.as_path()).map_err(quilt::Error::from)?;
+        model.reveal_in_file_browser(namespace, &key).await?;
     } else {
         info!("Installed {} paths, left out {left}", paths.len() - left);
         model.open_in_file_browser(namespace).await?;

@@ -22,7 +22,7 @@ async fn test_single_row_manifest() -> Res {
     let header = ManifestHeader::default();
 
     let manifest_row = ManifestRow {
-        logical_key: PathBuf::from("data.txt"),
+        logical_key: crate::LogicalKey::new("data.txt").unwrap(),
         physical_key: "s3://bucket/data.txt".to_string(),
         hash: Sha256ChunkedHash::try_from(objects::LESS_THAN_8MB_HASH_B64)?.into(),
         size: 16,
@@ -61,7 +61,7 @@ async fn test_mixed_hash_types_manifest() -> Res {
     let header = ManifestHeader::default();
 
     let row1 = ManifestRow {
-        logical_key: PathBuf::from("file1.txt"),
+        logical_key: crate::LogicalKey::new("file1.txt").unwrap(),
         physical_key: "s3://bucket/file1.txt".to_string(),
         hash: Sha256Hash::try_from(
             "7465737464617461000000000000000000000000000000000000000000000000",
@@ -72,7 +72,7 @@ async fn test_mixed_hash_types_manifest() -> Res {
     };
 
     let row2 = ManifestRow {
-        logical_key: PathBuf::from("file2.txt"),
+        logical_key: crate::LogicalKey::new("file2.txt").unwrap(),
         physical_key: "s3://bucket/file2.txt".to_string(),
         hash: Sha256ChunkedHash::try_from(objects::LESS_THAN_8MB_HASH_B64)?.into(),
         size: 16,
@@ -80,7 +80,7 @@ async fn test_mixed_hash_types_manifest() -> Res {
     };
 
     let row3 = ManifestRow {
-        logical_key: PathBuf::from("file3.txt"),
+        logical_key: crate::LogicalKey::new("file3.txt").unwrap(),
         physical_key: "s3://bucket/file3.txt".to_string(),
         hash: Crc64Hash::try_from("dGVzdGRhdGEAAAAAAAAAAAAAAAAAAAAA")?.into(),
         size: 32,
@@ -125,7 +125,7 @@ async fn test_multiple_rows_manifest() -> Res {
     let header = ManifestHeader::default();
 
     let row1 = ManifestRow {
-        logical_key: PathBuf::from("config.json"),
+        logical_key: crate::LogicalKey::new("config.json").unwrap(),
         physical_key: "s3://bucket/config.json".to_string(),
         hash: Sha256ChunkedHash::try_from(objects::ZERO_HASH_B64)?.into(),
         size: 0,
@@ -133,7 +133,7 @@ async fn test_multiple_rows_manifest() -> Res {
     };
 
     let row2 = ManifestRow {
-        logical_key: PathBuf::from("data/file.csv"),
+        logical_key: crate::LogicalKey::new("data/file.csv").unwrap(),
         physical_key: "s3://bucket/data/file.csv".to_string(),
         hash: Sha256ChunkedHash::try_from(objects::EQUAL_TO_8MB_HASH_B64)?.into(),
         size: 8_388_608,
@@ -141,7 +141,7 @@ async fn test_multiple_rows_manifest() -> Res {
     };
 
     let row3 = ManifestRow {
-        logical_key: PathBuf::from("images/photo.jpg"),
+        logical_key: crate::LogicalKey::new("images/photo.jpg").unwrap(),
         physical_key: "s3://bucket/images/photo.jpg".to_string(),
         hash: Sha256ChunkedHash::try_from(objects::MORE_THAN_8MB_HASH_B64)?.into(),
         size: 18_874_368,

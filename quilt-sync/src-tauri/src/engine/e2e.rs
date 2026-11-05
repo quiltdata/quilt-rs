@@ -22,6 +22,7 @@ use tokio::runtime::Runtime;
 use url::Url;
 
 use crate::engine::commands;
+use crate::engine::model::QuiltModel;
 use crate::engine::services::Services;
 use crate::engine::start;
 use crate::engine::start::Engine;
@@ -306,7 +307,12 @@ async fn write_until_listed(
 ) -> WebDriverResult<()> {
     let folder = quiltsync
         .on_engine(|s| async move {
-            commands::package_file_path(&s, NAMESPACE.to_owned(), String::new()).await
+            let namespace = quilt_uri::Namespace::try_from(NAMESPACE).map_err(|e| e.to_string())?;
+            s.model
+                .package_home(&namespace)
+                .await
+                .map(|home| home.display().to_string())
+                .map_err(|e| e.to_string())
         })
         .await
         .expect("the package's folder");

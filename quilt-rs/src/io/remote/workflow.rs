@@ -1192,14 +1192,13 @@ workflows:
     fn test_entry_view_non_utf8_logical_key_is_lossy() {
         use std::ffi::OsStr;
         use std::os::unix::ffi::OsStrExt;
-        use std::path::PathBuf;
 
         use crate::object_hash::ObjectHash;
 
         // A logical key with an invalid UTF-8 byte must project as the lossy
         // form (U+FFFD replacement character), not as a fabricated empty key.
         let row = ManifestRow {
-            logical_key: PathBuf::from(OsStr::from_bytes(b"bad-\xFF.txt")),
+            logical_key: crate::LogicalKey::new(OsStr::from_bytes(b"bad-\xFF.txt")).unwrap(),
             physical_key: "s3://bucket/bad".to_string(),
             hash: ObjectHash::default(),
             size: 1,

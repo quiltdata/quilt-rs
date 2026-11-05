@@ -16,6 +16,7 @@ use std::path::PathBuf;
 use tracing::{debug, info};
 
 use crate::Error;
+use crate::LogicalKey;
 use crate::Res;
 use crate::checksum::refresh_hash;
 use crate::error::PackageOpError;
@@ -89,7 +90,7 @@ pub async fn undo_commit(
     }
 
     for (logical_key, hash) in &to_write {
-        let working_path = package_home.join(logical_key);
+        let working_path = LogicalKey::new(logical_key)?.join_to(&package_home);
         if let Some(parent) = working_path.parent() {
             storage.create_dir_all(parent).await?;
         }
@@ -135,7 +136,7 @@ async fn remove_working_file(
     package_home: &Path,
     logical_key: &Path,
 ) -> Res {
-    let working_path = package_home.join(logical_key);
+    let working_path = LogicalKey::new(logical_key)?.join_to(package_home);
     debug!("⏳ Removing {}", logical_key.display());
     if let Err(err) = storage.remove_file(&working_path).await
         && err.kind() != ErrorKind::NotFound
@@ -188,7 +189,7 @@ async fn refuse_unless_clean(
 
     let mut unexpected: Vec<String> = Vec::new();
     for logical_key in to_check {
-        let working_path = package_home.join(logical_key);
+        let working_path = LogicalKey::new(logical_key)?.join_to(package_home);
         let ok = match current_manifest.get_record(logical_key) {
             // Changed, absent, a directory, unreadable: all the same answer.
             Some(row) => matches!(

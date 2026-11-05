@@ -435,7 +435,7 @@ mod tests {
     #[test]
     fn test_json_maps_each_change_kind() {
         let row = |key: &str| quilt_rs::manifest::ManifestRow {
-            logical_key: PathBuf::from(key),
+            logical_key: quilt_rs::LogicalKey::new(key).unwrap(),
             physical_key: String::new(),
             hash: quilt_rs::object_hash::ObjectHash::default(),
             size: 0,

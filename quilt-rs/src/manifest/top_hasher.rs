@@ -157,7 +157,6 @@ impl TopHasher {
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
-    use std::path::PathBuf;
     use test_log::test;
 
     use crate::Res;
@@ -686,7 +685,7 @@ mod tests {
 
         for i in 0..10 {
             let manifest_row = ManifestRow {
-                logical_key: PathBuf::from(format!("e0-{i}.txt")),
+                logical_key: crate::LogicalKey::new(format!("e0-{i}.txt")).unwrap(),
                 physical_key: "ignored".to_string(),
                 hash: Sha256ChunkedHash::try_from("/UMjH1bsbrMLBKdd9cqGGvtjhWzawhz1BfrxgngUhVI=")?
                     .into(),
@@ -711,7 +710,7 @@ mod tests {
         top_hasher.append_header(&header)?;
 
         let manifest_row = ManifestRow {
-            logical_key: PathBuf::from("data.txt"),
+            logical_key: crate::LogicalKey::new("data.txt").unwrap(),
             physical_key: "s3://bucket/data.txt".to_string(),
             hash: Sha256ChunkedHash::try_from(objects::LESS_THAN_8MB_HASH_B64)?.into(),
             size: 16,
@@ -736,7 +735,7 @@ mod tests {
 
         // Row 1: SHA256 hash (legacy format)
         let row1 = ManifestRow {
-            logical_key: PathBuf::from("file1.txt"),
+            logical_key: crate::LogicalKey::new("file1.txt").unwrap(),
             physical_key: "s3://bucket/file1.txt".to_string(),
             hash: Sha256Hash::try_from(
                 "7465737464617461000000000000000000000000000000000000000000000000",
@@ -749,7 +748,7 @@ mod tests {
 
         // Row 2: SHA256-chunked hash (current format)
         let row2 = ManifestRow {
-            logical_key: PathBuf::from("file2.txt"),
+            logical_key: crate::LogicalKey::new("file2.txt").unwrap(),
             physical_key: "s3://bucket/file2.txt".to_string(),
             hash: Sha256ChunkedHash::try_from(objects::LESS_THAN_8MB_HASH_B64)?.into(),
             size: 16,
@@ -759,7 +758,7 @@ mod tests {
 
         // Row 3: CRC64-NVMe hash (newest format)
         let row3 = ManifestRow {
-            logical_key: PathBuf::from("file3.txt"),
+            logical_key: crate::LogicalKey::new("file3.txt").unwrap(),
             physical_key: "s3://bucket/file3.txt".to_string(),
             hash: Crc64Hash::try_from("dGVzdGRhdGEAAAAAAAAAAAAAAAAAAAAA")?.into(),
             size: 32,
@@ -785,7 +784,7 @@ mod tests {
         top_hasher1.append_header(&header1)?;
 
         let empty_obj_meta_row = ManifestRow {
-            logical_key: PathBuf::from("test1.txt"),
+            logical_key: crate::LogicalKey::new("test1.txt").unwrap(),
             physical_key: "s3://bucket/test1.txt".to_string(),
             hash: Sha256ChunkedHash::try_from(objects::ZERO_HASH_B64)?.into(),
             size: 0,
@@ -793,7 +792,7 @@ mod tests {
         };
 
         let sorted_keys_meta_row = ManifestRow {
-            logical_key: PathBuf::from("test2.txt"),
+            logical_key: crate::LogicalKey::new("test2.txt").unwrap(),
             physical_key: "s3://bucket/test2.txt".to_string(),
             hash: Sha256ChunkedHash::try_from(objects::LESS_THAN_8MB_HASH_B64)?.into(),
             size: 16,
@@ -810,7 +809,7 @@ mod tests {
         top_hasher2.append_header(&header2)?;
 
         let null_meta_row = ManifestRow {
-            logical_key: PathBuf::from("test1.txt"),
+            logical_key: crate::LogicalKey::new("test1.txt").unwrap(),
             physical_key: "s3://bucket/test1.txt".to_string(),
             hash: Sha256ChunkedHash::try_from(objects::ZERO_HASH_B64)?.into(),
             size: 0,
@@ -818,7 +817,7 @@ mod tests {
         };
 
         let unsorted_keys_meta_row = ManifestRow {
-            logical_key: PathBuf::from("test2.txt"),
+            logical_key: crate::LogicalKey::new("test2.txt").unwrap(),
             physical_key: "s3://bucket/test2.txt".to_string(),
             hash: Sha256ChunkedHash::try_from(objects::LESS_THAN_8MB_HASH_B64)?.into(),
             size: 16,
@@ -835,7 +834,7 @@ mod tests {
         top_hasher3.append_header(&header3)?;
 
         let missing_meta_row = ManifestRow {
-            logical_key: PathBuf::from("test1.txt"),
+            logical_key: crate::LogicalKey::new("test1.txt").unwrap(),
             physical_key: "s3://bucket/test1.txt".to_string(),
             hash: Sha256ChunkedHash::try_from(objects::ZERO_HASH_B64)?.into(),
             size: 0,
@@ -843,7 +842,7 @@ mod tests {
         };
 
         let reordered_keys_meta_row = ManifestRow {
-            logical_key: PathBuf::from("test2.txt"),
+            logical_key: crate::LogicalKey::new("test2.txt").unwrap(),
             physical_key: "s3://bucket/test2.txt".to_string(),
             hash: Sha256ChunkedHash::try_from(objects::LESS_THAN_8MB_HASH_B64)?.into(),
             size: 16,
@@ -884,7 +883,7 @@ mod tests {
 
         // Row 1: Small file
         let row1 = ManifestRow {
-            logical_key: PathBuf::from("config.json"),
+            logical_key: crate::LogicalKey::new("config.json").unwrap(),
             physical_key: "s3://bucket/config.json".to_string(),
             hash: Sha256ChunkedHash::try_from(objects::ZERO_HASH_B64)?.into(),
             size: 0,
@@ -894,7 +893,7 @@ mod tests {
 
         // Row 2: Medium file
         let row2 = ManifestRow {
-            logical_key: PathBuf::from("data/file.csv"),
+            logical_key: crate::LogicalKey::new("data/file.csv").unwrap(),
             physical_key: "s3://bucket/data/file.csv".to_string(),
             hash: Sha256ChunkedHash::try_from(objects::EQUAL_TO_8MB_HASH_B64)?.into(),
             size: 8_388_608,
@@ -904,7 +903,7 @@ mod tests {
 
         // Row 3: Large file
         let row3 = ManifestRow {
-            logical_key: PathBuf::from("images/photo.jpg"),
+            logical_key: crate::LogicalKey::new("images/photo.jpg").unwrap(),
             physical_key: "s3://bucket/images/photo.jpg".to_string(),
             hash: Sha256ChunkedHash::try_from(objects::MORE_THAN_8MB_HASH_B64)?.into(),
             size: 18_874_368,

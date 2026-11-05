@@ -171,7 +171,7 @@ fn manifest(meta: &Value, paths: &[&str]) -> quilt::manifest::Manifest {
         rows: paths
             .iter()
             .map(|key| quilt::manifest::ManifestRow {
-                logical_key: PathBuf::from(key),
+                logical_key: quilt::LogicalKey::new(key).unwrap(),
                 ..quilt::manifest::ManifestRow::default()
             })
             .collect(),
@@ -455,26 +455,6 @@ async fn a_path_this_copy_tracks_is_not_downloaded_again() {
         *fixture.events.lock().unwrap(),
         ["download sub/TASK.md", "walk", "publish"]
     );
-}
-
-/// The download comes before the claim, outside any permission check.
-#[tokio::test]
-async fn a_revision_listing_a_path_outside_the_package_is_not_claimed() {
-    let fixture = Fixture {
-        rows: &["TASK.md", "../outside.csv"],
-        ..Fixture::new()
-    };
-
-    fixture
-        .check(unclaimed(), fresh(BTreeMap::new()), true)
-        .await;
-
-    assert_eq!(
-        *fixture.events.lock().unwrap(),
-        [] as [&str; 0],
-        "nothing downloaded"
-    );
-    assert_eq!(fixture.metas(), [] as [Value; 0], "nothing is claimed");
 }
 
 #[tokio::test]

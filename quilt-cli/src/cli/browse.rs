@@ -201,7 +201,7 @@ mod tests {
                     workflow: None,
                 },
                 rows: vec![quilt_rs::manifest::ManifestRow {
-                    logical_key: std::path::PathBuf::from("data/one.csv"),
+                    logical_key: quilt_rs::LogicalKey::new("data/one.csv").unwrap(),
                     physical_key: "s3://bucket/one.csv".to_string(),
                     hash: quilt_rs::object_hash::ObjectHash::default(),
                     size: 42,

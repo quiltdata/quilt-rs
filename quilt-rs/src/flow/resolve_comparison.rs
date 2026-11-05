@@ -64,7 +64,7 @@ mod tests {
 
     fn row(key: &str, hash_seed: &[u8]) -> ManifestRow {
         ManifestRow {
-            logical_key: PathBuf::from(key),
+            logical_key: crate::LogicalKey::new(key).unwrap(),
             physical_key: format!("s3://b/{key}"),
             hash: Multihash::<256>::wrap(0x12, hash_seed)
                 .unwrap()

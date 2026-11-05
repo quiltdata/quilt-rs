@@ -21,6 +21,14 @@
 
 ## [v0.52.0-dev]
 
+### Changed
+
+- **Breaking:** a manifest row's `logical_key` is a `LogicalKey`, which refuses a key that leaves the package folder: a `.` or `..` folder, an empty folder name, or a leading `/`, `\\` or drive. Reading a manifest that holds one fails, and `LogicalKey::join_to` is how a key becomes a local path. `ManifestRow` implements `Default` only with the `testing` feature
+
+### Fixed
+
+- Install, status, commit, pull and undo only touch files inside the package folder, whatever keys a manifest holds; a local file whose path can't be a logical key is left out of status and new packages
+
 ### Added
 
 - **Breaking:** `flow::Revision` has two new fields, `meta` (the revision's user metadata, `None` when it has none) and `workflow` (its workflow's id), filled by `InstalledPackage::current_revision` and `list_revisions` (<https://github.com/quiltdata/quilt-rs/pull/1297>)

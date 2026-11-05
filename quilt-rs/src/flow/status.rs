@@ -9,6 +9,7 @@ use tracing::trace;
 use tracing::warn;
 
 use crate::Error;
+use crate::LogicalKey;
 use crate::Res;
 use crate::checksum::calculate_hash;
 use crate::checksum::hash_file;
@@ -82,7 +83,7 @@ pub(crate) struct Tracked {
 }
 
 impl Tracked {
-    pub(crate) fn new<'a>(keys: impl Iterator<Item = &'a PathBuf>) -> Self {
+    pub(crate) fn new<'a>(keys: impl Iterator<Item = &'a Path>) -> Self {
         let mut tracked = Tracked::default();
         for key in keys {
             for dir in key.ancestors().skip(1) {
@@ -90,7 +91,7 @@ impl Tracked {
                     break;
                 }
             }
-            tracked.files.insert(key.clone());
+            tracked.files.insert(key.to_path_buf());
         }
         tracked
     }
@@ -120,6 +121,12 @@ pub(crate) fn walk_package_home(
         for (name, kind, stamp) in entries {
             let file_path = dir.join(name);
             let logical_key = crate::paths::logical_key(file_path.strip_prefix(package_home)?);
+            if !matches!(kind, EntryKind::Dir)
+                && let Err(err) = LogicalKey::new(&logical_key)
+            {
+                warn!("Left out of the package: {err}");
+                continue;
+            }
             match kind {
                 EntryKind::Dir => {
                     if let Some(ignored_by) =
@@ -261,11 +268,11 @@ impl<S: Storage + Sync> Hasher<'_, S> {
             )
             .await?;
         Ok(ManifestRow {
-            logical_key: logical_key.to_path_buf(),
+            logical_key: LogicalKey::new(logical_key)?,
             physical_key: crate::paths::file_url(path)?,
             size,
             hash,
-            ..ManifestRow::default()
+            meta: None,
         })
     }
 
@@ -337,7 +344,7 @@ pub async fn rehash_changes(
     let package_home = package_home.as_ref();
     let mut changes = ChangeSet::new();
     for (logical_key, change) in std::mem::take(&mut status.changes) {
-        let path = package_home.join(&logical_key);
+        let path = LogicalKey::new(&logical_key)?.join_to(package_home);
         let change = match change {
             Change::Removed(row) => Some(Change::Removed(row)),
             Change::Added(_) => Some(Change::Added(
@@ -453,8 +460,8 @@ pub async fn create_status_cached(
         manifest
             .rows
             .iter()
-            .map(|row| &row.logical_key)
-            .chain(orig_paths.keys()),
+            .map(|row| row.logical_key.as_path())
+            .chain(orig_paths.keys().map(PathBuf::as_path)),
     );
     let home = package_home.as_ref().to_path_buf();
     let walked_at = SystemTime::now();
@@ -731,7 +738,7 @@ mod tests {
         let added_file = status.changes.get(&logical_key).unwrap();
         if let Change::Added(added_row) = added_file {
             let reference_row = ManifestRow {
-                logical_key,
+                logical_key: crate::LogicalKey::new(logical_key).unwrap(),
                 size: 16,
                 hash: Sha256ChunkedHash::try_from(fixtures::objects::LESS_THAN_8MB_HASH_B64)?
                     .into(),
@@ -847,7 +854,7 @@ mod tests {
         let added_file = status.changes.get(&file_path).unwrap();
         if let Change::Added(added_row) = added_file {
             let reference_row = ManifestRow {
-                logical_key: PathBuf::from("some.pq"),
+                logical_key: crate::LogicalKey::new("some.pq").unwrap(),
                 size: 16,
                 hash: Crc64Hash::try_from("CRSFynAYcw4=")?.into(),
                 ..ManifestRow::default()
@@ -1716,6 +1723,24 @@ mod tests {
             ignored_source(&status, ".snakemake/x/.DS_Store"),
             Some(RuleSource::Default)
         );
+        Ok(())
+    }
+}
+
+#[cfg(all(test, unix))]
+mod keys_the_walk_leaves_out {
+    use super::*;
+
+    #[test]
+    fn a_file_whose_name_climbs_out_on_windows_is_left_out() -> Res {
+        let home = tempfile::TempDir::new()?;
+        std::fs::write(home.path().join("kept.txt"), b"x")?;
+        std::fs::write(home.path().join("..\\escape.txt"), b"x")?;
+        let rules =
+            quiltignore::Rules::load(home.path(), &home.path().join("no-user-quiltignore"))?;
+        let walked = walk_package_home(home.path(), &rules, &Tracked::default())?;
+        let keys: Vec<_> = walked.entries.iter().map(|entry| entry.0.clone()).collect();
+        assert_eq!(keys, vec![PathBuf::from("kept.txt")]);
         Ok(())
     }
 }

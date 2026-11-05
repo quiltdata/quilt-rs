@@ -366,7 +366,7 @@ mod tests {
         let manifest_src = fixtures::manifest_with_objects_all_sizes::manifest().await?;
         let base_record = manifest_src.get_record(&PathBuf::from("0mb.bin")).unwrap();
         let added = ManifestRow {
-            logical_key: PathBuf::from("foo"),
+            logical_key: crate::LogicalKey::new("foo").unwrap(),
             hash: base_record.hash.clone(),
             size: base_record.size,
             physical_key: base_record.physical_key.clone(),
@@ -461,7 +461,7 @@ mod tests {
     fn row_from_fixture(fixture: &Manifest, source_key: &str) -> ManifestRow {
         let base_record = fixture.get_record(&PathBuf::from(source_key)).unwrap();
         ManifestRow {
-            logical_key: PathBuf::from("foo"),
+            logical_key: crate::LogicalKey::new("foo").unwrap(),
             hash: base_record.hash.clone(),
             size: base_record.size,
             physical_key: base_record.physical_key.clone(),

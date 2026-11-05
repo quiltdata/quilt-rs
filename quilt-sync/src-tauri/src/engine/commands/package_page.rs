@@ -433,7 +433,7 @@ fn keeping_data(
     let changes = changes.unwrap_or(&no_changes);
     let counts = quilt::lineage::DownloadCounts::count(
         lineage,
-        sizes.iter().map(|(key, size)| (key, *size)),
+        sizes.iter().map(|(key, size)| (key.as_path(), *size)),
         changes,
         on_disk,
     );
@@ -1055,7 +1055,7 @@ mod tests {
                 (
                     PathBuf::from(path),
                     quilt::manifest::ManifestRow {
-                        logical_key: PathBuf::from(path),
+                        logical_key: quilt::LogicalKey::new(path).unwrap(),
                         size: 7,
                         ..Default::default()
                     },
@@ -1725,7 +1725,7 @@ mod tests {
         let row = super::super::main_page::MainPageDownloads::from(
             quilt::lineage::DownloadCounts::count(
                 &lineage,
-                listed.iter().map(|(key, size)| (key, *size)),
+                listed.iter().map(|(key, size)| (key.as_path(), *size)),
                 &changes,
                 &BTreeSet::new(),
             ),

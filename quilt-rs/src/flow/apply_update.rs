@@ -316,7 +316,7 @@ mod tests {
     fn row_at(key: &str, body: &[u8], object: &str) -> ManifestRow {
         use sha2::Digest;
         ManifestRow {
-            logical_key: PathBuf::from(key),
+            logical_key: crate::LogicalKey::new(key).unwrap(),
             physical_key: format!("s3://b/{object}"),
             hash: multihash::Multihash::<256>::wrap(0x12, &sha2::Sha256::digest(body))
                 .unwrap()

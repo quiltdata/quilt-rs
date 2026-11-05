@@ -422,7 +422,13 @@ pub async fn pull_package(
         let Some(base_row) = manifest.get_record(path) else {
             continue;
         };
-        match refresh_hash(storage, &working_dir.join(path), base_row.clone()).await {
+        match refresh_hash(
+            storage,
+            &base_row.logical_key.join_to(&working_dir),
+            base_row.clone(),
+        )
+        .await
+        {
             // File still holds the base content — no drift.
             Ok(None) => {}
             // Content changed, or the file is gone (raced local delete) — drift.
@@ -501,7 +507,7 @@ mod tests {
     /// working-tree file — exactly what the drift-detection test wants.
     fn row(key: &str, hash_seed: &[u8]) -> ManifestRow {
         ManifestRow {
-            logical_key: PathBuf::from(key),
+            logical_key: crate::LogicalKey::new(key).unwrap(),
             physical_key: format!("s3://b/{key}"),
             hash: Multihash::<256>::wrap(0x12, hash_seed)
                 .unwrap()
@@ -1241,7 +1247,7 @@ mod tests {
         // it lands in the touch-set as a removal and the apply has nothing to
         // download.
         let base = manifest_of(vec![ManifestRow {
-            logical_key: never.clone(),
+            logical_key: crate::LogicalKey::new(never.clone()).unwrap(),
             ..ManifestRow::default()
         }]);
         let latest_manifest = manifest_of(vec![]);
@@ -1328,7 +1334,7 @@ mod tests {
             .await?
             .into();
         let base_row = ManifestRow {
-            logical_key: path.clone(),
+            logical_key: crate::LogicalKey::new(path.clone()).unwrap(),
             hash: hash.try_into()?,
             size: content.len() as u64,
             ..ManifestRow::default()

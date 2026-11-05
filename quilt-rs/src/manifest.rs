@@ -8,7 +8,7 @@ pub use top_hasher::TopHasher;
 pub use crate::workflow::Workflow;
 pub use crate::workflow::WorkflowId;
 
-use std::path::PathBuf;
+use std::path::Path;
 
 use serde::Deserialize;
 use serde::Deserializer;
@@ -18,6 +18,7 @@ use tokio::io::AsyncRead;
 use tokio::io::BufReader;
 
 use crate::Error;
+use crate::LogicalKey;
 use crate::Res;
 use crate::error::ManifestError;
 use crate::io::manifest::RowsStream;
@@ -49,7 +50,7 @@ impl Default for ManifestHeader {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 struct Quilt3ManifestRow {
-    pub logical_key: PathBuf,
+    pub logical_key: LogicalKey,
     pub physical_keys: Vec<String>,
     pub hash: object_hash::ObjectHash,
     // XXX: u64 cannot be safely deserialized by standard JS json parser,
@@ -81,9 +82,10 @@ impl From<ManifestRow> for Quilt3ManifestRow {
 }
 
 /// Represents the row in JSONL manifest
-#[derive(Clone, Debug, Deserialize, Serialize, Default, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[cfg_attr(any(test, feature = "testing"), derive(Default))]
 pub struct ManifestRow {
-    pub logical_key: PathBuf,
+    pub logical_key: LogicalKey,
     // XXX: use Url to have validated string?
     pub physical_key: String,
     pub hash: object_hash::ObjectHash,
@@ -224,14 +226,18 @@ impl Manifest {
 
     /// Find a record by path (for compatibility with Table API)
     #[must_use]
-    pub fn get_record(&self, path: &PathBuf) -> Option<&ManifestRow> {
-        self.rows.iter().find(|row| &row.logical_key == path)
+    pub fn get_record(&self, path: &Path) -> Option<&ManifestRow> {
+        self.rows
+            .iter()
+            .find(|row| row.logical_key.as_path() == path)
     }
 
     /// Check if manifest contains a record for the given path
     #[must_use]
-    pub fn contains_record(&self, path: &PathBuf) -> bool {
-        self.rows.iter().any(|row| &row.logical_key == path)
+    pub fn contains_record(&self, path: &Path) -> bool {
+        self.rows
+            .iter()
+            .any(|row| row.logical_key.as_path() == path)
     }
 
     /// Create a stream of rows compatible with Table API
@@ -309,14 +315,14 @@ mod tests {
     #[test]
     fn test_matches_content_identical_rows() -> Res {
         let left = ManifestRow {
-            logical_key: PathBuf::from("A"),
+            logical_key: crate::LogicalKey::new("A").unwrap(),
             physical_key: "B".to_string(),
             hash: object_hash::Sha256Hash::try_from("deadbeef")?.into(),
             size: 1,
             meta: None,
         };
         let right = ManifestRow {
-            logical_key: PathBuf::from("A"),
+            logical_key: crate::LogicalKey::new("A").unwrap(),
             physical_key: "B".to_string(),
             hash: object_hash::Sha256Hash::try_from("deadbeef")?.into(),
             size: 1,
@@ -331,14 +337,14 @@ mod tests {
         let mut meta = serde_json::Map::new();
         meta.insert("foo".to_string(), serde_json::json!("bar"));
         let left = ManifestRow {
-            logical_key: PathBuf::from("A"),
+            logical_key: crate::LogicalKey::new("A").unwrap(),
             physical_key: "FOO".to_string(),
             hash: object_hash::Sha256Hash::try_from("deadbeef")?.into(),
             size: 1,
             meta: Some(serde_json::Value::Object(meta)),
         };
         let right = ManifestRow {
-            logical_key: PathBuf::from("A"),
+            logical_key: crate::LogicalKey::new("A").unwrap(),
             physical_key: "BAR".to_string(),
             hash: object_hash::Sha256Hash::try_from("deadbeef")?.into(),
             size: 1,
@@ -486,7 +492,7 @@ mod tests {
         assert_eq!(
             checksummed_manifest.rows[0],
                     ManifestRow {
-                        logical_key: PathBuf::from("e0-0.txt".to_string()),
+                        logical_key: crate::LogicalKey::new("e0-0.txt".to_string()).unwrap(),
                         physical_key: "s3://data-yaml-spec-tests/scale/10u/e0-0.txt?versionId=jHb6DGN43Ex7EhbxZc2G9JnAkWSeTfEY".to_string(),
                         size: 29,
                         hash: object_hash::Sha256ChunkedHash::try_from("/UMjH1bsbrMLBKdd9cqGGvtjhWzawhz1BfrxgngUhVI=")?.into(),
@@ -496,7 +502,7 @@ mod tests {
         assert_eq!(
             checksummed_manifest.rows[9],
                     ManifestRow {
-                        logical_key: PathBuf::from("e0-9.txt".to_string()),
+                        logical_key: crate::LogicalKey::new("e0-9.txt".to_string()).unwrap(),
                         physical_key: "s3://data-yaml-spec-tests/scale/10u/e0-9.txt?versionId=T5tkWkC.7PVcpiFYRoCQKhhKC249fdBC".to_string(),
                         size: 29,
                         hash: object_hash::Sha256ChunkedHash::try_from("/UMjH1bsbrMLBKdd9cqGGvtjhWzawhz1BfrxgngUhVI=")?.into(),

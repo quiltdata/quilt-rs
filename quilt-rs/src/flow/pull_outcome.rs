@@ -81,19 +81,19 @@ pub(crate) fn remote_delta(base: &Manifest, latest: &Manifest) -> BTreeMap<PathB
             Some(latest_row) if latest_row.hash == base_row.hash => {}
             Some(latest_row) => {
                 delta.insert(
-                    base_row.logical_key.clone(),
+                    base_row.logical_key.to_path_buf(),
                     RemoteChange::Modified(latest_row.hash.clone()),
                 );
             }
             None => {
-                delta.insert(base_row.logical_key.clone(), RemoteChange::Removed);
+                delta.insert(base_row.logical_key.to_path_buf(), RemoteChange::Removed);
             }
         }
     }
     for latest_row in &latest.rows {
         if base.get_record(&latest_row.logical_key).is_none() {
             delta.insert(
-                latest_row.logical_key.clone(),
+                latest_row.logical_key.to_path_buf(),
                 RemoteChange::Added(latest_row.hash.clone()),
             );
         }
@@ -274,15 +274,15 @@ pub async fn identical_to_latest(
         .map(|row| (row.logical_key.as_path(), row))
         .collect();
     for latest_row in &latest.rows {
-        let path = &latest_row.logical_key;
+        let path = latest_row.logical_key.as_path();
         if tracked.contains_key(path) || status.changes.contains_key(path) {
             continue;
         }
-        let base_row = base_rows.get(path.as_path()).copied();
+        let base_row = base_rows.get(path).copied();
         if base_row.is_some_and(|base_row| base_row.hash == latest_row.hash) {
             continue;
         }
-        let file = working_dir.join(path);
+        let file = latest_row.logical_key.join_to(working_dir);
         if !storage.exists(&file).await {
             continue;
         }
@@ -303,7 +303,7 @@ pub async fn identical_to_latest(
         } else {
             &mut in_the_way
         };
-        set.insert(path.clone());
+        set.insert(path.to_path_buf());
     }
     for (path, change) in &status.changes {
         let local_hash = match change {
@@ -329,7 +329,8 @@ pub async fn identical_to_latest(
         if local_hash.algorithm() == latest_row.hash.algorithm() {
             continue;
         }
-        match refresh_hash(storage, &working_dir.join(path), latest_row.clone()).await {
+        let file = latest_row.logical_key.join_to(working_dir);
+        match refresh_hash(storage, &file, latest_row.clone()).await {
             Ok(None) => {
                 identical.insert(path.clone());
             }
@@ -501,7 +502,7 @@ mod tests {
 
     fn row(key: &str, hash_seed: &[u8]) -> ManifestRow {
         ManifestRow {
-            logical_key: PathBuf::from(key),
+            logical_key: crate::LogicalKey::new(key).unwrap(),
             physical_key: format!("s3://b/{key}"),
             hash: Multihash::<256>::wrap(0x12, hash_seed)
                 .unwrap()
@@ -770,7 +771,7 @@ mod tests {
             },
         )
         .await?;
-        latest_row.logical_key = path.clone();
+        latest_row.logical_key = crate::LogicalKey::new(path.clone()).unwrap();
 
         let base = manifest_of(vec![]);
         let latest = manifest_of(vec![latest_row]);
@@ -844,7 +845,7 @@ mod tests {
             },
         )
         .await?;
-        latest_row.logical_key = path.clone();
+        latest_row.logical_key = crate::LogicalKey::new(path.clone()).unwrap();
 
         let base = manifest_of(vec![row("a", b"the old content")]);
         let latest = manifest_of(vec![latest_row]);

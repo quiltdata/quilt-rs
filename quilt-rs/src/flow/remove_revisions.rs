@@ -289,7 +289,7 @@ mod tests {
         let rows = objects
             .iter()
             .map(|name| ManifestRow {
-                logical_key: (*name).into(),
+                logical_key: name.parse().unwrap(),
                 physical_key: url::Url::from_file_path(paths.objects_dir().join(name))
                     .expect("absolute")
                     .to_string(),

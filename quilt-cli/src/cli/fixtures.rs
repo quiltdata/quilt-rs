@@ -287,7 +287,7 @@ pub mod old_revisions {
                 let object = paths.objects_dir().join(format!("{hash}-object"));
                 std::fs::write(&object, "x".repeat(*len))?;
                 rows.push(ManifestRow {
-                    logical_key: format!("{hash}.txt").into(),
+                    logical_key: format!("{hash}.txt").parse().unwrap(),
                     physical_key: url::Url::from_file_path(&object)
                         .expect("absolute")
                         .to_string(),

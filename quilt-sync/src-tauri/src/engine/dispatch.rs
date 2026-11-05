@@ -6,6 +6,7 @@
 
 use std::path::PathBuf;
 
+use quilt_rs::LogicalKey;
 use quilt_rs::io::remote::WorkflowIntent;
 use quilt_uri::S3PackageUri;
 use serde::Deserialize;
@@ -219,10 +220,10 @@ commands! {
         measure_storage() -> StorageSize;
         collect_diagnostic_logs() -> String;
         send_crash_report(zip_path: String, message: Option<String>) -> String;
-        reveal_in_file_browser(namespace: String, path: String, uri: Option<S3PackageUri>) -> String;
+        reveal_in_file_browser(namespace: String, path: LogicalKey, uri: Option<S3PackageUri>) -> String;
         open_in_file_browser(namespace: String, uri: Option<S3PackageUri>) -> String;
-        open_in_default_application(namespace: String, path: String, uri: Option<S3PackageUri>) -> String;
-        package_file_path(namespace: String, path: String) -> String;
+        open_in_default_application(namespace: String, path: LogicalKey, uri: Option<S3PackageUri>) -> String;
+        package_file_path(namespace: String, path: LogicalKey) -> String;
         open_in_web_browser(url: String) -> String;
         setup(directory: String) -> String;
         get_toasts() -> Vec<Toast>;
@@ -313,6 +314,37 @@ mod tests {
             panic!("a snake_case argument was accepted");
         };
         assert!(err.contains("zipPath"), "{err}");
+    }
+
+    /// A file the window asks to open, reveal or locate is refused before
+    /// anything is joined onto the package folder when its path leaves it.
+    #[test]
+    fn a_file_path_leaving_the_package_is_refused_when_read() {
+        for cmd in [
+            "open_in_default_application",
+            "reveal_in_file_browser",
+            "package_file_path",
+        ] {
+            for path in ["../../Applications/Calculator.app", "/etc/hosts", ""] {
+                let Err(err) = prepare(
+                    cmd,
+                    serde_json::json!({"namespace": "a/b", "path": path}),
+                    true,
+                ) else {
+                    panic!("{cmd}: {path:?} was accepted");
+                };
+                assert!(err.contains("can't be a logical key"), "{cmd}: {err}");
+            }
+            assert!(
+                prepare(
+                    cmd,
+                    serde_json::json!({"namespace": "a/b", "path": "data/a.csv"}),
+                    true,
+                )
+                .is_ok(),
+                "{cmd}"
+            );
+        }
     }
 
     #[test]
