@@ -42,6 +42,12 @@ ignore = [
     # --- dotenv ---
     { id = "RUSTSEC-2021-0141", reason = "dotenv unmaintained, a direct dependency of quilt-sync" },
 
+    # --- pin-utils via reqwest-retry ---
+    # reqwest-retry 0.9.1 pulls in wasmtimer 0.4.3, which still depends on
+    # pin-utils. Both are the latest releases. Drop this when wasmtimer moves
+    # to core::pin::pin!.
+    { id = "RUSTSEC-2026-0441", reason = "pin-utils unmaintained, via wasmtimer from reqwest-retry" },
+
     # --- zbus 5 helper crates via opener / tauri-plugin-single-instance (Linux only) ---
     # zbus 6 folded zbus_names, zvariant and zvariant_derive into itself, so the
     # standalone crates are unmaintained. opener 0.9 and

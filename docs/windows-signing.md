@@ -6,13 +6,24 @@ GitHub — the private key never leaves Azure.
 
 ## How it works
 
-1. GitHub Actions requests an OIDC token from GitHub's identity provider
-2. `azure/login` exchanges that token for an Azure access token (federated
-   identity, no client secret)
-3. After the Tauri build, `azure/trusted-signing-action` sends the built
-   `.exe` and `.msi` artifacts to Azure for signing
-4. Azure returns the signed files; the private key is never exposed to the
-   runner
+Signing happens inside Tauri's own build, so the release keeps the signed
+files and the updater signature (`.sig`, `latest.json`) is made over them.
+
+1. The Windows release job passes
+   `--config src-tauri/windows-sign.conf.json` to tauri-action. That file
+   sets Tauri's `bundle.windows.signCommand`, so only that job signs; local
+   builds and the other platforms don't need Azure.
+2. Tauri runs `quilt-sync/src-tauri/windows-sign.ps1` for each file it signs:
+   the app `.exe` and the `.msi`.
+3. The script asks GitHub for a fresh OIDC token, runs `az login` with it
+   (federated identity, no client secret), and signs the file with
+   `Invoke-ArtifactSigning` from the `ArtifactSigning` PowerShell module. It
+   logs in per file because GitHub's token lives only minutes and Tauri
+   signs at the end of a long build.
+4. Azure signs the file; the private key never reaches the runner. The
+   script fails the build if the file's signature isn't valid.
+5. Tauri then makes the updater signature and tauri-action uploads the
+   signed files to the draft release.
 
 ## Azure setup (one-time)
 
@@ -69,7 +80,6 @@ Settings → Secrets and variables → Actions → Variables:
 | --- | --- |
 | `AZURE_TENANT_ID` | Directory (tenant) ID from the App Registration |
 | `AZURE_CLIENT_ID` | Application (client) ID from the App Registration |
-| `AZURE_SUBSCRIPTION_ID` | Azure subscription ID |
 | `AZURE_TRUSTED_SIGNING_ENDPOINT` | Endpoint URL (e.g. `https://eus.codesigning.azure.net`) |
 | `AZURE_TRUSTED_SIGNING_ACCOUNT` | Trusted Signing account name |
 | `AZURE_TRUSTED_SIGNING_PROFILE` | Certificate profile name |
@@ -83,11 +93,12 @@ Settings → Secrets and variables → Actions → Variables:
 
 After a signed release build:
 
-- Download the installer from GitHub Releases
+- Download the `.msi` from the draft GitHub release
 - Right-click → **Properties → Digital Signatures** — confirm publisher shows
   **Quilt Data, Inc.**
 - Or in PowerShell:
-  `Get-AuthenticodeSignature .\QuiltSync_x.y.z_x64-setup.exe`
+  `Get-AuthenticodeSignature .\QuiltSync_x.y.z_x64_en-US.msi`
+- Or on macOS/Linux: `osslsigncode verify -in QuiltSync_x.y.z_x64_en-US.msi`
 - Signing history is also visible in the Azure portal under the Certificate
   Profile
 

@@ -19,46 +19,48 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.26.2-dev]
+## [v0.27.1-dev]
+
+### Changed
+
+- The settings page's *Saved* shows for 1.5 seconds, as long as *Copied* does (<https://github.com/quiltdata/quilt-rs/pull/1310>)
+
+## [v0.27.0] - 2026-11-05
 
 ### Added
 
-- The tray's *Open in browser* opens QuiltSync in a browser tab beside the window, with the same pages kept in step with the app
+- The tray's *Open in browser* opens QuiltSync in a browser tab, kept in step with the window
   - <https://github.com/quiltdata/quilt-rs/pull/1266>
+  - <https://github.com/quiltdata/quilt-rs/pull/1272>
   - <https://github.com/quiltdata/quilt-rs/pull/1304>
   - <https://github.com/quiltdata/quilt-rs/pull/1307>
-- A browser tab names the page it shows, reconnects on its own after QuiltSync restarts, saying so in its top bar, and finishes a login it started
-  - <https://github.com/quiltdata/quilt-rs/pull/1272>
   - <https://github.com/quiltdata/quilt-rs/pull/1309>
-- `QuiltSync --headless` runs QuiltSync with no window or tray, serving it to a browser in the new design; folders are typed with completion, login is by code, and a new version shows a download link
+- `QuiltSync --headless` runs with no window or tray and serves QuiltSync to a browser; login is by code
   - <https://github.com/quiltdata/quilt-rs/pull/1279>
   - <https://github.com/quiltdata/quilt-rs/pull/1301>
   - <https://github.com/quiltdata/quilt-rs/pull/1303>
   - <https://github.com/quiltdata/quilt-rs/pull/1304>
   - <https://github.com/quiltdata/quilt-rs/pull/1306>
-- The package page shows the current revision's metadata under its message, and clicking the revision shows all of it, with the revision's hash, whether it is published and its workflow
+- The package page shows the revision's metadata, hash and workflow
   - <https://github.com/quiltdata/quilt-rs/pull/1297>
   - <https://github.com/quiltdata/quilt-rs/pull/1300>
-- On Windows, when links from the Quilt catalog open another program, QuiltSync says so on its main page and how to fix it (<https://github.com/quiltdata/quilt-rs/pull/1293>)
+- On Windows, QuiltSync says when links from the Quilt catalog open another program, and how to fix it (<https://github.com/quiltdata/quilt-rs/pull/1293>)
 
 ### Changed
 
-- Under the hood, everything but the window, tray and deep links moves into an engine with no Tauri in it; every command is listed once, and the window reaches the engine over the same connection as a browser tab. No behaviour changes (<https://github.com/quiltdata/quilt-rs/pull/1262>, <https://github.com/quiltdata/quilt-rs/pull/1265>, <https://github.com/quiltdata/quilt-rs/pull/1272>)
-- The update check reads the update feed directly, so a browser tab sees new versions too (<https://github.com/quiltdata/quilt-rs/pull/1279>)
-- `QUILT_DOMAIN` moves QuiltSync's data folder, as it moves the `quilt` CLI's domain (<https://github.com/quiltdata/quilt-rs/pull/1279>)
-- Usage analytics report the QuiltSync version (<https://github.com/quiltdata/quilt-rs/pull/1286>)
-- QuiltSync makes all its HTTPS connections with one TLS library, and on Linux no longer uses OpenSSL (<https://github.com/quiltdata/quilt-rs/pull/1288>)
-- The settings page's *Saved* shows for 1.5 seconds, as long as *Copied* does (<https://github.com/quiltdata/quilt-rs/pull/1310>)
-- Under the hood, browser tests drive headless QuiltSync in Chrome from Rust, and CI runs them on every PR (<https://github.com/quiltdata/quilt-rs/pull/1287>)
+- `QUILT_DOMAIN` moves QuiltSync's data folder, as it does for the `quilt` CLI (<https://github.com/quiltdata/quilt-rs/pull/1279>)
+- On Linux, QuiltSync no longer needs OpenSSL (<https://github.com/quiltdata/quilt-rs/pull/1288>)
+- QuiltSync opens only `https` and `mailto` links (<https://github.com/quiltdata/quilt-rs/pull/1315>)
 
 ### Fixed
 
-- On the main page, switching from **Recent files** back to **Packages** works while the page reloads, for example when a new revision arrives; before, the page could get stuck (<https://github.com/quiltdata/quilt-rs/pull/1308>)
+- Switching from **Recent files** back to **Packages** no longer gets stuck while the main page reloads (<https://github.com/quiltdata/quilt-rs/pull/1308>)
 - On Windows and Linux, opening QuiltSync while it runs in the tray shows its window (<https://github.com/quiltdata/quilt-rs/pull/1275>)
+- The Windows installer and app are signed by Quilt Data, Inc. (<https://github.com/quiltdata/quilt-rs/pull/1312>)
 
 ### quilt-rs
 
-- Updated [from v0.51.0 to v0.52.0-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.51.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+- Updated [from v0.51.0 to v0.52.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.51.0...quilt-rs/v0.52.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
 
 ## [v0.26.1] - 2026-10-29
 

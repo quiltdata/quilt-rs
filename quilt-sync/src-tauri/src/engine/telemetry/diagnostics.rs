@@ -154,12 +154,17 @@ fn read_metadata_from_zip(zip_bytes: &[u8]) -> Option<DiagnosticMetadata> {
     serde_json::from_reader(file).ok()
 }
 
+/// Where [`save_diagnostic_zip`] writes the archive.
+pub fn diagnostic_zip_path(data_dir: &Path) -> PathBuf {
+    data_dir.join("quiltsync-diagnostic.zip")
+}
+
 /// Bundle diagnostic info, logs, and config files into a zip and reveal it.
 pub fn save_diagnostic_zip(info: &DiagnosticInfo) -> Result<PathBuf, Error> {
     let domain_paths = DomainPaths::new(info.data_dir.clone());
     let auth_dir = info.data_dir.join(quilt::paths::AUTH_DIR);
 
-    let zip_path = info.data_dir.join("quiltsync-diagnostic.zip");
+    let zip_path = diagnostic_zip_path(&info.data_dir);
     let file = std::fs::File::create(&zip_path)?;
     let mut zip_writer = zip::ZipWriter::new(file);
     let options = zip::write::SimpleFileOptions::default()

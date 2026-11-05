@@ -19,11 +19,11 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.52.0-dev]
+## [v0.52.0] - 2026-11-05
 
 ### Added
 
-- **Breaking:** `flow::Revision` has two new fields, `meta` (the revision's user metadata, `None` when it has none) and `workflow` (its workflow's id), filled by `InstalledPackage::current_revision` and `list_revisions` (<https://github.com/quiltdata/quilt-rs/pull/1297>)
+- **Breaking:** `flow::Revision` carries the revision's user metadata (`meta`, `None` when it has none) and its workflow's id (`workflow`), filled by `InstalledPackage::current_revision` and `list_revisions`. `Revision::from_header` builds one from a manifest header (<https://github.com/quiltdata/quilt-rs/pull/1297>)
 
 ## [v0.51.0] - 2026-10-29
 

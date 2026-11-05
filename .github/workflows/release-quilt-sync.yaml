@@ -78,7 +78,9 @@ jobs:
           - platform: "ubuntu-24.04"
             args: ""
           - platform: "windows-latest"
-            args: ""
+            # Signs the app and installer during the build, before the
+            # updater signature and the upload; see docs/windows-signing.md.
+            args: "--config src-tauri/windows-sign.conf.json"
     runs-on: ${{ matrix.platform }}
     environment: ${{ inputs.environment }}
     env:
@@ -118,6 +120,12 @@ jobs:
         with:
           tool: stylance-cli@0.8.4
 
+      # Provides Invoke-ArtifactSigning for quilt-sync/src-tauri/windows-sign.ps1.
+      - name: Install Azure Trusted Signing module
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: Install-Module -Name ArtifactSigning -RequiredVersion 0.1.20 -Force -Repository PSGallery
+
       - name: Build the app
         id: tauri
         uses: tauri-apps/tauri-action@v1
@@ -135,6 +143,12 @@ jobs:
           # Auto updater signing keys - required for cryptographic verification
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # Windows code signing, read by quilt-sync/src-tauri/windows-sign.ps1.
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ vars.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          AZURE_TRUSTED_SIGNING_ACCOUNT: ${{ vars.AZURE_TRUSTED_SIGNING_ACCOUNT }}
+          AZURE_TRUSTED_SIGNING_PROFILE: ${{ vars.AZURE_TRUSTED_SIGNING_PROFILE }}
         with:
           # A numeric id makes tauri-action upload straight to that release
           # and ignore tagName, releaseName and releaseDraft.
@@ -147,34 +161,6 @@ jobs:
           # (updaterJsonKeepUniversal was removed in tauri-action v1 — universal
           # macOS builds are now always kept in latest.json.)
           updaterJsonPreferNsis: false
-
-      # Windows Authenticode code signing via Azure Trusted Signing.
-      # We authenticate immediately before signing (not before the build) so the
-      # OIDC token hasn't expired after the ~25 minute build.
-      # See docs/windows-signing.md for setup instructions.
-      - name: Azure login (OIDC)
-        if: matrix.platform == 'windows-latest'
-        uses: azure/login@v3
-        with:
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Sign Windows artifacts with Azure Trusted Signing
-        if: matrix.platform == 'windows-latest'
-        uses: azure/trusted-signing-action@v2
-        with:
-          azure-tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          azure-client-id: ${{ vars.AZURE_CLIENT_ID }}
-          endpoint: ${{ vars.AZURE_TRUSTED_SIGNING_ENDPOINT }}
-          signing-account-name: ${{ vars.AZURE_TRUSTED_SIGNING_ACCOUNT }}
-          certificate-profile-name: ${{ vars.AZURE_TRUSTED_SIGNING_PROFILE }}
-          files-folder: target/release/bundle
-          files-folder-filter: exe,msi
-          files-folder-recurse: true
-          timestamp-rfc3161: http://timestamp.acs.microsoft.com
-          timestamp-digest: SHA256
-          file-digest: SHA256
 
   # Single approval gate that flips the draft to public, marks it as
   # "latest", and dispatches `upload-to-hubspot.yaml` — the two surfaces

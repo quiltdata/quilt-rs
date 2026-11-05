@@ -218,6 +218,7 @@ commands! {
         run_gc() -> FreedSpace;
         measure_storage() -> StorageSize;
         collect_diagnostic_logs() -> String;
+        reveal_diagnostic_logs() -> String;
         send_crash_report(zip_path: String, message: Option<String>) -> String;
         reveal_in_file_browser(namespace: String, path: String, uri: Option<S3PackageUri>) -> String;
         open_in_file_browser(namespace: String, uri: Option<S3PackageUri>) -> String;
