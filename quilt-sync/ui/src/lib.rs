@@ -42,13 +42,13 @@ wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
 pub mod commands;
 pub mod components;
+pub mod engine;
 pub mod error_handler;
 pub mod kit;
 pub mod pages;
 pub mod panic_report;
 pub mod routes;
 pub mod story;
-pub mod tauri;
 #[cfg(test)]
 pub(crate) mod test_support;
 pub mod theme;

@@ -13,6 +13,7 @@
 //! on the next mount.
 
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::time::Duration;
 
 use leptos::prelude::*;
@@ -22,7 +23,7 @@ use crate::commands;
 use crate::commands::Toast;
 use crate::commands::ToastGroup;
 use crate::commands::ToastKind;
-use crate::tauri as tauri_bridge;
+use crate::engine;
 
 /// The visible toasts, keyed by id so a hydration read and a live event cannot
 /// double-render the same toast — the backend retains before it emits, so that
@@ -50,10 +51,15 @@ fn apply_snapshot(toasts: RwSignal<Toasts>, snapshot: Vec<Toast>) {
 /// dismissal and landing after it, carries a snapshot the backend took before
 /// the dismissal — and would put the toast back. So a write invalidates reads,
 /// not just a newer read.
+///
+/// A read can still land between this window's own dismissals, as *Dismiss
+/// all* sends them one by one, so a snapshot leaves out the ids this window
+/// is still dismissing.
 #[derive(Clone, Copy)]
 struct Store {
     toasts: RwSignal<Toasts>,
     stamp: StoredValue<u64>,
+    dismissing: StoredValue<BTreeSet<u64>>,
 }
 
 impl Store {
@@ -61,6 +67,7 @@ impl Store {
         Self {
             toasts: RwSignal::new(BTreeMap::new()),
             stamp: StoredValue::new(0),
+            dismissing: StoredValue::new(BTreeSet::new()),
         }
     }
 
@@ -76,9 +83,15 @@ impl Store {
 
     /// Adopt a snapshot only if nothing has happened since it was asked for.
     fn apply_if_current(self, stamp: u64, snapshot: Vec<Toast>) {
-        if self.stamp.try_get_value().unwrap_or_default() == stamp {
-            apply_snapshot(self.toasts, snapshot);
+        if self.stamp.try_get_value().unwrap_or_default() != stamp {
+            return;
         }
+        let dismissing = self.dismissing.try_get_value().unwrap_or_default();
+        let snapshot = snapshot
+            .into_iter()
+            .filter(|t| !dismissing.contains(&t.id))
+            .collect();
+        apply_snapshot(self.toasts, snapshot);
     }
 
     /// Read the backend's list and adopt it if it is still the newest word.
@@ -97,17 +110,26 @@ impl Store {
         });
     }
 
+    /// Drop one toast here only: a window, maybe this one, dismissed it.
+    fn forget(self, id: u64) {
+        self.bump();
+        self.toasts.update(|map| {
+            map.remove(&id);
+        });
+    }
+
     /// Drop one toast here and at the backend, then re-read.
     ///
     /// The re-read is sequenced *after* the backend call so the snapshot it
     /// adopts is one the dismissal is already in.
     fn dismiss(self, id: u64) {
-        self.bump();
-        self.toasts.update(|map| {
-            map.remove(&id);
+        self.forget(id);
+        self.dismissing.update_value(|ids| {
+            ids.insert(id);
         });
         spawn_local(async move {
             let _ = commands::dismiss_toast(id).await;
+            self.dismissing.try_update_value(|ids| ids.remove(&id));
             self.reconcile().await;
         });
     }
@@ -118,9 +140,12 @@ impl Store {
             .toasts
             .with_untracked(|map| map.keys().copied().collect());
         self.toasts.update(BTreeMap::clear);
+        self.dismissing
+            .update_value(|dismissing| dismissing.extend(ids.iter().copied()));
         spawn_local(async move {
             for id in ids {
                 let _ = commands::dismiss_toast(id).await;
+                self.dismissing.try_update_value(|ids| ids.remove(&id));
             }
             self.reconcile().await;
         });
@@ -134,27 +159,34 @@ pub fn ToastStack() -> impl IntoView {
     // Whatever was posted while nothing was listening.
     spawn_local(store.reconcile());
 
-    let listener = tauri_bridge::listen::<Toast>(commands::TOAST_EVENT, move |toast| {
-        // The payload alone cannot say what the backend evicted to make room,
-        // so show it and then re-read.
-        store.insert(toast);
+    // Read again each time events start to flow: a toast posted before the
+    // listener was live, or while the socket was down, arrived unheard.
+    let listener = engine::listen_then::<Toast>(
+        commands::TOAST_EVENT,
+        move |toast| {
+            // The payload alone cannot say what the backend evicted to make
+            // room, so show it and then re-read.
+            store.insert(toast);
+            spawn_local(store.reconcile());
+        },
+        move || spawn_local(store.reconcile()),
+    );
+    // Then re-read: forgetting invalidates a read in flight, whose other
+    // toasts would otherwise stay unseen.
+    let dismissed = engine::listen::<u64>(commands::TOAST_DISMISSED_EVENT, move |id| {
+        store.forget(id);
         spawn_local(store.reconcile());
     });
-
-    // A second read, sequenced after the listener exists. This **narrows** the
-    // startup race rather than closing it: registration completes on a promise
-    // the bridge does not expose, so a toast posted between the first read and
-    // the listener going live is still deliverable only by the reconcile above,
-    // which the next toast triggers. Closing it properly needs the bridge to
-    // hand back a registration future.
-    spawn_local(store.reconcile());
-    on_cleanup(move || drop(listener));
+    on_cleanup(move || {
+        drop(listener);
+        drop(dismissed);
+    });
 
     view! { <ToastLayer store=store /> }
 }
 
 /// The markup, split from the bridge wiring above so it can be mounted in a
-/// test — `ToastStack` cannot, since it reaches for Tauri on mount.
+/// test — `ToastStack` cannot, since it reaches for the engine on mount.
 #[component]
 fn ToastLayer(store: Store) -> impl IntoView {
     let toasts = store.toasts;
@@ -364,6 +396,47 @@ mod tests {
         );
     }
 
+    /// *Dismiss all* sends one dismissal at a time; a read landing between
+    /// them must not bring back the toasts not yet sent.
+    #[test]
+    fn a_snapshot_leaves_out_toasts_still_being_dismissed() {
+        let store = store_of(BTreeMap::new());
+        store.dismissing.update_value(|ids| {
+            ids.insert(1);
+        });
+        let stamp = store.bump();
+        store.apply_if_current(
+            stamp,
+            vec![
+                Toast {
+                    id: 1,
+                    ..toast(ToastKind::Info, None, "being dismissed")
+                },
+                Toast {
+                    id: 2,
+                    ..toast(ToastKind::Info, None, "kept")
+                },
+            ],
+        );
+        let ids: Vec<u64> = store
+            .toasts
+            .with_untracked(|map| map.keys().copied().collect());
+        assert_eq!(ids, vec![2]);
+    }
+
+    #[test]
+    fn a_toast_dismissed_elsewhere_goes() {
+        let store = store_of(BTreeMap::from([
+            (1, toast(ToastKind::Info, None, "one")),
+            (2, toast(ToastKind::Info, None, "two")),
+        ]));
+        store.forget(1);
+        let ids: Vec<u64> = store
+            .toasts
+            .with_untracked(|map| map.keys().copied().collect());
+        assert_eq!(ids, vec![2]);
+    }
+
     #[test]
     fn a_snapshot_that_is_still_the_newest_word_is_adopted() {
         let store = store_of(BTreeMap::new());
@@ -410,6 +483,7 @@ mod tests {
     #[test]
     fn the_event_name_is_the_one_the_backend_emits() {
         assert_eq!(commands::TOAST_EVENT, "toast");
+        assert_eq!(commands::TOAST_DISMISSED_EVENT, "toast-dismissed");
     }
 
     #[wasm_bindgen_test]

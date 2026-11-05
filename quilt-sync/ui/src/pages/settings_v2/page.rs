@@ -58,6 +58,7 @@ use crate::commands::{
     self, AccountHostData, AutosyncPatch, ChangelogEntry, Design, FreedSpace, LogEnv,
     PublishSettingsData, SettingsData, TaskSettings, TaskSettingsData,
 };
+use crate::engine;
 use crate::kit::{
     Button, ButtonVariant, Card, Dialog, HostRowSkeleton, LoadFailure, PageLayout,
     ToggleRowSkeleton,
@@ -94,7 +95,7 @@ pub(crate) enum Write {
 }
 
 /// What the page reads and writes, as parameters so a test can answer
-/// without a Tauri host. The rest of its commands are called directly.
+/// without an engine. The rest of its commands are called directly.
 #[derive(Clone, Copy)]
 pub(crate) struct SettingsIo {
     pub read: PageRead<SettingsData>,
@@ -1040,6 +1041,12 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
             }
         });
     });
+    // A sign-in, sign-out or role switch in another window or tab.
+    let accounts_changed =
+        engine::listen::<serde::de::IgnoredAny>(commands::ACCOUNTS_CHANGED_EVENT, move |_| {
+            accounts_reload.notify();
+        });
+    on_cleanup(move || drop(accounts_changed));
     let asked_sign_out = RwSignal::new(None::<String>);
     let navigate_sign_in = use_navigate();
     let on_sign_in = Callback::new(move |host: String| {
@@ -1366,6 +1373,7 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
                     <ExperimentalCard
                         design_preview=fields.design_preview
                         agent_tasks=fields.agent_tasks
+                        headless=engine::headless()
                         saved=just_saved
                         pending=pending
                     />
@@ -2254,6 +2262,38 @@ mod tests {
         toggle(&el, WATCH).click();
         sleep_ms(50).await;
         assert_eq!(alert(&el), None, "markup was {}", el.inner_html());
+    }
+
+    /// Headless always draws the new design, so it offers no choice.
+    #[wasm_bindgen_test]
+    async fn headless_has_no_design_choice() {
+        use crate::engine::fake::{FakeEngine, ask};
+
+        let engine = FakeEngine::install();
+        engine.as_headless();
+        let _asked = ask("get_toasts");
+        sleep_ms(0).await;
+        engine.hello();
+        let el = page(vec![settings()]).await;
+        let words = el.text_content().unwrap_or_default();
+        assert!(words.contains("Agent tasks"), "{words}");
+        assert!(!words.contains(PREVIEW), "{words}");
+    }
+
+    /// A sign-out or role switch in another tab reads the accounts again.
+    #[wasm_bindgen_test]
+    async fn an_account_change_elsewhere_reads_the_accounts_again() {
+        use crate::engine::fake::{FakeEngine, ask};
+
+        let engine = FakeEngine::install();
+        let _asked = ask("get_toasts");
+        sleep_ms(0).await;
+        engine.hello();
+        let _el = page(vec![settings()]).await;
+        let before = ACCOUNT_READS.with(Cell::get);
+        engine.event(commands::ACCOUNTS_CHANGED_EVENT, &serde_json::Value::Null);
+        sleep_ms(50).await;
+        assert_eq!(ACCOUNT_READS.with(Cell::get), before + 1);
     }
 
     /// Turning *New design* off saves the classic design and leaves for `/`.

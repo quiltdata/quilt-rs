@@ -9,10 +9,11 @@
 //! keeps a seventh call site from being the one that forgets.
 //!
 //! [`use_query`] decodes on the way in, once, as does the backend's own parse of a
-//! `back` parameter (`src-tauri/src/routes.rs`), so the encoding is invisible to
+//! `back` parameter (`src-tauri/src/engine/routes.rs`), so the encoding is invisible to
 //! everything downstream.
 
 use quilt_uri::Namespace;
+use quilt_uri::S3PackageUri;
 
 /// The installed-package screen for one package.
 ///
@@ -212,9 +213,74 @@ pub fn use_query() -> leptos::prelude::Memo<Query> {
     Memo::new(move |_| url.with(|url| Query::parse(url.search())))
 }
 
+/// The browser tab's title for the page at `path`, most specific first:
+/// `Commit · org/pkg · QuiltSync`, `org/pkg · QuiltSync`, `QuiltSync`.
+#[must_use]
+pub fn page_title(path: &str, query: &Query) -> String {
+    let package = match path {
+        "/remote-package" => query.get("uri").and_then(|uri| {
+            S3PackageUri::try_from(uri.as_str())
+                .ok()
+                .map(|uri| uri.namespace.to_string())
+        }),
+        _ => query.get("namespace"),
+    };
+    let page = match path {
+        "/commit" => Some("Commit"),
+        "/merge" => Some("Merge"),
+        "/login" => Some("Login"),
+        "/settings" => Some("Settings"),
+        "/setup" => Some("Setup"),
+        "/error" => Some("Error"),
+        _ => None,
+    };
+    [page, package.as_deref(), Some("QuiltSync")]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[wasm_bindgen_test::wasm_bindgen_test]
+    fn the_tab_title_names_the_page_then_the_package() {
+        let ns = |namespace: &str| Query(vec![("namespace".into(), namespace.into())]);
+        assert_eq!(page_title("/", &Query::default()), "QuiltSync");
+        assert_eq!(
+            page_title("/installed-package", &ns("org/pkg")),
+            "org/pkg · QuiltSync"
+        );
+        assert_eq!(
+            page_title("/commit", &ns("org/pkg")),
+            "Commit · org/pkg · QuiltSync"
+        );
+        assert_eq!(
+            page_title("/settings", &Query::default()),
+            "Settings · QuiltSync"
+        );
+        let uri = |uri: &str| Query(vec![("uri".into(), uri.into())]);
+        assert_eq!(
+            page_title(
+                "/remote-package",
+                &uri("quilt+s3://bucket#package=org/pkg@abc123&path=a.csv")
+            ),
+            "org/pkg · QuiltSync"
+        );
+        assert_eq!(
+            page_title(
+                "/remote-package",
+                &uri("quilt+s3://bucket#package=org%2Fpkg%40abc123")
+            ),
+            "org/pkg · QuiltSync"
+        );
+        assert_eq!(
+            page_title("/remote-package", &uri("not a package uri")),
+            "QuiltSync"
+        );
+    }
 
     /// A `back` that is itself an encoded address keeps its encoding.
     #[wasm_bindgen_test::wasm_bindgen_test]

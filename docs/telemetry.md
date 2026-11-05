@@ -101,7 +101,7 @@ Never log a whole collection. `{:?}` on a `Vec<PathBuf>` was 52 KB per call and
 ## Adding an event
 
 Events are a closed vocabulary in
-[`telemetry/event.rs`](../quilt-sync/src-tauri/src/telemetry/event.rs). Adding
+[`telemetry/event.rs`](../quilt-sync/src-tauri/src/engine/telemetry/event.rs). Adding
 one:
 
 1. **Add a variant** to `MixpanelEvent`. The wire name is the snake-case form of

@@ -154,7 +154,7 @@ fn next_deadline(data: &MainPageWatcherData, now: f64) -> Option<f64> {
 }
 
 /// The card, on one payload. Split from [`AutosyncCard`] so it can be tested
-/// without a Tauri host.
+/// without an engine.
 #[component]
 fn AutosyncBody(data: MainPageWatcherData, reload: Trigger) -> impl IntoView {
     // The SETTING, which stays true while paused. Local signals because
@@ -291,14 +291,14 @@ fn AutosyncListener(reload: Trigger) -> impl IntoView {
             reload.notify();
         }
     });
-    // Read again once the listener is live: a change between the first read
-    // and the registration fired unheard.
-    let changed = crate::tauri::listen_then::<serde::de::IgnoredAny>(
+    // Read again each time the listener goes live: a change between the first
+    // read and the registration, or while the socket was down, fired unheard.
+    let changed = crate::engine::listen_then::<serde::de::IgnoredAny>(
         commands::AUTOSYNC_CHANGED_EVENT,
         move |_| reload.notify(),
         move || reload.notify(),
     );
-    let activity = crate::tauri::listen::<serde::de::IgnoredAny>(
+    let activity = crate::engine::listen::<serde::de::IgnoredAny>(
         commands::AUTOPULL_ACTIVITY_EVENT,
         move |_| reload.notify(),
     );
@@ -791,7 +791,7 @@ mod tests {
             .unwrap();
         input.click();
         // 200ms: an absolute bound, not a multiple of any constant this file reads.
-        // There is no Tauri bridge here, so the write resolves as `Err` at once and
+        // There is no engine here, so the write resolves as `Err` at once and
         // only the notify that follows it is under test.
         sleep_ms(200).await;
         assert_eq!(
