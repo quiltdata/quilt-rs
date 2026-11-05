@@ -2343,8 +2343,9 @@ pub async fn open_in_web_browser(url: String) -> Result<String, String> {
                 .map_err(|_| "This browser didn't open the mail app.".to_owned())?;
             return Ok("Opened in the mail app".to_owned());
         }
-        // No opener, so the new page can't steer this one.
-        if url.starts_with("http://") || url.starts_with("https://") {
+        // No opener, so the new page can't steer this one. Anything else goes
+        // to the engine, which refuses it.
+        if url.starts_with("https://") {
             window
                 .open_with_url_and_target_and_features(&url, "_blank", "noopener")
                 .map_err(|_| "This browser didn't open the link.".to_owned())?;
@@ -2503,11 +2504,11 @@ mod tests {
         assert_eq!(super::Design::V1.drawn(), super::Design::V2);
     }
 
-    /// On headless a web link opens from the tab and never reaches the
-    /// engine, whose machine is seldom the reader's; the diagnostics folder
-    /// is revealed by the engine, which knows where it saved the zip.
+    /// On headless an https link opens from the tab and never reaches the
+    /// engine, whose machine is seldom the reader's; an http link goes to the
+    /// engine, which refuses it. Diagnostics Reveal goes to the engine too.
     #[wasm_bindgen_test::wasm_bindgen_test]
-    async fn headless_opens_web_links_here_and_diagnostics_on_the_engine() {
+    async fn headless_opens_https_here_and_sends_http_to_the_engine() {
         use crate::engine::fake::{FakeEngine, ask};
         use crate::test_support::sleep_ms;
 
@@ -2532,6 +2533,10 @@ mod tests {
             recorded.as_string().as_deref(),
             Some("https://quilt.test/b/bucket")
         );
+        // The fake engine never answers, so each call waits on its own task.
+        wasm_bindgen_futures::spawn_local(async {
+            let _ = super::open_in_web_browser("http://quilt.test".to_owned()).await;
+        });
         wasm_bindgen_futures::spawn_local(async {
             let _ = super::reveal_diagnostic_logs().await;
         });
@@ -2542,7 +2547,7 @@ mod tests {
             .filter_map(|request| request["cmd"].as_str().map(str::to_owned))
             .filter(|cmd| cmd.contains("browser") || cmd.contains("reveal"))
             .collect();
-        assert_eq!(asked, ["reveal_diagnostic_logs"]);
+        assert_eq!(asked, ["open_in_web_browser", "reveal_diagnostic_logs"]);
     }
 
     /// Anchored identically in the backend's `files_data_wire_form_is_verbatim`.
