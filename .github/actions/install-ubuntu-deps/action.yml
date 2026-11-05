@@ -4,6 +4,11 @@ description: "Install system dependencies required for Tauri on Ubuntu"
 runs:
   using: "composite"
   steps:
+    # The image's package index goes stale, and a stale one makes a cache miss fail on removed versions
+    - name: Update package index
+      shell: bash
+      run: sudo apt-get update
+
     # The runner's Ubuntu mirror is sometimes slow enough to stall the job, so packages come from the cache
     - name: Install dependencies
       uses: awalsh128/cache-apt-pkgs-action@v1
