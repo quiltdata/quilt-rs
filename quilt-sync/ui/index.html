@@ -35,8 +35,9 @@
       } catch (e) {}
     })();
   </script>
-  <!-- copy assets into dist/ -->
+  <!-- copy assets into dist/, and the kit's appbar mark, which v1's bar uses too -->
   <link data-trunk rel="copy-dir" href="assets" />
+  <link data-trunk rel="copy-file" href="../../quilt-ui-kit/assets/img/quilt.png" data-target-path="assets/img" />
   <!-- fonts -->
   <link rel="stylesheet" href="assets/css/external/400.css" />
   <link rel="stylesheet" href="assets/css/external/500.css" />

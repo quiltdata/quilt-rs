@@ -32,8 +32,10 @@
   <link data-trunk rel="css" href="assets/css/kit/modules.css" />
   <link data-trunk rel="css" href="../../quilt-ui-kit/css/chrome.css" />
   <link data-trunk rel="css" href="assets/css/kit/old_revisions_inline.css" />
-  <!-- The appbar's mark, for the whole-page scenes; the app's index.html copies all of assets/. -->
+  <!-- The app's images, for the whole-page scenes, and the kit's appbar mark;
+       the app's index.html copies the same. -->
   <link data-trunk rel="copy-dir" href="assets/img" data-target-path="assets/img" />
+  <link data-trunk rel="copy-file" href="../../quilt-ui-kit/assets/img/quilt.png" data-target-path="assets/img" />
 
   <!-- The metadata editor, for the commit page scene: the same bundle the app's
        index.html loads, written by Trunk.toml's pre-build hook. -->
