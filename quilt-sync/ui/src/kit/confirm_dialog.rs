@@ -90,7 +90,12 @@ pub fn ConfirmDialog(
     /// A checkbox under the sentence, sealed with the rest while the action runs.
     #[prop(optional)]
     option: Option<ConfirmOption>,
+    /// The safe answer's words, where *Cancel* would not say what it does: the quit
+    /// prompt's *Stay*.
+    #[prop(optional, into)]
+    cancel: Option<String>,
 ) -> impl IntoView {
+    let cancel = cancel.unwrap_or_else(|| "Cancel".to_string());
     let Submit { label, action } = confirm;
     let submission = Submission::new(open, running);
     let busy = submission.busy;
@@ -100,7 +105,7 @@ pub fn ConfirmDialog(
         // `autofocus`, so `showModal()` lands on the safe answer; first, so a UA that
         // focuses the first control lands there as well.
         <Button autofocus=true disabled=busy on_click=move |_| open.set(false)>
-            "Cancel"
+            {cancel}
         </Button>
         <Button
             variant=ButtonVariant::Danger

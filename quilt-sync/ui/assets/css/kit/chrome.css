@@ -319,6 +319,17 @@ body {
 .g-inline__start {
   margin-inline-end: auto;
 }
+/* A popover's contents shown inline, on the surface `anchored_overlay.module.css`
+ * draws, so a panel can be read without opening it. */
+.g-popover-inline {
+  min-width: 0;
+  max-width: 100%;
+  padding: var(--q-space-1);
+  border: 1px solid var(--q-borderColor-default);
+  border-radius: var(--q-radius);
+  background: var(--q-bgColor-default);
+  color: var(--q-fgColor-default);
+}
 /* A confirmation's sentence shown inline. Mirrors `confirm_dialog.module.css`, as
  * `.g-dialog-inline` mirrors the dialog's width. */
 .g-consequence {

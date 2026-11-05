@@ -61,6 +61,9 @@ pub fn PageLayout(
     /// cannot be missed by someone deep in a long list. A slot rather than the
     /// signal itself, so the layout stays ignorant of what kinds exist and who
     /// dismisses them.
+    ///
+    /// Several bands go in as siblings, each behind its own `Show`, not inside
+    /// a wrapper: the row takes no room only while it holds no element.
     #[prop(optional)]
     banner: Option<AnyView>,
     /// The logo navigates in place of this page's history entry, for a page
@@ -255,5 +258,53 @@ mod tests {
         let h1: web_sys::Element = h1.dyn_into().unwrap();
         assert_eq!(h1.text_content().as_deref(), Some("QuiltSync"));
         assert!(h1.has_attribute("data-sr-only"), "and it is not drawn");
+    }
+
+    /// Two bands, both hidden: the row under the appbar takes no room, so
+    /// the page does not keep a gap where they were.
+    #[wasm_bindgen_test]
+    async fn a_row_of_hidden_bands_takes_no_room() {
+        use crate::test_support::load_module_style;
+        load_module_style(
+            include_str!("page_layout.module.css"),
+            &[("notice", style::notice)],
+        );
+        let shown = RwSignal::new(true);
+        let el = mount(move || {
+            view! {
+                <div style="--q-space-2:8px; --q-space-4:16px">
+                    <PageLayout
+                        heading="Page"
+                        banner=view! {
+                            <Show when=move || shown.get()>
+                                <div style="height:20px">"One"</div>
+                            </Show>
+                            <Show when=move || shown.get()>
+                                <div style="height:20px">"Two"</div>
+                            </Show>
+                        }
+                            .into_any()
+                    >
+                        "body"
+                    </PageLayout>
+                </div>
+            }
+        });
+        let height = || {
+            el.query_selector(&format!(".{}", style::notice))
+                .unwrap()
+                .expect("the band row")
+                .get_bounding_client_rect()
+                .height()
+        };
+        sleep_ms(0).await;
+        assert_eq!(
+            height(),
+            16.0 + 20.0 + 8.0 + 20.0,
+            "two bands, one gap apart"
+        );
+        shown.set(false);
+        sleep_ms(0).await;
+        assert_eq!(height(), 0.0);
     }
 }

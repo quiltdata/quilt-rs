@@ -1,17 +1,13 @@
 //! `ButtonGroup` stories, in the package header's location group.
 
-use std::time::Duration;
-
 use leptos::prelude::*;
 
 use crate::Cell;
 use crate::Story;
+use crate::kit::ACKNOWLEDGE_FOR;
 use crate::kit::ButtonGroup;
 use crate::kit::GroupButton;
 use crate::kit::icons;
-
-/// How long the page shows "Copied", as `pages::copy_mark` does.
-const CONFIRM_FOR: Duration = Duration::from_millis(1_500);
 
 /// The package header's group: the local folder, then the remote side when
 /// the package is published to a catalog. `copied` stands in for the page's
@@ -54,7 +50,7 @@ fn group(remote: bool, catalog: bool, copied: RwSignal<bool>, busy: bool) -> Any
                         move || {
                             copied.try_set(false);
                         },
-                        CONFIRM_FOR,
+                        ACKNOWLEDGE_FOR,
                     )
                     .ok();
                     pending.try_set_value(later);

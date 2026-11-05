@@ -19,6 +19,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.27.1-dev]
+
+### Changed
+
+- The settings page's *Saved* shows for 1.5 seconds, as long as *Copied* does (<https://github.com/quiltdata/quilt-rs/pull/1310>)
+
 ## [v0.27.0] - 2026-11-05
 
 ### Added
