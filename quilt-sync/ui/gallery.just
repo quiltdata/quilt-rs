@@ -24,4 +24,4 @@ preview *args: stubs
 # its pre-build hooks write. Empty stubs get it past that check.
 [private]
 stubs:
-    mkdir -p assets/js && touch assets/js/json-editor.js assets/css/kit/modules.css assets/css/kit/normalize.css
+    mkdir -p assets/js && touch assets/js/json-editor.js assets/css/kit/modules.css ../../quilt-ui-kit/css/kit-modules.css

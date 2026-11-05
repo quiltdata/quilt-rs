@@ -1,5 +1,6 @@
-//! Component gallery — a debug harness, and the kit's design record on GitHub
-//! Pages (`deploy-gallery.yaml`). Never the app.
+//! The app's gallery — the app's regions and pages drawn from fixture data, and
+//! their design record on GitHub Pages (`deploy-gallery.yaml`). Never the app.
+//! The kit's own components are in its storybook (`quilt-ui-kit/src/storybook.rs`).
 //!
 //! Its own Trunk target (`gallery.html`), mounting `Gallery` and never `App`. A
 //! deliberate separation, not just a style choice: `App` mounts the real router
@@ -15,114 +16,61 @@
 //! `just gallery preview` serves the release build, as small as the shipped
 //! app's, for a final look; its builds are slower.
 //!
-//! # Render states, not components
+//! # Render states, not regions
 //!
-//! One entry per *state*. A gallery listing `Button` once is useless; listing
-//! its twelve is a visual-regression surface. Add a cell for every state a
-//! component can reach, including the ones that only appear when something has
-//! gone wrong.
+//! One entry per *state*. Add a cell for every state a region can reach,
+//! including the ones that only appear when something has gone wrong.
 
 // `main.rs`'s line: this bin is its own compilation unit, so `configure!`
-// there does not reach tests compiled here. `kit`'s DOM tests (`file_row.rs`)
-// run in this binary too — without this, `web_sys::window()` is `None` under
-// wasm-bindgen-test's default Node.js target.
+// there does not reach tests compiled here. Without this, `web_sys::window()`
+// is `None` under wasm-bindgen-test's default Node.js target.
 #[cfg(test)]
 wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
-// A plain `mod`, no `#[path]`. This file lives in `src/` next to `kit.rs`
-// precisely so that works: a `#[path]`-included module resolves its *children*
-// relative to itself, so `kit.rs`'s `pub mod button;` would have looked for
-// `src/button.rs` and failed. Declared as a second `[[bin]]` in Cargo.toml.
-// From the library beside this file, not a second compilation of the same tree —
-// see `src/lib.rs`. `pub(crate)` so the story modules keep reaching it as
-// `crate::kit`, which is what they were written against.
-pub(crate) use quilt_sync_ui::kit;
+// A plain `mod`, no `#[path]`: this file lives in `src/`, so `mod gallery`'s
+// children resolve to `src/gallery/`. Declared as a second `[[bin]]` in
+// Cargo.toml.
 pub(crate) use quilt_sync_ui::{commands, pages};
 
-// One module per component. Adding a story means adding a file here and one
+// One module per region or page. Adding a scene means adding a file here and one
 // `entry!` line in `ENTRIES` below — the nav, the routes and the page all read
 // that one list.
 mod gallery {
-    pub mod action_menu;
-    pub mod anchored_overlay;
-    pub mod back_link;
-    pub mod button;
-    pub mod button_group;
-    pub mod card;
-    pub mod checkbox;
-    pub mod choice_group;
+    // The kit's stories this gallery shows as scenes or reads fixtures from.
+    pub use quilt_ui_kit::stories::{
+        button_group, confirm_dialog, feedback, forms, inbox, list_toolbar, queue_parts,
+        quit_confirm, recent_files_parts, unchecked,
+    };
+
     pub mod commit_page;
-    pub mod confirm_dialog;
     pub mod context_pane;
-    pub mod countdown;
-    pub mod entry_group;
-    pub mod entry_row;
-    pub mod feedback;
-    pub mod file_list;
     pub mod file_pane;
-    pub mod file_toolbar;
-    pub mod forms;
-    pub mod host_row;
-    pub mod inbox;
     pub mod incoming_files;
     pub mod installed_package;
-    pub mod json_display;
-    pub mod label;
-    pub mod list_toolbar;
-    pub mod load_failure;
-    pub mod name_tooltip;
     pub mod notifications;
     pub mod old_revisions_inline;
     pub mod package_autosync;
     pub mod package_header;
-    pub mod package_row;
     pub mod packages;
     pub mod page;
-    pub mod pane_section;
     pub mod queue;
-    pub mod queue_parts;
-    pub mod quit_confirm;
     pub mod recent_files;
-    pub mod recent_files_parts;
-    pub mod revision_row;
-    pub mod search_input;
-    pub mod segmented_control;
-    pub mod select;
-    pub mod select_all;
     pub mod settings_page;
-    pub mod skeleton;
     pub mod small_pages;
-    pub mod split_button;
-    pub mod state_label;
     pub mod state_strip;
-    pub mod toggle_row;
-    pub mod tooltip;
-    pub mod two_columns;
-    pub mod unchecked;
-    pub mod update_band;
 }
 
 use leptos::prelude::*;
 
-use quilt_sync_ui::story::{Catalog, Entry, Gallery, Home, HomeFrame, Tier};
+use quilt_ui_kit::story::{Catalog, Entry, Gallery, Home, HomeFrame, Tier};
 // The story modules reach these as `crate::Story` and the like.
-pub(crate) use quilt_sync_ui::story::{Cell, Scene, Story, after_a_beat};
+pub(crate) use quilt_ui_kit::story::{Cell, Scene, Story, after_a_beat};
 
 fn main() {
     console_error_panic_hook::set_once();
     mount_to_body(|| view! { <Gallery catalog=&GALLERY /> });
 }
 
-const CORE: Tier = Tier {
-    name: "Core",
-    slug: "core",
-    rule: "One kit component, in every state it can reach. No composition.",
-};
-const COMBINED: Tier = Tier {
-    name: "Combined",
-    slug: "combined",
-    rule: "Several kit components wired as the kit intends. No page data.",
-};
 /// Its entries, and only its entries, name the page they belong to as their area.
 const SCENES: Tier = Tier {
     name: "Scenes",
@@ -136,7 +84,9 @@ const PAGES: Tier = Tier {
 };
 
 static GALLERY: Catalog = Catalog {
-    tiers: &[CORE, COMBINED, SCENES, PAGES],
+    title: "QuiltSync pages",
+    elsewhere: ("the UI kit's storybook", "kit/"),
+    tiers: &[SCENES, PAGES],
     entries: ENTRIES,
     home: Home {
         intro: "A short overview: the busiest frame of each of the two whole pages.",
@@ -166,63 +116,9 @@ macro_rules! entry {
     (@area $area:literal) => { Some($area) };
 }
 
-/// Every section, in page order. Core and Combined are alphabetical, since they
-/// are looked up by name; Scenes are grouped by the page they belong to, then
-/// in the order that page draws them top to bottom.
+/// Every section, in page order. Scenes are grouped by the page they belong to,
+/// then in the order that page draws them top to bottom.
 const ENTRIES: &[Entry] = &[
-    entry!(CORE, "ActionMenu", action_menu::ActionMenuStories),
-    entry!(
-        CORE,
-        "AnchoredOverlay",
-        anchored_overlay::AnchoredOverlayStories
-    ),
-    entry!(CORE, "BackLink", back_link::BackLinkStories),
-    entry!(CORE, "Button", button::ButtonStories),
-    entry!(CORE, "ButtonGroup", button_group::ButtonGroupStories),
-    entry!(CORE, "Card", card::CardStories),
-    entry!(CORE, "Checkbox", checkbox::CheckboxStories),
-    entry!(CORE, "ChoiceGroup", choice_group::ChoiceGroupStories),
-    entry!(CORE, "Countdown", countdown::CountdownStories),
-    entry!(CORE, "EntryGroup", entry_group::EntryGroupStories),
-    entry!(CORE, "EntryRow", entry_row::EntryRowStories),
-    entry!(CORE, "Feedback", feedback::FeedbackStories),
-    entry!(CORE, "Forms", forms::FormsStories),
-    entry!(CORE, "HostRow", host_row::HostRowStories),
-    entry!(CORE, "Inbox", inbox::InboxStories),
-    entry!(CORE, "JsonDisplay", json_display::JsonDisplayStories),
-    entry!(CORE, "Label", label::LabelStories),
-    entry!(CORE, "LoadFailure", load_failure::LoadFailureStories),
-    entry!(CORE, "NameTooltip", name_tooltip::NameTooltipStories),
-    entry!(CORE, "PackageRow", package_row::PackageRowStories),
-    entry!(CORE, "PaneSection", pane_section::PaneSectionStories),
-    entry!(CORE, "RevisionRow", revision_row::RevisionRowStories),
-    entry!(CORE, "SearchInput", search_input::SearchInputStories),
-    entry!(
-        CORE,
-        "SegmentedControl",
-        segmented_control::SegmentedControlStories
-    ),
-    entry!(CORE, "Select", select::SelectStories),
-    entry!(CORE, "SelectAll", select_all::SelectAllStories),
-    entry!(CORE, "SkeletonBox", skeleton::SkeletonStories),
-    entry!(CORE, "SplitButton", split_button::SplitButtonStories),
-    entry!(CORE, "StateLabel", state_label::StateLabelStories),
-    entry!(CORE, "ToggleRow", toggle_row::ToggleRowStories),
-    entry!(CORE, "Tooltip", tooltip::TooltipStories),
-    entry!(CORE, "TwoColumns", two_columns::TwoColumnsStories),
-    entry!(CORE, "UpdateBand", update_band::UpdateBandStories),
-    entry!(COMBINED, "File list", file_list::FileListStories),
-    entry!(
-        COMBINED,
-        "File pane toolbar",
-        file_toolbar::FileToolbarStories
-    ),
-    entry!(COMBINED, "Queue parts", queue_parts::QueueStories),
-    entry!(
-        COMBINED,
-        "Recent files parts",
-        recent_files_parts::RecentFilesStories
-    ),
     entry!(
         SCENES / "Main page",
         "State strip",
@@ -355,12 +251,13 @@ const HOME: &[HomeFrame] = &[
 /// only the pane carries; a cell without it would point at nothing.
 /// `count` is how many rows the cell marks, which the sentence counts.
 ///
-/// Its id is the cell's own `kit::DiffersId`, read the same way the rows read
+/// Its id is the cell's own `quilt_ui_kit::DiffersId`, read the same way the rows read
 /// it, so a cell that forgets to provide one draws `DIFFERS_ID` and the
 /// gallery's unique-id test names it.
 #[must_use]
 pub fn differs_caption(count: usize) -> AnyView {
-    view! { <p class="g-note" id=kit::differs_id()>{pages::differs_sentence(count)}</p> }.into_any()
+    view! { <p class="g-note" id=quilt_ui_kit::differs_id()>{pages::differs_sentence(count)}</p> }
+        .into_any()
 }
 
 #[cfg(test)]
@@ -369,11 +266,9 @@ mod tests {
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::wasm_bindgen_test;
 
-    use quilt_sync_ui::story::{Gallery, Route};
+    use quilt_ui_kit::story::{Gallery, Route};
 
     use super::{ENTRIES, GALLERY, HOME, SCENES};
-    use crate::gallery::entry_group::EntryGroupStories;
-    use crate::gallery::entry_row::EntryRowStories;
     use crate::gallery::file_pane::FilePaneScene;
     use crate::gallery::installed_package::InstalledPackageScene;
 
@@ -422,7 +317,7 @@ mod tests {
             doc.create_element("div").unwrap().dyn_into().unwrap();
         doc.body().unwrap().append_child(&container).unwrap();
         let handle =
-            leptos::mount::mount_to(container.clone(), || quilt_sync_ui::story::home(&GALLERY));
+            leptos::mount::mount_to(container.clone(), || quilt_ui_kit::story::home(&GALLERY));
         let with_id = container.query_selector_all("[id]").unwrap();
         let mut ids = Vec::new();
         for i in 0..with_id.length() {
@@ -491,7 +386,7 @@ mod tests {
     /// exactly once there, so the description is either missing or ambiguous.
     ///
     /// Except a form control's validation message while it has none to show:
-    /// `kit/form_control.rs` names that id from the start on purpose, so a
+    /// `quilt-ui-kit/src/form_control.rs` names that id from the start on purpose, so a
     /// message that appears later is announced, and a missing id is ignored.
     fn descriptions_not_drawn_once(container: &web_sys::Element) -> Vec<String> {
         let unshown_validation = |id: &str| id.starts_with("q-control-") && id.ends_with("-error");
@@ -626,19 +521,6 @@ mod tests {
         drop(handle);
         container.remove();
         missing
-    }
-
-    #[wasm_bindgen_test]
-    fn every_description_the_entry_row_stories_name_is_drawn() {
-        assert_eq!(dangling_descriptions(EntryRowStories), Vec::<String>::new());
-    }
-
-    #[wasm_bindgen_test]
-    fn every_description_the_entry_group_stories_name_is_drawn() {
-        assert_eq!(
-            dangling_descriptions(EntryGroupStories),
-            Vec::<String>::new()
-        );
     }
 
     #[wasm_bindgen_test]

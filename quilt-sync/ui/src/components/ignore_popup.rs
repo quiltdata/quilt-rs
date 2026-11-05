@@ -4,8 +4,8 @@ use quilt_uri::S3PackageUri;
 use crate::commands;
 use crate::components::Notification;
 use crate::components::buttons;
-use crate::kit::{Choice, ChoiceGroup};
 use crate::util::{format_size, thousands};
+use quilt_ui_kit::{Choice, ChoiceGroup};
 
 // ── Ignore popup ──
 
@@ -455,7 +455,7 @@ fn StopIgnoringForm(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{button_saying, element_saying, mount};
+    use quilt_ui_kit::test_support::{button_saying, element_saying, mount};
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 

@@ -8,13 +8,13 @@ use leptos::prelude::*;
 
 use crate::commands;
 use crate::engine;
-use crate::kit::Banner;
-use crate::kit::BannerVariant;
-use crate::kit::Button;
-use crate::kit::ButtonVariant;
-use crate::kit::Dialog;
-use crate::kit::FormControl;
-use crate::kit::TextInput;
+use quilt_ui_kit::Banner;
+use quilt_ui_kit::BannerVariant;
+use quilt_ui_kit::Button;
+use quilt_ui_kit::ButtonVariant;
+use quilt_ui_kit::Dialog;
+use quilt_ui_kit::FormControl;
+use quilt_ui_kit::TextInput;
 
 use crate::pages::path_field::PathField;
 
@@ -207,7 +207,7 @@ fn PackageFields(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::sleep_ms;
+    use quilt_ui_kit::test_support::sleep_ms;
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
@@ -216,7 +216,7 @@ mod tests {
     /// a later test could not focus anything.
     fn mount_dialog(open: RwSignal<bool>) -> web_sys::Element {
         let reload = Trigger::new();
-        crate::test_support::mount(move || {
+        quilt_ui_kit::test_support::mount(move || {
             view! { <CreatePackageDialog open=open reload=reload /> }
         })
     }
@@ -276,7 +276,7 @@ mod tests {
     }
 
     /// Types into a field the way a user does — set the property, then fire the
-    /// event `TextInput` listens for (`kit/text_input.rs:64`: `on:input`).
+    /// event `TextInput` listens for (`quilt-ui-kit/src/text_input.rs:64`: `on:input`).
     fn type_into(field: &web_sys::HtmlInputElement, text: &str) {
         field.set_value(text);
         field
@@ -335,7 +335,7 @@ mod tests {
     async fn create_is_refused_while_the_folder_is_relative() {
         use crate::engine::fake::{FakeEngine, ask};
 
-        crate::test_support::unmount_earlier();
+        quilt_ui_kit::test_support::unmount_earlier();
         let engine = FakeEngine::install();
         engine.as_headless();
         let _asked = ask("get_toasts");
@@ -379,7 +379,7 @@ mod tests {
         type_into(&folder, "/home/a/data");
         answer(false).await;
         assert!(!create_button(&el).disabled(), "a full path");
-        crate::test_support::unmount_earlier();
+        quilt_ui_kit::test_support::unmount_earlier();
     }
 
     #[wasm_bindgen_test]

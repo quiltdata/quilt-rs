@@ -7,14 +7,14 @@ use leptos::prelude::*;
 
 use crate::Scene;
 use crate::commands::PausedReasonData;
-use crate::kit::Card;
-use crate::kit::Countdown;
-use crate::kit::ToggleRow;
 use quilt_sync_ui::pages::StateStrip;
 use quilt_sync_ui::pages::package_autosync::PackageAutosync;
 use quilt_sync_ui::pages::package_autosync::PublishCard;
 use quilt_sync_ui::pages::package_autosync::publish_detail;
 use quilt_sync_ui::pages::package_autosync::publish_trailing;
+use quilt_ui_kit::Card;
+use quilt_ui_kit::Countdown;
+use quilt_ui_kit::ToggleRow;
 
 const MINUTE: f64 = 60_000.0;
 /// The wait in the screenshot this work started from.

@@ -21,7 +21,7 @@ pub fn Merge(namespace: Namespace, #[prop(optional)] small: bool) -> impl IntoVi
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::mount;
+    use quilt_ui_kit::test_support::mount;
     use wasm_bindgen_test::*;
 
     /// The scenes name packages as text; the payloads carry the type.

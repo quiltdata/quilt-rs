@@ -1705,7 +1705,7 @@ mod tests {
     /// Drives `get_main_page_packages_from_model`'s real loop over a mock model —
     /// the paused map, the per-package lineage read, and the warn-and-skip on a
     /// failed lineage — and pins the result's serialized JSON. That JSON is the
-    /// contract the UI's `MainPagePackageData` must deserialize (`kit/package_state.rs`),
+    /// contract the UI's `MainPagePackageData` must deserialize (`quilt-ui-kit/src/package_state.rs`),
     /// so this one test buys both the loop's integration coverage and the wire-shape
     /// pin the final review asked for, rather than two separate tests.
     ///

@@ -61,30 +61,30 @@ use toolbar_memory::remembered_choice;
 
 stylance::import_crate_style!(style, "src/pages/main_page.module.css");
 
-use crate::kit::Banner;
-use crate::kit::BannerVariant;
-use crate::kit::Blankslate;
-use crate::kit::Button;
-use crate::kit::ButtonVariant;
-use crate::kit::Card;
-use crate::kit::FileRowSkeleton;
-use crate::kit::GroupHeading;
-use crate::kit::ListToolbar;
-use crate::kit::LoadFailure;
-use crate::kit::Naming;
-use crate::kit::PackageRow;
-use crate::kit::PackageRowSkeleton;
-use crate::kit::PackageState;
-use crate::kit::PageLayout;
-use crate::kit::RowDownloads;
-use crate::kit::SearchInput;
-use crate::kit::SegmentedControl;
-use crate::kit::Select;
-use crate::kit::Site;
-use crate::kit::TwoColumns;
-use crate::kit::ZeroLineSkeleton;
-use crate::kit::publish_height;
-use crate::kit::render;
+use quilt_ui_kit::Banner;
+use quilt_ui_kit::BannerVariant;
+use quilt_ui_kit::Blankslate;
+use quilt_ui_kit::Button;
+use quilt_ui_kit::ButtonVariant;
+use quilt_ui_kit::Card;
+use quilt_ui_kit::FileRowSkeleton;
+use quilt_ui_kit::GroupHeading;
+use quilt_ui_kit::ListToolbar;
+use quilt_ui_kit::LoadFailure;
+use quilt_ui_kit::Naming;
+use quilt_ui_kit::PackageRow;
+use quilt_ui_kit::PackageRowSkeleton;
+use quilt_ui_kit::PackageState;
+use quilt_ui_kit::PageLayout;
+use quilt_ui_kit::RowDownloads;
+use quilt_ui_kit::SearchInput;
+use quilt_ui_kit::SegmentedControl;
+use quilt_ui_kit::Select;
+use quilt_ui_kit::Site;
+use quilt_ui_kit::TwoColumns;
+use quilt_ui_kit::ZeroLineSkeleton;
+use quilt_ui_kit::publish_height;
+use quilt_ui_kit::render;
 
 /// The fixed sentence shown when the fetch fails. The backend's error text is
 /// logged (see `render_fetch_error`) but never shown: §5's words-come-from-`render`
@@ -176,7 +176,7 @@ struct RowSignals {
 ///
 /// One field rather than a `provisional` boolean beside an `unchecked` one:
 /// "settled but unchecked" is not a thing, and a type that cannot express it
-/// beats a note asking people not to — `kit/banner.rs` makes the same argument
+/// beats a note asking people not to — `quilt-ui-kit/src/banner.rs` makes the same argument
 /// for its own enum.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Confidence {
@@ -449,7 +449,7 @@ fn PackageListRow(
 }
 
 /// The rows, as direct children of the card body — no wrapper element. The
-/// card's own `.body > * + *` rule (`kit/card.module.css`) spaces them; a
+/// card's own `.body > * + *` rule (`quilt-ui-kit/src/card.module.css`) spaces them; a
 /// wrapping `div` would defeat that direct-child selector, and gallery
 /// chrome's `.g-rows` is not shipped to the app at all (`index.html` does
 /// not link it). Split out from `MainPage` so it can be tested without an
@@ -1371,7 +1371,7 @@ fn MainPageRegions(
                                                 // A heading and its rows are flat siblings
                                                 // here, never wrapped in a `div` per group
                                                 // — `Card`'s own `.body > * + *` rule
-                                                // (`kit/card.module.css`) spaces any two
+                                                // (`quilt-ui-kit/src/card.module.css`) spaces any two
                                                 // direct children, and a wrapper would
                                                 // defeat that.
                                                 {move || match shape.get() {
@@ -1627,9 +1627,9 @@ mod tests {
     use crate::commands::AccountHostData;
     use crate::commands::MainPageFileData;
     use crate::commands::MainPagePackageData;
-    use crate::kit::StateTone;
-    use crate::test_support::mount;
-    use crate::test_support::sleep_ms;
+    use quilt_ui_kit::StateTone;
+    use quilt_ui_kit::test_support::mount;
+    use quilt_ui_kit::test_support::sleep_ms;
     use std::cell::Cell;
     use std::rc::Rc;
     use std::sync::Arc;
@@ -1885,7 +1885,8 @@ mod tests {
     /// The muted lines of the first row's tooltip, under its title.
     fn tooltip_lines(el: &web_sys::Element) -> Vec<String> {
         let link = el.query_selector("a").unwrap().expect("a row");
-        let surface = crate::test_support::describing_tooltip(&link).expect("the row's tooltip");
+        let surface =
+            quilt_ui_kit::test_support::describing_tooltip(&link).expect("the row's tooltip");
         let lines = surface.query_selector_all("[class*=line]").unwrap();
         (0..lines.length())
             .map(|i| lines.item(i).unwrap().text_content().unwrap())
@@ -2612,7 +2613,7 @@ mod tests {
 
     /// Types into the search field the way a user does — set the property, then
     /// fire the event the component listens for. `SearchInput` binds `on:input`
-    /// (`kit/search_input.rs:39`), so `input` is the event, not `change`.
+    /// (`quilt-ui-kit/src/search_input.rs:39`), so `input` is the event, not `change`.
     fn type_search(el: &web_sys::Element, text: &str) {
         let field = search_field(el);
         field.set_value(text);
@@ -2623,7 +2624,7 @@ mod tests {
 
     /// A `<select>` in the toolbar, found by its `aria-label` rather than by
     /// position. `Select` puts `aria-label` on the `<select>` element itself,
-    /// taken from `Naming::Prefix(name)` (`kit/select.rs:45`), so this is the
+    /// taken from `Naming::Prefix(name)` (`quilt-ui-kit/src/select.rs:45`), so this is the
     /// only other selector in this file that could match one — `host_row.rs`'s
     /// `Role` select is the sole other `Select` on the page, and its label does
     /// not collide with either of these.
@@ -2643,7 +2644,7 @@ mod tests {
         labelled_select(el, "Sort")
     }
 
-    /// `Select` binds `on:change` (`kit/select.rs:70`), which is what `accounts.rs`'s
+    /// `Select` binds `on:change` (`quilt-ui-kit/src/select.rs:70`), which is what `accounts.rs`'s
     /// own role-switch test drives (`accounts.rs:192`).
     fn select_option(select: &web_sys::HtmlSelectElement, value: &str) {
         select.set_value(value);
@@ -2657,7 +2658,7 @@ mod tests {
     /// `stylance` emits `<class>-<hash>` with no module prefix, so nothing on
     /// the page has `group` in a class name — `title` and `count` are shared
     /// with `Card` and `Dialog`. But `GroupHeading` is the only component that
-    /// renders its title in a `<span>` (`kit/group_heading.rs:8`); `Card` and
+    /// renders its title in a `<span>` (`quilt-ui-kit/src/group_heading.rs:8`); `Card` and
     /// `Dialog` both use `<h2>` (`card.rs:38`, `dialog.rs:73`). So
     /// `span[class*=title]` can only match a group heading's title, and its
     /// `parent_element()` is the heading root, whose full text (title,
@@ -2724,7 +2725,7 @@ mod tests {
 
     #[wasm_bindgen_test]
     async fn the_feed_toolbar_drops_sort_and_create_and_keeps_its_own_group() {
-        // `kit/list_toolbar.rs`'s own doc: "the packages view adds Sort and Create
+        // `quilt-ui-kit/src/list_toolbar.rs`'s own doc: "the packages view adds Sort and Create
         // package, the files view drops both, and Group's options differ between
         // them." Search and the view toggle are on both.
         let (slot, on_store) = store_slot();
@@ -2816,7 +2817,7 @@ mod tests {
     /// The page as [`mount_regions`] draws it, after `unmount_earlier`, over
     /// whatever toolbar choices are stored: the reader coming back.
     fn remount_regions() -> web_sys::Element {
-        crate::test_support::unmount_earlier();
+        quilt_ui_kit::test_support::unmount_earlier();
         mount_regions_keeping_toolbar(
             Ok(a_package_needing_attention()),
             Ok(one_signed_out_host()),
@@ -2876,7 +2877,7 @@ mod tests {
 
     #[wasm_bindgen_test]
     async fn an_unknown_stored_choice_opens_on_the_defaults() {
-        crate::test_support::unmount_earlier();
+        quilt_ui_kit::test_support::unmount_earlier();
         forget_toolbar();
         // A label is not a stored name, and garbage is not either.
         store_toolbar(&toolbar_memory::PACKAGES_GROUP, GROUP_PREFIX);
@@ -2895,7 +2896,7 @@ mod tests {
 
     #[wasm_bindgen_test]
     async fn the_catalog_group_survives_a_remount() {
-        crate::test_support::unmount_earlier();
+        quilt_ui_kit::test_support::unmount_earlier();
         forget_toolbar();
         let el = remount_regions();
         sleep_ms(50).await;
@@ -3873,18 +3874,17 @@ mod tests {
         );
     }
 
-    #[expect(dead_code, reason = "only the classes this layout needs are loaded")]
     mod frame_sheet {
-        stylance::import_crate_style!(pub layout, "src/kit/page_layout.module.css");
+        pub use quilt_ui_kit::page_layout::style as layout;
     }
 
     /// The parts above the list stay where they are while the rows scroll the
     /// page, each band directly under the one above it.
     #[wasm_bindgen_test]
     async fn the_bands_stay_stacked_while_the_rows_scroll_the_page() {
-        use crate::test_support::load_module_style;
+        use quilt_ui_kit::test_support::load_module_style;
         load_module_style(
-            include_str!("../kit/page_layout.module.css"),
+            quilt_ui_kit::test_support::sheet("page_layout"),
             &[
                 ("root", frame_sheet::layout::root),
                 ("main", frame_sheet::layout::main),
@@ -3957,9 +3957,9 @@ mod tests {
     /// scroll under it, even a row's part with a `z-index` of its own.
     #[wasm_bindgen_test]
     async fn a_stuck_group_heading_draws_over_its_rows() {
-        use crate::test_support::load_module_style;
+        use quilt_ui_kit::test_support::load_module_style;
         load_module_style(
-            include_str!("../kit/page_layout.module.css"),
+            quilt_ui_kit::test_support::sheet("page_layout"),
             &[
                 ("root", frame_sheet::layout::root),
                 ("main", frame_sheet::layout::main),
@@ -4040,9 +4040,9 @@ mod tests {
     /// keeps a row in view and no band covers another.
     #[wasm_bindgen_test]
     async fn bands_taller_than_the_window_leave_the_list_in_view() {
-        use crate::test_support::load_module_style;
+        use quilt_ui_kit::test_support::load_module_style;
         load_module_style(
-            include_str!("../kit/page_layout.module.css"),
+            quilt_ui_kit::test_support::sheet("page_layout"),
             &[
                 ("root", frame_sheet::layout::root),
                 ("main", frame_sheet::layout::main),
@@ -4221,7 +4221,7 @@ mod tests {
     /// box: the `<dialog>` is closed, so it is not laid out.
     #[wasm_bindgen_test]
     async fn the_skeleton_is_the_page_s_first_paint() {
-        use crate::test_support::shape;
+        use quilt_ui_kit::test_support::shape;
 
         fn column(children: &web_sys::HtmlCollection) -> Vec<String> {
             (0..children.length())

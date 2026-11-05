@@ -4,7 +4,7 @@
 //!
 //! A file row carries no state, no tone and no `provisional`: a path and an
 //! mtime are facts on disk. That is why this view was buildable before the
-//! status scales were settled, and why nothing here imports [`crate::kit::render`].
+//! status scales were settled, and why nothing here imports [`quilt_ui_kit::render`].
 //!
 //! Flat is the default; an optional `Package` axis groups the same rows under
 //! a heading per namespace without touching the order within a group.
@@ -19,11 +19,11 @@ use quilt_uri::S3PackageUri;
 
 use super::super::main_page::rows_class;
 use crate::commands::MainPageFileData;
-use crate::kit::Blankslate;
-use crate::kit::Card;
-use crate::kit::FileRow;
-use crate::kit::GroupHeading;
-use crate::kit::NameTooltip;
+use quilt_ui_kit::Blankslate;
+use quilt_ui_kit::Card;
+use quilt_ui_kit::FileRow;
+use quilt_ui_kit::GroupHeading;
+use quilt_ui_kit::NameTooltip;
 
 #[cfg(test)]
 use super::GROUP_NONE;
@@ -402,8 +402,8 @@ fn file_row(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::mount;
-    use crate::test_support::sleep_ms;
+    use quilt_ui_kit::test_support::mount;
+    use quilt_ui_kit::test_support::sleep_ms;
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
@@ -729,7 +729,7 @@ mod tests {
     #[expect(dead_code, reason = "only the classes this layout needs are loaded")]
     mod sheets {
         stylance::import_crate_style!(pub page, "src/pages/main_page.module.css");
-        stylance::import_crate_style!(pub card, "src/kit/card.module.css");
+        pub use quilt_ui_kit::card::style as card;
     }
 
     /// The feed has no scroller of its own: a long feed grows the region, and
@@ -737,13 +737,13 @@ mod tests {
     /// window.
     #[wasm_bindgen_test]
     async fn a_long_feed_scrolls_the_page_not_its_card() {
-        use crate::test_support::load_module_style;
+        use quilt_ui_kit::test_support::load_module_style;
         load_module_style(
             include_str!("../main_page.module.css"),
             &[("list_region", sheets::page::list_region)],
         );
         load_module_style(
-            include_str!("../../kit/card.module.css"),
+            quilt_ui_kit::test_support::sheet("card"),
             &[
                 ("root", sheets::card::root),
                 ("body", sheets::card::body),

@@ -10,10 +10,10 @@ use leptos::prelude::*;
 
 use crate::Cell;
 use crate::Scene;
-use crate::kit::{Banner, BannerVariant, Button, PageLayout, Spinner, SpinnerVariant, icons};
 use crate::pages::error_v2::{ErrorSlate, ErrorSlateSkeleton};
 use crate::pages::login_v2::{LoginCard, LoginCardSkeleton, SignIn};
 use crate::pages::setup_v2::{SetupCard, SetupCardSkeleton};
+use quilt_ui_kit::{Banner, BannerVariant, Button, PageLayout, Spinner, SpinnerVariant, icons};
 
 const HOST: &str = "open.quiltdata.com";
 

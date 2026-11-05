@@ -20,8 +20,8 @@
 //!
 //! # Two blocks, two components, one label style
 //!
-//! `Revision` is a [`PaneSection`](crate::kit::PaneSection) label and `Keeping`
-//! is a [`ChoiceGroup`](crate::kit::ChoiceGroup) label, because a `PaneSection`
+//! `Revision` is a [`PaneSection`](quilt_ui_kit::PaneSection) label and `Keeping`
+//! is a [`ChoiceGroup`](quilt_ui_kit::ChoiceGroup) label, because a `PaneSection`
 //! titled `Keeping` around a `ChoiceGroup` titled `Keeping` says it twice. They
 //! are drawn from the same rule and match to the pixel — but only one of them is
 //! a heading, so heading navigation finds `Revision` and walks straight past
@@ -43,27 +43,27 @@ use crate::commands::ResolveData;
 use crate::commands::RevisionHistoryData;
 use crate::commands::RevisionHistoryRow;
 use crate::gallery::file_pane::MARKED;
-use crate::kit::Align;
-use crate::kit::AnchoredOverlay;
-use crate::kit::Button;
-use crate::kit::ButtonVariant;
-use crate::kit::Card;
-use crate::kit::CatalogLink;
-use crate::kit::Choice;
-use crate::kit::ChoiceGroup;
-use crate::kit::DiffersId;
-use crate::kit::FolderList;
-use crate::kit::FormDialog;
-use crate::kit::LoadFailure;
-use crate::kit::PaneSection;
-use crate::kit::RevisionRow;
-use crate::kit::SkeletonBox;
-use crate::kit::Submit;
-use crate::kit::folder_list::filled;
 use quilt_sync_ui::util::Held;
 use quilt_sync_ui::util::counted;
 use quilt_sync_ui::util::format_size;
 use quilt_sync_ui::util::thousands;
+use quilt_ui_kit::Align;
+use quilt_ui_kit::AnchoredOverlay;
+use quilt_ui_kit::Button;
+use quilt_ui_kit::ButtonVariant;
+use quilt_ui_kit::Card;
+use quilt_ui_kit::CatalogLink;
+use quilt_ui_kit::Choice;
+use quilt_ui_kit::ChoiceGroup;
+use quilt_ui_kit::DiffersId;
+use quilt_ui_kit::FolderList;
+use quilt_ui_kit::FormDialog;
+use quilt_ui_kit::LoadFailure;
+use quilt_ui_kit::PaneSection;
+use quilt_ui_kit::RevisionRow;
+use quilt_ui_kit::SkeletonBox;
+use quilt_ui_kit::Submit;
+use quilt_ui_kit::folder_list::filled;
 
 /// The design's fixed pane width. Written here rather than taken from a token
 /// because it is this page's bet, not the system's: the file list grows and the
@@ -536,7 +536,7 @@ fn in_page(pane: AnyView) -> AnyView {
 /// The two buttons are deliberately not mirrors. One publishes what is already
 /// here; the other replaces local files and is the one that opens the
 /// confirmation, whose verb is the kit's `ButtonVariant::Danger`
-/// (`kit/confirm_dialog.rs`). What the pane avoids is a Danger *pane* button:
+/// (`quilt-ui-kit/src/confirm_dialog.rs`). What the pane avoids is a Danger *pane* button:
 /// before the confirmation nothing has been risked, so the weight is carried by
 /// the arrangement and by the dialog's own copy.
 ///

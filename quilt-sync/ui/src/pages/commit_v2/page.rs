@@ -30,7 +30,7 @@ use crate::components::workflow_select::{
     shows_settings_workflow_hint,
 };
 use crate::components::{IgnorePopup, IgnorePopupData, Notification, PreviousWorkflow};
-use crate::kit::{LoadFailure, PageLayout};
+use quilt_ui_kit::{LoadFailure, PageLayout};
 
 use super::super::installed_package_v2::{
     BucketDialog, BucketDraft, CopiedMark, MenuCommand, RemoveDialog, Uninstall, ask_to_remove,
@@ -1186,9 +1186,9 @@ fn workflow_field(fixed: &Form, draft: Draft, violations: Memo<Vec<CommitViolati
 mod tests {
     use super::*;
     use crate::pages::commit_v2::SAVE_WITHOUT_PUBLISHING;
-    use crate::test_support::{button_saying, mount, sleep_ms, unmount_earlier};
     use leptos_router::components::{Route, Router, Routes};
     use leptos_router::path;
+    use quilt_ui_kit::test_support::{button_saying, mount, sleep_ms, unmount_earlier};
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
@@ -1698,7 +1698,7 @@ mod tests {
         assert_eq!(save.text_content().unwrap().trim(), SAVE_WITHOUT_PUBLISHING);
         save.click();
         sleep_ms(80).await;
-        crate::test_support::element_saying(&el, "Refresh").click();
+        quilt_ui_kit::test_support::element_saying(&el, "Refresh").click();
         sleep_ms(80).await;
         let face = buttons(&el).item(0).unwrap();
         assert_eq!(
@@ -1758,7 +1758,7 @@ mod tests {
     #[wasm_bindgen_test]
     async fn invalid_metadata_blocks_without_a_workflow() {
         let el = page_at("/commit?namespace=org%2Fpkg").await;
-        crate::test_support::element_saying(&el, "Edit").click();
+        quilt_ui_kit::test_support::element_saying(&el, "Edit").click();
         sleep_ms(30).await;
         let editor: web_sys::HtmlTextAreaElement = el
             .query_selector("textarea")
@@ -1789,7 +1789,7 @@ mod tests {
     async fn a_re_read_does_not_take_the_focus_back() {
         let el = page_at("/commit?namespace=org%2Fpkg&focus=message").await;
         message_input(&el).blur().unwrap();
-        crate::test_support::element_saying(&el, "Refresh").click();
+        quilt_ui_kit::test_support::element_saying(&el, "Refresh").click();
         sleep_ms(80).await;
         let active = web_sys::window()
             .unwrap()
@@ -1888,7 +1888,7 @@ mod tests {
             dialog.inner_html()
         );
 
-        crate::test_support::button_saying(&dialog, "Remove").click();
+        quilt_ui_kit::test_support::button_saying(&dialog, "Remove").click();
         sleep_ms(80).await;
         assert!(
             el.text_content()
@@ -1964,7 +1964,7 @@ mod tests {
         };
         assert!(workflow(&el).starts_with("Plates"), "{}", workflow(&el));
 
-        crate::test_support::element_saying(&el, "Refresh").click();
+        quilt_ui_kit::test_support::element_saying(&el, "Refresh").click();
         sleep_ms(80).await;
 
         assert_eq!(message_input(&el).value(), "Plate 7");
@@ -2088,7 +2088,7 @@ mod tests {
             el.inner_html()
         );
 
-        crate::test_support::element_saying(&el, "Refresh").click();
+        quilt_ui_kit::test_support::element_saying(&el, "Refresh").click();
         sleep_ms(past_the_pause()).await;
 
         assert_eq!(BUCKET.get(), "other-bucket");
@@ -2239,7 +2239,7 @@ mod tests {
             }
         });
         sleep_ms(80).await;
-        crate::test_support::element_saying(&el, "Edit").click();
+        quilt_ui_kit::test_support::element_saying(&el, "Edit").click();
         sleep_ms(30).await;
         let editor = |el: &web_sys::Element| -> web_sys::HtmlTextAreaElement {
             el.query_selector("textarea")
@@ -2260,7 +2260,7 @@ mod tests {
         };
         assert!(!face(&el).disabled(), "team-bucket's rules take it");
 
-        crate::test_support::element_saying(&el, "Refresh").click();
+        quilt_ui_kit::test_support::element_saying(&el, "Refresh").click();
         sleep_ms(past_the_pause()).await;
 
         assert_eq!(BUCKET.get(), "other-bucket");

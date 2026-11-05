@@ -18,7 +18,7 @@ pub fn FreeUpSpace(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{button_saying, mount};
+    use quilt_ui_kit::test_support::{button_saying, mount};
     use wasm_bindgen_test::*;
 
     /// While a sweep runs the button says so and cannot start a second one.

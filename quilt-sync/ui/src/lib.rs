@@ -2,23 +2,18 @@
 //!
 //! # Why a `[lib]` at all
 //!
-//! The app and the debug gallery are two binaries that share the `src/kit/` tree.
-//! An item can be used in one and unused in the other (`kit::render` is used by
-//! the pages and never by the gallery), and `dead_code` runs per target. In a
-//! binary, `#[allow(dead_code)]` never expires, and `#[expect(dead_code)]` fails
-//! in whichever binary does use the item, because an unfulfilled `expect` is an
-//! error under the workspace's `warnings = "deny"`.
+//! The app and the debug gallery are two binaries that share the pages. An item
+//! can be used in one and unused in the other, and `dead_code` runs per target.
+//! In a binary, `#[allow(dead_code)]` never expires, and `#[expect(dead_code)]`
+//! fails in whichever binary does use the item, because an unfulfilled `expect`
+//! is an error under the workspace's `warnings = "deny"`.
 //!
 //! `dead_code` does not flag an unused `pub` item in a library, because a
 //! library's callers are outside it. So the shared modules live in this library,
 //! and the two binaries are its callers.
 //!
-//! # Nothing moved on disk
-//!
-//! `stylance`'s `import_crate_style!` paths are relative to the crate root and its
-//! scan is configured `folders = ["./src/kit/", "./src/pages/"]`. Both would break
-//! if these files moved, so they did not: this declares the same modules from a
-//! new root.
+//! The components, the theme switch and the gallery harness are the
+//! `quilt-ui-kit` crate's.
 
 // Two pedantic lints exist for PUBLISHED library APIs and started firing the
 // moment this crate had a library at all: `missing_errors_doc` wants an
@@ -44,12 +39,7 @@ pub mod commands;
 pub mod components;
 pub mod engine;
 pub mod error_handler;
-pub mod kit;
 pub mod pages;
 pub mod panic_report;
 pub mod routes;
-pub mod story;
-#[cfg(test)]
-pub(crate) mod test_support;
-pub mod theme;
 pub mod util;

@@ -11,9 +11,9 @@ use leptos_router::hooks::use_navigate;
 use crate::commands;
 use crate::engine;
 use crate::engine::Connection;
-use crate::kit;
-use crate::kit::{Activity, ActivityKind, Banner, BannerVariant, Blankslate};
-use crate::theme;
+use quilt_ui_kit as kit;
+use quilt_ui_kit::theme;
+use quilt_ui_kit::{Activity, ActivityKind, Banner, BannerVariant, Blankslate};
 
 /// A bar once the engine refused the page; while it reconnects, the activity
 /// line says so instead, or in the classic design a bar too.
@@ -155,7 +155,7 @@ mod tests {
 
     use super::*;
     use crate::engine::fake::{FakeEngine, ask};
-    use crate::test_support::{mount, sleep_ms, unmount_earlier};
+    use quilt_ui_kit::test_support::{mount, sleep_ms, unmount_earlier};
 
     fn alerts(root: &web_sys::Element) -> u32 {
         root.query_selector_all("[role=alert]").unwrap().length()
@@ -314,7 +314,7 @@ mod tests {
     /// no line, shows a bar.
     #[wasm_bindgen_test]
     async fn a_lost_connection_shows_in_the_activity_line_until_the_engine_is_back() {
-        crate::theme::set_v2(true);
+        quilt_ui_kit::theme::set_v2(true);
         let engine = FakeEngine::install();
         let activities = kit::Activities::new();
         let pulling = "Getting latest for team/pkg\u{2026}";
@@ -349,7 +349,7 @@ mod tests {
         sleep_ms(0).await;
         assert_eq!(line.text_content().unwrap_or_default(), pulling);
 
-        crate::theme::set_v2(false);
+        quilt_ui_kit::theme::set_v2(false);
         engine.close();
         sleep_ms(0).await;
         let regions = root.query_selector_all("[role=status]").unwrap().length();
