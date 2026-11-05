@@ -49,6 +49,7 @@
 - Usage analytics report the QuiltSync version (<https://github.com/quiltdata/quilt-rs/pull/1286>)
 - QuiltSync makes all its HTTPS connections with one TLS library, and on Linux no longer uses OpenSSL (<https://github.com/quiltdata/quilt-rs/pull/1288>)
 - Under the hood, browser tests drive headless QuiltSync in Chrome from Rust, and CI runs them on every PR (<https://github.com/quiltdata/quilt-rs/pull/1287>)
+- QuiltSync opens only `https` and `mailto` links in the browser, and the diagnostics *Reveal* button shows the saved zip in its folder (<https://github.com/quiltdata/quilt-rs/pull/1315>)
 
 ### Fixed
 
