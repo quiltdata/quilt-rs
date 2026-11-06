@@ -19,10 +19,11 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.27.1-dev]
+## [v0.28.0-dev]
 
 ### Changed
 
+- QuiltSync has one design: the classic design and the *New design* switch in Settings are gone (<https://github.com/quiltdata/quilt-rs/pull/1319>)
 - The settings page's *Saved* shows for 1.5 seconds, as long as *Copied* does (<https://github.com/quiltdata/quilt-rs/pull/1310>)
 
 ## [v0.27.0] - 2026-11-05

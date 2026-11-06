@@ -921,7 +921,6 @@ mod tests {
                             }
                         />
                         <Route path=path!("/commit") view=|| view! { "the commit page" } />
-                        <Route path=path!("/merge") view=|| view! { "the merge page" } />
                     </Routes>
                 </Router>
             }
@@ -1203,8 +1202,7 @@ mod tests {
     }
 
     /// Resolve is a mode of this page, not another route: it pushes `resolve=1`
-    /// on this package's address, so Back leaves the mode. `mount_routed` keeps
-    /// `/merge`, so a regression to the merge page shows here.
+    /// on this package's address, so Back leaves the mode.
     #[wasm_bindgen_test]
     async fn resolve_opens_the_mode_on_this_page() {
         let el = mount_routed(data(kit::PackageState::Diverged));
@@ -1223,13 +1221,6 @@ mod tests {
             window.history().unwrap().length().unwrap(),
             before + 1,
             "pushed, not replaced"
-        );
-        assert!(
-            !el.text_content()
-                .unwrap_or_default()
-                .contains("the merge page"),
-            "markup was {}",
-            el.inner_html()
         );
     }
 

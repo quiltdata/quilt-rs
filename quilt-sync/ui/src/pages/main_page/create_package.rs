@@ -1,8 +1,5 @@
-//! Create a package, as a modal over the main page.
-//!
-//! v2's own, not v1's `CreatePackagePopup`: the kit's `Dialog` traps focus and
-//! handles Escape, neither of which v1's four hand-rolled overlays did. The two
-//! commands underneath are v1's, unchanged.
+//! Create a package, as a modal over the main page. The kit's `Dialog` traps
+//! focus and handles Escape.
 
 use leptos::prelude::*;
 
@@ -31,17 +28,16 @@ pub fn CreatePackageDialog(open: RwSignal<bool>, reload: Trigger) -> impl IntoVi
     // `PageLayout`'s banner slot: `Dialog` uses `show_modal()`, so anything in the page's
     // own flow sits behind the backdrop in a lower layer, dimmed and out of tab order.
     let failure = RwSignal::new(None::<String>);
-    // Trimmed, as v1 does: a name of spaces is not a name, and the backend
+    // Trimmed: a name of spaces is not a name, and the backend
     // would refuse it after a round trip.
     let can_create = Signal::derive(move || {
         !namespace.get().trim().is_empty() && !not_full.get() && !submitting.get()
     });
 
     // This dialog is mounted once, permanently, outside the page's `Transition`
-    // (a refetch must not close it mid-typing) — unlike v1's `CreatePackagePopup`,
-    // which sat inside a `Show` and so got a fresh instance, and a fresh form,
-    // every open. Without this the previous package's name would sit in the
-    // field on the next open, inviting an accidental duplicate submission.
+    // (a refetch must not close it mid-typing), so the form outlives a close.
+    // Without this the previous package's name would sit in the field on the
+    // next open, inviting an accidental duplicate submission.
     //
     // Resets only on the transition to `true`, tracked by `was_open` — never on
     // close, and never while already open. Closing on a failed create must keep
@@ -138,8 +134,7 @@ fn PackageFields(
     source: RwSignal<String>,
     not_full: RwSignal<bool>,
 ) -> impl IntoView {
-    // v1's directory picker, unchanged: the chosen path becomes the (disabled)
-    // field's text. A cancelled picker returns `Err`, and the field is left as
+    // The chosen path becomes the (disabled) field's text. A cancelled picker returns `Err`, and the field is left as
     // it was.
     let on_browse = move |_| {
         leptos::task::spawn_local(async move {
@@ -297,7 +292,6 @@ mod tests {
 
     #[wasm_bindgen_test]
     async fn create_is_refused_while_the_namespace_is_empty() {
-        // v1 returns early on an empty namespace (`installed_packages_list.rs:848`).
         // A create with no name is not a thing the backend can do, and finding that
         // out through a rejected round trip would be worse than not offering it.
         let open = RwSignal::new(true);
@@ -317,8 +311,7 @@ mod tests {
 
     #[wasm_bindgen_test]
     async fn a_namespace_of_only_spaces_is_still_empty() {
-        // v1 trims before checking (`installed_packages_list.rs:847`). Without the
-        // trim the button enables on a space and the backend refuses it.
+        // Without the trim the button enables on a space and the backend refuses it.
         let open = RwSignal::new(true);
         let el = mount_dialog(open);
         leptos::task::tick().await;
@@ -430,10 +423,9 @@ mod tests {
 
     #[wasm_bindgen_test]
     async fn reopening_the_dialog_clears_what_was_typed_before() {
-        // This dialog is mounted once, permanently (unlike v1's `CreatePackagePopup`,
-        // which sat inside a `Show` and so got a fresh instance every open). Without
-        // a reset on the open transition, the previous package's name would still be
-        // sitting in the field, inviting an accidental duplicate-namespace submit.
+        // This dialog is mounted once, permanently. Without a reset on the open
+        // transition, the previous package's name would still be sitting in the
+        // field, inviting an accidental duplicate-namespace submit.
         let open = RwSignal::new(true);
         let el = mount_dialog(open);
         leptos::task::tick().await;

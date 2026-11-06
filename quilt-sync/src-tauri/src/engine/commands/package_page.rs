@@ -1,9 +1,4 @@
-//! The v2 package page's data.
-//!
-//! Beside `main_page.rs` and borrowing from it; `package_data.rs` is v1's and is
-//! never opened here. See `arch/comp/quilt-sync/node.md#v2-parallel-path` in the
-//! spec corpus for why a v2 surface gets its own module rather than a wider v1
-//! one.
+//! The package page's data, beside `main_page.rs` and borrowing from it.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -358,7 +353,7 @@ fn blocked_state(err: &Error) -> Option<PackageStateDto> {
         // Not a session failure — the credentials vended and the active role
         // cannot read the bucket — but a state all the same, and one the header
         // already has words for. Without this arm the read fails and the page
-        // draws nothing at all for a package v1 says `No access` about.
+        // draws nothing at all for a package the reader may not see.
         //
         // `role: None` is the classification only. Naming the role is the
         // caller's second step, and a network one: `role_remedy` fills it.
@@ -416,8 +411,7 @@ fn epoch_millis(at: DateTime<Utc>) -> f64 {
 
 /// A listed path is outstanding when this copy neither tracks it nor has a
 /// local change at it ([`quilt::lineage::DownloadCounts::is_outstanding`]),
-/// and in the backlog when the scope also covers it —
-/// v1's `remote` rows (`package_data.rs:195-206`). `changes` is `None` when
+/// and in the backlog when the scope also covers it. `changes` is `None` when
 /// the status could not be read: then only tracking decides, and the engine
 /// still refuses to overwrite a local file. A path in `on_disk` already has
 /// a file here, so it stays out of the backlog.
@@ -489,9 +483,9 @@ async fn resolve_for_page(
 /// Which files are here and whether they changed does not depend on the
 /// remote, so a blocked remote status does not hide them. A blocked status
 /// stopped before its walk — the refusal came from refreshing the latest hash —
-/// so the tree is walked once, here, against the cached manifest (v1 does the
-/// same after a denial). Only what needs the remote degrades, and the header
-/// says so. The manifest's rows are read only once there is a status.
+/// so the tree is walked once, here, against the cached manifest. Only what
+/// needs the remote degrades, and the header says so. The manifest's rows are
+/// read only once there is a status.
 async fn files_data(
     m: &impl model::QuiltModel,
     installed: &quilt::InstalledPackage,
@@ -515,13 +509,7 @@ async fn files_data(
         },
     };
     match m.get_installed_package_records(installed).await {
-        Ok(records) => FilesData::Listed(entry_list(
-            namespace,
-            status,
-            &lineage.paths,
-            &records,
-            true,
-        )),
+        Ok(records) => FilesData::Listed(entry_list(namespace, status, &lineage.paths, &records)),
         Err(err) => FilesData::Unlisted {
             reason: err.to_frontend_string(),
         },
@@ -938,9 +926,8 @@ pub struct NotDownloaded {
 
 /// Install the backlog the page read listed — Keeping's `Download N files`.
 ///
-/// Namespace-keyed like the rest of this page, and not v1's
-/// `package_install_paths`: that opens the file browser after every install
-/// (the file, or the package folder), which a backlog catch-up must not do.
+/// Namespace-keyed like the rest of this page. It never opens the file
+/// browser: a backlog catch-up must not.
 ///
 /// Returns the paths it left out; both lists are empty when all installed.
 pub async fn package_download_backlog(
@@ -2616,7 +2603,7 @@ mod tests {
     }
 
     /// A download mock that asserts it installs `expected` and never opens
-    /// the file browser, as v1's install path does after every install.
+    /// the file browser.
     fn mock_download(expected: &'static [&'static str]) -> crate::engine::model::MockQuiltModel {
         let mut m = crate::engine::model::mocks::create();
         m.expect_get_installed_package()
@@ -3091,7 +3078,7 @@ mod tests {
     /// A denial is not a session failure, and must not be worded as one: the
     /// credentials vended, so signing in again re-vends the same denied role.
     /// It still resolves to a state rather than propagating, or the page draws
-    /// nothing for a package v1 says `No access` about.
+    /// nothing for a package the reader may not see.
     #[test]
     fn a_refused_role_is_a_denial_and_not_a_session_failure() {
         let err = quilt::Error::S3(quilt::S3Error {

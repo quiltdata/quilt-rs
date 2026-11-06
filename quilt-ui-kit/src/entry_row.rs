@@ -67,8 +67,8 @@
 //!
 //! `Open` is always the **local** file. Opening in the catalog leaves the
 //! application, and that is a named command in the `[⋯]`, never something a
-//! click infers — v1 splits the same way and is legible because it splits by
-//! which control is present, not by what a gesture guesses.
+//! click infers. The split is by which control is present, not by what a
+//! gesture guesses.
 //!
 //! # The gutter is the list's, and it can be nothing
 //!

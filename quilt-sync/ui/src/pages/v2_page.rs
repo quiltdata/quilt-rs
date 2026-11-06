@@ -16,11 +16,9 @@
 //!    reconnect to the engine after news may have been lost.
 //! 2. Reads are numbered, and only the newest one's answer lands. An older
 //!    read that settles late is dropped.
-//! 3. The answer lands in a signal, never a resource. A resource read under
-//!    `ByDesign`'s `Suspense` registers with it, and every re-read would put
-//!    the loading frame back over the page. And an answer equal to the one on
-//!    screen changes nothing, so a re-read that finds nothing new rebuilds
-//!    nothing: no focus lost, no row redrawn.
+//! 3. The answer lands in a signal, never a resource, and an answer equal to
+//!    the one on screen changes nothing, so a re-read that finds nothing new
+//!    rebuilds nothing: no focus lost, no row redrawn.
 //! 4. What the reader did lives above the rebuild line. The body is rebuilt
 //!    from each new answer; a page keeps typed text, a choice or an open dialog
 //!    in signals it creates before [`V2Page`], which a rebuild does not
@@ -30,9 +28,9 @@
 //! 6. One band under the appbar, [`PageHandle::outcome`], keyed to the
 //!    address, so a result that lands after the reader moved on is not drawn.
 //! 7. A read that fails for a missing session or setup goes to `/login` or
-//!    `/setup`, as v1 does, but only before the page has drawn an answer for
-//!    its address. After that the page may hold the reader's work, so a failed
-//!    re-read stays and says so.
+//!    `/setup`, but only before the page has drawn an answer for its address.
+//!    After that the page may hold the reader's work, so a failed re-read
+//!    stays and says so.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -259,7 +257,7 @@ where
                     drawn_for.set_value(Some(showing.get_untracked()));
                     body(d)
                 }
-                // A missing session or setup goes where v1 sends it, but only
+                // A missing session or setup goes to sign-in or setup, but only
                 // from a page with nothing on screen for this address: one
                 // that has drawn may hold the reader's work.
                 Some(Err(e))
@@ -337,8 +335,7 @@ pub fn critical(namespace: String, lead: &str, detail: Option<String>) -> Outcom
     }
 }
 
-/// The scaffold's life, over a small page mounted as the routes mount theirs:
-/// under `ByDesign`'s `Suspense`.
+/// The scaffold's life, over a small page mounted as the routes mount theirs.
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -456,9 +453,7 @@ mod tests {
         let el = mount(move || {
             view! {
                 <leptos_router::components::Router>
-                    <Suspense fallback=|| view! { <p data-fallback>"loading"</p> }>
-                        <Probe read=read />
-                    </Suspense>
+                    <Probe read=read />
                 </leptos_router::components::Router>
             }
         });
@@ -536,8 +531,8 @@ mod tests {
         assert_eq!(field(&el).value(), "Plate 7");
     }
 
-    /// While a re-read is out, the last answer stays up: no loading frame from
-    /// the `Suspense` above, no skeleton, and *Refresh* spins.
+    /// While a re-read is out, the last answer stays up: no skeleton, and
+    /// *Refresh* spins.
     #[wasm_bindgen_test]
     async fn a_re_read_in_flight_keeps_the_page() {
         let el = probe(vec![1, 2], vec![0, 10_000], scripted).await;
@@ -547,9 +542,7 @@ mod tests {
 
         assert!(handle().in_flight.get_untracked(), "the read is out");
         assert!(
-            el.query_selector("[data-fallback], [data-skeleton]")
-                .unwrap()
-                .is_none(),
+            el.query_selector("[data-skeleton]").unwrap().is_none(),
             "the page went back to a loading frame; markup was {}",
             el.inner_html()
         );
@@ -575,13 +568,11 @@ mod tests {
         assert!(!handle().in_flight.get_untracked());
     }
 
-    /// The first paint is the skeleton, inside the frame: the `Suspense` above
-    /// never shows its own.
+    /// The first paint is the skeleton, inside the frame.
     #[wasm_bindgen_test]
-    async fn the_first_read_draws_the_skeleton_not_the_loading_frame() {
+    async fn the_first_read_draws_the_skeleton() {
         let el = probe(vec![1], vec![], pending).await;
         assert!(el.query_selector("[data-skeleton]").unwrap().is_some());
-        assert!(el.query_selector("[data-fallback]").unwrap().is_none());
     }
 
     /// A command holds the lock every writer reads, popups included, and
@@ -638,8 +629,8 @@ mod tests {
         (landed, at.to_string(), failed)
     }
 
-    /// A read that needs setup goes to `/setup`, as v1 does, and draws no
-    /// failure on the way.
+    /// A read that needs setup goes to `/setup`, and draws no failure on the
+    /// way.
     #[wasm_bindgen_test]
     async fn a_read_that_needs_setup_goes_to_setup() {
         let (landed, _, failed) =

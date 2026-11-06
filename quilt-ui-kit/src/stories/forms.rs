@@ -361,11 +361,10 @@ fn Submitting() -> impl IntoView {
     view! {
         <Story
             title="FormDialog"
-            note="Open one and press Return in a field — it submits, which none of v1's \
-                  four overlays does. Watch the footer while it runs: the primary goes \
+            note="Open one and press Return in a field — it submits. Watch the footer while it runs: the primary goes \
                   busy and Cancel is refused, because dismissing would not stop a write \
                   already in flight. A refusal stays open with the reason above the \
-                  fields, where v1 put it in the page's slot behind the modal."
+                  fields, not in the page's slot behind the modal."
         >
             <Cell label="it saves">
                 <Case title=TITLE submit_label="Save" />
@@ -392,13 +391,12 @@ fn FormBodies() -> impl IntoView {
             note="Rendered here for review and again inside real modals in the scene below \
                   — one definition each, so they cannot drift. \
                   \
-                  Both replace hand-rolled overlays in v1. The labels are the part NOT yet \
-                  settled by the vocabulary spec, which fixed the action names but never \
-                  the field names: v1 says Namespace and Source directory, and both are \
-                  jargon by the spec's own test, so these read Package name and \
-                  Folder to add. Worth a decision rather than inheritance."
+                  The labels are the part NOT yet settled by the vocabulary spec, which \
+                  fixed the action names but never the field names: Namespace and Source \
+                  directory are jargon by the spec's own test, so these read Package name \
+                  and Folder to add."
         >
-            <Cell wide=true label="Choose S3 bucket — v1's Set remote">
+            <Cell wide=true label="Choose S3 bucket">
                 <div class="g-bars">
                     <BucketForm />
                 </div>
@@ -431,9 +429,9 @@ pub fn RefusedScene() -> impl IntoView {
     view! {
         <Scene
             title="Scene · a dialog that was refused"
-            note="Where v1 puts this: the page's notification slot, behind the modal that \
-                  caused it. Here it is above the fields, the values are still there to \
-                  correct, and the reason names the bucket. This copy is inline, at the \
+            note="The refusal sits above the fields, not behind the modal that caused \
+                  it. The values are still there to correct, and the reason names the \
+                  bucket. This copy is inline, at the \
                   width the modal gets, so it can be read and screenshotted without \
                   taking the page's pointer events — press Open the real one for the \
                   modal, whose banner arrives through an actual refused submit."
@@ -481,10 +479,8 @@ pub fn DialogScene() -> impl IntoView {
         <Scene
             title="Scene · the three dialogs"
             note="The two forms, and the bucket form in its published shape, as the page \
-                  opens them. Tab: focus \
-                  is trapped, which none of v1's four overlays does. Escape closes, which \
-                  none of them handles. The backdrop is the platform's top layer, so there \
-                  is no z-index and no ancestor can clip it — and clicking it does not \
+                  opens them. Tab: focus is trapped. Escape closes. The backdrop is the \
+                  platform's top layer, so there is no z-index and no ancestor can clip it — and clicking it does not \
                   close them, deliberately: each holds a form, and a stray click \
                   discarding what you typed is a bad trade for saving a movement to Cancel."
         >

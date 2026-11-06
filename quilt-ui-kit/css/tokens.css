@@ -6,7 +6,7 @@
  * TIER 2 — semantic roles. The only tier component CSS may reference.
  *
  * That split is what makes dark mode and a colourblind-safe variant a matter of
- * re-pointing tier 2. Additive — `theme.css` is untouched, so v1 is unaffected.
+ * re-pointing tier 2. Separate from `theme.css`.
  *
  * Hex only: the generator's `oklch()`/display-p3 twins were dropped, since these
  * scales sit far inside sRGB and two copies of every value drift. Worth
@@ -408,11 +408,10 @@
    * the override block below and does not go through a Radix scale. A brand
    * colour is a brand colour; `--blue-9` would have been the tempting shortcut
    * and is wrong, because it is `#282b50` in light and `#3d63dd` in dark, so
-   * the bar would change hue with the theme. The value is v1's
-   * `--q-ui-palette-primary`, unchanged, so the two appbars agree for as long
-   * as both exist.
+   * the bar would change hue with the theme. The value is `theme.css`'s
+   * `--q-ui-palette-primary`.
    *
-   * `onBrand` is white at 11.9:1 over it — the ink v1's `quilt.png` is already
+   * `onBrand` is white at 11.9:1 over it — the ink `quilt.png` is already
    * drawn in. Measured, not assumed. */
   --q-bgColor-brand: #2d306d;
   --q-fgColor-onBrand: #fff;
@@ -549,7 +548,7 @@
   --q-bgColor-danger-muted: var(--red-a3);
   --q-borderColor-danger-muted: var(--red-7);
 
-  /* SPACE — a 4px grid, mirroring v1's `--q-ui-size-*` but named by multiples of
+  /* SPACE — a 4px grid, like `theme.css`'s `--q-ui-size-*` but named by multiples of
    * the unit rather than by half-steps (`--q-space-3` reads better than
    * `--q-ui-size-1-5`). Use for layout: gaps between regions, page padding, row
    * rhythm.
@@ -580,9 +579,8 @@
    * the first line of every row under it. A control plus a hair of air. */
   --q-queue-line-height: calc(var(--q-control-height) + var(--q-space-1));
 
-  /* Page width cap. v1 sets 1280px, which exactly equals the default window
-   * width, so its container has zero margin at the size users actually get —
-   * almost certainly unintentional. Held slightly under so gutters exist. */
+  /* Page width cap, held slightly under the default window width so gutters
+   * exist. */
   --q-container: 1200px;
 
   /* SHAPE — ONE radius, deliberately. There were four (4/6/8/pill) and no reason
@@ -603,7 +601,7 @@
   --q-shadow-overlay: 0 8px 24px rgb(0 0 0 / 14%);
 
   /* TYPE — system stack: no webfont, no FOUT, native on all three platforms.
-   * `system-ui` first and no Roboto: v1 still links Roboto as a swap-display
+   * `system-ui` first and no Roboto: `index.html` links Roboto as a swap-display
    * webfont, and on WebKitGTK it would otherwise win the fallback and bring the
    * swap flash with it. Whatever face the desktop chooses is the right one, a light
    * one included — this is a desktop app, not a web page (decided 2026-09-14).

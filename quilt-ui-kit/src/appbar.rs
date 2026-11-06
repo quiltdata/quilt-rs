@@ -1,9 +1,8 @@
 //! The appbar: the home logo on the left, the [`ActivityLine`] centered, and a
 //! slot for controls on the right.
 //!
-//! Drawn by both the v2 frame and the v1 `Layout`, so it must never carry
-//! `data-v2-page`: that marker darkens the surface it is on, and v1 pages sit
-//! under this bar.
+//! It never carries `data-v2-page`: that marker darkens the surface it is on,
+//! and belongs to the frame around the bar.
 
 use leptos::prelude::*;
 
