@@ -23,6 +23,7 @@ pub mod acp;
 pub mod agent_exec;
 pub mod agent_process;
 pub mod login_path;
+mod rebase;
 pub mod settings;
 
 use agent_exec::Claim;
@@ -362,8 +363,9 @@ async fn stop_leftover_agent(
     }
 }
 
-/// After a metadata-only publish that didn't become `latest`: back to `latest`
-/// while nothing would be lost (a clean tree, no later commit), else Diverged.
+/// After a metadata-only publish that didn't become `latest`, or an outcome
+/// rebased onto it: back to `latest` while nothing would be lost (a clean tree,
+/// no later commit), else Diverged.
 async fn reset_if_clean<M: QuiltModel>(
     model: &M,
     pkg: &quilt::InstalledPackage,
@@ -381,8 +383,8 @@ async fn reset_if_clean<M: QuiltModel>(
     Ok(())
 }
 
-/// A publish other than a metadata-only one is never reset when it doesn't
-/// become `latest`: the package stays Diverged for the user.
+/// A push that doesn't become `latest` here is not reset: the package stays
+/// Diverged for the user.
 fn note_not_latest(pkg: &Namespace, push: &quilt::PushOutcome) {
     if !push.certified_latest {
         warn!("tasks: {pkg}: what it pushed is not latest; the package is left Diverged");
@@ -495,7 +497,7 @@ async fn sweep<M: QuiltModel>(
     };
     let tree = Tree { status, commit };
     publish_outcome(
-        model, locked, pkg, workflow, user_meta, claim, message, tree,
+        model, locked, pkg, workflow, head, user_meta, claim, message, tree,
     )
     .await
 }
@@ -520,21 +522,25 @@ fn count_changes(changes: &quilt::lineage::ChangeSet) -> Value {
     json!({ "added": added, "modified": modified, "removed": removed })
 }
 
-/// Publish the tree as a run's last revision. One that changes only the
-/// metadata resets if it isn't `latest`; any other is left Diverged.
+/// Publish the tree, walked against `head`, as a run's last revision. If it
+/// isn't `latest`, one that changes only the metadata resets, and a `done` or
+/// `failed` built on a published revision is rebased onto `latest`; any other
+/// is left Diverged.
 #[allow(clippy::too_many_arguments, reason = "one publish's inputs")]
 async fn publish_outcome<M: QuiltModel>(
     model: &M,
     locked: &M::Locked,
     pkg: &quilt::InstalledPackage,
     workflow: WorkflowIntent,
+    head: &quilt::lineage::PackageLineage,
     user_meta: &Value,
     mut claim: Value,
     mut message: String,
     Tree { status, commit }: Tree,
 ) -> Result<(), Error> {
     // A pending commit makes the walk compare against it, not the claim.
-    if matches!(claim["status"].as_str(), Some("done" | "failed")) && commit.is_none() {
+    let counted = matches!(claim["status"].as_str(), Some("done" | "failed")) && commit.is_none();
+    if counted {
         claim["changes"] = count_changes(&status.changes);
         if status.changes.is_empty() {
             message.push_str(", no changes");
@@ -545,14 +551,27 @@ async fn publish_outcome<M: QuiltModel>(
     let metadata_only = matches!(claim["status"].as_str(), Some("not_started" | "unrunnable"))
         && status.changes.is_empty()
         && commit.is_none();
+    let built_on = head.remote_uri.clone().filter(|_| counted);
     let meta = agent_exec::with_claim(user_meta, claim);
     let published = publish(model, locked, pkg, workflow, meta, message, status).await?;
     let Some(push) = published.push() else {
         return Ok(());
     };
+    if push.certified_latest {
+        return Ok(());
+    }
     if metadata_only {
-        if !push.certified_latest {
-            reset_if_clean(model, pkg, locked).await?;
+        reset_if_clean(model, pkg, locked).await?;
+    } else if let Some(base) = built_on {
+        match rebase::onto_latest(model, &pkg.namespace, &base, &push.manifest_uri, user_meta).await
+        {
+            Ok(true) => reset_if_clean(model, pkg, locked).await?,
+            Ok(false) => {}
+            // The outcome is published; only its rebase failed.
+            Err(err) => warn!(
+                "tasks: {}: cannot rebase onto latest, left Diverged: {err}",
+                pkg.namespace
+            ),
         }
     } else {
         note_not_latest(&pkg.namespace, push);
@@ -812,7 +831,7 @@ async fn finish<M: QuiltModel>(
     let workflow = carried_workflow(head.header.workflow.as_ref());
     let message = outcome_message(&run.document, &claim);
     publish_outcome(
-        model, &locked, &installed, workflow, &base, claim, message, tree,
+        model, &locked, &installed, workflow, &lineage, &base, claim, message, tree,
     )
     .await
 }

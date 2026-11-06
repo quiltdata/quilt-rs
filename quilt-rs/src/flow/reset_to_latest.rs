@@ -37,6 +37,9 @@ pub async fn reset_to_latest(
 
     if latest.hash == lineage.remote()?.hash && lineage.commit.is_none() {
         info!("✔️ Package is already at latest version");
+        // Its base may be older, as after a push that became `latest` with no
+        // certify.
+        lineage.update_latest(latest);
         return Ok(lineage);
     }
 
@@ -99,6 +102,7 @@ mod tests {
         };
         let source_lineage = PackageLineage {
             remote_uri: Some(source_manifest_uri),
+            base_hash: "older".to_string(),
             ..PackageLineage::default()
         };
 
@@ -121,7 +125,15 @@ mod tests {
             Namespace::default(),
         )
         .await?;
-        assert_eq!(resolved_lineage, source_lineage);
+        assert_eq!(
+            resolved_lineage,
+            PackageLineage {
+                base_hash: "foo".to_string(),
+                latest_hash: "foo".to_string(),
+                ..source_lineage
+            },
+            "nothing to fetch, and the copy is up to date"
+        );
         Ok(())
     }
 

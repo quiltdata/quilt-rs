@@ -19,6 +19,16 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.52.1-dev]
+
+### Added
+
+- `flow::push_onto` and `LocalDomain::push_onto` publish a manifest whose rows are already on the remote as the revision after a given parent, and move `latest` to it only while `latest` still names that parent (<https://github.com/quiltdata/quilt-rs/pull/1320>)
+
+### Fixed
+
+- `reset_to_latest` on a copy already at `latest`'s revision records that revision as its base, so the copy reads up to date rather than Diverged (<https://github.com/quiltdata/quilt-rs/pull/1320>)
+
 ## [v0.52.0] - 2026-11-05
 
 ### Added
