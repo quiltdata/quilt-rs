@@ -25,6 +25,14 @@
 
 - The settings page's *Saved* shows for 1.5 seconds, as long as *Copied* does (<https://github.com/quiltdata/quilt-rs/pull/1310>)
 
+### Fixed
+
+- A package task whose outcome loses `latest` to a revision published during the run lands its own changes on top of that revision instead of leaving the package Diverged, unless both changed the same file (<https://github.com/quiltdata/quilt-rs/pull/PR>)
+
+### quilt-rs
+
+- Updated [from v0.52.0 to v0.52.1-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.52.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
 ## [v0.27.0] - 2026-11-05
 
 ### Added

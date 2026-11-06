@@ -180,6 +180,16 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
             .inspect_err(|e| warn!("Failed to browse manifest {}: {}", uri.hash, e))
     }
 
+    /// [`flow::push_onto`] on this domain's remote.
+    pub async fn push_onto(
+        &self,
+        parent: &ManifestUri,
+        manifest: Manifest,
+    ) -> Res<crate::PushOutcome> {
+        self.scaffold_paths_for_caching(&parent.bucket).await?;
+        flow::push_onto(&self.paths, &self.storage, &*self.remote, parent, manifest).await
+    }
+
     /// Every package shares *this* domain's remote — the same client,
     /// region and credential caches, not a snapshot. A per-package copy
     /// would start empty and discard whatever it built, and logout could
