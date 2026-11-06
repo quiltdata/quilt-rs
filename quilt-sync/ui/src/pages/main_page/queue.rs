@@ -1572,8 +1572,7 @@ mod tests {
         // Never produced by `action`, and mapped anyway so the vocabulary can
         // gain a verb without this match going stale.
         assert_eq!(href(SwitchRole), package_page);
-        // Resolve opens the package page's resolve mode — the page the main
-        // page's own generation renders there — rather than `/merge`.
+        // Resolve opens the package page's resolve mode.
         assert_eq!(
             href(Resolve),
             "/installed-package?namespace=org%2Fpkg&filter=unmodified&resolve=1"

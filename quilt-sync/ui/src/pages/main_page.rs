@@ -697,8 +697,7 @@ impl ListControls {
         }
     }
 
-    /// Store each `Group:` and `Sort:` choice when the reader changes it. The
-    /// page's own set only: the loading frame's is inert.
+    /// Store each `Group:` and `Sort:` choice when the reader changes it.
     fn remember(self) {
         for (signal, choice) in [
             (self.group_packages_by, &PACKAGES_GROUP),
@@ -750,20 +749,15 @@ fn regions_skeleton(toolbar: AnyView, inert: bool) -> AnyView {
 /// The whole main page before any of its reads have answered: the appbar, the
 /// strip's two cards, and [`regions_skeleton`].
 ///
-/// What `/` draws while it reads which main page the reader has switched on,
-/// when the root marker says it will be this one — see `main.rs`'s
-/// `design_loading`. It is the page's own first paint, element for element, so
-/// the handover to [`MainPage`] moves nothing: the appbar, the zero line and the
-/// toolbar land on the pixels they already hold.
+/// [`MainPage`]'s own first paint, element for element, drawn alone by the
+/// gallery.
 ///
 /// The strip's two cards are their own skeletons, as the page's cards draw
 /// them until their reads answer. The toolbar is drawn, for its place, and
-/// inert: its signals are the frame's own and the page builds fresh ones, so a
-/// search typed or a view picked during the wait would vanish at the handover,
-/// and *Create package* would open nothing — its dialog belongs to the page.
-/// Inert rather than disabled, which would grey it and so change how the frame
-/// looks against the page that replaces it. The page's own fallback leaves the
-/// same toolbar live, over the page's signals and beside its dialog.
+/// inert: its signals lead nowhere and *Create package* has no dialog to open.
+/// Inert rather than disabled, which would grey it and so change how it looks
+/// against the page. The page's own fallback leaves the same toolbar live, over
+/// the page's signals and beside its dialog.
 ///
 /// `actions` is the appbar's, passed in because the app's Settings button
 /// navigates and the gallery, which draws this too, has no router.
@@ -4212,10 +4206,9 @@ mod tests {
         );
     }
 
-    /// `MainPageSkeleton` is the page's own first paint, so `/` handing its
-    /// loading frame over to the page moves nothing: under the appbar, the same
-    /// column children in the same boxes as the page draws before its reads
-    /// answer.
+    /// `MainPageSkeleton` is the page's own first paint: under the appbar, the
+    /// same column children in the same boxes as the page draws before its
+    /// reads answer.
     ///
     /// The strip's two card skeletons included. One exception, which takes no
     /// box: the `<dialog>` is closed, so it is not laid out.
@@ -4254,13 +4247,13 @@ mod tests {
         );
     }
 
-    /// The loading frame's toolbar is inert and the page's own fallback's is
-    /// not. The frame's controls sit over signals the page does not inherit, and
-    /// its *Create package* has no dialog to open, so anything done there would
-    /// be lost; the page's fallback is over the page's signals and dialog, where
-    /// a reader may start work before the rows arrive.
+    /// The skeleton's toolbar is inert and the page's own fallback's is not.
+    /// The skeleton's controls sit over signals nothing reads, and its *Create
+    /// package* has no dialog to open; the page's fallback is over the page's
+    /// signals and dialog, where a reader may start work before the rows
+    /// arrive.
     #[wasm_bindgen_test]
-    async fn only_the_loading_frame_s_toolbar_is_inert() {
+    async fn only_the_skeleton_s_toolbar_is_inert() {
         let frame = mount(|| {
             view! {
                 <leptos_router::components::Router>

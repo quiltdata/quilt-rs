@@ -1225,11 +1225,8 @@ fn open_file(
 /// The whole package page before its read answers: the appbar, the banner's
 /// row, and [`package_skeleton`].
 ///
-/// What `/installed-package` draws while it reads which package page the reader
-/// has switched on, when the root marker says it will be this one — see
-/// `main.rs`'s `design_loading`. It is [`PackageScreen`]'s own first paint, so
-/// the handover moves nothing: the appbar, the header and both panes land on
-/// the pixels they already hold.
+/// [`PackageScreen`]'s own first paint, drawn alone by the gallery: the
+/// appbar, the header and both panes in the boxes the page fills.
 ///
 /// The banner is passed empty, not left out. The page always fills
 /// `PageLayout`'s slot — its bands are drawn from the answer, inside the slot —
@@ -2849,10 +2846,9 @@ mod tests {
         el
     }
 
-    /// `PackagePageSkeleton` is the page's own first paint, so
-    /// `/installed-package` handing its loading frame over to the page moves
-    /// nothing: the same boxes from the appbar down, the banner's empty row
-    /// included, as the page draws while its one read is out.
+    /// `PackagePageSkeleton` is the page's own first paint: the same boxes
+    /// from the appbar down, the banner's empty row included, as the page
+    /// draws while its one read is out.
     #[wasm_bindgen_test]
     async fn the_skeleton_is_the_page_s_first_paint() {
         use crate::components::appbar::appbar_actions;

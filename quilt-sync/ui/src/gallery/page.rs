@@ -19,8 +19,7 @@
 //!
 //! [`LoadingScene`] is the pages before they have anything to show, and those are
 //! the app's own components rather than compositions: `MainPageSkeleton` and
-//! `PackagePageSkeleton` are what `main.rs` draws while a route decides between v1
-//! and v2, so a scene there is the frame the reader sees.
+//! `PackagePageSkeleton` are each page's own first paint.
 
 use leptos::context::Provider;
 use leptos::prelude::*;
@@ -195,17 +194,11 @@ pub fn LoadingScene() -> impl IntoView {
     view! {
         <Scene
             title="Scene · the main page while it loads"
-            note="What / draws before any read has answered, and what it draws even \
-                  earlier, while it reads which main page the reader has switched on: the \
-                  root marker predicts this one, so the frame is this page's first paint \
-                  rather than a spinner of its own. The appbar with Refresh spinning, the \
-                  strip's two cards on their toggle and host skeletons, the zero line held \
-                  open, the toolbar — inert, since its controls lead nowhere until the \
-                  page takes over — and three package rows. MainPageSkeleton is drawn \
-                  here and by main.rs's frame, and its regions are the page's own loading boundary, so neither \
-                  handover — frame to page, page to rows — moves anything. A v1 reader \
-                  gets v1's own spinner instead, whose stylesheet this gallery does not \
-                  load."
+            note="What / draws before any read has answered: the appbar with Refresh \
+                  spinning, the strip's two cards on their toggle and host skeletons, the \
+                  zero line held open, the toolbar — inert here, since its controls lead \
+                  nowhere — and three package rows. Its regions are the page's own loading \
+                  boundary, so nothing moves when the rows arrive."
         >
             <div class="g-window">
                 <pages::MainPageSkeleton actions=loading_actions() />
@@ -216,8 +209,7 @@ pub fn LoadingScene() -> impl IntoView {
             note="The same for /installed-package: the appbar, the banner's empty row, the \
                   header's two lines and both panes, select-all's spot in the file \
                   toolbar included, before the page's one read answers. \
-                  PackagePageSkeleton, shared with main.rs's frame; its body is the page's \
-                  own first paint. The banner's row is there because the page always \
+                  PackagePageSkeleton is the page's own first paint. The banner's row is there because the page always \
                   fills that slot, as the package page's own scenes now draw it too."
         >
             <div class="g-window">

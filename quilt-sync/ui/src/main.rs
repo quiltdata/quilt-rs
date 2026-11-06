@@ -53,7 +53,7 @@ fn App() -> impl IntoView {
 }
 
 /// Every page, by address. Each page draws its own skeleton while its first
-/// read is out, so the route has no loading frame of its own.
+/// read is out.
 #[component]
 fn PageRoutes() -> impl IntoView {
     view! {
@@ -164,10 +164,9 @@ mod tests {
         }
     }
 
-    /// The pages the classic design drew alone are gone, and their addresses
-    /// are no longer pages.
+    /// Addresses of retired pages are not found.
     #[wasm_bindgen_test]
-    async fn the_classic_addresses_are_not_found() {
+    async fn retired_addresses_are_not_found() {
         for address in [
             "/main",
             "/installed-packages-list",
