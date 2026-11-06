@@ -135,54 +135,46 @@ mod tests {
         }
     }
 
-    /// The first paint of every route is its page's own frame, with the
-    /// regions still to be read marked busy: no loading frame of the route's
-    /// own comes first.
+    /// Every route draws its page in the page frame, appbar and all. Each
+    /// page's own tests check that its skeleton is its first paint.
     #[wasm_bindgen_test]
-    fn every_route_first_paints_its_page_s_skeleton() {
-        for (address, reads) in [
-            ("/", true),
-            ("/installed-package?namespace=team%2Fdataset", true),
-            ("/commit?namespace=team%2Fdataset", true),
-            ("/settings", true),
-            ("/login?host=quilt.test&back=%2F", true),
-            ("/setup", true),
-            ("/error?host=quilt.test&error=nope", true),
-            (
-                "/remote-package?uri=quilt%2Bs3%3A%2F%2Fb%23package%3Dteam%2Fdataset",
-                false,
-            ),
-            ("/no-such-page", false),
+    async fn every_route_draws_its_page() {
+        for address in [
+            "/",
+            "/installed-package?namespace=team%2Fdataset",
+            "/commit?namespace=team%2Fdataset",
+            "/settings",
+            "/login?host=quilt.test&back=%2F",
+            "/setup",
+            "/error?host=quilt.test&error=nope",
+            "/remote-package?uri=quilt%2Bs3%3A%2F%2Fb%23package%3Dteam%2Fdataset",
+            "/no-such-page",
         ] {
             let mounted = Mounted::at(address);
-            let el = &mounted.el;
+            quilt_ui_kit::test_support::sleep_ms(0).await;
             assert!(
-                el.query_selector("[data-v2-page]").unwrap().is_some(),
-                "{address}: the page's frame, appbar and all; markup was {}",
-                el.inner_html()
+                mounted
+                    .el
+                    .query_selector("[data-v2-page]")
+                    .unwrap()
+                    .is_some(),
+                "{address}: markup was {}",
+                mounted.el.inner_html()
             );
-            if reads {
-                assert!(
-                    el.query_selector("[data-v2-page] [aria-busy=true]")
-                        .unwrap()
-                        .is_some(),
-                    "{address}: a skeleton region that says it is busy; markup was {}",
-                    el.inner_html()
-                );
-            }
         }
     }
 
     /// The pages the classic design drew alone are gone, and their addresses
     /// are no longer pages.
     #[wasm_bindgen_test]
-    fn the_classic_addresses_are_not_found() {
+    async fn the_classic_addresses_are_not_found() {
         for address in [
             "/main",
             "/installed-packages-list",
             "/merge?namespace=team%2Fdataset",
         ] {
             let mounted = Mounted::at(address);
+            quilt_ui_kit::test_support::sleep_ms(0).await;
             assert!(
                 mounted
                     .el

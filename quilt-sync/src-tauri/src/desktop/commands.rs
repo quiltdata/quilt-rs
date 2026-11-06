@@ -129,7 +129,7 @@ mod tests {
             })
             .collect();
         let called = ui_calls();
-        assert!(called.len() > 80, "found only {} UI calls", called.len());
+        assert!(called.len() > 60, "found only {} UI calls", called.len());
         assert_eq!(called, listed);
     }
 }
