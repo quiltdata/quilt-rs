@@ -39,8 +39,9 @@ runs:
         sudo apt-get autoclean -o Dir::Cache::Archives="$HOME/apt-archives"
         sudo chown -R "$USER" ~/apt-archives
 
+    # Pull requests restore main's cache and never write their own.
     - name: Save package files
-      if: steps.apt-restore.outputs.cache-hit != 'true'
+      if: steps.apt-restore.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
       uses: actions/cache/save@v6
       with:
         path: ~/apt-archives
