@@ -28,9 +28,9 @@
 //! 6. One band under the appbar, [`PageHandle::outcome`], keyed to the
 //!    address, so a result that lands after the reader moved on is not drawn.
 //! 7. A read that fails for a missing session or setup goes to `/login` or
-//!    `/setup`, as v1 does, but only before the page has drawn an answer for
-//!    its address. After that the page may hold the reader's work, so a failed
-//!    re-read stays and says so.
+//!    `/setup`, but only before the page has drawn an answer for its address.
+//!    After that the page may hold the reader's work, so a failed re-read
+//!    stays and says so.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -257,7 +257,7 @@ where
                     drawn_for.set_value(Some(showing.get_untracked()));
                     body(d)
                 }
-                // A missing session or setup goes where v1 sends it, but only
+                // A missing session or setup goes to sign-in or setup, but only
                 // from a page with nothing on screen for this address: one
                 // that has drawn may hold the reader's work.
                 Some(Err(e))
@@ -629,8 +629,8 @@ mod tests {
         (landed, at.to_string(), failed)
     }
 
-    /// A read that needs setup goes to `/setup`, as v1 does, and draws no
-    /// failure on the way.
+    /// A read that needs setup goes to `/setup`, and draws no failure on the
+    /// way.
     #[wasm_bindgen_test]
     async fn a_read_that_needs_setup_goes_to_setup() {
         let (landed, _, failed) =

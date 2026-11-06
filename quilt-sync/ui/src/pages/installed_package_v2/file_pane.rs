@@ -43,7 +43,7 @@
 //!   `All`, the home a facet that empties falls back to. `All` leaves ignored
 //!   files out; only `Ignored` shows them, with no label and no box, since the
 //!   view already says it and an ignored file is never selectable. A tracked
-//!   file that is also ignored is two rows, as in v1, and counts under both.
+//!   file that is also ignored is two rows, and counts under both.
 //! - **A click does the thing the row can do.** A file that is here opens, a
 //!   missing one is `EntryRow`'s `Select` shape, and a deleted one is inert.
 //! - **Selection feeds one action.** Select-all, the headings' boxes and the
@@ -517,9 +517,9 @@ fn row_actions(r: &Row, menu: Option<RowMenu>) -> Signal<Vec<MenuAction>> {
 }
 
 /// The items a row offers, in their fixed order and groups: open and reveal;
-/// catalog, if any, and copy; then the `.quiltignore` item. v1's entries form
-/// gates its buttons the same way, but Ignore is on every row: the pane does
-/// not read `junky_pattern`, and the popup is prefilled with the path instead.
+/// catalog, if any, and copy; then the `.quiltignore` item. Ignore is on every
+/// row: the pane does not read `junky_pattern`, and the popup is prefilled with
+/// the path instead.
 fn row_commands(
     path: &str,
     folder: bool,
@@ -2433,7 +2433,7 @@ mod pane_tests {
         assert_eq!(heading_count(&el, "data/"), "2", "{}", el.inner_html());
     }
 
-    /// A tracked file that `.quiltignore` also matches is two rows, as in v1:
+    /// A tracked file that `.quiltignore` also matches is two rows:
     /// the ignored one under `Ignored`, and the tracked one — here deleted,
     /// since the walk skips it — under `All` and `Changed`. Counts follow rows.
     #[wasm_bindgen_test]

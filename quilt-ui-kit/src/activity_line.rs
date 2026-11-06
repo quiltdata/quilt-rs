@@ -27,8 +27,8 @@
 //!
 //! # Why a context
 //!
-//! [`Appbar`](crate::Appbar) is built by `PageLayout` and by v1's `Layout`, and a
-//! prop would thread through both and every page that builds them. So the app
+//! [`Appbar`](crate::Appbar) is built by `PageLayout`, and a prop would thread
+//! through it and every page that builds one. So the app
 //! provides [`Activities`] once, and the kit stays free of the engine. Without one —
 //! the gallery's and the tests' default — the line draws nothing at all.
 //!

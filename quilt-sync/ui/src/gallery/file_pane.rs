@@ -498,8 +498,8 @@ impl Confirm {
 /// `.quiltignore`, then `Stop keeping` under its danger rule.
 ///
 /// `Stop ignoring` is not in §3's list at all, although the `Ignored` facet is
-/// the view that reaches it and v1 has the popup. A menu that can ignore and
-/// cannot un-ignore is a one-way door.
+/// the view that reaches it. A menu that can ignore and cannot un-ignore is a
+/// one-way door.
 fn menu(mark: Mark, subject: String, confirm: Confirm) -> Vec<MenuAction> {
     let mut items = Vec::new();
     if mark.local() {

@@ -9,23 +9,22 @@
 //!
 //! # `ui_locked` is not here, and is not coming
 //!
-//! v1 disables the whole page behind an overlay while an operation runs. **Rejected for
-//! v2**, decided 2026-08-07 — and it is worth recording why, because it looks like a
-//! missing feature and is not one.
+//! A page-wide overlay that disables everything while an operation runs is rejected —
+//! worth saying why, because it looks like a missing feature and is not one.
 //!
-//! It exists in v1 because a single boolean was the only vocabulary available: with no way
-//! to say *this row is busy* or *this region is loading*, locking everything is the only
-//! honest thing left. v2 has that vocabulary — `busy` on a queue row's action, `SkeletonBox`
-//! per region, `loading` on a `Button`, `spinning` on the appbar's refresh — so the
-//! overlay's job is now done by indicators that are truthful about their scope.
+//! Locking everything is the only honest thing left when a single boolean is the only
+//! vocabulary, with no way to say *this row is busy* or *this region is loading*. The kit
+//! has that vocabulary — `busy` on a queue row's action, `SkeletonBox` per region,
+//! `loading` on a `Button`, `spinning` on the appbar's refresh — so indicators that are
+//! truthful about their scope do the overlay's job.
 //!
 //! And the overlay has a real cost that its scope-accurate replacements do not: it stops
 //! the user reading the page, which is exactly what people do while waiting.
 //!
-//! **The consequence, which is the part to be careful about.** The overlay was also a
-//! safety net — it covered any operation whose progress nobody remembered to show. Without
+//! **The consequence, which is the part to be careful about.** An overlay would also be a
+//! safety net — it covers any operation whose progress nobody remembered to show. Without
 //! it, *every* operation must own a visible indicator at its own scope, because there is
-//! no longer a backstop that makes forgetting merely ugly instead of invisible.
+//! no backstop that makes forgetting merely ugly instead of invisible.
 //!
 //! # What is deliberately not here yet
 //!
@@ -173,7 +172,7 @@ mod tests {
     use wasm_bindgen_test::*;
 
     /// The stylesheet hangs the dark `color-scheme` on this attribute, so a page
-    /// that lost it would put v1's ink on a dark canvas again.
+    /// that lost it would put `body`'s fixed ink on a dark canvas.
     #[wasm_bindgen_test]
     fn the_frame_marks_itself_as_a_v2_surface() {
         let el = mount(|| view! { <PageLayout heading="Page">"body"</PageLayout> });

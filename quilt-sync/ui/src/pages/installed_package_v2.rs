@@ -1039,8 +1039,8 @@ fn copy_outcome(namespace: String, command: &RowCommand) -> Outcome {
 /// The popups a row's `[⋯]` opens, drawn outside the body so a re-read keeps
 /// them.
 ///
-/// They are v1's, which report through a `Notification`; this page reports on
-/// its band instead, so a failure becomes the band's, keyed to the package the
+/// They report through a `Notification`; this page reports on its band
+/// instead, so a failure becomes the band's, keyed to the package the
 /// popup was opened for ([`report_popup`]), and a success says nothing there:
 /// the re-read is the report. Each popup re-reads the page itself once its
 /// write lands.
@@ -1111,7 +1111,7 @@ fn row_popups(files: Files, w: Wiring) -> impl IntoView {
     }
 }
 
-/// Turn a v1 popup's `Notification` into this page's band: a failure is news
+/// Turn a popup's `Notification` into this page's band: a failure is news
 /// about `opened_for`, the package the popup was opened for, whichever package
 /// is on screen when it lands (the band drops it if that is another one). A
 /// success says nothing: the popup re-reads the page itself.
@@ -1295,11 +1295,7 @@ fn package_failure(namespace: String, reload: Trigger) -> AnyView {
     .into_any()
 }
 
-/// What `/installed-package` renders in the v2 design.
-///
-/// `main.rs`'s `PackagePage` decides, from the same answer `/` renders the main
-/// page by, so a reader who has the new main page gets this one with it and
-/// every link to a package lands here rather than on v1's.
+/// What `/installed-package` renders.
 #[component]
 pub fn InstalledPackageV2() -> impl IntoView {
     view! {
@@ -2571,9 +2567,9 @@ mod tests {
         element_saying(&el, "Settings");
     }
 
-    /// v2's frame, not v1's. `data-v2-page` is what the stylesheet keys the
-    /// palette and `color-scheme` on, so without it the page is drawn in v1's
-    /// fixed light chrome whatever the desktop is set to.
+    /// `data-v2-page` is what the stylesheet keys the palette and
+    /// `color-scheme` on, so without it the page is drawn in a fixed light
+    /// chrome whatever the desktop is set to.
     #[wasm_bindgen_test]
     async fn the_page_is_drawn_in_the_v2_frame() {
         go_to("/installed-package?namespace=team%2Fdataset");

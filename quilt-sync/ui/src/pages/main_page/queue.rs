@@ -452,12 +452,7 @@ fn attention_line_text(count: usize) -> String {
 /// that drifts points the gallery's rows at pages the app does not use.
 pub fn action_href(action: PackageAction, namespace: &Namespace) -> String {
     match action {
-        // The package page's own resolve mode, not `/merge`: this queue is drawn
-        // only by the main page, which is v2's, and `/installed-package` renders
-        // v2 exactly when the main page does. The one exception is `/main`
-        // opened with the preview off, which lands this on v1's package page;
-        // that page ignores `resolve=1` and offers `[Merge]` in its status
-        // banner, so the reader is one click from where v1 would have sent them.
+        // The package page's own resolve mode.
         PackageAction::Resolve => crate::routes::resolve_href(namespace),
         // Shared with the list row's own link — `super::package_page_href`.
         //

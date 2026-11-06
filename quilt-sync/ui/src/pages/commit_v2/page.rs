@@ -9,9 +9,9 @@
 //! the reader edited it; the workflow and untouched metadata start over from
 //! the new answer.
 //!
-//! Live validation is v1's — the rules load, the candidate check, the 400ms
-//! debounce, the keyed answer — with one difference: every violation shows at
-//! once and blocks the primary. This page is the review before a publish, so
+//! Live validation loads the rules, checks the candidate after a debounce and
+//! keys the answer. Every violation shows at once and blocks the primary. This
+//! page is the review before a publish, so
 //! a publish that would be refused says so before the click.
 
 use std::future::Future;
@@ -191,10 +191,10 @@ fn caption(violations: &[CommitViolation], field: ViolationField) -> Option<Stri
     (!messages.is_empty()).then(|| messages.join(" "))
 }
 
-/// The select's options and where it starts, from the dropdown v1 draws.
+/// The select's options and where it starts, from the [`WorkflowView`].
 ///
 /// The select cannot grey an option, so a disabled one (`None` on a bucket
-/// that requires a workflow) is left out — unless v1 would start on it, which
+/// that requires a workflow) is left out — unless the view starts on it, which
 /// it does on a required bucket that names no default: then it stays, at the
 /// head, so the reader still has to choose, and `needs_choice` says so. With
 /// one workflow left there is nothing to choose, and it starts on that one.
@@ -549,7 +549,7 @@ type LiveKey = (String, String, Option<String>, Remote);
 pub(crate) type RulesCheck =
     fn(String, String, bool, String, String) -> Pin<Box<dyn Future<Output = Vec<CommitViolation>>>>;
 
-/// v1's: load the workflow's rules, then check the candidate against them.
+/// Load the workflow's rules, then check the candidate against them.
 fn check_rules(
     namespace: String,
     id: String,
@@ -650,7 +650,7 @@ fn CommitScreen(
     let menu = HeaderMenu::new(page, goto, uninstall);
     menu.hold_through_read();
 
-    // ── Live validation, v1's ──
+    // ── Live validation ──
     let workflow_id = Memo::new(move |_| match draft.workflow.get() {
         WorkflowIntent::Named(id) => Some(id),
         _ => None,
@@ -2353,8 +2353,8 @@ mod tests {
         }
     }
 
-    /// A required bucket with one workflow and no default: v1 starts on the
-    /// greyed `None`; here the one workflow is the start, so it can run.
+    /// A required bucket with one workflow and no default: the view starts on
+    /// the greyed `None`; here the one workflow is the start, so it can run.
     #[test]
     fn the_only_workflow_of_a_required_bucket_is_the_start() {
         let (options, initial, needs_choice) = workflow_choices(&available(

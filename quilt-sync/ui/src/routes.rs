@@ -23,8 +23,7 @@ use quilt_uri::S3PackageUri;
 /// every link to this screen has always carried.
 ///
 /// The `[Get latest]` and `[Choose S3 bucket]` queue actions land here too,
-/// because neither has a page of its own — v1 puts `Pull` in this page's status
-/// banner and `SetRemote` in its toolbar.
+/// because neither has a page of its own: this page offers both.
 pub fn package_page_href(namespace: &Namespace) -> String {
     let namespace = namespace.to_string();
     let namespace = urlencoding::encode(&namespace);
@@ -95,8 +94,8 @@ pub struct RevisionMismatch {
 }
 
 impl RevisionMismatch {
-    /// `mismatch` alone decides. A missing `mrbucket` reads as empty, as v1
-    /// has always read it, so the lookup fails and the band shows the hash.
+    /// `mismatch` alone decides. A missing `mrbucket` reads as empty, so the
+    /// lookup fails and the band shows the hash.
     fn from_query(query: &Query) -> Option<Self> {
         Some(Self {
             hash: query.get("mismatch")?,
@@ -436,8 +435,7 @@ mod tests {
     }
 
     /// What the address carries is what is read back: `mismatch` alone
-    /// decides, and a missing bucket reads as empty, as v1 has always read
-    /// it. In the browser, because [`Query`] parses through `URLSearchParams`.
+    /// decides, and a missing bucket reads as empty. In the browser, because [`Query`] parses through `URLSearchParams`.
     #[wasm_bindgen_test::wasm_bindgen_test]
     fn the_query_reads_back_what_was_carried() {
         let href = package_page_href(&ns("org/pkg"));

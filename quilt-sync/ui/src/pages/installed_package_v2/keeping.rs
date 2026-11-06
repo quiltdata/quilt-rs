@@ -565,8 +565,7 @@ mod tests {
     }
 
     /// Under individual-file scope the next revision can add a file and
-    /// falsify any promise about later files (v1's
-    /// `the_complete_caption_promises_nothing_about_later_files`).
+    /// falsify any promise about later files.
     #[test]
     fn only_the_whole_package_promises_later_files() {
         assert_eq!(

@@ -177,7 +177,7 @@ mod tests {
         el
     }
 
-    /// The rules v1's relay keeps: one bar, Refresh disabled, the failure
+    /// The relay's rules: one bar, Refresh disabled, the failure
     /// drawn inside the same frame.
     #[wasm_bindgen_test]
     async fn the_relay_draws_one_frame_with_refresh_disabled() {

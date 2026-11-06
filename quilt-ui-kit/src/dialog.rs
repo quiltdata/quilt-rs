@@ -1,12 +1,10 @@
 //! A modal, on the native `<dialog>` element.
 //!
-//! # It replaces four hand-rolled overlays
+//! # Why not a hand-rolled overlay
 //!
-//! v1 has the same modal written four times — `set_remote_popup`, `ignore_popup`,
-//! `workflow_select`, and the create-package form inside `installed_packages_list`. Each
-//! is a `div.popup-overlay` with a click-outside handler, and **none of them traps focus,
-//! handles Escape, or escapes its parent's `overflow`**. Tab out of one and you are
-//! tabbing through the page behind it.
+//! A `div` overlay with a click-outside handler **does not trap focus, handle Escape, or
+//! escape its parent's `overflow`**. Tab out of one and you are tabbing through the page
+//! behind it.
 //!
 //! `<dialog>` + `showModal()` gives all three from the platform: the top layer (so no
 //! `z-index` and no clipping), a focus trap, Escape, and `::backdrop` to style. `WebKitGTK`
@@ -33,8 +31,7 @@
 //!
 //! # The backdrop does not close it
 //!
-//! Deliberately unlike v1, whose overlay closed on any outside click. Every one of these
-//! dialogs contains a form, and a stray click discarding typed input is a bad trade for
+//! Every one of these dialogs contains a form, and a stray click discarding typed input is a bad trade for
 //! saving a movement to Cancel. Escape still closes — that is native and expected — and
 //! there is always an explicit Cancel.
 

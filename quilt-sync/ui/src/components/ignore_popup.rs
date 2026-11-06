@@ -46,7 +46,6 @@ pub fn IgnorePopup(
     /// A page's one-command lock. Given one, the popup does not add a pattern
     /// while another command holds it, and holds it while its own write runs,
     /// so `.quiltignore` never changes under a command writing the same tree.
-    /// v1 and the commit page pass none.
     #[prop(optional)]
     lock: Option<RwSignal<bool>>,
 ) -> impl IntoView {
@@ -280,7 +279,7 @@ pub fn UnignorePopup(
     on_close: impl Fn() + Clone + 'static,
     /// A page's one-command lock, as [`IgnorePopup`] takes it: given one, the
     /// popup does not write while another command holds it, and holds it while
-    /// its own write runs. v1 and the commit page pass none.
+    /// its own write runs.
     #[prop(optional)]
     lock: Option<RwSignal<bool>>,
 ) -> impl IntoView {

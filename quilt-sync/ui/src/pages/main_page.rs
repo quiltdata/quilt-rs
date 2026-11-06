@@ -386,8 +386,7 @@ fn record_refresh(
 ///
 /// What the appbar's Refresh cannot do: that notifies the page's trigger and
 /// reloads every payload. This re-fires only the heavy-phase calls a cause names,
-/// which is the affordance v1 had per row and this design moved to the cause
-/// (`gallery/unchecked.rs`).
+/// so the affordance sits on the cause rather than on each row.
 ///
 /// The rows are looked up BEFORE the counter is raised, so a namespace with no row
 /// cannot leave `outstanding` permanently above zero and the queue silent forever
@@ -913,7 +912,7 @@ fn files_view(
                         }
                             .into_any()
                     }
-                    // A missing session or setup goes where v1 sends it.
+                    // A missing session or setup goes to sign-in or setup.
                     Err(err) if first_load.redirect(&err) => ().into_any(),
                     Err(err) => {
                         web_sys::console::error_1(
@@ -929,8 +928,8 @@ fn files_view(
     .into_any()
 }
 
-/// Whether a failed read may still send the reader to sign-in or setup, as
-/// v1 does: only while the page has drawn no answer. After that the reader
+/// Whether a failed read may still send the reader to sign-in or setup: only
+/// while the page has drawn no answer. After that the reader
 /// may be reading or working, and a failed re-read is reported in place.
 #[derive(Clone, Copy)]
 struct FirstLoad {
@@ -1137,7 +1136,7 @@ fn MainPageRegions(
                             view! { <accounts::AccountsBody data=data refresh=reload /> }
                                 .into_any()
                         }
-                        // A missing session or setup goes where v1 sends it.
+                        // A missing session or setup goes to sign-in or setup.
                         Err(err) if first_load.redirect(&err) => ().into_any(),
                         Err(err) => {
                             // Logged once, here. The card says it could not read:
@@ -1446,7 +1445,7 @@ fn MainPageRegions(
                                 .into_any()
                         })
                     }
-                    // A missing session or setup goes where v1 sends it.
+                    // A missing session or setup goes to sign-in or setup.
                     Err(err) if first_load.redirect(&err) => ().into_any(),
                     Err(err) => {
                         web_sys::console::error_1(
@@ -1594,8 +1593,8 @@ pub(crate) fn link_handler_message(handlers: &[ForeignHandler]) -> String {
 /// rather than rebuilt with a payload.
 ///
 /// The page read this drives is the one the list rows AND the attention queue are
-/// derived from, so a row cannot be patched in place the way v1 patches its own
-/// (`installed_packages_list.rs:427-442`) — the queue would keep the old cause.
+/// derived from, so a row cannot be patched in place: the queue would keep the
+/// old cause.
 #[component]
 fn PackageStatusListener(reload: Trigger) -> impl IntoView {
     let watch = StatusWatch::new(reload);
@@ -3715,8 +3714,7 @@ mod tests {
     }
 
     /// A fresh app with no data folder: the reads say so, and the page goes to
-    /// `/setup`, replacing its entry, as v1's does, instead of drawing two
-    /// failures.
+    /// `/setup`, replacing its entry, instead of drawing two failures.
     #[wasm_bindgen_test]
     async fn reads_that_need_setup_go_to_setup() {
         let window = web_sys::window().unwrap();

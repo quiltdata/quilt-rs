@@ -138,7 +138,7 @@ pub fn PageScene() -> impl IntoView {
             title="Scene · the appbar alone"
             note="The two chrome buttons on the brand background, with nothing else on \
                   the bar. Buttons with an icon and a label; the bar removes their frame \
-                  (see PageLayout), like v1's link buttons. Hover and focus them here: the \
+                  (see PageLayout). Hover and focus them here: the \
                   focus ring uses the bar's text colour. Refresh is the app's own \
                   refresh_button, and both glyphs come from the kit's icons.rs."
         >

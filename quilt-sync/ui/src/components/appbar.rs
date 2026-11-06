@@ -1,9 +1,7 @@
-//! Refresh and Settings: the controls on every redesigned appbar, v1 routes
-//! included.
+//! Refresh and Settings: the controls on every appbar.
 //!
-//! Refresh takes its behaviour from the caller: a v2 page passes its refetch and
-//! in-flight state, and the v1 `Layout` passes a window reload — or, on a transit
-//! screen, draws it disabled.
+//! Refresh takes its behaviour from the caller: a page passes its refetch and
+//! in-flight state, or, on a transit screen, draws it disabled.
 
 use leptos::prelude::*;
 use leptos_router::NavigateOptions;

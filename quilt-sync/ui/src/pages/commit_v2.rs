@@ -390,7 +390,7 @@ pub fn WorkflowField(
     .into_any()
 }
 
-/// The metadata: a [`JsonDisplay`] preview until `Edit` swaps in v1's editor,
+/// The metadata: a [`JsonDisplay`] preview until `Edit` swaps in the JSON editor,
 /// the one tall control on the page. Nothing above the editor may set
 /// `overflow`, or its context menu is cropped. A failed check opens it.
 #[component]
@@ -621,7 +621,7 @@ fn keyed_height(height: i32, key: &str) -> Option<i32> {
     }
 }
 
-/// The metadata control: v1's editor over its fallback textarea, with a grip
+/// The metadata control: the JSON editor over its fallback textarea, with a grip
 /// under it that drags it taller. Not CSS `resize`: that needs `overflow` on
 /// the box, which crops the editor's context menu.
 fn metadata_editor(
