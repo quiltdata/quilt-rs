@@ -2,10 +2,16 @@ use leptos::prelude::*;
 use quilt_uri::S3PackageUri;
 
 use crate::commands;
-use crate::components::Notification;
 use crate::components::buttons;
 use crate::kit::{Choice, ChoiceGroup};
 use crate::util::{format_size, thousands};
+
+/// What a popup's command reported, for the page that opened it to show.
+#[derive(Clone)]
+pub enum Notification {
+    Success(String),
+    Error(String),
+}
 
 // ── Ignore popup ──
 

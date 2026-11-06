@@ -88,17 +88,6 @@ pub fn ErrorV2() -> impl IntoView {
     view! { <ErrorScreen read=read_error /> }
 }
 
-/// What `/error` draws while it reads which page it is, for a v2 reader: the
-/// page's own first paint.
-#[component]
-pub fn ErrorV2Skeleton(actions: AnyView) -> impl IntoView {
-    view! {
-        <PageLayout heading="Error" banner=().into_any() actions=actions>
-            <ErrorSlateSkeleton />
-        </PageLayout>
-    }
-}
-
 /// What an unknown address renders in the v2 design. It reads
 /// nothing, so it is also its own first paint.
 #[component]
@@ -288,9 +277,7 @@ mod tests {
         let el = mount(|| {
             view! {
                 <Router>
-                    <Suspense fallback=|| ()>
-                        <ErrorScreen read=answered />
-                    </Suspense>
+                    <ErrorScreen read=answered />
                 </Router>
             }
         });

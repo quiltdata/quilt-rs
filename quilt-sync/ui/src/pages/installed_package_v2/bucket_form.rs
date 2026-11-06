@@ -29,9 +29,8 @@ use leptos::reactive::signal::ArcRwSignal;
 
 use crate::commands;
 use crate::commands::{CommitWorkflows, WorkflowIntent};
-use crate::components::build_workflow_view;
-use crate::components::workflow_select::{WorkflowView, WorkflowViewKind};
 use crate::kit::{BannerVariant, FormControl, FormDialog, Naming, Select, Submit, TextInput};
+use crate::pages::workflow::{WorkflowView, WorkflowViewKind, build_workflow_view};
 use crate::util;
 
 use super::{BucketDraft, Outcome, holding};

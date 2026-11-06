@@ -80,9 +80,8 @@ pub fn PageLayout(
     let notice = NodeRef::new();
     publish_height(notice, "--q-banner-height");
     view! {
-        // `data-v2-page` marks the surface the v2 palette paints, which is what
-        // `color-scheme` keys on: `qui-v2` marks a READER who opted in, and that
-        // reader still visits v1's pages.
+        // `data-v2-page` marks the surface the theme's palette paints, which is
+        // what `color-scheme` keys on, so the document root stays light.
         <div class=style::root data-v2-page data-page-scroll=page_scroll.then_some("")>
             <h1 data-sr-only>{heading}</h1>
             <Appbar actions=actions replace=replace />

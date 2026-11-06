@@ -13,10 +13,9 @@ use crate::engine;
 use crate::engine::Connection;
 use crate::kit;
 use crate::kit::{Activity, ActivityKind, Banner, BannerVariant, Blankslate};
-use crate::theme;
 
 /// A bar once the engine refused the page; while it reconnects, the activity
-/// line says so instead, or in the classic design a bar too.
+/// line says so instead.
 ///
 /// Over the top of the page rather than above it: every page fills the window
 /// exactly, so a bar that pushed it down would cut off its bottom.
@@ -37,15 +36,6 @@ pub fn ConnectionBanner() -> impl IntoView {
         Connection::Rejected(message) => {
             Some(view! { <Banner variant=BannerVariant::Critical>{message}</Banner> }.into_any())
         }
-        // The classic design's appbar has no activity line.
-        Connection::Lost if !theme::is_v2() => Some(
-            view! {
-                <Banner variant=BannerVariant::Warning>
-                    "Lost the connection to QuiltSync. Reconnecting…"
-                </Banner>
-            }
-            .into_any(),
-        ),
         Connection::Connecting | Connection::Open(_) | Connection::Lost => None,
     };
     view! { <div style="position:fixed;top:0;left:0;right:0;z-index:1000">{bar}</div> }
@@ -310,11 +300,9 @@ mod tests {
     }
 
     /// While the page reconnects the activity line says so, over a stale
-    /// autopull entry, and stops saying so once back; the classic design, with
-    /// no line, shows a bar.
+    /// autopull entry, and stops saying so once back.
     #[wasm_bindgen_test]
     async fn a_lost_connection_shows_in_the_activity_line_until_the_engine_is_back() {
-        crate::theme::set_v2(true);
         let engine = FakeEngine::install();
         let activities = kit::Activities::new();
         let pulling = "Getting latest for team/pkg\u{2026}";
@@ -348,11 +336,5 @@ mod tests {
         engine.hello();
         sleep_ms(0).await;
         assert_eq!(line.text_content().unwrap_or_default(), pulling);
-
-        crate::theme::set_v2(false);
-        engine.close();
-        sleep_ms(0).await;
-        let regions = root.query_selector_all("[role=status]").unwrap().length();
-        assert_eq!(regions, 2, "the line, and the classic bar");
     }
 }

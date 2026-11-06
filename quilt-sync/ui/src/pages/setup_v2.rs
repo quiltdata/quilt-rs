@@ -13,8 +13,7 @@ use leptos_router::hooks::use_navigate;
 use crate::commands::{self, SetupData};
 use crate::engine;
 use crate::kit::{
-    Button, ButtonVariant, Card, FormControl, LoadFailure, PageLayout, SkeletonBox, TextInput,
-    readable,
+    Button, ButtonVariant, Card, FormControl, LoadFailure, SkeletonBox, TextInput, readable,
 };
 
 use super::path_field::PathField;
@@ -119,17 +118,6 @@ pub fn SetupCardSkeleton() -> impl IntoView {
 #[component]
 pub fn SetupV2() -> impl IntoView {
     view! { <SetupScreen read=read_setup /> }
-}
-
-/// What `/setup` draws while it reads which page it is, for a v2 reader: the
-/// page's own first paint.
-#[component]
-pub fn SetupV2Skeleton(actions: AnyView) -> impl IntoView {
-    view! {
-        <PageLayout heading="Set up QuiltSync" banner=().into_any() actions=actions>
-            <SetupCardSkeleton />
-        </PageLayout>
-    }
 }
 
 fn read_setup(_: String) -> std::pin::Pin<Box<dyn Future<Output = Result<SetupData, String>>>> {
@@ -281,9 +269,7 @@ mod tests {
         let el = mount(move || {
             view! {
                 <Router>
-                    <Suspense fallback=|| ()>
-                        <SetupScreen read=read />
-                    </Suspense>
+                    <SetupScreen read=read />
                 </Router>
             }
         });

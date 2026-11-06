@@ -466,9 +466,8 @@ impl IncomingAnswer {
 ///
 /// Above the rebuild line, for `Wiring`'s reason: every re-read rebuilds the
 /// header, and an answer held there would go back to `checking…` on each of
-/// the watcher's reports. Signals, not a resource, for the commit page's
-/// reason: a resource read under `ByDesign`'s `Suspense` would put the loading
-/// frame back over the page on every rerun.
+/// the watcher's reports. Signals, not a resource, for the scaffold's reason
+/// (`v2_page`'s rule 3).
 ///
 /// It runs again after every read that shows the package behind or in
 /// conflict, since a local edit can make a conflict while the newer revision
@@ -2786,9 +2785,8 @@ mod tests {
         screen_resolving(address, read, ResolveCommands::app()).await
     }
 
-    /// [`screen_at`], mounted as `/installed-package` mounts it: under
-    /// `ByDesign`'s `Suspense`, whose fallback is the loading frame.
-    async fn suspended_screen_at(address: &str, read: PageRead) -> web_sys::Element {
+    /// [`screen_at`], mounted as `/installed-package` mounts it.
+    async fn routed_screen_at(address: &str, read: PageRead) -> web_sys::Element {
         crate::test_support::unmount_earlier();
         READS.with(|r| r.set(0));
         go_to(address);
@@ -2800,14 +2798,12 @@ mod tests {
                             path=path!("/installed-package")
                             view=move || {
                                 view! {
-                                    <Suspense fallback=|| view! { <p data-fallback>"loading"</p> }>
-                                        <PackageScreen
-                                            read=read
-                                            pull=never_pulls
-                                            resolving=ResolveCommands::app()
-                                            revision_message=mismatch_band::app_revision_message
-                                        />
-                                    </Suspense>
+                                    <PackageScreen
+                                        read=read
+                                        pull=never_pulls
+                                        resolving=ResolveCommands::app()
+                                        revision_message=mismatch_band::app_revision_message
+                                    />
                                 }
                             }
                         />
@@ -3028,38 +3024,9 @@ mod tests {
         assert!(row(), "still listed; markup was {}", el.inner_html());
     }
 
-    /// Mounted as the route mounts it, a re-read still in flight leaves the
-    /// page up: `ByDesign`'s `Suspense` must not put its loading frame back.
-    #[wasm_bindgen_test]
-    async fn a_re_read_under_by_design_keeps_the_page() {
-        let el = suspended_screen_at(PLAIN, answers_once).await;
-        let row = || {
-            el.query_selector("section[aria-label='Files'] [data-full-name='a.csv']")
-                .unwrap()
-        };
-        assert!(row().is_some(), "listed; markup was {}", el.inner_html());
-
-        button_saying(&el, "Refresh").click();
-        sleep_ms(50).await;
-
-        assert_eq!(READS.with(std::cell::Cell::get), 2, "the page re-read");
-        assert!(
-            el.query_selector("[data-fallback]").unwrap().is_none(),
-            "the loading frame came back; markup was {}",
-            el.inner_html()
-        );
-        assert!(
-            row().is_some(),
-            "still listed; markup was {}",
-            el.inner_html()
-        );
-    }
-
-    /// A re-read that answers what is already on screen changes nothing on
-    /// it. The watcher's first event after the page opens is such a re-read.
     #[wasm_bindgen_test]
     async fn an_unchanged_re_read_rebuilds_nothing() {
-        let el = suspended_screen_at(PLAIN, settled_read).await;
+        let el = routed_screen_at(PLAIN, settled_read).await;
         let row = el
             .query_selector("section[aria-label='Files'] [data-full-name='a.csv']")
             .unwrap()
@@ -3566,9 +3533,9 @@ mod tests {
         }
     }
 
-    /// The page as `/installed-package` mounts it, under `ByDesign`'s
-    /// `Suspense`, reading `PAGE` and checking through `PULLS`.
-    async fn suspended_screen(page: commands::PackagePageData) -> web_sys::Element {
+    /// The page as `/installed-package` mounts it, reading `PAGE` and checking
+    /// through `PULLS`.
+    async fn routed_screen(page: commands::PackagePageData) -> web_sys::Element {
         crate::test_support::unmount_earlier();
         READS.with(|r| r.set(0));
         PULLS_ASKED.with(|n| n.set(0));
@@ -3582,14 +3549,12 @@ mod tests {
                             path=path!("/installed-package")
                             view=move || {
                                 view! {
-                                    <Suspense fallback=|| view! { <p data-fallback>"loading"</p> }>
-                                        <PackageScreen
-                                            read=scripted_read
-                                            pull=scripted_pull
-                                            resolving=ResolveCommands::app()
-                                            revision_message=mismatch_band::app_revision_message
-                                        />
-                                    </Suspense>
+                                    <PackageScreen
+                                        read=scripted_read
+                                        pull=scripted_pull
+                                        resolving=ResolveCommands::app()
+                                        revision_message=mismatch_band::app_revision_message
+                                    />
                                 }
                             }
                         />
@@ -3653,21 +3618,13 @@ mod tests {
             .contains("Conflict")
     }
 
-    fn no_fallback(el: &web_sys::Element) {
-        assert!(
-            el.query_selector("[data-fallback]").unwrap().is_none(),
-            "the loading frame came back; markup was {}",
-            el.inner_html()
-        );
-    }
-
     /// The watcher's news re-reads the page, which runs the check again; the
     /// answer for the same package and revision stays up while it runs, so
     /// the summary does not flash to `checking…`, and the page stays.
     #[wasm_bindgen_test]
     async fn a_re_read_with_the_same_newer_revision_keeps_the_answer() {
         script(vec![(0, Ok(adds(3))), (150, Ok(adds(3)))]);
-        let el = suspended_screen(behind("aaa")).await;
+        let el = routed_screen(behind("aaa")).await;
         assert_eq!(
             summary(&el).as_deref(),
             Some("3 file changes"),
@@ -3676,14 +3633,12 @@ mod tests {
         );
 
         re_read(&el, behind("aaa")).await;
-        no_fallback(&el);
         assert_eq!(READS.with(std::cell::Cell::get), 2, "the page re-read");
         assert_eq!(pulls_asked(), 2, "and checked again");
         assert_eq!(summary(&el).as_deref(), Some("3 file changes"));
         assert!(!text(&el).contains("checking"), "no flash: {}", text(&el));
 
         sleep_ms(200).await;
-        no_fallback(&el);
         assert_eq!(summary(&el).as_deref(), Some("3 file changes"));
     }
 
@@ -3694,7 +3649,7 @@ mod tests {
     #[wasm_bindgen_test]
     async fn getting_the_latest_drops_the_summary() {
         script(vec![(0, Ok(adds(3)))]);
-        let el = suspended_screen(behind("aaa")).await;
+        let el = routed_screen(behind("aaa")).await;
         assert_eq!(summary(&el).as_deref(), Some("3 file changes"));
 
         let mut settled = page_data();
@@ -3738,7 +3693,7 @@ mod tests {
     #[wasm_bindgen_test]
     async fn a_moved_newer_revision_drops_the_kept_answer() {
         script(vec![(0, Ok(adds_on(3, "n1")))]);
-        let el = suspended_screen(behind_on("aaa", Some("n1"))).await;
+        let el = routed_screen(behind_on("aaa", Some("n1"))).await;
         assert_eq!(summary(&el).as_deref(), Some("3 file changes"));
 
         // The same newer revision: kept while the rerun runs.
@@ -3776,7 +3731,7 @@ mod tests {
     async fn an_answer_is_keyed_on_the_revision_it_read() {
         // The remote moved between the read and the dry run.
         script(vec![(0, Ok(adds_on(3, "n2")))]);
-        let el = suspended_screen(behind_on("aaa", Some("n1"))).await;
+        let el = routed_screen(behind_on("aaa", Some("n1"))).await;
         assert_eq!(summary(&el).as_deref(), Some("3 file changes"));
 
         script(vec![(120, Ok(adds_on(3, "n2")))]);
@@ -3866,13 +3821,12 @@ mod tests {
                 }),
             ),
         ]);
-        let el = suspended_screen(behind("aaa")).await;
+        let el = routed_screen(behind("aaa")).await;
         element_saying(&el, "Newer revision available");
         assert!(!row_marked(&el, "a.csv"));
 
         re_read(&el, behind("aaa")).await;
         sleep_ms(30).await;
-        no_fallback(&el);
         element_saying(&el, "conflict in 1 file");
         button_saying(&el, "Publish");
         assert_eq!(summary(&el).as_deref(), Some("1 file change"));
@@ -3907,7 +3861,7 @@ mod tests {
                 latest_hash: Some("feedbeef".to_string()),
             }),
         )]);
-        let el = suspended_screen(behind("aaa")).await;
+        let el = routed_screen(behind("aaa")).await;
         element_saying(&el, "Newer revision available");
         assert!(!row_marked(&el, "a.csv"));
 
@@ -3917,7 +3871,6 @@ mod tests {
             files: vec!["a.csv".to_string()],
         };
         re_read(&el, recorded).await;
-        no_fallback(&el);
         assert_eq!(pulls_asked(), 2, "the check runs again");
         assert_eq!(summary(&el).as_deref(), Some("1 file change"), "kept");
         element_saying(&el, "conflict in 1 file");
@@ -3958,7 +3911,7 @@ mod tests {
         recorded.header.state = crate::kit::PackageState::PullConflict {
             files: vec!["a.csv".to_string()],
         };
-        let el = suspended_screen(recorded).await;
+        let el = routed_screen(recorded).await;
         element_saying(&el, "conflict in 1 file");
         assert!(
             text(&el).contains("checking"),
@@ -3996,12 +3949,11 @@ mod tests {
                 latest_hash: Some("feedbeef".to_string()),
             }),
         )]);
-        let el = suspended_screen(behind("aaa")).await;
+        let el = routed_screen(behind("aaa")).await;
         element_saying(&el, "conflict in 1 file");
         assert!(row_marked(&el, "a.csv"));
 
         re_read(&el, behind("aaa")).await;
-        no_fallback(&el);
         assert_eq!(pulls_asked(), 2, "the check runs again");
         element_saying(&el, "Newer revision available");
         button_saying(&el, "Get latest");
@@ -4032,7 +3984,7 @@ mod tests {
     #[wasm_bindgen_test]
     async fn a_failed_check_offers_try_again() {
         script(vec![(0, Err("offline".to_string())), (0, Ok(adds(2)))]);
-        let el = suspended_screen(behind("aaa")).await;
+        let el = routed_screen(behind("aaa")).await;
         assert!(
             text(&el).contains("couldn't check"),
             "markup was {}",
@@ -4052,7 +4004,7 @@ mod tests {
     #[wasm_bindgen_test]
     async fn a_late_answer_from_a_replaced_check_is_dropped() {
         script(vec![(0, Ok(adds(3))), (200, Ok(adds(5))), (0, Ok(adds(1)))]);
-        let el = suspended_screen(behind("aaa")).await;
+        let el = routed_screen(behind("aaa")).await;
         assert_eq!(summary(&el).as_deref(), Some("3 file changes"));
 
         re_read(&el, behind("aaa")).await;
@@ -4099,7 +4051,7 @@ mod tests {
     #[wasm_bindgen_test]
     async fn a_pinned_popover_stays_open_across_a_re_read() {
         script(vec![(0, Ok(adds(3))), (0, Ok(adds(3)))]);
-        let el = suspended_screen(behind("aaa")).await;
+        let el = routed_screen(behind("aaa")).await;
         assert_eq!(summary(&el).as_deref(), Some("3 file changes"));
         pin(&el);
         sleep_ms(30).await;
@@ -4111,7 +4063,6 @@ mod tests {
         }
         re_read(&el, edited).await;
         sleep_ms(30).await;
-        no_fallback(&el);
         assert_eq!(pulls_asked(), 2, "the re-read checked again");
         assert_eq!(summary(&el).as_deref(), Some("3 file changes"));
         assert!(popover_open(&el), "the re-read closed a pinned popover");
@@ -4139,7 +4090,7 @@ mod tests {
                 }),
             ),
         ]);
-        let el = suspended_screen(behind("aaa")).await;
+        let el = routed_screen(behind("aaa")).await;
         pin(&el);
         sleep_ms(30).await;
         assert!(popover_open(&el), "the click pins it");
@@ -4154,7 +4105,7 @@ mod tests {
     #[wasm_bindgen_test]
     async fn a_pin_does_not_follow_to_another_package() {
         script(vec![(0, Ok(adds(3))), (0, Ok(adds(2)))]);
-        let el = suspended_screen(behind("aaa")).await;
+        let el = routed_screen(behind("aaa")).await;
         pin(&el);
         sleep_ms(30).await;
         assert!(popover_open(&el));

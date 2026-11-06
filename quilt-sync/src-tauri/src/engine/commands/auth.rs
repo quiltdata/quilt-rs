@@ -335,34 +335,11 @@ async fn observe_role(m: &impl QuiltModel, host: &Host) -> Result<RoleInfo, Erro
 ///
 /// Two caches, and both have to move together: the [`RoleCache`] the roster
 /// quotes back at the user, and the S3 clients still signing as the role it
-/// replaced. Every caller that learns a role from the registry — the explicit
-/// switch and the read paths that can observe an out-of-band one — goes
-/// through here, so a new caller cannot land with only one of the two.
+/// replaced. A caller that learns a role from the registry goes through here,
+/// so it cannot land with only one of the two.
 async fn adopt_role(m: &impl QuiltModel, roles: &RoleCache, host: &Host, info: RoleInfo) {
     roles.set(host, info).await;
     m.clear_remote_client_cache(Some(host.clone())).await;
-}
-
-pub(super) async fn get_roles_command(
-    m: &impl QuiltModel,
-    roles: &RoleCache,
-    host: &str,
-) -> Result<RolesData, Error> {
-    let host = Host::from_str(host)?;
-    // Settings is where an out-of-band switch usually surfaces, so this is a
-    // deliberately uncached read — and therefore an observation that has to
-    // be followed through. See [`observe_role`].
-    let info = m.refresh_roles(&host).await?;
-    adopt_role(m, roles, &host, info.clone()).await;
-    Ok(RolesData::from(info))
-}
-
-pub async fn get_roles(s: &Services, host: String) -> Result<RolesData, String> {
-    let m = &*s.model;
-    let roles = &*s.roles;
-    get_roles_command(m, roles, &host)
-        .await
-        .map_err(|e| e.to_string())
 }
 
 /// Switch the primary role, then make it take effect locally.
@@ -958,40 +935,6 @@ mod tests {
         );
     }
 
-    /// `get_roles` hands the stack's answer to the UI unchanged, so the
-    /// selector opens on the role that is actually active.
-    #[tokio::test]
-    async fn get_roles_returns_the_active_role_and_the_choices() {
-        let mut model = MockQuiltModel::new();
-        model.expect_refresh_roles().returning(|_| {
-            Ok(RoleInfo {
-                current: "ReadWrite".to_string(),
-                available: vec!["ReadWrite".to_string(), "ReadOnly".to_string()],
-            })
-        });
-        model.expect_clear_remote_client_cache().returning(|_| ());
-
-        let data = get_roles_command(&model, &RoleCache::default(), "quilt.test")
-            .await
-            .expect("roles");
-
-        assert_eq!(data.current, "ReadWrite");
-        assert_eq!(data.available, vec!["ReadWrite", "ReadOnly"]);
-    }
-
-    /// An unparseable host must fail before the remote call, so a typo
-    /// surfaces as an error rather than as an empty role list.
-    #[tokio::test]
-    async fn get_roles_rejects_an_unparseable_host() {
-        let mut model = MockQuiltModel::new();
-        model.expect_refresh_roles().never();
-        model.expect_clear_remote_client_cache().never();
-
-        let result = get_roles_command(&model, &RoleCache::default(), "").await;
-
-        assert!(result.is_err(), "an empty host is not a queryable host");
-    }
-
     /// An unparseable host must fail before any remote call — `Host` is the
     /// cache key, so a switch we cannot key could never be flushed.
     #[tokio::test]
@@ -1037,23 +980,16 @@ mod tests {
     }
 
     // ── Login data tests ──
-    // (Adapted from pages/login.rs: test_login_page_rendering)
 
     #[tokio::test]
     async fn test_get_login_data() -> Result<(), String> {
-        let data = get_login_data(
-            "quilt.test".to_string(),
-            "/installed-packages-list".to_string(),
-        )
-        .await?;
+        let data = get_login_data("quilt.test".to_string(), "/settings".to_string()).await?;
 
         assert_eq!(data.host, "quilt.test");
-        assert_eq!(data.back, "/installed-packages-list");
+        assert_eq!(data.back, "/settings");
         assert_eq!(data.catalog_url, "https://quilt.test/code");
         Ok(())
     }
-
-    // (Adapted from pages/login.rs: test_login_oauth_button_without_back)
 
     #[tokio::test]
     async fn test_get_login_data_empty_back() -> Result<(), String> {

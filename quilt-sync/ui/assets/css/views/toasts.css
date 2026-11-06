@@ -173,59 +173,46 @@
   background: var(--q-ui-palette-action-hover);
 }
 
-/* ── The v2 palette, for a reader in the v2 design ───────────────────────────
-   The stack is mounted outside the router, so it draws over both v1 and v2
-   pages. v1's stylesheets read only `--q-ui-*`, which no theme switches, so v1
-   pages are always light. A toast that always followed the OS theme would be
-   dark over a white page for every v1 reader with a dark desktop.
-
-   `.qui-v2` is set on the root from the reader's design setting
-   (`theme::set_v2`, fed by `main.rs`'s `design_preview`), so these rules apply
-   whenever the v2 design is on.
-
-   Known limitation: with the flag on, /settings, /commit, /merge and the
-   package pages are still v1-styled and light, so a toast shown on one of them
-   is themed over an unthemed page. The rules follow the flag rather than the
-   current page on purpose: the flag is the reader's choice, and toasts are
-   mostly read on the main page. The mismatch goes away when those pages get v2
-   styles. */
-.qui-v2 .qui-toast {
+/* ── The theme's palette ──────────────────────────────────────────────────────
+   The rules above are the layout; these colour the stack in the theme's
+   tokens, so it follows the OS theme as the pages do. */
+.qui-toast {
   color: var(--q-fgColor-default);
   background: var(--q-bgColor-default);
   border-left-color: var(--q-bgColor-accent-emphasis);
 }
 
-.qui-v2 .qui-toast.success {
+.qui-toast.success {
   border-left-color: var(--q-fgColor-success);
 }
 
-.qui-v2 .qui-toast.warning {
+.qui-toast.warning {
   border-left-color: var(--q-fgColor-attention);
 }
 
-.qui-v2 .qui-toast.error {
+.qui-toast.error {
   border-left-color: var(--q-fgColor-danger);
 }
 
 /* The muted half: a group's heading, the "and N more" remainder, and the close
    glyph until it is hovered. */
-.qui-v2 .qui-toast .group .heading,
-.qui-v2 .qui-toast .items li.more,
-.qui-v2 .qui-toast .close {
+.qui-toast .group .heading,
+.qui-toast .items li.more,
+.qui-toast .close {
   color: var(--q-fgColor-muted);
 }
 
-.qui-v2 .qui-toast .close:hover {
+.qui-toast .close:hover {
   color: var(--q-fgColor-default);
   background: var(--q-bgColor-neutral-muted);
 }
 
-.qui-v2 .qui-toasts .dismiss-all {
+.qui-toasts .dismiss-all {
   color: var(--q-fgColor-default);
   background: var(--q-bgColor-default);
   border-color: var(--q-borderColor-default);
 }
 
-.qui-v2 .qui-toasts .dismiss-all:hover {
+.qui-toasts .dismiss-all:hover {
   background: var(--q-bgColor-neutral-muted);
 }

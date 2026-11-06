@@ -23,23 +23,3 @@ body {
   overflow: hidden; /* it's a weird bug */
   position: relative;
 }
-
-.layout-appbar {
-  position: sticky;
-  top: 0;
-  z-index: var(--q-ui-z-index-appbar);
-}
-
-.layout-toolbar {
-  position: sticky;
-  top: 64px;
-  z-index: var(--q-ui-z-index-appbar);
-}
-
-/* The kit appbar in v1's slot: 64px, because `.layout-toolbar` sticks at
- * `top: 64px`, and v1's container, to line up with the breadcrumbs. */
-.layout-appbar-v2 {
-  --q-appbar-min-height: var(--q-ui-size-8);
-  --q-appbar-container: var(--q-ui-container-size);
-  --q-appbar-gutter: var(--q-ui-size-4);
-}

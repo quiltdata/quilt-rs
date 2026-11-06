@@ -156,13 +156,6 @@ pub fn new_revision_href(namespace: &Namespace) -> String {
     format!("{}&focus=message", commit_href(namespace))
 }
 
-/// The merge screen for one package.
-pub fn merge_href(namespace: &Namespace) -> String {
-    let namespace = namespace.to_string();
-    let namespace = urlencoding::encode(&namespace);
-    format!("/merge?namespace={namespace}")
-}
-
 /// A page's query string, each value decoded once.
 ///
 /// `leptos_router`'s `use_query_map` decodes each value twice: the browser's
@@ -227,7 +220,6 @@ pub fn page_title(path: &str, query: &Query) -> String {
     };
     let page = match path {
         "/commit" => Some("Commit"),
-        "/merge" => Some("Merge"),
         "/login" => Some("Login"),
         "/settings" => Some("Settings"),
         "/setup" => Some("Setup"),
@@ -334,7 +326,6 @@ mod tests {
             new_revision_href(&ns("org/pkg")),
             "/commit?namespace=org%2Fpkg&focus=message"
         );
-        assert_eq!(merge_href(&ns("org/pkg")), "/merge?namespace=org%2Fpkg");
     }
 
     /// The mode is the plain address plus one parameter, so leaving it is

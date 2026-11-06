@@ -50,7 +50,7 @@ use super::commit_v2::{MetadataEditorField, MetadataPreview};
 stylance::import_crate_style!(style, "src/pages/settings_v2.module.css");
 
 mod page;
-pub use page::{SettingsV2, SettingsV2Skeleton};
+pub use page::SettingsV2;
 
 /// A row that saves as it changes, so it can say it did.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,7 +59,6 @@ pub enum Saved {
     Publish,
     Watch,
     Tray,
-    DesignPreview,
     AgentTasks,
     LogLevel,
 }
@@ -1397,35 +1396,18 @@ pub fn StorageCard(
 
 // ── Experimental ──
 
-pub const DESIGN_PREVIEW_SUBLABEL: &str = "The redesigned QuiltSync.";
-
 pub const AGENT_TASKS_SUBLABEL: &str = "Shows the Agent tasks card, where you choose which \
      buckets can ask an agent on this computer to run a task. Turning it off only hides the card.";
 
-/// Opt-ins for what is still being designed. Entire-package sync is not one
-/// of them here: the v2 pages offer it whatever v1's flag says, so a row for
-/// it would change nothing a reader of this page can see.
+/// Opt-ins for what is still being designed.
 #[component]
 pub fn ExperimentalCard(
-    design_preview: RwSignal<bool>,
     agent_tasks: RwSignal<bool>,
-    /// No design choice: headless always draws the new design.
-    #[prop(optional, into)]
-    headless: Signal<bool>,
     #[prop(optional, into)] saved: Signal<Option<Saved>>,
     #[prop(optional, into)] pending: Signal<Vec<Saved>>,
 ) -> impl IntoView {
     view! {
         <Card title="Experimental">
-            <Show when=move || !headless.get()>
-                <ToggleRow
-                    label="New design"
-                    sublabel=DESIGN_PREVIEW_SUBLABEL
-                    checked=design_preview
-                    disabled=saving(pending, Saved::DesignPreview)
-                    trailing=saved_note(saved, Saved::DesignPreview)
-                />
-            </Show>
             <ToggleRow
                 label="Agent tasks"
                 sublabel=AGENT_TASKS_SUBLABEL
@@ -2460,7 +2442,7 @@ mod tests {
         assert_eq!(legend.get_bounding_client_rect().width(), 48.0);
     }
 
-    /// v2 vocabulary: no commit, push, pull or remote in the page's words.
+    /// The page's vocabulary: no commit, push, pull or remote in its words.
     #[test]
     fn no_fixed_string_uses_a_banned_word() {
         let mut all = vec![
@@ -2468,7 +2450,6 @@ mod tests {
             PUBLISHING_USE,
             GLOBAL_SCOPE_WARNING,
             TRAY_SUBLABEL,
-            DESIGN_PREVIEW_SUBLABEL,
             AGENT_TASKS_SUBLABEL,
             AGENT_TASKS_USE,
             NO_BUCKETS,

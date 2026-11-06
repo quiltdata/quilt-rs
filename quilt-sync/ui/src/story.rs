@@ -181,8 +181,6 @@ pub fn Gallery(catalog: &'static Catalog) -> impl IntoView {
     // the app from the OS, and one of them getting the root element wrong is
     // exactly the bug the shared version's doc explains.
     Effect::new(move |_| theme::set(dark.get()));
-    // A v2 reader, so v2-only rules apply — the loading frame's ground is one.
-    theme::set_v2(true);
 
     let route = RwSignal::new(Route::current(catalog));
     let handle = window_event_listener(leptos::ev::hashchange, move |_| {

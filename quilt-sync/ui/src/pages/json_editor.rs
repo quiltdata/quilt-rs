@@ -1,5 +1,4 @@
 //! The metadata editor, `vanilla-jsoneditor`, over a fallback `<textarea>`.
-//! Shared by both commit pages.
 //!
 //! The glue hides the textarea's parent on mount, so give the textarea a
 //! wrapper of its own. Ancestors with `overflow` crop the editor's menus.
@@ -11,9 +10,6 @@ use leptos::prelude::*;
 // by element identity — see the `Transition`-safety note in json-editor-glue.js.
 #[wasm_bindgen::prelude::wasm_bindgen]
 extern "C" {
-    #[wasm_bindgen(js_namespace = ["window"], js_name = "__getJsonEditorValue")]
-    fn get_json_editor_value_js(target: &web_sys::HtmlElement) -> String;
-
     #[wasm_bindgen(js_namespace = ["window"], js_name = "__createJsonEditor")]
     fn create_json_editor_js(
         target: &web_sys::HtmlElement,
@@ -33,24 +29,6 @@ fn bundle_loaded() -> bool {
     web_sys::window().is_some_and(|window| {
         js_sys::Reflect::get(&window, &"__createJsonEditor".into()).is_ok_and(|f| f.is_function())
     })
-}
-
-/// Read the committed metadata at submit: the editor's live value, or the
-/// textarea when the editor never mounted or is empty.
-pub(crate) fn get_json_editor_value(
-    editor_ref: NodeRef<html::Div>,
-    textarea_ref: NodeRef<html::Textarea>,
-) -> String {
-    if let Some(editor) = editor_ref.get_untracked().filter(|_| bundle_loaded()) {
-        let value = get_json_editor_value_js(&editor);
-        if !value.is_empty() {
-            return value;
-        }
-    }
-    textarea_ref
-        .get_untracked()
-        .map(|ta| ta.value())
-        .unwrap_or_default()
 }
 
 /// Put the cursor in the editor, if it mounted. `false` when it did not, and

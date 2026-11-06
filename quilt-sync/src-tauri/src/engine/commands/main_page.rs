@@ -550,7 +550,7 @@ async fn load_rows(
     Ok(rows)
 }
 
-async fn get_main_page_packages_from_model(
+pub(super) async fn get_main_page_packages_from_model(
     m: &impl model::QuiltModel,
     roles: &RoleCache,
     tracing: &crate::engine::telemetry::Telemetry,

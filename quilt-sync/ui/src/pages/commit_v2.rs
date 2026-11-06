@@ -41,7 +41,7 @@ use super::row_menu::{RowCommand, menu_actions};
 stylance::import_crate_style!(style, "src/pages/commit_v2.module.css");
 
 mod page;
-pub use page::{CommitV2, CommitV2Skeleton};
+pub use page::CommitV2;
 
 /// What the revision will do, which decides the primary's words.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

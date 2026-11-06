@@ -1,188 +1,94 @@
-mod base;
-pub mod browse;
-pub mod certify_latest;
-pub mod collect_logs;
-pub mod commit_and_push;
-pub mod commit_revision;
-pub mod create_local_package;
-pub mod create_new_revision;
-pub mod email_support;
-pub mod form_primary;
-pub mod form_secondary;
-pub mod free_up_space;
-pub mod go_home;
-pub mod ignore;
-pub mod log_in_with_browser;
-pub mod login;
-pub mod login_link;
-pub mod logout;
-pub mod merge;
-pub mod open;
-pub mod open_browser;
-pub mod open_dot_quilt;
-pub mod open_in_catalog;
-pub mod open_in_file_browser;
-pub mod open_logs_dir;
-pub mod publish;
-pub mod pull;
-pub mod push;
-pub mod re_login;
-pub mod refresh;
-pub mod release_notes;
-pub mod reload_page;
-pub mod remove;
-pub mod reset_local;
-pub mod reveal;
-pub mod save;
-pub mod send_to_sentry;
-pub mod set_remote;
-pub mod settings;
-pub mod submit_login;
-pub mod switch_role;
-pub mod unignore;
+//! The two buttons of the app-wide popups: the quit prompt, the update bar and
+//! the ignore popups.
 
-pub use browse::Browse;
-pub use certify_latest::CertifyLatest;
-pub use collect_logs::CollectLogs;
-pub use commit_and_push::CommitAndPush;
-pub use commit_revision::CommitRevision;
-pub use create_local_package::CreateLocalPackage;
-pub use create_new_revision::CreateNewRevision;
-pub use email_support::EmailSupport;
-pub use form_primary::FormPrimary;
-pub use form_secondary::FormSecondary;
-pub use free_up_space::FreeUpSpace;
-pub use go_home::GoHome;
-pub use ignore::Ignore;
-pub use log_in_with_browser::LogInWithBrowser;
-pub use login::Login;
-pub use login_link::LoginLink;
-pub use logout::Logout;
-pub use merge::Merge;
-pub use open::Open;
-pub use open_browser::OpenBrowser;
-pub use open_dot_quilt::OpenDotQuilt;
-pub use open_in_catalog::OpenInCatalog;
-pub use open_in_file_browser::OpenInFileBrowser;
-pub use open_logs_dir::OpenLogsDir;
-pub use publish::Publish;
-pub use pull::Pull;
-pub use push::Push;
-pub use re_login::ReLogin;
-pub use refresh::Refresh;
-pub use release_notes::ReleaseNotes;
-pub use reload_page::ReloadPage;
-pub use remove::Remove;
-pub use reset_local::ResetLocal;
-pub use reveal::Reveal;
-pub use save::Save;
-pub use send_to_sentry::SendToSentry;
-pub use set_remote::SetRemote;
-pub use settings::Settings;
-pub use submit_login::SubmitLogin;
-pub use switch_role::SwitchRole;
-pub use unignore::Unignore;
+use leptos::prelude::*;
 
-use base::icon::IconButton;
-use base::icon::IconLink;
-
-/// Icon and label registry for button components. Only buttons with icons
-/// need a variant here; text-only buttons don't use `ButtonKind`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ButtonKind {
-    CommitRevision,
-    CreateLocalPackage,
-    CreateNewRevision,
-    Ignore,
-    LogInWithBrowser,
-    Login,
-    Logout,
-    Merge,
-    Open,
-    OpenLogsDir,
-    OpenBrowser,
-    OpenInCatalog,
-    OpenInFileBrowser,
-    Publish,
-    Pull,
-    Push,
-    Refresh,
-    Remove,
-    Reveal,
-    Save,
-    Settings,
-    SetRemote,
-    SubmitLogin,
-    SwitchRole,
-    Unignore,
+/// The popup's answer.
+#[component]
+pub fn FormPrimary(
+    on_click: impl Fn(leptos::ev::MouseEvent) + 'static,
+    #[prop(optional, into)] disabled: MaybeProp<bool>,
+    #[prop(optional, into)] danger: MaybeProp<bool>,
+    children: Children,
+) -> impl IntoView {
+    view! {
+        <button
+            class="qui-button"
+            // `danger` replaces `primary` rather than stacking on it, so the
+            // error color never depends on CSS rule order to win.
+            class:primary=move || !danger.get().unwrap_or(false)
+            class:danger=move || danger.get().unwrap_or(false)
+            type="button"
+            prop:disabled=move || disabled.get().unwrap_or(false)
+            on:click=on_click
+        >
+            <span>{children()}</span>
+        </button>
+    }
 }
 
-impl ButtonKind {
-    #[allow(
-        clippy::match_same_arms,
-        reason = "readable one-variant-per-line lookup table; merging same-value arms obscures it"
-    )]
-    pub const fn icon(self) -> &'static str {
-        match self {
-            Self::CommitRevision => "/assets/img/icons/done.svg",
-            Self::CreateLocalPackage => "/assets/img/icons/add.svg",
-            Self::CreateNewRevision => "/assets/img/icons/arrow_forward.svg",
-            Self::Ignore => "/assets/img/icons/visibility_off.svg",
-            Self::LogInWithBrowser => "/assets/img/icons/open_in_browser.svg",
-            Self::Login => "/assets/img/icons/warning.svg",
-            Self::Logout => "/assets/img/icons/warning.svg",
-            Self::Merge => "/assets/img/icons/merge.svg",
-            Self::Open => "/assets/img/icons/open_in_new.svg",
-            Self::OpenLogsDir => "/assets/img/icons/folder_open.svg",
-            Self::OpenBrowser => "/assets/img/icons/open_in_browser.svg",
-            Self::OpenInCatalog => "/assets/img/icons/open_in_browser.svg",
-            Self::OpenInFileBrowser => "/assets/img/icons/folder_open.svg",
-            Self::Publish => "/assets/img/icons/rocket_launch.svg",
-            Self::Pull => "/assets/img/icons/cloud_download.svg",
-            Self::Push => "/assets/img/icons/cloud_upload.svg",
-            Self::Refresh => "/assets/img/icons/refresh.svg",
-            Self::Remove => "/assets/img/icons/block.svg",
-            Self::Reveal => "/assets/img/icons/folder_open.svg",
-            Self::Save => "/assets/img/icons/done.svg",
-            Self::Settings => "/assets/img/icons/gear.svg",
-            Self::SetRemote => "/assets/img/icons/link.svg",
-            Self::SubmitLogin => "/assets/img/icons/done.svg",
-            Self::SwitchRole => "/assets/img/icons/gear.svg",
-            Self::Unignore => "/assets/img/icons/visibility.svg",
-        }
+/// The way out of the popup; says "Cancel" unless given its own words.
+#[component]
+pub fn FormSecondary(
+    on_click: impl Fn(leptos::ev::MouseEvent) + 'static,
+    #[prop(optional)] children: Option<Children>,
+) -> impl IntoView {
+    view! {
+        <button class="qui-button" type="button" on:click=on_click>
+            <span>
+                {match children {
+                    Some(c) => c().into_any(),
+                    None => "Cancel".into_any(),
+                }}
+            </span>
+        </button>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::mount;
+    use std::cell::Cell;
+    use std::rc::Rc;
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_test::*;
+
+    fn button(el: &web_sys::Element) -> web_sys::HtmlButtonElement {
+        el.query_selector("button")
+            .unwrap()
+            .unwrap()
+            .dyn_into()
+            .unwrap()
     }
 
-    #[allow(
-        clippy::match_same_arms,
-        reason = "readable one-variant-per-line lookup table; merging same-value arms obscures it"
-    )]
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::CommitRevision => "Commit",
-            Self::CreateLocalPackage => "Create local package",
-            Self::CreateNewRevision => "Create new revision",
-            Self::Ignore => "Ignore",
-            Self::LogInWithBrowser => "Log in with browser",
-            Self::Login => "Login",
-            Self::Logout => "Logout",
-            Self::Merge => "Resolve conflict",
-            Self::Open => "Open",
-            Self::OpenLogsDir => "Open",
-            Self::OpenBrowser => "Open browser",
-            Self::OpenInCatalog => "Open in Catalog",
-            Self::OpenInFileBrowser => "Open",
-            Self::Publish => "Commit and Push",
-            Self::Pull => "Pull",
-            Self::Push => "Push",
-            Self::Refresh => "Refresh",
-            Self::Remove => "Remove",
-            Self::Reveal => "Reveal",
-            Self::Save => "Save",
-            Self::Settings => "Settings",
-            Self::SetRemote => "Set remote",
-            Self::SubmitLogin => "Submit code and Log in",
-            Self::SwitchRole => "Switch role",
-            Self::Unignore => "Unignore",
-        }
+    #[wasm_bindgen_test]
+    fn the_primary_is_primary_until_it_is_danger() {
+        let el = mount(|| view! { <FormPrimary on_click=|_| {}>"Go"</FormPrimary> });
+        let btn = button(&el);
+        assert_eq!(btn.get_attribute("type").as_deref(), Some("button"));
+        assert!(btn.class_list().contains("qui-button"));
+        assert!(btn.class_list().contains("primary"));
+        assert!(!btn.disabled());
+
+        let el = mount(|| {
+            view! { <FormPrimary on_click=|_| {} danger=true disabled=true>"Go"</FormPrimary> }
+        });
+        let btn = button(&el);
+        assert!(btn.class_list().contains("danger"));
+        assert!(!btn.class_list().contains("primary"));
+        assert!(btn.disabled());
+    }
+
+    #[wasm_bindgen_test]
+    fn the_secondary_says_cancel_and_runs_its_handler() {
+        let clicked = Rc::new(Cell::new(false));
+        let seen = clicked.clone();
+        let el = mount(move || view! { <FormSecondary on_click=move |_| seen.set(true) /> });
+        let btn = button(&el);
+        assert_eq!(btn.text_content().unwrap(), "Cancel");
+        assert!(!btn.class_list().contains("primary"));
+        btn.click();
+        assert!(clicked.get());
     }
 }
