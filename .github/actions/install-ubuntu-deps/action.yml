@@ -1,11 +1,48 @@
 name: "Install Ubuntu Dependencies"
 description: "Install system dependencies required for Tauri on Ubuntu"
 
+inputs:
+  packages:
+    description: "Packages to install"
+    default: "libwebkit2gtk-4.1-dev libxdo-dev libssl-dev librsvg2-dev libayatana-appindicator3-dev mold"
+
 runs:
   using: "composite"
   steps:
+    - name: Update package index
+      shell: bash
+      run: sudo apt-get update
+
+    # The key changes whenever apt would fetch a different set of package files
+    - name: Compute package cache key
+      id: apt-key
+      shell: bash
+      run: |
+        hash=$(apt-get install --print-uris -qq ${{ inputs.packages }} | sort | sha256sum | cut -d' ' -f1)
+        echo "prefix=apt-archives-$ImageOS-" >> "$GITHUB_OUTPUT"
+        echo "key=apt-archives-$ImageOS-$hash" >> "$GITHUB_OUTPUT"
+
+    # The runner's Ubuntu mirror is sometimes slow enough to stall the job, so package files come from the cache
+    - name: Restore package files
+      id: apt-restore
+      uses: actions/cache/restore@v6
+      with:
+        path: ~/apt-archives
+        key: ${{ steps.apt-key.outputs.key }}
+        restore-keys: ${{ steps.apt-key.outputs.prefix }}
+
     - name: Install dependencies
       shell: bash
       run: |
-        sudo apt-get update
-        sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev librsvg2-dev libayatana-appindicator3-dev mold
+        mkdir -p ~/apt-archives/partial
+        sudo apt-get install -y -o Dir::Cache::Archives="$HOME/apt-archives" ${{ inputs.packages }}
+        sudo apt-get autoclean -o Dir::Cache::Archives="$HOME/apt-archives"
+        sudo chown -R "$USER" ~/apt-archives
+
+    # Pull requests restore main's cache and never write their own.
+    - name: Save package files
+      if: steps.apt-restore.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
+      uses: actions/cache/save@v6
+      with:
+        path: ~/apt-archives
+        key: ${{ steps.apt-key.outputs.key }}
