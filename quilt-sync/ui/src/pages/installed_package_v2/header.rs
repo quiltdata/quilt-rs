@@ -2027,7 +2027,7 @@ mod tests {
     fn with_catalog(state: kit::PackageState) -> commands::PackageHeaderData {
         commands::PackageHeaderData {
             uri: Some(
-                "quilt+s3://team-bucket#package=team/dataset@abc123&catalog=quilt.test"
+                "quilt+s3://team-bucket#package=team/dataset@abc1230000000000000000000000000000000000000000000000000000000000&catalog=quilt.test"
                     .parse()
                     .expect("a uri with a catalog"),
             ),
@@ -2039,7 +2039,7 @@ mod tests {
     fn without_catalog(state: kit::PackageState) -> commands::PackageHeaderData {
         commands::PackageHeaderData {
             uri: Some(
-                "quilt+s3://team-bucket#package=team/dataset@abc123"
+                "quilt+s3://team-bucket#package=team/dataset@abc1230000000000000000000000000000000000000000000000000000000000"
                     .parse()
                     .expect("a uri with no catalog"),
             ),
@@ -2201,7 +2201,10 @@ mod tests {
     /// At the remote's latest, both buttons name `latest`: no hash.
     #[test]
     fn at_latest_both_name_latest() {
-        let target = remote_target_of(&holding_against(Some("abc123"))).unwrap();
+        let target = remote_target_of(&holding_against(Some(
+            "abc1230000000000000000000000000000000000000000000000000000000000",
+        )))
+        .unwrap();
         assert_eq!(
             target.address.to_copy_string(),
             "quilt+s3://team-bucket#package=team/dataset&catalog=quilt.test"
@@ -2218,11 +2221,13 @@ mod tests {
         let target = remote_target_of(&holding_against(Some("def456"))).unwrap();
         assert_eq!(
             target.address.to_copy_string(),
-            "quilt+s3://team-bucket#package=team/dataset@abc123&catalog=quilt.test"
+            "quilt+s3://team-bucket#package=team/dataset@abc1230000000000000000000000000000000000000000000000000000000000&catalog=quilt.test"
         );
         assert_eq!(
             target.catalog_url.as_deref(),
-            Some("https://quilt.test/b/team-bucket/packages/team/dataset/tree/abc123")
+            Some(
+                "https://quilt.test/b/team-bucket/packages/team/dataset/tree/abc1230000000000000000000000000000000000000000000000000000000000"
+            )
         );
     }
 
@@ -2240,7 +2245,8 @@ mod tests {
     #[test]
     fn without_a_catalog_the_copy_names_the_bucket() {
         let mut d = without_catalog(kit::PackageState::Latest);
-        d.newer = Some("abc123".to_string());
+        d.newer =
+            Some("abc1230000000000000000000000000000000000000000000000000000000000".to_string());
         let target = remote_target_of(&d).unwrap();
         assert_eq!(
             target.address.to_copy_string(),

@@ -328,10 +328,15 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_resolve_existing_hash() -> Res {
-        let uri = S3PackageUri::try_from("quilt+s3://b#package=foo/bar@hjknlmn")?;
+        let uri = S3PackageUri::try_from(
+            "quilt+s3://b#package=foo/bar@0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        )?;
         let remote = MockRemote::default();
         let top_hash = resolve_top_hash(&remote, None, &uri).await?;
-        assert_eq!(top_hash, "hjknlmn".to_string(),);
+        assert_eq!(
+            top_hash,
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
+        );
         Ok(())
     }
 

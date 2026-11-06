@@ -19,6 +19,16 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.40.3-dev]
+
+### quilt-rs
+
+- Updated [from v0.52.0 to v0.52.1-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.52.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
+### quilt-uri
+
+- Updated [from v0.4.3 to v0.4.4-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-uri/v0.4.3...main) (see [quilt-uri/CHANGELOG.md](../quilt-uri/CHANGELOG.md))
+
 ## [v0.40.2] - 2026-11-05
 
 ### quilt-rs

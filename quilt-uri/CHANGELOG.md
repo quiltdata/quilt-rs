@@ -16,6 +16,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.4.4-dev]
+
+### Changed
+
+- `S3PackageUri` parses an `@` revision only when it is a top hash: 64 lowercase hex characters. Anything else is a parse error, where before it was read as a hash that no package has. `display()` shortens a hand-built hash by characters, so one that holds multibyte characters no longer panics
+
 ## [v0.4.3] - 2026-10-22
 
 ### Added

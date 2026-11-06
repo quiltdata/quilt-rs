@@ -1308,12 +1308,12 @@ mod tests {
             Ok(CommitData {
                 uri: Some(
                     quilt_uri::S3PackageUri::try_from(
-                        "quilt+s3://team-bucket#package=org/pkg@abc123&catalog=quilt.test",
+                        "quilt+s3://team-bucket#package=org/pkg@abc1230000000000000000000000000000000000000000000000000000000000&catalog=quilt.test",
                     )
                     .unwrap(),
                 ),
                 remote_locked: true,
-                newer: Some("abc123".to_string()),
+                newer: Some("abc1230000000000000000000000000000000000000000000000000000000000".to_string()),
                 ..commit_data()
             })
         })
@@ -1326,12 +1326,12 @@ mod tests {
             Ok(CommitData {
                 uri: Some(
                     quilt_uri::S3PackageUri::try_from(
-                        "quilt+s3://team-bucket#package=org/pkg@abc123",
+                        "quilt+s3://team-bucket#package=org/pkg@abc1230000000000000000000000000000000000000000000000000000000000",
                     )
                     .unwrap(),
                 ),
                 remote_locked: true,
-                newer: Some("abc123".to_string()),
+                newer: Some("abc1230000000000000000000000000000000000000000000000000000000000".to_string()),
                 ..commit_data()
             })
         })
