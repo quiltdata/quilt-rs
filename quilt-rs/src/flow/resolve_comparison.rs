@@ -13,6 +13,7 @@ use std::collections::HashSet;
 use std::hash::BuildHasher;
 use std::path::PathBuf;
 
+use crate::flow::list_revisions::holds_user_meta;
 use crate::flow::remote_delta;
 use crate::lineage::CommitState;
 use crate::manifest::Manifest;
@@ -73,16 +74,21 @@ pub fn compare_for_resolve<S: BuildHasher>(
             })
         })
         .count();
-    // Normalized as entry `meta` is, so a header with none and one with `{}` agree.
-    let user_meta_differs = normalized_entry_meta(current.header.user_meta.as_ref())
-        != normalized_entry_meta(published.header.user_meta.as_ref());
     ResolveComparison {
         published_message: published.header.message.clone(),
         differing,
         lost,
-        user_meta_differs,
+        user_meta_differs: user_meta(current) != user_meta(published),
         unpublished,
     }
+}
+
+fn user_meta(manifest: &Manifest) -> Option<&serde_json::Value> {
+    manifest
+        .header
+        .user_meta
+        .as_ref()
+        .filter(|v| holds_user_meta(v))
 }
 
 #[cfg(test)]
@@ -231,6 +237,19 @@ mod tests {
         let comparison = compare_for_resolve(&current, &published, None, &HashSet::new());
 
         assert!(!comparison.user_meta_differs);
+    }
+
+    #[test]
+    fn user_meta_that_is_not_an_object_is_compared_as_it_stands() {
+        let current = with_user_meta(manifest_of(vec![]), Some(serde_json::json!([1])));
+        let published = with_user_meta(
+            manifest_of(vec![]),
+            Some(serde_json::json!({"user_meta": [1]})),
+        );
+
+        let comparison = compare_for_resolve(&current, &published, None, &HashSet::new());
+
+        assert!(comparison.user_meta_differs);
     }
 
     #[test]
