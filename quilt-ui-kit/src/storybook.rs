@@ -40,7 +40,14 @@ const COMBINED: Tier = Tier {
 
 static STORYBOOK: Catalog = Catalog {
     title: "QuiltSync UI kit",
-    elsewhere: ("the app's gallery", "../"),
+    // `just storybook dev` sets it to the gallery's own server.
+    elsewhere: (
+        "the app's gallery",
+        match option_env!("QUILT_GALLERY_URL") {
+            Some(url) => url,
+            None => "../",
+        },
+    ),
     tiers: &[CORE, COMBINED],
     entries: ENTRIES,
     home: Home {
@@ -59,7 +66,7 @@ macro_rules! entry {
             tier: &$tier,
             area: None,
             label: $label,
-            file: concat!(stringify!($module), ".rs"),
+            file: concat!("quilt-ui-kit/src/stories/", stringify!($module), ".rs"),
             view: || {
                 use quilt_ui_kit::stories::$module::$component;
                 view! { <$component /> }.into_any()

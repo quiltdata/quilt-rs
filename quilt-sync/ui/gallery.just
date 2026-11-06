@@ -5,9 +5,11 @@ public_url := "/quilt-rs/"
 # `<dist>/index.html`, so a shared directory serves whichever rebuilt last.
 # The port goes through Trunk's env var so `--port` overrides it.
 #
+# The link to the storybook points at `just storybook dev`'s server.
+#
 # Serve a debug build and rebuild on save; `--open` opens a browser tab
 dev *args: stubs
-    TRUNK_SERVE_PORT="${TRUNK_SERVE_PORT:-8787}" trunk serve gallery.html --dist dist-gallery {{args}}
+    QUILT_STORYBOOK_URL=http://127.0.0.1:8788/ TRUNK_SERVE_PORT="${TRUNK_SERVE_PORT:-8787}" trunk serve gallery.html --dist dist-gallery {{args}}
 
 # Trunk 0.21 reads a bare `--release` followed by another argument as taking a
 # value, hence `--release=true`.

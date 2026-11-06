@@ -3,9 +3,11 @@ public_url := "/quilt-rs/kit/"
 
 # The port goes through Trunk's env var so `--port` overrides it.
 #
+# The link to the app's gallery points at `just gallery dev`'s server.
+#
 # Serve a debug build and rebuild on save; `--open` opens a browser tab
 dev *args: stubs
-    TRUNK_SERVE_PORT="${TRUNK_SERVE_PORT:-8788}" trunk serve {{args}}
+    QUILT_GALLERY_URL=http://127.0.0.1:8787/ TRUNK_SERVE_PORT="${TRUNK_SERVE_PORT:-8788}" trunk serve {{args}}
 
 # Trunk 0.21 reads a bare `--release` followed by another argument as taking a
 # value, hence `--release=true`.

@@ -36,11 +36,8 @@ pub(crate) use quilt_sync_ui::{commands, pages};
 // `entry!` line in `ENTRIES` below — the nav, the routes and the page all read
 // that one list.
 mod gallery {
-    // The kit's stories this gallery shows as scenes or reads fixtures from.
-    pub use quilt_ui_kit::stories::{
-        button_group, confirm_dialog, feedback, forms, inbox, list_toolbar, queue_parts,
-        quit_confirm, recent_files_parts, unchecked,
-    };
+    // The kit's stories this gallery's scenes read fixtures from.
+    pub use quilt_ui_kit::stories::{button_group, inbox, queue_parts, recent_files_parts};
 
     pub mod commit_page;
     pub mod context_pane;
@@ -85,7 +82,14 @@ const PAGES: Tier = Tier {
 
 static GALLERY: Catalog = Catalog {
     title: "QuiltSync pages",
-    elsewhere: ("the UI kit's storybook", "kit/"),
+    // `just gallery dev` sets it to the storybook's own server.
+    elsewhere: (
+        "the UI kit's storybook",
+        match option_env!("QUILT_STORYBOOK_URL") {
+            Some(url) => url,
+            None => "kit/",
+        },
+    ),
     tiers: &[SCENES, PAGES],
     entries: ENTRIES,
     home: Home {
@@ -94,18 +98,31 @@ static GALLERY: Catalog = Catalog {
     },
 };
 
-/// `entry!(TIER, "Label", module::Component)`, or `entry!(SCENES / "Area", …)`.
+/// `entry!(TIER, "Label", module::Component)`, or `entry!(SCENES / "Area", …)`;
+/// `kit module::Component` for a scene from the kit's stories.
 ///
 /// A macro so the file name is derived from the module path rather than typed a
 /// second time, and so the `use` lives inside the view it serves instead of in
 /// a fifty-line block at the top of this file.
 macro_rules! entry {
+    ($tier:ident $(/ $area:literal)?, $label:literal, kit $module:ident :: $component:ident) => {
+        Entry {
+            tier: &$tier,
+            area: entry!(@area $($area)?),
+            label: $label,
+            file: concat!("quilt-ui-kit/src/stories/", stringify!($module), ".rs"),
+            view: || {
+                use quilt_ui_kit::stories::$module::$component;
+                view! { <$component /> }.into_any()
+            },
+        }
+    };
     ($tier:ident $(/ $area:literal)?, $label:literal, $module:ident :: $component:ident) => {
         Entry {
             tier: &$tier,
             area: entry!(@area $($area)?),
             label: $label,
-            file: concat!(stringify!($module), ".rs"),
+            file: concat!("quilt-sync/ui/src/gallery/", stringify!($module), ".rs"),
             view: || {
                 use crate::gallery::$module::$component;
                 view! { <$component /> }.into_any()
@@ -142,7 +159,7 @@ const ENTRIES: &[Entry] = &[
     entry!(
         SCENES / "Main page",
         "A banner in place",
-        feedback::BannerScene
+        kit feedback::BannerScene
     ),
     entry!(
         SCENES / "Main page",
@@ -152,12 +169,12 @@ const ENTRIES: &[Entry] = &[
     entry!(
         SCENES / "Main page",
         "A check that failed",
-        unchecked::UncheckedScene
+        kit unchecked::UncheckedScene
     ),
     entry!(
         SCENES / "Main page",
         "List toolbar",
-        list_toolbar::ListToolbarScene
+        kit list_toolbar::ListToolbarScene
     ),
     entry!(
         SCENES / "Main page",
@@ -185,21 +202,21 @@ const ENTRIES: &[Entry] = &[
         "Remove old revisions",
         old_revisions_inline::OldRevisionsInlineScene
     ),
-    entry!(SCENES / "Dialogs", "The three dialogs", forms::DialogScene),
+    entry!(SCENES / "Dialogs", "The three dialogs", kit forms::DialogScene),
     entry!(
         SCENES / "Dialogs",
         "A dialog that was refused",
-        forms::RefusedScene
+        kit forms::RefusedScene
     ),
     entry!(
         SCENES / "Dialogs",
         "A confirmation",
-        confirm_dialog::ConfirmScene
+        kit confirm_dialog::ConfirmScene
     ),
     entry!(
         SCENES / "Dialogs",
         "The quit prompt",
-        quit_confirm::QuitScene
+        kit quit_confirm::QuitScene
     ),
     entry!(
         SCENES / "Notifications",

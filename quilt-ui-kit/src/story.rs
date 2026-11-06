@@ -32,9 +32,9 @@ pub struct Entry {
     /// they make up rather than as one flat list.
     pub area: Option<&'static str>,
     pub label: &'static str,
-    /// The story module, shown beside the section and matched by the filter: a
-    /// label that reads as prose ("Needs your attention") still leads to a file
-    /// (`queue.rs`).
+    /// The story's source file from the repository root, shown beside the
+    /// section and matched by the filter: a label that reads as prose ("Needs
+    /// your attention") still leads to a file (`queue.rs`).
     pub file: &'static str,
     pub view: fn() -> AnyView,
 }
@@ -90,8 +90,8 @@ pub struct Home {
 pub struct Catalog {
     /// The page's heading.
     pub title: &'static str,
-    /// The other gallery, linked under the heading: its name and its address
-    /// relative to this one.
+    /// The other gallery, linked under the heading: its name and its address,
+    /// relative to this one on Pages and the other server's in development.
     pub elsewhere: (&'static str, &'static str),
     /// In page order.
     pub tiers: &'static [Tier],
@@ -352,7 +352,6 @@ pub fn home(catalog: &'static Catalog) -> AnyView {
             view! {
                 <div class="g-entry">
                     <a class="g-entry__source" href=source.href()>
-                        "src/gallery/"
                         {source.file}
                     </a>
                     {(frame.view)()}
@@ -425,7 +424,6 @@ fn main_tier(entries: &'static [Entry], tier: &'static Tier, items: &[usize]) ->
             view! {
                 <div class="g-entry">
                     <a class="g-entry__source" href=entry.href()>
-                        "src/gallery/"
                         {entry.file}
                     </a>
                     {(entry.view)()}
