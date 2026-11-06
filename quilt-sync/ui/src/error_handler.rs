@@ -5,8 +5,8 @@ use leptos_router::hooks::use_navigate;
 use crate::commands;
 use crate::components::buttons;
 use crate::components::{Layout, Notification};
-use crate::kit::error_text::ErrorResponse;
-use crate::kit::readable;
+use quilt_ui_kit::error_text::ErrorResponse;
+use quilt_ui_kit::readable;
 
 /// Handle a command error that left the surface with nothing to render.
 ///
@@ -145,8 +145,8 @@ fn current_path_and_query() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::mount;
     use leptos_router::components::Router;
+    use quilt_ui_kit::test_support::mount;
     use wasm_bindgen_test::*;
 
     fn appbars(el: &web_sys::Element) -> u32 {
@@ -222,7 +222,7 @@ mod tests {
                 </Router>
             }
         });
-        crate::test_support::sleep_ms(50).await;
+        quilt_ui_kit::test_support::sleep_ms(50).await;
         assert!(
             el.text_content().unwrap_or_default().contains("boom"),
             "markup was {}",

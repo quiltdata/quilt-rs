@@ -77,16 +77,16 @@ use quilt_uri::S3PackageUri;
 use crate::commands::PullCheck;
 use crate::commands::PullOutcome;
 use crate::commands::PullPreview;
-use crate::kit::Align;
-use crate::kit::AnchoredOverlay;
-use crate::kit::Button;
-use crate::kit::PackageState;
-use crate::kit::StateLabel;
-use crate::kit::differs_id;
-use crate::kit::icons;
-use crate::kit::state_label::StateTone;
 use crate::pages::commit_v2::Change;
 use crate::util::thousands;
+use quilt_ui_kit::Align;
+use quilt_ui_kit::AnchoredOverlay;
+use quilt_ui_kit::Button;
+use quilt_ui_kit::PackageState;
+use quilt_ui_kit::StateLabel;
+use quilt_ui_kit::differs_id;
+use quilt_ui_kit::icons;
+use quilt_ui_kit::state_label::StateTone;
 
 use super::file_pane::Kept;
 
@@ -788,7 +788,7 @@ fn file_list(rows: Vec<Coming>, links: Option<&(Catalog, String)>) -> AnyView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{mount, sleep_ms};
+    use quilt_ui_kit::test_support::{mount, sleep_ms};
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 

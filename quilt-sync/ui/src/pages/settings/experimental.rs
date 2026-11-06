@@ -153,7 +153,7 @@ fn ExperimentalToggle(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{element_saying, mount};
+    use quilt_ui_kit::test_support::{element_saying, mount};
     use wasm_bindgen_test::*;
 
     /// The section over its stored answers.

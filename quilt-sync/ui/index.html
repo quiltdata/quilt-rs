@@ -35,16 +35,18 @@
       } catch (e) {}
     })();
   </script>
-  <!-- copy assets into dist/ -->
+  <!-- copy assets into dist/, and the kit's appbar mark, which v1's bar uses too -->
   <link data-trunk rel="copy-dir" href="assets" />
+  <link data-trunk rel="copy-file" href="../../quilt-ui-kit/assets/img/quilt.png" data-target-path="assets/img" />
   <!-- fonts -->
   <link rel="stylesheet" href="assets/css/external/400.css" />
   <link rel="stylesheet" href="assets/css/external/500.css" />
   <link rel="stylesheet" href="assets/css/external/700.css" />
   <!-- v2 kit: tokens + every component module, not the gallery chrome. -->
-  <link data-trunk rel="css" href="assets/css/kit/normalize.css" />
-  <link data-trunk rel="css" href="assets/css/kit/tokens.css" />
-  <link data-trunk rel="css" href="assets/css/kit/base.css" />
+  <link data-trunk rel="css" href="../../quilt-ui-kit/css/normalize.css" />
+  <link data-trunk rel="css" href="../../quilt-ui-kit/css/tokens.css" />
+  <link data-trunk rel="css" href="../../quilt-ui-kit/css/base.css" />
+  <link data-trunk rel="css" href="../../quilt-ui-kit/css/kit-modules.css" />
   <link data-trunk rel="css" href="assets/css/kit/modules.css" />
   <!-- base styles -->
   <link rel="stylesheet" href="assets/css/theme.css" />

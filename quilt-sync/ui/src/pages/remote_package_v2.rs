@@ -13,7 +13,7 @@ use leptos_router::hooks::use_navigate;
 
 use crate::commands;
 use crate::components::appbar::transit_appbar_actions;
-use crate::kit::{PageLayout, Spinner, SpinnerVariant, readable};
+use quilt_ui_kit::{PageLayout, Spinner, SpinnerVariant, readable};
 
 use super::error_v2::{ErrorSlate, open_dot_quilt};
 use super::remote_package::package_target;
@@ -130,8 +130,8 @@ pub(crate) fn RelayScreen(read: PageRead<String>) -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{button_saying, mount, sleep_ms, unmount_earlier};
     use leptos_router::components::Router;
+    use quilt_ui_kit::test_support::{button_saying, mount, sleep_ms, unmount_earlier};
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 

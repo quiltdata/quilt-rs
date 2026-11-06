@@ -1,0 +1,18 @@
+[build]
+target = "storybook.html"
+dist = "dist"
+filehash = false
+
+[watch]
+watch = ["src", "css", "assets", "storybook.html"]
+# Generated into a watched directory: without the ignore, each build rewrites
+# it, the watcher fires, and Trunk rebuilds forever.
+ignore = ["css/kit-modules.css"]
+
+# CSS Modules. Runs before Trunk reads the stylesheets, so the generated bundle
+# is current. Needs `cargo install stylance-cli`; a missing tool fails the
+# build here, which is wanted — skipping it would render every class as nothing.
+[[hooks]]
+stage = "pre_build"
+command = "stylance"
+command_arguments = ["."]

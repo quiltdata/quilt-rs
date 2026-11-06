@@ -270,7 +270,7 @@ mod tests {
         use leptos::prelude::*;
         use wasm_bindgen::JsCast;
 
-        let el = crate::test_support::mount(|| {
+        let el = quilt_ui_kit::test_support::mount(|| {
             view! {
                 <super::SyncScopeBand
                     namespace="team/dataset".to_string()

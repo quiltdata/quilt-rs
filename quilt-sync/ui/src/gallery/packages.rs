@@ -7,22 +7,22 @@
 use leptos::prelude::*;
 
 use crate::Scene;
-use crate::kit::Blankslate;
-use crate::kit::Button;
-use crate::kit::ButtonVariant;
-use crate::kit::Card;
-use crate::kit::GroupHeading;
-use crate::kit::ListToolbar;
-use crate::kit::Naming;
-use crate::kit::PackageRow;
-use crate::kit::RowDownloads;
-use crate::kit::SearchInput;
-use crate::kit::SegmentedControl;
-use crate::kit::Select;
-use crate::kit::StateTone;
 use quilt_sync_ui::pages::ToolbarBand;
 use quilt_sync_ui::pages::list_region_class;
 use quilt_sync_ui::pages::rows_class;
+use quilt_ui_kit::Blankslate;
+use quilt_ui_kit::Button;
+use quilt_ui_kit::ButtonVariant;
+use quilt_ui_kit::Card;
+use quilt_ui_kit::GroupHeading;
+use quilt_ui_kit::ListToolbar;
+use quilt_ui_kit::Naming;
+use quilt_ui_kit::PackageRow;
+use quilt_ui_kit::RowDownloads;
+use quilt_ui_kit::SearchInput;
+use quilt_ui_kit::SegmentedControl;
+use quilt_ui_kit::Select;
+use quilt_ui_kit::StateTone;
 
 const MINUTE: f64 = 60_000.0;
 const HOUR: f64 = 60.0 * MINUTE;

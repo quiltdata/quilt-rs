@@ -17,22 +17,22 @@ use crate::Story;
 use crate::gallery::inbox::every_kind;
 use crate::gallery::inbox::needs_you_in_queue;
 use crate::gallery::packages::PackagesRegion;
-use crate::kit::ACKNOWLEDGE_FOR;
-use crate::kit::Activities;
-use crate::kit::Activity;
-use crate::kit::ActivityKind;
-use crate::kit::Appbar;
-use crate::kit::Banner;
-use crate::kit::BannerVariant;
-use crate::kit::Button;
-use crate::kit::Inbox;
-use crate::kit::PageLayout;
-use crate::kit::StateTone;
-use crate::kit::UpdateBand;
-use crate::kit::UpdateState;
-use crate::kit::ZeroLine;
-use crate::kit::icons;
 use crate::pages;
+use quilt_ui_kit::ACKNOWLEDGE_FOR;
+use quilt_ui_kit::Activities;
+use quilt_ui_kit::Activity;
+use quilt_ui_kit::ActivityKind;
+use quilt_ui_kit::Appbar;
+use quilt_ui_kit::Banner;
+use quilt_ui_kit::BannerVariant;
+use quilt_ui_kit::Button;
+use quilt_ui_kit::Inbox;
+use quilt_ui_kit::PageLayout;
+use quilt_ui_kit::StateTone;
+use quilt_ui_kit::UpdateBand;
+use quilt_ui_kit::UpdateState;
+use quilt_ui_kit::ZeroLine;
+use quilt_ui_kit::icons;
 
 fn activity(kind: ActivityKind, label: &str) -> Activity {
     Activity {

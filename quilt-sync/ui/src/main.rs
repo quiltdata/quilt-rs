@@ -12,9 +12,9 @@ wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 // one compilation of them and neither can call an item dead that the other uses.
 use quilt_sync_ui::commands;
 use quilt_sync_ui::components;
-use quilt_sync_ui::kit;
 use quilt_sync_ui::pages;
 use quilt_sync_ui::panic_report;
+use quilt_ui_kit as kit;
 
 fn main() {
     console_error_panic_hook::set_once();
@@ -23,10 +23,10 @@ fn main() {
     // Before the mount, so the first paint is in the right palette. The frame
     // before this one belongs to `index.html` — Rust cannot run early enough for
     // it.
-    quilt_sync_ui::theme::follow_os();
+    quilt_ui_kit::theme::follow_os();
     // The launch marker comes off before anything is drawn: it darkens the bare
     // canvas, which only an empty frame may have.
-    quilt_sync_ui::theme::stop_booting();
+    quilt_ui_kit::theme::stop_booting();
     // Before the router reads the address: a link's token leaves it here.
     quilt_sync_ui::engine::start();
     if quilt_sync_ui::engine::linked() {
@@ -270,7 +270,7 @@ fn ByDesign(
                 Suspend::new(async move {
                     let settings = settings.await;
                     let on = design_preview(settings.as_ref().map_err(String::as_str));
-                    quilt_sync_ui::theme::set_v2(on);
+                    quilt_ui_kit::theme::set_v2(on);
                     if on { v2() } else { v1() }
                 })
             }}
@@ -309,7 +309,7 @@ fn ByDesign(
 /// `/` and `/installed-package` render v2 on exactly the value the marker is set
 /// from, so the ground the frame paints is the ground the page then keeps.
 fn design_loading(label: &'static str, skeleton: fn() -> AnyView) -> AnyView {
-    let page = if quilt_sync_ui::theme::is_v2() {
+    let page = if quilt_ui_kit::theme::is_v2() {
         skeleton()
     } else {
         view! { <components::Spinner /> }.into_any()
@@ -384,7 +384,7 @@ mod tests {
     /// The frame `/` draws while it decides, in whichever generation the root
     /// marker predicts, under a router because the v2 appbar's Settings navigates.
     fn home_frame(v2: bool) -> Mounted {
-        quilt_sync_ui::theme::set_v2(v2);
+        quilt_ui_kit::theme::set_v2(v2);
         Mounted::new(|| {
             view! {
                 <Router>
@@ -470,7 +470,7 @@ mod tests {
     /// page's skeleton for a v2 reader, announced as the package it is.
     #[wasm_bindgen_test]
     async fn the_package_route_waits_on_the_package_skeleton() {
-        quilt_sync_ui::theme::set_v2(true);
+        quilt_ui_kit::theme::set_v2(true);
         let el = package_route(settings_pending).await;
         let status = el
             .query_selector("[data-home-frame] [role=status]")
@@ -551,7 +551,7 @@ mod tests {
         fn drop(&mut self) {
             // The route tests set the root marker. Put back here, after the
             // assertions, so the next test starts from v1's.
-            quilt_sync_ui::theme::set_v2(false);
+            quilt_ui_kit::theme::set_v2(false);
             drop(self.handle.take());
             self.owner.cleanup();
             self.el.remove();
@@ -672,7 +672,7 @@ mod tests {
 
     #[wasm_bindgen_test]
     async fn the_settings_route_waits_on_the_settings_skeleton() {
-        quilt_sync_ui::theme::set_v2(true);
+        quilt_ui_kit::theme::set_v2(true);
         let el = settings_route(settings_pending).await;
         let status = el
             .query_selector("[data-home-frame] [role=status]")
@@ -690,7 +690,7 @@ mod tests {
 
     #[wasm_bindgen_test]
     async fn the_commit_route_waits_on_the_commit_skeleton() {
-        quilt_sync_ui::theme::set_v2(true);
+        quilt_ui_kit::theme::set_v2(true);
         let el = commit_route(settings_pending).await;
         let status = el
             .query_selector("[data-home-frame] [role=status]")

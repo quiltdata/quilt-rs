@@ -2,8 +2,8 @@ use leptos::prelude::*;
 
 use super::appbar::{appbar_actions, transit_appbar_actions};
 use super::buttons;
-use crate::kit::Appbar;
-use crate::theme;
+use quilt_ui_kit::Appbar;
+use quilt_ui_kit::theme;
 
 /// Notification variant for the layout notification bar.
 #[derive(Clone)]
@@ -212,8 +212,8 @@ fn Breadcrumbs(items: Vec<BreadcrumbItem>) -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::mount;
     use leptos_router::components::Router;
+    use quilt_ui_kit::test_support::mount;
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
@@ -395,7 +395,7 @@ mod tests {
         let el = settings_like(true, true);
         let before = history_length();
         settings_button(&el).click();
-        crate::test_support::sleep_ms(50).await;
+        quilt_ui_kit::test_support::sleep_ms(50).await;
         assert_eq!(history_length(), before);
     }
 }

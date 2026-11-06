@@ -11,11 +11,11 @@ use leptos_router::hooks::use_navigate;
 
 use crate::commands::{self, LoginErrorData};
 use crate::components::appbar::appbar_actions;
-use crate::kit::{
+use crate::routes::sign_in_href;
+use quilt_ui_kit::{
     BannerVariant, Blankslate, Button, ButtonVariant, LoadFailure, PageLayout, SkeletonText,
     readable,
 };
-use crate::routes::sign_in_href;
 
 use super::v2_page::{Outcome, PageHandle, PageRead, V2Page, critical};
 
@@ -261,8 +261,10 @@ pub(crate) fn ErrorScreen(read: PageRead<LoginErrorData>) -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{button_saying, element_saying, mount, sleep_ms, unmount_earlier};
     use leptos_router::components::Router;
+    use quilt_ui_kit::test_support::{
+        button_saying, element_saying, mount, sleep_ms, unmount_earlier,
+    };
     use wasm_bindgen_test::*;
 
     thread_local! {

@@ -1,0 +1,49 @@
+[package]
+name = "quilt-ui-kit"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+publish = false
+
+# Both declared: the library is what the app depends on, and `storybook` renders
+# the kit's stories in a plain browser.
+[lib]
+name = "quilt_ui_kit"
+path = "src/lib.rs"
+
+[[bin]]
+name = "storybook"
+path = "src/storybook.rs"
+
+[features]
+# The DOM test helpers, for the app's own tests.
+test-support = []
+
+[dependencies]
+leptos = { version = "0.8.22", features = ["csr"] }
+wasm-bindgen = "0.2.129"
+wasm-bindgen-futures = "0.4.79"
+js-sys = "0.3.106"
+web-sys = { version = "0.3.106", features = ["CssStyleDeclaration", "Document", "DomRect", "DomTokenList", "Element", "Event", "EventInit", "EventTarget", "FocusEvent", "FocusOptions", "HtmlButtonElement", "HtmlDialogElement", "HtmlDivElement", "HtmlElement", "HtmlFormElement", "HtmlInputElement", "HtmlSelectElement", "HtmlTextAreaElement", "InputEvent", "KeyboardEvent", "KeyboardEventInit", "MediaQueryList", "MediaQueryListEvent", "Node", "NodeList", "PointerEvent", "PointerEventInit", "ResizeObserver", "ResizeObserverEntry", "ResizeObserverSize", "Storage", "Window", "Location"] }
+serde.workspace = true
+serde_json.workspace = true
+console_error_panic_hook = "0.1.7"
+stylance = "0.8.4"
+
+# CSS Modules. `stylance-cli` scans `folders` recursively, hashes each class, and
+# concatenates into `output_file` — so a component declares its own stylesheet
+# from Rust and no list of stylesheets exists. Output is generated and
+# gitignored; Trunk's pre_build hook rebuilds it. Named apart from the app's
+# `modules.css`: Trunk copies linked files flat into `dist`, so two files with one
+# name would collide.
+[package.metadata.stylance]
+output_file = "./css/kit-modules.css"
+folders = ["./src/"]
+extensions = [".module.css"]
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3.79"
+
+[lints]
+workspace = true

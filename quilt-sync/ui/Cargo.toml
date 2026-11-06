@@ -35,20 +35,23 @@ console_error_panic_hook = "0.1.7"
 serde_json.workspace = true
 urlencoding = "2.1.3"
 quilt-uri = { path = "../../quilt-uri" }
+quilt-ui-kit = { path = "../../quilt-ui-kit" }
 send_wrapper = "0.6.0"
 stylance = "0.8.4"
 
-# CSS Modules. `stylance-cli` scans `folders` recursively, hashes each class, and
-# concatenates into `output_file` — so a component declares its own stylesheet
-# from Rust and no list of stylesheets exists. Output is generated and
-# gitignored; Trunk's pre_build hook rebuilds it.
+# CSS Modules, for the pages; the kit bundles its own (see its `Cargo.toml`).
+# `stylance-cli` scans `folders` recursively, hashes each class, and concatenates
+# into `output_file` — so a page declares its own stylesheet from Rust and no
+# list of stylesheets exists. Output is generated and gitignored; Trunk's
+# pre_build hook rebuilds it.
 [package.metadata.stylance]
 output_file = "./assets/css/kit/modules.css"
-folders = ["./src/kit/", "./src/pages/"]
+folders = ["./src/pages/"]
 extensions = [".module.css"]
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3.79"
+quilt-ui-kit = { path = "../../quilt-ui-kit", features = ["test-support"] }
 web-sys = { version = "0.3.106", features = ["DomTokenList", "Element", "Event", "EventInit", "FocusOptions", "HtmlButtonElement", "HtmlInputElement", "HtmlSelectElement", "InputEvent", "KeyboardEvent", "KeyboardEventInit", "Node", "NodeList", "PointerEvent", "PointerEventInit"] }
 
 [lints]

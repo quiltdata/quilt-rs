@@ -123,7 +123,7 @@ fn ReleaseNotesPopup(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{button_saying, mount, sleep_ms};
+    use quilt_ui_kit::test_support::{button_saying, mount, sleep_ms};
     use wasm_bindgen_test::*;
 
     fn mount_section(notification: RwSignal<Option<Notification>>) -> web_sys::Element {

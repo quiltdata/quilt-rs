@@ -13,7 +13,7 @@ use std::path::Path;
 use leptos::prelude::*;
 
 use crate::commands::{KeepingData, KeepingScope};
-use crate::kit::CheckState;
+use quilt_ui_kit::CheckState;
 
 /// What the Keeping scope fetches by itself, so no box offers it.
 #[derive(Clone, Debug, PartialEq, Eq)]

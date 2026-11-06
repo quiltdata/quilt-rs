@@ -1181,8 +1181,8 @@ mod tests {
         use leptos_router::components::Router;
         use wasm_bindgen::JsCast;
 
-        crate::test_support::unmount_earlier();
-        let el = crate::test_support::mount(move || {
+        quilt_ui_kit::test_support::unmount_earlier();
+        let el = quilt_ui_kit::test_support::mount(move || {
             view! {
                 <Router>
                     <super::CommitContent
@@ -1194,7 +1194,7 @@ mod tests {
                 </Router>
             }
         });
-        crate::test_support::sleep_ms(80).await;
+        quilt_ui_kit::test_support::sleep_ms(80).await;
         let all = el.query_selector_all(".qui-actionbar button").unwrap();
         (0..all.length())
             .map(|i| {

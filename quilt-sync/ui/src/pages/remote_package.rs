@@ -75,9 +75,9 @@ pub(crate) fn package_target(result: &commands::RemotePackageResult) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{mount, sleep_ms};
-    use crate::theme;
     use leptos_router::components::Router;
+    use quilt_ui_kit::test_support::{mount, sleep_ms};
+    use quilt_ui_kit::theme;
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
