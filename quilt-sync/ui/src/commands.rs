@@ -2331,8 +2331,7 @@ pub async fn open_in_web_browser(url: String) -> Result<String, String> {
         url: String,
     }
     // Headless's machine is seldom the reader's and may have no browser, so
-    // web and mail links open from this tab. A local folder still goes to the
-    // engine.
+    // web and mail links open from this tab.
     if engine::headless().get_untracked() {
         let window = web_sys::window().ok_or("No window")?;
         // The address bar hands a mail link to the mail app without leaving
@@ -2344,8 +2343,9 @@ pub async fn open_in_web_browser(url: String) -> Result<String, String> {
                 .map_err(|_| "This browser didn't open the mail app.".to_owned())?;
             return Ok("Opened in the mail app".to_owned());
         }
-        // No opener, so the new page can't steer this one.
-        if url.starts_with("http://") || url.starts_with("https://") {
+        // No opener, so the new page can't steer this one. Anything else goes
+        // to the engine, which refuses it.
+        if url.starts_with("https://") {
             window
                 .open_with_url_and_target_and_features(&url, "_blank", "noopener")
                 .map_err(|_| "This browser didn't open the link.".to_owned())?;
@@ -2452,6 +2452,11 @@ pub async fn collect_diagnostic_logs() -> Result<String, String> {
     engine::invoke_unit("collect_diagnostic_logs").await
 }
 
+/// Show the saved diagnostic zip in its folder; the engine knows where it is.
+pub async fn reveal_diagnostic_logs() -> Result<String, String> {
+    engine::invoke_unit("reveal_diagnostic_logs").await
+}
+
 /// Send the diagnostic zip to Quilt; `message` is what the user wrote about the
 /// problem, if anything.
 pub async fn send_crash_report(
@@ -2499,11 +2504,11 @@ mod tests {
         assert_eq!(super::Design::V1.drawn(), super::Design::V2);
     }
 
-    /// On headless a web link opens from the tab and never reaches the
-    /// engine, whose machine is seldom the reader's; a local folder still
-    /// does.
+    /// On headless an https link opens from the tab and never reaches the
+    /// engine, whose machine is seldom the reader's; an http link goes to the
+    /// engine, which refuses it. Diagnostics Reveal goes to the engine too.
     #[wasm_bindgen_test::wasm_bindgen_test]
-    async fn headless_opens_web_links_here_and_folders_on_the_engine() {
+    async fn headless_opens_https_here_and_sends_http_to_the_engine() {
         use crate::engine::fake::{FakeEngine, ask};
         use crate::test_support::sleep_ms;
 
@@ -2528,17 +2533,21 @@ mod tests {
             recorded.as_string().as_deref(),
             Some("https://quilt.test/b/bucket")
         );
+        // The fake engine never answers, so each call waits on its own task.
         wasm_bindgen_futures::spawn_local(async {
-            let _ = super::open_in_web_browser("/tmp/logs".to_owned()).await;
+            let _ = super::open_in_web_browser("http://quilt.test".to_owned()).await;
+        });
+        wasm_bindgen_futures::spawn_local(async {
+            let _ = super::reveal_diagnostic_logs().await;
         });
         sleep_ms(0).await;
         let asked: Vec<_> = engine
             .requests()
             .iter()
-            .filter(|request| request["cmd"] == "open_in_web_browser")
-            .map(|request| request["args"]["url"].clone())
+            .filter_map(|request| request["cmd"].as_str().map(str::to_owned))
+            .filter(|cmd| cmd.contains("browser") || cmd.contains("reveal"))
             .collect();
-        assert_eq!(asked, vec![serde_json::json!("/tmp/logs")]);
+        assert_eq!(asked, ["open_in_web_browser", "reveal_diagnostic_logs"]);
     }
 
     /// Anchored identically in the backend's `files_data_wire_form_is_verbatim`.

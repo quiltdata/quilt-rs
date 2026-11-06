@@ -153,7 +153,21 @@ pub async fn package_uninstall(
     model.package_uninstall(namespace, prune).await
 }
 
+/// Only `https` and `mailto` links open; anything else, a local path
+/// included, is refused.
+fn check_openable_link(url: &str) -> Result<(), Error> {
+    let scheme = url::Url::parse(url).ok().map(|u| u.scheme().to_owned());
+    if matches!(scheme.as_deref(), Some("https" | "mailto")) {
+        Ok(())
+    } else {
+        Err(Error::General(
+            "Only https and mailto links can be opened".to_string(),
+        ))
+    }
+}
+
 pub fn open_in_web_browser(url: &str) -> Result<(), Error> {
+    check_openable_link(url)?;
     Ok(opener::open(url)?)
 }
 
@@ -421,6 +435,20 @@ pub async fn get_or_register_client(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn opens_only_https_and_mailto_links() {
+        for allowed in [
+            "https://quilt.test/b/bucket",
+            "mailto:support@quilt.test?subject=Hi",
+        ] {
+            check_openable_link(allowed).expect(allowed);
+        }
+        for refused in ["file:///tmp/x", "/tmp/x", "http://quilt.test", "C:\\x"] {
+            let err = open_in_web_browser(refused).expect_err(refused);
+            assert!(err.to_string().contains("https and mailto"), "{err}");
+        }
+    }
     use quilt_uri::fixtures;
 
     use mockall::predicate::{always, eq};

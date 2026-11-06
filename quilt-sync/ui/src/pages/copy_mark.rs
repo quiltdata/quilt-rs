@@ -1,21 +1,14 @@
 //! What a page says about its last copy: the mark on the thing copied, and the
-//! words for a screen reader, both for [`CONFIRM_FOR`].
+//! words for a screen reader, both for [`ACKNOWLEDGE_FOR`].
 //!
 //! Stamped as `components/toasts.rs` is. Every click takes a fresh stamp, and
 //! a write settles only while its own stamp is the newest, so two clicks inside
 //! one round trip cannot let the slower answer mark something the reader has
 //! already moved past, nor an earlier timer clear a later mark.
 
-use std::time::Duration;
-
 use leptos::prelude::*;
 
-/// How long a mark stands, and its words their place in the live region.
-///
-/// Long enough to be seen after the click that caused it, short enough that a
-/// reader returning later is not told something stale about a clipboard
-/// anything else may own by then.
-pub const CONFIRM_FOR: Duration = Duration::from_millis(1_500);
+use crate::kit::ACKNOWLEDGE_FOR;
 
 /// One page's copy state. `T` names what was copied, such as a row's address.
 pub struct CopyMark<T: 'static> {
@@ -68,7 +61,7 @@ impl<T: Send + Sync + 'static> CopyMark<T> {
     }
 
     /// Report one outcome as the mark and the words, and take both back after
-    /// [`CONFIRM_FOR`].
+    /// [`ACKNOWLEDGE_FOR`].
     pub fn settle(self, stamp: u64, mark: Option<T>, words: String) {
         if !self.is_current(stamp) {
             return;
@@ -82,7 +75,7 @@ impl<T: Send + Sync + 'static> CopyMark<T> {
                     self.said.try_set(String::new());
                 }
             },
-            CONFIRM_FOR,
+            ACKNOWLEDGE_FOR,
         );
     }
 }

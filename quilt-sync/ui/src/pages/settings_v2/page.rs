@@ -48,7 +48,6 @@ use std::collections::BTreeSet;
 use std::collections::VecDeque;
 use std::future::Future;
 use std::pin::Pin;
-use std::time::Duration;
 
 use leptos::prelude::*;
 use leptos_router::NavigateOptions;
@@ -60,7 +59,7 @@ use crate::commands::{
 };
 use crate::engine;
 use crate::kit::{
-    Button, ButtonVariant, Card, Dialog, HostRowSkeleton, LoadFailure, PageLayout,
+    ACKNOWLEDGE_FOR, Button, ButtonVariant, Card, Dialog, HostRowSkeleton, LoadFailure, PageLayout,
     ToggleRowSkeleton,
 };
 
@@ -575,9 +574,6 @@ struct Saves {
     quiet: StoredValue<bool>,
 }
 
-/// How long *Saved* stays beside a row.
-const SAVED_FOR: Duration = Duration::from_millis(2_000);
-
 const SAVE_FAILED: &str = "Could not save this setting.";
 
 /// The outcome band's key: one page, one address.
@@ -694,7 +690,7 @@ impl Saves {
                     saved.try_set(None);
                 }
             },
-            SAVED_FOR,
+            ACKNOWLEDGE_FOR,
         ) {
             self.saved_timer.try_set_value(Some(handle));
         }

@@ -428,6 +428,11 @@
    * so they are stated once, as white, like the ground they are for. */
   --q-overlay-onBrand-hover: rgb(255 255 255 / 0.14);
   --q-overlay-onBrand-active: rgb(255 255 255 / 0.22);
+  /* The inbox bell's needs-you count: amber-9, the same in both themes, with the
+   * brand literal as its ink, 7.6:1. The pill measures 7.6:1 against the ground
+   * too. The bell's unread dot is the muted ink above, 7.0:1. */
+  --q-bgColor-attention-onBrand-emphasis: var(--amber-9);
+  --q-fgColor-attention-onBrand-emphasis: var(--q-bgColor-brand);
 
   /* lines. `muted` separates rows; `default` outlines buttons and cards. */
   --q-borderColor-muted: var(--gray-4);
@@ -461,8 +466,10 @@
   --q-borderColor-accent-muted: var(--blue-7);
 
   /* Focus ring: the first accent step over 3:1 on page, card and muted surfaces —
-   * 11 in light, 9 in dark (below); 8 measured 2.2 to 2.9. The brand bar overrides it. */
-  --q-focus-outlineColor: var(--blue-11);
+   * 11 in light, 9 in dark (below); 8 measured 2.2 to 2.9. The brand bar overrides it;
+   * a surface that opens from the bar, such as the inbox, sets it back to `-surface`. */
+  --q-focus-outlineColor-surface: var(--blue-11);
+  --q-focus-outlineColor: var(--q-focus-outlineColor-surface);
   --q-focus-outlineWidth: 2px;
   --q-focus-outlineOffset: 2px;
 
@@ -633,7 +640,8 @@
   --q-bgColor-muted: var(--gray-3);
   --q-bgColor-inset: var(--gray-4);
   /* Dark's 11 is the pale text step; 9 reads as a ring. */
-  --q-focus-outlineColor: var(--blue-9);
+  --q-focus-outlineColor-surface: var(--blue-9);
+  --q-focus-outlineColor: var(--q-focus-outlineColor-surface);
   /* Vivid, not the brand navy: see ACCENT. */
   --q-bgColor-accent-emphasis: var(--blue-9);
 }

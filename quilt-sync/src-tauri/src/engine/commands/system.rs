@@ -211,6 +211,19 @@ pub async fn collect_diagnostic_logs(s: &Services) -> Result<String, String> {
     }
 }
 
+fn reveal_diagnostic_logs_command(data_dir: &std::path::Path) -> Result<(), Error> {
+    opener::reveal(diagnostics::diagnostic_zip_path(data_dir))?;
+    Ok(())
+}
+
+pub async fn reveal_diagnostic_logs(s: &Services) -> Result<String, String> {
+    let msg_init = "Revealing diagnostic logs".to_string();
+    let msg_ok = "Successfully revealed diagnostic logs".to_string();
+    let msg_err = |err: &Error| format!("Failed to reveal diagnostic logs: {err}");
+
+    Notify::new(msg_init).map(reveal_diagnostic_logs_command(&s.data_dir), msg_ok, msg_err)
+}
+
 pub async fn send_crash_report(
     s: &Services,
     zip_path: String,
@@ -384,7 +397,7 @@ fn open_in_web_browser_command(url: &str) -> Result<(), Error> {
 pub async fn open_in_web_browser(s: &Services, url: String) -> Result<String, String> {
     let tracing = &*s.telemetry;
     // Hostless on purpose, even though a URL has a host: this one command opens
-    // catalog links, documentation, a local directory and `mailto:` alike, so its
+    // catalog links, documentation and `mailto:` alike, so its
     // URL's host is not necessarily a Quilt deployment — and `host` means the
     // deployment an event concerns, never a hostname that appeared nearby.
     let shown = loggable_url(&url);

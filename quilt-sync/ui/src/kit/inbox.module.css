@@ -1,0 +1,134 @@
+/*
+ * The inbox: the bell on the appbar, and the panel it opens.
+ *
+ * The bell is drawn on the brand ground, so its marks are stated against it:
+ * the needs-you count as an amber pill, the unread dot in the bar's muted ink.
+ */
+
+.bell {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--q-control-height);
+  height: var(--q-control-height);
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--q-radius);
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.bell svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* Both marks sit on the bell's top-right corner, over the glyph's edge. */
+.dot,
+.count {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  pointer-events: none;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--q-fgColor-onBrand-muted);
+}
+
+/* A pill, so a count of two digits keeps its shape. Its height is the body
+ * line, and the type floor holds: the count is body size, not smaller. */
+.count {
+  top: -4px;
+  right: -6px;
+  min-width: 20px;
+  padding: 0 5px;
+  border-radius: 10px;
+  background: var(--q-bgColor-attention-onBrand-emphasis);
+  color: var(--q-fgColor-attention-onBrand-emphasis);
+  font-size: var(--q-text-body);
+  font-weight: 600;
+  line-height: 20px;
+  text-align: center;
+}
+
+/* Bounded by the overlay, and scrolls as one: however many lines lead it,
+ * every line and entry stays reachable. */
+.panel {
+  display: flex;
+  flex-direction: column;
+  width: 340px;
+  max-width: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  /* Opened from the appbar, whose white ring would vanish on this surface. */
+  --q-focus-outlineColor: var(--q-focus-outlineColor-surface);
+}
+
+.lead {
+  /* A box of its own in the attention tone, so it reads as a separate
+   * callout and not as a heading over the entries below it. */
+  flex: none;
+  margin: 0 0 var(--q-space-1);
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--q-borderColor-attention-muted);
+  border-radius: var(--q-radius);
+  background: var(--q-bgColor-attention-muted);
+}
+
+.lead > li + li {
+  border-top: 1px solid var(--q-borderColor-attention-muted);
+}
+
+.needs {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--q-space-2);
+  padding: var(--q-space-2) var(--q-space-3);
+  border-radius: calc(var(--q-radius) - 1px);
+  color: var(--q-fgColor-attention-onMuted);
+  text-decoration: none;
+}
+
+.needs:focus-visible {
+  outline-offset: calc(-1 * var(--q-focus-outlineWidth));
+}
+
+.needs:hover {
+  background: var(--q-overlay-hover);
+}
+
+/* A package name has no spaces to break at. */
+.needs span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.needs svg {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  margin-top: 4px;
+  color: var(--q-fgColor-attention);
+}
+
+.entries {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.entries > li + li {
+  border-top: 1px solid var(--q-borderColor-muted);
+}
+
+.empty {
+  margin: 0;
+  padding: var(--q-space-2) var(--q-space-3);
+  color: var(--q-fgColor-muted);
+}

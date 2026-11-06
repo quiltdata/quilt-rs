@@ -1,0 +1,10 @@
+{
+  "bundle": {
+    "windows": {
+      "signCommand": {
+        "cmd": "pwsh",
+        "args": ["-NoProfile", "-NonInteractive", "-File", "windows-sign.ps1", "%1"]
+      }
+    }
+  }
+}
