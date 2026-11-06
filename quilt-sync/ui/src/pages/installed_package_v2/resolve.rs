@@ -2,9 +2,10 @@
 //! one, and the two whole-revision choices between them.
 //!
 //! The words are pure so their rules are host-tested: the sentence counts the
-//! page's differing set and points at the marks only when there are some, and
-//! the replace confirmation names each extent the reset reaches that is not
-//! zero, or, with none, what the reset still does (`#resolve-flow`).
+//! page's differing set and points at the marks only when there are some, the
+//! replace confirmation names each extent the reset reaches that is not
+//! zero, or, with none, what the reset still does (`#resolve-flow`), and the
+//! share confirmation names what the published revision loses.
 
 use std::collections::BTreeSet;
 use std::future::Future;
@@ -74,6 +75,27 @@ pub(super) fn consequence(unpublished: usize, differing: usize, uncommitted: usi
         (Some(first), Some(second)) => format!("{first} and {second}"),
     };
     format!("{}. This cannot be undone.", capitalised(&said))
+}
+
+/// What making this copy's revision the shared one takes from the published
+/// one, or `None` when it takes nothing and the choice need not ask. v1's
+/// *Promote my revision* asks with the same words.
+#[must_use]
+pub fn share_consequence(loss: commands::LatestLoss) -> Option<String> {
+    let commands::LatestLoss { entries, metadata } = loss;
+    let files = (entries > 0).then(|| {
+        format!(
+            "Everyone who syncs loses the published version of {entries} {}",
+            plural(entries, "file", "files")
+        )
+    });
+    let replaced = "the published metadata is replaced with yours";
+    match (files, metadata) {
+        (None, false) => None,
+        (None, true) => Some(format!("{}.", capitalised(replaced))),
+        (Some(files), false) => Some(format!("{files}.")),
+        (Some(files), true) => Some(format!("{files}, and {replaced}.")),
+    }
 }
 
 /// Upper-cases the first letter only; every clause starts with ASCII.
@@ -164,6 +186,7 @@ pub fn ResolvePane(
     let (published, extents) = match resolve {
         commands::ResolveData::Compared {
             published_message,
+            loss,
             unpublished,
             uncommitted,
             ..
@@ -178,7 +201,7 @@ pub fn ResolvePane(
                 </PaneSection>
             }
             .into_any(),
-            Some((unpublished, uncommitted)),
+            Some((unpublished, uncommitted, loss)),
         ),
         commands::ResolveData::Refused { reason } => (
             view! {
@@ -202,18 +225,10 @@ pub fn ResolvePane(
         uri,
         plain: super::carrying(routes::package_page_href(&namespace)),
     };
-    let on_certify = certify_press(target.clone(), w, commands.certify);
-    let replace = w.dialogs.replace;
-    let confirmation = extents.map(|(unpublished, uncommitted)| {
-        // Read once: the dialog's sentence is fixed while it is drawn, and
-        // the set does not change while the mode is open on one payload.
-        replace_confirmation(
-            target,
-            w,
-            commands.reset,
-            consequence(unpublished, untrack(count), uncommitted),
-        )
-    });
+    let replace = w.dialogs.resolve.get_value().replace;
+    // Read once: the dialog's sentence is fixed while it is drawn, and
+    // the set does not change while the mode is open on one payload.
+    let (on_certify, confirmations) = choices(target, w, commands, extents, untrack(count));
 
     let certify_hint = unique_id("resolve-hint");
     let replace_hint = unique_id("resolve-hint");
@@ -247,7 +262,7 @@ pub fn ResolvePane(
                                 "Share mine"
                             </Button>
                             <p id=certify_hint class=style::hint>
-                                "Everyone who syncs gets your revision next. Nothing is deleted."
+                                "Everyone who syncs gets your revision next."
                             </p>
                         </div>
                         <div class=style::choice>
@@ -265,7 +280,7 @@ pub fn ResolvePane(
                     </div>
                 </PaneSection>
             </Card>
-            {confirmation}
+            {confirmations}
         </aside>
     }
 }
@@ -278,8 +293,7 @@ struct Target {
     plain: String,
 }
 
-/// *Share mine*: runs at once, since nothing is lost that the
-/// registry does not keep (`#replace-confirmation`).
+/// *Share mine* when the published revision loses nothing: runs at once.
 fn certify_press(target: Target, w: Wiring, certify: RevisionChoice) -> impl Fn(MouseEvent) {
     let Wiring {
         busy,
@@ -320,33 +334,91 @@ fn certify_press(target: Target, w: Wiring, certify: RevisionChoice) -> impl Fn(
     }
 }
 
-/// *Replace mine*'s confirmation, on the page's flag
-/// so it outlives a re-read, as undo's does.
-fn replace_confirmation(
+/// The choices' confirmations, none for a refused comparison, and *Share
+/// mine*'s press, which opens its confirmation instead of certifying when the
+/// published revision loses something.
+fn choices(
     target: Target,
     w: Wiring,
-    reset: RevisionChoice,
-    consequence: String,
-) -> impl IntoView {
+    commands: ResolveCommands,
+    extents: Option<(usize, usize, commands::LatestLoss)>,
+    differing: usize,
+) -> (impl Fn(MouseEvent), impl IntoView) {
+    let super::ResolveDialogs { share, replace } = w.dialogs.resolve.get_value();
+    let sharing = extents
+        .and_then(|(_, _, loss)| share_consequence(loss))
+        .map(|consequence| {
+            let choice = Choice {
+                open: share,
+                title: "Share yours in place of the published revision",
+                verb: "Share mine",
+                run: commands.certify,
+                done: "Your revision is now the shared one.",
+            };
+            confirmation(target.clone(), w, choice, consequence)
+        });
+    let replacing = extents.map(|(unpublished, uncommitted, _)| {
+        let choice = Choice {
+            open: replace,
+            title: "Replace yours with the published revision",
+            verb: "Replace mine",
+            run: commands.reset,
+            done: "Replaced with the published revision.",
+        };
+        let consequence = consequence(unpublished, differing, uncommitted);
+        confirmation(target.clone(), w, choice, consequence)
+    });
+    let asks = sharing.is_some();
+    let press = certify_press(target, w, commands.certify);
+    let on_share = move |ev| {
+        if asks {
+            share.set(true);
+        } else {
+            press(ev);
+        }
+    };
+    (on_share, view! { {sharing} {replacing} })
+}
+
+/// A choice that asks first: its page flag, its words, its command, and
+/// the band's line on success.
+#[derive(Clone, Copy)]
+struct Choice {
+    open: RwSignal<bool>,
+    title: &'static str,
+    verb: &'static str,
+    run: RevisionChoice,
+    done: &'static str,
+}
+
+/// A choice's confirmation, on the page's flag so it outlives a re-read, as
+/// undo's does.
+fn confirmation(target: Target, w: Wiring, choice: Choice, consequence: String) -> impl IntoView {
     let Wiring {
         busy,
         outcome,
         reload,
         replace_to,
-        dialogs,
         ..
     } = w;
+    let Choice {
+        open,
+        title,
+        verb,
+        run,
+        done,
+    } = choice;
     view! {
         <ConfirmDialog
-            open=dialogs.replace
-            title="Replace yours with the published revision"
+            open=open
+            title=title
             consequence=consequence
-            confirm=Submit::new("Replace mine", move || {
+            confirm=Submit::new(verb, move || {
                 let Target { namespace, uri, plain } = target.clone();
                 async move {
                     // A refusal answers the dialog, which draws it and stays open.
-                    holding(busy, outcome, reset(namespace.clone(), uri)).await?;
-                    outcome.set(Some(success(namespace.clone(), "Replaced with the published revision.")));
+                    holding(busy, outcome, run(namespace.clone(), uri)).await?;
+                    outcome.set(Some(success(namespace.clone(), done)));
                     replace_to.set(Some(Replace { namespace, to: plain }));
                     reload.notify();
                     Ok(())
@@ -369,8 +441,11 @@ fn success(namespace: String, lead: &str) -> Outcome {
 
 #[cfg(test)]
 mod tests {
-    use super::{Answer, ResolveCommands, ResolvePane, Shown, consequence, differs_sentence};
-    use crate::commands::{CurrentRevisionData, ResolveData};
+    use super::{
+        Answer, ResolveCommands, ResolvePane, Shown, consequence, differs_sentence,
+        share_consequence,
+    };
+    use crate::commands::{CurrentRevisionData, LatestLoss, ResolveData};
     use crate::pages::installed_package_v2::{Outcome, Wiring};
     use leptos::prelude::*;
     use quilt_ui_kit::test_support::{button_saying, element_saying, mount, sleep_ms};
@@ -474,6 +549,42 @@ mod tests {
         );
     }
 
+    fn loss(entries: usize, metadata: bool) -> LatestLoss {
+        LatestLoss { entries, metadata }
+    }
+
+    #[test]
+    fn sharing_what_the_published_revision_holds_asks_nothing() {
+        assert_eq!(share_consequence(loss(0, false)), None);
+    }
+
+    #[test]
+    fn the_share_confirmation_counts_the_published_files_lost() {
+        assert_eq!(
+            share_consequence(loss(3, false)).as_deref(),
+            Some("Everyone who syncs loses the published version of 3 files.")
+        );
+        assert_eq!(
+            share_consequence(loss(1, false)).as_deref(),
+            Some("Everyone who syncs loses the published version of 1 file.")
+        );
+    }
+
+    #[test]
+    fn the_share_confirmation_says_the_published_metadata_is_replaced() {
+        assert_eq!(
+            share_consequence(loss(0, true)).as_deref(),
+            Some("The published metadata is replaced with yours.")
+        );
+        assert_eq!(
+            share_consequence(loss(2, true)).as_deref(),
+            Some(
+                "Everyone who syncs loses the published version of 2 files, and the published \
+                 metadata is replaced with yours."
+            )
+        );
+    }
+
     const BACK: &str = "/installed-package?namespace=team%2Fdataset&filter=unmodified";
 
     fn ns() -> Namespace {
@@ -491,9 +602,14 @@ mod tests {
     }
 
     fn compared(unpublished: usize, uncommitted: usize) -> ResolveData {
+        losing(unpublished, uncommitted, LatestLoss::default())
+    }
+
+    fn losing(unpublished: usize, uncommitted: usize, loss: LatestLoss) -> ResolveData {
         ResolveData::Compared {
             published_message: Some("Theirs".into()),
             differing: vec!["plate/a.csv".into(), "plate/b.csv".into()],
+            loss,
             unpublished,
             uncommitted,
         }
@@ -616,7 +732,7 @@ mod tests {
 
     const CERTIFY: &str = "Share mine";
     const REPLACE: &str = "Replace mine";
-    const CERTIFY_HINT: &str = "Everyone who syncs gets your revision next. Nothing is deleted.";
+    const CERTIFY_HINT: &str = "Everyone who syncs gets your revision next.";
     const REPLACE_HINT: &str = "Swaps your revision and edits here for the published one.";
 
     /// The pane's choice saying `label`, not the dialog's verb of the same words.
@@ -683,6 +799,7 @@ mod tests {
         let resolve = ResolveData::Compared {
             published_message: None,
             differing: vec!["plate/a.csv".into()],
+            loss: LatestLoss::default(),
             unpublished: 0,
             uncommitted: 0,
         };
@@ -700,6 +817,7 @@ mod tests {
                 "plate/b.csv".into(),
                 "plate/c.csv".into(),
             ],
+            loss: LatestLoss::default(),
             unpublished: 0,
             uncommitted: 0,
         };
@@ -941,7 +1059,7 @@ mod tests {
     const TITLE: &str = "Replace yours with the published revision";
 
     #[wasm_bindgen_test]
-    async fn sharing_mine_runs_at_once_and_says_so() {
+    async fn sharing_mine_that_loses_nothing_runs_at_once_and_says_so() {
         let w = Wiring::new();
         let el = choosing(
             compared(0, 0),
@@ -954,7 +1072,10 @@ mod tests {
         settle().await;
 
         assert_eq!(CERTIFIED.with_borrow(Clone::clone), vec!["team/dataset"]);
-        assert!(!w.dialogs.replace.get_untracked(), "no confirmation");
+        assert!(
+            !w.dialogs.resolve.get_value().replace.get_untracked(),
+            "no confirmation"
+        );
         assert_eq!(
             w.outcome.get_untracked(),
             Some(Outcome {
@@ -996,6 +1117,79 @@ mod tests {
         assert_eq!(w.replace_to.get_untracked(), None);
         assert_eq!(RELOADED.get(), 0, "nothing to re-read");
         section(&el, "Yours");
+    }
+
+    const SHARE_TITLE: &str = "Share yours in place of the published revision";
+
+    #[wasm_bindgen_test]
+    async fn sharing_mine_over_published_files_asks_first_and_counts_them() {
+        let el = choosing(
+            losing(0, 0, loss(3, false)),
+            two_marks(),
+            Wiring::new(),
+            with(certifies_ok, resets_ok),
+        )
+        .await;
+        choice(&el, CERTIFY).click();
+        leptos::task::tick().await;
+
+        let dialog = open_dialog(&el).expect("the confirmation is open");
+        element_saying(&dialog, SHARE_TITLE);
+        element_saying(
+            &dialog,
+            "Everyone who syncs loses the published version of 3 files.",
+        );
+        assert!(CERTIFIED.with_borrow(Vec::is_empty), "nothing ran yet");
+    }
+
+    #[wasm_bindgen_test]
+    async fn sharing_mine_over_other_published_metadata_asks_first() {
+        let el = choosing(
+            losing(0, 0, loss(0, true)),
+            two_marks(),
+            Wiring::new(),
+            with(certifies_ok, resets_ok),
+        )
+        .await;
+        choice(&el, CERTIFY).click();
+        leptos::task::tick().await;
+
+        let dialog = open_dialog(&el).expect("the confirmation is open");
+        element_saying(&dialog, "The published metadata is replaced with yours.");
+        assert!(CERTIFIED.with_borrow(Vec::is_empty), "nothing ran yet");
+    }
+
+    #[wasm_bindgen_test]
+    async fn confirming_shares_and_says_so() {
+        let w = Wiring::new();
+        let el = choosing(
+            losing(0, 0, loss(3, true)),
+            two_marks(),
+            w,
+            with(certifies_ok, resets_ok),
+        )
+        .await;
+        choice(&el, CERTIFY).click();
+        leptos::task::tick().await;
+        button_saying(
+            &open_dialog(&el).expect("the confirmation is open"),
+            CERTIFY,
+        )
+        .click();
+        settle().await;
+        settle().await;
+
+        assert_eq!(CERTIFIED.with_borrow(Clone::clone), vec!["team/dataset"]);
+        assert!(open_dialog(&el).is_none(), "the confirmation closed");
+        assert_eq!(
+            w.outcome.get_untracked().map(|o| o.lead),
+            Some("Your revision is now the shared one.".into())
+        );
+        assert_eq!(
+            w.replace_to.get_untracked().map(|r| r.to).as_deref(),
+            Some(BACK)
+        );
+        assert_eq!(RELOADED.get(), 1, "the page re-reads");
     }
 
     #[wasm_bindgen_test]
@@ -1197,7 +1391,7 @@ mod tests {
     async fn a_dialog_rebuilt_mid_reset_is_drawn_sealed() {
         let w = Wiring::new();
         w.busy.set(true);
-        w.dialogs.replace.set(true);
+        w.dialogs.resolve.get_value().replace.set(true);
         let el = choosing(
             compared(0, 0),
             two_marks(),

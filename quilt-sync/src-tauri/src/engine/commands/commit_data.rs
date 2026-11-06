@@ -31,6 +31,7 @@ use super::package_entries::ENTRIES_CAP;
 use super::package_entries::EntryCounts;
 use super::package_entries::InstalledPackageEntryData;
 use super::package_list::denied_mark;
+use super::package_page::LatestLoss;
 
 // ── Merge data for Leptos UI ──
 
@@ -76,6 +77,34 @@ pub async fn get_merge_data(s: &Services, namespace: String) -> Result<MergeData
         .map_err(|e: quilt_uri::UriError| e.to_string())?;
 
     get_merge_data_from_model(m, tracing, &namespace)
+        .await
+        .map_err(|e| e.to_frontend_string())
+}
+
+/// Read when the merge page's promote is pressed, so it compares against
+/// `latest` as it is then.
+async fn get_latest_loss_from_model(
+    m: &impl model::QuiltModel,
+    namespace: &quilt_uri::Namespace,
+) -> Result<LatestLoss, Error> {
+    let installed_package = m.get_installed_package(namespace).await?.ok_or_else(|| {
+        Error::from(quilt::InstallPackageError::NotInstalled(
+            namespace.to_owned(),
+        ))
+    })?;
+    let lineage = m.get_installed_package_lineage(&installed_package).await?;
+    let comparison = m
+        .get_installed_package_resolve_comparison(&installed_package, &lineage)
+        .await?;
+    Ok(LatestLoss::from(&comparison))
+}
+
+pub async fn get_latest_loss(s: &Services, namespace: String) -> Result<LatestLoss, String> {
+    let namespace: quilt_uri::Namespace = namespace
+        .try_into()
+        .map_err(|e: quilt_uri::UriError| e.to_string())?;
+
+    get_latest_loss_from_model(&*s.model, &namespace)
         .await
         .map_err(|e| e.to_frontend_string())
 }
@@ -948,6 +977,36 @@ mod tests {
 
         let result = get_merge_data_from_model(&model, &tracing, &namespace).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn the_latest_loss_is_the_installed_copy_s_comparison() {
+        let mut model = mocks::create();
+        mocks::mock_installed_package(&mut model);
+        model
+            .expect_get_installed_package_resolve_comparison()
+            .times(1)
+            .returning(|_, _| {
+                Ok(quilt::flow::ResolveComparison {
+                    published_message: None,
+                    differing: Vec::new(),
+                    lost: 2,
+                    user_meta_differs: true,
+                    unpublished: 0,
+                })
+            });
+
+        let loss = get_latest_loss_from_model(&model, &("foo", "bar").into())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            loss,
+            LatestLoss {
+                entries: 2,
+                metadata: true,
+            }
+        );
     }
 
     // ── Commit data tests ──

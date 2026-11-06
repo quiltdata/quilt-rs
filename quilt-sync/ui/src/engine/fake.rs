@@ -149,6 +149,10 @@ impl FakeEngine {
         link::received(self.socket(), &json!({ "id": id, "ok": ok }).to_string());
     }
 
+    pub(crate) fn refuse(&self, id: &Value, err: &str) {
+        link::received(self.socket(), &json!({ "id": id, "err": err }).to_string());
+    }
+
     pub(crate) fn close(&self) {
         link::closed(self.socket());
     }

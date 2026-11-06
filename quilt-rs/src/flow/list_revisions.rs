@@ -45,15 +45,20 @@ pub struct Revision {
     pub workflow: Option<String>,
 }
 
+/// Whether a header's `user_meta` says anything: null and `{}` say nothing.
+pub(crate) fn holds_user_meta(meta: &serde_json::Value) -> bool {
+    match meta {
+        serde_json::Value::Null => false,
+        serde_json::Value::Object(fields) => !fields.is_empty(),
+        _ => true,
+    }
+}
+
 impl Revision {
     /// The facts `header` records about the revision at `hash`.
     #[must_use]
     pub fn from_header(hash: String, obtained: DateTime<Utc>, header: ManifestHeader) -> Self {
-        let meta = header.user_meta.filter(|meta| match meta {
-            serde_json::Value::Null => false,
-            serde_json::Value::Object(fields) => !fields.is_empty(),
-            _ => true,
-        });
+        let meta = header.user_meta.filter(holds_user_meta);
         Self {
             hash,
             obtained,
