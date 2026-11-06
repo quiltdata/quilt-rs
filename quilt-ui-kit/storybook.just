@@ -3,7 +3,8 @@ public_url := "/quilt-rs/kit/"
 
 # The port goes through Trunk's env var so `--port` overrides it.
 #
-# The link to the app's gallery points at `just gallery dev`'s server.
+# In `dev` and `preview`, the link to the app's gallery points at the gallery's
+# own `dev` or `preview` server.
 #
 # Serve a debug build and rebuild on save; `--open` opens a browser tab
 dev *args: stubs
@@ -18,7 +19,7 @@ build public_url=public_url: stubs
 
 # Serve a release build as Pages does, rebuilding on save, at http://127.0.0.1:8788/quilt-rs/kit/
 preview *args: stubs
-    TRUNK_SERVE_PORT="${TRUNK_SERVE_PORT:-8788}" trunk serve --release=true --public-url "{{public_url}}" --dist dist-pages {{args}}
+    QUILT_GALLERY_URL=http://127.0.0.1:8787/quilt-rs/ TRUNK_SERVE_PORT="${TRUNK_SERVE_PORT:-8788}" trunk serve --release=true --public-url "{{public_url}}" --dist dist-pages {{args}}
 
 # Trunk refuses to start until the files in its watch-ignore list exist, which
 # its pre-build hook writes. An empty stub gets it past that check.
