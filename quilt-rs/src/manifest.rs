@@ -4,6 +4,7 @@
 mod top_hasher;
 
 pub use top_hasher::TopHasher;
+pub(crate) use top_hasher::normalized_entry_meta;
 
 pub use crate::workflow::Workflow;
 pub use crate::workflow::WorkflowId;

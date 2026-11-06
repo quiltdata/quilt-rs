@@ -66,11 +66,11 @@ fn serialize_manifest_header(
     Ok(header_meta)
 }
 
-pub fn serialize_manifest_row_entry(
-    manifest_row: &ManifestRow,
-) -> Res<serde_json::Map<String, serde_json::Value>> {
-    // Handle meta field - match quilt3 behavior where null becomes {}
-    let meta = match &manifest_row.meta {
+/// An entry's `meta` as the top hash reads it, so null, absent and `{}` are one value.
+pub(crate) fn normalized_entry_meta(
+    meta: Option<&serde_json::Value>,
+) -> serde_json::Map<String, serde_json::Value> {
+    match meta {
         Some(serde_json::Value::Object(obj)) => {
             let mut m = obj.clone();
             m.values_mut().for_each(serde_json::Value::sort_all_objects);
@@ -84,7 +84,13 @@ pub fn serialize_manifest_row_entry(
             obj.insert("user_meta".to_string(), other.clone());
             obj
         }
-    };
+    }
+}
+
+pub fn serialize_manifest_row_entry(
+    manifest_row: &ManifestRow,
+) -> Res<serde_json::Map<String, serde_json::Value>> {
+    let meta = normalized_entry_meta(manifest_row.meta.as_ref());
 
     Ok(serde_json::Map::from_iter([
         (
