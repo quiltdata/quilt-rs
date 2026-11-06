@@ -227,6 +227,7 @@ mod tests {
             "a/b:c.txt",
             "2024-01-01T10:00:00.csv",
             "a/C:x",
+            "a/\\\\server\\share",
         ] {
             assert!(LogicalKey::new(key).is_ok(), "{key}");
         }
@@ -256,6 +257,12 @@ mod tests {
             "\\a",
             "\\\\server\\share\\a",
             "\\\\?\\C:\\a",
+            "//server/share/a",
+            "\\\\.\\pipe\\a",
+            "\\??\\C:\\a",
+            "/??/C:/a",
+            "C:/a",
+            "C:..",
             "C:",
             "C:\\a",
             "c:a",
