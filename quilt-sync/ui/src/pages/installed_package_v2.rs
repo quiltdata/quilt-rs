@@ -4247,15 +4247,21 @@ mod tests {
 
     /// The page at `width`: a header, a context pane `pane` tall, and the
     /// file pane's band over `rows` and whatever follows them.
-    fn scrolling_page(width: u32, pane: u32, rows: AnyView) -> web_sys::Element {
+    fn scrolling_page(
+        width: u32,
+        pane: u32,
+        rows: impl FnOnce() -> AnyView + Send + 'static,
+    ) -> web_sys::Element {
         // An empty banner row, as the page always passes one.
         scrolling_page_with_banner(width, pane, rows, ().into_any())
     }
 
+    /// `rows` is built inside the mount: a component's effects need the executor
+    /// `mount` starts, and no earlier test is guaranteed to have started it.
     fn scrolling_page_with_banner(
         width: u32,
         pane: u32,
-        rows: AnyView,
+        rows: impl FnOnce() -> AnyView + Send + 'static,
         banner: AnyView,
     ) -> web_sys::Element {
         load_page_sheets();
@@ -4275,7 +4281,7 @@ mod tests {
                                     <FileToolbarBand>
                                         <div style="height:72px"></div>
                                     </FileToolbarBand>
-                                    {rows}
+                                    {rows()}
                                 </section>
                             </div>
                         </div>
@@ -4313,7 +4319,7 @@ mod tests {
     /// scroll the page.
     #[wasm_bindgen_test]
     async fn the_header_the_toolbar_and_the_pane_stay_while_the_rows_scroll() {
-        let el = scrolling_page(1024, 200, plain_rows());
+        let el = scrolling_page(1024, 200, plain_rows);
         sleep_ms(50).await;
         let frame = frame(&el);
         assert_near(
@@ -4352,7 +4358,7 @@ mod tests {
         let el = scrolling_page_with_banner(
             1024,
             200,
-            plain_rows(),
+            plain_rows,
             view! { <div data-banner style="height:40px"></div> }.into_any(),
         );
         sleep_ms(50).await;
@@ -4389,7 +4395,7 @@ mod tests {
         let el = scrolling_page_with_banner(
             1024,
             200,
-            plain_rows(),
+            plain_rows,
             view! { <div style="height:1200px"></div> }.into_any(),
         );
         sleep_ms(50).await;
@@ -4406,7 +4412,7 @@ mod tests {
     /// one already in view leaves the page where it is.
     #[wasm_bindgen_test]
     async fn a_pane_scrolled_away_is_brought_back_into_view() {
-        let el = scrolling_page(600, 200, plain_rows());
+        let el = scrolling_page(600, 200, plain_rows);
         sleep_ms(50).await;
         let frame = frame(&el);
         let pane = find(&el, "aside");
@@ -4430,7 +4436,7 @@ mod tests {
     /// page where it is.
     #[wasm_bindgen_test]
     async fn a_held_pane_does_not_move_the_page() {
-        let el = scrolling_page(1024, 200, plain_rows());
+        let el = scrolling_page(1024, 200, plain_rows);
         sleep_ms(50).await;
         let frame = frame(&el);
         frame.set_scroll_top(1000);
@@ -4444,7 +4450,7 @@ mod tests {
     /// rest of the page does not wait for it.
     #[wasm_bindgen_test]
     async fn a_pane_taller_than_the_window_scrolls_on_its_own() {
-        let el = scrolling_page(1024, 1200, plain_rows());
+        let el = scrolling_page(1024, 1200, plain_rows);
         sleep_ms(50).await;
         let pane: web_sys::HtmlElement = find(&el, "aside").unchecked_into();
         assert!(
@@ -4464,7 +4470,7 @@ mod tests {
     /// the page; only the header and the file toolbar stay.
     #[wasm_bindgen_test]
     async fn a_narrow_pane_scrolls_away_with_the_page() {
-        let el = scrolling_page(600, 200, plain_rows());
+        let el = scrolling_page(600, 200, plain_rows);
         sleep_ms(50).await;
         let frame = frame(&el);
         frame.set_scroll_top(1000);
@@ -4489,7 +4495,7 @@ mod tests {
     /// keeps clear of it.
     #[wasm_bindgen_test]
     async fn the_footer_stays_at_the_bottom_of_the_window() {
-        let el = scrolling_page(1024, 200, listed(60));
+        let el = scrolling_page(1024, 200, || listed(60));
         // Past the footer's entrance.
         sleep_ms(250).await;
         let frame = frame(&el);
@@ -4518,7 +4524,7 @@ mod tests {
     /// bottom, above the page's bottom padding, rather than under the rows.
     #[wasm_bindgen_test]
     async fn under_a_short_list_the_footer_stays_low() {
-        let el = scrolling_page(1024, 200, listed(3));
+        let el = scrolling_page(1024, 200, || listed(3));
         sleep_ms(250).await;
         let frame = frame(&el);
         let footer = find(&el, &format!(".{}", sheets::files::footer));
