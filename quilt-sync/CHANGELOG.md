@@ -27,7 +27,7 @@
 
 ### Fixed
 
-- A package task whose outcome loses `latest` to a revision published during the run lands its own changes on top of that revision instead of leaving the package Diverged, unless both changed the same file (<https://github.com/quiltdata/quilt-rs/pull/PR>)
+- A package task whose outcome loses `latest` to a revision published during the run lands its own changes on top of that revision instead of leaving the package Diverged, unless both changed the same file (<https://github.com/quiltdata/quilt-rs/pull/1320>)
 
 ### quilt-rs
 

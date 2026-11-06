@@ -23,7 +23,7 @@
 
 ### Added
 
-- `flow::push_onto` and `LocalDomain::push_onto` publish a manifest whose rows are already on the remote as the revision after a given parent, and move `latest` to it only while `latest` still names that parent (<https://github.com/quiltdata/quilt-rs/pull/PR>)
+- `flow::push_onto` and `LocalDomain::push_onto` publish a manifest whose rows are already on the remote as the revision after a given parent, and move `latest` to it only while `latest` still names that parent (<https://github.com/quiltdata/quilt-rs/pull/1320>)
 
 ## [v0.52.0] - 2026-11-05
 
