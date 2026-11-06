@@ -16,7 +16,7 @@
 use leptos::prelude::*;
 
 use crate::commands;
-use crate::kit::{FormControl, FormDialog, Naming, Select, Submit};
+use quilt_ui_kit::{FormControl, FormDialog, Naming, Select, Submit};
 
 use super::{Wiring, holding};
 

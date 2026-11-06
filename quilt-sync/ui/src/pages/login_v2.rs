@@ -15,7 +15,7 @@ use leptos_router::hooks::use_navigate;
 
 use crate::commands::{self, LoginData};
 use crate::engine;
-use crate::kit::{
+use quilt_ui_kit::{
     BannerVariant, Button, ButtonSize, ButtonVariant, Card, FormControl, LoadFailure, SkeletonBox,
     TextInput, icons, readable,
 };
@@ -322,8 +322,8 @@ pub(crate) fn LoginScreen(read: PageRead<LoginData>) -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{button_saying, mount, sleep_ms, unmount_earlier};
     use leptos_router::components::Router;
+    use quilt_ui_kit::test_support::{button_saying, mount, sleep_ms, unmount_earlier};
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 

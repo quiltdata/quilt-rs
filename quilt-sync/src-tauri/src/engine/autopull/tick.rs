@@ -770,7 +770,7 @@ pub(crate) async fn run_once(
     // reads a past deadline waits `REFETCH_DUE_FLOOR`, reads the same deadline
     // again, and restarts its countdown ring from zero each time.
     //
-    // The new deadline is early by this tick's duration. `kit/countdown.rs`
+    // The new deadline is early by this tick's duration. `quilt-ui-kit/src/countdown.rs`
     // accepts that: a ring that stays full for a few seconds is correct, and one
     // that restarts from zero is not.
     //

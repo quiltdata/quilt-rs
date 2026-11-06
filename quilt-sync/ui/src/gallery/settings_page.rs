@@ -40,9 +40,6 @@ use leptos::prelude::*;
 
 use crate::Cell;
 use crate::Scene;
-use crate::kit::Button;
-use crate::kit::ButtonVariant;
-use crate::kit::PageLayout;
 use crate::pages::settings_v2::{
     AboutCard, AccountHost, AccountsCard, AgentDraft, AgentTasksCard, AgentTasksDialog,
     AgentTasksForm, AppCard, BuiltInRule, ExperimentalCard, IgnoreRulesCard, IgnoreRulesForm,
@@ -54,6 +51,9 @@ use crate::pages::settings_v2::{
 use quilt_sync_ui::commands::{
     AgentSettings, LogEnv, PublishSettingsData, TaskSettings, TaskSettingsData,
 };
+use quilt_ui_kit::Button;
+use quilt_ui_kit::ButtonVariant;
+use quilt_ui_kit::PageLayout;
 
 const HOME_DIR: &str = "/Users/a-user/QuiltSync";
 const DATA_DIR: &str = "/Users/a-user/Library/Application Support/com.quiltdata.quilt-sync";

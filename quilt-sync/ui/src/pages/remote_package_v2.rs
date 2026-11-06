@@ -12,7 +12,7 @@ use leptos_router::NavigateOptions;
 use leptos_router::hooks::use_navigate;
 
 use crate::commands;
-use crate::kit::{Spinner, SpinnerVariant, readable};
+use quilt_ui_kit::{Spinner, SpinnerVariant, readable};
 
 use super::error_v2::{ErrorSlate, open_dot_quilt};
 use super::v2_page::{PageHandle, PageRead, V2Page};
@@ -140,8 +140,8 @@ fn package_target(result: &commands::RemotePackageResult) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{button_saying, mount, sleep_ms, unmount_earlier};
     use leptos_router::components::Router;
+    use quilt_ui_kit::test_support::{button_saying, mount, sleep_ms, unmount_earlier};
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 

@@ -16,7 +16,7 @@ use super::keeping::{KeepingCommands, KeepingSection};
 use super::old_revisions::{self, RemoveRevisionsFn, Remover};
 use super::revision_history::{History, Key, Shown};
 use crate::commands;
-use crate::kit::{
+use quilt_ui_kit::{
     Align, AnchoredOverlay, Button, ButtonVariant, Card, LoadFailure, PaneSection, RevisionRow,
     SkeletonBox, SkeletonText,
 };
@@ -156,7 +156,7 @@ pub fn CurrentRevisionPane(
                             align=Align::End
                             contained=true
                         >
-                            // The live region is the caller's (`kit/load_failure.rs`).
+                            // The live region is the caller's (`quilt-ui-kit/src/load_failure.rs`).
                             <div
                                 class=style::live
                                 aria-live="polite"
@@ -392,7 +392,7 @@ mod tests {
     use crate::pages::installed_package_v2::Wiring;
     use crate::pages::installed_package_v2::keeping::KeepingCommands;
     use crate::pages::installed_package_v2::old_revisions::RemoveRevisionsFn;
-    use crate::test_support::{element_saying, mount, sleep_ms};
+    use quilt_ui_kit::test_support::{element_saying, mount, sleep_ms};
     use std::cell::Cell;
     use std::future::Future;
     use std::pin::Pin;
@@ -665,7 +665,7 @@ mod tests {
         fetch: RevisionHistoryFetch,
         remove: RemoveRevisionsFn,
         w: Wiring,
-        activities: crate::kit::Activities,
+        activities: quilt_ui_kit::Activities,
     ) -> web_sys::Element {
         mount(move || {
             provide_context(activities);
@@ -722,7 +722,7 @@ mod tests {
             removable,
             removes_ok,
             Wiring::new(),
-            crate::kit::Activities::new(),
+            quilt_ui_kit::Activities::new(),
         );
         let surface = opened(&el).await;
 
@@ -741,7 +741,7 @@ mod tests {
                 .is_none(),
             "a kept row has no trash"
         );
-        crate::test_support::button_saying(&surface, "Remove 2 unused \u{b7} 6.9\u{a0}MB");
+        quilt_ui_kit::test_support::button_saying(&surface, "Remove 2 unused \u{b7} 6.9\u{a0}MB");
     }
 
     /// Sizes are exact: a row under a megabyte says how much, and so do the
@@ -752,12 +752,12 @@ mod tests {
             four_small,
             removes_ok,
             Wiring::new(),
-            crate::kit::Activities::new(),
+            quilt_ui_kit::Activities::new(),
         );
         let surface = opened(&el).await;
 
         element_saying(&surface, "frees 211.9\u{a0}kB");
-        crate::test_support::button_saying(&surface, "Remove 4 unused \u{b7} 211.9\u{a0}kB")
+        quilt_ui_kit::test_support::button_saying(&surface, "Remove 4 unused \u{b7} 211.9\u{a0}kB")
             .click();
         leptos::task::tick().await;
         let dialog = el
@@ -782,11 +782,11 @@ mod tests {
             frees_none,
             removes_ok,
             Wiring::new(),
-            crate::kit::Activities::new(),
+            quilt_ui_kit::Activities::new(),
         );
         let surface = opened(&el).await;
 
-        crate::test_support::button_saying(&surface, "Remove 2 unused").click();
+        quilt_ui_kit::test_support::button_saying(&surface, "Remove 2 unused").click();
         leptos::task::tick().await;
         let dialog = el
             .query_selector("dialog")
@@ -808,7 +808,7 @@ mod tests {
     async fn the_trash_confirms_then_removes_that_revision() {
         REMOVED.with(|r| r.borrow_mut().clear());
         let w = Wiring::new();
-        let activities = crate::kit::Activities::new();
+        let activities = quilt_ui_kit::Activities::new();
         let el = removal_pane(removable, removes_ok, w, activities);
         let surface = opened(&el).await;
 
@@ -831,7 +831,7 @@ mod tests {
             "nothing before the answer"
         );
 
-        crate::test_support::button_saying(&dialog, "Remove").click();
+        quilt_ui_kit::test_support::button_saying(&dialog, "Remove").click();
         settle().await;
         settle().await;
 
@@ -852,7 +852,7 @@ mod tests {
     #[wasm_bindgen_test]
     async fn while_removing_the_line_says_so_and_every_button_refuses() {
         let w = Wiring::new();
-        let activities = crate::kit::Activities::new();
+        let activities = quilt_ui_kit::Activities::new();
         let el = removal_pane(removable, removes_never, w, activities);
         let surface = opened(&el).await;
 
@@ -862,7 +862,7 @@ mod tests {
             .query_selector("dialog")
             .unwrap()
             .expect("the confirmation");
-        crate::test_support::button_saying(&dialog, "Remove").click();
+        quilt_ui_kit::test_support::button_saying(&dialog, "Remove").click();
         settle().await;
 
         assert_eq!(
@@ -878,10 +878,11 @@ mod tests {
     #[wasm_bindgen_test]
     async fn a_refusal_reaches_the_band() {
         let w = Wiring::new();
-        let el = removal_pane(removable, removes_busy, w, crate::kit::Activities::new());
+        let el = removal_pane(removable, removes_busy, w, quilt_ui_kit::Activities::new());
         let surface = opened(&el).await;
 
-        crate::test_support::button_saying(&surface, "Remove 2 unused \u{b7} 6.9\u{a0}MB").click();
+        quilt_ui_kit::test_support::button_saying(&surface, "Remove 2 unused \u{b7} 6.9\u{a0}MB")
+            .click();
         leptos::task::tick().await;
         let dialog = el
             .query_selector("dialog")
@@ -893,7 +894,7 @@ mod tests {
                 .unwrap_or_default()
                 .contains("Remove all 2 unused revisions? This frees 6.9\u{a0}MB.")
         );
-        crate::test_support::button_saying(&dialog, "Remove").click();
+        quilt_ui_kit::test_support::button_saying(&dialog, "Remove").click();
         settle().await;
         settle().await;
 
@@ -907,11 +908,11 @@ mod tests {
     /// the footer says why.
     #[wasm_bindgen_test]
     async fn a_sync_of_this_package_disables_removal_and_says_why() {
-        let activities = crate::kit::Activities::new();
+        let activities = quilt_ui_kit::Activities::new();
         activities.set(
-            crate::kit::ActivityKind::Autopull,
-            vec![crate::kit::Activity {
-                kind: crate::kit::ActivityKind::Autopull,
+            quilt_ui_kit::ActivityKind::Autopull,
+            vec![quilt_ui_kit::Activity {
+                kind: quilt_ui_kit::ActivityKind::Autopull,
                 label: "Getting latest for team/dataset\u{2026}".to_string(),
                 package: Some("team/dataset".to_string()),
             }],
@@ -932,7 +933,7 @@ mod tests {
     async fn a_command_started_under_the_dialog_refuses_remove() {
         REMOVED.with(|r| r.borrow_mut().clear());
         let w = Wiring::new();
-        let el = removal_pane(removable, removes_ok, w, crate::kit::Activities::new());
+        let el = removal_pane(removable, removes_ok, w, quilt_ui_kit::Activities::new());
         let surface = opened(&el).await;
 
         button_named(&surface, "Remove \u{201c}Old\u{201d}").click();
@@ -942,7 +943,7 @@ mod tests {
             .query_selector("dialog")
             .unwrap()
             .expect("the confirmation");
-        crate::test_support::button_saying(&dialog, "Remove").click();
+        quilt_ui_kit::test_support::button_saying(&dialog, "Remove").click();
         settle().await;
 
         assert!(REMOVED.with(|r| r.borrow().is_empty()), "nothing was asked");
@@ -960,7 +961,7 @@ mod tests {
     async fn a_page_command_disables_removal() {
         let w = Wiring::new();
         w.busy.set(true);
-        let el = removal_pane(removable, removes_ok, w, crate::kit::Activities::new());
+        let el = removal_pane(removable, removes_ok, w, quilt_ui_kit::Activities::new());
         let surface = opened(&el).await;
 
         assert!(button_named(&surface, "Remove \u{201c}Old\u{201d}").disabled());
@@ -972,7 +973,7 @@ mod tests {
             all_kept,
             removes_ok,
             Wiring::new(),
-            crate::kit::Activities::new(),
+            quilt_ui_kit::Activities::new(),
         );
         let surface = opened(&el).await;
 
@@ -1205,7 +1206,7 @@ mod tests {
 
         let button = section_action(&section);
         assert_eq!(button.text_content().unwrap_or_default().trim(), "Choose");
-        let primary = crate::test_support::mount(|| {
+        let primary = quilt_ui_kit::test_support::mount(|| {
             view! {
                 <Button on_click=|_| () variant=ButtonVariant::Primary>
                     "x"
@@ -1457,8 +1458,8 @@ mod tests {
 
     #[expect(dead_code, reason = "only the classes these tests need are loaded")]
     mod sheets {
-        stylance::import_crate_style!(pub pane, "src/kit/pane_section.module.css");
-        stylance::import_crate_style!(pub bar, "src/kit/skeleton_box.module.css");
+        pub use quilt_ui_kit::pane_section::style as pane;
+        pub use quilt_ui_kit::skeleton_box::style as bar;
         stylance::import_crate_style!(pub page, "src/pages/installed_package_v2.module.css");
     }
 
@@ -1466,8 +1467,8 @@ mod tests {
     /// container the pane's narrow layout asks about.
     fn load_pane_sheets() {
         use sheets::{bar, page, pane};
-        crate::test_support::load_module_style(
-            include_str!("../../kit/pane_section.module.css"),
+        quilt_ui_kit::test_support::load_module_style(
+            quilt_ui_kit::test_support::sheet("pane_section"),
             &[
                 ("root", pane::root),
                 ("label", pane::label),
@@ -1475,11 +1476,11 @@ mod tests {
                 ("heading", pane::heading),
             ],
         );
-        crate::test_support::load_module_style(
-            include_str!("../../kit/skeleton_box.module.css"),
+        quilt_ui_kit::test_support::load_module_style(
+            quilt_ui_kit::test_support::sheet("skeleton_box"),
             &[("root", bar::root), ("text", bar::text)],
         );
-        crate::test_support::load_module_style(
+        quilt_ui_kit::test_support::load_module_style(
             include_str!("context_pane.module.css"),
             &[
                 ("root", style::root),
@@ -1489,7 +1490,7 @@ mod tests {
                 ("lines", style::lines),
             ],
         );
-        crate::test_support::load_module_style(
+        quilt_ui_kit::test_support::load_module_style(
             include_str!("../installed_package_v2.module.css"),
             &[("page", page::page)],
         );

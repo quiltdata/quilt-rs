@@ -25,9 +25,9 @@ use leptos_router::hooks::use_navigate;
 
 use crate::commands;
 use crate::commands::NotDownloaded;
-use crate::kit::{Banner, BannerVariant, LoadFailure, PageLayout, publish_height};
 use crate::routes;
 use crate::util;
+use quilt_ui_kit::{Banner, BannerVariant, LoadFailure, PageLayout, publish_height};
 
 use super::copy_mark::CopyMark;
 use super::row_menu::{COPY_FAILED, LocalPath, Ran, RowCommand, carry_out, local_path};
@@ -53,7 +53,6 @@ mod revision_history;
 mod revision_pane;
 mod role_dialog;
 
-use crate::kit::PageHeaderSkeleton;
 pub(crate) use bucket_form::BucketDialog;
 use context_pane::{CurrentRevisionPane, CurrentRevisionPaneSkeleton};
 use file_pane::{Facet, FilePane, FilePaneSkeleton, Grouping, Kept, Listing, Picking};
@@ -64,6 +63,7 @@ pub(crate) use header::{
 };
 pub use header::{MenuCommand, MenuItem, menu_items, remote_target};
 use incoming::{HoverCard, IncomingSummary};
+use quilt_ui_kit::PageHeaderSkeleton;
 use resolve::{ResolveCommands, ResolvePane};
 use revision_pane::RevisionPane;
 
@@ -400,10 +400,10 @@ fn read_pull_outcome(
 
 /// Whether a read's header is one the dry run speaks to: a newer revision
 /// available, or the conflict a failed *Get latest* left.
-fn checks_incoming(state: &crate::kit::PackageState) -> bool {
+fn checks_incoming(state: &quilt_ui_kit::PackageState) -> bool {
     matches!(
         state,
-        crate::kit::PackageState::Behind | crate::kit::PackageState::PullConflict { .. }
+        quilt_ui_kit::PackageState::Behind | quilt_ui_kit::PackageState::PullConflict { .. }
     )
 }
 
@@ -1695,9 +1695,9 @@ fn reveal(el: &web_sys::Element) {
 mod tests {
     use super::*;
     use crate::pages::installed_package_v2::file_pane::{FileToolbarBand, FooterBand};
-    use crate::test_support::{button_saying, element_saying, mount, sleep_ms};
     use leptos_router::components::{Route, Router, Routes};
     use leptos_router::path;
+    use quilt_ui_kit::test_support::{button_saying, element_saying, mount, sleep_ms};
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
@@ -1719,7 +1719,7 @@ mod tests {
             header: commands::PackageHeaderData {
                 namespace: "team/dataset".try_into().unwrap(),
                 uri: None,
-                state: crate::kit::PackageState::Latest,
+                state: quilt_ui_kit::PackageState::Latest,
                 remote_locked: false,
                 has_local_commit: false,
                 commit_has_parent: false,
@@ -1844,7 +1844,7 @@ mod tests {
     #[wasm_bindgen_test]
     async fn a_failed_copy_goes_to_the_band_and_marks_nothing() {
         // Mounting starts the executor the copy is spawned on.
-        crate::test_support::mount(|| ());
+        quilt_ui_kit::test_support::mount(|| ());
         let outcome = RwSignal::new(None);
         let copies = CopyMark::new();
         run_reading(
@@ -1854,7 +1854,7 @@ mod tests {
             outcome,
             Some(copies),
         );
-        crate::test_support::sleep_ms(50).await;
+        quilt_ui_kit::test_support::sleep_ms(50).await;
         let said = outcome.get_untracked().expect("the band has it");
         assert_eq!(said.variant, BannerVariant::Critical);
         assert_eq!(said.lead, COPY_FAILED);
@@ -1888,7 +1888,7 @@ mod tests {
     #[wasm_bindgen_test]
     async fn a_slower_copy_leaves_the_newer_one_marked() {
         // Mounting starts the executor the copy is spawned on.
-        crate::test_support::mount(|| ());
+        quilt_ui_kit::test_support::mount(|| ());
         // An engine that counts every command it is asked to run, so a write
         // the gate missed would show.
         let engine = crate::engine::fake::FakeEngine::serving();
@@ -1915,7 +1915,7 @@ mod tests {
             .expect("the lookup is waiting")
             .call0(&wasm_bindgen::JsValue::NULL)
             .unwrap();
-        crate::test_support::sleep_ms(0).await;
+        quilt_ui_kit::test_support::sleep_ms(0).await;
 
         assert_eq!(
             engine.all_requests(),
@@ -2618,7 +2618,7 @@ mod tests {
 
     fn diverged(resolve: commands::ResolveData) -> commands::PackagePageData {
         let mut data = page_data();
-        data.header.state = crate::kit::PackageState::Diverged;
+        data.header.state = quilt_ui_kit::PackageState::Diverged;
         data.context.resolve = Some(resolve);
         data
     }
@@ -2776,7 +2776,7 @@ mod tests {
         let namespace = quilt_uri::Namespace::try_from("team/q%20report").unwrap();
         screen_at(&routes::package_page_href(&namespace), recorded_read).await;
         let asked = ASKED_FOR.with(|a| a.borrow().clone());
-        crate::test_support::unmount_earlier();
+        quilt_ui_kit::test_support::unmount_earlier();
         assert_eq!(asked.first().map(String::as_str), Some("team/q%20report"));
     }
 
@@ -2787,7 +2787,7 @@ mod tests {
 
     /// [`screen_at`], mounted as `/installed-package` mounts it.
     async fn routed_screen_at(address: &str, read: PageRead) -> web_sys::Element {
-        crate::test_support::unmount_earlier();
+        quilt_ui_kit::test_support::unmount_earlier();
         READS.with(|r| r.set(0));
         go_to(address);
         let el = mount(move || {
@@ -2821,7 +2821,7 @@ mod tests {
         read: PageRead,
         resolving: ResolveCommands,
     ) -> web_sys::Element {
-        crate::test_support::unmount_earlier();
+        quilt_ui_kit::test_support::unmount_earlier();
         READS.with(|r| r.set(0));
         go_to(address);
         let el = mount(move || {
@@ -2856,7 +2856,7 @@ mod tests {
     #[wasm_bindgen_test]
     async fn the_skeleton_is_the_page_s_first_paint() {
         use crate::components::appbar::appbar_actions;
-        use crate::test_support::shape;
+        use quilt_ui_kit::test_support::shape;
 
         let page = screen_at("/installed-package?namespace=team%2Fdataset", pending_read).await;
         let skeleton = mount(|| {
@@ -3411,7 +3411,10 @@ mod tests {
         ))
         .unwrap()
         .unwrap_or_else(|| panic!("{path} is listed; markup was {}", el.inner_html()))
-        .closest(&format!("[aria-describedby='{}']", crate::kit::DIFFERS_ID))
+        .closest(&format!(
+            "[aria-describedby='{}']",
+            quilt_ui_kit::DIFFERS_ID
+        ))
         .unwrap()
         .is_some()
     }
@@ -3428,7 +3431,7 @@ mod tests {
             "the same in both revisions"
         );
         assert!(
-            el.query_selector(&format!("#{}", crate::kit::DIFFERS_ID))
+            el.query_selector(&format!("#{}", quilt_ui_kit::DIFFERS_ID))
                 .unwrap()
                 .is_some(),
             "the description a marked row names is the resolve pane's sentence"
@@ -3487,7 +3490,7 @@ mod tests {
     /// `a.csv` and `b.csv` listed.
     fn behind(holds: &str) -> commands::PackagePageData {
         let mut data = page_data();
-        data.header.state = crate::kit::PackageState::Behind;
+        data.header.state = quilt_ui_kit::PackageState::Behind;
         data.context.revision.hash = holds.to_string();
         let entry = |path: &str| commands::EntryData {
             filename: path.to_string(),
@@ -3536,7 +3539,7 @@ mod tests {
     /// The page as `/installed-package` mounts it, reading `PAGE` and checking
     /// through `PULLS`.
     async fn routed_screen(page: commands::PackagePageData) -> web_sys::Element {
-        crate::test_support::unmount_earlier();
+        quilt_ui_kit::test_support::unmount_earlier();
         READS.with(|r| r.set(0));
         PULLS_ASKED.with(|n| n.set(0));
         PAGE.with(|p| *p.borrow_mut() = Some(page));
@@ -3833,7 +3836,7 @@ mod tests {
         assert!(row_marked(&el, "a.csv"), "the conflicting row is marked");
         assert!(!row_marked(&el, "b.csv"));
         let sentence = el
-            .query_selector(&format!("#{}", crate::kit::DIFFERS_ID))
+            .query_selector(&format!("#{}", quilt_ui_kit::DIFFERS_ID))
             .unwrap()
             .expect("the sentence a marked row names");
         assert!(
@@ -3867,7 +3870,7 @@ mod tests {
 
         // The rerun stays pending: nothing more is scripted.
         let mut recorded = behind("aaa");
-        recorded.header.state = crate::kit::PackageState::PullConflict {
+        recorded.header.state = quilt_ui_kit::PackageState::PullConflict {
             files: vec!["a.csv".to_string()],
         };
         re_read(&el, recorded).await;
@@ -3878,7 +3881,7 @@ mod tests {
         assert!(row_marked(&el, "a.csv"), "the recorded conflict's row");
         assert!(!row_marked(&el, "b.csv"));
         let sentence = el
-            .query_selector(&format!("#{}", crate::kit::DIFFERS_ID))
+            .query_selector(&format!("#{}", quilt_ui_kit::DIFFERS_ID))
             .unwrap()
             .expect("the sentence a marked row names");
         assert!(
@@ -3908,7 +3911,7 @@ mod tests {
         // The check stays pending: nothing is scripted.
         script(Vec::new());
         let mut recorded = behind("aaa");
-        recorded.header.state = crate::kit::PackageState::PullConflict {
+        recorded.header.state = quilt_ui_kit::PackageState::PullConflict {
             files: vec!["a.csv".to_string()],
         };
         let el = routed_screen(recorded).await;
@@ -3920,7 +3923,7 @@ mod tests {
         );
         assert!(row_marked(&el, "a.csv"));
         let sentence = el
-            .query_selector(&format!("#{}", crate::kit::DIFFERS_ID))
+            .query_selector(&format!("#{}", quilt_ui_kit::DIFFERS_ID))
             .unwrap()
             .expect("the sentence a marked row names");
         assert!(
@@ -3972,7 +3975,7 @@ mod tests {
         );
         assert!(!popover_conflict_on(&popover, "a.csv"), "and its label");
         assert!(
-            el.query_selector(&format!("#{}", crate::kit::DIFFERS_ID))
+            el.query_selector(&format!("#{}", quilt_ui_kit::DIFFERS_ID))
                 .unwrap()
                 .is_none(),
             "nothing marked, nothing to describe"
@@ -4121,14 +4124,14 @@ mod tests {
 
     #[expect(dead_code, reason = "only the classes this layout needs are loaded")]
     mod sheets {
-        stylance::import_crate_style!(pub layout, "src/kit/page_layout.module.css");
-        stylance::import_crate_style!(pub appbar, "src/kit/appbar.module.css");
+        pub use quilt_ui_kit::appbar::style as appbar;
+        pub use quilt_ui_kit::page_layout::style as layout;
         stylance::import_crate_style!(
             pub files,
             "src/pages/installed_package_v2/file_pane.module.css"
         );
-        stylance::import_crate_style!(pub group, "src/kit/entry_group.module.css");
-        stylance::import_crate_style!(pub card, "src/kit/card.module.css");
+        pub use quilt_ui_kit::card::style as card;
+        pub use quilt_ui_kit::entry_group::style as group;
     }
 
     /// The tokens the sheets read, which the test page does not load.
@@ -4137,9 +4140,9 @@ mod tests {
                           --q-space-12:48px";
 
     fn load_page_sheets() {
-        use crate::test_support::load_module_style;
+        use quilt_ui_kit::test_support::load_module_style;
         load_module_style(
-            include_str!("../kit/page_layout.module.css"),
+            quilt_ui_kit::test_support::sheet("page_layout"),
             &[
                 ("root", sheets::layout::root),
                 ("main", sheets::layout::main),
@@ -4147,7 +4150,7 @@ mod tests {
             ],
         );
         load_module_style(
-            include_str!("../kit/appbar.module.css"),
+            quilt_ui_kit::test_support::sheet("appbar"),
             &[
                 ("appbar", sheets::appbar::appbar),
                 ("bar", sheets::appbar::bar),
@@ -4171,11 +4174,11 @@ mod tests {
             ],
         );
         load_module_style(
-            include_str!("../kit/entry_group.module.css"),
+            quilt_ui_kit::test_support::sheet("entry_group"),
             &[("root", sheets::group::root), ("head", sheets::group::head)],
         );
         load_module_style(
-            include_str!("../kit/card.module.css"),
+            quilt_ui_kit::test_support::sheet("card"),
             &[
                 ("root", sheets::card::root),
                 ("body", sheets::card::body),
@@ -4195,15 +4198,21 @@ mod tests {
 
     /// The page at `width`: a header, a context pane `pane` tall, and the
     /// file pane's band over `rows` and whatever follows them.
-    fn scrolling_page(width: u32, pane: u32, rows: AnyView) -> web_sys::Element {
+    fn scrolling_page(
+        width: u32,
+        pane: u32,
+        rows: impl FnOnce() -> AnyView + Send + 'static,
+    ) -> web_sys::Element {
         // An empty banner row, as the page always passes one.
         scrolling_page_with_banner(width, pane, rows, ().into_any())
     }
 
+    /// `rows` is built inside the mount: a component's effects need the executor
+    /// `mount` starts, and no earlier test is guaranteed to have started it.
     fn scrolling_page_with_banner(
         width: u32,
         pane: u32,
-        rows: AnyView,
+        rows: impl FnOnce() -> AnyView + Send + 'static,
         banner: AnyView,
     ) -> web_sys::Element {
         load_page_sheets();
@@ -4223,7 +4232,7 @@ mod tests {
                                     <FileToolbarBand>
                                         <div style="height:72px"></div>
                                     </FileToolbarBand>
-                                    {rows}
+                                    {rows()}
                                 </section>
                             </div>
                         </div>
@@ -4261,7 +4270,7 @@ mod tests {
     /// scroll the page.
     #[wasm_bindgen_test]
     async fn the_header_the_toolbar_and_the_pane_stay_while_the_rows_scroll() {
-        let el = scrolling_page(1024, 200, plain_rows());
+        let el = scrolling_page(1024, 200, plain_rows);
         sleep_ms(50).await;
         let frame = frame(&el);
         assert_near(
@@ -4300,7 +4309,7 @@ mod tests {
         let el = scrolling_page_with_banner(
             1024,
             200,
-            plain_rows(),
+            plain_rows,
             view! { <div data-banner style="height:40px"></div> }.into_any(),
         );
         sleep_ms(50).await;
@@ -4337,7 +4346,7 @@ mod tests {
         let el = scrolling_page_with_banner(
             1024,
             200,
-            plain_rows(),
+            plain_rows,
             view! { <div style="height:1200px"></div> }.into_any(),
         );
         sleep_ms(50).await;
@@ -4354,7 +4363,7 @@ mod tests {
     /// one already in view leaves the page where it is.
     #[wasm_bindgen_test]
     async fn a_pane_scrolled_away_is_brought_back_into_view() {
-        let el = scrolling_page(600, 200, plain_rows());
+        let el = scrolling_page(600, 200, plain_rows);
         sleep_ms(50).await;
         let frame = frame(&el);
         let pane = find(&el, "aside");
@@ -4378,7 +4387,7 @@ mod tests {
     /// page where it is.
     #[wasm_bindgen_test]
     async fn a_held_pane_does_not_move_the_page() {
-        let el = scrolling_page(1024, 200, plain_rows());
+        let el = scrolling_page(1024, 200, plain_rows);
         sleep_ms(50).await;
         let frame = frame(&el);
         frame.set_scroll_top(1000);
@@ -4392,7 +4401,7 @@ mod tests {
     /// rest of the page does not wait for it.
     #[wasm_bindgen_test]
     async fn a_pane_taller_than_the_window_scrolls_on_its_own() {
-        let el = scrolling_page(1024, 1200, plain_rows());
+        let el = scrolling_page(1024, 1200, plain_rows);
         sleep_ms(50).await;
         let pane: web_sys::HtmlElement = find(&el, "aside").unchecked_into();
         assert!(
@@ -4412,7 +4421,7 @@ mod tests {
     /// the page; only the header and the file toolbar stay.
     #[wasm_bindgen_test]
     async fn a_narrow_pane_scrolls_away_with_the_page() {
-        let el = scrolling_page(600, 200, plain_rows());
+        let el = scrolling_page(600, 200, plain_rows);
         sleep_ms(50).await;
         let frame = frame(&el);
         frame.set_scroll_top(1000);
@@ -4437,7 +4446,7 @@ mod tests {
     /// keeps clear of it.
     #[wasm_bindgen_test]
     async fn the_footer_stays_at_the_bottom_of_the_window() {
-        let el = scrolling_page(1024, 200, listed(60));
+        let el = scrolling_page(1024, 200, || listed(60));
         // Past the footer's entrance.
         sleep_ms(250).await;
         let frame = frame(&el);
@@ -4466,7 +4475,7 @@ mod tests {
     /// bottom, above the page's bottom padding, rather than under the rows.
     #[wasm_bindgen_test]
     async fn under_a_short_list_the_footer_stays_low() {
-        let el = scrolling_page(1024, 200, listed(3));
+        let el = scrolling_page(1024, 200, || listed(3));
         sleep_ms(250).await;
         let frame = frame(&el);
         let footer = find(&el, &format!(".{}", sheets::files::footer));
@@ -4481,14 +4490,14 @@ mod tests {
     /// filling card, and the footer after them.
     fn listed(rows: usize) -> AnyView {
         view! {
-            <crate::kit::Card bare=true fill=true label="Files">
+            <quilt_ui_kit::Card bare=true fill=true label="Files">
                 <div class=sheets::files::list>
                     {(0..rows).map(|_| view! { <div style="height:32px"></div> }).collect_view()}
                 </div>
                 <FooterBand>
                     <div style="height:40px"></div>
                 </FooterBand>
-            </crate::kit::Card>
+            </quilt_ui_kit::Card>
         }
         .into_any()
     }
@@ -4519,7 +4528,7 @@ mod tests {
                                         <div style="height:72px"></div>
                                     </FileToolbarBand>
                                     <div class=sheets::files::list>
-                                        <crate::kit::EntryGroup
+                                        <quilt_ui_kit::EntryGroup
                                             name="raw/"
                                             shown=60
                                             total=60
@@ -4536,7 +4545,7 @@ mod tests {
                                                     }
                                                 })
                                                 .collect_view()}
-                                        </crate::kit::EntryGroup>
+                                        </quilt_ui_kit::EntryGroup>
                                     </div>
                                 </section>
                             </div>

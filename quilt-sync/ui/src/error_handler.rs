@@ -1,7 +1,7 @@
 use leptos_router::NavigateOptions;
 use leptos_router::hooks::use_navigate;
 
-use crate::kit::error_text::ErrorResponse;
+use quilt_ui_kit::error_text::ErrorResponse;
 
 /// Where a load failure sends the reader instead of drawing itself: `/login`
 /// for a missing session with a host, `/setup` for a missing data directory,

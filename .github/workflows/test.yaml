@@ -82,19 +82,23 @@ jobs:
               - biome.jsonc
               - justfile
               - .github/workflows/test.yaml
-            # Cargo forbids dependency cycles, so no other crate depends on QuiltSync.
+            # Cargo forbids dependency cycles, so no other crate depends on
+            # QuiltSync or its UI kit.
             crates:
               - "**"
               - "!**/*.md"
               - "!quilt-sync/**"
+              - "!quilt-ui-kit/**"
             # QuiltSync's backend builds on every crate but the UI.
             sync:
               - "**"
               - "!**/*.md"
-            # The UI, its path dependencies (`cargo metadata`: only quilt-uri),
-            # the workspace files, and the recipes and CI files it runs with.
+            # The UI, its path dependencies (`cargo metadata`: quilt-ui-kit and
+            # quilt-uri), the workspace files, and the recipes and CI files it
+            # runs with.
             ui:
               - quilt-sync/ui/**
+              - quilt-ui-kit/**
               - quilt-uri/**
               - Cargo.toml
               - Cargo.lock
@@ -162,16 +166,16 @@ jobs:
   crates:
     name: crates
     # The crates published to crates.io: quilt-rs, quilt-uri and quilt-cli.
-    # Both QuiltSync crates are `publish = false`. This runner has no Tauri
-    # system libraries, so it cannot build `quilt-sync`; `quilt-sync-ui` is
-    # tested in the `frontend` jobs.
+    # The QuiltSync crates and the UI kit are `publish = false`. This runner has
+    # no Tauri system libraries, so it cannot build `quilt-sync`; `quilt-sync-ui`
+    # and `quilt-ui-kit` are tested in the `frontend` jobs.
     needs: changes
     if: needs.changes.outputs.crates == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
       # The crates above, for the recipes' cargo commands.
-      SCOPE: --workspace --all-targets --exclude quilt-sync --exclude quilt-sync-ui
+      SCOPE: --workspace --all-targets --exclude quilt-sync --exclude quilt-sync-ui --exclude quilt-ui-kit
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -227,7 +231,7 @@ jobs:
     timeout-minutes: 45
     env:
       # Same crates as `crates`, for the reason given there.
-      SCOPE: --workspace --all-targets --exclude quilt-sync --exclude quilt-sync-ui
+      SCOPE: --workspace --all-targets --exclude quilt-sync --exclude quilt-sync-ui --exclude quilt-ui-kit
     # Bash on Windows too: `just` runs recipe lines with `sh`, which Git Bash
     # puts on the PATH.
     defaults:
@@ -292,7 +296,7 @@ jobs:
     timeout-minutes: 45
     env:
       # Same crates as `crates`, for the reason given there.
-      SCOPE: --workspace --all-targets --exclude quilt-sync --exclude quilt-sync-ui
+      SCOPE: --workspace --all-targets --exclude quilt-sync --exclude quilt-sync-ui --exclude quilt-ui-kit
     defaults:
       run:
         shell: bash
@@ -450,7 +454,7 @@ jobs:
         run: just check
         env:
           # The frontend is built for wasm.
-          SCOPE: --target wasm32-unknown-unknown -p quilt-sync-ui --all-targets
+          SCOPE: --target wasm32-unknown-unknown -p quilt-sync-ui -p quilt-ui-kit --all-targets
 
       # This crate has tests for two targets, and neither harness runs the
       # other's: `wasm-bindgen-test-runner` runs only `#[wasm_bindgen_test]`, and
@@ -468,7 +472,7 @@ jobs:
       - name: Test (host target)
         run: just test no-aws
         env:
-          SCOPE: -p quilt-sync-ui --lib --bins
+          SCOPE: -p quilt-sync-ui -p quilt-ui-kit --lib --bins
 
   frontend-wasm-tests:
     name: frontend wasm tests

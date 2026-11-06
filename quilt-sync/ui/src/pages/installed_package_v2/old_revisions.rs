@@ -40,20 +40,20 @@ use crate::commands;
 use crate::commands::KeptReason;
 use crate::commands::RevisionHistoryData;
 use crate::commands::RevisionHistoryRow;
-use crate::kit::Activities;
-use crate::kit::Activity;
-use crate::kit::ActivityKind;
-use crate::kit::BannerVariant;
-use crate::kit::Button;
-use crate::kit::CatalogLink;
-use crate::kit::ConfirmDialog;
-use crate::kit::IconButton;
-use crate::kit::IconButtonVariant;
-use crate::kit::PaneSection;
-use crate::kit::RevisionRow;
-use crate::kit::Submit;
-use crate::kit::icons;
 use crate::util::format_size;
+use quilt_ui_kit::Activities;
+use quilt_ui_kit::Activity;
+use quilt_ui_kit::ActivityKind;
+use quilt_ui_kit::BannerVariant;
+use quilt_ui_kit::Button;
+use quilt_ui_kit::CatalogLink;
+use quilt_ui_kit::ConfirmDialog;
+use quilt_ui_kit::IconButton;
+use quilt_ui_kit::IconButtonVariant;
+use quilt_ui_kit::PaneSection;
+use quilt_ui_kit::RevisionRow;
+use quilt_ui_kit::Submit;
+use quilt_ui_kit::icons;
 
 stylance::import_crate_style!(
     style,

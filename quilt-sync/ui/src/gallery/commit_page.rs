@@ -41,14 +41,14 @@ use leptos::prelude::*;
 use crate::Cell;
 use crate::Scene;
 use crate::gallery::button_group::location;
-use crate::kit::Button;
-use crate::kit::PageLayout;
-use crate::kit::icons;
 use crate::pages::commit_v2::{
     Change, CommitColumn, CommitHeader, CommitPageSkeleton, IncludedFile, IncludedList,
     MessageField, MetadataField, Primary, PrimaryWiring, Problem, ProblemBanner, WorkflowChoice,
     WorkflowField,
 };
+use quilt_ui_kit::Button;
+use quilt_ui_kit::PageLayout;
+use quilt_ui_kit::icons;
 
 const NAMESPACE: &str = "user/plate-07";
 const GENERATED: &str = "Updated 3 files: plate-03.csv, plate-04.csv, wells.csv";

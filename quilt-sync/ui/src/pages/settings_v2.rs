@@ -18,32 +18,32 @@ use crate::commands::LogEnv;
 use crate::commands::PublishSettingsData;
 use crate::commands::TaskSettings;
 use crate::commands::TaskSettingsData;
-use crate::kit::BackLink;
-use crate::kit::Banner;
-use crate::kit::BannerVariant;
-use crate::kit::Blankslate;
-use crate::kit::Button;
-use crate::kit::ButtonVariant;
-use crate::kit::Card;
-use crate::kit::Checkbox;
-use crate::kit::ConfirmDialog;
-use crate::kit::Dialog;
-use crate::kit::FormControl;
-use crate::kit::FormDialog;
-use crate::kit::HostRow;
-use crate::kit::JsonDisplay;
-use crate::kit::LoadFailure;
-use crate::kit::Naming;
-use crate::kit::NumberInput;
-use crate::kit::PageHeader;
-use crate::kit::Select;
-use crate::kit::StateTone;
-use crate::kit::Submit;
-use crate::kit::TextArea;
-use crate::kit::TextInput;
-use crate::kit::ToggleRow;
-use crate::kit::TwoColumns;
 use crate::util::format_size;
+use quilt_ui_kit::BackLink;
+use quilt_ui_kit::Banner;
+use quilt_ui_kit::BannerVariant;
+use quilt_ui_kit::Blankslate;
+use quilt_ui_kit::Button;
+use quilt_ui_kit::ButtonVariant;
+use quilt_ui_kit::Card;
+use quilt_ui_kit::Checkbox;
+use quilt_ui_kit::ConfirmDialog;
+use quilt_ui_kit::Dialog;
+use quilt_ui_kit::FormControl;
+use quilt_ui_kit::FormDialog;
+use quilt_ui_kit::HostRow;
+use quilt_ui_kit::JsonDisplay;
+use quilt_ui_kit::LoadFailure;
+use quilt_ui_kit::Naming;
+use quilt_ui_kit::NumberInput;
+use quilt_ui_kit::PageHeader;
+use quilt_ui_kit::Select;
+use quilt_ui_kit::StateTone;
+use quilt_ui_kit::Submit;
+use quilt_ui_kit::TextArea;
+use quilt_ui_kit::TextInput;
+use quilt_ui_kit::ToggleRow;
+use quilt_ui_kit::TwoColumns;
 
 use super::commit_v2::{MetadataEditorField, MetadataPreview};
 
@@ -135,7 +135,7 @@ fn minutes_field(
     held: Signal<bool>,
 ) -> (AnyView, AnyView) {
     let error = Signal::derive(move || minutes.with(|text| minutes_error(text)));
-    let error_id = crate::kit::unique_id("minutes-error");
+    let error_id = quilt_ui_kit::unique_id("minutes-error");
     let field = view! {
         <NumberInput
             naming=Naming::Hidden(name.to_string())
@@ -1478,7 +1478,7 @@ pub fn TroubleshootingCard(
         Some(hint) => format!("Applies after a restart. {hint}."),
         None => "Applies after a restart.".to_string(),
     };
-    let note_id = crate::kit::unique_id("log-level-note");
+    let note_id = quilt_ui_kit::unique_id("log-level-note");
     view! {
         <Card title="Troubleshooting">
             <ValueRow
@@ -1836,7 +1836,7 @@ mod tests {
     fn the_minutes_are_at_the_rows_end_with_the_error_under_it() {
         use wasm_bindgen::JsCast;
 
-        let el = crate::test_support::mount(move || {
+        let el = quilt_ui_kit::test_support::mount(move || {
             view! {
                 <SyncingCard
                     pull=RwSignal::new(true)
@@ -1890,7 +1890,7 @@ mod tests {
     /// level* and described by the note under the name.
     #[wasm_bindgen_test::wasm_bindgen_test]
     fn the_log_level_select_is_named_and_described_by_its_note() {
-        let el = crate::test_support::mount(move || {
+        let el = quilt_ui_kit::test_support::mount(move || {
             view! {
                 <TroubleshootingCard
                     on_report=Callback::new(|()| ())
@@ -1930,7 +1930,7 @@ mod tests {
 
         let minutes = RwSignal::new("1".to_string());
         let saves = RwSignal::new(0);
-        let el = crate::test_support::mount(move || {
+        let el = quilt_ui_kit::test_support::mount(move || {
             view! {
                 <SyncingCard
                     pull=RwSignal::new(true)
@@ -1965,7 +1965,7 @@ mod tests {
     #[wasm_bindgen_test::wasm_bindgen_test]
     async fn a_picked_role_reaches_the_page() {
         let picked = RwSignal::new(Vec::<(String, String)>::new());
-        let el = crate::test_support::mount(move || {
+        let el = quilt_ui_kit::test_support::mount(move || {
             view! {
                 <AccountsCard
                     hosts=vec![AccountHost {
@@ -2017,7 +2017,7 @@ mod tests {
     /// the label points at.
     #[wasm_bindgen_test::wasm_bindgen_test]
     async fn the_visible_metadata_editor_is_named_and_described() {
-        let el = crate::test_support::mount(|| form("{\"source\": "));
+        let el = quilt_ui_kit::test_support::mount(|| form("{\"source\": "));
         leptos::task::tick().await;
         let group = el
             .query_selector("[role=group]")
@@ -2045,10 +2045,10 @@ mod tests {
     #[wasm_bindgen_test::wasm_bindgen_test]
     async fn a_click_on_the_metadata_label_focuses_the_editor() {
         // An earlier test's modal, left open, would make this page inert.
-        crate::test_support::unmount_earlier();
-        let el = crate::test_support::mount(|| form("{}"));
+        quilt_ui_kit::test_support::unmount_earlier();
+        let el = quilt_ui_kit::test_support::mount(|| form("{}"));
         leptos::task::tick().await;
-        crate::test_support::element_saying(&el, "Default metadata").click();
+        quilt_ui_kit::test_support::element_saying(&el, "Default metadata").click();
         let focused = web_sys::window()
             .unwrap()
             .document()
@@ -2062,13 +2062,13 @@ mod tests {
     /// and draws the editor again over no metadata; it saves nothing.
     #[wasm_bindgen_test::wasm_bindgen_test]
     async fn reset_fills_the_defaults() {
-        crate::test_support::unmount_earlier();
+        quilt_ui_kit::test_support::unmount_earlier();
         let template = RwSignal::new("Plate {date}".to_string());
         let workflow = RwSignal::new("release".to_string());
         let metadata = RwSignal::new("{\"a\": 1}".to_string());
         let fresh = RwSignal::new(0);
         let saves = RwSignal::new(0);
-        let el = crate::test_support::mount(move || {
+        let el = quilt_ui_kit::test_support::mount(move || {
             view! {
                 <PublishingDialog
                     open=RwSignal::new(true)
@@ -2084,7 +2084,7 @@ mod tests {
             }
         });
         leptos::task::tick().await;
-        let reset = crate::test_support::button_saying(&el, "Reset to defaults");
+        let reset = quilt_ui_kit::test_support::button_saying(&el, "Reset to defaults");
         assert!(
             reset.closest("form").unwrap().is_none(),
             "in the footer, not the form"
@@ -2115,9 +2115,9 @@ mod tests {
     /// The card says what each empty value means, muted, and has one button.
     #[wasm_bindgen_test::wasm_bindgen_test]
     async fn the_card_reads_the_stored_values() {
-        crate::test_support::unmount_earlier();
+        quilt_ui_kit::test_support::unmount_earlier();
         let stored = RwSignal::new(PublishSettingsData::default());
-        let el = crate::test_support::mount(move || {
+        let el = quilt_ui_kit::test_support::mount(move || {
             view! { <PublishingCard stored=stored on_edit=Callback::new(|()| ()) /> }
         });
         leptos::task::tick().await;
@@ -2138,7 +2138,7 @@ mod tests {
         assert!(text().contains("Plate {date}"), "{}", text());
         assert!(text().contains("release"));
         assert!(!text().contains("No metadata"));
-        crate::test_support::button_saying(&el, "Edit…");
+        quilt_ui_kit::test_support::button_saying(&el, "Edit…");
         assert!(
             el.query_selector("input, textarea").unwrap().is_none(),
             "read-only"
@@ -2305,16 +2305,16 @@ mod tests {
 
     /// The grid's styles and the card rows', for a layout test.
     fn load_layout_styles() {
-        stylance::import_crate_style!(grid, "src/kit/two_columns.module.css");
-        crate::test_support::load_module_style(
-            include_str!("../kit/two_columns.module.css"),
+        use quilt_ui_kit::two_columns::style as grid;
+        quilt_ui_kit::test_support::load_module_style(
+            quilt_ui_kit::test_support::sheet("two_columns"),
             &[
                 ("grid", grid::grid),
                 ("tight", grid::tight),
                 ("fill", grid::fill),
             ],
         );
-        crate::test_support::load_module_style(
+        quilt_ui_kit::test_support::load_module_style(
             include_str!("settings_v2.module.css"),
             &[
                 ("slot", style::slot),
@@ -2356,11 +2356,11 @@ mod tests {
             error: None,
         };
         for width in [1024, 640] {
-            crate::test_support::unmount_earlier();
+            quilt_ui_kit::test_support::unmount_earlier();
             let card =
                 |name: &'static str| view! { <section data-card=name>{name}</section> }.into_any();
             let stored = long.clone();
-            let el = crate::test_support::mount(move || {
+            let el = quilt_ui_kit::test_support::mount(move || {
                 view! {
                     <div style=format!("--q-space-4:16px; width:{width}px")>
                         <SettingsLayout
@@ -2382,7 +2382,7 @@ mod tests {
                     </div>
                 }
             });
-            crate::test_support::sleep_ms(0).await;
+            quilt_ui_kit::test_support::sleep_ms(0).await;
             let rect = |selector: &str| {
                 el.query_selector(selector)
                     .unwrap()
@@ -2416,20 +2416,20 @@ mod tests {
     /// An agent's legend breaks only part of its fieldset's border.
     #[wasm_bindgen_test::wasm_bindgen_test]
     async fn the_agent_legend_is_narrow() {
-        crate::test_support::unmount_earlier();
+        quilt_ui_kit::test_support::unmount_earlier();
         // As the app's normalize sets every box.
         let css = format!(
             "{}\n[data-legend-test] legend {{ box-sizing: border-box; }}",
             include_str!("settings_v2.module.css")
         );
-        crate::test_support::load_module_style(
+        quilt_ui_kit::test_support::load_module_style(
             &css,
             &[
                 ("agent_fields", style::agent_fields),
                 ("agent_legend", style::agent_legend),
             ],
         );
-        let el = crate::test_support::mount(|| {
+        let el = quilt_ui_kit::test_support::mount(|| {
             let agents = RwSignal::new(vec![AgentDraft::new("kiro", &AgentSettings::default())]);
             view! {
                 <div data-legend-test style="width:600px">
@@ -2437,7 +2437,7 @@ mod tests {
                 </div>
             }
         });
-        crate::test_support::sleep_ms(0).await;
+        quilt_ui_kit::test_support::sleep_ms(0).await;
         let legend = el.query_selector("legend").unwrap().expect("the legend");
         assert_eq!(legend.get_bounding_client_rect().width(), 48.0);
     }

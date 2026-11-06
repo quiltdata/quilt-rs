@@ -29,9 +29,9 @@ use leptos::reactive::signal::ArcRwSignal;
 
 use crate::commands;
 use crate::commands::{CommitWorkflows, WorkflowIntent};
-use crate::kit::{BannerVariant, FormControl, FormDialog, Naming, Select, Submit, TextInput};
 use crate::pages::workflow::{WorkflowView, WorkflowViewKind, build_workflow_view};
 use crate::util;
+use quilt_ui_kit::{BannerVariant, FormControl, FormDialog, Naming, Select, Submit, TextInput};
 
 use super::{BucketDraft, Outcome, holding};
 
@@ -585,9 +585,9 @@ pub(crate) fn BucketDialog(
 mod tests {
     use super::super::Wiring;
     use super::*;
-    use crate::kit;
-    use crate::test_support::{element_saying, mount, sleep_ms};
     use leptos_router::components::Router;
+    use quilt_ui_kit as kit;
+    use quilt_ui_kit::test_support::{element_saying, mount, sleep_ms};
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
@@ -845,7 +845,7 @@ mod tests {
         type_into(&el, "Host", "quilt.test");
         leptos::task::tick().await;
 
-        crate::test_support::button_saying(&el, "Save").click();
+        quilt_ui_kit::test_support::button_saying(&el, "Save").click();
         sleep_ms(50).await;
 
         assert_eq!(
@@ -1246,7 +1246,7 @@ mod tests {
         leptos::task::tick().await;
         sleep_ms(SETTLED_MS).await;
 
-        crate::test_support::button_saying(&el, "Save").click();
+        quilt_ui_kit::test_support::button_saying(&el, "Save").click();
         sleep_ms(50).await;
         let alert = el
             .query_selector("dialog[open] [role=alert]")
@@ -1262,7 +1262,7 @@ mod tests {
         );
         assert_eq!(reloads.get_untracked(), 0, "not while the refusal is shown");
 
-        crate::test_support::button_saying(&el, "Cancel").click();
+        quilt_ui_kit::test_support::button_saying(&el, "Cancel").click();
         sleep_ms(50).await;
         assert_eq!(reloads.get_untracked(), 1, "read again on close");
         drop(owner);

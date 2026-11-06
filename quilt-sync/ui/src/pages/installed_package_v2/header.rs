@@ -77,26 +77,26 @@ use std::pin::Pin;
 use leptos::prelude::*;
 
 use crate::commands;
-use crate::kit;
-use crate::kit::ActionMenu;
-use crate::kit::ActionTone;
-use crate::kit::BackLink;
-use crate::kit::BannerVariant;
-use crate::kit::Button;
-use crate::kit::ButtonGroup;
-use crate::kit::ButtonVariant;
-use crate::kit::ConfirmDialog;
-use crate::kit::ConfirmOption;
-use crate::kit::GroupButton;
-use crate::kit::MenuAction;
-use crate::kit::PackageAction;
-use crate::kit::SplitButton;
-use crate::kit::SplitOption;
-use crate::kit::StateLabel;
-use crate::kit::Submit;
-use crate::kit::icons;
-use crate::kit::render;
 use crate::util;
+use quilt_ui_kit as kit;
+use quilt_ui_kit::ActionMenu;
+use quilt_ui_kit::ActionTone;
+use quilt_ui_kit::BackLink;
+use quilt_ui_kit::BannerVariant;
+use quilt_ui_kit::Button;
+use quilt_ui_kit::ButtonGroup;
+use quilt_ui_kit::ButtonVariant;
+use quilt_ui_kit::ConfirmDialog;
+use quilt_ui_kit::ConfirmOption;
+use quilt_ui_kit::GroupButton;
+use quilt_ui_kit::MenuAction;
+use quilt_ui_kit::PackageAction;
+use quilt_ui_kit::SplitButton;
+use quilt_ui_kit::SplitOption;
+use quilt_ui_kit::StateLabel;
+use quilt_ui_kit::Submit;
+use quilt_ui_kit::icons;
+use quilt_ui_kit::render;
 
 use super::bucket_form::BucketDialog;
 use super::role_dialog::RoleDialog;
@@ -850,10 +850,10 @@ pub fn PageHeader(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kit::BannerVariant;
-    use crate::test_support::{element_saying, mount, sleep_ms};
     use leptos_router::components::{Route, Router, Routes};
     use leptos_router::path;
+    use quilt_ui_kit::BannerVariant;
+    use quilt_ui_kit::test_support::{element_saying, mount, sleep_ms};
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 

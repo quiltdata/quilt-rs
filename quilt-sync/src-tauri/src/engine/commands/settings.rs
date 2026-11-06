@@ -935,5 +935,4 @@ mod tests {
             &enabled(false, false)
         ));
     }
-
 }

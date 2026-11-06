@@ -464,9 +464,9 @@ minutes.
 
 ## Design System: Radix Values, Primer Names
 
-> **Scope**: this section governs the `ui/src/kit/` component kit and
-> `ui/assets/css/kit/` tokens. The rest of this document still describes
-> the v1 page code, which predates the kit.
+> **Scope**: this section governs the `quilt-ui-kit` crate: its components
+> and its `css/` tokens. The rest of this document still describes the v1 page
+> code, which predates the kit.
 
 ### The decision
 

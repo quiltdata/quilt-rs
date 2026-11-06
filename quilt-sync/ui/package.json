@@ -1,7 +1,6 @@
 {
   "private": true,
   "dependencies": {
-    "modern-normalize": "^3.0.1",
     "vanilla-jsoneditor": "^3.13.0"
   }
 }

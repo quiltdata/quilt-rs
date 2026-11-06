@@ -281,14 +281,23 @@ fn workflows_config_to_commit_workflows(
 /// Why the active role cannot reach a bucket on `host`, naming the role when
 /// the registry says which. A failed role query is not fatal: the denial
 /// stands either way, it just cannot name the role.
-async fn denied_reason(m: &impl model::QuiltModel, roles: &RoleCache, host: Option<&Host>) -> String {
+async fn denied_reason(
+    m: &impl model::QuiltModel,
+    roles: &RoleCache,
+    host: Option<&Host>,
+) -> String {
     let info = match host {
         Some(host) => roles.get(m, host).await.ok(),
         None => None,
     };
     info.map_or_else(
         || "The active role has no access to this bucket".to_string(),
-        |roles| format!("Current role {} has no access to this bucket", roles.current),
+        |roles| {
+            format!(
+                "Current role {} has no access to this bucket",
+                roles.current
+            )
+        },
     )
 }
 

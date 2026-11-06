@@ -138,7 +138,7 @@ pub fn QuitPrompt() -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::mount;
+    use quilt_ui_kit::test_support::mount;
 
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;

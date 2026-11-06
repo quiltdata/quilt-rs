@@ -10,7 +10,7 @@ use std::pin::Pin;
 use leptos::prelude::*;
 
 use crate::commands;
-use crate::kit::MenuAction;
+use quilt_ui_kit::MenuAction;
 
 /// One command a row's `[⋯]` offers, naming the row it acts on.
 #[derive(Clone, Debug, PartialEq, Eq)]

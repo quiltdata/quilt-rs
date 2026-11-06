@@ -11,17 +11,17 @@ use leptos::prelude::*;
 
 use crate::Scene;
 use crate::gallery::queue::row;
-use crate::kit::AttentionQueue;
-use crate::kit::Card;
-use crate::kit::Countdown;
-use crate::kit::HostRow;
-use crate::kit::LoadFailure;
-use crate::kit::PackageState;
-use crate::kit::StateLabel;
-use crate::kit::StateTone;
-use crate::kit::ToggleRow;
-use crate::kit::ZeroLine;
 use quilt_sync_ui::pages::StateStrip;
+use quilt_ui_kit::AttentionQueue;
+use quilt_ui_kit::Card;
+use quilt_ui_kit::Countdown;
+use quilt_ui_kit::HostRow;
+use quilt_ui_kit::LoadFailure;
+use quilt_ui_kit::PackageState;
+use quilt_ui_kit::StateLabel;
+use quilt_ui_kit::StateTone;
+use quilt_ui_kit::ToggleRow;
+use quilt_ui_kit::ZeroLine;
 
 fn in_secs(secs: f64) -> Signal<Option<f64>> {
     let at = js_sys::Date::now() + secs * 1000.0;

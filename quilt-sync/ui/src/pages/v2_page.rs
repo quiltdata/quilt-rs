@@ -39,8 +39,8 @@ use leptos::prelude::*;
 
 use crate::components::appbar::{appbar_actions, transit_appbar_actions};
 use crate::error_handler::{current_path, follow_redirect};
-use crate::kit::readable;
-use crate::kit::{Banner, BannerVariant, PageLayout};
+use quilt_ui_kit::readable;
+use quilt_ui_kit::{Banner, BannerVariant, PageLayout};
 
 /// What a command reported, and which address it reported about.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -339,7 +339,7 @@ pub fn critical(namespace: String, lead: &str, detail: Option<String>) -> Outcom
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{button_saying, mount, sleep_ms, unmount_earlier};
+    use quilt_ui_kit::test_support::{button_saying, mount, sleep_ms, unmount_earlier};
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 

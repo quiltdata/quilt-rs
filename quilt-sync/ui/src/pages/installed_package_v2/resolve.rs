@@ -17,12 +17,12 @@ use quilt_uri::{Namespace, S3PackageUri};
 
 use super::{Outcome, Replace, Reread, Wiring, holding, run};
 use crate::commands;
-use crate::kit::readable;
-use crate::kit::{
+use crate::routes;
+use quilt_ui_kit::readable;
+use quilt_ui_kit::{
     BackLink, BannerVariant, Button, ButtonVariant, Card, ConfirmDialog, LoadFailure, PaneSection,
     RevisionRow, Submit, differs_id, unique_id,
 };
-use crate::routes;
 
 stylance::import_crate_style!(style, "src/pages/installed_package_v2/resolve.module.css");
 
@@ -371,10 +371,10 @@ fn success(namespace: String, lead: &str) -> Outcome {
 mod tests {
     use super::{Answer, ResolveCommands, ResolvePane, Shown, consequence, differs_sentence};
     use crate::commands::{CurrentRevisionData, ResolveData};
-    use crate::kit::{BannerVariant, DIFFERS_ID};
     use crate::pages::installed_package_v2::{Outcome, Wiring};
-    use crate::test_support::{button_saying, element_saying, mount, sleep_ms};
     use leptos::prelude::*;
+    use quilt_ui_kit::test_support::{button_saying, element_saying, mount, sleep_ms};
+    use quilt_ui_kit::{BannerVariant, DIFFERS_ID};
     use quilt_uri::{Namespace, S3PackageUri};
     use std::cell::{Cell, RefCell};
     use std::collections::BTreeSet;

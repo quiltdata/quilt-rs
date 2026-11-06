@@ -9,9 +9,9 @@ wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 // for why. Imported rather than declared, so this binary and the gallery share
 // one compilation of them and neither can call an item dead that the other uses.
 use quilt_sync_ui::components;
-use quilt_sync_ui::kit;
 use quilt_sync_ui::pages;
 use quilt_sync_ui::panic_report;
+use quilt_ui_kit as kit;
 
 fn main() {
     console_error_panic_hook::set_once();
@@ -20,10 +20,10 @@ fn main() {
     // Before the mount, so the first paint is in the right palette. The frame
     // before this one belongs to `index.html` — Rust cannot run early enough for
     // it.
-    quilt_sync_ui::theme::follow_os();
+    quilt_ui_kit::theme::follow_os();
     // The launch marker comes off before anything is drawn: it darkens the bare
     // canvas, which only an empty frame may have.
-    quilt_sync_ui::theme::stop_booting();
+    quilt_ui_kit::theme::stop_booting();
     // Before the router reads the address: a link's token leaves it here.
     quilt_sync_ui::engine::start();
     if quilt_sync_ui::engine::linked() {

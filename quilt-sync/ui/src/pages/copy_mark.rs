@@ -8,7 +8,7 @@
 
 use leptos::prelude::*;
 
-use crate::kit::ACKNOWLEDGE_FOR;
+use quilt_ui_kit::ACKNOWLEDGE_FOR;
 
 /// One page's copy state. `T` names what was copied, such as a row's address.
 pub struct CopyMark<T: 'static> {

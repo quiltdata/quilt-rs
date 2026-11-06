@@ -14,18 +14,18 @@ use super::super::main_page::list_class;
 use crate::commands::MainPagePackageData;
 use crate::commands::PausedPackageData;
 use crate::commands::PausedReasonData;
-use crate::kit::AttentionQueue;
-use crate::kit::Button;
-use crate::kit::CauseRow;
-use crate::kit::PackageAction;
-use crate::kit::PackageState;
-use crate::kit::QueueRow;
-use crate::kit::Remedy;
-use crate::kit::Site;
-use crate::kit::ZeroLine;
-use crate::kit::ZeroLineSkeleton;
-use crate::kit::render;
 use crate::routes::sign_in_href;
+use quilt_ui_kit::AttentionQueue;
+use quilt_ui_kit::Button;
+use quilt_ui_kit::CauseRow;
+use quilt_ui_kit::PackageAction;
+use quilt_ui_kit::PackageState;
+use quilt_ui_kit::QueueRow;
+use quilt_ui_kit::Remedy;
+use quilt_ui_kit::Site;
+use quilt_ui_kit::ZeroLine;
+use quilt_ui_kit::ZeroLineSkeleton;
+use quilt_ui_kit::render;
 
 /// One row in the queue, in draw order: a cause shared by several packages,
 /// or a package needing its own decision.
@@ -707,7 +707,7 @@ enum Shape {
 mod tests {
     use super::*;
     use crate::commands::MainPagePackageData;
-    use crate::kit::PackageState;
+    use quilt_ui_kit::PackageState;
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
@@ -1162,7 +1162,7 @@ mod tests {
     /// Inside a `Router`, which the queue's rows navigate through: `use_navigate`
     /// panics without one.
     fn mount<N: IntoView + 'static>(f: impl FnOnce() -> N + Send + 'static) -> web_sys::Element {
-        crate::test_support::mount(move || {
+        quilt_ui_kit::test_support::mount(move || {
             view! { <leptos_router::components::Router>{f()}</leptos_router::components::Router> }
         })
     }

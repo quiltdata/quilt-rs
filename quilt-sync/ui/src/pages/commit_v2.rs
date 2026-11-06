@@ -8,31 +8,31 @@
 
 use leptos::prelude::*;
 
-use crate::kit::ActionMenu;
-use crate::kit::Banner;
-use crate::kit::BannerVariant;
-use crate::kit::Blankslate;
-use crate::kit::Button;
-use crate::kit::ButtonVariant;
-use crate::kit::Card;
-use crate::kit::EntryRow;
-use crate::kit::FormControl;
-use crate::kit::JsonDisplay;
-use crate::kit::NameTooltip;
-use crate::kit::Naming;
-use crate::kit::PageHeader;
-use crate::kit::PageHeaderSkeleton;
-use crate::kit::Select;
-use crate::kit::SkeletonBox;
-use crate::kit::SplitButton;
-use crate::kit::SplitOption;
-use crate::kit::StateTone;
-use crate::kit::TextInput;
-use crate::kit::Tooltip;
-use crate::kit::Trail;
-use crate::kit::TwoColumns;
-use crate::kit::icons;
 use crate::util::format_size;
+use quilt_ui_kit::ActionMenu;
+use quilt_ui_kit::Banner;
+use quilt_ui_kit::BannerVariant;
+use quilt_ui_kit::Blankslate;
+use quilt_ui_kit::Button;
+use quilt_ui_kit::ButtonVariant;
+use quilt_ui_kit::Card;
+use quilt_ui_kit::EntryRow;
+use quilt_ui_kit::FormControl;
+use quilt_ui_kit::JsonDisplay;
+use quilt_ui_kit::NameTooltip;
+use quilt_ui_kit::Naming;
+use quilt_ui_kit::PageHeader;
+use quilt_ui_kit::PageHeaderSkeleton;
+use quilt_ui_kit::Select;
+use quilt_ui_kit::SkeletonBox;
+use quilt_ui_kit::SplitButton;
+use quilt_ui_kit::SplitOption;
+use quilt_ui_kit::StateTone;
+use quilt_ui_kit::TextInput;
+use quilt_ui_kit::Tooltip;
+use quilt_ui_kit::Trail;
+use quilt_ui_kit::TwoColumns;
+use quilt_ui_kit::icons;
 
 use super::installed_package_v2::{MenuCommand, MenuItem, remote_item, remove_item};
 use super::json_editor::{JsonEditor, focus_json_editor};
@@ -173,7 +173,7 @@ pub fn CommitHeader(
         Some(reason) => view! {
             <Tooltip
                 text=reason
-                align=crate::kit::Align::End
+                align=quilt_ui_kit::Align::End
                 trigger=move |id| {
                     view! {
                         <span class=style::slot data-primary-action aria-describedby=id>
@@ -417,7 +417,7 @@ pub fn MetadataField(
         now
     });
     // Not a `FormControl`: the name shares its line with the editor's toggle.
-    let control_id = crate::kit::unique_id("metadata");
+    let control_id = quilt_ui_kit::unique_id("metadata");
     let error_id = format!("{control_id}-error");
     let label_id = format!("{control_id}-label");
     let body_id = format!("{control_id}-body");
@@ -530,7 +530,7 @@ pub fn MetadataEditorField(
     height: Option<i32>,
 ) -> impl IntoView {
     let failing = Signal::derive(move || error.get().is_some());
-    let control_id = crate::kit::unique_id("metadata");
+    let control_id = quilt_ui_kit::unique_id("metadata");
     let error_id = format!("{control_id}-error");
     let label_id = format!("{control_id}-label");
     // Here so a height the reader dragged to survives a reset.
@@ -867,7 +867,7 @@ pub fn IncludedList(
     let (count, total) =
         totals.unwrap_or_else(|| (files.len(), files.iter().map(|f| f.size).sum()));
     let cut = (count > files.len() && !files.is_empty()).then(|| cut_words(files.len(), count));
-    let heading_id = crate::kit::unique_id("included");
+    let heading_id = quilt_ui_kit::unique_id("included");
     let labelled_by = heading_id.clone();
     let tally = (count > 0).then(|| format!(" · {} · {}", files_words(count), format_size(total)));
     let rows = if files.is_empty() {
@@ -978,14 +978,14 @@ pub fn CommitPageSkeleton() -> impl IntoView {
 #[cfg(test)]
 mod layout_tests {
     use super::*;
-    use crate::test_support::{load_module_style, mount, sleep_ms};
+    use quilt_ui_kit::test_support::{load_module_style, mount, sleep_ms};
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
-    stylance::import_crate_style!(columns, "src/kit/two_columns.module.css");
-    stylance::import_crate_style!(card, "src/kit/card.module.css");
-    stylance::import_crate_style!(form_control, "src/kit/form_control.module.css");
-    stylance::import_crate_style!(text_input, "src/kit/text_input.module.css");
+    use quilt_ui_kit::card::style as card;
+    use quilt_ui_kit::form_control::style as form_control;
+    use quilt_ui_kit::text_input::style as text_input;
+    use quilt_ui_kit::two_columns::style as columns;
 
     /// The kit's spacing tokens, which the test page does not load.
     const TOKENS: &str = "--q-space-3:12px; --q-space-4:16px";
@@ -997,7 +997,7 @@ mod layout_tests {
     /// The page's, the layout's and the card's stylesheets, as the app has them.
     fn load_styles() {
         load_module_style(
-            include_str!("../kit/two_columns.module.css"),
+            quilt_ui_kit::test_support::sheet("two_columns"),
             &[
                 ("grid", columns::grid),
                 ("tight", columns::tight),
@@ -1005,7 +1005,7 @@ mod layout_tests {
             ],
         );
         load_module_style(
-            include_str!("../kit/card.module.css"),
+            quilt_ui_kit::test_support::sheet("card"),
             &[
                 ("root", card::root),
                 ("title", card::title),
@@ -1152,7 +1152,7 @@ mod layout_tests {
     async fn the_message_and_the_files_line_up() {
         load_styles();
         load_module_style(
-            include_str!("../kit/form_control.module.css"),
+            quilt_ui_kit::test_support::sheet("form_control"),
             &[
                 ("root", form_control::root),
                 ("name", form_control::name),
@@ -1162,7 +1162,7 @@ mod layout_tests {
             ],
         );
         load_module_style(
-            include_str!("../kit/text_input.module.css"),
+            quilt_ui_kit::test_support::sheet("text_input"),
             &[("root", text_input::root), ("invalid", text_input::invalid)],
         );
         // The app's baseline (modern-normalize) zeroes a control's margin,
@@ -1387,7 +1387,7 @@ pub(crate) mod tests {
         let items = header_menu(false, false);
         assert_eq!(items[0].command, MenuCommand::Remote);
         assert_eq!(items[1].command, MenuCommand::Remove);
-        assert_eq!(items[1].tone, crate::kit::ActionTone::Danger);
+        assert_eq!(items[1].tone, quilt_ui_kit::ActionTone::Danger);
     }
 
     #[test]
@@ -1480,7 +1480,7 @@ pub(crate) mod tests {
     #[wasm_bindgen_test::wasm_bindgen_test]
     async fn a_row_s_menu_hands_the_chosen_command_to_the_page() {
         let chosen = RwSignal::new(None);
-        let el = crate::test_support::mount(move || {
+        let el = quilt_ui_kit::test_support::mount(move || {
             view! {
                 <IncludedList
                     files=vec![file(Change::New)]
