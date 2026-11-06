@@ -2,7 +2,7 @@ use leptos::prelude::*;
 use leptos_router::NavigateOptions;
 use leptos_router::hooks::use_navigate;
 
-use quilt_ui_kit::{ConfirmDialog, Submit};
+use quilt_ui_kit::{ConfirmDialog, Submit, readable};
 
 use super::installed_package_v2::resolve::share_consequence;
 use crate::commands::{self, MergeData};
@@ -121,7 +121,7 @@ fn MergeContent(
             .await;
             if let Err(e) = answer {
                 ui_locked.set(false);
-                notification.set(Some(Notification::Error(e)));
+                notification.set(Some(Notification::Error(readable(&e))));
             }
         });
     };
@@ -289,9 +289,14 @@ mod tests {
 
     use super::MergeContent;
     use crate::commands::MergeData;
+    use crate::components::Notification;
     use crate::engine::fake::FakeEngine;
 
     async fn merge_page() -> web_sys::Element {
+        merge_page_telling(RwSignal::new(None)).await
+    }
+
+    async fn merge_page_telling(notification: RwSignal<Option<Notification>>) -> web_sys::Element {
         unmount_earlier();
         let el = mount(move || {
             view! {
@@ -301,7 +306,7 @@ mod tests {
                             namespace: ("team", "dataset").into(),
                             uri: None,
                         }
-                        notification=RwSignal::new(None)
+                        notification=notification
                         ui_locked=RwSignal::new(false)
                     />
                 </Router>
@@ -315,8 +320,8 @@ mod tests {
         engine.requests().into_iter().find(|r| r["cmd"] == cmd)
     }
 
-    /// Press *Promote my revision* and answer what `latest` would lose.
-    async fn promote(engine: &FakeEngine, el: &web_sys::Element, loss: Value) {
+    /// Press *Promote my revision*; the engine's ask for what `latest` would lose.
+    async fn press_promote(engine: &FakeEngine, el: &web_sys::Element) -> Value {
         button_saying(el, "Promote my revision").click();
         sleep_ms(0).await;
         // The first ask opened the socket; it waits for the hello.
@@ -324,8 +329,35 @@ mod tests {
         sleep_ms(0).await;
         let ask = asked(engine, "get_latest_loss").expect("the loss is asked");
         assert_eq!(ask["args"]["namespace"], "team/dataset");
+        ask
+    }
+
+    /// Press *Promote my revision* and answer what `latest` would lose.
+    async fn promote(engine: &FakeEngine, el: &web_sys::Element, loss: Value) {
+        let ask = press_promote(engine, el).await;
         engine.reply(&ask["id"], &loss);
         sleep_ms(0).await;
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_refused_loss_read_says_why_and_promotes_nothing() {
+        const DENIED: &str = "The active role does not have access to this object.";
+        let engine = FakeEngine::install();
+        let notification = RwSignal::new(None);
+        let el = merge_page_telling(notification).await;
+        let ask = press_promote(&engine, &el).await;
+        engine.refuse(
+            &ask["id"],
+            &json!({"kind": "access_denied", "message": DENIED}).to_string(),
+        );
+        sleep_ms(0).await;
+
+        assert!(
+            matches!(notification.get_untracked(), Some(Notification::Error(m)) if m == DENIED),
+            "the message, not its JSON envelope"
+        );
+        assert!(asked(&engine, "certify_latest").is_none(), "nothing ran");
+        unmount_earlier();
     }
 
     fn open_dialog(el: &web_sys::Element) -> Option<web_sys::Element> {
