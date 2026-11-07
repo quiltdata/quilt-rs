@@ -197,6 +197,9 @@ struct Fixture {
     latest_meta: Option<Value>,
     /// What the head a run ends on carries; [`edited_head`] unless set.
     finished_meta: Option<Value>,
+    /// The revision the copy last took from `latest` when the run ends; the
+    /// head, `h2`, unless the user pushed a commit of their own.
+    finished_base: &'static str,
     /// Walking the tree the run ended on fails, as it does while signed out.
     walk_fails: bool,
     /// What the user changes in the tree once the run's outcome is published.
@@ -231,6 +234,7 @@ impl Fixture {
             pulled_meta: None,
             latest_meta: None,
             finished_meta: None,
+            finished_base: "h2",
             walk_fails: false,
             edited_after_publish: BTreeMap::new(),
             tracked: &[],
@@ -1276,11 +1280,13 @@ fn finishing_model(
         .then(|| fixture.lineage().commit)
         .flatten();
     let walked = Arc::clone(&committed);
+    let finished_base = fixture.finished_base;
     model
         .expect_get_installed_package_lineage()
         .returning(move |_| {
             let mut lineage = quilt::lineage::PackageLineage {
                 remote_uri: Some(at("h2")),
+                base_hash: finished_base.to_string(),
                 ..quilt::lineage::PackageLineage::default()
             };
             if !walked.load(std::sync::atomic::Ordering::SeqCst) {
@@ -1817,27 +1823,34 @@ async fn a_revision_the_reread_pulled_is_not_counted_as_the_runs_change() {
     assert_eq!(remote.latest().rows, [task, result]);
 }
 
-/// The user committed by hand during the run.
+/// The user committed by hand during the run, and pushed it or not.
 #[tokio::test]
 async fn an_outcome_built_on_a_hand_commit_stays_diverged() {
-    let fixture = Fixture {
+    let pending = Fixture {
         pending_commit: true,
         ..Fixture::new()
     };
-    let task = file("TASK.md", "do it");
+    // Their push did not become `latest`, so the copy's base is still the claim.
+    let pushed = Fixture {
+        finished_base: "h1",
+        ..Fixture::new()
+    };
+    for fixture in [pending, pushed] {
+        let task = file("TASK.md", "do it");
 
-    let remote = finish_among(
-        &fixture,
-        Revisions::new(
-            vec![task.clone()],
-            vec![task.clone(), file("out.md", "result")],
-            vec![task.clone(), file("others.csv", "theirs")],
-        ),
-    )
-    .await;
+        let remote = finish_among(
+            &fixture,
+            Revisions::new(
+                vec![task.clone()],
+                vec![task.clone(), file("out.md", "result")],
+                vec![task.clone(), file("others.csv", "theirs")],
+            ),
+        )
+        .await;
 
-    assert_eq!(remote.lock().unwrap().latest, "h4");
-    assert_eq!(*fixture.events.lock().unwrap(), ["publish"], "no reset");
+        assert_eq!(remote.lock().unwrap().latest, "h4");
+        assert_eq!(*fixture.events.lock().unwrap(), ["publish"], "no reset");
+    }
 }
 
 /// Another writer's revision: `latest`'s rows and `row`, still under the claim.

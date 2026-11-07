@@ -551,7 +551,12 @@ async fn publish_outcome<M: QuiltModel>(
     let metadata_only = matches!(claim["status"].as_str(), Some("not_started" | "unrunnable"))
         && status.changes.is_empty()
         && commit.is_none();
-    let built_on = head.remote_uri.clone().filter(|_| counted);
+    // A head this copy pushed itself that never became `latest` is a hand
+    // commit too.
+    let built_on = head
+        .remote_uri
+        .clone()
+        .filter(|uri| counted && uri.hash == head.base_hash);
     let meta = agent_exec::with_claim(user_meta, claim);
     let published = publish(model, locked, pkg, workflow, meta, message, status).await?;
     let Some(push) = published.push() else {
