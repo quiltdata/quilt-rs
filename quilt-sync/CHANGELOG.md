@@ -24,6 +24,11 @@
 ### Changed
 
 - The settings page's *Saved* shows for 1.5 seconds, as long as *Copied* does (<https://github.com/quiltdata/quilt-rs/pull/1310>)
+- *Share mine* and *Promote my revision* say what the published revision would lose, its files and its metadata, and ask before replacing it (<https://github.com/quiltdata/quilt-rs/pull/1321>)
+
+### quilt-rs
+
+- Updated [from v0.52.0 to v0.53.0-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.52.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
 
 ## [v0.27.0] - 2026-11-05
 

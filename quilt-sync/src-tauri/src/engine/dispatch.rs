@@ -15,8 +15,8 @@ use crate::engine::autopull::activity::AutopullActivity;
 use crate::engine::autopull::reporter::WatcherSnapshot;
 use crate::engine::commands::{
     AccountHost, AutosyncPatch, AutosyncSettingsData, CommitData, CommitViolation, CommitWorkflows,
-    FreedSpace, InstalledPackageData, InstalledPackagesListData, KeepingScope, LoginData,
-    LoginErrorData, MainPageAccounts, MainPagePackageRefresh, MainPagePackages,
+    FreedSpace, InstalledPackageData, InstalledPackagesListData, KeepingScope, LatestLoss,
+    LoginData, LoginErrorData, MainPageAccounts, MainPagePackageRefresh, MainPagePackages,
     MainPageRecentFiles, MainPageWatcher, MergeData, NotDownloaded, PackagePageData, PathCheck,
     RefreshedPackageStatus, RemotePackageResult, RevisionHistoryData, RolesData, SetRemoteResponse,
     SettingsData, SetupData, StopIgnoringPreview, StopIgnoringScope, StorageSize,
@@ -160,6 +160,7 @@ commands! {
         login(host: String, code: String) -> String;
         login_oauth(host: String, back: Option<String>, page: Option<String>) -> String;
         get_merge_data(namespace: String) -> MergeData;
+        get_latest_loss(namespace: String) -> LatestLoss;
         get_commit_data(namespace: String) -> CommitData;
         get_bucket_workflows(host: Option<String>, bucket: String) -> CommitWorkflows;
         load_workflow_rules(namespace: String, workflow_id: String, refresh: bool) -> bool;
