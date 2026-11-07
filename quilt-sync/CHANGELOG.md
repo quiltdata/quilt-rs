@@ -25,7 +25,7 @@
 
 - The settings page's *Saved* shows for 1.5 seconds, as long as *Copied* does (<https://github.com/quiltdata/quilt-rs/pull/1310>)
 - *Share mine* and *Promote my revision* say what the published revision would lose, its files and its metadata, and ask before replacing it (<https://github.com/quiltdata/quilt-rs/pull/1321>)
-- Autosync no longer pauses a package whose changes and a newer published revision touch different files: it publishes both together, and pauses only where the two changed the same file or the package metadata (<https://github.com/quiltdata/quilt-rs/pull/1323>)
+- Autosync no longer pauses a package whose changes and a newer published revision touch different files: it publishes both together, and pauses only where the two changed the same file or the package metadata, which the resolve pane names (<https://github.com/quiltdata/quilt-rs/pull/1323>)
 
 ### Fixed
 

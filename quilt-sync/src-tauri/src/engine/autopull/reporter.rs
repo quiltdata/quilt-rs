@@ -256,7 +256,7 @@ impl PausedEvent {
         let (reason_str, message) = match reason {
             PausedReason::PendingChanges => ("pendingChanges", None),
             PausedReason::PendingCommit => ("pendingCommit", None),
-            PausedReason::Diverged => ("diverged", None),
+            PausedReason::Diverged | PausedReason::MergeRefused(_) => ("diverged", None),
             PausedReason::PullConflict(files) => ("pullConflict", Some(files.join(", "))),
             // The message is the role *name*, not a sentence: the wording
             // ("switch role to resume") is presentation and lives in the UI,

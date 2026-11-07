@@ -132,7 +132,7 @@ impl From<&PausedReason> for PausedDto {
         match reason {
             PausedReason::PendingChanges => Self::PendingChanges,
             PausedReason::PendingCommit => Self::PendingCommit,
-            PausedReason::Diverged => Self::Diverged,
+            PausedReason::Diverged | PausedReason::MergeRefused(_) => Self::Diverged,
             PausedReason::PullConflict(files) => Self::PullConflict {
                 files: files.clone(),
             },

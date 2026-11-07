@@ -7,6 +7,7 @@ use std::sync::Mutex;
 use serde_json::json;
 
 use super::*;
+use crate::engine::autopull::MergeBlock;
 
 fn file(key: &str, content: &str) -> quilt::manifest::ManifestRow {
     quilt::manifest::ManifestRow {
@@ -464,11 +465,11 @@ async fn edits_still_in_their_wait_are_neither_committed_nor_merged() {
 }
 
 #[tokio::test]
-async fn a_file_both_sides_changed_differently_stays_diverged_and_publishes_nothing() {
+async fn a_file_both_sides_changed_differently_pauses_naming_it_and_publishes_nothing() {
     let (model, remote) = model_of(Copy::new(
-        vec![file("a.csv", "1")],
-        vec![file("a.csv", "mine")],
-        vec![file("a.csv", "theirs")],
+        vec![file("a.csv", "1"), file("b.csv", "1")],
+        vec![file("a.csv", "mine"), file("b.csv", "1")],
+        vec![file("a.csv", "theirs"), file("b.csv", "2")],
     ));
 
     let (inner, _) = tick(&model).await;
@@ -478,12 +479,14 @@ async fn a_file_both_sides_changed_differently_stays_diverged_and_publishes_noth
     assert_eq!(remote.latest, "h1");
     assert_eq!(
         inner.paused.read().await.get(&ns()),
-        Some(&PausedReason::Diverged)
+        Some(&PausedReason::MergeRefused(MergeBlock::Paths(vec![
+            "a.csv".to_string()
+        ])))
     );
 }
 
 #[tokio::test]
-async fn metadata_both_sides_changed_differently_stays_diverged() {
+async fn metadata_both_sides_changed_differently_pauses_naming_the_metadata() {
     let mut copy = Copy::new(
         vec![file("a.csv", "1")],
         vec![file("a.csv", "mine")],
@@ -498,7 +501,7 @@ async fn metadata_both_sides_changed_differently_stays_diverged() {
     assert_eq!(seen(&remote).events, NOTHING);
     assert_eq!(
         inner.paused.read().await.get(&ns()),
-        Some(&PausedReason::Diverged)
+        Some(&PausedReason::MergeRefused(MergeBlock::Metadata))
     );
 }
 
@@ -553,7 +556,7 @@ async fn a_latest_that_keeps_moving_pauses_the_copy_after_three_attempts() {
     assert_eq!(remote.latest, "w3", "the last writer keeps latest");
     assert_eq!(
         inner.paused.read().await.get(&ns()),
-        Some(&PausedReason::Diverged)
+        Some(&PausedReason::MergeRefused(MergeBlock::LatestMoved))
     );
 }
 

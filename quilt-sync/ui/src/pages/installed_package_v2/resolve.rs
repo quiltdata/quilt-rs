@@ -38,6 +38,27 @@ pub fn differs_sentence(differing: usize) -> String {
     format!("{differing} {files} between these revisions — marked in the list.")
 }
 
+/// What stopped autosync merging the two revisions, when it tried.
+#[must_use]
+pub fn blocked_sentence(block: &commands::MergeBlock) -> String {
+    let what = match block {
+        commands::MergeBlock::Paths { paths } => format!("both changed {}", named(paths)),
+        commands::MergeBlock::Metadata => "both changed the package metadata".to_string(),
+        commands::MergeBlock::LatestMoved => "the published one kept changing".to_string(),
+    };
+    format!("Autosync could not combine these revisions: {what}.")
+}
+
+/// Up to three paths by name, the rest counted, as `util::incoming_files` lists them.
+fn named(paths: &[String]) -> String {
+    const NAMED: usize = 3;
+    let shown = paths[..paths.len().min(NAMED)].join(", ");
+    match paths.len().saturating_sub(NAMED) {
+        0 => shown,
+        rest => format!("{shown} and {rest} more"),
+    }
+}
+
 fn plural<'a>(n: usize, one: &'a str, many: &'a str) -> &'a str {
     if n == 1 { one } else { many }
 }
@@ -189,9 +210,11 @@ pub fn ResolvePane(
             loss,
             unpublished,
             uncommitted,
+            blocked,
             ..
         } => (
             view! {
+                {blocked.map(|block| view! { <p>{blocked_sentence(&block)}</p> })}
                 <p id=differs_id()>{move || differs_sentence(count())}</p>
                 {yours}
                 <PaneSection nested=true label="Published">
@@ -442,10 +465,10 @@ fn success(namespace: String, lead: &str) -> Outcome {
 #[cfg(test)]
 mod tests {
     use super::{
-        Answer, ResolveCommands, ResolvePane, Shown, consequence, differs_sentence,
-        share_consequence,
+        Answer, ResolveCommands, ResolvePane, Shown, blocked_sentence, consequence,
+        differs_sentence, share_consequence,
     };
-    use crate::commands::{CurrentRevisionData, LatestLoss, ResolveData};
+    use crate::commands::{CurrentRevisionData, LatestLoss, MergeBlock, ResolveData};
     use crate::pages::installed_package_v2::{Outcome, Wiring};
     use leptos::prelude::*;
     use quilt_ui_kit::test_support::{button_saying, element_saying, mount, sleep_ms};
@@ -466,6 +489,40 @@ mod tests {
         assert_eq!(
             differs_sentence(1),
             "1 file differs between these revisions — marked in the list."
+        );
+    }
+
+    fn paths(keys: &[&str]) -> MergeBlock {
+        MergeBlock::Paths {
+            paths: keys.iter().map(ToString::to_string).collect(),
+        }
+    }
+
+    #[test]
+    fn a_refused_merge_names_the_files_both_sides_changed() {
+        assert_eq!(
+            blocked_sentence(&paths(&["a.csv"])),
+            "Autosync could not combine these revisions: both changed a.csv."
+        );
+        assert_eq!(
+            blocked_sentence(&paths(&["a.csv", "b.csv", "c.csv"])),
+            "Autosync could not combine these revisions: both changed a.csv, b.csv, c.csv."
+        );
+        assert_eq!(
+            blocked_sentence(&paths(&["a.csv", "b.csv", "c.csv", "d.csv", "e.csv"])),
+            "Autosync could not combine these revisions: both changed a.csv, b.csv, c.csv and 2 more."
+        );
+    }
+
+    #[test]
+    fn a_refused_merge_names_the_metadata_or_a_latest_that_kept_moving() {
+        assert_eq!(
+            blocked_sentence(&MergeBlock::Metadata),
+            "Autosync could not combine these revisions: both changed the package metadata."
+        );
+        assert_eq!(
+            blocked_sentence(&MergeBlock::LatestMoved),
+            "Autosync could not combine these revisions: the published one kept changing."
         );
     }
 
@@ -612,6 +669,7 @@ mod tests {
             loss,
             unpublished,
             uncommitted,
+            blocked: None,
         }
     }
 
@@ -792,6 +850,34 @@ mod tests {
         for label in [CERTIFY, REPLACE] {
             assert!(!choice(&el, label).disabled(), "{label} is enabled");
         }
+        assert!(
+            !el.text_content()
+                .unwrap_or_default()
+                .contains("Autosync could not"),
+            "no merge was refused; markup was {}",
+            el.inner_html()
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn the_mode_opens_on_what_blocked_a_refused_merge() {
+        let mut resolve = compared(0, 0);
+        if let ResolveData::Compared { blocked, .. } = &mut resolve {
+            *blocked = Some(MergeBlock::Metadata);
+        }
+        let el = pane(resolve, marks(&["plate/a.csv"]), Wiring::new());
+
+        let first = el
+            .query_selector("p")
+            .unwrap()
+            .expect("the pane's first sentence");
+        assert_eq!(
+            first.text_content().unwrap_or_default(),
+            "Autosync could not combine these revisions: both changed the package metadata."
+        );
+        for label in [CERTIFY, REPLACE] {
+            assert!(!choice(&el, label).disabled(), "{label} is still offered");
+        }
     }
 
     #[wasm_bindgen_test]
@@ -802,6 +888,7 @@ mod tests {
             loss: LatestLoss::default(),
             unpublished: 0,
             uncommitted: 0,
+            blocked: None,
         };
         let el = pane(resolve, marks(&["plate/a.csv"]), Wiring::new());
         element_saying(&section(&el, "Published"), "No message");
@@ -820,6 +907,7 @@ mod tests {
             loss: LatestLoss::default(),
             unpublished: 0,
             uncommitted: 0,
+            blocked: None,
         };
         let el = pane(
             resolve,
