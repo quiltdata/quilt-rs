@@ -197,8 +197,13 @@ struct Fixture {
     latest_meta: Option<Value>,
     /// What the head a run ends on carries; [`edited_head`] unless set.
     finished_meta: Option<Value>,
+    /// The revision the copy last took from `latest` when the run ends; the
+    /// head, `h2`, unless the user pushed a commit of their own.
+    finished_base: &'static str,
     /// Walking the tree the run ended on fails, as it does while signed out.
     walk_fails: bool,
+    /// What the user changes in the tree once the run's outcome is published.
+    edited_after_publish: BTreeMap<PathBuf, quilt::lineage::Change>,
     /// The paths this copy already tracks.
     tracked: &'static [&'static str],
     /// The paths the head lists.
@@ -229,7 +234,9 @@ impl Fixture {
             pulled_meta: None,
             latest_meta: None,
             finished_meta: None,
+            finished_base: "h2",
             walk_fails: false,
+            edited_after_publish: BTreeMap::new(),
             tracked: &[],
             rows: &["TASK.md", "sub/TASK.md"],
             gone: &[],
@@ -671,6 +678,31 @@ async fn the_sweep_publishes_the_outcome_the_run_saved() -> Result<(), Error> {
         assert_eq!(published[0].message, message);
         assert_eq!(published[0].paths, paths);
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_sweeps_outcome_that_is_not_latest_is_rebased_onto_it() -> Result<(), Error> {
+    let fixture = Fixture::new();
+    settings::remember_invocation(fixture.dir.path(), "ours").await?;
+    let mut model = fixture.model(ours_claimed(), fresh(written()), false);
+    model
+        .expect_resolve_manifest_uri()
+        .returning(|_| Ok(at("h4")));
+    let parents = Arc::new(Mutex::new(Vec::new()));
+    let pushed = Arc::clone(&parents);
+    model.expect_push_onto().returning(move |parent, _| {
+        pushed.lock().unwrap().push(parent.hash.clone());
+        Ok(quilt::PushOutcome {
+            manifest_uri: at("r1"),
+            certified_latest: true,
+        })
+    });
+    let pkg = quilt::LocalDomain::new(PathBuf::new()).create_installed_package(namespace());
+
+    check(&model, &fixture.tasks, &settings(), &pkg).await;
+
+    assert_eq!(*parents.lock().unwrap(), ["h4"]);
     Ok(())
 }
 
@@ -1208,9 +1240,10 @@ fn claimed_run(tasks: &Tasks) -> Run {
     }
 }
 
-/// A package the run ended on: its head carries the fixture's `finished_meta`
-/// under the workflow `edited`, its tree walks with `changes`, and its publishes are taken as
-/// `latest` or not by `certified_latest`. Publishes go to the fixture's
+/// A package the run ended on: its head, the published `h2`, carries the
+/// fixture's `finished_meta` under the workflow `edited`, its tree walks with
+/// `changes`, and its publish, `h3`, is taken as `latest` or not by
+/// `certified_latest`. Publishes go to the fixture's
 /// `published`; publishes and resets to its `events`.
 fn finishing_model(
     fixture: &Fixture,
@@ -1226,15 +1259,17 @@ fn finishing_model(
     model
         .expect_lock_package()
         .returning(|p| Ok(p.namespace.clone()));
-    // The publish commits the tree's changes, so later walks find it clean.
+    // The publish commits the tree's changes, so later walks find only the
+    // user's.
     let committed = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let walked = Arc::clone(&committed);
     let walk_fails = fixture.walk_fails;
+    let edited_after_publish = fixture.edited_after_publish.clone();
     model.expect_locked_package_status().returning(move |_, _| {
         if walk_fails {
             Err(Error::General("signed out".to_string()))
         } else if walked.load(std::sync::atomic::Ordering::SeqCst) {
-            Ok(fresh(BTreeMap::new()))
+            Ok(fresh(edited_after_publish.clone()))
         } else {
             Ok(fresh(changes.clone()))
         }
@@ -1245,10 +1280,15 @@ fn finishing_model(
         .then(|| fixture.lineage().commit)
         .flatten();
     let walked = Arc::clone(&committed);
+    let finished_base = fixture.finished_base;
     model
         .expect_get_installed_package_lineage()
         .returning(move |_| {
-            let mut lineage = quilt::lineage::PackageLineage::default();
+            let mut lineage = quilt::lineage::PackageLineage {
+                remote_uri: Some(at("h2")),
+                base_hash: finished_base.to_string(),
+                ..quilt::lineage::PackageLineage::default()
+            };
             if !walked.load(std::sync::atomic::Ordering::SeqCst) {
                 lineage.commit.clone_from(&pending);
             }
@@ -1300,17 +1340,22 @@ fn finishing_model(
             });
             Ok(quilt::PublishOutcome::CommittedAndPushed(
                 quilt::PushOutcome {
-                    manifest_uri: quilt_uri::ManifestUri {
-                        bucket: "quilt-dev".to_string(),
-                        namespace: namespace(),
-                        hash: "h3".to_string(),
-                        origin: None,
-                    },
+                    manifest_uri: at("h3"),
                     certified_latest,
                 },
             ))
         });
     model
+}
+
+/// The package's revision `hash` in `quilt-dev`.
+fn at(hash: &str) -> quilt_uri::ManifestUri {
+    quilt_uri::ManifestUri {
+        bucket: "quilt-dev".to_string(),
+        namespace: namespace(),
+        hash: hash.to_string(),
+        origin: Some(fixtures::host()),
+    }
 }
 
 /// The head a run ends on, after the re-read pulled a later revision that
@@ -1530,20 +1575,550 @@ async fn a_head_that_no_longer_holds_the_claim_gets_no_outcome() -> Result<(), E
     Ok(())
 }
 
+/// A row at `key` whose bytes read `content`.
+fn file(key: &str, content: &str) -> quilt::manifest::ManifestRow {
+    let hex = content.bytes().fold(String::new(), |mut hex, byte| {
+        use std::fmt::Write;
+        write!(hex, "{byte:02x}").expect("written");
+        hex
+    });
+    quilt::manifest::ManifestRow {
+        logical_key: PathBuf::from(key),
+        physical_key: format!("s3://quilt-dev/acme/demo/{key}?versionId={content}"),
+        hash: quilt::object_hash::Sha256Hash::try_from(hex.as_str())
+            .expect("hex")
+            .into(),
+        size: content.len() as u64,
+        meta: None,
+    }
+}
+
+fn revision(meta: Value, rows: Vec<quilt::manifest::ManifestRow>) -> quilt::manifest::Manifest {
+    quilt::manifest::Manifest {
+        header: quilt::manifest::ManifestHeader {
+            user_meta: Some(meta),
+            ..quilt::manifest::ManifestHeader::default()
+        },
+        rows,
+    }
+}
+
+fn keys(manifest: &quilt::manifest::Manifest) -> BTreeSet<String> {
+    manifest
+        .rows
+        .iter()
+        .map(|row| row.logical_key.display().to_string())
+        .collect()
+}
+
+/// The revisions around a run's outcome that did not become `latest`.
+struct Revisions {
+    /// The claim's revision, `h1`.
+    claim: Vec<quilt::manifest::ManifestRow>,
+    /// The head the outcome was built on, `h2`.
+    head: Vec<quilt::manifest::ManifestRow>,
+    /// The outcome, `h3`.
+    outcome: Vec<quilt::manifest::ManifestRow>,
+    /// `latest` once the outcome is pushed, `h4`.
+    latest: quilt::manifest::Manifest,
+    /// What other writers publish, one just before each push onto `latest`.
+    writers: Vec<quilt::manifest::Manifest>,
+}
+
+impl Revisions {
+    /// A run claimed at the head it ended on, and a `latest` that lists
+    /// `latest` under the head's metadata.
+    fn new(
+        head: Vec<quilt::manifest::ManifestRow>,
+        outcome: Vec<quilt::manifest::ManifestRow>,
+        latest: Vec<quilt::manifest::ManifestRow>,
+    ) -> Self {
+        Self {
+            claim: head.clone(),
+            head,
+            outcome,
+            latest: revision(edited_head(), latest),
+            writers: Vec::new(),
+        }
+    }
+}
+
+/// The remote a rebase reads and publishes to.
+struct Remote {
+    revisions: BTreeMap<String, quilt::manifest::Manifest>,
+    /// The hash `latest` names.
+    latest: String,
+    writers: std::collections::VecDeque<quilt::manifest::Manifest>,
+    pushes: usize,
+}
+
+impl Remote {
+    fn latest(&self) -> &quilt::manifest::Manifest {
+        &self.revisions[&self.latest]
+    }
+}
+
+/// Finish a `done` run among `revisions`. The walk finds no changes: they only
+/// count, and the rebase reads the revisions.
+async fn finish_among(fixture: &Fixture, revisions: Revisions) -> Arc<Mutex<Remote>> {
+    let mut model = finishing_model(fixture, BTreeMap::new(), false);
+    let remote = Arc::new(Mutex::new(Remote {
+        revisions: BTreeMap::from([
+            (
+                "h1".to_string(),
+                revision(claimed_by_this_run(), revisions.claim),
+            ),
+            ("h2".to_string(), revision(edited_head(), revisions.head)),
+            ("h4".to_string(), revisions.latest),
+        ]),
+        latest: "h4".to_string(),
+        writers: revisions.writers.into(),
+        pushes: 0,
+    }));
+    let published = Arc::clone(&fixture.published);
+    let outcome = revisions.outcome;
+    let state = Arc::clone(&remote);
+    model.expect_browse_remote_manifest().returning(move |uri| {
+        if uri.hash == "h3" {
+            let published = &published.lock().unwrap()[0];
+            let mut revision = revision(published.meta.clone(), outcome.clone());
+            revision.header.message = Some(published.message.clone());
+            return Ok(revision);
+        }
+        let remote = state.lock().unwrap();
+        Ok(remote.revisions[&uri.hash].clone())
+    });
+    let state = Arc::clone(&remote);
+    model
+        .expect_resolve_manifest_uri()
+        .returning(move |_| Ok(at(&state.lock().unwrap().latest)));
+    let state = Arc::clone(&remote);
+    let events = Arc::clone(&fixture.events);
+    model.expect_push_onto().returning(move |parent, manifest| {
+        let mut remote = state.lock().unwrap();
+        events
+            .lock()
+            .unwrap()
+            .push(format!("push onto {}", parent.hash));
+        remote.pushes += 1;
+        let n = remote.pushes;
+        if let Some(theirs) = remote.writers.pop_front() {
+            remote.revisions.insert(format!("w{n}"), theirs);
+            remote.latest = format!("w{n}");
+        }
+        let hash = format!("r{n}");
+        remote.revisions.insert(hash.clone(), manifest);
+        let certified_latest = remote.latest == parent.hash;
+        if certified_latest {
+            remote.latest.clone_from(&hash);
+        }
+        Ok(quilt::PushOutcome {
+            manifest_uri: at(&hash),
+            certified_latest,
+        })
+    });
+
+    finish(&model, &claimed_run(&fixture.tasks), &done())
+        .await
+        .expect("finished");
+    remote
+}
+
 #[tokio::test]
-async fn a_terminal_revision_that_is_not_latest_is_left_diverged() -> Result<(), Error> {
+async fn an_outcome_lands_on_a_latest_that_gained_other_entries() {
+    let task = file("TASK.md", "do it");
+    let others = file("others.csv", "theirs");
+    for outcome in [
+        vec![task.clone()],
+        vec![task.clone(), file("out.md", "result")],
+    ] {
+        let fixture = Fixture::new();
+        let expected: BTreeSet<String> = outcome
+            .iter()
+            .chain([&others])
+            .map(|row| row.logical_key.display().to_string())
+            .collect();
+
+        let remote = finish_among(
+            &fixture,
+            Revisions::new(
+                vec![task.clone()],
+                outcome,
+                vec![task.clone(), others.clone()],
+            ),
+        )
+        .await;
+
+        let remote = remote.lock().unwrap();
+        assert_eq!(remote.latest, "r1", "the rebased outcome is latest");
+        assert_eq!(keys(remote.latest()), expected);
+        assert_eq!(
+            *fixture.events.lock().unwrap(),
+            ["publish", "push onto h4", "reset"],
+            "and the copy is reset to it"
+        );
+    }
+}
+
+#[tokio::test]
+async fn an_outcome_adding_a_file_the_agent_also_published_rebases_cleanly() {
     let fixture = Fixture::new();
-    // A clean tree, which alone would not stop a reset.
-    let model = finishing_model(&fixture, BTreeMap::new(), false);
-    let done = acp::RunOutcome::Done {
-        session_id: "s1".to_string(),
-        stop_reason: "end_turn".to_string(),
+    let task = file("TASK.md", "do it");
+    let result = file("out.md", "result");
+
+    let remote = finish_among(
+        &fixture,
+        Revisions::new(
+            vec![task.clone()],
+            vec![task.clone(), result.clone()],
+            vec![task.clone(), result.clone()],
+        ),
+    )
+    .await;
+
+    let remote = remote.lock().unwrap();
+    assert_eq!(remote.latest, "r1");
+    assert_eq!(remote.latest().rows, [task, result]);
+}
+
+#[tokio::test]
+async fn an_outcome_whose_change_collides_with_another_writers_stays_diverged() {
+    let fixture = Fixture::new();
+    let task = file("TASK.md", "do it");
+
+    let remote = finish_among(
+        &fixture,
+        Revisions::new(
+            vec![task.clone(), file("data.csv", "v1")],
+            vec![task.clone(), file("data.csv", "ours")],
+            vec![task.clone(), file("data.csv", "theirs")],
+        ),
+    )
+    .await;
+
+    assert_eq!(remote.lock().unwrap().latest, "h4", "nothing over theirs");
+    assert_eq!(*fixture.events.lock().unwrap(), ["publish"], "no reset");
+}
+
+/// The pre-prompt re-read pulled `pulled.csv`, which another writer has since
+/// removed.
+#[tokio::test]
+async fn a_revision_the_reread_pulled_is_not_counted_as_the_runs_change() {
+    let fixture = Fixture::new();
+    let task = file("TASK.md", "do it");
+    let pulled = file("pulled.csv", "pulled");
+    let result = file("out.md", "result");
+    let revisions = Revisions {
+        claim: vec![task.clone()],
+        ..Revisions::new(
+            vec![task.clone(), pulled.clone()],
+            vec![task.clone(), pulled, result.clone()],
+            vec![task.clone()],
+        )
     };
 
-    finish(&model, &claimed_run(&fixture.tasks), &done).await?;
+    let remote = finish_among(&fixture, revisions).await;
 
+    let remote = remote.lock().unwrap();
+    assert_eq!(remote.latest().rows, [task, result]);
+}
+
+/// The user committed by hand during the run, and pushed it or not.
+#[tokio::test]
+async fn an_outcome_built_on_a_hand_commit_stays_diverged() {
+    let pending = Fixture {
+        pending_commit: true,
+        ..Fixture::new()
+    };
+    // Their push did not become `latest`, so the copy's base is still the claim.
+    let pushed = Fixture {
+        finished_base: "h1",
+        ..Fixture::new()
+    };
+    for fixture in [pending, pushed] {
+        let task = file("TASK.md", "do it");
+
+        let remote = finish_among(
+            &fixture,
+            Revisions::new(
+                vec![task.clone()],
+                vec![task.clone(), file("out.md", "result")],
+                vec![task.clone(), file("others.csv", "theirs")],
+            ),
+        )
+        .await;
+
+        assert_eq!(remote.lock().unwrap().latest, "h4");
+        assert_eq!(*fixture.events.lock().unwrap(), ["publish"], "no reset");
+    }
+}
+
+/// Another writer's revision: `latest`'s rows and `row`, still under the claim.
+fn writer(
+    latest: &[quilt::manifest::ManifestRow],
+    row: quilt::manifest::ManifestRow,
+) -> quilt::manifest::Manifest {
+    let mut rows = latest.to_vec();
+    rows.push(row);
+    revision(edited_head(), rows)
+}
+
+#[tokio::test]
+async fn a_writer_who_publishes_during_the_rebase_keeps_latest_and_the_rebase_is_redone_onto_it() {
+    let fixture = Fixture::new();
+    let task = file("TASK.md", "do it");
+    let result = file("out.md", "result");
+    let theirs = file("theirs.csv", "theirs");
+    let revisions = Revisions {
+        writers: vec![writer(std::slice::from_ref(&task), theirs.clone())],
+        ..Revisions::new(
+            vec![task.clone()],
+            vec![task.clone(), result.clone()],
+            vec![task.clone()],
+        )
+    };
+
+    let remote = finish_among(&fixture, revisions).await;
+
+    let remote = remote.lock().unwrap();
+    assert_eq!(remote.latest, "r2");
+    assert_eq!(remote.latest().rows, [task, result, theirs]);
+    assert_eq!(
+        *fixture.events.lock().unwrap(),
+        ["publish", "push onto h4", "push onto w1", "reset"],
+        "the second push builds on theirs"
+    );
+}
+
+#[tokio::test]
+async fn a_rebase_that_keeps_losing_latest_gives_up_after_three_attempts() {
+    let fixture = Fixture::new();
+    let task = file("TASK.md", "do it");
+    let revisions = Revisions {
+        writers: ["a", "b", "c"]
+            .map(|name| {
+                writer(
+                    std::slice::from_ref(&task),
+                    file(&format!("{name}.csv"), name),
+                )
+            })
+            .into(),
+        ..Revisions::new(
+            vec![task.clone()],
+            vec![task.clone(), file("out.md", "result")],
+            vec![task.clone()],
+        )
+    };
+
+    let remote = finish_among(&fixture, revisions).await;
+
+    let remote = remote.lock().unwrap();
+    assert_eq!(remote.latest, "w3", "the last writer keeps latest");
+    assert_eq!(
+        *fixture.events.lock().unwrap(),
+        ["publish", "push onto h4", "push onto w1", "push onto w2"],
+        "no reset"
+    );
+}
+
+#[tokio::test]
+async fn a_file_where_latest_gained_a_folder_stays_diverged() {
+    let fixture = Fixture::new();
+    let task = file("TASK.md", "do it");
+
+    let remote = finish_among(
+        &fixture,
+        Revisions::new(
+            vec![task.clone()],
+            vec![task.clone(), file("results", "ours")],
+            vec![task.clone(), file("results/output.csv", "theirs")],
+        ),
+    )
+    .await;
+
+    assert_eq!(remote.lock().unwrap().latest, "h4");
+}
+
+#[tokio::test]
+async fn a_run_that_replaces_a_file_with_a_folder_rebases() {
+    let fixture = Fixture::new();
+    let task = file("TASK.md", "do it");
+    let output = file("results/output.csv", "ours");
+    let others = file("others.csv", "theirs");
+
+    let remote = finish_among(
+        &fixture,
+        Revisions::new(
+            vec![task.clone(), file("results", "old")],
+            vec![task.clone(), output.clone()],
+            vec![task.clone(), file("results", "old"), others.clone()],
+        ),
+    )
+    .await;
+
+    let remote = remote.lock().unwrap();
+    assert_eq!(remote.latest().rows, [task, others, output]);
+}
+
+#[tokio::test]
+async fn a_task_registered_during_the_run_survives_the_outcome() {
+    let fixture = Fixture::new();
+    let task = file("TASK.md", "do it");
+    let mut registered = edited_head();
+    registered["next"] = json!({ "document": "NEXT.md" });
+    let revisions = Revisions {
+        latest: revision(registered.clone(), vec![task.clone()]),
+        ..Revisions::new(vec![task.clone()], vec![task.clone()], Vec::new())
+    };
+
+    let remote = finish_among(&fixture, revisions).await;
+
+    let outcome_claim = fixture.metas()[0]["agent_exec"]["claim"].clone();
+    let remote = remote.lock().unwrap();
+    assert_eq!(
+        remote.latest().header.user_meta,
+        Some(agent_exec::with_claim(&registered, outcome_claim)),
+        "latest's metadata, with only the claim moved on"
+    );
+}
+
+/// Another writer moved the package to another workflow during the run.
+#[tokio::test]
+async fn the_rebased_outcome_keeps_latests_workflow_under_its_own_message() {
+    let fixture = Fixture::new();
+    let task = file("TASK.md", "do it");
+    let switched = Some(quilt::manifest::Workflow {
+        config: quilt_uri::S3Uri {
+            bucket: "quilt-dev".to_string(),
+            key: ".quilt/workflows/config.yaml".to_string(),
+            version: None,
+        },
+        id: Some(quilt::manifest::WorkflowId {
+            id: "switched".to_string(),
+            schemas: BTreeMap::new(),
+        }),
+    });
+    let mut latest = revision(edited_head(), vec![task.clone()]);
+    latest.header.workflow.clone_from(&switched);
+    let revisions = Revisions {
+        latest,
+        ..Revisions::new(vec![task.clone()], vec![task.clone()], Vec::new())
+    };
+
+    let remote = finish_among(&fixture, revisions).await;
+
+    let message = fixture.published.lock().unwrap()[0].message.clone();
+    let remote = remote.lock().unwrap();
+    assert_eq!(remote.latest().header.workflow, switched);
+    assert_eq!(remote.latest().header.message, Some(message));
+}
+
+/// The outcome is already published, so its publish did not fail.
+#[tokio::test]
+async fn a_rebase_that_cannot_read_the_remote_leaves_the_package_diverged() {
+    let fixture = Fixture::new();
+    let mut model = finishing_model(&fixture, BTreeMap::new(), false);
+    model
+        .expect_browse_remote_manifest()
+        .returning(|_| Err(Error::General("offline".to_string())));
+
+    let finished = finish(&model, &claimed_run(&fixture.tasks), &done()).await;
+
+    assert!(finished.is_ok(), "{finished:?}");
     assert_eq!(*fixture.events.lock().unwrap(), ["publish"], "no reset");
-    Ok(())
+}
+
+#[tokio::test]
+async fn another_writers_change_to_only_an_entrys_meta_on_a_path_the_run_changed_stays_diverged() {
+    let fixture = Fixture::new();
+    let task = file("TASK.md", "do it");
+    let reviewed = quilt::manifest::ManifestRow {
+        meta: Some(json!({ "reviewed": true })),
+        ..file("data.csv", "v1")
+    };
+
+    let remote = finish_among(
+        &fixture,
+        Revisions::new(
+            vec![task.clone(), file("data.csv", "v1")],
+            vec![task.clone(), file("data.csv", "v2")],
+            vec![task.clone(), reviewed],
+        ),
+    )
+    .await;
+
+    assert_eq!(remote.lock().unwrap().latest, "h4");
+}
+
+/// The top hash reads null, absent and `{}` alike.
+#[tokio::test]
+async fn an_entry_meta_written_as_empty_is_no_change() {
+    let fixture = Fixture::new();
+    let task = file("TASK.md", "do it");
+    let empty = quilt::manifest::ManifestRow {
+        meta: Some(json!({})),
+        ..file("data.csv", "v1")
+    };
+
+    let remote = finish_among(
+        &fixture,
+        Revisions::new(
+            vec![task.clone(), file("data.csv", "v1")],
+            vec![task.clone(), file("data.csv", "v2")],
+            vec![task.clone(), empty],
+        ),
+    )
+    .await;
+
+    let remote = remote.lock().unwrap();
+    assert_eq!(remote.latest().rows, [task, file("data.csv", "v2")]);
+}
+
+/// The user cancelled the task in a revision published during the run.
+#[tokio::test]
+async fn a_latest_that_no_longer_holds_the_claim_gets_no_rebase() {
+    let fixture = Fixture::new();
+    let task = file("TASK.md", "do it");
+    let mut cancelled = edited_head();
+    cancelled["agent_exec"]["claim"] = json!({ "status": "cancelled" });
+    let revisions = Revisions {
+        latest: revision(cancelled, vec![task.clone()]),
+        ..Revisions::new(vec![task.clone()], vec![task.clone()], Vec::new())
+    };
+
+    let remote = finish_among(&fixture, revisions).await;
+
+    assert_eq!(remote.lock().unwrap().latest, "h4");
+    assert_eq!(*fixture.events.lock().unwrap(), ["publish"]);
+}
+
+#[tokio::test]
+async fn a_reset_that_refuses_after_the_rebase_leaves_latest_holding_the_outcome() {
+    let fixture = Fixture {
+        edited_after_publish: written(),
+        ..Fixture::new()
+    };
+    let task = file("TASK.md", "do it");
+    let result = file("out.md", "result");
+
+    let remote = finish_among(
+        &fixture,
+        Revisions::new(
+            vec![task.clone()],
+            vec![task.clone(), result.clone()],
+            vec![task.clone()],
+        ),
+    )
+    .await;
+
+    let remote = remote.lock().unwrap();
+    assert_eq!(remote.latest, "r1");
+    assert_eq!(remote.latest().rows, [task, result]);
+    assert_eq!(
+        *fixture.events.lock().unwrap(),
+        ["publish", "push onto h4"],
+        "the copy stays Diverged"
+    );
 }
 
 #[tokio::test]
