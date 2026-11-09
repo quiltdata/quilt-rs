@@ -638,7 +638,8 @@ async fn a_move_that_failed_after_the_merge_is_retried_before_an_edit_is_committ
 
 /// `latest` holds the copy's change, but the copy edited `b.csv`, which the
 /// other side changed, so the move is refused. The edit is committed and the
-/// merge refuses on it, rather than the move being retried every tick.
+/// merge refuses on it, naming `b.csv`, rather than the move being retried
+/// every tick.
 #[tokio::test]
 async fn an_edit_that_blocks_the_retried_move_is_committed_and_the_copy_pauses() {
     let (model, remote) = model_of(Copy {
@@ -657,7 +658,9 @@ async fn an_edit_that_blocks_the_retried_move_is_committed_and_the_copy_pauses()
     assert_eq!(seen(&remote).events, ["move to h1", "publish"]);
     assert_eq!(
         inner.paused.read().await.get(&ns()),
-        Some(&PausedReason::Diverged)
+        Some(&PausedReason::MergeRefused(MergeBlock::Paths(vec![
+            "b.csv".to_string()
+        ])))
     );
 }
 
