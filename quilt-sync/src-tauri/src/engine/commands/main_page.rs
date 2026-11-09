@@ -356,14 +356,19 @@ pub(super) fn session_state(err: &Error) -> Option<PackageStateDto> {
     }
 }
 
-/// A package's status read worked: its session or credentials are good, and
-/// its bucket answered. A denial pause stands until it is cleared.
+/// A package's status read worked. When it reached the bucket, its session or
+/// credentials are good and the bucket answered; a read from the last-known
+/// tip proves neither. A denial pause stands until it is cleared.
 pub(super) fn read_worked(
     needs_you: &NeedsYou,
     namespace: &quilt_uri::Namespace,
     origin: Option<&Host>,
     paused: Option<&PausedReason>,
+    status: &quilt::lineage::InstalledPackageStatus,
 ) {
+    if !status.latest_refreshed {
+        return;
+    }
     needs_you.session_works(origin);
     if !matches!(paused, Some(PausedReason::RoleDenied { .. })) {
         needs_you.leave(&Subject::package(namespace), Kind::NoAccess);
@@ -935,7 +940,7 @@ pub(super) async fn refresh_main_page_package_from_model(
         .await
     {
         Ok((status, counts)) => {
-            read_worked(needs_you, namespace, host.as_ref(), paused);
+            read_worked(needs_you, namespace, host.as_ref(), paused, &status);
             Ok(MainPagePackageRefresh {
                 // The pause checks go here rather than at the top of the function,
                 // because the access-denied arm below has higher precedence and must
@@ -2811,7 +2816,7 @@ mod tests {
     }
 
     /// A read that finds the session gone enters its host in the needs-you
-    /// set, and a read that works leaves it, autosync on or off.
+    /// set, and a read that reaches the bucket leaves it, autosync on or off.
     #[tokio::test]
     async fn a_read_enters_a_lost_session_and_a_working_read_leaves_it() {
         use crate::engine::needs_you::{Cause, NeedsYou, Subject};
@@ -2854,6 +2859,15 @@ mod tests {
         );
 
         read(Ok(status_with(UpstreamState::UpToDate, 0))).await;
+        assert_eq!(
+            needs_you.get().len(),
+            1,
+            "a read that did not reach the bucket proves nothing"
+        );
+
+        let mut reached = status_with(UpstreamState::UpToDate, 0);
+        reached.latest_refreshed = true;
+        read(Ok(reached)).await;
         assert!(needs_you.get().is_empty(), "the session works");
     }
 

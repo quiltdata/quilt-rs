@@ -2828,3 +2828,63 @@ async fn a_transient_failure_from_the_old_catalog_leaves_no_backoff() -> Result<
     assert!(inner.backoff.read().await.get(&ns).is_none());
     Ok(())
 }
+
+/// What no installed package stands behind leaves the set: an uninstalled
+/// package, a catalog no package syncs on, and the computer's credentials
+/// once every package has a catalog.
+#[tokio::test]
+async fn a_pass_drops_what_no_package_stands_behind() {
+    use crate::engine::needs_you::Cause;
+    use crate::engine::needs_you::Kind;
+    use crate::engine::needs_you::Subject;
+
+    let installed: Namespace = ("acme", "demo").into();
+    let gone: Namespace = ("acme", "gone").into();
+    let host = fixtures::host();
+    let other: quilt_uri::Host = "other.test".parse().unwrap();
+    let lineage = quilt::lineage::PackageLineage::from_remote(
+        quilt_uri::ManifestUri {
+            bucket: "bucket".to_string(),
+            namespace: installed.clone(),
+            hash: "h0".to_string(),
+            origin: Some(host.clone()),
+        },
+        "h1".to_string(),
+    );
+    let mut model = MockQuiltModel::new();
+    model
+        .expect_get_installed_package_lineage()
+        .returning(move |_| Ok(lineage.clone()));
+    let packages = [quilt::LocalDomain::new(std::path::PathBuf::new())
+        .create_installed_package(installed.clone())];
+
+    let inner = make_inner(enabled());
+    let set = &inner.needs_you;
+    set.enter(Subject::package(&installed), Cause::NoAccess { role: None });
+    set.enter(Subject::package(&gone), Cause::NoAccess { role: None });
+    set.session_failed(Some(&host), true);
+    set.session_failed(Some(&other), true);
+    set.session_failed(None, true);
+    set.enter(
+        Subject::App,
+        Cause::Watcher {
+            message: "limit".into(),
+        },
+    );
+
+    prune_needs_you(&model, &inner, &packages).await;
+
+    let left: Vec<(Subject, Kind)> = set
+        .get()
+        .into_iter()
+        .map(|e| (e.subject, e.cause.kind()))
+        .collect();
+    assert_eq!(
+        left,
+        vec![
+            (Subject::package(&installed), Kind::NoAccess),
+            (Subject::Host { host }, Kind::SignIn),
+            (Subject::App, Kind::Watcher),
+        ]
+    );
+}

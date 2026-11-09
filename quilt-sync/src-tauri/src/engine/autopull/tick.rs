@@ -852,10 +852,7 @@ pub(crate) async fn run_once(
         .await
         .retain(|ns| current.contains(ns));
     inner.aggregator.retain_namespaces(&current);
-    inner.needs_you.retain(|entry| match &entry.subject {
-        Subject::Package { namespace } => current.contains(namespace),
-        Subject::Host { .. } | Subject::App => true,
-    });
+    prune_needs_you(model, inner, &packages).await;
 
     // Snapshot publish settings once per tick so we don't reacquire the
     // RwLock per package. Same lifetime for `wait`, which is
@@ -1104,6 +1101,38 @@ pub(crate) async fn sync_package(
     }
     inner.reporter.report_autosync_changed();
     Pass::Done
+}
+
+/// Drop the entries no installed package stands behind any more: an
+/// uninstalled package, and a session or the computer's credentials that no
+/// package syncs on. Sessions stay when a package's catalog can't be read.
+async fn prune_needs_you(
+    model: &impl QuiltModel,
+    inner: &WatcherInner,
+    packages: &[quilt::InstalledPackage],
+) {
+    let mut origins = Vec::new();
+    let mut read_all = true;
+    for pkg in packages {
+        match model.get_installed_package_lineage(pkg).await {
+            Ok(lineage) => {
+                if let Some(remote) = lineage.remote_uri.filter(|r| !r.bucket.is_empty()) {
+                    origins.push(remote.origin);
+                }
+            }
+            Err(_) => read_all = false,
+        }
+    }
+    inner
+        .needs_you
+        .retain(|entry| match (&entry.subject, entry.cause.kind()) {
+            (Subject::Package { namespace }, _) => {
+                packages.iter().any(|pkg| pkg.namespace == *namespace)
+            }
+            (Subject::Host { host }, _) => !read_all || origins.contains(&Some(host.clone())),
+            (Subject::App, Kind::Credentials) => !read_all || origins.contains(&None),
+            (Subject::App, _) => true,
+        });
 }
 
 /// A publish that has kept failing for [`PUBLISH_FAILING_AFTER`] needs the

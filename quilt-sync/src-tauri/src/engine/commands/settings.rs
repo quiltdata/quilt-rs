@@ -14,6 +14,7 @@ use crate::engine::log_settings::LogEnv;
 use crate::engine::log_settings::LogLevel;
 use crate::engine::log_settings::LogSettings;
 use crate::engine::model::QuiltModel;
+use crate::engine::needs_you::Kind;
 use crate::engine::publish_settings::PublishSettings;
 use crate::engine::quilt;
 use crate::engine::services::Services;
@@ -569,7 +570,7 @@ async fn write_autosync_patch(
     let _writing = s.settings_writes.lock().await;
     let data_dir = s.data_dir.clone();
 
-    let clear = {
+    let (clear, publishing_off) = {
         let mut current = autosync_settings.write().await;
         let next = patch.apply(&current)?;
         next.save(&data_dir).await.map_err(|e| e.to_string())?;
@@ -579,11 +580,15 @@ async fn write_autosync_patch(
         if turns_publishing_on(&current, &next) {
             watcher.note_publishing_on().await;
         }
+        let publishing_off = !next.push.enabled;
         *current = next;
-        clear
+        (clear, publishing_off)
     };
     if clear {
         watcher.clear_all_paused().await;
+    }
+    if publishing_off {
+        watcher.needs_you().forget(Kind::PublishFailing);
     }
     watcher.settings_changed();
     Ok(())

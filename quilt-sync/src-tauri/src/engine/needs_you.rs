@@ -238,6 +238,11 @@ impl NeedsYou {
         self.retain(|entry| !entry.is(subject, kind));
     }
 
+    /// Every entry of `kind` no longer applies.
+    pub fn forget(&self, kind: Kind) {
+        self.retain(|entry| entry.cause.kind() != kind);
+    }
+
     /// Keep only the entries `keep` holds to.
     pub fn retain(&self, keep: impl Fn(&Entry) -> bool) {
         self.tx.send_if_modified(|set| {
@@ -371,6 +376,23 @@ mod tests {
 
         let left: Vec<Kind> = set.get().iter().map(|e| e.cause.kind()).collect();
         assert_eq!(left, vec![Kind::PublishFailing, Kind::SignIn]);
+    }
+
+    #[test]
+    fn forgetting_a_kind_drops_it_for_every_subject() {
+        let set = NeedsYou::default();
+        let failing = || Cause::PublishFailing {
+            error: "offline".into(),
+        };
+        set.enter(Subject::package(&ns("a/b")), failing());
+        set.enter(Subject::package(&ns("c/d")), failing());
+        set.enter(
+            Subject::package(&ns("a/b")),
+            Cause::of_pause(&PausedReason::Diverged),
+        );
+        set.forget(Kind::PublishFailing);
+        let left: Vec<Kind> = set.get().iter().map(|e| e.cause.kind()).collect();
+        assert_eq!(left, vec![Kind::Paused]);
     }
 
     #[test]

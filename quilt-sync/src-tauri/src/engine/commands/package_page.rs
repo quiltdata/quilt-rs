@@ -745,8 +745,8 @@ async fn get_package_page_data_from_model(
         }
     };
 
-    match status_read {
-        Ok(_) => read_worked(needs_you, namespace, origin, paused),
+    match &status_read {
+        Ok(status) => read_worked(needs_you, namespace, origin, paused, status),
         Err(_) => read_blocked(needs_you, namespace, origin, &state),
     }
     // A blocked read counts from tracking alone.
