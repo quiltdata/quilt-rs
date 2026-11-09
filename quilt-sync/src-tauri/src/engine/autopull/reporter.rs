@@ -995,6 +995,16 @@ mod tests {
             PausedEvent::from_reason(&ns, &PausedReason::Diverged).reason,
             "diverged"
         );
+        let refused = PausedEvent::from_reason(
+            &ns,
+            &PausedReason::MergeRefused(crate::engine::autopull::MergeBlock::Paths(vec![
+                "a.csv".to_string(),
+            ])),
+        );
+        assert_eq!(
+            (refused.reason.as_str(), refused.message),
+            ("diverged", None)
+        );
     }
 
     /// The banner needs the role name to say which role to switch away from,

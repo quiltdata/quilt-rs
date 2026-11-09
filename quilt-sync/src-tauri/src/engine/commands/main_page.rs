@@ -1311,8 +1311,8 @@ mod tests {
 
     #[test]
     fn the_reasons_that_carry_nothing_carry_nothing() {
-        // Three of the six are fully described by their kind. A `message: null` on
-        // these is the overloaded field surviving in a new shape.
+        // These are fully described by their kind. A `message: null` on them is
+        // the overloaded field surviving in a new shape.
         for (reason, expected) in [
             (
                 PausedReason::PendingChanges,
@@ -1320,6 +1320,12 @@ mod tests {
             ),
             (PausedReason::PendingCommit, r#"{"kind":"pending_commit"}"#),
             (PausedReason::Diverged, r#"{"kind":"diverged"}"#),
+            (
+                PausedReason::MergeRefused(crate::engine::autopull::MergeBlock::Paths(vec![
+                    "a.csv".to_string(),
+                ])),
+                r#"{"kind":"diverged"}"#,
+            ),
         ] {
             assert_eq!(
                 serde_json::to_string(&PausedDto::from(&reason)).unwrap(),
