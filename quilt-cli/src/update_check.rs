@@ -97,7 +97,8 @@ async fn notice() -> Option<String> {
 }
 
 /// Reads the cache at `path`, awaits `fetch` only when the cache is a day
-/// old or missing, and saves what it learned.
+/// old or missing, and saves what it learned. The attempt is saved before
+/// the fetch, since the process may exit before a slow one returns.
 async fn check(
     path: &Path,
     now: u64,
@@ -110,16 +111,16 @@ async fn check(
     let latest = match cache {
         Some(cache) if !due(&cache, now) => cache.latest,
         cache => {
-            let known = cache.and_then(|cache| cache.latest);
-            let latest = fetch.await.map(|v| v.to_string()).or(known);
-            save(
-                path,
-                &Cache {
-                    checked_at: now,
-                    latest: latest.clone(),
-                },
-            );
-            latest
+            let mut cache = Cache {
+                checked_at: now,
+                latest: cache.and_then(|cache| cache.latest),
+            };
+            save(path, &cache);
+            if let Some(found) = fetch.await {
+                cache.latest = Some(found.to_string());
+                save(path, &cache);
+            }
+            cache.latest
         }
     };
     let latest = Version::parse(&latest?).ok()?;
@@ -278,6 +279,30 @@ not json
                 latest: Some("0.41.0".into()),
             }
         );
+    }
+
+    /// A process that exits during a slow fetch still skips the next day.
+    #[tokio::test]
+    async fn the_attempt_is_saved_before_the_fetch() {
+        let (_dir, path) = cache_file();
+        save(
+            &path,
+            &Cache {
+                checked_at: 100,
+                latest: Some("0.41.0".into()),
+            },
+        );
+        let fetch = async {
+            assert_eq!(
+                read(&path),
+                Cache {
+                    checked_at: 100 + DAY,
+                    latest: Some("0.41.0".into()),
+                }
+            );
+            None
+        };
+        check(&path, 100 + DAY, &v("0.40.2"), fetch).await;
     }
 
     #[tokio::test]
