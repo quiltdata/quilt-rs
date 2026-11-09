@@ -47,6 +47,9 @@ pub enum PausedReason {
     PendingChanges,
     PendingCommit,
     Diverged,
+    /// Diverged, and the tick's merge onto `latest` refused: the resolve pane
+    /// names what blocked it.
+    MergeRefused(MergeBlock),
     /// A surgical pull found a real conflict (`PullOutcome::Blocked`): a
     /// tracked path changed on both sides. Carries the conflicting file names
     /// for the banner; the user resolves by committing, then resolving on the package page.
@@ -70,6 +73,18 @@ pub enum PausedReason {
     /// the per-package status banner so the user knows what to fix
     /// before clearing the pause.
     Other(String),
+}
+
+/// What stopped the tick merging a Diverged copy onto `latest`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MergeBlock {
+    /// Paths both sides changed to different results, or held as a file on
+    /// one side and a folder on the other.
+    Paths(Vec<String>),
+    /// Both sides changed the package metadata, to different values.
+    Metadata,
+    /// `latest` moved past each attempt before it could publish.
+    LatestMoved,
 }
 
 impl PausedReason {

@@ -533,10 +533,27 @@ pub enum ResolveData {
         loss: LatestLoss,
         unpublished: usize,
         uncommitted: usize,
+        /// What stopped autosync merging the two, when it tried.
+        blocked: Option<MergeBlock>,
     },
     Refused {
         reason: String,
     },
+}
+
+/// What stopped autosync merging this copy's revision onto the published one.
+/// Mirrors `MergeBlockData` in `src-tauri/src/engine/commands/package_page.rs`;
+/// the serde attributes MUST match.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum MergeBlock {
+    Paths { paths: Vec<String> },
+    Metadata,
+    LatestMoved,
 }
 
 /// What the published `latest` loses when this copy's revision replaces it.
@@ -2235,8 +2252,9 @@ pub async fn send_crash_report(
 mod tests {
     use super::{
         CommitViolation, CommitWorkflows, EntryCounts, EntryList, FilesData, KeepingScope,
-        KeptReason, LatestLoss, PackageContextData, PackageSize, PullOutcome, PullPreview,
-        ResolveData, RevisionHistoryData, RolesData, ViolationField, WorkflowInfo, WorkflowIntent,
+        KeptReason, LatestLoss, MergeBlock, PackageContextData, PackageSize, PullOutcome,
+        PullPreview, ResolveData, RevisionHistoryData, RolesData, ViolationField, WorkflowInfo,
+        WorkflowIntent,
     };
     use quilt_ui_kit::RowDownloads;
 
@@ -2399,7 +2417,7 @@ mod tests {
     #[test]
     fn resolve_compared_wire_form_is_verbatim() {
         let resolve = serde_json::from_str::<ResolveData>(
-            r#"{"kind":"compared","publishedMessage":"Add intake folder-upload note","differing":["plate/a.csv","plate/b.csv"],"loss":{"entries":3,"metadata":true},"unpublished":2,"uncommitted":1}"#,
+            r#"{"kind":"compared","publishedMessage":"Add intake folder-upload note","differing":["plate/a.csv","plate/b.csv"],"loss":{"entries":3,"metadata":true},"unpublished":2,"uncommitted":1,"blocked":{"kind":"paths","paths":["plate/a.csv"]}}"#,
         )
         .unwrap();
 
@@ -2414,8 +2432,22 @@ mod tests {
                 },
                 unpublished: 2,
                 uncommitted: 1,
+                blocked: Some(MergeBlock::Paths {
+                    paths: vec!["plate/a.csv".to_string()],
+                }),
             }
         );
+    }
+
+    /// Anchored identically in the backend's `merge_block_wire_forms_are_verbatim`.
+    #[test]
+    fn merge_block_wire_forms_are_verbatim() {
+        for (wire, block) in [
+            (r#"{"kind":"metadata"}"#, MergeBlock::Metadata),
+            (r#"{"kind":"latestMoved"}"#, MergeBlock::LatestMoved),
+        ] {
+            assert_eq!(serde_json::from_str::<MergeBlock>(wire).unwrap(), block);
+        }
     }
 
     /// Anchored identically in the backend's

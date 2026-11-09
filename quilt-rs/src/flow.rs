@@ -12,6 +12,7 @@ mod gc;
 mod install_package;
 mod install_paths;
 mod list_revisions;
+mod merge_onto;
 #[cfg(test)]
 mod older_revision_tests;
 mod publish;
@@ -59,6 +60,9 @@ pub use list_revisions::HistoryEntry;
 pub use list_revisions::Revision;
 pub use list_revisions::count_revisions;
 pub use list_revisions::list_revisions;
+pub use merge_onto::MergeRefusal;
+pub use merge_onto::merge_onto;
+pub use merge_onto::merge_rows_onto;
 pub use publish::CommitOptions;
 pub use publish::PublishOutcome;
 pub use publish::publish_package as publish;

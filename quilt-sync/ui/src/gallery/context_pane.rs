@@ -582,6 +582,7 @@ fn compared() -> ResolveData {
         },
         unpublished: 2,
         uncommitted: 1,
+        blocked: None,
     }
 }
 
