@@ -6,6 +6,7 @@
 
 use std::future::Future;
 use std::io::IsTerminal;
+use std::io::Write;
 use std::path::Path;
 use std::sync::mpsc;
 use std::time::Duration;
@@ -134,12 +135,15 @@ fn due(cache: &Cache, now: u64) -> bool {
     now < cache.checked_at || now - cache.checked_at >= DAY
 }
 
+/// Replaces the file whole, so a reader never sees half of it.
 fn save(path: &Path, cache: &Cache) {
     let write = || -> std::io::Result<()> {
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
-        std::fs::write(path, serde_json::to_vec(cache)?)
+        let dir = path.parent().unwrap_or(Path::new("."));
+        std::fs::create_dir_all(dir)?;
+        let mut file = tempfile::NamedTempFile::new_in(dir)?;
+        file.write_all(&serde_json::to_vec(cache)?)?;
+        file.persist(path)?;
+        Ok(())
     };
     let _ = write();
 }
