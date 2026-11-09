@@ -5,7 +5,7 @@ readme = "README.md"
 keywords = ["data", "versioning", "cli", "s3", "reproducibility"]
 categories = ["command-line-utilities", "filesystem", "science"]
 
-version = "0.40.2"
+version = "0.41.0-dev"
 
 # Inherit from workspace
 edition.workspace = true
@@ -26,6 +26,8 @@ quilt-uri = { path = "../quilt-uri", version = "0.4.3" }
 # CLI-specific dependencies
 clap.workspace = true
 dirs.workspace = true
+reqwest.workspace = true
+semver = "1.0.28"
 serde.workspace = true
 serde_json.workspace = true
 tabled.workspace = true

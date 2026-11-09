@@ -9,6 +9,7 @@ use tracing::log;
 use tracing_subscriber::filter::{EnvFilter, LevelFilter};
 
 mod cli;
+mod update_check;
 
 use cli::Args;
 use cli::Error;
@@ -24,6 +25,7 @@ async fn main() {
     );
     let format = args.format();
     cli::notice_lock_waits(|line| eprintln!("{line}"));
+    let update_notice = tokio::spawn(update_check::notice());
 
     // An error raised before dispatch — an unreadable domain, a rejected flag
     // combination — is a command failure like any other. It used to go out as a
@@ -34,6 +36,12 @@ async fn main() {
         Ok(()) => to_std(cli::init(args).await),
         Err(err) => Std::Err(err),
     };
+
+    // Before the result, so under `--json` an error object stays the last
+    // line on stderr.
+    if let Ok(Some(line)) = update_notice.await {
+        eprintln!("{line}");
+    }
 
     let failed = matches!(&result, Std::Err(_));
     let stdout = io::stdout();
