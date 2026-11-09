@@ -194,7 +194,9 @@ async fn holds(storage: &impl Storage, working_dest: &Path, row: ManifestRow) ->
 ///
 /// The hash reads through an open handle, so an editor that saves by renaming
 /// a new file over this one leaves it hashing the old bytes; a modified time
-/// that moved during the hash counts as an edit.
+/// that moved during the hash counts as an edit, and so does a file that was
+/// there when the check began and is gone by its end, as an editor that moves
+/// the old file aside before writing the new one leaves it.
 async fn edited(storage: &impl Storage, working_dest: &Path, row: &ManifestRow) -> Res<bool> {
     let modified = || async {
         match storage.modified_timestamp(working_dest).await {
@@ -208,13 +210,10 @@ async fn edited(storage: &impl Storage, working_dest: &Path, row: &ManifestRow) 
     };
     let changed = match refresh_hash(storage, working_dest, row.clone()).await {
         Ok(changed) => changed.is_some(),
-        Err(err) if err.is_not_found() => return Ok(false),
+        Err(err) if err.is_not_found() => return Ok(true),
         Err(err) => return Err(err),
     };
-    match modified().await? {
-        Some(after) => Ok(changed || after != before),
-        None => Ok(false),
-    }
+    Ok(changed || modified().await? != Some(before))
 }
 
 /// Renames each staged file onto its destination, refusing to overwrite one a

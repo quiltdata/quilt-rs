@@ -49,8 +49,9 @@ pub(crate) struct Applied {
     pub replaced: Vec<PathBuf>,
     /// Paths deleted from the working tree and dropped from tracking.
     pub uninstalled: Vec<PathBuf>,
-    /// Paths `latest` dropped whose file was edited after the renames began:
-    /// kept in the working tree and dropped from tracking.
+    /// Paths `latest` dropped whose file was edited after the check before the
+    /// first rename or delete: kept in the working tree and dropped from
+    /// tracking.
     pub kept: Vec<PathBuf>,
 }
 
@@ -186,9 +187,9 @@ pub(crate) async fn apply_latest_update(
     let mut uninstalled = Vec::new();
     let mut kept = Vec::new();
     for path in &to_uninstall {
-        // The renames have landed, so a file edited since can no longer refuse
-        // the apply with nothing written. It is kept, and the prune below
-        // stops tracking it.
+        // Renames and earlier deletes may have landed, so a file edited since
+        // the check before them can no longer refuse the apply with nothing
+        // written. It is kept, and the prune below stops tracking it.
         if protect.edited_at(storage, &working_dir, path).await? {
             kept.push(path.clone());
             continue;
@@ -1181,6 +1182,22 @@ mod tests {
         async fn on_disk(&self, key: &str) -> Option<Vec<u8>> {
             self.storage.read_bytes(wd().join(key)).await.ok()
         }
+
+        /// Puts a working file's modified time an hour back, so a save during
+        /// the test cannot share it on a coarse clock.
+        fn backdate(&self, key: &str) -> Res {
+            let real = crate::io::storage::mocks::relative_to_temp_dir(
+                &self.storage.temp_dir,
+                wd().join(key),
+            );
+            std::fs::File::options()
+                .write(true)
+                .open(real.as_ref())?
+                .set_modified(
+                    std::time::SystemTime::now() - std::time::Duration::from_secs(3600),
+                )?;
+            Ok(())
+        }
     }
 
     fn is_conflict_on(result: &Res<(PackageLineage, Applied)>, key: &str) -> bool {
@@ -1278,6 +1295,7 @@ mod tests {
             &[("a.txt", b"new-a")],
         )
         .await?;
+        copy.backdate("gone.txt")?;
         // The first read is the check before the renames, the second the
         // check before the delete.
         let storage = SaveDuring::new(&copy.storage, When::ReadFor(2));
@@ -1290,6 +1308,25 @@ mod tests {
             "the user's save was deleted"
         );
         assert_eq!(applied.kept, vec![PathBuf::from("gone.txt")]);
+        Ok(())
+    }
+
+    /// An editor that moves the old file aside before writing the new one, while
+    /// the check before the delete is reading it, leaves no file there by the
+    /// check's end; the path is kept for the save about to land, not deleted.
+    #[test(tokio::test)]
+    async fn a_removed_file_moved_aside_while_checked_before_its_delete_is_kept() -> Res {
+        let copy = copy_at_base(
+            &[("a.txt", b"base-a"), ("gone.txt", b"base-gone")],
+            &[("a.txt", b"new-a")],
+        )
+        .await?;
+        let storage = SaveDuring::new(&copy.storage, When::MovedAsideOnRead(2));
+
+        let (_, applied) = copy.apply(&storage, &LocalWork::Protect).await?;
+
+        assert_eq!(applied.kept, vec![PathBuf::from("gone.txt")]);
+        assert_eq!(applied.uninstalled, [] as [PathBuf; 0]);
         Ok(())
     }
 
@@ -1349,12 +1386,15 @@ mod tests {
         Ok(())
     }
 
-    /// When [`SaveDuring`] saves.
+    /// When [`SaveDuring`] acts.
     enum When {
-        /// Once a file is renamed onto this path.
+        /// Saves once a file is renamed onto this path.
         RenamedOnto(PathBuf),
-        /// Once `gone.txt` is opened for the nth time, after it is opened.
+        /// Saves once `gone.txt` is opened for the nth time, after it is opened.
         ReadFor(usize),
+        /// Moves `gone.txt` aside, an editor's first step, once it is opened
+        /// for the nth time.
+        MovedAsideOnRead(usize),
     }
 
     /// [`MockStorage`] that saves [`USERS_SAVE`] over `gone.txt` as an editor
@@ -1411,13 +1451,19 @@ mod tests {
             self.inner.modified_timestamp(path).await
         }
         async fn open_file(&self, path: impl AsRef<Path> + Send) -> Res<tokio::fs::File> {
-            let gone = path.as_ref() == wd().join("gone.txt");
+            let gone = wd().join("gone.txt");
+            let nth_open = if path.as_ref() == gone {
+                self.opens.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1
+            } else {
+                0
+            };
             let file = self.inner.open_file(path).await?;
-            if let When::ReadFor(nth) = self.when
-                && gone
-                && self.opens.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1 == nth
-            {
-                self.save().await?;
+            match self.when {
+                When::ReadFor(nth) if nth == nth_open => self.save().await?,
+                When::MovedAsideOnRead(nth) if nth == nth_open => {
+                    self.inner.rename(&gone, wd().join("gone.txt~")).await?;
+                }
+                _ => {}
             }
             Ok(file)
         }
