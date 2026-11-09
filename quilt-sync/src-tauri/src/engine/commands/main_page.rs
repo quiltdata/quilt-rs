@@ -287,13 +287,14 @@ impl From<PackageState> for PackageStateDto {
 /// `Other` is deliberately absent: it has no state in the vocabulary, and
 /// folding it would destroy the case the queue exists to surface — a package
 /// `latest` by hash and paused by a workflow rejection. It travels as a pause on
-/// the watcher payload instead. The other three reasons are absent because the
-/// tree's own state already says what they say.
+/// the watcher payload instead. The other reasons are absent because the tree's
+/// own state already says what they say.
 /// Whether this pause has no state of its own to resolve into.
 ///
 /// Only `Other`. Every other reason either resolves into the state the working
-/// tree already reports (`PendingChanges`, `PendingCommit`, `Diverged`) or has a
-/// state of its own (`PullConflict`, `RoleDenied`). `Other` is the catch-all —
+/// tree already reports (`PendingChanges`, `PendingCommit`, `Diverged`,
+/// `MergeRefused`) or has a state of its own (`PullConflict`, `RoleDenied`).
+/// `Other` is the catch-all —
 /// a workflow rejection, a hash mismatch — and it is non-transient, so a package
 /// left in it stays stopped until something outside this app changes.
 pub(super) fn unexplained_pause(paused: Option<&PausedReason>) -> bool {
