@@ -338,8 +338,8 @@ fn action(state: &PackageState) -> Option<PackageAction> {
     match state {
         PackageState::Behind => Some(PackageAction::GetLatest),
 
-        // `Publish` for the conflict too, and not `Resolve`: the merge page cannot
-        // resolve one until the local changes are committed, so publishing is the
+        // `Publish` for the conflict too, and not `Resolve`: a conflict cannot be
+        // resolved until the local changes are committed, so publishing is the
         // step that unblocks it. Publishing lands the package in `Diverged`, which
         // is the state below — and that one does offer `Resolve`.
         PackageState::PendingChanges { .. }
@@ -684,7 +684,7 @@ mod tests {
         assert_eq!(
             r.action,
             Some(PackageAction::Publish),
-            "the merge page cannot resolve it until the changes are committed"
+            "a conflict cannot be resolved until the changes are committed"
         );
     }
 

@@ -516,8 +516,7 @@ fn cause_trailing(
 /// its own (global constraint): the caller resolves both lists and hands them
 /// in.
 #[component]
-// Owned, not borrowed, matching `components/buttons/merge.rs`'s own `Merge`:
-// a prop only borrowed inside the body still has to be owned by the caller,
+// Owned, not borrowed: a prop only borrowed inside the body still has to be owned by the caller,
 // since a component's arguments outlive the call that builds them.
 #[allow(clippy::needless_pass_by_value)]
 pub fn QueueRegion(

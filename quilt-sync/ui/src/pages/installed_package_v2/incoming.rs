@@ -26,8 +26,8 @@
 //! It keeps `Newer revision available` and `Get latest`; the summary after
 //! it is the only count. A revision that brings no files has no summary and
 //! no popover. A `Blocked` verdict resolves the header to
-//! `PackageState::PullConflict`, which offers `Publish`, not `Resolve`: the
-//! merge page cannot act until the local changes are published. That is the
+//! `PackageState::PullConflict`, which offers `Publish`, not `Resolve`:
+//! resolving cannot act until the local changes are published. That is the
 //! state a failed `Get latest` leaves, so the header reads the same before the
 //! click and after it. Only an answer from a run that finished after the
 //! current read moves the state; one kept across a re-read while its rerun is

@@ -49,7 +49,7 @@ pub enum PausedReason {
     Diverged,
     /// A surgical pull found a real conflict (`PullOutcome::Blocked`): a
     /// tracked path changed on both sides. Carries the conflicting file names
-    /// for the banner; the user resolves by committing → the merge page.
+    /// for the banner; the user resolves by committing, then resolving on the package page.
     PullConflict(Vec<String>),
     /// Storage refused the call with `AccessDenied`: the active role cannot
     /// reach this package's bucket. Retrying cannot help — the role has to
