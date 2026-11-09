@@ -763,7 +763,12 @@ fn regions_skeleton(toolbar: AnyView, inert: bool) -> AnyView {
 #[component]
 pub fn MainPageSkeleton(actions: AnyView) -> impl IntoView {
     view! {
-        <PageLayout heading="QuiltSync" actions=actions page_scroll=true>
+        <PageLayout
+            heading="QuiltSync"
+            actions=actions
+            banner=view! { <crate::components::UpdateNotice /> }.into_any()
+            page_scroll=true
+        >
             <StateStrip>
                 {autosync::autosync_skeleton()}
                 {accounts::accounts_skeleton()}
@@ -1534,7 +1539,10 @@ pub fn MainPage() -> impl IntoView {
             heading="QuiltSync"
             page_scroll=true
             actions=appbar_actions(move || reload.notify(), Signal::derive(move || outstanding.get() > 0))
-            banner=view! { {move || link_handlers.get().and_then(Result::ok).map(|handlers| link_handler_banner(&handlers))} }
+            banner=view! {
+                <crate::components::UpdateNotice />
+                {move || link_handlers.get().and_then(Result::ok).map(|handlers| link_handler_banner(&handlers))}
+            }
                 .into_any()
         >
             <PackageStatusListener reload=reload />

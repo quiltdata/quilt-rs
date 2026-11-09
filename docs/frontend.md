@@ -36,7 +36,7 @@ quilt-sync/ui/
 ├── js/
 │   └── json-editor-glue.js     # Bundled into assets/js/ at build time
 ├── assets/
-│   └── css/                    # Global sheets; see CSS Organization
+│   └── css/                    # Generated module bundle; see CSS Organization
 └── src/
     ├── main.rs                 # App root and router
     ├── gallery.rs              # Gallery root: pages and regions over fixtures
@@ -46,12 +46,11 @@ quilt-sync/ui/
     ├── components/
     │   ├── appbar.rs           # Refresh and Settings, on every appbar
     │   ├── autopull_activity.rs # Background pulls, in the activity line
-    │   ├── buttons.rs          # FormPrimary / FormSecondary, for popups
     │   ├── connection.rs       # Engine connection bar and page following
     │   ├── ignore_popup.rs     # Ignore and Stop-ignoring popups
     │   ├── quit_prompt.rs      # Quit confirmation
     │   ├── toasts.rs           # Backend-posted notifications
-    │   └── update_checker.rs   # Auto-update polling
+    │   └── update_checker.rs   # The update check and each page's update band
     ├── pages.rs                # Module re-exports
     ├── pages/
     │   ├── page.rs             # The scaffold most pages share
@@ -204,10 +203,11 @@ consequence sentence in place of fields, a `Danger` primary carrying the verb,
 focus on Cancel and Escape answering Cancel — the confirmation every Danger
 menu item is followed by.
 
-The ignore popups (`components/ignore_popup.rs`) and the quit prompt are older,
-hand-built overlays, shown under a signal the same way. Given the page's
-`busy` lock, an ignore popup does not write while another command holds it,
-and holds it while its own write runs.
+The ignore popups (`components/ignore_popup.rs`) are `FormDialog`s too, mounted
+while the page's signal holds their data. Given the page's `busy` lock, an
+ignore popup does not write while another command holds it, and holds it while
+its own write runs. The quit prompt (`components/quit_prompt.rs`) is the kit's
+`QuitConfirm`, a `ConfirmDialog` whose Cancel reads *Stay*.
 
 ## Routing
 
@@ -416,11 +416,13 @@ its own box, and renders nothing at all when empty.
 
 ## Auto-Update Checker
 
-`components/update_checker.rs` renders an update notification bar
-at the top of the app (outside the router). It polls
-`commands::check_for_update()` on mount and offers Download, Install,
-and Dismiss actions. Dismissal is persisted in localStorage for 5
-minutes.
+`components/update_checker.rs` checks once, from `App` above the router
+(`provide_update_check`), by calling `commands::check_for_update()`, and shares
+the answer as context. Each page draws `UpdateNotice` in its `PageLayout` band
+row: the kit's `UpdateBand`, with *Download & Install*, or *Download* on a
+headless engine, which opens the release's installer (the release page when
+the feed has no build for the machine). Dismissal is persisted in localStorage
+for 5 minutes.
 
 ## Design System: Radix Values, Primer Names
 
@@ -683,9 +685,8 @@ Still outstanding:
 
 Tokens are named property-first in `tokens.css` and in every module
 stylesheet. The role words `subtle`, `canvas` and `strong` are not used,
-so a fill token and a border token cannot share one name. The app's global
-sheets in `quilt-sync/ui/assets/css/` do not read these tokens: they use a
-separate `--q-ui-*` namespace, defined in `theme.css`.
+so a fill token and a border token cannot share one name. The app's module
+stylesheets read the same tokens; there is no second set.
 
 Two checks are worth repeating after any future token sweep, because a
 dangling `var()` fails **silently** -- the declaration is simply dropped
@@ -699,8 +700,9 @@ and the element renders unstyled rather than erroring:
 
 ## CSS Organization
 
-Pages and kit components style themselves with CSS Modules: each has a
-`.module.css` beside its `.rs`, imported with `stylance::import_crate_style!`.
+Pages, app components and kit components style themselves with CSS Modules:
+each has a `.module.css` beside its `.rs`, imported with
+`stylance::import_crate_style!`.
 Trunk's pre-build hooks run `stylance`, which hashes each class and bundles the
 app's into `assets/css/kit/modules.css` and the kit's into
 `quilt-ui-kit/css/kit-modules.css`. Both bundles are generated and gitignored.
@@ -715,31 +717,13 @@ quilt-ui-kit/css/
 └── chrome.css              # Storybook and gallery chrome, not the app
 ```
 
-The app's own global sheets, for the popups and bars outside the kit:
+The app has no global sheets of its own. `assets/css/kit/` holds the generated
+bundle and `old_revisions_inline.css`, which only the gallery loads. The commit
+page's metadata editor is styled from `commit.module.css`, through `:global`
+on the editor's own classes.
 
-```text
-quilt-sync/ui/assets/css/
-├── theme.css               # --q-ui-* custom properties
-├── layout.css              # html and body
-├── components/
-│   ├── button.css          # FormPrimary / FormSecondary
-│   ├── ignore-popup.css
-│   └── quit-prompt.css
-├── views/
-│   ├── notify.css          # Update bar
-│   ├── popup.css           # Popup overlay
-│   └── toasts.css
-├── kit/
-│   └── old_revisions_inline.css   # Gallery only
-└── external/               # Vendored webfont @font-face files
-    ├── 400.css
-    ├── 500.css
-    └── 700.css
-```
-
-`index.html` links the kit's sheets and the generated bundles through Trunk,
-and the rest with plain `<link>` tags; Trunk copies `assets/` to `dist/` at
-build time. The global sheets use a `qui-*` class naming convention.
+`index.html` links the kit's sheets and the generated bundles through Trunk;
+Trunk copies `assets/` to `dist/` at build time.
 
 ## Key Differences from Previous Architecture
 

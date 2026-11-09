@@ -1,7 +1,6 @@
 /* Brand ground in both themes.
  *
- * States its own ink and type: outside the frame it would inherit `layout.css`'s
- * `body` (Roboto, unthemed black). */
+ * States its own ink and type, so it reads the same outside the frame. */
 .appbar {
   display: flex;
   align-items: center;

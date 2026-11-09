@@ -1,7 +1,7 @@
 use leptos::prelude::*;
+use quilt_ui_kit::{UpdateBand, UpdateState};
 
 use crate::commands;
-use crate::components::buttons;
 use crate::engine;
 
 // Intentionally short: we want to aggressively encourage updates.
@@ -34,139 +34,98 @@ fn set_dismissed() {
     }
 }
 
+/// What the check found, and where a release is downloaded from.
 #[derive(Clone)]
-enum UpdateState {
-    /// No update available or still checking.
-    Hidden,
-    /// An update is available; display version and action buttons, or for
-    /// an engine with no desktop, where to download it.
-    Available(String, String),
-    /// Download and install in progress.
-    Installing,
-    /// Download or install failed; show error and allow retry.
-    Failed { version: String, error: String },
+struct Found {
+    state: UpdateState,
+    url: String,
 }
 
-/// App-level component that checks for updates on mount and shows a
-/// notification bar when one is available.
+/// The app's one update check, shared by every page's band row.
+#[derive(Clone, Copy)]
+pub struct UpdateCheck {
+    found: RwSignal<Option<Found>>,
+}
+
+/// Checks for an update once, unless one was dismissed recently, and hands
+/// the answer to every page. Called once, above the router.
 ///
-/// Renders its own notification UI, independent of per-page notifications.
-#[component]
-pub fn UpdateChecker() -> impl IntoView {
-    let state = RwSignal::new(UpdateState::Hidden);
-
-    // Check for updates on mount (unless recently dismissed).
-    Effect::new(move || {
-        if is_dismissed() {
-            return;
+/// "No update" and a failed check (network error, etc.) show nothing, to
+/// avoid distracting the user on every launch.
+pub fn provide_update_check() {
+    let found = RwSignal::new(None);
+    provide_context(UpdateCheck { found });
+    if is_dismissed() {
+        return;
+    }
+    leptos::task::spawn_local(async move {
+        if let Ok(Some(info)) = commands::check_for_update().await {
+            found.set(Some(Found {
+                state: UpdateState::Available {
+                    version: info.version,
+                },
+                url: info.url,
+            }));
         }
-        leptos::task::spawn_local(async move {
-            // Show the banner only when an update is available; "no update" or a
-            // check failure (network error, etc.) is silently ignored to avoid
-            // distracting the user on every launch.
-            if let Ok(Some(info)) = commands::check_for_update().await {
-                state.set(UpdateState::Available(info.version, info.url));
-            }
-        });
     });
+}
 
-    let dismiss = move |_| {
+/// The update band, in a page's band row; nothing while there is no update.
+#[component]
+pub fn UpdateNotice() -> impl IntoView {
+    let check = use_context::<UpdateCheck>()?;
+    let found = check.found;
+
+    let snooze = move |()| {
         set_dismissed();
-        state.set(UpdateState::Hidden);
+        found.set(None);
     };
 
-    let install = move |_| {
-        let (UpdateState::Available(version, _) | UpdateState::Failed { version, .. }) =
-            state.get()
+    // Install, where the engine can; headless can't install itself, so the
+    // user downloads it and restarts QuiltSync.
+    let install = move |()| {
+        let Some(Found { state, url }) = found.get_untracked() else {
+            return;
+        };
+        if engine::headless().get_untracked() {
+            if let Some(window) = web_sys::window() {
+                drop(window.open_with_url_and_target_and_features(&url, "_blank", "noopener"));
+            }
+            return;
+        }
+        let (UpdateState::Available { version } | UpdateState::Failed { version, .. }) = state
         else {
             return;
         };
-        state.set(UpdateState::Installing);
+        found.set(Some(Found {
+            state: UpdateState::Installing,
+            url: url.clone(),
+        }));
         leptos::task::spawn_local(async move {
-            if let Err(e) = commands::download_and_install_update().await {
-                leptos::logging::error!("Update failed: {e}");
-                state.set(UpdateState::Failed { version, error: e });
+            if let Err(error) = commands::download_and_install_update().await {
+                leptos::logging::error!("Update failed: {error}");
+                found.set(Some(Found {
+                    state: UpdateState::Failed { version, error },
+                    url,
+                }));
             }
             // On success the app restarts, so we never reach here.
         });
     };
 
-    move || match state.get() {
-        UpdateState::Hidden => None,
-        UpdateState::Available(version, url) => Some(
-            view! {
-                <div class="qui-notify">
-                    <div class="root">
-                        <div class="update-bar">
-                            <span>"Update available: " {version}</span>
-                            <div class="update-bar-actions">
-                                <UpdateAction url=url on_install=install />
-                                <buttons::FormSecondary on_click=dismiss>
-                                    "Dismiss"
-                                </buttons::FormSecondary>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            }
-            .into_any(),
-        ),
-        UpdateState::Installing => Some(
-            view! {
-                <div class="qui-notify">
-                    <div class="root">
-                        <div class="update-bar">
-                            <span>"Downloading and installing update\u{2026}"</span>
-                        </div>
-                    </div>
-                </div>
-            }
-            .into_any(),
-        ),
-        UpdateState::Failed { version, error } => Some(
-            view! {
-                <div class="qui-notify error">
-                    <div class="root">
-                        <div class="update-bar">
-                            <span>"Update " {version} " failed: " {error}</span>
-                            <div class="update-bar-actions">
-                                <buttons::FormPrimary on_click=install>
-                                    "Retry"
-                                </buttons::FormPrimary>
-                                <buttons::FormSecondary on_click=dismiss>
-                                    "Dismiss"
-                                </buttons::FormSecondary>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            }
-            .into_any(),
-        ),
-    }
-}
+    let install_label =
+        Signal::derive(move || engine::headless().get().then(|| "Download".to_string()));
 
-/// Install, where the engine can; headless can't install itself, so the
-/// user downloads it and restarts QuiltSync.
-#[component]
-fn UpdateAction(
-    url: String,
-    on_install: impl Fn(leptos::ev::MouseEvent) + Clone + Send + Sync + 'static,
-) -> impl IntoView {
-    move || {
-        if engine::headless().get() {
+    Some(move || {
+        found.get().map(|Found { state, .. }| {
             view! {
-                <a href=url.clone() target="_blank" rel="noopener">
-                    "Download"
-                </a>
+                <UpdateBand
+                    state=state
+                    on_install=install
+                    on_snooze=snooze
+                    install_label=install_label
+                />
             }
-            .into_any()
-        } else {
-            let on_install = on_install.clone();
-            view! {
-                <buttons::FormPrimary on_click=on_install>"Download & Install"</buttons::FormPrimary>
-            }
-            .into_any()
-        }
-    }
+        })
+    })
 }
