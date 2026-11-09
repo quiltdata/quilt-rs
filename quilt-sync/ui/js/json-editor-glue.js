@@ -34,14 +34,6 @@ window.__createJsonEditor = function (target, textarea, initialValue) {
   mountEditor(target, textarea, initialValue);
 };
 
-window.__getJsonEditorValue = function (target) {
-  const editor = target && editors.get(target);
-  if (!editor) return "";
-  const content = editor.get();
-  if (content.json !== undefined) return JSON.stringify(content.json);
-  return content.text ?? "";
-};
-
 // Whether there was an editor to focus: the field's label points at the
 // hidden textarea, so a click on it focuses this instead.
 window.__focusJsonEditor = function (target) {

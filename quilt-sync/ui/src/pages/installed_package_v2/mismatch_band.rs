@@ -86,9 +86,9 @@ pub(super) fn requested_message(
 ///
 /// # The line follows the page's own state
 ///
-/// v1 keys its line on the upstream state, which cannot tell a conflict from a
-/// divergence. This page has resolved the state already, so the line reads the
-/// same answer the header draws.
+/// The upstream state alone cannot tell a conflict from a divergence. This page
+/// has resolved the state already, so the line reads the same answer the header
+/// draws.
 ///
 /// # Nothing when the requested revision is installed
 ///

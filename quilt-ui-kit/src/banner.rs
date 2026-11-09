@@ -11,7 +11,7 @@
 //!
 //! # Three kinds, and the type enforces it
 //!
-//! `Success`, `Warning`, `Error` — the three v1 already has. A dedicated enum rather than
+//! `Success`, `Warning`, `Error`. A dedicated enum rather than
 //! [`StateTone`](super::StateTone), which has four variants: `Neutral` has no meaning for
 //! an outcome, and a type that cannot express it is better than a note asking people not
 //! to. The kinds map onto tones internally, so the glyphs and colours are the page's.

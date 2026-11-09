@@ -166,7 +166,7 @@ pub trait QuiltModel {
         package.reset_to_latest().await
     }
 
-    /// [`Self::package_push`] on the held lock.
+    /// Push the package on the held lock.
     async fn locked_package_push(&self, package: &Self::Locked) -> Result<quilt::Pushed, Error> {
         package.push().await
     }
@@ -433,14 +433,6 @@ pub trait QuiltModel {
     ) -> Result<bool, Error> {
         let package_lineage = self.get_installed_package_lineage(package).await?;
         Ok(package_lineage.paths.contains_key(path))
-    }
-
-    async fn package_push(
-        &self,
-        package: &quilt::InstalledPackage,
-        host_config: Option<HostConfig>,
-    ) -> Result<quilt::Pushed, Error> {
-        Ok(package.push(host_config).await?)
     }
 
     async fn package_publish(

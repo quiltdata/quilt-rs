@@ -1,5 +1,4 @@
-//! v2's main-page payloads. Nothing here is shared with `package_list.rs`, which
-//! is v1's, frozen, and deleted once v2 ships.
+//! The main page's payloads.
 
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -94,15 +93,16 @@ pub enum PackageStateDto {
 
 /// Why the watcher stopped syncing one package, as sent to the UI.
 ///
-/// v2's own type. v1's `reporter::PausedEvent` is frozen: its `reason` is a plain
-/// string, and its single `message` means something different for each reason
-/// (the raw refusal for `other`, comma-joined file names for `pullConflict`, the
-/// role name for `roleDenied`). A comma-joined list cannot be split back apart
-/// when a file name contains a comma. Here each meaning has its own field.
+/// Not `reporter::PausedEvent`, the `autosync-paused` payload: its `reason` is a
+/// plain string, and its single `message` means something different for each
+/// reason (the raw refusal for `other`, comma-joined file names for
+/// `pullConflict`, the role name for `roleDenied`). A comma-joined list cannot be
+/// split back apart when a file name contains a comma. Here each meaning has its
+/// own field.
 ///
-/// Kinds are `snake_case`, matching [`PackageStateDto`] rather than v1's
-/// camelCase reason strings. The queue reads a pause and a state side by side,
-/// so those two vocabularies are the pair that must agree.
+/// Kinds are `snake_case`, matching [`PackageStateDto`]. The queue reads a pause
+/// and a state side by side, so those two vocabularies are the pair that must
+/// agree.
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum PausedDto {
@@ -371,9 +371,6 @@ fn session_host(err: &Error) -> Option<String> {
 /// covers the readable-bucket query and the role query behind a denial
 /// together.
 ///
-/// A copy of `BUCKET_LIST_BUDGET` in `package_list.rs`, not shared with it,
-/// because v1 is frozen and will be deleted as a whole. Keep the two in sync.
-///
 /// Apart from these queries the roster is local data and renders without the
 /// network. The bucket query adds two round trips per host (`config.json`, then
 /// a GraphQL POST), serialised under the host's credential lock behind a retry
@@ -389,9 +386,8 @@ const BUCKET_LIST_BUDGET: Duration = Duration::from_secs(2);
 
 /// Whether the active role can reach a row's bucket, and what to say about it.
 ///
-/// COPIED from `package_list.rs:81-87`. v2 carries the ROLE NAME rather than
-/// v1's rendered `reason` string: §2 keeps prose off the wire, and
-/// `kit::render` already words `RoleDenied` for both sites.
+/// Carries the role name, not a sentence: prose stays off the wire, and
+/// `kit::render` words `RoleDenied`.
 struct AccessMark {
     role: Option<String>,
     role_switch_host: Option<String>,
@@ -552,20 +548,18 @@ async fn load_rows(
     Ok(rows)
 }
 
-async fn get_main_page_packages_from_model(
+pub(super) async fn get_main_page_packages_from_model(
     m: &impl model::QuiltModel,
     roles: &RoleCache,
     tracing: &crate::engine::telemetry::Telemetry,
     paused_reasons: &HashMap<quilt_uri::Namespace, PausedReason>,
 ) -> Result<MainPagePackages, Error> {
-    // Clear the role cache on every load, as v1's
-    // `get_installed_packages_list_data_from_model` does (a copy, not shared).
-    // A role switch is server-side and global, so it can happen in the web
-    // catalog without the app knowing. If the cached name lived for the whole
-    // session, a row could name a role that in fact has access, and
-    // `observe_role` would never run again, so the S3 clients would keep signing
-    // as the old role until Settings is opened or the ~1h credential TTL
-    // expires. All hosts are cleared because the roster's hosts are known only
+    // Clear the role cache on every load. A role switch is server-side and
+    // global, so it can happen in the web catalog without the app knowing. If
+    // the cached name lived for the whole session, a row could name a role that
+    // in fact has access, and `observe_role` would never run again, so the S3
+    // clients would keep signing as the old role until Settings is opened or the
+    // ~1h credential TTL expires. All hosts are cleared because the roster's hosts are known only
     // after `load_rows` below, and a cache entry is only a name.
     roles.invalidate(None).await;
 
@@ -621,8 +615,6 @@ async fn load_main_page_package(
         .as_ref()
         .map(quilt_uri::S3PackageUri::from);
     // Crash reports are attributed to the deployment of the most recent action.
-    // v1 does this in its own light phase (`package_list.rs:334`); without it here,
-    // the attribution dies with v1.
     if let Some(host) = typed_uri.as_ref().and_then(|uri| uri.catalog.as_ref()) {
         tracing.add_host(host);
     }
@@ -1252,7 +1244,7 @@ mod tests {
 
     #[test]
     fn a_conflict_crosses_the_wire_as_a_list_not_a_joined_string() {
-        // v1's `reporter` sends `files.join(", ")`. Counting files for
+        // `reporter::PausedEvent` sends `files.join(", ")`. Counting files for
         // "conflicts in N files" from that string means splitting on ", ", which
         // gives the wrong count for this file name.
         let reason =
@@ -2407,13 +2399,10 @@ mod tests {
         );
     }
 
-    /// COPIED judgement 4's own regression guard: `roles.invalidate(None)` runs
-    /// at the top of every load. Without it, a `RoleCache` shared across two
-    /// loads would serve the first load's cached role forever, and
-    /// `refresh_roles` would be called once rather than once per load.
-    ///
-    /// v1's analogue is `package_list.rs:1126-1132`; this is v2's own version,
-    /// against v2's own `roster` helper.
+    /// `roles.invalidate(None)` runs at the top of every load. Without it, a
+    /// `RoleCache` shared across two loads would serve the first load's cached
+    /// role forever, and `refresh_roles` would be called once rather than once
+    /// per load.
     #[tokio::test]
     async fn a_second_load_re_fetches_the_role_rather_than_serving_the_cache() {
         let mut model = crate::engine::model::mocks::create();
@@ -2602,10 +2591,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_denial_outranks_a_pull_conflict_pause() {
-        // The named invariant `a_denial_outranks_a_pause_even_a_pull_conflict`, from
-        // v1's `installed_packages_list.rs`. Denial is rank 1 and the conflict is
-        // rank 2, so the fold must sit AFTER the denial arm has had its chance — an
-        // early return at the top of the heavy phase would silently invert this.
+        // Denial is rank 1 and the conflict is rank 2, so the fold must sit
+        // AFTER the denial arm has had its chance — an early return at the top of the heavy phase would silently invert this.
         let m = mock_one_package(Err(access_denied_error()), Some(two_roles()));
 
         let refreshed = refresh_with_pause(

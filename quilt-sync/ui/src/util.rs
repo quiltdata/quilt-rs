@@ -1,10 +1,6 @@
-use std::future::Future;
-
-use leptos::prelude::*;
 use quilt_uri::S3PackageUri;
 
 use crate::commands::PackageSize;
-use crate::components::layout::Notification;
 
 /// Format the catalog HTTPS URL for a package URI, if its `catalog`
 /// host is set. Used to power "Open in catalog" buttons.
@@ -79,73 +75,6 @@ pub fn has_bucket(uri: Option<&S3PackageUri>) -> bool {
     uri.is_some_and(|u| !u.bucket.is_empty())
 }
 
-/// Create a busy-guarded async action handler.
-///
-/// Returns `(busy_signal, click_handler)`. The handler guards against
-/// double-clicks, optionally locks the UI, runs the command, and shows
-/// a success/error notification. On success it calls `on_done` (e.g.
-/// to trigger a refetch or navigate).
-///
-/// `busy` is **not** reset on success — `on_done` is expected to trigger
-/// a re-render that destroys the component (and its signal). If `on_done`
-/// does not rebuild the component, the button will remain disabled.
-/// What the page's notification slot should hold after a command succeeded.
-///
-/// An empty message means the command had nothing to say. `None`, not
-/// `Some("")`: `Layout` raises a full-screen dismiss overlay for as long as the
-/// slot holds anything, which would dim the app behind a blank.
-fn success_notification(msg: String) -> Option<Notification> {
-    (!msg.is_empty()).then_some(Notification::Success(msg))
-}
-
-pub fn make_action<F, Fut>(
-    command: F,
-    notification: RwSignal<Option<Notification>>,
-    ui_locked: Option<RwSignal<bool>>,
-    on_done: impl Fn() + 'static + Clone,
-) -> (RwSignal<bool>, impl Fn(leptos::ev::MouseEvent) + 'static)
-where
-    F: Fn() -> Fut + 'static + Clone,
-    Fut: Future<Output = Result<String, String>> + 'static,
-{
-    let busy = RwSignal::new(false);
-    let handler = move |_| {
-        if busy.get_untracked() {
-            return;
-        }
-        busy.set(true);
-        if let Some(ui_locked) = ui_locked {
-            ui_locked.set(true);
-        }
-        let command = command.clone();
-        let on_done = on_done.clone();
-        leptos::task::spawn_local(async move {
-            match command().await {
-                Ok(msg) => {
-                    // Don't reset `busy` here — the refetch triggered by
-                    // `on_done` will destroy/rebuild the component, clearing
-                    // the signal. Resetting early would briefly re-enable the
-                    // button and allow duplicate clicks.
-                    if let Some(ui_locked) = ui_locked {
-                        ui_locked.set(false);
-                    }
-                    notification.set(success_notification(msg));
-                    on_done();
-                }
-                Err(e) => {
-                    // Don't call on_done — nothing changed on the server.
-                    if let Some(ui_locked) = ui_locked {
-                        ui_locked.set(false);
-                    }
-                    notification.set(Some(Notification::Error(e)));
-                    busy.set(false);
-                }
-            }
-        });
-    };
-    (busy, handler)
-}
-
 /// Validate that `value` is a syntactically valid hostname
 /// (two or more dot-separated labels, each starting and ending with
 /// an ASCII alphanumeric character, with hyphens allowed in the middle).
@@ -168,59 +97,6 @@ fn is_valid_label(label: &str) -> bool {
         && bytes
             .iter()
             .all(|&b| b.is_ascii_alphanumeric() || b == b'-')
-}
-
-/// The line shown for an autosync pause whose cause is a role denial
-/// (`reason = "roleDenied"`), given the role name the event carried.
-///
-/// Shared by the list row and the detail banner so both surfaces say the same
-/// thing. The generic paused guidance ("push manually to resume") is wrong
-/// here — a manual push under the same role is denied too — so this names the
-/// only fix there is. The wording matches the roster's `no_access_reason`,
-/// and it stays a neutral fact: switching to a narrow role on purpose is a
-/// legitimate thing to have done.
-///
-/// `None` means the backend could not resolve the role name, not that no role
-/// is active.
-pub fn role_denied_hint(role: Option<&str>) -> String {
-    match role {
-        Some(role) if !role.is_empty() => format!(
-            "Current role {role} has no access to this bucket. Switch role to resume autosync."
-        ),
-        _ => "The active role has no access to this bucket. Switch role to resume autosync."
-            .to_string(),
-    }
-}
-
-/// The tooltip on a commit affordance the active role cannot use, given the
-/// backend's `no_access_reason`; `None` when the role can reach the bucket and
-/// the affordance stays live.
-///
-/// Committing is not offline work: the workflow quality gate reads the
-/// bucket's `.quilt/workflows/config.yml` before any manifest is written, so
-/// under a denied role neither Commit nor Commit and Push can succeed. Both
-/// the commit page and the installed-package page word it this way, and the
-/// sentence continues the reason the roster already states rather than
-/// restating it — same neutral fact, same named role, plus the only fix.
-pub fn commit_denied_hint(no_access_reason: Option<&str>) -> Option<String> {
-    let reason = no_access_reason.filter(|reason| !reason.is_empty())?;
-    Some(format!("{reason}. Switch role to commit."))
-}
-
-/// Why committing is blocked when there is no session, and what fixes it.
-/// Never a role switch — the role was never the problem. Keyed on whether
-/// there is a deployment: one can be signed into; ambient AWS credentials
-/// are fixed in `~/.aws` or by `aws sso login`.
-pub fn commit_no_session_hint(no_session: bool, no_session_host: Option<&str>) -> Option<String> {
-    if !no_session {
-        return None;
-    }
-    Some(match no_session_host.filter(|host| !host.is_empty()) {
-        Some(host) => format!("Not signed in to {host}. Sign in to commit."),
-        None => {
-            "No usable AWS credentials. Update ~/.aws or run aws sso login to commit.".to_string()
-        }
-    })
 }
 
 /// A logical size, in decimal units: whole bytes under 1 kB, else one decimal
@@ -430,50 +306,6 @@ mod tests {
         assert!(!is_valid_hostname("example.com."));
     }
 
-    #[test]
-    fn role_denied_hint_names_the_role_and_the_fix() {
-        assert_eq!(
-            role_denied_hint(Some("ReadOnly")),
-            "Current role ReadOnly has no access to this bucket. \
-             Switch role to resume autosync."
-        );
-    }
-
-    #[test]
-    fn role_denied_hint_without_a_name_still_offers_the_fix() {
-        // The backend sends no message when it could not resolve the name.
-        // An empty string is the same case, defensively.
-        let unnamed = "The active role has no access to this bucket. \
-                       Switch role to resume autosync.";
-        assert_eq!(role_denied_hint(None), unnamed);
-        assert_eq!(role_denied_hint(Some("")), unnamed);
-    }
-
-    #[test]
-    fn commit_denied_hint_continues_the_reason_with_the_fix() {
-        assert_eq!(
-            commit_denied_hint(Some("Current role ReadOnly has no access to this bucket")),
-            Some(
-                "Current role ReadOnly has no access to this bucket. Switch role to commit."
-                    .to_string()
-            )
-        );
-        // The unnamed wording (the role query itself failed) reads the same way.
-        assert_eq!(
-            commit_denied_hint(Some("The active role has no access to this bucket")),
-            Some(
-                "The active role has no access to this bucket. Switch role to commit.".to_string()
-            )
-        );
-    }
-
-    #[test]
-    fn commit_denied_hint_is_absent_on_a_readable_bucket() {
-        assert_eq!(commit_denied_hint(None), None);
-        // An empty reason is not a denial either, defensively.
-        assert_eq!(commit_denied_hint(Some("")), None);
-    }
-
     /// The words as read, with the no-break spaces shown as spaces.
     fn plain(words: &str) -> String {
         words.replace('\u{a0}', " ")
@@ -542,92 +374,5 @@ mod tests {
             counted(held),
             "All files are downloaded \u{b7} 3.4\u{a0}MB \u{b7} 2 deleted here"
         );
-    }
-}
-
-/// The sentence naming what an incoming revision brings, or `None` when it
-/// brings no new file.
-///
-/// One wording for both surfaces that say it — the package-list row and the
-/// package screen's behind banner — because a user who sees both should read
-/// the same sentence. They differ only in `max_named`, the row having less
-/// room.
-///
-/// Names some and counts the rest rather than truncating silently: the point is
-/// that the user can see *which* files, and a bare count is what they already
-/// had.
-#[must_use]
-pub fn incoming_files(added: &[String], max_named: usize) -> Option<String> {
-    if added.is_empty() {
-        return None;
-    }
-    let plural = if added.len() == 1 { "" } else { "s" };
-    let named = added
-        .iter()
-        .take(max_named)
-        .map(String::as_str)
-        .collect::<Vec<_>>()
-        .join(", ");
-    let rest = added.len().saturating_sub(max_named);
-    let tail = if rest > 0 {
-        format!(" and {rest} more")
-    } else {
-        String::new()
-    };
-    Some(format!("{} new file{plural}: {named}{tail}", added.len()))
-}
-
-#[cfg(test)]
-mod incoming_tests {
-    use super::Notification;
-    use super::incoming_files;
-    use super::success_notification;
-
-    #[test]
-    fn a_revision_that_adds_nothing_says_nothing() {
-        assert_eq!(incoming_files(&[], 3), None);
-    }
-
-    #[test]
-    fn one_file_is_named_in_the_singular() {
-        assert_eq!(
-            incoming_files(&["qc/summary.csv".to_owned()], 3).unwrap(),
-            "1 new file: qc/summary.csv"
-        );
-    }
-
-    #[test]
-    fn a_long_list_names_some_and_counts_the_rest() {
-        let added: Vec<String> = ["a", "b", "c", "d"]
-            .iter()
-            .map(|s| (*s).to_owned())
-            .collect();
-        assert_eq!(
-            incoming_files(&added, 2).unwrap(),
-            "4 new files: a, b and 2 more"
-        );
-        // The same list with room for all of them names all of them.
-        assert_eq!(
-            incoming_files(&added, 4).unwrap(),
-            "4 new files: a, b, c, d"
-        );
-    }
-
-    /// A reported pull returns an empty success message, and the slot must hold
-    /// nothing at all: `Layout` raises a full-screen dismiss overlay whenever
-    /// the slot is occupied, so `Some("")` would dim the app behind a blank.
-    #[test]
-    fn an_empty_success_message_leaves_the_slot_empty() {
-        assert!(success_notification(String::new()).is_none());
-    }
-
-    #[test]
-    fn a_message_that_says_something_still_reaches_the_slot() {
-        match success_notification("Successfully pulled package acme/demo".to_owned()) {
-            Some(Notification::Success(msg)) => {
-                assert_eq!(msg, "Successfully pulled package acme/demo");
-            }
-            _ => panic!("a non-empty message must reach the slot as a success"),
-        }
     }
 }

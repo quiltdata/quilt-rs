@@ -24,18 +24,7 @@ const FILE_NAME: &str = "experimental_settings.json";
 /// it back off.
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
 pub struct ExperimentalSettings {
-    /// Whether v1's package screen offers a per-package
-    /// [sync scope](quilt_rs::lineage::SyncScope) — the choice between
-    /// downloading the files you pick and keeping the whole package.
-    ///
-    /// A **gate on v1's control** and nothing else: every pull honours the
-    /// package's stored scope whatever this says, and the v2 package page
-    /// offers the choice without it. Turning it off leaves the per-package
-    /// choices written where they are; clearing them would destroy a choice
-    /// the user made in order to undo a setting that only ever hid a control.
-    #[serde(default)]
-    pub entire_package_sync: bool,
-    /// Whether the v2 Settings page shows the Agent tasks card. Only the card:
+    /// Whether the Settings page shows the Agent tasks card. Only the card:
     /// the task runner reads `task_settings.json` whatever this says, and
     /// turning it off leaves that file as it is.
     #[serde(default)]
@@ -52,10 +41,7 @@ impl ExperimentalSettings {
     /// A caller that knows about one experiment must not reset another it has
     /// never heard of — which is what a whole-struct write does the moment a
     /// second flag exists.
-    pub fn patch(&mut self, entire_package_sync: Option<bool>, agent_tasks: Option<bool>) {
-        if let Some(value) = entire_package_sync {
-            self.entire_package_sync = value;
-        }
+    pub fn patch(&mut self, agent_tasks: Option<bool>) {
         if let Some(value) = agent_tasks {
             self.agent_tasks = value;
         }
@@ -99,24 +85,20 @@ mod tests {
     #[tokio::test]
     async fn roundtrip() -> Result<(), Error> {
         let dir = TempDir::new().unwrap();
-        let settings = ExperimentalSettings {
-            entire_package_sync: true,
-            agent_tasks: true,
-        };
+        let settings = ExperimentalSettings { agent_tasks: true };
         settings.save(dir.path()).await?;
         assert_eq!(ExperimentalSettings::load(dir.path()).await?, settings);
         Ok(())
     }
 
     /// An experiment nobody opted into is off, and a fresh install has no file
-    /// at all — so the package screen is byte-identical to before for everyone
-    /// who has not gone looking.
+    /// at all.
     #[tokio::test]
     async fn missing_file_is_all_off() -> Result<(), Error> {
         let dir = TempDir::new().unwrap();
         let loaded = ExperimentalSettings::load(dir.path()).await?;
         assert_eq!(loaded, ExperimentalSettings::default());
-        assert!(!loaded.entire_package_sync);
+        assert!(!loaded.agent_tasks);
         Ok(())
     }
 
@@ -126,26 +108,20 @@ mod tests {
     async fn an_unknown_shape_still_loads() -> Result<(), Error> {
         let dir = TempDir::new().unwrap();
         tokio::fs::write(dir.path().join(FILE_NAME), b"{}").await?;
-        assert!(
-            !ExperimentalSettings::load(dir.path())
-                .await?
-                .entire_package_sync
-        );
+        assert!(!ExperimentalSettings::load(dir.path()).await?.agent_tasks);
         Ok(())
     }
 
     #[test]
     fn patch_leaves_untouched_flags_alone() {
-        let mut s = ExperimentalSettings {
-            entire_package_sync: true,
-            agent_tasks: false,
-        };
-        s.patch(None, Some(true));
+        let mut s = ExperimentalSettings { agent_tasks: true };
+        s.patch(None);
         assert!(
-            s.entire_package_sync,
-            "a flag the caller never mentioned must not be reset"
+            s.agent_tasks,
+            "a flag the caller never sent must not be reset"
         );
-        assert!(s.agent_tasks);
+        s.patch(Some(false));
+        assert!(!s.agent_tasks);
     }
 
     /// A retired experiment leaves its key in files written before it went.
@@ -157,23 +133,17 @@ mod tests {
         let path = dir.path().join(FILE_NAME);
         tokio::fs::write(
             &path,
-            br#"{"entire_package_sync":true,"main_page_v2":true,"package_page_v2":true}"#,
+            br#"{"entire_package_sync":true,"agent_tasks":true,"main_page_v2":true}"#,
         )
         .await?;
 
         let loaded = ExperimentalSettings::load(dir.path()).await?;
-        assert_eq!(
-            loaded,
-            ExperimentalSettings {
-                entire_package_sync: true,
-                agent_tasks: false,
-            }
-        );
+        assert_eq!(loaded, ExperimentalSettings { agent_tasks: true });
 
         loaded.save(dir.path()).await?;
         let written = tokio::fs::read_to_string(&path).await?;
         assert!(
-            !written.contains("page_v2"),
+            !written.contains("page_v2") && !written.contains("entire_package_sync"),
             "the retired keys are gone after a save: {written}"
         );
         Ok(())

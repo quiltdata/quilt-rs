@@ -88,24 +88,13 @@ pub fn ErrorV2() -> impl IntoView {
     view! { <ErrorScreen read=read_error /> }
 }
 
-/// What `/error` draws while it reads which page it is, for a v2 reader: the
-/// page's own first paint.
-#[component]
-pub fn ErrorV2Skeleton(actions: AnyView) -> impl IntoView {
-    view! {
-        <PageLayout heading="Error" banner=().into_any() actions=actions>
-            <ErrorSlateSkeleton />
-        </PageLayout>
-    }
-}
-
 /// What an unknown address renders in the v2 design. It reads
 /// nothing, so it is also its own first paint.
 #[component]
 pub fn NotFoundV2() -> impl IntoView {
     let navigate = use_navigate();
     let on_home = Callback::new(move |()| navigate("/", NavigateOptions::default()));
-    // Nothing is read here, so Refresh reloads the window, as v1's does.
+    // Nothing is read here, so Refresh reloads the window.
     let actions = appbar_actions(
         || {
             let _ = web_sys::window().map(|w| w.location().reload());
@@ -290,9 +279,7 @@ mod tests {
         let el = mount(|| {
             view! {
                 <Router>
-                    <Suspense fallback=|| ()>
-                        <ErrorScreen read=answered />
-                    </Suspense>
+                    <ErrorScreen read=answered />
                 </Router>
             }
         });
@@ -300,9 +287,9 @@ mod tests {
         el
     }
 
-    /// v1's four ways on, Login among them while there is a host.
+    /// Four ways on, Login among them while there is a host.
     #[wasm_bindgen_test]
-    async fn the_page_offers_v1_s_four_actions() {
+    async fn the_page_offers_four_ways_on() {
         let el = error_page("quilt.test").await;
         element_saying(&el, "Login failed");
         element_saying(&el, "The code expired.");

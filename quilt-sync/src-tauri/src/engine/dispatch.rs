@@ -12,16 +12,13 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::engine::autopull::activity::AutopullActivity;
-use crate::engine::autopull::reporter::WatcherSnapshot;
 use crate::engine::commands::{
-    AccountHost, AutosyncPatch, AutosyncSettingsData, CommitData, CommitViolation, CommitWorkflows,
-    FreedSpace, InstalledPackageData, InstalledPackagesListData, KeepingScope, LatestLoss,
-    LoginData, LoginErrorData, MainPageAccounts, MainPagePackageRefresh, MainPagePackages,
-    MainPageRecentFiles, MainPageWatcher, MergeData, NotDownloaded, PackagePageData, PathCheck,
-    RefreshedPackageStatus, RemotePackageResult, RevisionHistoryData, RolesData, SetRemoteResponse,
+    AccountHost, AutosyncPatch, CommitData, CommitViolation, CommitWorkflows, FreedSpace,
+    KeepingScope, LoginData, LoginErrorData, MainPageAccounts, MainPagePackageRefresh,
+    MainPagePackages, MainPageRecentFiles, MainPageWatcher, NotDownloaded, PackagePageData,
+    PathCheck, RemotePackageResult, RevisionHistoryData, RolesData, SetRemoteResponse,
     SettingsData, SetupData, StopIgnoringPreview, StopIgnoringScope, StorageSize,
 };
-use crate::engine::design_settings::Design;
 use crate::engine::desktop::{Desktop, ForeignHandler, NOT_AVAILABLE};
 use crate::engine::log_settings::LogLevel;
 use crate::engine::navigation::Navigation;
@@ -155,12 +152,9 @@ commands! {
     }
     shared {
         erase_auth(host: String) -> String;
-        get_roles(host: String) -> RolesData;
         switch_role(host: String, role: String) -> RolesData;
         login(host: String, code: String) -> String;
         login_oauth(host: String, back: Option<String>, page: Option<String>) -> String;
-        get_merge_data(namespace: String) -> MergeData;
-        get_latest_loss(namespace: String) -> LatestLoss;
         get_commit_data(namespace: String) -> CommitData;
         get_bucket_workflows(host: Option<String>, bucket: String) -> CommitWorkflows;
         load_workflow_rules(namespace: String, workflow_id: String, refresh: bool) -> bool;
@@ -171,13 +165,9 @@ commands! {
         refresh_main_page_package(namespace: String) -> MainPagePackageRefresh;
         get_main_page_watcher() -> MainPageWatcher;
         get_main_page_recent_files() -> MainPageRecentFiles;
-        get_installed_package_data(namespace: String, filter: Option<String>) -> InstalledPackageData;
-        get_installed_packages_list_data() -> InstalledPackagesListData;
-        refresh_package_status(namespace: String) -> RefreshedPackageStatus;
         package_commit(namespace: String, message: String, metadata: String, workflow: WorkflowIntent, uri: Option<S3PackageUri>) -> String;
         certify_latest(namespace: String, uri: Option<S3PackageUri>) -> String;
         reset_local(namespace: String, uri: Option<S3PackageUri>) -> String;
-        package_push(namespace: String, uri: Option<S3PackageUri>) -> String;
         package_publish(namespace: String, uri: Option<S3PackageUri>) -> String;
         package_commit_and_push(namespace: String, message: String, metadata: String, workflow: WorkflowIntent, uri: Option<S3PackageUri>) -> String;
         package_set_sync_scope(namespace: String, scope: KeepingScope, folders: Vec<String>) -> ();
@@ -188,7 +178,6 @@ commands! {
         set_remote(namespace: String, origin: String, bucket: String, workflow: WorkflowIntent) -> SetRemoteResponse;
         change_catalog(namespace: String, origin: String) -> String;
         package_create(namespace: String, source: Option<String>, message: Option<String>) -> String;
-        package_install_paths(uri: String, paths: Vec<String>) -> String;
         add_to_quiltignore(namespace: String, pattern: String, uri: Option<S3PackageUri>) -> String;
         stop_ignoring_preview(namespace: String, path: String, folder: bool) -> StopIgnoringPreview;
         stop_ignoring(namespace: String, path: String, folder: bool, scope: StopIgnoringScope, uri: Option<S3PackageUri>) -> String;
@@ -202,16 +191,13 @@ commands! {
         set_default_ignore_rules(off: Vec<String>) -> ();
         open_user_ignore_rules() -> ();
         update_publish_settings(message_template: String, default_workflow: String, default_metadata: String) -> ();
-        update_autosync_settings(settings: AutosyncSettingsData) -> ();
         set_autosync_direction(pull: Option<bool>, push: Option<bool>) -> ();
         patch_autosync_settings(patch: AutosyncPatch) -> ();
-        get_autosync_snapshot() -> WatcherSnapshot;
         get_autopull_activity() -> Option<AutopullActivity>;
         update_fswatcher_settings(enabled: bool) -> ();
         update_log_settings(level: LogLevel) -> ();
-        update_experimental_settings(entire_package_sync: Option<bool>, agent_tasks: Option<bool>) -> ();
+        update_experimental_settings(agent_tasks: Option<bool>) -> ();
         update_task_settings(settings: TaskSettings) -> ();
-        update_design_settings(design: Design) -> ();
         debug_dot_quilt() -> String;
         debug_logs() -> String;
         open_home_dir() -> String;
@@ -219,7 +205,6 @@ commands! {
         run_gc() -> FreedSpace;
         measure_storage() -> StorageSize;
         collect_diagnostic_logs() -> String;
-        reveal_diagnostic_logs() -> String;
         send_crash_report(zip_path: String, message: Option<String>) -> String;
         reveal_in_file_browser(namespace: String, path: String, uri: Option<S3PackageUri>) -> String;
         open_in_file_browser(namespace: String, uri: Option<S3PackageUri>) -> String;
@@ -297,14 +282,13 @@ mod tests {
     fn arguments_are_read_by_their_camel_case_names() {
         let call = prepare(
             "update_experimental_settings",
-            serde_json::json!({"entirePackageSync": true}),
+            serde_json::json!({"agentTasks": true}),
             false,
         );
         assert!(matches!(
             call,
             Ok(Call::update_experimental_settings {
-                entire_package_sync: Some(true),
-                agent_tasks: None,
+                agent_tasks: Some(true),
             })
         ));
         let Err(err) = prepare(

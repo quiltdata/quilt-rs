@@ -16,8 +16,8 @@ use leptos_router::hooks::use_navigate;
 use crate::commands::{self, LoginData};
 use crate::engine;
 use quilt_ui_kit::{
-    BannerVariant, Button, ButtonSize, ButtonVariant, Card, FormControl, LoadFailure, PageLayout,
-    SkeletonBox, TextInput, icons, readable,
+    BannerVariant, Button, ButtonSize, ButtonVariant, Card, FormControl, LoadFailure, SkeletonBox,
+    TextInput, icons, readable,
 };
 
 use super::v2_page::{Outcome, PageHandle, PageRead, V2Page, critical, hold, still_here};
@@ -142,17 +142,6 @@ pub fn LoginCardSkeleton() -> impl IntoView {
 #[component]
 pub fn LoginV2() -> impl IntoView {
     view! { <LoginScreen read=read_login /> }
-}
-
-/// What `/login` draws while it reads which page it is, for a v2 reader: the
-/// page's own first paint.
-#[component]
-pub fn LoginV2Skeleton(actions: AnyView) -> impl IntoView {
-    view! {
-        <PageLayout heading="Log in" banner=().into_any() actions=actions>
-            <LoginCardSkeleton />
-        </PageLayout>
-    }
 }
 
 /// The read's address: the query's `host` and `back`, both of which the read
@@ -364,9 +353,7 @@ mod tests {
         let el = mount(move || {
             view! {
                 <Router>
-                    <Suspense fallback=|| ()>
-                        <LoginScreen read=read />
-                    </Suspense>
+                    <LoginScreen read=read />
                 </Router>
             }
         });

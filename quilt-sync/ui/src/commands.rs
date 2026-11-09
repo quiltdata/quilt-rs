@@ -5,54 +5,6 @@ use crate::engine;
 
 // ── Response types ──────────────────────────────────────────
 
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[allow(clippy::struct_excessive_bools)]
-pub struct InstalledPackageData {
-    pub namespace: Namespace,
-    pub uri: Option<S3PackageUri>,
-    pub status: String,
-    /// Hash of the revision currently installed locally, if any. Feeds the
-    /// version-mismatch deep-link banner on `pages/installed_package.rs`.
-    pub installed_hash: Option<String>,
-    /// Commit message of the revision currently installed locally, if any.
-    /// See `installed_hash`.
-    pub installed_message: Option<String>,
-    /// Package has been pushed — the remote is pinned to its push history
-    /// and can't be edited. The toolbar's remote button becomes a read-only
-    /// "Show remote" view.
-    pub remote_locked: bool,
-    /// Package has a local commit. Setting a remote only re-commits (creating
-    /// a new revision) when there is one, so the Set-remote notice is gated
-    /// on this.
-    pub has_local_commit: bool,
-    /// The active role cannot reach this package's bucket, worded as the
-    /// roster words it. The status banner states this instead of the
-    /// "unable to check remote status" copy, and must not offer Login: the
-    /// session is healthy, so signing in again re-vends the same role.
-    pub no_access_reason: Option<String>,
-    /// Sorted by path, then capped at 1000.
-    pub entries: Vec<EntryData>,
-    /// Whole-package facet counts for the v2 file pane.
-    pub counts: EntryCounts,
-    /// Every entry the package has, ignored ones included, before the cap.
-    pub total: usize,
-    /// The cap dropped entries. Set by the backend; never infer it from
-    /// `entries.len()`.
-    pub truncated: bool,
-    pub has_remote_entries: bool,
-    pub ignored_count: usize,
-    pub unmodified_count: usize,
-    pub filter_unmodified: bool,
-    pub filter_ignored: bool,
-    /// This package's standing sync scope.
-    pub syncs_entire_package: bool,
-    /// The scope keeps chosen folders, which neither of this screen's scopes is.
-    pub keeps_folders: bool,
-    /// Whether the experiment that offers the scope control is on.
-    pub entire_package_sync_enabled: bool,
-}
-
 /// The v2 file pane's facet counts, over the whole package. The facets are
 /// disjoint apart from `all`, which excludes only the ignored entries.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
@@ -302,13 +254,6 @@ pub enum WorkflowIntent {
     Named(String),
 }
 
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MergeData {
-    pub namespace: Namespace,
-    pub uri: Option<S3PackageUri>,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LoginData {
@@ -372,8 +317,7 @@ impl Default for FsWatcherSettingsData {
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ExperimentalSettingsData {
-    pub entire_package_sync: bool,
-    /// Whether the v2 Settings page shows the Agent tasks card.
+    /// Whether the Settings page shows the Agent tasks card.
     #[serde(default)]
     pub agent_tasks: bool,
 }
@@ -408,31 +352,6 @@ pub struct TaskSettingsData {
     pub settings: TaskSettings,
     /// Why the file could not be read.
     pub error: Option<String>,
-}
-
-/// Which design generation the app draws: v2 unless the reader chose the
-/// classic design.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum Design {
-    V1,
-    #[default]
-    V2,
-}
-
-impl Design {
-    /// The design drawn for this saved one: headless always draws v2, whose
-    /// pages type a folder and sign in by code. v1's need the desktop's folder
-    /// picker and a browser sign-in that headless cannot finish.
-    #[must_use]
-    pub fn drawn(self) -> Self {
-        use leptos::prelude::GetUntracked;
-        if engine::headless().get_untracked() {
-            Self::V2
-        } else {
-            self
-        }
-    }
 }
 
 /// One built-in ignore rule, its place in the popup, and whether it is on.
@@ -484,8 +403,6 @@ pub struct SettingsData {
     pub fswatcher: FsWatcherSettingsData,
     pub experimental: ExperimentalSettingsData,
     #[serde(default)]
-    pub design: Design,
-    #[serde(default)]
     pub ignore_rules: IgnoreRulesData,
     #[serde(default)]
     pub tasks: TaskSettingsData,
@@ -502,49 +419,6 @@ pub struct ChangelogEntry {
 #[serde(rename_all = "camelCase")]
 pub struct SetupData {
     pub default_home: String,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct InstalledPackagesListData {
-    pub packages: Vec<PackageItemData>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PackageItemData {
-    pub namespace: Namespace,
-    pub status: String,
-    pub has_changes: bool,
-    /// Package has a local commit. Setting a remote only re-commits (creating
-    /// a new revision) when there is one, so the Set-remote notice is gated
-    /// on this.
-    pub has_local_commit: bool,
-    pub uri: Option<S3PackageUri>,
-    pub remote_display: Option<String>,
-    /// The autosync watcher's `Other` pause message for this namespace,
-    /// fetched with the list data. `Some` means the row is autosync-paused
-    /// for a reason the status string cannot carry, so it renders red with
-    /// this reason as its third line; `None` means no such pause. Sourced
-    /// directly from the backend's authoritative paused map — there is no
-    /// frontend cache to go stale.
-    pub paused_reason: Option<String>,
-    /// The stable reason discriminant for the pause (`"pullConflict"`,
-    /// `"other"`, …), paired with `paused_reason`. `Some` exactly when
-    /// `paused_reason` is; lets the row pick conflict- vs. generic guidance
-    /// without re-parsing the message.
-    pub paused_kind: Option<String>,
-    /// The active role cannot reach this row's bucket. The row explains
-    /// itself with `no_access_reason` and must **not** offer Login: the
-    /// session is fine, so signing in again re-vends the same denied role.
-    pub no_access: bool,
-    /// Why the row is marked, naming the active role. `Some` exactly when
-    /// `no_access` is.
-    pub no_access_reason: Option<String>,
-    /// The host whose role selector the switch affordance opens. `Some`
-    /// only when the user holds more than one role there, so a single-role
-    /// user never gets a dead-end button.
-    pub role_switch_host: Option<String>,
 }
 
 /// A deep-link banner to surface on the installed-package page after
@@ -852,19 +726,6 @@ pub struct UpdateInfo {
 
 // ── Data-fetching commands ──────────────────────────────────
 
-pub async fn get_installed_package_data(
-    namespace: String,
-    filter: Option<String>,
-) -> Result<InstalledPackageData, String> {
-    #[derive(Serialize)]
-    #[serde(rename_all = "camelCase")]
-    struct Args {
-        namespace: String,
-        filter: Option<String>,
-    }
-    engine::invoke("get_installed_package_data", &Args { namespace, filter }).await
-}
-
 /// Read everything the v2 package page draws, for one package.
 ///
 /// One read for the page rather than one per region — see
@@ -1010,24 +871,6 @@ pub async fn validate_commit_candidate(
     .await
 }
 
-pub async fn get_merge_data(namespace: String) -> Result<MergeData, String> {
-    #[derive(Serialize)]
-    #[serde(rename_all = "camelCase")]
-    struct Args {
-        namespace: String,
-    }
-    engine::invoke("get_merge_data", &Args { namespace }).await
-}
-
-pub async fn get_latest_loss(namespace: String) -> Result<LatestLoss, String> {
-    #[derive(Serialize)]
-    #[serde(rename_all = "camelCase")]
-    struct Args {
-        namespace: String,
-    }
-    engine::invoke("get_latest_loss", &Args { namespace }).await
-}
-
 pub async fn get_login_data(host: String, back: String) -> Result<LoginData, String> {
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
@@ -1121,10 +964,6 @@ pub async fn complete_path(prefix: String) -> Result<Vec<String>, String> {
 
 pub async fn get_setup_data() -> Result<SetupData, String> {
     engine::invoke_unit("get_setup_data").await
-}
-
-pub async fn get_installed_packages_list_data() -> Result<InstalledPackagesListData, String> {
-    engine::invoke_unit("get_installed_packages_list_data").await
 }
 
 /// v2's package list, light phase. Every row arrives `provisional`.
@@ -1473,22 +1312,8 @@ pub async fn get_main_page_recent_files() -> Result<MainPageRecentFilesData, Str
     engine::invoke_unit("get_main_page_recent_files").await
 }
 
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RefreshedPackageStatus {
-    pub status: String,
-    pub has_changes: bool,
-    /// See [`PackageItemData::no_access`]. Carried here too, so a denial
-    /// the heavy phase discovers reaches a row the light phase's bucket
-    /// list had cleared.
-    pub no_access: bool,
-    pub no_access_reason: Option<String>,
-    pub role_switch_host: Option<String>,
-}
-
-/// Payload of the `package-status-changed` engine event. Same shape as
-/// [`RefreshedPackageStatus`] plus the namespace it applies to, so the
-/// list/detail pages can match a row by namespace.
+/// Payload of the `package-status-changed` engine event, with the namespace
+/// it applies to, so a page can match a package by namespace.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PackageStatusEvent {
@@ -1531,31 +1356,6 @@ pub struct PausedEvent {
 }
 
 pub const AUTOSYNC_PAUSED_EVENT: &str = "autosync-paused";
-
-/// Point-in-time view of the autosync watcher's per-namespace state.
-/// Returned by `get_autosync_snapshot`; the UI uses it to re-hydrate
-/// the paused banner when a page mounts after the watcher already
-/// paused a namespace (the `autosync-paused` event alone would miss
-/// those pauses).
-#[derive(Clone, Debug, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct WatcherSnapshot {
-    pub paused: Vec<PausedEvent>,
-}
-
-pub async fn get_autosync_snapshot() -> Result<WatcherSnapshot, String> {
-    #[derive(Serialize)]
-    struct Args {}
-    engine::invoke("get_autosync_snapshot", &Args {}).await
-}
-
-pub async fn refresh_package_status(namespace: String) -> Result<RefreshedPackageStatus, String> {
-    #[derive(Serialize)]
-    struct Args {
-        namespace: String,
-    }
-    engine::invoke("refresh_package_status", &Args { namespace }).await
-}
 
 pub async fn handle_remote_package(uri: String) -> Result<RemotePackageResult, String> {
     #[derive(Serialize)]
@@ -1636,15 +1436,6 @@ pub async fn package_commit(
     .await
 }
 
-pub async fn package_push(namespace: String, uri: Option<S3PackageUri>) -> Result<String, String> {
-    #[derive(Serialize)]
-    struct Args {
-        namespace: String,
-        uri: Option<S3PackageUri>,
-    }
-    engine::invoke("package_push", &Args { namespace, uri }).await
-}
-
 pub async fn package_publish(
     namespace: String,
     uri: Option<S3PackageUri>,
@@ -1707,15 +1498,6 @@ pub async fn update_publish_settings(
         },
     )
     .await
-}
-
-pub async fn update_autosync_settings(settings: AutosyncSettingsData) -> Result<(), String> {
-    #[derive(Serialize)]
-    #[serde(rename_all = "camelCase")]
-    struct Args {
-        settings: AutosyncSettingsData,
-    }
-    engine::invoke("update_autosync_settings", &Args { settings }).await
 }
 
 /// Some of autosync's settings; every `None` stays as stored. The pull
@@ -1787,24 +1569,13 @@ pub async fn update_log_settings(level: String) -> Result<(), String> {
 
 /// Turn an experiment on or off. `None` leaves a flag as it is — a caller that
 /// knows about one experiment must not reset another.
-pub async fn update_experimental_settings(
-    entire_package_sync: Option<bool>,
-    agent_tasks: Option<bool>,
-) -> Result<(), String> {
+pub async fn update_experimental_settings(agent_tasks: Option<bool>) -> Result<(), String> {
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
     struct Args {
-        entire_package_sync: Option<bool>,
         agent_tasks: Option<bool>,
     }
-    engine::invoke(
-        "update_experimental_settings",
-        &Args {
-            entire_package_sync,
-            agent_tasks,
-        },
-    )
-    .await
+    engine::invoke("update_experimental_settings", &Args { agent_tasks }).await
 }
 
 /// Replace `task_settings.json`.
@@ -1814,15 +1585,6 @@ pub async fn update_task_settings(settings: TaskSettings) -> Result<(), String> 
         settings: TaskSettings,
     }
     engine::invoke("update_task_settings", &Args { settings }).await
-}
-
-/// Choose the design generation. The next page that asks draws it.
-pub async fn update_design_settings(design: Design) -> Result<(), String> {
-    #[derive(Serialize)]
-    struct Args {
-        design: Design,
-    }
-    engine::invoke("update_design_settings", &Args { design }).await
 }
 
 /// Record which files a package keeps; `folders` is read only for a folders
@@ -1996,15 +1758,6 @@ pub async fn package_uninstall(
         },
     )
     .await
-}
-
-pub async fn package_install_paths(uri: String, paths: Vec<String>) -> Result<String, String> {
-    #[derive(Serialize)]
-    struct Args {
-        uri: String,
-        paths: Vec<String>,
-    }
-    engine::invoke("package_install_paths", &Args { uri, paths }).await
 }
 
 pub async fn package_create(
@@ -2202,16 +1955,6 @@ pub async fn erase_auth(host: String) -> Result<String, String> {
 pub struct RolesData {
     pub current: String,
     pub available: Vec<String>,
-}
-
-/// Fetch the host's roles. Takes that host's credential single-flight lock, so
-/// call it lazily — never as part of a bulk page load.
-pub async fn get_roles(host: String) -> Result<RolesData, String> {
-    #[derive(Serialize)]
-    struct Args {
-        host: String,
-    }
-    engine::invoke("get_roles", &Args { host }).await
 }
 
 /// Switch the host's primary role. The backend expires the stored credentials
@@ -2490,11 +2233,6 @@ pub async fn collect_diagnostic_logs() -> Result<String, String> {
     engine::invoke_unit("collect_diagnostic_logs").await
 }
 
-/// Show the saved diagnostic zip in its folder; the engine knows where it is.
-pub async fn reveal_diagnostic_logs() -> Result<String, String> {
-    engine::invoke_unit("reveal_diagnostic_logs").await
-}
-
 /// Send the diagnostic zip to Quilt; `message` is what the user wrote about the
 /// problem, if anything.
 pub async fn send_crash_report(
@@ -2514,38 +2252,15 @@ pub async fn send_crash_report(
 mod tests {
     use super::{
         CommitViolation, CommitWorkflows, EntryCounts, EntryList, FilesData, KeepingScope,
-        KeptReason, LatestLoss, MergeBlock, PackageContextData, PackageItemData, PackageSize,
-        PullOutcome, PullPreview, ResolveData, RevisionHistoryData, RolesData, ViolationField,
-        WorkflowInfo, WorkflowIntent,
+        KeptReason, LatestLoss, MergeBlock, PackageContextData, PackageSize, PullOutcome,
+        PullPreview, ResolveData, RevisionHistoryData, RolesData, ViolationField, WorkflowInfo,
+        WorkflowIntent,
     };
     use quilt_ui_kit::RowDownloads;
 
-    /// Headless draws v2 whatever design is saved, also after a reconnect
-    /// to a desktop engine restarted as headless; a desktop engine draws the
-    /// saved one.
-    #[wasm_bindgen_test::wasm_bindgen_test]
-    async fn headless_draws_v2_over_a_saved_v1() {
-        use crate::engine::fake::{FakeEngine, ask};
-        use quilt_ui_kit::test_support::sleep_ms;
-
-        let engine = FakeEngine::install();
-        let _asked = ask("get_toasts");
-        sleep_ms(0).await;
-        engine.hello();
-        sleep_ms(0).await;
-        assert_eq!(super::Design::V1.drawn(), super::Design::V1);
-
-        engine.close();
-        sleep_ms(0).await;
-        engine.as_headless();
-        engine.hello();
-        sleep_ms(0).await;
-        assert_eq!(super::Design::V1.drawn(), super::Design::V2);
-    }
-
     /// On headless an https link opens from the tab and never reaches the
     /// engine, whose machine is seldom the reader's; an http link goes to the
-    /// engine, which refuses it. Diagnostics Reveal goes to the engine too.
+    /// engine, which refuses it.
     #[wasm_bindgen_test::wasm_bindgen_test]
     async fn headless_opens_https_here_and_sends_http_to_the_engine() {
         use crate::engine::fake::{FakeEngine, ask};
@@ -2572,21 +2287,18 @@ mod tests {
             recorded.as_string().as_deref(),
             Some("https://quilt.test/b/bucket")
         );
-        // The fake engine never answers, so each call waits on its own task.
+        // The fake engine never answers, so the call waits on its own task.
         wasm_bindgen_futures::spawn_local(async {
             let _ = super::open_in_web_browser("http://quilt.test".to_owned()).await;
-        });
-        wasm_bindgen_futures::spawn_local(async {
-            let _ = super::reveal_diagnostic_logs().await;
         });
         sleep_ms(0).await;
         let asked: Vec<_> = engine
             .requests()
             .iter()
             .filter_map(|request| request["cmd"].as_str().map(str::to_owned))
-            .filter(|cmd| cmd.contains("browser") || cmd.contains("reveal"))
+            .filter(|cmd| cmd.contains("browser"))
             .collect();
-        assert_eq!(asked, ["open_in_web_browser", "reveal_diagnostic_logs"]);
+        assert_eq!(asked, ["open_in_web_browser"]);
     }
 
     /// Anchored identically in the backend's `files_data_wire_form_is_verbatim`.
@@ -2792,38 +2504,6 @@ mod tests {
         );
         assert_eq!(unpublished.frees, None);
         assert_eq!(data.removable_frees, Some(1_200_000));
-    }
-
-    /// The mirror struct must deserialize the exact JSON the backend
-    /// (`quilt_sync::commands::package_list::InstalledPackageListItem`)
-    /// serializes. This literal is anchored identically in the backend's
-    /// `package_item_data_wire_form_is_verbatim`; if the two drift, the
-    /// list silently drops the pause reason (or a whole field) at the
-    /// engine boundary — the exact class of bug this data-driven design
-    /// exists to prevent.
-    #[test]
-    fn package_item_data_wire_form_is_verbatim() {
-        let item = serde_json::from_str::<PackageItemData>(
-            r#"{"namespace":"acme/data","status":"paused","hasChanges":false,"hasLocalCommit":false,"uri":null,"remoteDisplay":null,"pausedReason":"workflow rejected metadata","pausedKind":"other","noAccess":true,"noAccessReason":"Current role ReadOnly has no access to this bucket","roleSwitchHost":"quilt.test"}"#,
-        )
-        .unwrap();
-        assert_eq!(item.namespace.to_string(), "acme/data");
-        assert_eq!(item.status, "paused");
-        assert!(!item.has_changes);
-        assert!(!item.has_local_commit);
-        assert!(item.uri.is_none());
-        assert!(item.remote_display.is_none());
-        assert_eq!(
-            item.paused_reason.as_deref(),
-            Some("workflow rejected metadata")
-        );
-        assert_eq!(item.paused_kind.as_deref(), Some("other"));
-        assert!(item.no_access);
-        assert_eq!(
-            item.no_access_reason.as_deref(),
-            Some("Current role ReadOnly has no access to this bucket")
-        );
-        assert_eq!(item.role_switch_host.as_deref(), Some("quilt.test"));
     }
 
     /// The mirror types must deserialize the exact tagged JSON the backend

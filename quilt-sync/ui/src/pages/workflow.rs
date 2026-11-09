@@ -1,16 +1,10 @@
-//! Shared workflow-selection control.
+//! The workflow choice's model, shared by the commit page and the package
+//! page's bucket form.
 //!
 //! The backend's [`CommitWorkflows`] state maps to a render model whose option
 //! list carries, per entry, the [`WorkflowIntent`] it submits. The selected
-//! index into that list is the whole client-side state. Both the commit dialog
-//! (`pages::commit`) and the set-remote popup (`components::set_remote_popup`)
-//! reuse this so their dropdowns are byte-for-byte the same catalog-parity
-//! control.
+//! index into that list is the whole client-side state.
 
-use leptos::prelude::*;
-use leptos::task::spawn_local;
-
-use crate::commands;
 use crate::commands::{CommitWorkflows, WorkflowData, WorkflowInfo, WorkflowIntent};
 
 // ── Workflow dropdown model ──
@@ -23,12 +17,6 @@ pub struct WorkflowOption {
     pub label: String,
     pub intent: WorkflowIntent,
     pub disabled: bool,
-    /// Catalog HTTPS link to this workflow's declared metadata schema, or
-    /// `None` when it declares none. Surfaced in the hint row when this option
-    /// is selected. The `None` head carries no schema links.
-    pub metadata_schema_url: Option<String>,
-    /// Catalog HTTPS link to this workflow's declared entries schema.
-    pub entries_schema_url: Option<String>,
 }
 
 /// Display label for a single declared workflow: its name, or its id when the
@@ -37,12 +25,8 @@ fn workflow_label(w: &WorkflowInfo) -> String {
     w.name.clone().unwrap_or_else(|| w.id.clone())
 }
 
-/// The previous revision's workflow stamp, distinguishing the three cases the
-/// override note must tell apart.
-///
-/// `preselected_index` only needs the concrete `Named` id, but the note also
-/// cares whether the previous revision was never pushed versus explicitly
-/// stamped with no workflow — so this is the one place that distinction lives.
+/// The previous revision's workflow stamp: never pushed, explicitly stamped
+/// with no workflow, or a named workflow.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PreviousWorkflow {
     NeverPushed,
@@ -63,49 +47,11 @@ impl PreviousWorkflow {
     }
 
     /// The workflow id `preselected_index` treats as the previous pick: only a
-    /// concrete named workflow, collapsing never-pushed and explicit-none (the
-    /// same behavior preselection had before this note existed).
+    /// concrete named workflow, collapsing never-pushed and explicit-none.
     pub fn preselect_id(&self) -> Option<&str> {
         match self {
             Self::Named(id) => Some(id),
             Self::NeverPushed | Self::ExplicitNone => None,
-        }
-    }
-}
-
-/// Neutral note shown under the dropdown when the currently-selected workflow
-/// diverges from what the previous revision stamped, so the override (the
-/// bucket default winning over the previous pick in `preselected_index`) is
-/// visible. `None` means no divergence to report.
-///
-/// Pure and signal-free: the render layer recomputes it whenever the selection
-/// changes.
-pub fn previous_workflow_note(
-    previous: &PreviousWorkflow,
-    current: &WorkflowIntent,
-    workflows: &[WorkflowInfo],
-) -> Option<String> {
-    match previous {
-        // Nothing was ever stamped, so nothing can be overridden.
-        PreviousWorkflow::NeverPushed => None,
-        PreviousWorkflow::ExplicitNone => match current {
-            WorkflowIntent::NoWorkflow => None,
-            WorkflowIntent::BucketDefault | WorkflowIntent::Named(_) => {
-                Some("The previous revision used no workflow.".to_string())
-            }
-        },
-        PreviousWorkflow::Named(prev) => {
-            if matches!(current, WorkflowIntent::Named(id) if id == prev) {
-                None
-            } else {
-                let label = workflows
-                    .iter()
-                    .find(|w| &w.id == prev)
-                    .map_or_else(|| prev.clone(), workflow_label);
-                Some(format!(
-                    "The previous revision used the \"{label}\" workflow."
-                ))
-            }
         }
     }
 }
@@ -145,9 +91,6 @@ pub fn workflow_options(
         label: none_label,
         intent: WorkflowIntent::NoWorkflow,
         disabled: is_workflow_required,
-        // The `None` head declares no workflow, so it carries no schema links.
-        metadata_schema_url: None,
-        entries_schema_url: None,
     }];
 
     options.extend(workflows.iter().map(|w| {
@@ -161,8 +104,6 @@ pub fn workflow_options(
             label,
             intent: WorkflowIntent::Named(w.id.clone()),
             disabled: false,
-            metadata_schema_url: w.metadata_schema_url.clone(),
-            entries_schema_url: w.entries_schema_url.clone(),
         }
     }));
 
@@ -194,7 +135,7 @@ pub fn workflow_options(
 /// 3. Required bucket with no usable default (genuinely no default): the
 ///    previous revision's workflow if present, else index 0 (`None`, disabled).
 ///
-/// A first push (set-remote popup) has no previous revision, so it passes
+/// A first push (the bucket form) has no previous revision, so it passes
 /// `previous_workflow_id = None` and the bucket default is preselected.
 pub fn preselected_index(
     workflows: &[WorkflowInfo],
@@ -224,8 +165,8 @@ pub fn preselected_index(
     0
 }
 
-/// Which of the three [`CommitWorkflows`] states the section renders, plus the
-/// per-state chrome the render needs.
+/// Which of the [`CommitWorkflows`] states the choice renders, plus what each
+/// state's render needs.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WorkflowViewKind {
     /// The bucket has a config: render the dropdown. Carries whether the bucket
@@ -242,7 +183,7 @@ pub enum WorkflowViewKind {
     Invalid { reason: String },
 }
 
-/// The workflow section, resolved from the backend state.
+/// The workflow choice, resolved from the backend state.
 ///
 /// `options` and `initial` drive both display and submit uniformly across all
 /// three states: submit reads `options[selected].intent`. On the non-`Available`
@@ -254,17 +195,12 @@ pub struct WorkflowView {
     pub kind: WorkflowViewKind,
     pub options: Vec<WorkflowOption>,
     pub initial: usize,
-    /// Catalog HTTPS link to the bucket's `.quilt/workflows/config.yml`, shown
-    /// in the hint row whenever the bucket has a config. `None` on the
-    /// non-`Available` states (no config to link) and when there is no catalog
-    /// host to link against.
-    pub config_url: Option<String>,
 }
 
-/// Map the backend [`CommitWorkflows`] state to the section's render model.
+/// Map the backend [`CommitWorkflows`] state to the choice's render model.
 ///
 /// `settings_workflow_id` is the publish settings' default workflow, which the
-/// commit dialog preselects first so it starts from what one-click Publish
+/// commit page preselects first so it starts from what one-click Publish
 /// would send. It applies only when the bucket declares it; otherwise
 /// [`preselected_index`] decides, unchanged. Callers with no publish to mirror
 /// pass `None`.
@@ -278,7 +214,7 @@ pub fn build_workflow_view(
             workflows,
             default_workflow,
             is_workflow_required,
-            config_url,
+            ..
         } => WorkflowView {
             kind: WorkflowViewKind::Available {
                 is_workflow_required: *is_workflow_required,
@@ -302,7 +238,6 @@ pub fn build_workflow_view(
                     },
                     |pos| pos + 1,
                 ),
-            config_url: config_url.clone(),
         },
         // Ungoverned bucket: a single disabled `None`. Submit sends
         // `BucketDefault`, which on a config-less bucket resolves to
@@ -313,11 +248,8 @@ pub fn build_workflow_view(
                 label: "None".to_string(),
                 intent: WorkflowIntent::BucketDefault,
                 disabled: true,
-                metadata_schema_url: None,
-                entries_schema_url: None,
             }],
             initial: 0,
-            config_url: None,
         },
         // Config load failed (transient): no dropdown, just a notice. Submit
         // sends `BucketDefault` so the real default re-resolves at commit time
@@ -328,17 +260,13 @@ pub fn build_workflow_view(
                 label: "Bucket default".to_string(),
                 intent: WorkflowIntent::BucketDefault,
                 disabled: true,
-                metadata_schema_url: None,
-                entries_schema_url: None,
             }],
             initial: 0,
-            config_url: None,
         },
         // Config is malformed: no dropdown, a notice naming the reason. Submit
         // still carries `BucketDefault`; the commit will fail loudly against the
-        // invalid config (semantics unchanged), but the user is told up front —
-        // and given a link to open the broken config and fix it.
-        CommitWorkflows::Invalid { reason, config_url } => WorkflowView {
+        // invalid config (semantics unchanged), but the user is told up front.
+        CommitWorkflows::Invalid { reason, .. } => WorkflowView {
             kind: WorkflowViewKind::Invalid {
                 reason: reason.clone(),
             },
@@ -346,11 +274,8 @@ pub fn build_workflow_view(
                 label: "Bucket default".to_string(),
                 intent: WorkflowIntent::BucketDefault,
                 disabled: true,
-                metadata_schema_url: None,
-                entries_schema_url: None,
             }],
             initial: 0,
-            config_url: config_url.clone(),
         },
     }
 }
@@ -393,314 +318,12 @@ pub fn missing_settings_workflow<'a>(
     }
 }
 
-/// The warning for [`missing_settings_workflow`], ending in a link to
-/// Settings where the default is changed.
-fn missing_settings_workflow_view(id: &str) -> impl IntoView + use<> {
-    let text = format!(
-        "⚠ Your default workflow in Settings, \"{id}\", isn't one of this bucket's \
-         workflows, so Publish would fail here. Change it in"
-    );
-    view! {
-        <span class="qui-settings-hint qui-workflow-note-warn">
-            {text}
-            " "
-            <a class="qui-workflow-link" href="/settings">"Settings"</a>
-            "."
-        </span>
-    }
-}
-
-/// A helper line ending in a link to Settings, where the commit defaults are
-/// edited: `{text} Settings.`
-pub fn settings_hint_view(text: &'static str) -> impl IntoView {
-    view! {
-        <span class="qui-settings-hint">
-            {text}
-            " "
-            <a class="qui-workflow-link" href="/settings">"Settings"</a>
-            "."
-        </span>
-    }
-}
-
-// ── Workflow section ──
-
-#[component]
-pub fn WorkflowSection(
-    view: WorkflowView,
-    selected: RwSignal<usize>,
-    /// Neutral divergence note, live over `selected`. Rendered only in the
-    /// `Available` state; the other states have no dropdown to override. A first
-    /// push has no previous revision, so the popup passes a note that is always
-    /// `None`.
-    note: Memo<Option<String>>,
-    /// The publish settings' default workflow id. While it is the selection,
-    /// a hint says it comes from Settings. Callers with no publish to mirror
-    /// leave it out.
-    #[prop(optional_no_strip)]
-    settings_workflow: Option<String>,
-) -> impl IntoView {
-    let missing = missing_settings_workflow(&view, settings_workflow.as_deref())
-        .map(|id| missing_settings_workflow_view(id).into_any());
-    let WorkflowView {
-        kind,
-        options,
-        initial,
-        config_url,
-    } = view;
-
-    // The warning renders inside the section's own block, so it sits right
-    // under the selector instead of a whole form gap below it.
-    match kind {
-        WorkflowViewKind::Available {
-            is_workflow_required,
-        } => {
-            // Why this workflow is selected, while Settings' pick is selected.
-            let hint_intents: Vec<WorkflowIntent> =
-                options.iter().map(|o| o.intent.clone()).collect();
-            let settings_row = move || {
-                shows_settings_workflow_hint(
-                    hint_intents.get(selected.get()),
-                    settings_workflow.as_deref(),
-                )
-                .then(|| settings_hint_view("This workflow is your default in"))
-            };
-            let settings_rows = view! { {settings_row} {missing} }.into_any();
-            workflow_dropdown(
-                options,
-                selected,
-                initial,
-                is_workflow_required,
-                note,
-                config_url,
-                settings_rows,
-            )
-            .into_any()
-        }
-        // Ungoverned bucket: a single disabled `None`, plus a hint explaining
-        // why there is no choice to make. Submit already carries `BucketDefault`
-        // via `options[0]`.
-        WorkflowViewKind::NotConfigured => view! {
-            <div class="qui-workflow">
-                <p class="qui-workflow-field">
-                    <label class="qui-workflow-label" for="workflow">"Workflow"</label>
-                    <select class="qui-workflow-select" id="workflow" name="workflow" disabled>
-                        <option selected>"None"</option>
-                    </select>
-                </p>
-                <span class="qui-workflow-hint">"This bucket has no workflow configuration."</span>
-                {missing}
-            </div>
-        }
-        .into_any(),
-        // Config load failed (transient): no dropdown, just an inline soft
-        // notice. Submit does not block; it re-resolves the bucket default at
-        // commit time. The notice does NOT promise the default will apply —
-        // only that the commit will try it — since the load may keep failing.
-        WorkflowViewKind::Unavailable => view! {
-            <div class="qui-workflow">
-                <p class="qui-workflow-field">
-                    <label class="qui-workflow-label" for="workflow">"Workflow"</label>
-                    <span class="qui-workflow-hint">
-                        "⚠ Couldn't load this bucket's workflows. Commit will try the bucket's default workflow."
-                    </span>
-                </p>
-            </div>
-        }
-        .into_any(),
-        // Config is malformed: an inline notice that names the reason and warns
-        // that commits will fail until the config is fixed — no false promise
-        // of a bucket-default fallback. When a catalog host is known, the notice
-        // links the offending config object so the user can open and fix it.
-        WorkflowViewKind::Invalid { reason } => {
-            let config_link = config_url
-                .map(|url| view! { " " {catalog_link_view("open config.yml", url)} });
-            view! {
-                <div class="qui-workflow">
-                    <p class="qui-workflow-field">
-                        <label class="qui-workflow-label" for="workflow">"Workflow"</label>
-                        <span class="qui-workflow-error">
-                            {format!("⚠ This bucket's workflow configuration is invalid ({reason}). Commits to this bucket will fail until it's fixed.")}
-                            {config_link}
-                        </span>
-                    </p>
-                </div>
-            }
-            .into_any()
-        }
-    }
-}
-
-/// One catalog "Open in catalog" link in the hint row: its display label and
-/// the URL it opens. Kept as a plain pair so the row is built from pure data.
-type CatalogLink = (&'static str, String);
-
-/// The selected workflow's two schema links `(metadata, entries)`, projected out
-/// of the option list so the reactive links row captures only these two strings
-/// per option rather than cloning every [`WorkflowOption`].
-type SchemaUrls = (Option<String>, Option<String>);
-
-/// Build the "Open in catalog" links for the current selection: the bucket's
-/// `config.yml` (always, when the bucket has a config), plus the selected
-/// workflow's metadata / entries schemas when it declares them.
-fn catalog_links(
-    config_url: Option<&String>,
-    selected_schemas: Option<&SchemaUrls>,
-) -> Vec<CatalogLink> {
-    let mut links = Vec::new();
-    if let Some(url) = config_url {
-        links.push(("config.yml", url.clone()));
-    }
-    if let Some((metadata_schema_url, entries_schema_url)) = selected_schemas {
-        if let Some(url) = metadata_schema_url {
-            links.push(("metadata schema", url.clone()));
-        }
-        if let Some(url) = entries_schema_url {
-            links.push(("entries schema", url.clone()));
-        }
-    }
-    links
-}
-
-/// A single hint-row anchor: opens the catalog URL in the system browser via
-/// the same [`commands::open_in_web_browser`] mechanism the other catalog
-/// links use, rather than navigating the webview. The trailing ↗ glyph marks
-/// it as an external link (the app has no dedicated inline external-link icon).
-fn catalog_link_view(label: &'static str, url: String) -> impl IntoView {
-    let href = url.clone();
-    view! {
-        <a
-            class="qui-workflow-link"
-            href=href
-            on:click=move |ev| {
-                ev.prevent_default();
-                let url = url.clone();
-                spawn_local(async move {
-                    let _ = commands::open_in_web_browser(url).await;
-                });
-            }
-        >
-            {label}
-            " ↗"
-        </a>
-    }
-}
-
-/// The [`CommitWorkflows::Available`] dropdown.
-fn workflow_dropdown(
-    options: Vec<WorkflowOption>,
-    selected: RwSignal<usize>,
-    initial: usize,
-    is_workflow_required: bool,
-    note: Memo<Option<String>>,
-    config_url: Option<String>,
-    // The Settings lines under the selector: why the selection came from
-    // Settings, or that Settings names a workflow this bucket can't use.
-    settings_rows: AnyView,
-) -> impl IntoView {
-    // Intents indexed by option position — used to decide whether the current
-    // selection is the (disabled) `None` item, which drives the required hint.
-    let intents: Vec<WorkflowIntent> = options.iter().map(|o| o.intent.clone()).collect();
-
-    let show_required_hint = move || {
-        is_workflow_required
-            && intents
-                .get(selected.get())
-                .is_some_and(|i| *i == WorkflowIntent::NoWorkflow)
-    };
-
-    // The hint row recomputes over `selected`: the schema links follow the
-    // currently-selected workflow, while `config.yml` stays put. Project the
-    // options down to just the two schema URLs the row reads, so the long-lived
-    // closure captures those rather than a clone of every `WorkflowOption`.
-    let schema_urls: Vec<SchemaUrls> = options
-        .iter()
-        .map(|o| (o.metadata_schema_url.clone(), o.entries_schema_url.clone()))
-        .collect();
-    let links_row = move || {
-        let idx = selected.get();
-        let links = catalog_links(config_url.as_ref(), schema_urls.get(idx));
-        (!links.is_empty()).then(|| {
-            // Comma-separate the anchors: a plain text node between each pair.
-            let mut anchors: Vec<AnyView> = Vec::new();
-            for (i, (label, url)) in links.into_iter().enumerate() {
-                if i > 0 {
-                    anchors.push(", ".into_any());
-                }
-                anchors.push(catalog_link_view(label, url).into_any());
-            }
-            view! {
-                <p class="qui-workflow-links">
-                    <span class="qui-workflow-links-label">"Open in catalog: "</span>
-                    {anchors}
-                </p>
-            }
-        })
-    };
-
-    // The initial selection is rendered as the HTML boolean `selected`
-    // attribute on the matching option. Unlike a `<select prop:value=…>`
-    // (which tachys applies before the options mount, making it a no-op), the
-    // attribute survives mount order and works even on the disabled `None`
-    // option. `initial` is the same index that seeds `selected` in the parent,
-    // so what the browser shows and what submit sends cannot diverge. The
-    // `on:change` handler keeps the `selected` signal in step thereafter.
-    let option_views = options
-        .into_iter()
-        .enumerate()
-        .map(|(i, o)| {
-            view! {
-                <option value=i.to_string() selected=i == initial disabled=o.disabled>
-                    {o.label}
-                </option>
-            }
-        })
-        .collect::<Vec<_>>();
-
-    view! {
-        <div class="qui-workflow">
-            <p class="qui-workflow-field">
-                <label class="qui-workflow-label" for="workflow">"Workflow"</label>
-                <select
-                    class="qui-workflow-select"
-                    id="workflow"
-                    name="workflow"
-                    on:change=move |ev| {
-                        if let Ok(i) = event_target_value(&ev).parse::<usize>() {
-                            selected.set(i);
-                        }
-                    }
-                >
-                    {option_views}
-                </select>
-            </p>
-            <Show when=show_required_hint>
-                <span class="qui-workflow-error">"Workflow is required for this bucket."</span>
-            </Show>
-            // Divergence note: appears when the current pick differs from the
-            // previous revision's stamp, and disappears when they match again.
-            // Warning-coloured — QuiltSync's default-wins preselection can
-            // silently switch the workflow away from the previous pick, so the
-            // divergence is flagged rather than whispered.
-            {move || {
-                note.get().map(|text| view! {
-                    <p class="qui-workflow-hint qui-workflow-note-warn">{text}</p>
-                })
-            }}
-            {settings_rows}
-            // Catalog links for the current selection (config.yml + the
-            // selected workflow's schemas), recomputed as the selection changes.
-            {links_row}
-        </div>
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        PreviousWorkflow, WorkflowOption, WorkflowViewKind, build_workflow_view, catalog_links,
-        missing_settings_workflow, preselected_index, previous_workflow_note,
-        shows_settings_workflow_hint, workflow_options,
+        PreviousWorkflow, WorkflowOption, WorkflowViewKind, build_workflow_view,
+        missing_settings_workflow, preselected_index, shows_settings_workflow_hint,
+        workflow_options,
     };
     use crate::commands::{CommitWorkflows, WorkflowData, WorkflowInfo, WorkflowIntent};
 
@@ -711,21 +334,6 @@ mod tests {
             description: None,
             metadata_schema_url: None,
             entries_schema_url: None,
-        }
-    }
-
-    /// A declared workflow carrying catalog schema links, for the hint-row tests.
-    fn wf_with_schemas(
-        id: &str,
-        metadata_schema_url: Option<&str>,
-        entries_schema_url: Option<&str>,
-    ) -> WorkflowInfo {
-        WorkflowInfo {
-            id: id.to_string(),
-            name: None,
-            description: None,
-            metadata_schema_url: metadata_schema_url.map(str::to_string),
-            entries_schema_url: entries_schema_url.map(str::to_string),
         }
     }
 
@@ -742,24 +350,18 @@ mod tests {
                     label: "None".to_string(),
                     intent: WorkflowIntent::NoWorkflow,
                     disabled: false,
-                    metadata_schema_url: None,
-                    entries_schema_url: None,
                 },
                 WorkflowOption {
                     // The bucket default gets the " (default)" suffix.
                     label: "Alpha WF (default)".to_string(),
                     intent: WorkflowIntent::Named("alpha".to_string()),
                     disabled: false,
-                    metadata_schema_url: None,
-                    entries_schema_url: None,
                 },
                 WorkflowOption {
                     // No name → fall back to the id as the label; not the default.
                     label: "beta".to_string(),
                     intent: WorkflowIntent::Named("beta".to_string()),
                     disabled: false,
-                    metadata_schema_url: None,
-                    entries_schema_url: None,
                 },
             ]
         );
@@ -862,8 +464,6 @@ mod tests {
                 label: "None (default)".to_string(),
                 intent: WorkflowIntent::NoWorkflow,
                 disabled: false,
-                metadata_schema_url: None,
-                entries_schema_url: None,
             }]
         );
     }
@@ -906,8 +506,6 @@ mod tests {
                 label: "None".to_string(),
                 intent: WorkflowIntent::BucketDefault,
                 disabled: true,
-                metadata_schema_url: None,
-                entries_schema_url: None,
             }]
         );
     }
@@ -942,12 +540,6 @@ mod tests {
         );
         assert_eq!(view.initial, 0);
         assert_eq!(view.options[0].intent, WorkflowIntent::BucketDefault);
-        // The malformed-config view threads the config link through so the
-        // notice can offer an "open config.yml" anchor.
-        assert_eq!(
-            view.config_url.as_deref(),
-            Some("https://cat/b/b/tree/.quilt/workflows/config.yml")
-        );
     }
 
     // ── Preselection: the bucket default always wins over the previous pick ──
@@ -998,7 +590,7 @@ mod tests {
         assert_eq!(preselected_index(&wfs, Some("ghost"), None, true), 0);
     }
 
-    // ── First push (set-remote popup): no previous → bucket default ──
+    // ── First push (the bucket form): no previous → bucket default ──
 
     #[test]
     fn preselect_first_push_lands_on_bucket_default() {
@@ -1075,20 +667,6 @@ mod tests {
             assert_eq!(view.initial, 0);
             assert_eq!(view.options[0].intent, WorkflowIntent::BucketDefault);
         }
-    }
-
-    #[test]
-    fn note_flags_a_settings_workflow_that_differs_from_the_previous_pick() {
-        let workflows = vec![wf("alpha", Some("Alpha WF")), wf("beta", None)];
-        let note = previous_workflow_note(
-            &PreviousWorkflow::Named("alpha".to_string()),
-            &WorkflowIntent::Named("beta".to_string()),
-            &workflows,
-        );
-        assert_eq!(
-            note.as_deref(),
-            Some("The previous revision used the \"Alpha WF\" workflow.")
-        );
     }
 
     #[test]
@@ -1205,113 +783,6 @@ mod tests {
         assert_eq!(opts[idx].label, "Alpha WF (default)");
     }
 
-    // ── Previous-workflow override note (pure) ──
-
-    #[test]
-    fn note_never_pushed_is_silent() {
-        // No prior stamp → nothing can be overridden, regardless of selection.
-        let wfs = vec![wf("alpha", Some("Alpha WF"))];
-        for current in [
-            WorkflowIntent::BucketDefault,
-            WorkflowIntent::NoWorkflow,
-            WorkflowIntent::Named("alpha".to_string()),
-        ] {
-            assert_eq!(
-                previous_workflow_note(&PreviousWorkflow::NeverPushed, &current, &wfs),
-                None
-            );
-        }
-    }
-
-    #[test]
-    fn note_explicit_none_silent_when_current_is_no_workflow() {
-        let wfs = vec![wf("alpha", Some("Alpha WF"))];
-        assert_eq!(
-            previous_workflow_note(
-                &PreviousWorkflow::ExplicitNone,
-                &WorkflowIntent::NoWorkflow,
-                &wfs
-            ),
-            None
-        );
-    }
-
-    #[test]
-    fn note_explicit_none_flags_divergence_to_a_workflow() {
-        let wfs = vec![wf("alpha", Some("Alpha WF"))];
-        // Current selection is a named workflow → the previous no-workflow is
-        // being overridden.
-        assert_eq!(
-            previous_workflow_note(
-                &PreviousWorkflow::ExplicitNone,
-                &WorkflowIntent::Named("alpha".to_string()),
-                &wfs
-            ),
-            Some("The previous revision used no workflow.".to_string())
-        );
-        // BucketDefault likewise diverges from an explicit no-workflow.
-        assert_eq!(
-            previous_workflow_note(
-                &PreviousWorkflow::ExplicitNone,
-                &WorkflowIntent::BucketDefault,
-                &wfs
-            ),
-            Some("The previous revision used no workflow.".to_string())
-        );
-    }
-
-    #[test]
-    fn note_named_silent_when_current_matches_previous() {
-        let wfs = vec![wf("alpha", Some("Alpha WF"))];
-        assert_eq!(
-            previous_workflow_note(
-                &PreviousWorkflow::Named("alpha".to_string()),
-                &WorkflowIntent::Named("alpha".to_string()),
-                &wfs
-            ),
-            None
-        );
-    }
-
-    #[test]
-    fn note_named_uses_workflow_name_when_in_list() {
-        let wfs = vec![wf("alpha", Some("Alpha WF")), wf("beta", None)];
-        // Current selection differs (another named workflow) → show the
-        // previous workflow's display name.
-        assert_eq!(
-            previous_workflow_note(
-                &PreviousWorkflow::Named("alpha".to_string()),
-                &WorkflowIntent::Named("beta".to_string()),
-                &wfs
-            ),
-            Some("The previous revision used the \"Alpha WF\" workflow.".to_string())
-        );
-        // BucketDefault also diverges from the previous named pick; unnamed
-        // workflow falls back to its id as the label.
-        assert_eq!(
-            previous_workflow_note(
-                &PreviousWorkflow::Named("beta".to_string()),
-                &WorkflowIntent::BucketDefault,
-                &wfs
-            ),
-            Some("The previous revision used the \"beta\" workflow.".to_string())
-        );
-    }
-
-    #[test]
-    fn note_named_falls_back_to_id_when_absent_from_list() {
-        // Previous workflow id no longer declared → use the raw id in the note.
-        let wfs = vec![wf("alpha", Some("Alpha WF"))];
-        assert_eq!(
-            previous_workflow_note(
-                &PreviousWorkflow::Named("ghost".to_string()),
-                &WorkflowIntent::Named("alpha".to_string()),
-                &wfs
-            ),
-            Some("The previous revision used the \"ghost\" workflow.".to_string())
-        );
-    }
-
     #[test]
     fn previous_workflow_from_stamp_and_preselect_id() {
         // Never pushed / explicit-none collapse to no preselect id; a named
@@ -1349,77 +820,5 @@ mod tests {
                 WorkflowIntent::BucketDefault
             );
         }
-    }
-
-    // ── Catalog links (config.yml + per-selection schema links) ──
-
-    #[test]
-    fn view_available_carries_config_and_schema_links() {
-        // The `Available` state threads the config link through and attaches
-        // each declared workflow's schema links to its option; the `None` head
-        // carries none.
-        let workflows = CommitWorkflows::Available {
-            workflows: vec![
-                wf_with_schemas(
-                    "alpha",
-                    Some("https://catalog/b/b/tree/meta.json"),
-                    Some("https://catalog/b/b/tree/entries.json"),
-                ),
-                wf_with_schemas("beta", None, None),
-            ],
-            default_workflow: None,
-            is_workflow_required: false,
-            config_url: Some("https://catalog/b/b/tree/.quilt/workflows/config.yml".to_string()),
-        };
-        let view = build_workflow_view(&workflows, None, None);
-        assert_eq!(
-            view.config_url.as_deref(),
-            Some("https://catalog/b/b/tree/.quilt/workflows/config.yml")
-        );
-        // options: [None, alpha, beta]. The `None` head has no schema links.
-        assert!(view.options[0].metadata_schema_url.is_none());
-        assert!(view.options[0].entries_schema_url.is_none());
-        assert_eq!(
-            view.options[1].metadata_schema_url.as_deref(),
-            Some("https://catalog/b/b/tree/meta.json")
-        );
-        assert_eq!(
-            view.options[1].entries_schema_url.as_deref(),
-            Some("https://catalog/b/b/tree/entries.json")
-        );
-        assert!(view.options[2].metadata_schema_url.is_none());
-    }
-
-    #[test]
-    fn catalog_links_follow_selection() {
-        let config = "https://cat/b/b/tree/.quilt/workflows/config.yml".to_string();
-        // The row reads only the selected option's two schema URLs, projected
-        // out of the option list — so the inputs here are those pairs.
-        let none_head: (Option<String>, Option<String>) = (None, None);
-        let both: (Option<String>, Option<String>) = (
-            Some("https://cat/meta".to_string()),
-            Some("https://cat/entries".to_string()),
-        );
-
-        // `None` selected → only the config link shows.
-        assert_eq!(
-            catalog_links(Some(&config), Some(&none_head)),
-            vec![("config.yml", config.clone())]
-        );
-        // A workflow declaring both schemas → config + both schema links.
-        assert_eq!(
-            catalog_links(Some(&config), Some(&both)),
-            vec![
-                ("config.yml", config.clone()),
-                ("metadata schema", "https://cat/meta".to_string()),
-                ("entries schema", "https://cat/entries".to_string()),
-            ]
-        );
-        // No config link (no catalog host) and a workflow with no schemas →
-        // nothing to show, so the row is hidden.
-        assert_eq!(
-            catalog_links(None, Some(&none_head)),
-            [] as [(&str, String); 0]
-        );
     }
 }

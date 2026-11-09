@@ -54,12 +54,12 @@ use leptos_router::NavigateOptions;
 use leptos_router::hooks::use_navigate;
 
 use crate::commands::{
-    self, AccountHostData, AutosyncPatch, ChangelogEntry, Design, FreedSpace, LogEnv,
-    PublishSettingsData, SettingsData, TaskSettings, TaskSettingsData,
+    self, AccountHostData, AutosyncPatch, ChangelogEntry, FreedSpace, LogEnv, PublishSettingsData,
+    SettingsData, TaskSettings, TaskSettingsData,
 };
 use crate::engine;
 use quilt_ui_kit::{
-    ACKNOWLEDGE_FOR, Button, ButtonVariant, Card, Dialog, HostRowSkeleton, LoadFailure, PageLayout,
+    ACKNOWLEDGE_FOR, Button, ButtonVariant, Card, Dialog, HostRowSkeleton, LoadFailure,
     ToggleRowSkeleton,
 };
 
@@ -82,7 +82,6 @@ pub(crate) type Answer<T> = Pin<Box<dyn Future<Output = Result<T, String>>>>;
 pub(crate) enum Write {
     Autosync(AutosyncPatch),
     Watch(bool),
-    DesignPreview(bool),
     /// Whether the Agent tasks card shows.
     AgentTasks(bool),
     /// Lowercase, as the backend names it.
@@ -121,11 +120,7 @@ fn write_setting(write: Write) -> Answer<()> {
         match write {
             Write::Autosync(patch) => commands::patch_autosync_settings(patch).await,
             Write::Watch(on) => commands::update_fswatcher_settings(on).await,
-            Write::DesignPreview(on) => {
-                let design = if on { Design::V2 } else { Design::V1 };
-                commands::update_design_settings(design).await
-            }
-            Write::AgentTasks(on) => commands::update_experimental_settings(None, Some(on)).await,
+            Write::AgentTasks(on) => commands::update_experimental_settings(Some(on)).await,
             Write::LogLevel(level) => commands::update_log_settings(level).await,
             Write::Publishing(p) => {
                 commands::update_publish_settings(
@@ -180,17 +175,6 @@ const TAURI: SettingsIo = SettingsIo {
 #[component]
 pub fn SettingsV2() -> impl IntoView {
     view! { <SettingsScreen io=TAURI /> }
-}
-
-/// What `/settings` draws while it reads which page it is, for a v2 reader:
-/// the page's own first paint.
-#[component]
-pub fn SettingsV2Skeleton() -> impl IntoView {
-    view! {
-        <PageLayout heading="Settings" banner=().into_any() actions=().into_any()>
-            {skeleton()}
-        </PageLayout>
-    }
 }
 
 /// The header, then the first card's rows still being read.
@@ -304,7 +288,6 @@ struct Fields {
     publish_minutes: RwSignal<String>,
     watch: RwSignal<bool>,
     tray: RwSignal<bool>,
-    design_preview: RwSignal<bool>,
     agent_tasks: RwSignal<bool>,
     /// One of `LOG_LEVELS`.
     log_level: RwSignal<String>,
@@ -329,7 +312,6 @@ impl Fields {
             publish_minutes: RwSignal::new(String::new()),
             watch: RwSignal::new(false),
             tray: RwSignal::new(false),
-            design_preview: RwSignal::new(false),
             agent_tasks: RwSignal::new(false),
             log_level: RwSignal::new(String::new()),
             rules_off: RwSignal::new(BTreeSet::new()),
@@ -361,7 +343,6 @@ struct Written {
     publish_secs: StoredValue<u64>,
     watch: StoredValue<bool>,
     tray: StoredValue<bool>,
-    design_preview: StoredValue<bool>,
     agent_tasks: StoredValue<bool>,
     log_level: StoredValue<String>,
     rules_off: StoredValue<BTreeSet<String>>,
@@ -384,7 +365,6 @@ impl Written {
             publish_secs: StoredValue::new(0),
             watch: StoredValue::new(false),
             tray: StoredValue::new(false),
-            design_preview: StoredValue::new(false),
             agent_tasks: StoredValue::new(false),
             log_level: StoredValue::new(String::new()),
             rules_off: StoredValue::new(BTreeSet::new()),
@@ -419,11 +399,6 @@ fn seed_all(fields: Fields, written: Written, d: &SettingsData) {
     seed(fields.publish, written.publish, autosync.push_enabled);
     seed(fields.watch, written.watch, d.fswatcher.enabled);
     seed(fields.tray, written.tray, autosync.close_to_tray);
-    seed(
-        fields.design_preview,
-        written.design_preview,
-        d.design == Design::V2,
-    );
     seed(
         fields.agent_tasks,
         written.agent_tasks,
@@ -559,8 +534,6 @@ thread_local! {
 #[derive(Clone, Copy)]
 struct Saves {
     visit: u64,
-    /// The preview's off was saved: time to leave for `/`.
-    leave: RwSignal<bool>,
     /// A save of this visit's is out, or waiting.
     writing: RwSignal<bool>,
     /// The row that just saved, for its *Saved*.
@@ -586,7 +559,6 @@ impl Saves {
                 v.set(v.get() + 1);
                 v.get()
             }),
-            leave: RwSignal::new(false),
             writing: RwSignal::new(false),
             saved: RwSignal::new(None),
             pending: RwSignal::new(Vec::new()),
@@ -628,16 +600,12 @@ impl Saves {
         leptos::task::spawn_local(drain());
     }
 
-    /// One of this visit's saves has run.
-    ///
-    /// `preview` is the *New design* value it wrote, if it wrote one:
-    /// the last one saved decides whether the page leaves for `/`. A save
-    /// with a `reply` gets its answer there, failure included.
+    /// One of this visit's saves has run. A save with a `reply` gets its
+    /// answer there, failure included.
     fn ran(
         self,
         page: PageHandle,
         row: Option<Saved>,
-        preview: Option<bool>,
         reply: Option<Reply>,
         result: Result<(), String>,
     ) {
@@ -656,9 +624,6 @@ impl Saves {
             Ok(()) => {
                 if let Some(row) = row {
                     self.say_saved(row);
-                }
-                if let Some(on) = preview {
-                    self.leave.try_set(!on);
                 }
             }
             Err(detail) => {
@@ -709,12 +674,8 @@ async fn drain() {
             write,
             reply,
         } = next;
-        let preview = match write {
-            Write::DesignPreview(on) => Some(on),
-            _ => None,
-        };
         let result = (io.write)(write).await;
-        from.ran(page, row, preview, reply, result);
+        from.ran(page, row, reply, result);
         if !QUEUE.with(|q| q.borrow().iter().any(|q| q.from.visit == from.visit)) {
             from.done(page);
         }
@@ -790,8 +751,7 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
 
     // ── Saving as each control changes ──
     let save = move |row: Saved, write: Write| saves.push(Some(row), write, None, io, page);
-    let navigate = use_navigate();
-    let toggles: [Toggle; 6] = [
+    let toggles: [Toggle; 5] = [
         (fields.pull, written.pull, Saved::Pull, |on| {
             Write::Autosync(AutosyncPatch {
                 pull_enabled: Some(on),
@@ -811,12 +771,6 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
                 ..AutosyncPatch::default()
             })
         }),
-        (
-            fields.design_preview,
-            written.design_preview,
-            Saved::DesignPreview,
-            Write::DesignPreview,
-        ),
         (
             fields.agent_tasks,
             written.agent_tasks,
@@ -842,16 +796,6 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
         written.log_level.set_value(label.clone());
         save(Saved::LogLevel, Write::LogLevel(label.to_lowercase()));
     });
-    // Off this page once the preview's off is saved and the queue has run:
-    // `/` asks again which design is on, and this page would stay the one it
-    // is until the reader moved. A failed save stays here, in the band.
-    Effect::new(move |_| {
-        if saves.leave.get() && !saves.writing.get() {
-            saves.leave.set(false);
-            navigate("/", NavigateOptions::default());
-        }
-    });
-
     // A minutes field saves on Enter or leaving it, when it is valid and
     // differs from what is stored: a stored 45 s shows 1 and stays 45 s
     // until the reader changes it.
@@ -1367,9 +1311,7 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
                 storage=view! { <div class=style::slot data-storage>{storage_card}</div> }.into_any()
                 experimental=view! {
                     <ExperimentalCard
-                        design_preview=fields.design_preview
                         agent_tasks=fields.agent_tasks
-                        headless=engine::headless()
                         saved=just_saved
                         pending=pending
                     />
@@ -1505,8 +1447,7 @@ fn ReleaseNotes(open: RwSignal<bool>, entries: Signal<Vec<ChangelogEntry>>) -> i
     }
 }
 
-/// The page's life, mounted as `/settings` mounts it: under `ByDesign`'s
-/// `Suspense`, over stubbed commands.
+/// The page's life, mounted as `/settings` mounts it, over stubbed commands.
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1580,7 +1521,6 @@ mod tests {
             },
             fswatcher: FsWatcherSettingsData { enabled: true },
             experimental: ExperimentalSettingsData::default(),
-            design: Design::V2,
             ignore_rules: IgnoreRulesData {
                 file: "/data/.quiltignore".to_string(),
                 rules: Some(vec![
@@ -1703,9 +1643,7 @@ mod tests {
         let el = mount(|| {
             view! {
                 <leptos_router::components::Router>
-                    <Suspense fallback=|| view! { <p data-fallback>"loading"</p> }>
-                        <SettingsScreen io=STUBS />
-                    </Suspense>
+                    <SettingsScreen io=STUBS />
                 </leptos_router::components::Router>
             }
         });
@@ -1719,9 +1657,7 @@ mod tests {
         let el = mount(|| {
             view! {
                 <leptos_router::components::Router>
-                    <Suspense fallback=|| view! { <p data-fallback>"loading"</p> }>
-                        <SettingsScreen io=STUBS />
-                    </Suspense>
+                    <SettingsScreen io=STUBS />
                 </leptos_router::components::Router>
             }
         });
@@ -1736,10 +1672,6 @@ mod tests {
             .unwrap()
             .replace_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(path))
             .unwrap();
-    }
-
-    fn path() -> String {
-        web_sys::window().unwrap().location().pathname().unwrap()
     }
 
     fn alert(el: &web_sys::Element) -> Option<String> {
@@ -1775,7 +1707,6 @@ mod tests {
 
     const PULL: &str = "Get new revisions";
     const WATCH: &str = "Watch folders for changes";
-    const PREVIEW: &str = "New design";
     const TRAY: &str = "Keep running in the tray";
 
     fn minutes(el: &web_sys::Element, n: u32) -> web_sys::HtmlInputElement {
@@ -1841,14 +1772,6 @@ mod tests {
     fn popup(el: &web_sys::Element) -> Option<web_sys::Element> {
         el.query_selector("dialog[open][aria-label=Publishing]")
             .unwrap()
-    }
-
-    fn no_loading_frame(el: &web_sys::Element) {
-        assert!(
-            el.query_selector("[data-fallback]").unwrap().is_none(),
-            "the page went back to the loading frame; markup was {}",
-            el.inner_html()
-        );
     }
 
     /// The popup starts from what is stored; Confirm writes the set chosen,
@@ -1980,7 +1903,6 @@ mod tests {
         sleep_ms(50).await;
         assert_eq!(reads(), 2, "and only once");
         assert_eq!(ACCOUNT_READS.with(Cell::get), 1, "not news about accounts");
-        no_loading_frame(&el);
     }
 
     /// An unreadable rules file disables Review…, and Open file stays.
@@ -2030,7 +1952,6 @@ mod tests {
             vec![Write::Watch(false)],
             "and nothing else was saved"
         );
-        no_loading_frame(&el);
     }
 
     /// A value changed elsewhere shows on the next read, and seeding it is
@@ -2262,22 +2183,6 @@ mod tests {
         assert_eq!(alert(&el), None, "markup was {}", el.inner_html());
     }
 
-    /// Headless always draws the new design, so it offers no choice.
-    #[wasm_bindgen_test]
-    async fn headless_has_no_design_choice() {
-        use crate::engine::fake::{FakeEngine, ask};
-
-        let engine = FakeEngine::install();
-        engine.as_headless();
-        let _asked = ask("get_toasts");
-        sleep_ms(0).await;
-        engine.hello();
-        let el = page(vec![settings()]).await;
-        let words = el.text_content().unwrap_or_default();
-        assert!(words.contains("Agent tasks"), "{words}");
-        assert!(!words.contains(PREVIEW), "{words}");
-    }
-
     /// A sign-out or role switch in another tab reads the accounts again.
     #[wasm_bindgen_test]
     async fn an_account_change_elsewhere_reads_the_accounts_again() {
@@ -2292,17 +2197,6 @@ mod tests {
         engine.event(commands::ACCOUNTS_CHANGED_EVENT, &serde_json::Value::Null);
         sleep_ms(50).await;
         assert_eq!(ACCOUNT_READS.with(Cell::get), before + 1);
-    }
-
-    /// Turning *New design* off saves the classic design and leaves for `/`.
-    #[wasm_bindgen_test]
-    async fn turning_the_new_design_off_goes_home() {
-        let el = page(vec![settings()]).await;
-        assert!(toggle(&el, PREVIEW).checked(), "this page is v2");
-        toggle(&el, PREVIEW).click();
-        sleep_ms(50).await;
-        assert_eq!(writes(), vec![Write::DesignPreview(false)]);
-        assert_eq!(path(), "/");
     }
 
     /// The backend trims what Publishing saves; the re-read's value replaces

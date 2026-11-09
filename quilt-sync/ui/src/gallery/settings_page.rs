@@ -511,7 +511,6 @@ fn whole_page(width: u32, height: u32) -> AnyView {
                     storage=storage(StorageSize::NotMeasured, false, None)
                     experimental=view! {
                         <ExperimentalCard
-                            design_preview=RwSignal::new(true)
                             agent_tasks=RwSignal::new(true)
                         />
                     }
@@ -531,8 +530,8 @@ const NOTE: &str = "The settings page v2. From a 1024px window, two cards to a r
     Accounts, Storage and App, Publishing and Troubleshooting, Experimental and About, then Ignore \
     rules, with Agent tasks beside it while its experiment is on. Narrower, \
     the same order in one column. Toggles, selects and minute fields save as they change and say \
-    Saved; Publishing and Agent tasks are read-only, edited in a popup with Save. Routed at /settings in the v2 \
-    design.";
+    Saved; Publishing and Agent tasks are read-only, edited in a popup with Save. Routed at \
+    /settings.";
 
 #[component]
 #[allow(clippy::too_many_lines, reason = "one cell per state, read as a list")]
@@ -664,7 +663,6 @@ pub fn SettingsPageScene() -> impl IntoView {
             <Cell full=true label="Experimental — Agent tasks on, so its card shows">
                 {column(view! {
                     <ExperimentalCard
-                        design_preview=RwSignal::new(true)
                         agent_tasks=RwSignal::new(true)
                     />
                 }

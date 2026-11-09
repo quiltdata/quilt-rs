@@ -452,12 +452,7 @@ fn attention_line_text(count: usize) -> String {
 /// that drifts points the gallery's rows at pages the app does not use.
 pub fn action_href(action: PackageAction, namespace: &Namespace) -> String {
     match action {
-        // The package page's own resolve mode, not `/merge`: this queue is drawn
-        // only by the main page, which is v2's, and `/installed-package` renders
-        // v2 exactly when the main page does. The one exception is `/main`
-        // opened with the preview off, which lands this on v1's package page;
-        // that page ignores `resolve=1` and offers `[Merge]` in its status
-        // banner, so the reader is one click from where v1 would have sent them.
+        // The package page's own resolve mode.
         PackageAction::Resolve => crate::routes::resolve_href(namespace),
         // Shared with the list row's own link — `super::package_page_href`.
         //
@@ -521,8 +516,7 @@ fn cause_trailing(
 /// its own (global constraint): the caller resolves both lists and hands them
 /// in.
 #[component]
-// Owned, not borrowed, matching `components/buttons/merge.rs`'s own `Merge`:
-// a prop only borrowed inside the body still has to be owned by the caller,
+// Owned, not borrowed: a prop only borrowed inside the body still has to be owned by the caller,
 // since a component's arguments outlive the call that builds them.
 #[allow(clippy::needless_pass_by_value)]
 pub fn QueueRegion(
@@ -1572,8 +1566,7 @@ mod tests {
         // Never produced by `action`, and mapped anyway so the vocabulary can
         // gain a verb without this match going stale.
         assert_eq!(href(SwitchRole), package_page);
-        // Resolve opens the package page's resolve mode — the page the main
-        // page's own generation renders there — rather than `/merge`.
+        // Resolve opens the package page's resolve mode.
         assert_eq!(
             href(Resolve),
             "/installed-package?namespace=org%2Fpkg&filter=unmodified&resolve=1"

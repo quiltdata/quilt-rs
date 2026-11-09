@@ -32,6 +32,7 @@ pub use reporter::PackageStatusEvent;
 pub use reporter::StatusReporter;
 pub use settings::AutosyncSettings;
 pub use settings::PullSettings;
+#[cfg(test)]
 pub use settings::PushSettings;
 pub use settings::SharedAutosyncSettings;
 pub use settings::init as init_settings;
@@ -51,7 +52,7 @@ pub enum PausedReason {
     MergeRefused(MergeBlock),
     /// A surgical pull found a real conflict (`PullOutcome::Blocked`): a
     /// tracked path changed on both sides. Carries the conflicting file names
-    /// for the banner; the user resolves by committing → the merge page.
+    /// for the banner; the user resolves by committing, then resolving on the package page.
     PullConflict(Vec<String>),
     /// Storage refused the call with `AccessDenied`: the active role cannot
     /// reach this package's bucket. Retrying cannot help — the role has to
@@ -439,10 +440,8 @@ impl Watcher {
         self.inner.reschedule_publish();
     }
 
-    /// Point-in-time view of the paused set, used by the
-    /// `get_autosync_snapshot` command so the UI can re-hydrate
-    /// per-page banners on navigation. Read-only — the lock is released
-    /// before the function returns.
+    /// Point-in-time view of the paused set, for tests.
+    #[cfg(test)]
     pub async fn snapshot(&self) -> reporter::WatcherSnapshot {
         let paused = self
             .inner

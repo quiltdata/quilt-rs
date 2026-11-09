@@ -276,16 +276,11 @@ impl PausedEvent {
     }
 }
 
-/// Point-in-time view of the autosync watcher's per-namespace state.
-///
-/// Returned by the `get_autosync_snapshot` command so the UI can
-/// re-hydrate per-page banners on navigation — listening for the
-/// `autosync-paused` event only catches pauses that fire while the page
-/// is mounted, but the watcher's `paused` map persists across page
-/// loads. Each entry in `paused` has the same wire shape as the
-/// `autosync-paused` event payload.
-#[derive(Serialize, Clone, Debug, PartialEq, Eq, Default)]
-#[serde(rename_all = "camelCase")]
+/// Point-in-time view of the autosync watcher's per-namespace state, for
+/// tests. Each entry in `paused` has the wire shape of the `autosync-paused`
+/// event payload.
+#[cfg(test)]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct WatcherSnapshot {
     pub paused: Vec<PausedEvent>,
 }

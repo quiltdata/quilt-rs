@@ -2,9 +2,8 @@
 //!
 //! Mounted once in `App`, **outside** the router, so it survives navigation —
 //! a report about a background pull must not vanish because the user changed
-//! page. It is deliberately separate from [`Layout`](super::layout::Layout)'s
-//! single notification slot, which stays exactly as it was: that slot belongs
-//! to the screen that raised it, this stack to the backend.
+//! page. It is deliberately separate from a page's own notification slot: that
+//! slot belongs to the screen that raised it, this stack to the backend.
 //!
 //! The backend is the source of truth. Two reads keep it so: [`get_toasts`]
 //! on mount, which catches everything posted while no window was open, and the
