@@ -861,10 +861,14 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn the_mode_opens_on_what_blocked_a_refused_merge() {
-        let mut resolve = compared(0, 0);
-        if let ResolveData::Compared { blocked, .. } = &mut resolve {
-            *blocked = Some(MergeBlock::Metadata);
-        }
+        let resolve = ResolveData::Compared {
+            published_message: Some("Theirs".into()),
+            differing: vec!["plate/a.csv".into()],
+            loss: LatestLoss::default(),
+            unpublished: 0,
+            uncommitted: 0,
+            blocked: Some(MergeBlock::Metadata),
+        };
         let el = pane(resolve, marks(&["plate/a.csv"]), Wiring::new());
 
         let first = el

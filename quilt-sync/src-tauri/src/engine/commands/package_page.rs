@@ -1244,8 +1244,15 @@ mod tests {
     }
 
     async fn read(model: &crate::engine::model::MockQuiltModel) -> Result<PackagePageData, Error> {
+        read_paused(model, None).await
+    }
+
+    async fn read_paused(
+        model: &crate::engine::model::MockQuiltModel,
+        paused: Option<&PausedReason>,
+    ) -> Result<PackagePageData, Error> {
         let ns: quilt_uri::Namespace = NS.try_into().unwrap();
-        get_package_page_data_from_model(model, &RoleCache::default(), &ns, None).await
+        get_package_page_data_from_model(model, &RoleCache::default(), &ns, paused).await
     }
 
     /// Diverged on disk: the remote at `b`, the registry's latest `l`, and a
@@ -1284,13 +1291,9 @@ mod tests {
         model
             .expect_get_installed_package_resolve_comparison()
             .returning(|_, _| Ok(comparison(&[], 0)));
-        let ns: quilt_uri::Namespace = NS.try_into().unwrap();
         let paused = PausedReason::MergeRefused(MergeBlock::Metadata);
 
-        let page =
-            get_package_page_data_from_model(&model, &RoleCache::default(), &ns, Some(&paused))
-                .await
-                .unwrap();
+        let page = read_paused(&model, Some(&paused)).await.unwrap();
 
         let Some(ResolveData::Compared { blocked, .. }) = page.context.resolve else {
             panic!(

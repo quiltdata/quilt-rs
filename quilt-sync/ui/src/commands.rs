@@ -660,7 +660,6 @@ pub enum ResolveData {
         unpublished: usize,
         uncommitted: usize,
         /// What stopped autosync merging the two, when it tried.
-        #[serde(default)]
         blocked: Option<MergeBlock>,
     },
     Refused {
