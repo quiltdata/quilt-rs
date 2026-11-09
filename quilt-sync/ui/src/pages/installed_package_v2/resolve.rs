@@ -38,15 +38,26 @@ pub fn differs_sentence(differing: usize) -> String {
     format!("{differing} {files} between these revisions — marked in the list.")
 }
 
-/// What stopped autosync merging the two revisions, when it tried.
+/// Why autosync paused, in the past tense: the pause outlives the published
+/// revision it tried, which may since have moved. A path collides when both
+/// sides changed it differently, or one side made it a file and the other a folder.
 #[must_use]
 pub fn blocked_sentence(block: &commands::MergeBlock) -> String {
-    let what = match block {
-        commands::MergeBlock::Paths { paths } => format!("both changed {}", named(paths)),
-        commands::MergeBlock::Metadata => "both changed the package metadata".to_string(),
-        commands::MergeBlock::LatestMoved => "the published one kept changing".to_string(),
+    let why = match block {
+        commands::MergeBlock::Paths { paths } => {
+            format!(
+                "your changes and the published ones collided at {}",
+                named(paths)
+            )
+        }
+        commands::MergeBlock::Metadata => {
+            "your changes and the published ones both changed the package metadata".to_string()
+        }
+        commands::MergeBlock::LatestMoved => {
+            "the published revision kept changing before your changes could be added".to_string()
+        }
     };
-    format!("Autosync could not combine these revisions: {what}.")
+    format!("Autosync paused because {why}.")
 }
 
 /// Up to three paths by name, the rest counted, as `util::incoming_files` lists them.
@@ -499,18 +510,18 @@ mod tests {
     }
 
     #[test]
-    fn a_refused_merge_names_the_files_both_sides_changed() {
+    fn a_refused_merge_names_the_colliding_paths() {
         assert_eq!(
             blocked_sentence(&paths(&["a.csv"])),
-            "Autosync could not combine these revisions: both changed a.csv."
+            "Autosync paused because your changes and the published ones collided at a.csv."
         );
         assert_eq!(
             blocked_sentence(&paths(&["a.csv", "b.csv", "c.csv"])),
-            "Autosync could not combine these revisions: both changed a.csv, b.csv, c.csv."
+            "Autosync paused because your changes and the published ones collided at a.csv, b.csv, c.csv."
         );
         assert_eq!(
             blocked_sentence(&paths(&["a.csv", "b.csv", "c.csv", "d.csv", "e.csv"])),
-            "Autosync could not combine these revisions: both changed a.csv, b.csv, c.csv and 2 more."
+            "Autosync paused because your changes and the published ones collided at a.csv, b.csv, c.csv and 2 more."
         );
     }
 
@@ -518,11 +529,11 @@ mod tests {
     fn a_refused_merge_names_the_metadata_or_a_latest_that_kept_moving() {
         assert_eq!(
             blocked_sentence(&MergeBlock::Metadata),
-            "Autosync could not combine these revisions: both changed the package metadata."
+            "Autosync paused because your changes and the published ones both changed the package metadata."
         );
         assert_eq!(
             blocked_sentence(&MergeBlock::LatestMoved),
-            "Autosync could not combine these revisions: the published one kept changing."
+            "Autosync paused because the published revision kept changing before your changes could be added."
         );
     }
 
@@ -853,7 +864,7 @@ mod tests {
         assert!(
             !el.text_content()
                 .unwrap_or_default()
-                .contains("Autosync could not"),
+                .contains("Autosync paused"),
             "no merge was refused; markup was {}",
             el.inner_html()
         );
@@ -877,7 +888,7 @@ mod tests {
             .expect("the pane's first sentence");
         assert_eq!(
             first.text_content().unwrap_or_default(),
-            "Autosync could not combine these revisions: both changed the package metadata."
+            "Autosync paused because your changes and the published ones both changed the package metadata."
         );
         for label in [CERTIFY, REPLACE] {
             assert!(!choice(&el, label).disabled(), "{label} is still offered");
