@@ -8,7 +8,7 @@ use quilt_uri::Namespace;
 use super::Wiring;
 use super::context_pane::RevisionHistoryFetch;
 use crate::commands;
-use crate::kit::{
+use quilt_ui_kit::{
     BackLink, BannerVariant, Button, Card, JsonDisplay, LoadFailure, PaneSection, RevisionRow,
     SkeletonText,
 };
@@ -206,7 +206,7 @@ mod tests {
     use super::*;
     use crate::commands::{CurrentRevisionData, RevisionHistoryData, RevisionHistoryRow};
     use crate::engine::fake::FakeEngine;
-    use crate::test_support::mount;
+    use quilt_ui_kit::test_support::mount;
     use std::future::Future;
     use std::pin::Pin;
     use wasm_bindgen_test::*;
@@ -301,7 +301,7 @@ mod tests {
     }
 
     async fn settle() {
-        crate::test_support::sleep_ms(0).await;
+        quilt_ui_kit::test_support::sleep_ms(0).await;
     }
 
     #[wasm_bindgen_test]
@@ -369,7 +369,7 @@ mod tests {
         let w = Wiring::new();
         let el = pane_wired(None, None, published, w);
         settle().await;
-        let copy = crate::test_support::button_saying(&el, "Copy");
+        let copy = quilt_ui_kit::test_support::button_saying(&el, "Copy");
 
         copy.click();
         settle().await;
@@ -400,7 +400,7 @@ mod tests {
         w.outcome.set(Some(other.clone()));
 
         let engine = FakeEngine::install();
-        crate::test_support::button_saying(&el, "Copy").click();
+        quilt_ui_kit::test_support::button_saying(&el, "Copy").click();
         settle().await;
         answer_copy(&engine).await;
         assert_eq!(w.outcome.get_untracked(), Some(other));

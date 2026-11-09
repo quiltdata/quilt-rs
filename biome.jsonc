@@ -1,13 +1,17 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.6.4/schema.json",
-  // The kit's hand-written CSS. The generated `modules.css` and the vendored
-  // `normalize.css` are left out, and so is v1's CSS.
+  // The kit's and the pages' hand-written CSS. The generated bundles and the
+  // vendored `normalize.css` are left out, and so are the older global sheets
+  // under `quilt-sync/ui/assets/css`.
   "files": {
     "includes": [
+      "quilt-ui-kit/css/*.css",
+      "quilt-ui-kit/src/**/*.module.css",
       "quilt-sync/ui/assets/css/kit/*.css",
       "quilt-sync/ui/src/**/*.module.css",
-      "!quilt-sync/ui/assets/css/kit/modules.css",
-      "!quilt-sync/ui/assets/css/kit/normalize.css"
+      "!quilt-ui-kit/css/kit-modules.css",
+      "!quilt-ui-kit/css/normalize.css",
+      "!quilt-sync/ui/assets/css/kit/modules.css"
     ]
   },
   "formatter": {

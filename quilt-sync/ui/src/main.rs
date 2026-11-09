@@ -1,8 +1,6 @@
 use leptos::prelude::*;
 use leptos_router::components::{Route, Router, Routes};
 use leptos_router::path;
-use std::future::Future;
-use std::pin::Pin;
 
 #[cfg(test)]
 wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
@@ -10,11 +8,10 @@ wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 // The modules themselves live in the library beside this file — see `src/lib.rs`
 // for why. Imported rather than declared, so this binary and the gallery share
 // one compilation of them and neither can call an item dead that the other uses.
-use quilt_sync_ui::commands;
 use quilt_sync_ui::components;
-use quilt_sync_ui::kit;
 use quilt_sync_ui::pages;
 use quilt_sync_ui::panic_report;
+use quilt_ui_kit as kit;
 
 fn main() {
     console_error_panic_hook::set_once();
@@ -23,10 +20,10 @@ fn main() {
     // Before the mount, so the first paint is in the right palette. The frame
     // before this one belongs to `index.html` — Rust cannot run early enough for
     // it.
-    quilt_sync_ui::theme::follow_os();
+    quilt_ui_kit::theme::follow_os();
     // The launch marker comes off before anything is drawn: it darkens the bare
     // canvas, which only an empty frame may have.
-    quilt_sync_ui::theme::stop_booting();
+    quilt_ui_kit::theme::stop_booting();
     // Before the router reads the address: a link's token leaves it here.
     quilt_sync_ui::engine::start();
     if quilt_sync_ui::engine::linked() {
@@ -50,20 +47,26 @@ fn App() -> impl IntoView {
         <Router>
             <components::FollowEngine />
             <DocumentTitle />
-            <Routes fallback=|| view! { <NotFoundPage read=read_settings /> }>
-                <Route path=path!("/") view=|| view! { <Home /> } />
-                <Route path=path!("/commit") view=|| view! { <CommitPage read=read_settings /> } />
-                <Route path=path!("/installed-package") view=|| view! { <PackagePage read=read_settings /> } />
-                <Route path=path!("/installed-packages-list") view=pages::InstalledPackagesList />
-                <Route path=path!("/login") view=|| view! { <LoginPage read=read_settings /> } />
-                <Route path=path!("/main") view=pages::MainPage />
-                <Route path=path!("/error") view=|| view! { <ErrorPage read=read_settings /> } />
-                <Route path=path!("/merge") view=pages::Merge />
-                <Route path=path!("/remote-package") view=|| view! { <RemotePackagePage read=read_settings /> } />
-                <Route path=path!("/settings") view=|| view! { <SettingsPage read=read_settings /> } />
-                <Route path=path!("/setup") view=|| view! { <SetupPage read=read_settings /> } />
-            </Routes>
+            <PageRoutes />
         </Router>
+    }
+}
+
+/// Every page, by address. Each page draws its own skeleton while its first
+/// read is out.
+#[component]
+fn PageRoutes() -> impl IntoView {
+    view! {
+        <Routes fallback=pages::NotFoundV2>
+            <Route path=path!("/") view=pages::MainPage />
+            <Route path=path!("/commit") view=pages::CommitV2 />
+            <Route path=path!("/installed-package") view=pages::InstalledPackageV2 />
+            <Route path=path!("/login") view=pages::LoginV2 />
+            <Route path=path!("/error") view=pages::ErrorV2 />
+            <Route path=path!("/remote-package") view=pages::RemotePackageV2 />
+            <Route path=path!("/settings") view=pages::SettingsV2 />
+            <Route path=path!("/setup") view=pages::SetupV2 />
+        </Routes>
     }
 }
 
@@ -80,443 +83,13 @@ fn DocumentTitle() -> impl IntoView {
     });
 }
 
-/// `/` is the main page, and the design setting decides which one it is.
-///
-/// Rendered here rather than redirected to: one route means every way home —
-/// the logo, a breadcrumb, a Cancel — arrives at the page the reader has switched
-/// on, instead of at whichever page the link was written against. `/main` and
-/// `/installed-packages-list` stay reachable on purpose, for looking at one
-/// specific page while both exist.
-#[component]
-fn Home() -> impl IntoView {
-    view! {
-        <ByDesign
-            read=read_settings
-            v2=|| view! { <pages::MainPage /> }.into_any()
-            v1=|| view! { <pages::InstalledPackagesList /> }.into_any()
-            skeleton=|| view! { <pages::MainPageSkeleton actions=loading_actions() /> }.into_any()
-            loading="Loading QuiltSync"
-        />
-    }
-}
-
-/// `/installed-package` is one package's screen, and the design setting decides
-/// which one — the same answer, read the same way, as [`Home`].
-///
-/// One route, the answer read in place, for the reason [`Home`] has it: every
-/// link to a package (a roster row, a queue remedy, a deep link, a post-commit
-/// return) lands on the page the reader has switched on rather than on whichever
-/// one the link was written against. There is no second address for either page.
-///
-/// `read` is a parameter so a test can answer the settings read without an
-/// engine; the route passes [`read_settings`].
-#[component]
-fn PackagePage(read: SettingsRead) -> impl IntoView {
-    view! {
-        <ByDesign
-            read=read
-            v2=|| view! { <pages::InstalledPackageV2 /> }.into_any()
-            v1=|| view! { <pages::InstalledPackage /> }.into_any()
-            skeleton=|| view! { <pages::PackagePageSkeleton actions=loading_actions() /> }.into_any()
-            loading="Loading package"
-        />
-    }
-}
-
-/// `/commit` is the new revision's screen, and the design setting decides
-/// which one, as for [`PackagePage`]: every way here is a link from a package
-/// page, so the commit page is the one beside the package page the reader has.
-#[component]
-fn CommitPage(read: SettingsRead) -> impl IntoView {
-    view! {
-        <ByDesign
-            read=read
-            v2=|| view! { <pages::CommitV2 /> }.into_any()
-            v1=|| view! { <pages::Commit /> }.into_any()
-            skeleton=|| view! { <pages::CommitV2Skeleton actions=loading_actions() /> }.into_any()
-            loading="Loading new revision"
-        />
-    }
-}
-
-/// `/settings`, decided as the other routes are: the v2 page under *New design
-/// preview*, v1 otherwise. Turning the preview off saves, then goes to `/`,
-/// which asks again.
-#[component]
-fn SettingsPage(read: SettingsRead) -> impl IntoView {
-    view! {
-        <ByDesign
-            read=read
-            v2=|| view! { <pages::SettingsV2 /> }.into_any()
-            v1=|| view! { <pages::Settings /> }.into_any()
-            skeleton=|| view! { <pages::SettingsV2Skeleton /> }.into_any()
-            loading="Loading settings"
-        />
-    }
-}
-
-/// `/login`, decided as the other routes are. Every way here is a link from a
-/// page that needs a session, so the login page is the one beside it.
-#[component]
-fn LoginPage(read: SettingsRead) -> impl IntoView {
-    view! {
-        <ByDesign
-            read=read
-            v2=|| view! { <pages::LoginV2 /> }.into_any()
-            v1=|| view! { <pages::Login /> }.into_any()
-            skeleton=|| view! { <pages::LoginV2Skeleton actions=loading_actions() /> }.into_any()
-            loading="Loading login"
-        />
-    }
-}
-
-/// `/setup`, decided as the other routes are.
-#[component]
-fn SetupPage(read: SettingsRead) -> impl IntoView {
-    view! {
-        <ByDesign
-            read=read
-            v2=|| view! { <pages::SetupV2 /> }.into_any()
-            v1=|| view! { <pages::Setup /> }.into_any()
-            skeleton=|| view! { <pages::SetupV2Skeleton actions=loading_actions() /> }.into_any()
-            loading="Loading setup"
-        />
-    }
-}
-
-/// `/error`, decided as the other routes are.
-#[component]
-fn ErrorPage(read: SettingsRead) -> impl IntoView {
-    view! {
-        <ByDesign
-            read=read
-            v2=|| view! { <pages::ErrorV2 /> }.into_any()
-            v1=|| view! { <pages::Error /> }.into_any()
-            skeleton=|| view! { <pages::ErrorV2Skeleton actions=loading_actions() /> }.into_any()
-            loading="Loading error"
-        />
-    }
-}
-
-/// `/remote-package`, decided as the other routes are. Either page runs the
-/// deep link as it mounts, which is after the decision, so the link runs once.
-#[component]
-fn RemotePackagePage(read: SettingsRead) -> impl IntoView {
-    view! {
-        <ByDesign
-            read=read
-            v2=|| view! { <pages::RemotePackageV2 /> }.into_any()
-            v1=|| view! { <pages::RemotePackage /> }.into_any()
-            skeleton=|| view! { <pages::RemotePackageV2Skeleton /> }.into_any()
-            loading="Opening link"
-        />
-    }
-}
-
-/// An address no route matches, decided as the routes are. The v2 page reads
-/// nothing, so it is its own first paint.
-#[component]
-fn NotFoundPage(read: SettingsRead) -> impl IntoView {
-    view! {
-        <ByDesign
-            read=read
-            v2=|| view! { <pages::NotFoundV2 /> }.into_any()
-            v1=|| view! { <pages::NotFound /> }.into_any()
-            skeleton=|| view! { <pages::NotFoundV2 /> }.into_any()
-            loading="Loading"
-        />
-    }
-}
-
-/// The settings read a route decides its generation from.
-type SettingsRead = fn() -> Pin<Box<dyn Future<Output = Result<commands::SettingsData, String>>>>;
-
-fn read_settings() -> Pin<Box<dyn Future<Output = Result<commands::SettingsData, String>>>> {
-    Box::pin(commands::get_settings_data())
-}
-
-/// One route that is two pages: `v2` when [`design_preview`] says so, `v1`
-/// otherwise, asked afresh on every visit.
-///
-/// A fetch, so there is a frame before the answer — [`design_loading`] says what
-/// it holds. Asked per visit rather than once for the session, because saving the
-/// preference in Settings has to take effect on the next page the reader opens,
-/// and a cached answer would need a second path to hear about that.
-///
-/// Recorded on the root here rather than fetched again out in `App`: this is the
-/// one read of the preference the app already makes, and `/` is where every
-/// session starts, so the marker is set before any other route can be reached
-/// and updated whenever the reader comes back having changed it. A launch by
-/// deep link starts on `/remote-package` instead, which is decided here too.
-#[component]
-fn ByDesign(
-    read: SettingsRead,
-    v2: fn() -> AnyView,
-    v1: fn() -> AnyView,
-    /// `v2`'s first paint, for the loading frame when the root marker predicts
-    /// `v2`.
-    skeleton: fn() -> AnyView,
-    /// What the loading frame announces.
-    loading: &'static str,
-) -> impl IntoView {
-    let settings = LocalResource::new(read);
-    let headless = Memo::new(move |_| quilt_sync_ui::engine::headless().get());
-
-    view! {
-        <Suspense fallback=move || design_loading(loading, skeleton)>
-            {move || {
-                // Picks again when a reconnect finds the engine now headless.
-                headless.get();
-                Suspend::new(async move {
-                    let settings = settings.await;
-                    let on = design_preview(settings.as_ref().map_err(String::as_str));
-                    quilt_sync_ui::theme::set_v2(on);
-                    if on { v2() } else { v1() }
-                })
-            }}
-        </Suspense>
-    }
-}
-
-/// What a [`ByDesign`] route shows while it works out which page it is.
-///
-/// The page the root marker predicts. The marker is the answer this read gave
-/// last time — `index.html` restores it before the first paint, and every
-/// `ByDesign` sets it from its own answer — so it is wrong only when the
-/// preference changed somewhere this app did not see, or when this read fails
-/// and the route falls back to v2 under a v1 marker. For a v2 reader that makes
-/// the frame `skeleton`, the v2 page's own first paint: the appbar, then the page
-/// in the shape it will take. The page then draws the same skeleton and fills it,
-/// so the frame is the first step of the page's own loading and nothing moves at
-/// either handover.
-///
-/// The prediction is cheap to get wrong. A stale marker costs one v2 skeleton
-/// frame before v1, and that frame is a skeleton rather than a real page, so the
-/// swap replaces placeholders instead of content the reader has started to read.
-/// A v1 reader gets the spinner v1's own pages load behind: v1 has no skeletons
-/// to draw, and a v2 one would be the guess the marker has just ruled out.
-///
-/// The announcement is the frame's, not the skeleton's, so it speaks whichever
-/// generation is coming and says what it is waiting on. Off-screen text inside
-/// the live region, for `kit::Spinner`'s reason: a live region announces its
-/// content, and one with nothing inside may never fire. It sits outside every
-/// `aria-busy` region, which would hold its announcement back.
-///
-/// The ground is these routes' alone. `data-home-frame` is styled off
-/// `theme::set_v2`'s root marker (`base.css`), which records the reader's
-/// design setting — see [`design_preview`] — and a frame may paint from that
-/// marker only where it predicts what is coming. That is here and nowhere else:
-/// `/` and `/installed-package` render v2 on exactly the value the marker is set
-/// from, so the ground the frame paints is the ground the page then keeps.
-fn design_loading(label: &'static str, skeleton: fn() -> AnyView) -> AnyView {
-    let page = if quilt_sync_ui::theme::is_v2() {
-        skeleton()
-    } else {
-        view! { <components::Spinner /> }.into_any()
-    };
-    view! {
-        <div data-home-frame>
-            <p role="status" data-sr-only>
-                {label}
-            </p>
-            {page}
-        </div>
-    }
-    .into_any()
-}
-
-/// The appbar's controls in a loading frame: Refresh spinning, as the page
-/// draws it while its first read is out, so the bar does not change at the
-/// handover. A spinning Button is disabled, so it takes no press.
-///
-/// Settings stays live, unlike the frame's list toolbar. It navigates to a page
-/// of its own and depends on nothing the frame holds, so a reader who presses
-/// it during the wait gets exactly what they asked for; there is nothing to
-/// lose.
-fn loading_actions() -> AnyView {
-    components::appbar::appbar_actions(|| (), Signal::stored(true))
-}
-
-/// Whether the app draws v2, given the settings fetch's outcome: yes unless the
-/// reader chose the classic design on a desktop engine.
-///
-/// `Err` — the fetch failed — is v2, the default.
-fn design_preview(settings: Result<&commands::SettingsData, &str>) -> bool {
-    settings.map_or(true, |data| data.design.drawn() == commands::Design::V2)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use commands::{
-        AutosyncSettingsData, ExperimentalSettingsData, FsWatcherSettingsData, PublishSettingsData,
-        SettingsData,
-    };
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
-    fn settings_stub(v2: bool) -> SettingsData {
-        SettingsData {
-            version: String::new(),
-            home_dir: None,
-            data_dir: String::new(),
-            auth_hosts: Vec::new(),
-            log_level: String::new(),
-            log_env: commands::LogEnv::Unset,
-            logs_dir: String::new(),
-            logs_dir_is_temporary: false,
-            os: String::new(),
-            changelog: Vec::new(),
-            publish: PublishSettingsData::default(),
-            autosync: AutosyncSettingsData::default(),
-            fswatcher: FsWatcherSettingsData::default(),
-            experimental: ExperimentalSettingsData::default(),
-            design: if v2 {
-                commands::Design::V2
-            } else {
-                commands::Design::V1
-            },
-            ignore_rules: commands::IgnoreRulesData::default(),
-            tasks: commands::TaskSettingsData::default(),
-        }
-    }
-
-    /// The frame `/` draws while it decides, in whichever generation the root
-    /// marker predicts, under a router because the v2 appbar's Settings navigates.
-    fn home_frame(v2: bool) -> Mounted {
-        quilt_sync_ui::theme::set_v2(v2);
-        Mounted::new(|| {
-            view! {
-                <Router>
-                    {design_loading("Loading QuiltSync", || {
-                        view! { <pages::MainPageSkeleton actions=loading_actions() /> }.into_any()
-                    })}
-                </Router>
-            }
-        })
-    }
-
-    #[wasm_bindgen_test]
-    fn the_loading_frame_announces_itself() {
-        // The frame's skeleton or spinner says nothing on its own — the bars are
-        // hidden and v1's rings are markup — so the frame has to say what it is
-        // waiting on. `kit::Spinner`'s rule: off-screen text INSIDE the live
-        // region rather than a label on it, or the announcement may never fire.
-        //
-        // This pins that the frame speaks, in both generations. It cannot pin
-        // what it looks like: no stylesheet is loaded here.
-        for v2 in [true, false] {
-            let el = home_frame(v2);
-            // Inside the frame `base.css` grounds for a v2 reader — the two are
-            // pinned together because the frame is what a stylesheet can see.
-            let status = el
-                .query_selector("[data-home-frame] [role=status]")
-                .unwrap()
-                .expect("the loading frame is a live region inside the grounded frame");
-            assert_eq!(
-                status.text_content().unwrap().trim(),
-                "Loading QuiltSync",
-                "and it says what it is waiting on (v2: {v2})"
-            );
-            // `aria-busy` on an ancestor holds a live region's news back until it
-            // clears, which is when there is nothing left to announce.
-            assert!(
-                status.closest("[aria-busy=true]").unwrap().is_none(),
-                "and nothing busy around it silences it (v2: {v2})"
-            );
-        }
-    }
-
-    /// The marker predicts v2, so the frame is the v2 page's own first paint:
-    /// its appbar and its skeleton, with the skeleton's region marked busy. Not
-    /// the tiny region spinner the frame used to hold, nor v1's.
-    #[wasm_bindgen_test]
-    fn a_v2_reader_waits_on_the_page_s_skeleton() {
-        let el = home_frame(true);
-        let frame = el.query_selector("[data-home-frame]").unwrap().unwrap();
-        assert!(
-            frame.query_selector("[data-v2-page]").unwrap().is_some(),
-            "the v2 page's frame, appbar and all; markup was {}",
-            el.inner_html()
-        );
-        assert!(
-            frame.query_selector("[aria-busy=true]").unwrap().is_some(),
-            "a skeleton region that says it is busy; markup was {}",
-            el.inner_html()
-        );
-        assert!(
-            frame.query_selector(".q-spinner").unwrap().is_none(),
-            "and no spinner beside it; markup was {}",
-            el.inner_html()
-        );
-    }
-
-    /// A v1 reader gets the spinner v1's own pages load behind, and no v2
-    /// surface: a v2 skeleton is a prediction the marker has ruled out.
-    #[wasm_bindgen_test]
-    fn a_v1_reader_waits_on_v1_s_spinner() {
-        let el = home_frame(false);
-        assert!(
-            el.query_selector("[data-home-frame] .q-spinner")
-                .unwrap()
-                .is_some(),
-            "markup was {}",
-            el.inner_html()
-        );
-        assert!(!draws_v2(&el), "markup was {}", el.inner_html());
-    }
-
-    /// `/installed-package` before its settings read answers: the package
-    /// page's skeleton for a v2 reader, announced as the package it is.
-    #[wasm_bindgen_test]
-    async fn the_package_route_waits_on_the_package_skeleton() {
-        quilt_sync_ui::theme::set_v2(true);
-        let el = package_route(settings_pending).await;
-        let status = el
-            .query_selector("[data-home-frame] [role=status]")
-            .unwrap()
-            .expect("the frame, still up: the read never answers");
-        assert_eq!(status.text_content().unwrap().trim(), "Loading package");
-        assert!(
-            el.query_selector("[data-home-frame] [data-v2-page] [aria-label=Files]")
-                .unwrap()
-                .is_some(),
-            "the package page's panes, not the main page's list; markup was {}",
-            el.inner_html()
-        );
-    }
-
-    fn settings_on() -> Pin<Box<dyn Future<Output = Result<SettingsData, String>>>> {
-        Box::pin(async { Ok(settings_stub(true)) })
-    }
-
-    fn settings_off() -> Pin<Box<dyn Future<Output = Result<SettingsData, String>>>> {
-        Box::pin(async { Ok(settings_stub(false)) })
-    }
-
-    fn settings_pending() -> Pin<Box<dyn Future<Output = Result<SettingsData, String>>>> {
-        Box::pin(std::future::pending())
-    }
-
-    fn settings_fail() -> Pin<Box<dyn Future<Output = Result<SettingsData, String>>>> {
-        Box::pin(async { Err("no settings".to_string()) })
-    }
-
-    async fn sleep_ms(ms: i32) {
-        let promise = js_sys::Promise::new(&mut |resolve, _| {
-            web_sys::window()
-                .unwrap()
-                .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, ms)
-                .unwrap();
-        });
-        wasm_bindgen_futures::JsFuture::from(promise).await.unwrap();
-    }
-
-    /// A view mounted under `<body>`, torn down when this is dropped — after the
-    /// test's assertions, and on a failing one too.
-    ///
-    /// `test_support::mount` is the library's and `#[cfg(test)]`, so this binary
-    /// cannot reach it; this is the same shape, but owning its teardown: a
+    /// The routes mounted at `address`, torn down when this is dropped: a
     /// `Router` left mounted keeps listening for clicks on the window, and the
     /// first one registered takes them from every later test's.
     struct Mounted {
@@ -526,12 +99,26 @@ mod tests {
     }
 
     impl Mounted {
-        fn new<N: IntoView + 'static>(f: impl FnOnce() -> N + 'static) -> Self {
-            let doc = web_sys::window().unwrap().document().unwrap();
+        fn at(address: &str) -> Self {
+            let window = web_sys::window().unwrap();
+            window
+                .history()
+                .unwrap()
+                .replace_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(address))
+                .unwrap();
+            let doc = window.document().unwrap();
             let host: web_sys::HtmlElement = doc.create_element("div").unwrap().dyn_into().unwrap();
             doc.body().unwrap().append_child(&host).unwrap();
             let owner = Owner::new();
-            let handle = owner.with(|| leptos::mount::mount_to(host.clone(), f));
+            let handle = owner.with(|| {
+                leptos::mount::mount_to(host.clone(), || {
+                    view! {
+                        <Router>
+                            <PageRoutes />
+                        </Router>
+                    }
+                })
+            });
             Self {
                 el: host.into(),
                 owner,
@@ -540,239 +127,62 @@ mod tests {
         }
     }
 
-    impl std::ops::Deref for Mounted {
-        type Target = web_sys::Element;
-        fn deref(&self) -> &web_sys::Element {
-            &self.el
-        }
-    }
-
     impl Drop for Mounted {
         fn drop(&mut self) {
-            // The route tests set the root marker. Put back here, after the
-            // assertions, so the next test starts from v1's.
-            quilt_sync_ui::theme::set_v2(false);
             drop(self.handle.take());
             self.owner.cleanup();
             self.el.remove();
         }
     }
 
-    /// `/installed-package` as the router draws it, over a stubbed settings read.
-    ///
-    /// Neither page has an engine here, so each draws its own failure — inside
-    /// its own frame, which is what tells them apart: v2's `PageLayout` carries
-    /// `data-v2-page`, v1's `Layout` is `#layout`. The route sets the marker;
-    /// [`Mounted`]'s drop puts it back.
-    async fn package_route(read: SettingsRead) -> Mounted {
-        let el = Mounted::new(move || {
-            view! {
-                <Router>
-                    <PackagePage read=read />
-                </Router>
-            }
-        });
-        sleep_ms(100).await;
-        el
-    }
-
-    fn draws_v2(el: &web_sys::Element) -> bool {
-        el.query_selector("[data-v2-page]").unwrap().is_some()
-    }
-
-    fn draws_v1(el: &web_sys::Element) -> bool {
-        el.query_selector("#layout").unwrap().is_some()
-    }
-
+    /// Every route draws its page in the page frame, appbar and all. Each
+    /// page's own tests check that its skeleton is its first paint.
     #[wasm_bindgen_test]
-    async fn the_package_route_is_v2_with_the_preview_on() {
-        let el = package_route(settings_on).await;
-        assert!(draws_v2(&el), "markup was {}", el.inner_html());
-        assert!(
-            !draws_v1(&el),
-            "one page, not two; markup was {}",
-            el.inner_html()
-        );
-    }
-
-    #[wasm_bindgen_test]
-    async fn the_package_route_is_v1_with_the_preview_off() {
-        let el = package_route(settings_off).await;
-        assert!(draws_v1(&el), "markup was {}", el.inner_html());
-        assert!(!draws_v2(&el), "markup was {}", el.inner_html());
-    }
-
-    /// A failed read is v2 here too, as it is on `/`.
-    #[wasm_bindgen_test]
-    async fn the_package_route_is_v2_when_settings_cannot_be_read() {
-        let el = package_route(settings_fail).await;
-        assert!(draws_v2(&el), "markup was {}", el.inner_html());
-        assert!(!draws_v1(&el), "markup was {}", el.inner_html());
-    }
-
-    /// `/commit` as the router draws it, over a stubbed settings read.
-    async fn commit_route(read: SettingsRead) -> Mounted {
-        let el = Mounted::new(move || {
-            view! {
-                <Router>
-                    <CommitPage read=read />
-                </Router>
-            }
-        });
-        sleep_ms(100).await;
-        el
-    }
-
-    #[wasm_bindgen_test]
-    async fn the_commit_route_is_v2_with_the_preview_on() {
-        let el = commit_route(settings_on).await;
-        assert!(draws_v2(&el), "markup was {}", el.inner_html());
-        assert!(!draws_v1(&el), "markup was {}", el.inner_html());
-    }
-
-    #[wasm_bindgen_test]
-    async fn the_commit_route_is_v1_with_the_preview_off() {
-        let el = commit_route(settings_off).await;
-        assert!(draws_v1(&el), "markup was {}", el.inner_html());
-        assert!(!draws_v2(&el), "markup was {}", el.inner_html());
-    }
-
-    #[wasm_bindgen_test]
-    async fn the_commit_route_is_v2_when_settings_cannot_be_read() {
-        let el = commit_route(settings_fail).await;
-        assert!(draws_v2(&el), "markup was {}", el.inner_html());
-    }
-
-    /// `/settings` as the router draws it, over a stubbed settings read.
-    async fn settings_route(read: SettingsRead) -> Mounted {
-        let el = Mounted::new(move || {
-            view! {
-                <Router>
-                    <SettingsPage read=read />
-                </Router>
-            }
-        });
-        sleep_ms(100).await;
-        el
-    }
-
-    #[wasm_bindgen_test]
-    async fn the_settings_route_is_v2_with_the_preview_on() {
-        let el = settings_route(settings_on).await;
-        assert!(draws_v2(&el), "markup was {}", el.inner_html());
-        assert!(!draws_v1(&el), "markup was {}", el.inner_html());
-    }
-
-    #[wasm_bindgen_test]
-    async fn the_settings_route_is_v1_with_the_preview_off() {
-        let el = settings_route(settings_off).await;
-        assert!(draws_v1(&el), "markup was {}", el.inner_html());
-        assert!(!draws_v2(&el), "markup was {}", el.inner_html());
-    }
-
-    #[wasm_bindgen_test]
-    async fn the_settings_route_waits_on_the_settings_skeleton() {
-        quilt_sync_ui::theme::set_v2(true);
-        let el = settings_route(settings_pending).await;
-        let status = el
-            .query_selector("[data-home-frame] [role=status]")
-            .unwrap()
-            .expect("the frame, still up: the read never answers");
-        assert_eq!(status.text_content().unwrap().trim(), "Loading settings");
-        assert!(
-            el.query_selector("[data-home-frame] [data-v2-page] [aria-busy=true]")
-                .unwrap()
-                .is_some(),
-            "the settings page's skeleton; markup was {}",
-            el.inner_html()
-        );
-    }
-
-    #[wasm_bindgen_test]
-    async fn the_commit_route_waits_on_the_commit_skeleton() {
-        quilt_sync_ui::theme::set_v2(true);
-        let el = commit_route(settings_pending).await;
-        let status = el
-            .query_selector("[data-home-frame] [role=status]")
-            .unwrap()
-            .expect("the frame, still up: the read never answers");
-        assert_eq!(
-            status.text_content().unwrap().trim(),
-            "Loading new revision"
-        );
-        assert!(
-            el.query_selector("[data-home-frame] [data-v2-page] [aria-busy=true]")
-                .unwrap()
-                .is_some(),
-            "the commit page's skeleton; markup was {}",
-            el.inner_html()
-        );
-    }
-
-    /// A route component, drawn over a settings read.
-    type RouteView = fn(SettingsRead) -> AnyView;
-
-    /// A route as the router draws it, over a stubbed settings read.
-    async fn route(page: RouteView, read: SettingsRead) -> Mounted {
-        let el = Mounted::new(move || view! { <Router>{page(read)}</Router> });
-        sleep_ms(100).await;
-        el
-    }
-
-    /// The routes ported last, each as `ByDesign` draws it.
-    fn small_routes() -> [(&'static str, RouteView); 5] {
-        [
-            ("/login", |read| {
-                view! { <LoginPage read=read /> }.into_any()
-            }),
-            ("/setup", |read| {
-                view! { <SetupPage read=read /> }.into_any()
-            }),
-            ("/error", |read| {
-                view! { <ErrorPage read=read /> }.into_any()
-            }),
-            ("/remote-package", |read| {
-                view! { <RemotePackagePage read=read /> }.into_any()
-            }),
-            ("no route", |read| {
-                view! { <NotFoundPage read=read /> }.into_any()
-            }),
-        ]
-    }
-
-    #[wasm_bindgen_test]
-    async fn the_small_routes_are_v2_with_the_preview_on() {
-        for (name, page) in small_routes() {
-            let el = route(page, settings_on).await;
-            assert!(draws_v2(&el), "{name}: markup was {}", el.inner_html());
-            assert!(!draws_v1(&el), "{name}: markup was {}", el.inner_html());
+    async fn every_route_draws_its_page() {
+        for address in [
+            "/",
+            "/installed-package?namespace=team%2Fdataset",
+            "/commit?namespace=team%2Fdataset",
+            "/settings",
+            "/login?host=quilt.test&back=%2F",
+            "/setup",
+            "/error?host=quilt.test&error=nope",
+            "/remote-package?uri=quilt%2Bs3%3A%2F%2Fb%23package%3Dteam%2Fdataset",
+            "/no-such-page",
+        ] {
+            let mounted = Mounted::at(address);
+            quilt_ui_kit::test_support::sleep_ms(0).await;
+            assert!(
+                mounted
+                    .el
+                    .query_selector("[data-v2-page]")
+                    .unwrap()
+                    .is_some(),
+                "{address}: markup was {}",
+                mounted.el.inner_html()
+            );
         }
     }
 
+    /// Addresses of retired pages are not found.
     #[wasm_bindgen_test]
-    async fn the_small_routes_are_v1_with_the_preview_off() {
-        for (name, page) in small_routes() {
-            let el = route(page, settings_off).await;
-            assert!(draws_v1(&el), "{name}: markup was {}", el.inner_html());
-            assert!(!draws_v2(&el), "{name}: markup was {}", el.inner_html());
+    async fn retired_addresses_are_not_found() {
+        for address in [
+            "/main",
+            "/installed-packages-list",
+            "/merge?namespace=team%2Fdataset",
+        ] {
+            let mounted = Mounted::at(address);
+            quilt_ui_kit::test_support::sleep_ms(0).await;
+            assert!(
+                mounted
+                    .el
+                    .text_content()
+                    .unwrap_or_default()
+                    .contains("Page not found"),
+                "{address}: markup was {}",
+                mounted.el.inner_html()
+            );
         }
-    }
-
-    #[test]
-    fn flag_on_renders_v2() {
-        let settings = settings_stub(true);
-        assert!(design_preview(Ok(&settings)));
-    }
-
-    #[test]
-    fn flag_off_renders_v1() {
-        let settings = settings_stub(false);
-        assert!(!design_preview(Ok(&settings)));
-    }
-
-    /// A failed read is v2, the default.
-    #[test]
-    fn a_failed_settings_read_is_v2() {
-        assert!(design_preview(Err("nope")));
     }
 }

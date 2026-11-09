@@ -26,8 +26,8 @@
 //! It keeps `Newer revision available` and `Get latest`; the summary after
 //! it is the only count. A revision that brings no files has no summary and
 //! no popover. A `Blocked` verdict resolves the header to
-//! `PackageState::PullConflict`, which offers `Publish`, not `Resolve`: the
-//! merge page cannot act until the local changes are published. That is the
+//! `PackageState::PullConflict`, which offers `Publish`, not `Resolve`:
+//! resolving cannot act until the local changes are published. That is the
 //! state a failed `Get latest` leaves, so the header reads the same before the
 //! click and after it. Only an answer from a run that finished after the
 //! current read moves the state; one kept across a re-read while its rerun is
@@ -77,16 +77,16 @@ use quilt_uri::S3PackageUri;
 use crate::commands::PullCheck;
 use crate::commands::PullOutcome;
 use crate::commands::PullPreview;
-use crate::kit::Align;
-use crate::kit::AnchoredOverlay;
-use crate::kit::Button;
-use crate::kit::PackageState;
-use crate::kit::StateLabel;
-use crate::kit::differs_id;
-use crate::kit::icons;
-use crate::kit::state_label::StateTone;
 use crate::pages::commit_v2::Change;
 use crate::util::thousands;
+use quilt_ui_kit::Align;
+use quilt_ui_kit::AnchoredOverlay;
+use quilt_ui_kit::Button;
+use quilt_ui_kit::PackageState;
+use quilt_ui_kit::StateLabel;
+use quilt_ui_kit::differs_id;
+use quilt_ui_kit::icons;
+use quilt_ui_kit::state_label::StateTone;
 
 use super::file_pane::Kept;
 
@@ -788,7 +788,7 @@ fn file_list(rows: Vec<Coming>, links: Option<&(Catalog, String)>) -> AnyView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{mount, sleep_ms};
+    use quilt_ui_kit::test_support::{mount, sleep_ms};
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 

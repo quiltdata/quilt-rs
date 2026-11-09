@@ -7,32 +7,9 @@ ASCII wireframes for Quilt Sync's UI pages and user journeys.
 
 ### Setup
 
-First-run screen. User picks the home directory for Quilt data.
-
-```text
-+--[appbar]----------------------------------------------+
-| [logo]                                 [refresh] [gear] |
-+---------------------------------------------------------+
-|                                                         |
-|   Quilt stores packages in a local directory.           |
-|                                                         |
-|   Directory                                             |
-|   [ /home/user/quilt________________ ]                  |
-|   hint text                                             |
-|                                                         |
-|   [Browse...]                                           |
-|                                                         |
-+---------------------------------------------------------+
-```
-
-After submit -> **Installed Packages List**
-
-### Setup (v2)
-
-In the v2 design, `/setup` renders this page instead: one card
-with the same explanation, the directory field (chosen with **Browse**, not
-typed) and **Save**. A failed pick or save says so in the band under the
-appbar.
+First-run screen, at `/setup`. One card with the explanation, the directory
+field (chosen with **Browse**, not typed) and **Save**. A failed pick or save
+says so in the band under the appbar.
 
 ```text
 +--[appbar]----------------------------------------------+
@@ -46,39 +23,16 @@ appbar.
 +---------------------------------------------------------+
 ```
 
+After save -> **Main Page**
+
 ---
 
 ### Login
 
-Shown when authentication is required. Redirects back to the
-page that triggered it via `back` parameter.
-
-```text
-+--[appbar]----------------------------------------------+
-| [logo]                                 [refresh] [gear] |
-+---------------------------------------------------------+
-|                                                         |
-|   [Login with Browser]                                  |
-|                                                         |
-|   ------------------------------------------------      |
-|                                                         |
-|   Or paste a code from the catalog:                     |
-|   [Open Catalog]                                        |
-|                                                         |
-|   Code                                                  |
-|   [ ________________________________________ ]          |
-|                                                         |
-+---------------------------------------------------------+
-```
-
-After login -> redirect to `back` URL (the page user came from)
-
-### Login (v2)
-
-In the v2 design, `/login` renders this page instead: one card
-titled with the host. **Log in with browser** first; then the catalog's
-address with **Open browser**, the **Code** field and **Submit code and Log
-in**, which waits for a code. A failure says so in the band under the
+Shown when authentication is required, at `/login`. It returns to the page
+that sent it via the `back` parameter. One card titled with the host. **Log
+in with browser** first; then the catalog's address with **Open browser**, the
+**Code** field and **Submit code and Log in**, which waits for a code. A failure says so in the band under the
 appbar; opening the browser sign-in says to continue there.
 
 ```text
@@ -96,14 +50,13 @@ appbar; opening the browser sign-in says to continue there.
 +---------------------------------------------------------+
 ```
 
+After login -> redirect to `back` URL (the page user came from)
+
 ---
 
 ### Main Page
 
-The main screen, unless Settings → Experimental → **New design** is off.
-`/` renders this or the Installed Packages List below according to
-the effective design generation, and both stay reachable at `/main` and
-`/installed-packages-list`.
+The main screen, at `/`.
 
 Four regions, in reading order. The queue is absent — not empty — when nothing
 needs a decision, and says so in one line instead.
@@ -170,96 +123,66 @@ its tooltip; the pointer passes through it to the rows below. It gives:
 The last two are left out until the row's check answers, and again when a check
 fails.
 
-### Installed Packages List
-
-Lists all locally installed packages. The main screen only when Settings →
-Experimental → **New design** is off; otherwise the Main Page takes `/`
-and this one stays at `/installed-packages-list`.
-
-```text
-+--[appbar]----------------------------------------------+
-| [logo]                                 [refresh] [gear] |
-+--[toolbar]---------------------------------------------+
-| [< Packages]                  [+ Create local package]  |
-+---------------------------------------------------------+
-|                                                         |
-|  +---------------------------------------------------+  |
-|  | user/package-a                        [Pull] [>]  |  |
-|  +---------------------------------------------------+  |
-|  | user/package-b              [Commit and Push] [>] |  |
-|  +---------------------------------------------------+  |
-|  | org/dataset-c                         [Pull] [>]  |  |
-|  +---------------------------------------------------+  |
-|  | local/my-data               [Set Remote] [>]      |  |
-|  +---------------------------------------------------+  |
-|                                                         |
-+---------------------------------------------------------+
-```
-
-Packages where the host or bucket is missing (local-only with no
-`manifest_uri`, or a partial remote) show `[Set Remote]` in the
-context menu but no Commit-and-Push / Pull buttons and no "Open
-Remote" action. The context menu never shows a `Change remote`
-entry — editing a fully-configured remote is a detail-page concern,
-handled by the toolbar button on the Installed Package page. After
-setting a remote, the status changes to Ahead and `[Commit and Push]`
-becomes available immediately (no re-commit needed).
-
-`[Commit and Push]` is the one-click "commit changes (if any) then
-push" action. It is shown when the package has a remote and
-something to ship — uncommitted changes, a pending commit that was
-not yet pushed, or both. It uses per-user defaults from Settings
-for message, workflow, and metadata; users who need a bespoke
-message enter the full form via the package page's `[Commit…]`
-link.
-
-Empty state:
-
-```text
-+--[toolbar]---------------------------------------------+
-| [< Packages]                  [+ Create local package]  |
-+---------------------------------------------------------+
-|                                                         |
-|   No packages installed                                 |
-|   Install packages from the catalog using deep links.   |
-|                                                         |
-|   [how-to-deep-link illustration]                       |
-|                                                         |
-+---------------------------------------------------------+
-```
-
-- Click [+ Create] -> opens **Create Package** popup
-- Click package row -> **Installed Package**
-- Click [Pull] -> runs pull flow, reloads
-  - Two-phase: enabled state and copy fill in from a dry-run pull check;
-    disabled only while checking, if the check fails (Retry offered), or
-    when the outcome is a conflict (see the status banner below)
-- Click [Commit and Push] -> commits if needed, then pushes;
-  reloads
-  - Disabled while the package's status is still refreshing in the
-    background
-  - Never shown without a remote; `[Set Remote]` appears instead
-- Click [Set Remote] -> opens **Set Remote** popup
-- Click [gear] -> **Settings**
-
-Rows update live from the background autopull watcher: when a
-tick changes a package's `UpstreamState` or pauses / un-pauses a
-namespace, the row's status pill and contextual button refresh
-without a page reload. Status changes propagate via
-`PackageStatusEvent`; pause / un-pause via `AUTOSYNC_PAUSED_EVENT`.
+- Click a package row -> **Installed Package**
+- A queue row's action (`Get latest`, `Publish`, `Choose S3 bucket`, ...)
+  navigates; it never runs the command itself. Each lands on the control on
+  the package page that does.
+- [Create package] -> opens the **Create Package Dialog**
+- [gear] -> **Settings**
 
 ---
 
 ### Installed Package
 
-Shows contents of a single installed package: file entries
-with checkboxes, status indicator, and a toolbar.
+One installed package, at `/installed-package`: a header, a file pane and a
+context pane.
 
-This is the page when Settings → Experimental → **New design** is off.
-On, `/installed-package` renders the redesigned package page instead, with a
-header, a context pane and a file pane; it has no address of its own.
+```text
++--[appbar]-------------------------------------------------------------------+
+| [logo]                                                     [refresh] [gear] |
++-----------------------------------------------------------------------------+
+| < Packages                                                                  |
+| user/package-a  [Newer revision available]                  [Get latest]    |
+|                     [Open folder] [Open in catalog] [Copy Quilt URI]  [...] |
++-----------------------------------------------------------------------------+
+| [Search files...]                              | Bucket and catalog         |
+| [ ] Select all     [Group v] [All | Changed |  | Revision                   |
+|                    Not downloaded | Ignored]   | Keeping                    |
+| raw/ 54                                        |                            |
+|   [v] data/file-a.csv               Changed    |                            |
+|   [ ] data/file-b.parquet    Not downloaded    |                            |
+| [Download 3 · 114.1 kB]                        |                            |
++-----------------------------------------------------------------------------+
+```
 
-On the redesigned page, the context pane's **Keeping** caption says how much of
+- **Header** — the trail back to **Main Page**, the package's name, its one
+  state, and that state's one action: `Publish` (its caret holds `Review before
+  publishing…`, which opens the **Commit** page), `Get latest`, `Resolve` or
+  `Sign in`. Then the location group: *Open folder*, *Open in catalog*,
+  *Copy Quilt URI*. Everything else is behind `[⋯]`: *Create new revision*
+  (opens **Commit**), *Undo last revision* and *Remove*, each disabled with
+  its reason when it cannot run. *Remove* asks first, with *Also delete
+  downloaded files from disk*, then goes to **Main Page**.
+- **File pane** — the package's files. Search, select-all, grouping, and the
+  facets *All · Changed · Not downloaded · Ignored*, each with the package's
+  count. A row's menu holds *Ignore*, which opens the **Ignore Popup**, or on
+  an ignored row *Stop ignoring*, which opens the **Stop Ignoring Popup**.
+- **Context pane** — *Bucket and catalog*, which opens the **Bucket and
+  Catalog Dialog**; the current *Revision*, with the revisions this copy holds;
+  and *Keeping*.
+
+The context pane has two other modes, each asked for by the address:
+
+- **Resolve** (`resolve=1`), for a package whose revision and the published
+  one have diverged: *Yours* against *Published*, the files that differ marked
+  in the file pane, and two choices. **Share mine**: "Everyone who syncs gets
+  your revision next. Nothing is deleted." **Replace mine** swaps your
+  revision and edits here for the published one, after a confirmation that
+  says what it overwrites.
+- **Revision** (`revision=<hash>`) — the current revision whole, with its hash,
+  publication, workflow and full metadata.
+
+The context pane's **Keeping** caption says how much of
 the current revision is here, in files and in bytes:
 
 - *"54 of 56 files · 1.9 MB of 3.4 MB downloaded."*
@@ -289,167 +212,11 @@ When the sizes cannot be read the caption gives the count alone, *"54 of 56
 downloaded."*, and the button *Download 2 files*. The file pane's footer says
 the ticked files' bytes the same way, *Download 3 · 114.1 kB*.
 
-```text
-+--[appbar]----------------------------------------------+
-| [logo]  user/package-a                 [refresh] [gear] |
-+--[toolbar]---------------------------------------------+
-| [< Packages]   [Open in File Browser] [Open in Catalog?] [Set Remote / Change Remote] [Uninstall] |
-+---------------------------------------------------------+
-| [status banner: status-dependent action ────────────]   |
-|   ahead        -> [Push]                                |
-|   behind       -> [Pull]   (see two-phase note below)   |
-|   diverged     -> [Merge]                               |
-|   local+origin -> [Push]                                |
-|   error        -> [Login]                               |
-|                                                         |
-| [sync scope: (·) individual files ( ) entire package]   |
-|                        (only with the experiment on)    |
-| Show [x] unmodified [x] ignored (2)                    |
-| [toolbar: Select All / Deselect All]                    |
-| +-----------------------------------------------------+ |
-| | [x] data/file-a.csv            1.2 MB  M            | |
-| | [x] data/file-b.parquet        3.4 MB  A            | |
-| | [ ] data/file-c.json           0.5 MB      [Ignore] | |
-| | [ ] data/subdir/file-d.txt     0.1 MB               | |
-| |                                                      | |
-| |  (dimmed)                                            | |
-| | [ ] .DS_Store                  4 KB     [Ignored]    | |
-| +-----------------------------------------------------+ |
-|                                                         |
-+--[actionbar]-------------------------------------------+
-|        [Create new revision]  or  [Commit and Push]     |
-+---------------------------------------------------------+
-```
-
-- [< Packages] -> **Installed Packages List**
-- Top toolbar hosts package-agnostic actions: file browser, catalog,
-  the remote-editing action (`Set remote` when host or bucket is missing,
-  `Change remote` otherwise — both open the same popup), and Uninstall.
-  Package sync actions (Push / Pull / Merge / Login) live in the status
-  banner below it.
-- [Push] -> runs push flow, reloads
-- [Pull] -> two-phase. The `behind` banner renders immediately with a
-  "Checking for updates…" placeholder and Pull disabled; a dry-run pull
-  check then drives the copy and enabled state:
-  - still loading -> disabled, "Checking for updates…"
-  - check failed -> disabled, "Couldn't check for updates." + [Retry]
-  - clean update -> enabled, "The remote has newer revisions."
-  - keeps local changes -> enabled, "The remote has newer revisions.
-    Your local changes are safe — pulling keeps them."
-  - conflict -> disabled, "Conflicts in {files}. Commit your changes to
-    resolve them on the merge page."
-- [Uninstall] -> runs uninstall flow -> **Installed Packages List**
-- [Install Selected Paths] -> runs install_paths flow, reloads
-- **Sync scope** (only when Settings → Experimental → *Enable entire-package
-  sync* is on) -> a band above the entries toolbar, two options:
-  - *Sync individual files* — today's behaviour: a pull updates the files you
-    already have, and one a teammate added is listed but not fetched
-  - *Sync entire package* — a pull fetches the added ones too, on this package,
-    from now on (the autopull tick included)
-
-  A package that keeps chosen folders, set on the redesigned page or with
-  `quilt keep --folder`, selects neither option, and picking one replaces the
-  folders. Its file list keeps a checkbox on every file.
-
-  Picking either **stores the choice and downloads nothing**. The band renders
-  whether or not anything is pending: once a package has caught up it is the
-  only thing on screen saying what its scope is, and the only way back.
-
-  In whole-package scope the toolbar's left slot drops *Select All* and
-  relabels its button to *Download all files*; row checkboxes are inert, since
-  the scope has taken the per-file choice away. When nothing is pending that
-  slot carries a caption instead — *"Files added later are downloaded too."*
-  under whole-package scope, *"All files are downloaded."* under individual.
-- [Ignore] -> opens **Ignore Popup** (for junk-detected files)
-- [Ignored] -> opens **Un-ignore Popup** (for `.quiltignore`-matched files)
-- [Create new revision] -> opens the **Commit** form at
-  `/commit?namespace=…`; the form is where the user picks message,
-  workflow, and metadata before either saving locally (`[Commit]`) or
-  committing-and-pushing (`[Commit and Push]`)
-- [Commit and Push] -> one-click commit-and-push using the
-  Commit-and-Push defaults from Settings. Shown in the actionbar
-  only when the package has a remote and something to ship
-  (uncommitted changes or a pending commit that has not been pushed).
-  Equivalent to the `[Commit and Push]` button on the Installed
-  Packages List.
-
-**Autosync paused (variant)**: when the background autopull watcher
-refuses to act for a `PausedReason::Other(_)` reason (workflow
-rejection, persistent push/commit error after backoff, etc.) or for a
-`PausedReason::PullConflict` (autopull hit a two-sided conflict), an
-additional banner stacks above the standard status banner:
-
-```text
-+--[autosync paused]-------------------------------------+
-| Autosync paused: <message from PausedReason::Other(_)> |
-|                                              [Dismiss] |
-+--------------------------------------------------------+
-```
-
-- A `PullConflict` pause shows conflict-specific guidance instead of
-  the generic text: "Conflicts in {files}. Commit your changes to
-  resolve them on the merge page." — the same remediation the manual
-  pull's `Blocked` banner gives.
-- Suppressed for `Diverged`, `Behind`, and pending-change/commit paused
-  reasons — the standard status banner already surfaces those with their
-  own action (`[Merge]` / `[Pull]`).
-- Re-hydrated on page mount from `get_autosync_snapshot()`; live
-  updated via the `AUTOSYNC_PAUSED_EVENT` Tauri event.
-- `[Dismiss]` only hides the banner locally; the underlying
-  refusal is cleared when the next watcher tick succeeds or when
-  the user resolves the upstream condition.
-
 ---
 
 ### Commit
 
-Form for committing local changes to a package.
-Two-column layout: form on the left, file list on the right.
-
-```text
-+--[appbar]----------------------------------------------+
-| [logo]  user/package-a                 [refresh] [gear] |
-+--[toolbar]---------------------------------------------+
-| [< Packages]                                            |
-+---------------------------------------------------------+
-|                        |                                |
-|  [workflow indicator]  | Show [x] unmodified            |
-|                        |       [x] ignored (1)          |
-|  Namespace             | -------------------------      |
-|  [ user/package-a   ]  |  data/file-a.csv          M   |
-|  (readonly)            |  data/file-b.parquet      A   |
-|                        |  data/file-c.json         D   |
-|  Message *             | -------------------------      |
-|  [ Updated dataset__ ] |  .DS_Store        [Ignored]   |
-|                        |                                |
-|  Metadata              |                                |
-|  [ { "key": "value" }] |                                |
-|  [rendered metadata]   |                                |
-|                        |                                |
-+---------------------------------------------------------+
-+--[actionbar]-------------------------------------------+
-|                     [Commit]  or  [Commit and Push]     |
-+---------------------------------------------------------+
-```
-
-Both buttons are disabled when the message field is empty.
-
-- `[Commit and Push]` is the primary action — it commits the form
-  values and immediately pushes the new revision.
-- `[Commit]` stays available as a secondary action for users who want
-  to save a local revision without pushing (e.g. to squash with a
-  later commit before pushing).
-- For local-only packages (no remote configured) only `[Commit]` is
-  shown, because there is nothing to push to.
-
-After either action -> **Installed Package**
-
----
-
-### Commit (v2)
-
-In the v2 design, `/commit` renders this page instead, from the
-same read and through the same commands. The header and any banner span the
+Form for a new revision, at `/commit`. The header and any banner span the
 page. From about a 1024px window, the form is on the left and the changed
 files on the right; narrower, it is one column with the files last.
 
@@ -510,44 +277,17 @@ in the banner under the appbar, and the page re-reads.
 
 ---
 
-### Merge
-
-Shown when local and remote versions have diverged.
-Offers two resolution options.
-
-```text
-+--[appbar]----------------------------------------------+
-| [logo]  user/package-a                 [refresh] [gear] |
-+--[toolbar]---------------------------------------------+
-| [< Packages] > [package-a]              [Push] [Pull]  |
-+---------------------------------------------------------+
-|                                                         |
-|   Certify your local version as the latest:             |
-|   [Certify as Latest]                                   |
-|                                                         |
-|   Or discard local changes and reset to remote:         |
-|   [Reset to Remote]                                     |
-|                                                         |
-+---------------------------------------------------------+
-```
-
-- [Certify as Latest] -> runs certify_latest flow
-- [Reset to Remote] -> runs reset_to_latest flow
-
----
-
 ### Ignore Popup
 
-Shown when clicking [Ignore] on a junk-detected file entry.
-Lets the user add a pattern to `.quiltignore`.
+Shown from *Ignore* on a file row, or *Ignore them* on the commit page's
+system-files banner. Adds a pattern to `.quiltignore`.
 
 ```text
 +---------------------------------------------------------+
 |                                                         |
-|   Pattern                                               |
+|   Pattern to ignore:                                    |
 |   [ *.pyc______________________________ ]               |
-|   hint: will be ignored                                 |
-|     or: Ignore all similar files with `*.pyc`           |
+|   data/file.pyc will be ignored                         |
 |                                                         |
 |   [Add to .quiltignore]  [Cancel]                       |
 |                                                         |
@@ -555,166 +295,130 @@ Lets the user add a pattern to `.quiltignore`.
 ```
 
 - Pattern field is pre-filled with the suggested pattern
-- Live validation with debounce shows what the pattern matches
-- [Add to .quiltignore] -> appends pattern, reloads page
+- As the pattern is typed, the hint says what it matches: the path *will be
+  ignored*, *Only* the path will be, or it *Doesn't match* the path
+- [Add to .quiltignore] -> appends pattern, re-reads the page
 
 ---
 
-### Un-ignore Popup
+### Stop Ignoring Popup
 
-Shown when clicking [Ignored] on a `.quiltignore`-matched file.
-Shows which pattern is ignoring the file.
+Shown from *Stop ignoring* on an ignored file row. Says which pattern ignores
+the path, and brings it back.
 
 ```text
 +---------------------------------------------------------+
 |                                                         |
-|   Ignored by pattern: *.pyc                             |
+|   Stop ignoring data/file.pyc                           |
+|   Ignored by: *.pyc                                     |
 |                                                         |
-|   [Edit .quiltignore]  [Cancel]                         |
+|   Stop ignoring in                                      |
+|   (*) This package   ( ) All packages                   |
+|   This adds 1 file (4 kB) to the package on the next    |
+|   sync.                                                 |
+|   Adds !data/file.pyc to this package's .quiltignore    |
+|                                                         |
+|   [Stop ignoring]  [Cancel]                             |
 |                                                         |
 +---------------------------------------------------------+
 ```
 
-- [Edit .quiltignore] -> opens file in default application
+- *This package* is chosen when the popup opens; *All packages* is offered
+  only when a user-wide line can bring the path back
+- While the files are counted, and when counting failed, [Stop ignoring] is
+  disabled
+- [Stop ignoring] -> writes the `!` lines, re-reads the page
 
 ---
 
-### Create Package Popup
+### Create Package Dialog
 
-Shown when clicking [+ Create] on the Installed Packages List page.
-Creates a new local-only package.
+Shown from [Create package] in the Main Page's toolbar. Creates a new
+local-only package.
 
 ```text
 +---------------------------------------------------------+
+|  Create package                                         |
 |                                                         |
-|   Namespace *                                           |
+|   Package name  Required                                |
 |   [ owner/package-name________________ ]                |
+|   Two parts, separated by a slash — user/plate-07.      |
 |                                                         |
-|   [Create]  [Cancel]                                    |
+|   Folder to add                                         |
+|   [ No folder chosen__________________ ] [Browse…]      |
+|   Optional. You can add files later.                    |
 |                                                         |
+|                                     [Cancel]  [Create]  |
 +---------------------------------------------------------+
 ```
 
-- Namespace must be `owner/name` format
-- After create -> page reloads, new package appears in list
+- Package name must be `owner/name` format
+- Without a desktop (headless) the folder is typed, not picked
+- A failure shows as a banner above the fields
+- After create -> the list re-reads, new package appears in it
 - Package starts as local-only with an initial empty commit
 
 ---
 
-### Set Remote Popup
+### Bucket and Catalog Dialog
 
-Shown from the Installed Package toolbar on any package, and from the
-Installed Packages List context menu when host or bucket is missing.
-Both `[Set remote]` and `[Change remote]` labels open the same popup.
-Host and bucket are pre-filled from the current remote state (empty
-strings when unset) so editing a partial or mistyped remote is just
-correcting the input. Title is always "Set remote".
+Shown from the package page's *Bucket and catalog* section, and from the
+commit page's menu (*Change bucket*) before the first push. Before the first
+push it sets host, bucket and workflow. A published package keeps its bucket:
+the bucket is shown and disabled, there is no workflow, and Save changes only
+the catalog.
 
 ```text
 +---------------------------------------------------------+
+|  Bucket and catalog                                     |
 |                                                         |
-|   Set remote                                            |
-|                                                         |
-|   Host *                                                |
+|   Host                                                  |
 |   [ open.quiltdata.com________________ ]                |
 |                                                         |
-|   Bucket *                                              |
+|   Bucket                                                |
 |   [ my-s3-bucket______________________ ]                |
 |                                                         |
-|   [Save]  [Cancel]                                      |
+|   Workflow                                              |
+|   [ Plate reads (default) v ]                           |
 |                                                         |
+|                                       [Cancel]  [Save]  |
 +---------------------------------------------------------+
 ```
 
-- After save -> page reloads, status changes to Ahead
-- Push becomes available immediately (no re-commit needed)
-
 ---
 
-### Edit Commit and Push Defaults Popup
+### Publishing Dialog
 
-Shown when clicking `[Edit]` in Settings → Commit and Push. Form
-for the global defaults the one-click `[Commit and Push]` action
-uses for every package (no per-package overrides).
+Shown from **Edit…** on Settings' *Publishing* card. The global defaults
+publishing and autosync use for every package; they also fill in a new
+revision's form.
 
 ```text
 +---------------------------------------------------------+
-|  Edit Commit and Push defaults                          |
+|  Publishing                                             |
 |                                                         |
 |  Message template                                       |
-|  [ Auto-publish {date} ({changes})_________________ ]   |
+|  [ Generated from the changes______________________ ]   |
 |  Placeholders: {date} {time} {datetime}                 |
 |                {namespace} {changes}                    |
-|  Preview: Auto-publish 2026-04-21 (3 files modified)    |
 |                                                         |
 |  Default workflow                                       |
-|   (*) Use the bucket's default workflow                 |
-|   ( ) Override:  [ __________________________ ]         |
+|  [ Each bucket's default___________________________ ]   |
+|  A workflow id. Empty uses each bucket's default.       |
 |                                                         |
 |  Default metadata                                       |
 |  [ { "source": "desktop" }_________________________ ]   |
 |                                                         |
-|  [Save]  [Cancel]   Reset to defaults                   |
-|                                                         |
+|  [Reset to defaults]                  [Cancel]  [Save]  |
 +---------------------------------------------------------+
 ```
 
-- Preview re-renders live as the user types (client-side, no round
-  trip); unknown placeholders like `{dat}` pass through so typos stay
-  visible.
-- Workflow radio: "Use bucket's default workflow" sends no workflow
-  id at Commit-and-Push time; "Override" saves the typed id,
-  validated against the bucket on the first run (same as today's
-  Commit form).
-- Metadata is JSON-validated on Save; empty = no metadata.
-- `Reset to defaults` clears all three fields but does not save —
-  user still has to click `[Save]`.
-- After save -> popup closes, Settings page reloads showing the new
-  values.
-
----
-
-### Edit Autosync Settings Popup
-
-Shown when clicking `[Edit]` in Settings → Autosync.
-Form for the two direction toggles, the pull interval, and the
-publish quiet window.
-
-```text
-+---------------------------------------------------------+
-|  Edit autosync settings                                 |
-|                                                         |
-|  [ ] Auto-pull updates from the remote                  |
-|  hint: pull when remote moves ahead and local is clean  |
-|                                                         |
-|  [ ] Auto-publish local changes                         |
-|  hint: commit and push once the working tree is quiet   |
-|                                                         |
-|  Pull interval (seconds)                                |
-|  [ 30 ]                                                 |
-|                                                         |
-|  Wait after last edit before publishing (seconds)       |
-|  [ 300 ]                                                |
-|                                                         |
-|  [Save]  [Cancel]   Reset to defaults                   |
-|                                                         |
-+---------------------------------------------------------+
-```
-
-- The two checkboxes are independent: many users want background
-  pulls without unattended pushes. Either toggle being on starts
-  the watcher; both off stops it.
-- Intervals are positive integers; the form rejects non-numeric
-  or zero input before saving, and the Tauri command rejects zero
-  again as a backstop.
-- Auto-publish refuses on `Diverged` and on foreign-remote
-  conflicts — those still require explicit user action via
-  **Merge** or **Set Remote**.
-- `Reset to defaults` restores the shipped defaults (both off,
-  30 s pull interval, 300 s wait) but does not save — user still
-  has to click `[Save]`.
-- After save -> popup closes, watcher cadence updates immediately,
-  Settings page reloads.
+- Save is off while the metadata is not valid JSON.
+- A named workflow or any metadata shows a warning: these settings apply to every
+  bucket, so a default can make publishing fail in a bucket that doesn't
+  define it.
+- *Reset to defaults* clears the fields but saves nothing, so Cancel undoes
+  it.
 
 ---
 
@@ -750,71 +454,9 @@ nothing is being written, which is the common case.
 
 ### Settings
 
-Application settings and diagnostics. This is the page when Settings →
-Experimental → **New design** is off.
-
-```text
-+--[appbar]----------------------------------------------+
-| [logo]                                 [refresh] [gear] |
-+---------------------------------------------------------+
-|                                                         |
-|  General                                                |
-|  -------                                                |
-|  Version          0.27.0  [Release Notes]               |
-|  Home directory   /home/user/quilt  [Open]              |
-|  Data directory   /home/user/.quilt [Open]              |
-|                                                         |
-|  Commit and Push                                        |
-|  ---------------                                        |
-|  Message template   Default — auto-generated summary    |
-|  Default workflow   Default — bucket's workflow         |
-|  Default metadata   Default — none                      |
-|                                                         |
-|  [Edit]                                                 |
-|                                                         |
-|  Autosync                                               |
-|  --------                                               |
-|  Pull (remote -> local)        Off                      |
-|  Push (local -> remote)        Off                      |
-|  Pull interval                 30 s                     |
-|  Wait after last edit          300 s                    |
-|                                                         |
-|  [Edit]                                                 |
-|                                                         |
-|  Filesystem Watcher                                     |
-|  ------------------                                     |
-|  Enable filesystem watcher     [x]                      |
-|  hint: refreshes local status when files change         |
-|                                                         |
-|  Experimental                                           |
-|  ------------                                           |
-|  Enable entire-package sync    [ ]                      |
-|  hint: adds a per-package option to sync everything in  |
-|        a package, instead of picking files.             |
-|                                                         |
-|  New design                    [ ]                      |
-|  hint: the redesigned QuiltSync.                        |
-|                                                         |
-|  Account                                                |
-|  -------                                                |
-|  open.quiltdata.com       [Re-login] [Logout]           |
-|  custom.registry.io       [Re-login] [Logout]           |
-|                                                         |
-|  Diagnostics                                            |
-|  -----------                                            |
-|  Log level        INFO                                  |
-|  Logs directory   /home/user/.quilt/logs  [Open]        |
-|                                                         |
-|  [Collect Logs] then [Send Crash Report]                |
-|                  or   [Email Support]                    |
-|                                                         |
-+---------------------------------------------------------+
-```
-
-### Settings (v2)
-
-In the v2 design, `/settings` renders this page instead. One
-column of cards, most used first. No Refresh or Settings in the appbar.
+Application settings and diagnostics, at `/settings`. Cards in rows of two
+on a wide window, in the same order in one column when narrow. No Refresh or
+Settings in the appbar.
 
 ```text
 +--[appbar]----------------------------------------------+
@@ -829,27 +471,30 @@ column of cards, most used first. No Refresh or Settings in the appbar.
 |  [ ] Publish your changes                               |
 |      After [5] minutes of inactivity                    |
 |  [x] Watch folders for changes                          |
-| Publishing                                              |
-|  Message template  [ Generated from the changes     ]   |
-|  Default workflow  [ Each bucket's default          ]   |
-|  Default metadata                              [Add]    |
-|                                               [Save]    |
 | Accounts                                                |
 |  open.quiltdata.com   Role [analyst v]      [Sign out]  |
 |  custom.registry.io   Signed out             [Sign in]  |
-| App                                                     |
-|  [ ] Keep running in the tray when the window is closed |
 | Storage                                                 |
 |  Where packages live  /home/user/QuiltSync      [Open]  |
 |  App storage          [Check size]     [Free up space]  |
-| Experimental                                            |
-|  [x] New design                                         |
-| Help                                                    |
-|  Report a problem              [Report a problem...]    |
+| App                                                     |
+|  [ ] Keep running in the tray when the window is closed |
+| Publishing                                              |
+|  Message template  Generated from the changes           |
+|  Default workflow  Each bucket's default                |
+|  Default metadata  No metadata                          |
+|                                              [Edit…]    |
+| Troubleshooting                                         |
+|  Report a problem              [Report a problem…]      |
 |  Log level  [Default v]                                 |
 |  Logs folder  ...  [Open]     Data folder  ...  [Open]  |
+| Experimental                                            |
+|  [ ] Agent tasks                                        |
 | About                                                   |
 |  Version  0.22.10                    [Release notes]    |
+| Ignore rules                                            |
+|  Your rules      ...                       [Open file]  |
+|  Built-in rules                            [Review…]    |
 +---------------------------------------------------------+
 ```
 
@@ -863,10 +508,8 @@ column of cards, most used first. No Refresh or Settings in the appbar.
   least 1. The pull minutes are the interval while the window is focused;
   the unfocused and closed intervals stay as stored. A stored time that is
   not whole minutes shows rounded and is written only when changed.
-- Publishing is the one card with **Save**, enabled while the fields differ
-  from what is stored and the metadata is valid JSON. The metadata folds to
-  a preview with `Edit` (`Add` when empty); clicking its label while open
-  puts the cursor in the editor.
+- Publishing shows the stored defaults; **Edit…** opens the **Publishing
+  Dialog**.
 - Accounts are read on their own, so asking each host's role does not hold
   the page. **Sign in** returns here; **Sign out** asks first. A role pick
   switches at once.
@@ -877,46 +520,26 @@ column of cards, most used first. No Refresh or Settings in the appbar.
   list of what is sent, **Send to Quilt** (collects the logs, sends them
   with your text) and **Email instead** (collects the logs, opens your mail
   app with the text and the zip's path).
-- Turning *New design* off saves, then goes to `/`.
+- Turning on *Agent tasks* adds an *Agent tasks* card beside *Ignore rules*.
 
 ---
 
 ### Error
 
-Generic error page with recovery options.
+Generic error page with recovery options, at `/error`. The title, the
+message, and **Reload page**, **Open .quilt directory**, **Login** and
+**Go home**; **Login** shows only when there is a host. *Open .quilt
+directory* reports in the band under the appbar. An unknown address draws the
+same shape with *Page not found* and **Go home**.
 
-```text
-+--[appbar]----------------------------------------------+
-| [logo]                                 [refresh] [gear] |
-+---------------------------------------------------------+
-|                                                         |
-|   Error Title                                           |
-|                                                         |
-|   Detailed error message explaining what went wrong.    |
-|                                                         |
-|   [Reload] [Open .quilt] [Login] [Home]                 |
-|                                                         |
-+---------------------------------------------------------+
-```
+### Opening a Quilt link
 
-Buttons shown depend on context (e.g. [Login] only when
-auth-related).
-
-### Error (v2)
-
-In the v2 design, `/error` renders the same title, message and
-buttons centred in the v2 frame; **Login** shows only when there is a host.
-*Open .quilt directory* reports in the band under the appbar. An unknown
-address draws the same shape with *Page not found* and **Go home**.
-
-### Opening a Quilt link (v2)
-
-`/remote-package` runs the link as it opens. In the v2 design it
-shows a spinner in the v2 frame, with **Refresh** disabled, then replaces
-itself with the package page. A failure draws the error buttons (Reload page,
-Open .quilt directory, Go home) in the same frame; Reload page runs the link
-again without reloading the window. A link that needs a sign-in or setup goes
-there instead, replacing this page so Back does not run the link again.
+`/remote-package` runs the link as it opens. It shows a spinner, with
+**Refresh** disabled, then replaces itself with the package page. A failure
+draws the error buttons (Reload page, Open .quilt directory, Go home) in the
+same frame; Reload page runs the link again without reloading the window. A
+link that needs a sign-in or setup goes there instead, replacing this page so
+Back does not run the link again.
 
 ---
 
@@ -929,54 +552,31 @@ there instead, replacing this page so Back does not run the link again.
                             |
                             v
   +---------------------------------------------------+
-  |   Home  (Main Page or Installed Packages List,     |<---------+
-  |          per Settings -> Experimental)             |
-  +---+-------+------------+---------------+----------+           |
-      |       |            |               |                      |
-      |       | [Create]   | [Commit and   | [gear]               |
-      |       v            |     Push]     v                      |
-      |  [popup]           v          +----------+                |
-      |  namespace    (commit if      | Settings |                |
-      |  -> reload    needed, then    +----------+                |
-      |               push) -> reload                             |
-      |                                                           |
-      | click pkg                                                 |
-      v                                                           |
-+-----+-------+      [Push]        (status banner: ahead / local) |
-|  Installed   |----> push only -----------------------> reload --+|
-|  Package     |                                                 ||
-|              |      [Commit and Push]   (bottom actionbar)     ||
-|              |----> commit+push (uses Settings defaults) ----->+|
-|              |                                                 ||
-|              |      [Create new revision]  (bottom actionbar)  ||
-+--+-+--+------+----> +----+----+                                ||
-   | |  |             |         |                                ||
-   | |  |             | Commit  |                                ||
-   | |  |             |         |                                ||
-   | |  |             +----+----+                                ||
-   | |  |                  |                                     ||
-   | |  |                  | [Commit and Push]  (primary)        ||
-   | |  |                  | [Commit]           (secondary)      ||
-   | |  |                  v                                     ||
-   | |  |             --->--+-------------------------->---------+|
-   | |  |                                                         |
-   | |  |   [Set remote] / [Change remote]  (toolbar and list    |
-   | |  |                                    context menu)        |
-   | |  |     -> popup (host + bucket, pre-filled from state)     |
-   | |  |     -> status updates on save -> reload                 |
-   | |  | [Uninstall]                                             |
-   | |  +---->----------------------------------------------------+
-   | |
-   | | when diverged
-   | v
-   | +---------+
-   +>|  Merge  |
-     +---------+
-     | Certify | Reset
-     +----+----+
-          |
-          v
-     (back to Installed Package)
+  |                     Main Page                     |<---------+
+  +---+---------------+-------------------+-----------+          |
+      |               |                   |                      |
+      | click pkg     | [Create package]  | [gear]               |
+      | or queue row  v                   v                      |
+      |          [dialog]           +----------+                 |
+      |          -> list re-reads   | Settings |                 |
+      |                             +----------+                 |
+      v                                                          |
++-----+--------------+   [Publish] / [Get latest]                |
+|  Installed Package |----> runs, page re-reads                  |
+|                    |                                           |
+|                    |   [Resolve] -> resolve mode               |
+|                    |----> Share mine / Replace mine            |
+|                    |                                           |
+|                    |   [Review before publishing…]             |
+|                    |   [⋯] Create new revision                 |
+|                    |----> +--------+                           |
+|                    |      | Commit |                           |
+|                    |      +---+----+                           |
+|                    |          | Publish / Save                 |
+|                    |<---------+                                |
+|                    |                                           |
+|                    |   [⋯] Remove                              |
++--------------------+----> confirm ----------------------------+
 
 
   Any page ----[needs auth]----> Login ----[back]----> original page

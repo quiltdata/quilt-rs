@@ -9,9 +9,9 @@
 //! the reader edited it; the workflow and untouched metadata start over from
 //! the new answer.
 //!
-//! Live validation is v1's — the rules load, the candidate check, the 400ms
-//! debounce, the keyed answer — with one difference: every violation shows at
-//! once and blocks the primary. This page is the review before a publish, so
+//! Live validation loads the rules, checks the candidate after a debounce and
+//! keys the answer. Every violation shows at once and blocks the primary. This
+//! page is the review before a publish, so
 //! a publish that would be refused says so before the click.
 
 use std::future::Future;
@@ -24,13 +24,12 @@ use leptos_router::hooks::use_navigate;
 
 use crate::commands::{self, CommitData, CommitViolation, EntryData, JunkSummary, ViolationField};
 use crate::commands::{CommitWorkflows, WorkflowIntent};
-use crate::components::build_workflow_view;
-use crate::components::workflow_select::{
-    WorkflowOption, WorkflowView, WorkflowViewKind, missing_settings_workflow,
-    shows_settings_workflow_hint,
+use crate::components::{IgnorePopup, IgnorePopupData, Notification};
+use crate::pages::workflow::{
+    PreviousWorkflow, WorkflowOption, WorkflowView, WorkflowViewKind, build_workflow_view,
+    missing_settings_workflow, shows_settings_workflow_hint,
 };
-use crate::components::{IgnorePopup, IgnorePopupData, Notification, PreviousWorkflow};
-use crate::kit::{LoadFailure, PageLayout};
+use quilt_ui_kit::LoadFailure;
 
 use super::super::installed_package_v2::{
     BucketDialog, BucketDraft, CopiedMark, MenuCommand, RemoveDialog, Uninstall, ask_to_remove,
@@ -40,9 +39,6 @@ use super::super::row_menu::RowCommand;
 use super::super::v2_page::{Outcome, PageHandle, V2Page, critical};
 use crate::routes;
 
-use super::super::commit::{
-    effective_metadata, field_violations, should_debounce, starting_metadata,
-};
 use super::{
     Change, CommitColumn, CommitHeader, CommitPageSkeleton, IncludedFile, IncludedList,
     MessageField, MetadataField, Primary, PrimaryWiring, Problem, ProblemBanner, WorkflowChoice,
@@ -60,17 +56,6 @@ fn read_commit(namespace: String) -> Pin<Box<dyn Future<Output = Result<CommitDa
 #[component]
 pub fn CommitV2() -> impl IntoView {
     view! { <CommitScreen read=read_commit /> }
-}
-
-/// What `/commit` draws while it reads which page it is, for a v2 reader: the
-/// page's own first paint.
-#[component]
-pub fn CommitV2Skeleton(actions: AnyView) -> impl IntoView {
-    view! {
-        <PageLayout heading="New revision" banner=().into_any() actions=actions>
-            <CommitPageSkeleton />
-        </PageLayout>
-    }
 }
 
 // ── Mapping ──
@@ -206,10 +191,10 @@ fn caption(violations: &[CommitViolation], field: ViolationField) -> Option<Stri
     (!messages.is_empty()).then(|| messages.join(" "))
 }
 
-/// The select's options and where it starts, from the dropdown v1 draws.
+/// The select's options and where it starts, from the [`WorkflowView`].
 ///
 /// The select cannot grey an option, so a disabled one (`None` on a bucket
-/// that requires a workflow) is left out — unless v1 would start on it, which
+/// that requires a workflow) is left out — unless the view starts on it, which
 /// it does on a required bucket that names no default: then it stays, at the
 /// head, so the reader still has to choose, and `needs_choice` says so. With
 /// one workflow left there is nothing to choose, and it starts on that one.
@@ -564,7 +549,7 @@ type LiveKey = (String, String, Option<String>, Remote);
 pub(crate) type RulesCheck =
     fn(String, String, bool, String, String) -> Pin<Box<dyn Future<Output = Vec<CommitViolation>>>>;
 
-/// v1's: load the workflow's rules, then check the candidate against them.
+/// Load the workflow's rules, then check the candidate against them.
 fn check_rules(
     namespace: String,
     id: String,
@@ -629,8 +614,7 @@ fn CommitScreen(
     // The page's frame, its one read, its lock and its band: the shared v2
     // scaffold, whose rules say why a re-read keeps the form, the cursor in it
     // and the reader's choices. The live check below lands in a signal for the
-    // same reason the read does: a resource under `ByDesign`'s `Suspense`
-    // would put the loading frame back over the form mid-word.
+    // same reason the read does.
     let page = PageHandle::new();
     let PageHandle {
         reload, outcome, ..
@@ -666,7 +650,7 @@ fn CommitScreen(
     let menu = HeaderMenu::new(page, goto, uninstall);
     menu.hold_through_read();
 
-    // ── Live validation, v1's ──
+    // ── Live validation ──
     let workflow_id = Memo::new(move |_| match draft.workflow.get() {
         WorkflowIntent::Named(id) => Some(id),
         _ => None,
@@ -1182,13 +1166,55 @@ fn workflow_field(fixed: &Form, draft: Draft, violations: Memo<Vec<CommitViolati
     }
 }
 
+// ── Live validation ──
+
+/// Whether a settled edit should (re)arm the debounce timer: only when the
+/// current input key differs from the value the debounced mirror already holds.
+/// Guards the mount-time Effect run, which observes the initial key equal to the
+/// seeded mirror — scheduling a `set` there would re-run the validation resource
+/// with identical input (`RwSignal::set` has no `PartialEq` dedupe).
+fn should_debounce<T: PartialEq>(key: &T, debounced: &T) -> bool {
+    key != debounced
+}
+
+/// The text the metadata editor starts with: the publish settings' default
+/// metadata when there is one, else the previous revision's metadata.
+fn starting_metadata(settings: Option<&str>, previous: &str) -> String {
+    settings.unwrap_or(previous).to_string()
+}
+
+/// The metadata the live validation should check for a given editor state.
+/// Mirrors the commit path's `UserMeta::Keep` semantics: an empty/whitespace
+/// editor means "keep the previous revision's metadata", which the commit gate
+/// validates — so live validation substitutes that seeded previous value rather
+/// than validating `{}`. A non-empty editor is validated as typed. When both are
+/// empty they collapse to `{}` on both paths, keeping live and commit consistent.
+fn effective_metadata(editor_text: &str, seeded_previous: &str) -> String {
+    if editor_text.trim().is_empty() {
+        seeded_previous.to_string()
+    } else {
+        editor_text.to_string()
+    }
+}
+
+/// The messages of the violations that belong under `field`, in order. Pure
+/// mapping from the backend's per-field violation list to the strings one field
+/// renders, so the routing is unit-testable without a DOM.
+fn field_violations(violations: &[CommitViolation], field: ViolationField) -> Vec<String> {
+    violations
+        .iter()
+        .filter(|violation| violation.field == field)
+        .map(|violation| violation.message.clone())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::pages::commit_v2::SAVE_WITHOUT_PUBLISHING;
-    use crate::test_support::{button_saying, mount, sleep_ms, unmount_earlier};
     use leptos_router::components::{Route, Router, Routes};
     use leptos_router::path;
+    use quilt_ui_kit::test_support::{button_saying, mount, sleep_ms, unmount_earlier};
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
@@ -1547,8 +1573,8 @@ mod tests {
         })
     }
 
-    /// The page as `/commit` mounts it: under `ByDesign`'s `Suspense`.
-    async fn suspended_page_at(address: &str, read: CommitRead) -> web_sys::Element {
+    /// The page as `/commit` mounts it.
+    async fn routed_page_at(address: &str, read: CommitRead) -> web_sys::Element {
         unmount_earlier();
         web_sys::window()
             .unwrap()
@@ -1564,9 +1590,7 @@ mod tests {
                             path=path!("/commit")
                             view=move || {
                                 view! {
-                                    <Suspense fallback=|| view! { <p data-fallback>"loading"</p> }>
-                                        <CommitScreen read=read />
-                                    </Suspense>
+                                    <CommitScreen read=read />
                                 }
                             }
                         />
@@ -1578,12 +1602,11 @@ mod tests {
         el
     }
 
-    /// The live check runs after each pause in typing. It must not send the
-    /// page back to the loading frame, which would take the field, and the
-    /// cursor in it, away mid-word.
+    /// The live check runs after each pause in typing. It must not rebuild the
+    /// form, which would take the field, and the cursor in it, away mid-word.
     #[wasm_bindgen_test]
     async fn a_check_while_typing_keeps_the_page() {
-        let el = suspended_page_at("/commit?namespace=org%2Fpkg", governed).await;
+        let el = routed_page_at("/commit?namespace=org%2Fpkg", governed).await;
         let input = message_input(&el);
         input.focus().unwrap();
         input.set_value("Plate 7");
@@ -1591,11 +1614,6 @@ mod tests {
             .dispatch_event(&web_sys::Event::new("input").unwrap())
             .unwrap();
         sleep_ms(700).await;
-        assert!(
-            el.query_selector("[data-fallback]").unwrap().is_none(),
-            "the loading frame came back; markup was {}",
-            el.inner_html()
-        );
         assert!(input.is_connected(), "the field was rebuilt");
         let active = web_sys::window()
             .unwrap()
@@ -1698,7 +1716,7 @@ mod tests {
         assert_eq!(save.text_content().unwrap().trim(), SAVE_WITHOUT_PUBLISHING);
         save.click();
         sleep_ms(80).await;
-        crate::test_support::element_saying(&el, "Refresh").click();
+        quilt_ui_kit::test_support::element_saying(&el, "Refresh").click();
         sleep_ms(80).await;
         let face = buttons(&el).item(0).unwrap();
         assert_eq!(
@@ -1758,7 +1776,7 @@ mod tests {
     #[wasm_bindgen_test]
     async fn invalid_metadata_blocks_without_a_workflow() {
         let el = page_at("/commit?namespace=org%2Fpkg").await;
-        crate::test_support::element_saying(&el, "Edit").click();
+        quilt_ui_kit::test_support::element_saying(&el, "Edit").click();
         sleep_ms(30).await;
         let editor: web_sys::HtmlTextAreaElement = el
             .query_selector("textarea")
@@ -1789,7 +1807,7 @@ mod tests {
     async fn a_re_read_does_not_take_the_focus_back() {
         let el = page_at("/commit?namespace=org%2Fpkg&focus=message").await;
         message_input(&el).blur().unwrap();
-        crate::test_support::element_saying(&el, "Refresh").click();
+        quilt_ui_kit::test_support::element_saying(&el, "Refresh").click();
         sleep_ms(80).await;
         let active = web_sys::window()
             .unwrap()
@@ -1888,7 +1906,7 @@ mod tests {
             dialog.inner_html()
         );
 
-        crate::test_support::button_saying(&dialog, "Remove").click();
+        quilt_ui_kit::test_support::button_saying(&dialog, "Remove").click();
         sleep_ms(80).await;
         assert!(
             el.text_content()
@@ -1943,7 +1961,7 @@ mod tests {
     #[wasm_bindgen_test]
     async fn a_new_bucket_keeps_the_message_and_resets_untouched_fields() {
         READS.set(0);
-        let el = suspended_page_at("/commit?namespace=org%2Fpkg", rebucketed).await;
+        let el = routed_page_at("/commit?namespace=org%2Fpkg", rebucketed).await;
         let input = message_input(&el);
         input.set_value("Plate 7");
         input
@@ -1964,7 +1982,7 @@ mod tests {
         };
         assert!(workflow(&el).starts_with("Plates"), "{}", workflow(&el));
 
-        crate::test_support::element_saying(&el, "Refresh").click();
+        quilt_ui_kit::test_support::element_saying(&el, "Refresh").click();
         sleep_ms(80).await;
 
         assert_eq!(message_input(&el).value(), "Plate 7");
@@ -2088,7 +2106,7 @@ mod tests {
             el.inner_html()
         );
 
-        crate::test_support::element_saying(&el, "Refresh").click();
+        quilt_ui_kit::test_support::element_saying(&el, "Refresh").click();
         sleep_ms(past_the_pause()).await;
 
         assert_eq!(BUCKET.get(), "other-bucket");
@@ -2239,7 +2257,7 @@ mod tests {
             }
         });
         sleep_ms(80).await;
-        crate::test_support::element_saying(&el, "Edit").click();
+        quilt_ui_kit::test_support::element_saying(&el, "Edit").click();
         sleep_ms(30).await;
         let editor = |el: &web_sys::Element| -> web_sys::HtmlTextAreaElement {
             el.query_selector("textarea")
@@ -2260,7 +2278,7 @@ mod tests {
         };
         assert!(!face(&el).disabled(), "team-bucket's rules take it");
 
-        crate::test_support::element_saying(&el, "Refresh").click();
+        quilt_ui_kit::test_support::element_saying(&el, "Refresh").click();
         sleep_ms(past_the_pause()).await;
 
         assert_eq!(BUCKET.get(), "other-bucket");
@@ -2318,8 +2336,6 @@ mod tests {
             label: label.to_string(),
             intent,
             disabled,
-            metadata_schema_url: None,
-            entries_schema_url: None,
         }
     }
 
@@ -2334,12 +2350,11 @@ mod tests {
             },
             options,
             initial,
-            config_url: None,
         }
     }
 
-    /// A required bucket with one workflow and no default: v1 starts on the
-    /// greyed `None`; here the one workflow is the start, so it can run.
+    /// A required bucket with one workflow and no default: the view starts on
+    /// the greyed `None`; here the one workflow is the start, so it can run.
     #[test]
     fn the_only_workflow_of_a_required_bucket_is_the_start() {
         let (options, initial, needs_choice) = workflow_choices(&available(
@@ -2641,5 +2656,71 @@ mod tests {
         for words in &all {
             assert_eq!(super::super::tests::banned_in(words), None, "{words:?}");
         }
+    }
+
+    #[test]
+    fn effective_metadata_keeps_previous_when_editor_empty() {
+        // Empty/whitespace editor → validate the seeded previous metadata (the
+        // commit path's `UserMeta::Keep`), not `{}`.
+        assert_eq!(
+            effective_metadata("   ", r#"{"owner":"alice"}"#),
+            r#"{"owner":"alice"}"#
+        );
+        // A non-empty editor is validated as typed.
+        assert_eq!(effective_metadata(r#"{"x":1}"#, "prev"), r#"{"x":1}"#);
+        // Both empty collapse to the same empty string → `{}` on both paths.
+        assert_eq!(effective_metadata("", ""), "");
+    }
+
+    #[test]
+    fn editor_starts_from_settings_but_an_emptied_editor_keeps_the_previous() {
+        let settings = r#"{"source":"desktop"}"#;
+        let previous = r#"{"owner":"alice"}"#;
+        // The editor starts from the settings' default metadata.
+        let start = starting_metadata(Some(settings), previous);
+        assert_eq!(start, settings);
+        // Left as seeded, it is validated as the settings value.
+        assert_eq!(effective_metadata(&start, previous), settings);
+        // Cleared, it keeps the previous revision's metadata, not the settings'.
+        assert_eq!(effective_metadata("", previous), previous);
+        // With no settings metadata, the editor starts from the previous one.
+        assert_eq!(starting_metadata(None, previous), previous);
+    }
+
+    #[test]
+    fn should_debounce_skips_equal_key() {
+        // Mount-time: the input equals the seeded debounced mirror, so no timer.
+        let key = ("msg".to_string(), "{}".to_string(), Some("wf".to_string()));
+        assert!(!should_debounce(&key, &key.clone()));
+        // A settled edit differs, so the timer arms.
+        let edited = ("msg2".to_string(), "{}".to_string(), Some("wf".to_string()));
+        assert!(should_debounce(&edited, &key));
+    }
+
+    #[test]
+    fn field_violations_routes_messages_to_their_field() {
+        let violation = |field, message: &str| CommitViolation {
+            field,
+            message: message.to_string(),
+        };
+        let violations = vec![
+            violation(ViolationField::Message, "message required"),
+            violation(ViolationField::Metadata, "missing owner"),
+            violation(ViolationField::Name, "handle mismatch"),
+            violation(ViolationField::Metadata, "bad json"),
+        ];
+        assert_eq!(
+            field_violations(&violations, ViolationField::Message),
+            vec!["message required".to_string()]
+        );
+        // Two metadata violations preserve their order.
+        assert_eq!(
+            field_violations(&violations, ViolationField::Metadata),
+            vec!["missing owner".to_string(), "bad json".to_string()]
+        );
+        assert_eq!(
+            field_violations(&[], ViolationField::Name),
+            [] as [String; 0]
+        );
     }
 }

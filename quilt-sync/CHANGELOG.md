@@ -19,20 +19,34 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.27.1-dev]
+## [v0.28.0-dev]
 
 ### Added
 
 - When syncing stops until you act, such as a conflict or an expired sign-in, QuiltSync posts a system notification while its window is not in front. Clicking it opens the page that fixes it, and Settings can turn it off (<https://github.com/quiltdata/quilt-rs/pull/PR>)
 - The tray icon shows a dot while something needs you, and its tooltip says how many (<https://github.com/quiltdata/quilt-rs/pull/PR>)
 
+### Changed
+
+- QuiltSync has one design: the classic design and the *New design* switch in Settings are gone (<https://github.com/quiltdata/quilt-rs/pull/1319>)
+- The settings page's *Saved* shows for 1.5 seconds, as long as *Copied* does (<https://github.com/quiltdata/quilt-rs/pull/1310>)
+- *Share mine* and *Promote my revision* say what the published revision would lose, its files and its metadata, and ask before replacing it (<https://github.com/quiltdata/quilt-rs/pull/1321>)
+- Autosync no longer pauses a package whose changes and a newer published revision touch different files: it publishes both together, and pauses only where the two changed the same file or the package metadata, and the resolve pane says why it paused
+  - <https://github.com/quiltdata/quilt-rs/pull/1323>
+  - <https://github.com/quiltdata/quilt-rs/pull/1327>
+
 ### Fixed
 
 - The package page drops its paused band as soon as the pause clears, also when autosync is turned back on (<https://github.com/quiltdata/quilt-rs/pull/PR>)
+- A package task whose outcome loses `latest` to a revision published during the run lands its own changes on top of that revision instead of leaving the package Diverged, unless both changed the same file (<https://github.com/quiltdata/quilt-rs/pull/1320>)
 
-### Changed
+### Security
 
-- The settings page's *Saved* shows for 1.5 seconds, as long as *Copied* does (<https://github.com/quiltdata/quilt-rs/pull/1310>)
+- QuiltSync bundles SQLite 3.54.1, which fixes [RUSTSEC-2026-0459](https://rustsec.org/advisories/RUSTSEC-2026-0459) (<https://github.com/quiltdata/quilt-rs/pull/1326>)
+
+### quilt-rs
+
+- Updated [from v0.52.0 to v0.53.0-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.52.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
 
 ## [v0.27.0] - 2026-11-05
 

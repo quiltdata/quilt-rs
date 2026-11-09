@@ -139,8 +139,8 @@
   min-height: 44px;
 }
 
-/* A copy of `.qui-v2 .qui-toast.success` (views/toasts.css), in the v2 tokens:
- * the gallery does not load v1's stylesheet. */
+/* A copy of `.qui-toast.success` (views/toasts.css), in the theme's tokens:
+ * the gallery does not load that stylesheet. */
 .g-ori-toast {
   display: flex;
   gap: var(--q-space-4);

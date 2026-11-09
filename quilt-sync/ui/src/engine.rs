@@ -227,7 +227,7 @@ mod tests {
             |_| (),
             move || flag.set(true),
         );
-        crate::test_support::sleep_ms(0).await;
+        quilt_ui_kit::test_support::sleep_ms(0).await;
         drop(listener);
         assert!(!live.get());
     }
@@ -240,7 +240,7 @@ mod tests {
 
     use super::Connection;
     use super::fake::{FakeEngine, ask};
-    use crate::test_support::{mount, sleep_ms};
+    use quilt_ui_kit::test_support::{mount, sleep_ms};
 
     /// A request made before the hello waits for it, then goes out once, and
     /// its reply lands.

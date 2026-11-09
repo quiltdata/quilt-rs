@@ -20,7 +20,8 @@ frontend owns all rendering.
 | Framework | Leptos 0.8 (CSR mode) | `quilt-sync/ui/src/` |
 | Routing | leptos\_router 0.8 | `ui/src/main.rs` |
 | Engine client | wasm-bindgen + web-sys `WebSocket` | `ui/src/engine.rs` |
-| Styles | Plain CSS (global, no scoping) | `ui/assets/css/` |
+| Components | The `quilt-ui-kit` crate | `quilt-ui-kit/src/` |
+| Styles | CSS Modules (stylance) beside each page and kit component, plus a few global sheets | `ui/src/pages/*.module.css`, `quilt-ui-kit/`, `ui/assets/css/` |
 | Build tool | Trunk | `ui/Trunk.toml` |
 | Transport | The engine's WebSocket, for the window and every tab, over the engine's command table | `src-tauri/src/engine/dispatch.rs`, `src-tauri/src/engine/server.rs` |
 
@@ -28,69 +29,78 @@ frontend owns all rendering.
 
 ```text
 quilt-sync/ui/
-├── Cargo.toml
-├── Trunk.toml
-├── index.html                  # Entry point (CSS links, Trunk directives)
+├── Cargo.toml                  # A library and two binaries: the app and the gallery
+├── Trunk.toml                  # Build, plus pre-build hooks (JSON editor, stylance)
+├── index.html                  # The app's entry point (CSS links, Trunk directives)
+├── gallery.html                # The gallery's entry point
+├── js/
+│   └── json-editor-glue.js     # Bundled into assets/js/ at build time
 ├── assets/
-│   ├── css/
-│   │   ├── styles.css          # Global resets
-│   │   ├── theme.css           # CSS custom properties
-│   │   ├── layout.css          # Layout helpers
-│   │   ├── spinner.css         # Loading indicator
-│   │   ├── components/         # Reusable component styles
-│   │   ├── pages/              # Per-page styles
-│   │   ├── views/              # Layout section styles (appbar, toolbar, ...)
-│   │   └── external/           # Vendored webfont files
-│   ├── img/
-│   │   └── icons/              # SVG icons
-│   └── js/
-│       └── json-editor.js      # Third-party JSON editor (commit metadata)
+│   └── css/                    # Global sheets; see CSS Organization
 └── src/
-    ├── main.rs                 # App root, router, legacy URL redirect
+    ├── main.rs                 # App root and router
+    ├── gallery.rs              # Gallery root: pages and regions over fixtures
+    ├── gallery/                # One scene per region or page
+    ├── lib.rs                  # The modules both binaries share
     ├── components.rs           # Module re-exports
     ├── components/
-    │   ├── buttons.rs          # Button module: ButtonKind enum, re-exports
-    │   ├── buttons/            # IconButton/ButtonCta bases + specific buttons
-    │   ├── layout.rs           # Layout, Notification, BreadcrumbItem
-    │   ├── spinner.rs          # Loading spinner
+    │   ├── appbar.rs           # Refresh and Settings, on every appbar
+    │   ├── autopull_activity.rs # Background pulls, in the activity line
+    │   ├── buttons.rs          # FormPrimary / FormSecondary, for popups
+    │   ├── connection.rs       # Engine connection bar and page following
+    │   ├── ignore_popup.rs     # Ignore and Stop-ignoring popups
+    │   ├── quit_prompt.rs      # Quit confirmation
+    │   ├── toasts.rs           # Backend-posted notifications
     │   └── update_checker.rs   # Auto-update polling
     ├── pages.rs                # Module re-exports
-    ├── pages/                  # One file per page (9 pages)
-    │   ├── installed_packages_list.rs
-    │   ├── installed_package.rs
-    │   ├── commit.rs
-    │   ├── settings.rs
-    │   ├── merge.rs
-    │   ├── login.rs
-    │   ├── setup.rs
-    │   ├── error.rs
-    │   └── remote_package.rs
+    ├── pages/
+    │   ├── v2_page.rs          # The scaffold most pages share
+    │   ├── main_page.rs        # `/`
+    │   ├── main_page/          # Its regions and the Create package dialog
+    │   ├── installed_package_v2.rs  # `/installed-package`
+    │   ├── installed_package_v2/    # Header, context pane, file pane, dialogs
+    │   ├── commit_v2.rs        # `/commit`
+    │   ├── settings_v2.rs      # `/settings` cards
+    │   ├── settings_v2/        # `/settings` page
+    │   ├── login_v2.rs         # `/login`
+    │   ├── setup_v2.rs         # `/setup`
+    │   ├── error_v2.rs         # `/error` and the not-found page
+    │   ├── remote_package_v2.rs # `/remote-package`
+    │   ├── *.module.css        # Each page's own styles
+    │   └── ...                 # Shared parts: row menu, path field, ...
     ├── commands.rs             # Typed command wrappers + response DTOs
     ├── engine.rs               # invoke/listen over the engine's socket
-    └── error_handler.rs        # Error parsing and redirect logic
+    ├── engine/                 # The connection, the browser socket, a test fake
+    ├── error_handler.rs        # Error parsing and redirect logic
+    ├── routes.rs               # Addresses the app links to, and the query reader
+    └── panic_report.rs         # Reports a panic to the engine
 ```
+
+The components, the theme switch and the storybook are the `quilt-ui-kit`
+crate's (`quilt-ui-kit/src/`, styles in `quilt-ui-kit/css/`).
 
 ## Data Flow
 
 ### Page load cycle
 
-Every page follows the same reactive pattern:
+Most pages share one scaffold, `V2Page` with its `PageHandle`
+(`pages/v2_page.rs`):
 
 ```text
-Browser navigates to e.g. /installed-package?namespace=foo/bar
+Browser navigates to e.g. /setup
     |
     v
 leptos_router matches route, mounts page component
     |
     v
-Component creates LocalResource (async data fetch)
+Page creates a PageHandle and calls page.read(key, read)
     |
     v
-Suspense renders <Layout> + <Spinner /> while loading
+V2Page draws the appbar and the page's skeleton while the read is out
     |
     v
-LocalResource calls commands::get_page_data() [typed wrapper]
-    |                                              (the engine's socket)
+read calls commands::get_setup_data() [typed wrapper]
+    |                                    (the engine's socket)
     v
 engine::invoke() → {"id", "cmd", "args"} on /ws
     |
@@ -101,154 +111,131 @@ dispatch runs the command, which returns a serializable struct
 serde_json deserializes the reply's `ok` into Rust DTO
     |
     v
-Suspend::new resolves, Leptos renders the page reactively
+The answer lands in a signal; V2Page draws the body from it
 ```
 
-### Two-phase loading (Installed Packages List)
+The scaffold's rules, written out in the module's own docs:
 
-The packages list page uses a two-phase approach so the list renders
-instantly instead of blocking behind network calls and file hashing:
+- The read is keyed by the address and runs again on `PageHandle::reload`:
+  *Refresh*, a command done, the watcher's news, a reconnect.
+- Reads are numbered, and only the newest one's answer lands.
+- An answer equal to the one on screen changes nothing, so a re-read that finds
+  nothing new rebuilds nothing.
+- What the reader did (typed text, a choice, an open dialog) lives in signals
+  the page creates before `V2Page`, so a rebuild keeps it.
+- A read that fails for a missing session or setup goes to `/login` or
+  `/setup`, but only before the page has drawn an answer for its address.
+
+The main page does not use the scaffold: it holds several reads of its own
+and draws them inside `Transition`s, so a refetch never shows the loading
+frame again.
+
+### Two-phase loading (Main page)
+
+The main page's package list renders at once instead of waiting behind
+network calls and file hashing:
 
 ```text
 Phase 1 — Light (cached lineage)
-    get_installed_packages_list_data()
+    get_main_page_packages()
         |
         v
-    For each package, read lineage.json from disk
+    For each installed package, read its cached lineage and resolve
+    its state; no network, no hashing
         |
         v
-    Derive upstream status from cached hashes
-    (From<PackageLineage> for UpstreamState — no network, no hashing)
-        |
-        v
-    Return list with has_changes = false for every package
+    Return the list, most rows marked provisional
         |
         v
     Leptos renders the full list immediately
 
 Phase 2 — Heavy (per-package, async)
-    For each PackageItem, spawn_local calls refresh_package_status()
+    For each row, spawn_local calls refresh_main_page_package()
         |
         v
-    The engine command fetches latest hash from S3 (network)
-    and walks local files to detect changes (hashing)
+    The engine command checks the remote and the local files,
+    and resolves through the same function as the light phase
         |
         v
-    Returns fresh status + has_changes
+    Returns the row's real state
         |
         v
-    RwSignal updates trigger reactive UI changes:
-    buttons appear/disappear, Commit highlights, Pull's enabled state settles
+    The row's signals update; a failed check marks the row unchecked,
+    and the queue shows failed checks as one shared cause
 ```
-
-While the heavy phase is in flight, each row shows a small spinner
-and the menu buttons pulse at reduced opacity. A hover tooltip
-reads "Syncing with remote and scanning local files for changes...".
 
 ### User action cycle
 
-When the user clicks a button (push, commit, pull, etc.):
+When the user runs a command (publish, get latest, save, ...):
 
 ```text
 Leptos event handler fires (on:click)
     |
     v
-ui_locked.set(true) — disables UI via reactive signal
-    |
-    v
-spawn_local(async { commands::action(...).await })
+spawn_local(async { hold(busy, outcome, commands::action(...)).await })
+    |   hold sets PageHandle::busy, which disables every control that writes,
+    |   and clears the last outcome
     |                                        (the engine's socket)
     v
-Rust command executes the operation (e.g. push_package)
+Rust command executes the operation
     |
     v
-Returns Ok(success_message) or Err(error_message)
+Returns Ok(...) or Err(error_message)
     |
     v
-notification.set(Some(Notification::Success(msg)))
-    or
-notification.set(Some(Notification::Error(msg)))
+On Err, the page sets PageHandle::outcome to its own sentence,
+with the engine's text as the detail; the band under the appbar draws it
     |
     v
-Navigate to next page or reload current page
+Navigate to the next page, or reload the page's read
 ```
 
-### Popup cycle
+The outcome band is keyed to the address it is about, so a result that lands
+after the reader moved to another package is dropped, not drawn.
 
-This is **v1's**. The v2 kit's `FormDialog` keeps the `RwSignal<bool>` and owns
-the rest: it takes the submit as an async action, holds the in-flight state,
-seals its fields and refuses Escape while that runs, closes on `Ok`, and draws
-an `Err` as a banner above the fields instead of leaving it to the page's
-notification slot — which sits behind the modal that raised it. `ConfirmDialog`
-is the same machinery with one consequence sentence in place of fields, a
-`Danger` primary carrying the verb, focus on Cancel and Escape answering Cancel
-— the confirmation every Danger menu item is followed by.
+### Dialog cycle
 
-Popups (ignore, set-remote, create-package) are **Leptos
-components** controlled by a `RwSignal<bool>`:
+Dialogs are built on the kit. `FormDialog` takes an open `RwSignal<bool>` and
+owns the rest: it takes the submit as an async action, holds the in-flight
+state, seals its fields and refuses Escape while that runs, closes on `Ok`, and
+draws an `Err` as a banner above the fields — the page's band sits behind the
+modal that raised it. `ConfirmDialog` is the same machinery with one
+consequence sentence in place of fields, a `Danger` primary carrying the verb,
+focus on Cancel and Escape answering Cancel — the confirmation every Danger
+menu item is followed by.
 
-```text
-User clicks trigger button
-    |
-    v
-show_popup.set(true) — signal drives conditional rendering
-    |
-    v
-<Show when=move || show_popup.get()>
-    <PopupComponent on_submit=... on_cancel=... />
-</Show>
-    |
-    v
-Popup renders over overlay, user fills form
-    |
-    v
-On submit: spawn_local calls the engine command,
-           show_popup.set(false), page reloads
-```
+The ignore popups (`components/ignore_popup.rs`) and the quit prompt are older,
+hand-built overlays, shown under a signal the same way. Given the page's
+`busy` lock, an ignore popup does not write while another command holds it,
+and holds it while its own write runs.
 
 ## Routing
 
-Routes are defined in `main.rs` using leptos\_router:
+Routes are defined in `main.rs` (`PageRoutes`) using leptos\_router. Each
+route renders its page directly:
 
 | Path | Component | Query params |
 |---|---|---|
-| `/` | `Home` | |
-| `/main` | `MainPage` | |
-| `/installed-packages-list` | `InstalledPackagesList` | |
-| `/installed-package` | `PackagePage` | `namespace`, `filter`, `resolve` (`1` opens the v2 page's resolve mode); from a deep link, `mismatch`, `mrbucket`, `mrcatalog` (another revision was asked for) or `localOnly` (the package has no remote) |
-| `/commit` | `Commit` | `namespace` |
-| `/merge` | `Merge` | `namespace` |
-| `/login` | `Login` | `host`, `back` |
-| `/error` | `Error` | `host`, `back`, `message` |
-| `/settings` | `Settings` | |
-| `/setup` | `Setup` | |
-| `/remote-package` | `RemotePackage` | `uri` |
+| `/` | `MainPage` | |
+| `/installed-package` | `InstalledPackageV2` | `namespace`, `filter`, `resolve` (`1` opens resolve mode), `revision` (a hash opens revision mode); from a deep link, `mismatch`, `mrbucket`, `mrcatalog` (another revision was asked for) or `localOnly` (the package has no remote) |
+| `/commit` | `CommitV2` | `namespace`, `focus` |
+| `/login` | `LoginV2` | `host`, `back` |
+| `/error` | `ErrorV2` | `host`, `title`, `error` |
+| `/settings` | `SettingsV2` | |
+| `/setup` | `SetupV2` | |
+| `/remote-package` | `RemotePackageV2` | `uri` |
+| anything else | `NotFoundV2` | |
 
-Query parameters are read via `use_query_map()`. Navigation uses
-`use_navigate()` for client-side transitions.
+Every page reads its query through `routes::use_query()`, which decodes each
+value once; never through `use_query_map`. Navigation uses `use_navigate()`
+for client-side transitions. `routes.rs` builds the addresses the app links
+to, so a namespace is percent-encoded in one place.
 
 A deep link's parameters on `/installed-package` are its outcome
-(`routes::DeepLinkOutcome`): `pages/remote_package.rs` writes one or the other,
-and the package page carries it through every address it builds for the same
-package — entering and leaving Resolve, and a replaced address — so switching
-mode does not end the band that reports it.
-
-`/` is not a redirect. `Home` reads the reader's design setting, v2 unless they
-turned off **New design** (Settings → Experimental), and renders `MainPage`
-or `InstalledPackagesList` in place; a settings read that fails falls back to
-the former. One route, so every
-way home — the logo, a breadcrumb, a Cancel — lands on the page the reader chose
-rather than on whichever page the link was written against. `/main` and
-`/installed-packages-list` stay addressable for looking at one specific page
-while both exist.
-
-`/installed-package` works the same way: `PackagePage` reads the same setting and
-renders `InstalledPackageV2` or `InstalledPackage` in place, with the same
-fallback to the former, so every link to a package lands on the page of the
-generation the reader chose. It has no second address for either page. The main
-page's queue links a diverged package to the v2 page's resolve mode; opened at
-`/main` in the classic design, that lands on v1's package page, whose status
-banner offers **Merge**.
+(`routes::DeepLinkOutcome`): `pages/remote_package_v2.rs` writes one or the
+other, and the package page carries it through every address it builds for the
+same package — entering and leaving Resolve, and a replaced address — so
+switching mode does not end the band that reports it.
 
 A `back` handed to `/login` has to be a route `routes::Paths` can parse, not just
 one the client router knows. Code login navigates in the client and never asks,
@@ -256,53 +243,64 @@ but OAuth stores `back` and the backend parses it when the callback arrives —
 anything it cannot read is logged and replaced by the default landing page. So
 every login link in the UI points at an address with a `Paths` variant behind it.
 
-## Component Pattern
+## Page Pattern
 
-Every page component follows the same structure:
+A page that reads data and runs commands builds on `V2Page`. The setup page
+(`pages/setup_v2.rs`), shortened:
 
 ```rust
 #[component]
-pub fn PageName() -> impl IntoView {
-    let notification = RwSignal::new(None);
-    let ui_locked = RwSignal::new(false);
+pub(crate) fn SetupScreen(read: PageRead<SetupData>) -> impl IntoView {
+    let key = Memo::new(|_| HERE.to_string());
+    let page = PageHandle::new();
+    let PageHandle { busy, outcome, .. } = page;
+    let answer = page.read(key, read);
 
-    // Async data fetch — runs on mount
-    let data = LocalResource::new(move || async move {
-        commands::get_page_data(params).await
+    // Above the rebuild line: survives a re-read.
+    let directory = RwSignal::new(String::new());
+
+    let on_save = Callback::new(move |()| {
+        let chosen = directory.get_untracked();
+        leptos::task::spawn_local(async move {
+            match hold(busy, outcome, commands::setup(chosen)).await {
+                Ok(_) if still_here(key, HERE) => navigate("/", NavigateOptions::default()),
+                Ok(_) => {}
+                Err(e) => {
+                    outcome.try_set(Some(critical(
+                        HERE.into(),
+                        "Could not set up the directory.",
+                        Some(e),
+                    )));
+                }
+            }
+        });
     });
 
     view! {
-        // Show spinner while loading
-        <Suspense fallback=move || view! {
-            <Layout notification=notification>
-                <Spinner />
-            </Layout>
-        }>
-            {move || Suspend::new(async move {
-                match data.await {
-                    Ok(d) => view! {
-                        <PageContent data=d notification ui_locked />
-                    }.into_any(),
-                    Err(e) => {
-                        // Redirect to login/setup, or show error
-                        error_handler::handle(e, notification)
-                    }
-                }
-            })}
-        </Suspense>
+        <V2Page
+            heading="Set up QuiltSync"
+            page=page
+            answer=answer
+            showing=key
+            skeleton=|| view! { <SetupCardSkeleton /> }.into_any()
+            bands=|_| ().into_any()
+            body=move |_: SetupData| view! { <SetupCard ... /> }.into_any()
+            failure=move || { /* LoadFailure with the engine's words */ }
+        />
     }
 }
 ```
 
 Key conventions:
 
-- **Data fetching**: `LocalResource` triggers on mount; the
-  component awaits it inside `Suspend::new`
-- **Loading state**: `Suspense` with `<Spinner />` fallback
-- **Error handling**: `error_handler.rs` parses structured errors
-  and redirects to `/login` or `/setup` when needed
-- **UI locking**: `RwSignal<bool>` passed to `Layout`, which adds
-  a `.disabled` CSS class during async operations
+- **Data fetching**: `PageHandle::read` (or `PageHandle::run` for a relay page
+  whose read is its operation, such as `/remote-package`)
+- **Loading state**: the page's own skeleton, its first paint
+- **Error handling**: `error_handler.rs` parses structured errors and
+  redirects to `/login` or `/setup` when needed (`follow_redirect`)
+- **One command at a time**: `PageHandle::busy`, held through `hold`
+- **What a command said**: `PageHandle::outcome`, drawn in the band under the
+  appbar
 - **Derived state**: `Memo::new` for filtered/computed views
 - **Async actions**: `leptos::task::spawn_local` for button handlers
 
@@ -351,10 +349,10 @@ still waiting and none is sent again; the page reconnects with back-off and
 says so in a bar. A refused token stops the retries for good, with one bar
 saying to open the new link. An engine of another version reloads the page.
 
-Events sent while the socket was down are lost, so after a reconnect every v2
+Events sent while the socket was down are lost, so after a reconnect every
 page reads again (`engine::reread_on_reconnect`, used by
 `PageHandle::read` and the main page), and listeners that hydrate a state read
-again through `listen_then`. v1 pages don't. A relay page whose read is its
+again through `listen_then`. A relay page whose read is its
 operation uses `PageHandle::run`, which never runs again on its own.
 
 ### Typed wrappers (`commands.rs`)
@@ -363,58 +361,47 @@ Each command has a corresponding async function with proper
 arg/return types:
 
 ```rust
-pub async fn get_installed_package_data(
-    namespace: &str,
-    filter: &str,
-) -> Result<InstalledPackageData, String> { ... }
+pub async fn get_setup_data() -> Result<SetupData, String> { ... }
 
-pub async fn package_push(namespace: &str) -> Result<String, String> { ... }
+pub async fn setup(directory: String) -> Result<String, String> { ... }
 ```
 
-Response DTOs (e.g. `InstalledPackageData`, `CommitData`,
+Response DTOs (e.g. `SetupData`, `MainPagePackagesData`, `CommitData`,
 `SettingsData`) are defined here with `#[derive(Deserialize)]`.
 The backend returns **data structs**, not pre-rendered HTML -- the
 Leptos components own all rendering.
 
-## Layout Component
+## Page Frame
 
-`components/layout.rs` provides the shared page shell:
+The kit's `PageLayout` is every page's frame, and `V2Page` fills it:
 
 ```text
 +--[appbar]----------------------------------------------+
-| [logo]  [package URI]                  [refresh] [gear] |
-+--[toolbar]---------------------------------------------+
-| [breadcrumbs...]              [optional toolbar actions] |
-+--[notification bar]------------------------------------+
-| Success or error message (dismissible)                  |
+| [logo]  [activity line]                [refresh] [gear] |
++--[banner slot]-----------------------------------------+
+| Outcome band: what the last command said (dismissible)  |
+| Bands the page's answer calls for                       |
 +---------------------------------------------------------+
 |                                                         |
-|   [page content — children]                             |
+|   [page content — the body drawn from the answer]       |
 |                                                         |
 +---------------------------------------------------------+
 ```
 
-### Notification
+*Refresh* re-reads the page and spins while a read is out; Settings has no
+appbar controls; a relay page (`/remote-package`) draws *Refresh* disabled
+and replaces its history entry on every way out (`components/appbar.rs`).
 
-```rust
-pub enum Notification {
-    Success(String),
-    Error(String),
-}
-```
-
-Messages are rendered as text nodes (not `inner_html`), so they
-are auto-escaped by Leptos. Users dismiss notifications by clicking
-the overlay. An empty success message leaves the slot empty — the overlay is
-raised for as long as the slot holds anything, so a blank would dim the app
-behind a notification that is not there.
+Messages are rendered as text nodes (not `inner_html`), so they are
+auto-escaped by Leptos. The lead is the page's own sentence; the engine's text
+follows as the detail.
 
 ### Toast stack
 
 `components/toasts.rs` renders a second, separate surface: the notifications the
 *backend* posts. Mounted once in `App`, outside the router, so an entry survives
-navigation. The split from the enum above is by direction — that slot belongs to
-the screen that raised it and dies with the page, while these come from the
+navigation. The split from the outcome band is by direction — that band belongs
+to the page that raised it and dies with the page, while these come from the
 backend, including the autosync tick, which runs with no page mounted.
 
 The backend holds the list (`toast::ToastCenter`, bounded, in memory): the client
@@ -427,33 +414,6 @@ authoritative, so a snapshot replaces the visible set rather than merging into
 it. The layer takes the pointer only over the list and its controls, never over
 its own box, and renders nothing at all when empty.
 
-### Breadcrumbs
-
-```rust
-pub enum BreadcrumbItem {
-    Link(BreadcrumbLink),   // Navigable parent page
-    Current(String),        // Non-linked current page label
-}
-```
-
-### Toolbar Actions
-
-```rust
-pub struct ToolbarActions(pub Box<dyn FnOnce() -> AnyView>);
-```
-
-Pages pass button components (e.g. `buttons::Push`, `buttons::Remove`)
-to appear to the right of breadcrumbs. All buttons are defined in
-`components/buttons/` — each is a thin wrapper around `IconButton`
-(leading icon) or `ButtonCta` (trailing icon, always large).
-`ButtonKind` centralizes icon paths and labels for icon buttons.
-
-### UI Lock
-
-When `ui_locked` signal is `true`, the layout adds a CSS class that
-disables all interaction — used during async operations to prevent
-double-submission.
-
 ## Auto-Update Checker
 
 `components/update_checker.rs` renders an update notification bar
@@ -464,9 +424,8 @@ minutes.
 
 ## Design System: Radix Values, Primer Names
 
-> **Scope**: this section governs the `ui/src/kit/` component kit and
-> `ui/assets/css/kit/` tokens. The rest of this document still describes
-> the v1 page code, which predates the kit.
+> **Scope**: this section governs the `quilt-ui-kit` crate: its components
+> and its `css/` tokens.
 
 ### The decision
 
@@ -724,8 +683,9 @@ Still outstanding:
 
 Tokens are named property-first in `tokens.css` and in every module
 stylesheet. The role words `subtle`, `canvas` and `strong` are not used,
-so a fill token and a border token cannot share one name. v1's page CSS
-does not read these tokens: it uses a separate `--q-ui-*` namespace.
+so a fill token and a border token cannot share one name. The app's global
+sheets in `quilt-sync/ui/assets/css/` do not read these tokens: they use a
+separate `--q-ui-*` namespace, defined in `theme.css`.
 
 Two checks are worth repeating after any future token sweep, because a
 dangling `var()` fails **silently** -- the declaration is simply dropped
@@ -739,38 +699,47 @@ and the element renders unstyled rather than erroring:
 
 ## CSS Organization
 
+Pages and kit components style themselves with CSS Modules: each has a
+`.module.css` beside its `.rs`, imported with `stylance::import_crate_style!`.
+Trunk's pre-build hooks run `stylance`, which hashes each class and bundles the
+app's into `assets/css/kit/modules.css` and the kit's into
+`quilt-ui-kit/css/kit-modules.css`. Both bundles are generated and gitignored.
+
+The kit's global sheets live in `quilt-ui-kit/css/`:
+
 ```text
-ui/assets/css/
-├── theme.css               # CSS custom properties (colors, spacing, fonts)
-├── layout.css              # Layout helpers
-├── spinner.css             # Loading spinner
-├── components/             # Reusable component styles
-│   ├── button.css
-│   ├── entries-filter.css
+quilt-ui-kit/css/
+├── normalize.css           # Vendored reset
+├── tokens.css              # Design tokens (Radix values, Primer names)
+├── base.css                # Base styles over normalize, launch frame
+└── chrome.css              # Storybook and gallery chrome, not the app
+```
+
+The app's own global sheets, for the popups and bars outside the kit:
+
+```text
+quilt-sync/ui/assets/css/
+├── theme.css               # --q-ui-* custom properties
+├── layout.css              # html and body
+├── components/
+│   ├── button.css          # FormPrimary / FormSecondary
 │   ├── ignore-popup.css
-│   └── popover.css
-├── pages/                  # Per-page styles
-│   ├── commit.css
-│   ├── installed-package.css
-│   ├── installed-packages-list.css
-│   └── ...
-├── views/                  # Layout section styles
-│   ├── appbar.css
-│   ├── breadcrumbs.css
-│   ├── entry.css
-│   ├── notify.css
-│   ├── toolbar.css
-│   └── ...
+│   └── quit-prompt.css
+├── views/
+│   ├── notify.css          # Update bar
+│   ├── popup.css           # Popup overlay
+│   └── toasts.css
+├── kit/
+│   └── old_revisions_inline.css   # Gallery only
 └── external/               # Vendored webfont @font-face files
     ├── 400.css
     ├── 500.css
     └── 700.css
 ```
 
-All CSS is loaded via `<link>` tags in `index.html`. Trunk copies
-the `assets/` directory to `dist/` at build time. There is no CSS
-scoping -- all selectors are global, using a `qui-*` naming
-convention.
+`index.html` links the kit's sheets and the generated bundles through Trunk,
+and the rest with plain `<link>` tags; Trunk copies `assets/` to `dist/` at
+build time. The global sheets use a `qui-*` class naming convention.
 
 ## Key Differences from Previous Architecture
 
@@ -784,7 +753,7 @@ TypeScript to Leptos client-side WASM. Key changes:
 | Type safety | `data-*` attributes parsed manually | Typed Rust DTOs end-to-end |
 | Routing | Static `.html` files + `#fragment` params | leptos\_router + query strings |
 | State | None (full re-render on every action) | Reactive signals (`RwSignal`, `Memo`) |
-| Popups | HTML strings built in TypeScript | Leptos components with signal toggles |
-| Notifications | Raw HTML via `inner_html` (XSS risk) | Typed `Notification` enum (auto-escaped) |
-| Build | Parcel (npm) | Trunk (no npm/node dependency) |
-| UI disable | Imperative `lock_ui()` DOM manipulation | Reactive `ui_locked` signal |
+| Popups | HTML strings built in TypeScript | Leptos dialogs opened by a signal |
+| Notifications | Raw HTML via `inner_html` (XSS risk) | Text nodes in the outcome band and toasts (auto-escaped) |
+| Build | Parcel (npm) | Trunk (npm only to bundle the JSON editor) |
+| UI disable | Imperative `lock_ui()` DOM manipulation | Reactive `PageHandle::busy` lock |

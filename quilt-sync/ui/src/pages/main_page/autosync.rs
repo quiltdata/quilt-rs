@@ -31,10 +31,10 @@ use crate::commands::AutosyncStateData;
 use crate::commands::MainPageWatcherData;
 use crate::commands::ToggleActivityData;
 use crate::commands::ToggleStateData;
-use crate::kit::Card;
-use crate::kit::Countdown;
-use crate::kit::ToggleRow;
-use crate::kit::ToggleRowSkeleton;
+use quilt_ui_kit::Card;
+use quilt_ui_kit::Countdown;
+use quilt_ui_kit::ToggleRow;
+use quilt_ui_kit::ToggleRowSkeleton;
 
 /// An interval in the shortest honest form: `30s`, `5 min`.
 ///
@@ -55,7 +55,7 @@ fn human_interval(ms: f64) -> String {
 /// Protects against a deadline a few milliseconds out: waking for it schedules a
 /// refetch that can beat the watcher to the lock and read the same deadline back.
 /// Two seconds bounds that, and costs nothing — a ring that sits full for up to two
-/// seconds of a thirty-second cycle is what `kit/countdown.rs` already documents as
+/// seconds of a thirty-second cycle is what `quilt-ui-kit/src/countdown.rs` already documents as
 /// truthful: *"A full ring means 'due', not 'fired'"*.
 const REFETCH_FLOOR: Duration = Duration::from_secs(2);
 
@@ -380,8 +380,8 @@ pub fn AutosyncCard(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::mount;
-    use crate::test_support::sleep_ms;
+    use quilt_ui_kit::test_support::mount;
+    use quilt_ui_kit::test_support::sleep_ms;
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
@@ -447,7 +447,7 @@ mod tests {
     /// How many countdown rings the card draws.
     ///
     /// Found by the ring's own track circle rather than by a role: the svg is
-    /// hidden from the accessibility tree (`kit/countdown.rs`), and `svg` alone
+    /// hidden from the accessibility tree (`quilt-ui-kit/src/countdown.rs`), and `svg` alone
     /// would also match the glyph a `Paused` `StateLabel` draws into the same
     /// trailing slot.
     fn rings(el: &web_sys::Element) -> u32 {
@@ -481,7 +481,7 @@ mod tests {
     fn an_armed_toggle_draws_a_ring() {
         // `Countdown` draws an `aria-hidden` svg into the row's trailing slot —
         // the slot is the selector, the ring carrying no role of its own (see
-        // `kit/countdown.rs`). A toggle that is armed and draws no ring is the
+        // `quilt-ui-kit/src/countdown.rs`). A toggle that is armed and draws no ring is the
         // countdown silently missing, which is what this pins.
         let el = mount(|| view! { <AutosyncBody data=armed_payload() reload=Trigger::new() /> });
         assert_eq!(rings(&el), 1, "one ring: pull is armed, publish is idle");

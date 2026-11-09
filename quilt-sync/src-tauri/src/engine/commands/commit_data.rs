@@ -1,4 +1,4 @@
-//! `get_merge_data` / `get_commit_data` — commit-workflow queries for the Leptos UI.
+//! `get_commit_data` — commit-workflow queries for the Leptos UI.
 
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -30,55 +30,6 @@ use crate::engine::services::Services;
 use super::package_entries::ENTRIES_CAP;
 use super::package_entries::EntryCounts;
 use super::package_entries::InstalledPackageEntryData;
-use super::package_list::denied_mark;
-
-// ── Merge data for Leptos UI ──
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MergeData {
-    pub namespace: quilt_uri::Namespace,
-    pub uri: Option<quilt_uri::S3PackageUri>,
-}
-
-async fn get_merge_data_from_model(
-    m: &impl model::QuiltModel,
-    tracing: &crate::engine::telemetry::Telemetry,
-    namespace: &quilt_uri::Namespace,
-) -> Result<MergeData, Error> {
-    let installed_package = m.get_installed_package(namespace).await?.ok_or_else(|| {
-        Error::from(quilt::InstallPackageError::NotInstalled(
-            namespace.to_owned(),
-        ))
-    })?;
-
-    let lineage = m.get_installed_package_lineage(&installed_package).await?;
-
-    let uri = lineage
-        .remote_uri
-        .as_ref()
-        .map(quilt_uri::S3PackageUri::from);
-    if let Some(host) = uri.as_ref().and_then(|u| u.catalog.as_ref()) {
-        tracing.add_host(host);
-    }
-
-    Ok(MergeData {
-        namespace: namespace.clone(),
-        uri,
-    })
-}
-
-pub async fn get_merge_data(s: &Services, namespace: String) -> Result<MergeData, String> {
-    let m = &*s.model;
-    let tracing = &*s.telemetry;
-    let namespace: quilt_uri::Namespace = namespace
-        .try_into()
-        .map_err(|e: quilt_uri::UriError| e.to_string())?;
-
-    get_merge_data_from_model(m, tracing, &namespace)
-        .await
-        .map_err(|e| e.to_frontend_string())
-}
 
 // ── Commit data for Leptos UI ──
 
@@ -327,6 +278,29 @@ fn workflows_config_to_commit_workflows(
     }
 }
 
+/// Why the active role cannot reach a bucket on `host`, naming the role when
+/// the registry says which. A failed role query is not fatal: the denial
+/// stands either way, it just cannot name the role.
+async fn denied_reason(
+    m: &impl model::QuiltModel,
+    roles: &RoleCache,
+    host: Option<&Host>,
+) -> String {
+    let info = match host {
+        Some(host) => roles.get(m, host).await.ok(),
+        None => None,
+    };
+    info.map_or_else(
+        || "The active role has no access to this bucket".to_string(),
+        |roles| {
+            format!(
+                "Current role {} has no access to this bucket",
+                roles.current
+            )
+        },
+    )
+}
+
 #[allow(clippy::too_many_lines, reason = "cohesive commit-data assembly")]
 async fn get_commit_data_from_model(
     m: &impl model::QuiltModel,
@@ -382,7 +356,7 @@ async fn get_commit_data_from_model(
                 "No read access to the remote of {}; opening the commit page on cached lineage",
                 installed_package.namespace,
             );
-            no_access_reason = denied_mark(m, roles, origin_host).await.reason;
+            no_access_reason = Some(denied_reason(m, roles, origin_host).await);
             m.recompute_local_status(&installed_package, None).await?
         }
         // Everything this page shows is local and was not refused.
@@ -917,38 +891,6 @@ mod tests {
 
     use crate::engine::commands::test_support::*;
     use crate::engine::model::mocks;
-
-    #[tokio::test]
-    async fn test_get_merge_data() -> Result<(), String> {
-        let mut model = mocks::create();
-        mocks::mock_installed_package(&mut model);
-        let tracing = crate::engine::telemetry::Telemetry::default();
-        let namespace = ("foo", "bar").into();
-
-        let data = get_merge_data_from_model(&model, &tracing, &namespace)
-            .await
-            .map_err(|e| e.to_string())?;
-
-        assert_eq!(data.namespace.to_string(), "foo/bar");
-        let uri = data.uri.as_ref().expect("URI present");
-        assert_eq!(uri.bucket, "quilt-example");
-        assert_eq!(
-            catalog_host(data.uri.as_ref()).as_deref(),
-            Some("quilt.test")
-        );
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_get_merge_data_not_installed() {
-        let mut model = mocks::create();
-        model.expect_get_installed_package().returning(|_| Ok(None));
-        let tracing = crate::engine::telemetry::Telemetry::default();
-        let namespace = ("missing", "package").into();
-
-        let result = get_merge_data_from_model(&model, &tracing, &namespace).await;
-        assert!(result.is_err());
-    }
 
     // ── Commit data tests ──
 

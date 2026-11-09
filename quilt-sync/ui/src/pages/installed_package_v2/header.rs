@@ -77,26 +77,26 @@ use std::pin::Pin;
 use leptos::prelude::*;
 
 use crate::commands;
-use crate::kit;
-use crate::kit::ActionMenu;
-use crate::kit::ActionTone;
-use crate::kit::BackLink;
-use crate::kit::BannerVariant;
-use crate::kit::Button;
-use crate::kit::ButtonGroup;
-use crate::kit::ButtonVariant;
-use crate::kit::ConfirmDialog;
-use crate::kit::ConfirmOption;
-use crate::kit::GroupButton;
-use crate::kit::MenuAction;
-use crate::kit::PackageAction;
-use crate::kit::SplitButton;
-use crate::kit::SplitOption;
-use crate::kit::StateLabel;
-use crate::kit::Submit;
-use crate::kit::icons;
-use crate::kit::render;
 use crate::util;
+use quilt_ui_kit as kit;
+use quilt_ui_kit::ActionMenu;
+use quilt_ui_kit::ActionTone;
+use quilt_ui_kit::BackLink;
+use quilt_ui_kit::BannerVariant;
+use quilt_ui_kit::Button;
+use quilt_ui_kit::ButtonGroup;
+use quilt_ui_kit::ButtonVariant;
+use quilt_ui_kit::ConfirmDialog;
+use quilt_ui_kit::ConfirmOption;
+use quilt_ui_kit::GroupButton;
+use quilt_ui_kit::MenuAction;
+use quilt_ui_kit::PackageAction;
+use quilt_ui_kit::SplitButton;
+use quilt_ui_kit::SplitOption;
+use quilt_ui_kit::StateLabel;
+use quilt_ui_kit::Submit;
+use quilt_ui_kit::icons;
+use quilt_ui_kit::render;
 
 use super::bucket_form::BucketDialog;
 use super::role_dialog::RoleDialog;
@@ -750,8 +750,8 @@ pub fn PageHeader(
         remove: remove_open,
         // The menu resets it, and the dialog reads it, through `w`.
         remove_prune: _,
-        // The resolve pane's confirmation, not the header's.
-        replace: _,
+        // The resolve pane's confirmations, not the header's.
+        resolve: _,
     } = dialogs;
     let payload = StoredValue::new(data.clone());
     let rendered = render(&data.state, kit::Site::PageHeader);
@@ -850,10 +850,10 @@ pub fn PageHeader(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kit::BannerVariant;
-    use crate::test_support::{element_saying, mount, sleep_ms};
     use leptos_router::components::{Route, Router, Routes};
     use leptos_router::path;
+    use quilt_ui_kit::BannerVariant;
+    use quilt_ui_kit::test_support::{element_saying, mount, sleep_ms};
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
@@ -921,7 +921,6 @@ mod tests {
                             }
                         />
                         <Route path=path!("/commit") view=|| view! { "the commit page" } />
-                        <Route path=path!("/merge") view=|| view! { "the merge page" } />
                     </Routes>
                 </Router>
             }
@@ -1203,8 +1202,7 @@ mod tests {
     }
 
     /// Resolve is a mode of this page, not another route: it pushes `resolve=1`
-    /// on this package's address, so Back leaves the mode. `mount_routed` keeps
-    /// `/merge`, so a regression to the merge page shows here.
+    /// on this package's address, so Back leaves the mode.
     #[wasm_bindgen_test]
     async fn resolve_opens_the_mode_on_this_page() {
         let el = mount_routed(data(kit::PackageState::Diverged));
@@ -1223,13 +1221,6 @@ mod tests {
             window.history().unwrap().length().unwrap(),
             before + 1,
             "pushed, not replaced"
-        );
-        assert!(
-            !el.text_content()
-                .unwrap_or_default()
-                .contains("the merge page"),
-            "markup was {}",
-            el.inner_html()
         );
     }
 
@@ -1960,8 +1951,9 @@ mod tests {
     }
 
     /// Nothing else on the header confirms. A third `ConfirmDialog` here would be
-    /// a tone rule nobody decided; the pane's `Replace mine` is the
-    /// page's one other, decided in `replace-confirmation`.
+    /// a tone rule nobody decided; the pane's `Replace mine` and `Share mine`
+    /// are the page's others, decided in `replace-confirmation` and
+    /// `d-share-mine-names-loss`.
     #[wasm_bindgen_test]
     fn only_the_two_danger_items_are_followed_by_a_confirmation() {
         let el = mount_header(data(kit::PackageState::Latest));

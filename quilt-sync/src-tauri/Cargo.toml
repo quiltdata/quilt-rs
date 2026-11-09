@@ -1,6 +1,6 @@
 [package]
 name = "quilt-sync"
-version = "0.27.1-dev"
+version = "0.28.0-dev"
 authors = ["Quilt Data, Inc."]
 description = "Cross-platform desktop application for editing Quilt data packages"
 documentation = "https://docs.quiltdata.com"
@@ -16,7 +16,7 @@ publish = false
 tauri-build = { version = "2.7.4", features = [] }
 
 [dependencies]
-agent-client-protocol = "3.6.0"
+agent-client-protocol = "5.1.0"
 async-trait.workspace = true
 axum = { version = "0.8.9", features = ["ws"] }
 base64.workspace = true

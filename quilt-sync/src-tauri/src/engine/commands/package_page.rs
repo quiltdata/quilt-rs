@@ -1,9 +1,4 @@
-//! The v2 package page's data.
-//!
-//! Beside `main_page.rs` and borrowing from it; `package_data.rs` is v1's and is
-//! never opened here. See `arch/comp/quilt-sync/node.md#v2-parallel-path` in the
-//! spec corpus for why a v2 surface gets its own module rather than a wider v1
-//! one.
+//! The package page's data, beside `main_page.rs` and borrowing from it.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -12,6 +7,7 @@ use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::engine::autopull::MergeBlock;
 use crate::engine::autopull::PausedReason;
 use crate::engine::autopull::Watcher;
 use crate::engine::commands::RoleCache;
@@ -190,12 +186,59 @@ pub enum ResolveData {
         /// Sorted logical keys, the whole package: neither capped nor filtered,
         /// because the pane's count and the file pane's marks read this one value.
         differing: Vec<String>,
+        loss: LatestLoss,
         unpublished: usize,
         /// Tracked paths with a local change: the edits a reset overwrites.
         uncommitted: usize,
+        /// What stopped autosync merging the two, when it tried.
+        blocked: Option<MergeBlockData>,
     },
     /// The manifest fetch, the listing, the status or the session failed.
     Refused { reason: String },
+}
+
+/// [`MergeBlock`], for the resolve pane.
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum MergeBlockData {
+    Paths { paths: Vec<String> },
+    Metadata,
+    LatestMoved,
+}
+
+impl From<&MergeBlock> for MergeBlockData {
+    fn from(block: &MergeBlock) -> Self {
+        match block {
+            MergeBlock::Paths(paths) => Self::Paths {
+                paths: paths.clone(),
+            },
+            MergeBlock::Metadata => Self::Metadata,
+            MergeBlock::LatestMoved => Self::LatestMoved,
+        }
+    }
+}
+
+/// What the published `latest` loses when this copy's revision replaces it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LatestLoss {
+    /// Published entries this copy's revision lacks or holds otherwise.
+    pub entries: usize,
+    /// Whether the published metadata is replaced.
+    pub metadata: bool,
+}
+
+impl From<&quilt::flow::ResolveComparison> for LatestLoss {
+    fn from(comparison: &quilt::flow::ResolveComparison) -> Self {
+        Self {
+            entries: comparison.lost,
+            metadata: comparison.user_meta_differs,
+        }
+    }
 }
 
 /// The current revision's user-facing facts.
@@ -361,7 +404,7 @@ fn blocked_state(err: &Error) -> Option<PackageStateDto> {
         // Not a session failure — the credentials vended and the active role
         // cannot read the bucket — but a state all the same, and one the header
         // already has words for. Without this arm the read fails and the page
-        // draws nothing at all for a package v1 says `No access` about.
+        // draws nothing at all for a package the reader may not see.
         //
         // `role: None` is the classification only. Naming the role is the
         // caller's second step, and a network one: `role_remedy` fills it.
@@ -419,8 +462,7 @@ fn epoch_millis(at: DateTime<Utc>) -> f64 {
 
 /// A listed path is outstanding when this copy neither tracks it nor has a
 /// local change at it ([`quilt::lineage::DownloadCounts::is_outstanding`]),
-/// and in the backlog when the scope also covers it —
-/// v1's `remote` rows (`package_data.rs:195-206`). `changes` is `None` when
+/// and in the backlog when the scope also covers it. `changes` is `None` when
 /// the status could not be read: then only tracking decides, and the engine
 /// still refuses to overwrite a local file. A path in `on_disk` already has
 /// a file here, so it stays out of the backlog.
@@ -465,6 +507,7 @@ async fn resolve_for_page(
     installed: &quilt::InstalledPackage,
     lineage: &quilt::lineage::PackageLineage,
     status_read: &Result<quilt::lineage::InstalledPackageStatus, String>,
+    paused: Option<&PausedReason>,
 ) -> Option<ResolveData> {
     match status_read {
         Ok(status) if status.upstream_state == UpstreamState::Diverged => Some(
@@ -472,7 +515,7 @@ async fn resolve_for_page(
                 .get_installed_package_resolve_comparison(installed, lineage)
                 .await
             {
-                Ok(comparison) => resolve_data(lineage, comparison, &status.changes),
+                Ok(comparison) => resolve_data(lineage, comparison, &status.changes, paused),
                 Err(err) => ResolveData::Refused {
                     reason: err.to_frontend_string(),
                 },
@@ -492,9 +535,9 @@ async fn resolve_for_page(
 /// Which files are here and whether they changed does not depend on the
 /// remote, so a blocked remote status does not hide them. A blocked status
 /// stopped before its walk — the refusal came from refreshing the latest hash —
-/// so the tree is walked once, here, against the cached manifest (v1 does the
-/// same after a denial). Only what needs the remote degrades, and the header
-/// says so. The manifest's rows are read only once there is a status.
+/// so the tree is walked once, here, against the cached manifest. Only what
+/// needs the remote degrades, and the header says so. The manifest's rows are
+/// read only once there is a status.
 async fn files_data(
     m: &impl model::QuiltModel,
     installed: &quilt::InstalledPackage,
@@ -518,13 +561,7 @@ async fn files_data(
         },
     };
     match m.get_installed_package_records(installed).await {
-        Ok(records) => FilesData::Listed(entry_list(
-            namespace,
-            status,
-            &lineage.paths,
-            &records,
-            true,
-        )),
+        Ok(records) => FilesData::Listed(entry_list(namespace, status, &lineage.paths, &records)),
         Err(err) => FilesData::Unlisted {
             reason: err.to_frontend_string(),
         },
@@ -537,6 +574,7 @@ fn resolve_data(
     lineage: &quilt::lineage::PackageLineage,
     comparison: quilt::flow::ResolveComparison,
     changes: &quilt::lineage::ChangeSet,
+    paused: Option<&PausedReason>,
 ) -> ResolveData {
     let mut differing: Vec<String> = comparison
         .differing
@@ -546,6 +584,7 @@ fn resolve_data(
     // `PathBuf` orders by component, so `a-b` and `a/b` swap once they are strings.
     differing.sort();
     ResolveData::Compared {
+        loss: LatestLoss::from(&comparison),
         published_message: comparison.published_message,
         differing,
         unpublished: comparison.unpublished,
@@ -553,6 +592,10 @@ fn resolve_data(
             .keys()
             .filter(|p| lineage.paths.contains_key(*p))
             .count(),
+        blocked: match paused {
+            Some(PausedReason::MergeRefused(block)) => Some(block.into()),
+            _ => None,
+        },
     }
 }
 
@@ -714,7 +757,7 @@ async fn get_package_page_data_from_model(
         &m.get_installed_package_sizes(&installed, &lineage).await?,
         status.map(|s| &s.changes),
     );
-    let resolve = resolve_for_page(m, &installed, &lineage, &status_read).await;
+    let resolve = resolve_for_page(m, &installed, &lineage, &status_read, paused).await;
     let files = files_data(m, &installed, namespace, &lineage, &status_read).await;
     let context = package_context_data(
         namespace,
@@ -950,9 +993,8 @@ pub struct NotDownloaded {
 
 /// Install the backlog the page read listed — Keeping's `Download N files`.
 ///
-/// Namespace-keyed like the rest of this page, and not v1's
-/// `package_install_paths`: that opens the file browser after every install
-/// (the file, or the package folder), which a backlog catch-up must not do.
+/// Namespace-keyed like the rest of this page. It never opens the file
+/// browser: a backlog catch-up must not.
 ///
 /// Returns the paths it left out; both lists are empty when all installed.
 pub async fn package_download_backlog(
@@ -1201,12 +1243,19 @@ mod tests {
     }
 
     async fn read(model: &crate::engine::model::MockQuiltModel) -> Result<PackagePageData, Error> {
+        read_paused(model, None).await
+    }
+
+    async fn read_paused(
+        model: &crate::engine::model::MockQuiltModel,
+        paused: Option<&PausedReason>,
+    ) -> Result<PackagePageData, Error> {
         let ns: quilt_uri::Namespace = NS.try_into().unwrap();
         get_package_page_data_from_model(
             model,
             &RoleCache::default(),
             &ns,
-            None,
+            paused,
             &crate::engine::needs_you::NeedsYou::default(),
         )
         .await
@@ -1242,6 +1291,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_diverged_read_paused_on_a_refused_merge_carries_what_blocked_it() {
+        let lineage = diverged_snapshot();
+        let mut model = mock_package(&lineage, Ok(diverged(modified("a.csv"))));
+        model
+            .expect_get_installed_package_resolve_comparison()
+            .returning(|_, _| Ok(comparison(&[], 0)));
+        let paused = PausedReason::MergeRefused(MergeBlock::Metadata);
+
+        let page = read_paused(&model, Some(&paused)).await.unwrap();
+
+        let Some(ResolveData::Compared { blocked, .. }) = page.context.resolve else {
+            panic!(
+                "a diverged read is compared, got {:?}",
+                page.context.resolve
+            );
+        };
+        assert_eq!(blocked, Some(MergeBlockData::Metadata));
+    }
+
+    #[tokio::test]
     async fn a_diverged_read_carries_the_comparison() {
         let lineage = diverged_snapshot();
         let mut model = mock_package(&lineage, Ok(diverged(modified("a.csv"))));
@@ -1253,6 +1322,8 @@ mod tests {
                 Ok(quilt::flow::ResolveComparison {
                     published_message: Some("Sent".to_string()),
                     differing: vec![PathBuf::from("plate/a.csv")],
+                    lost: 1,
+                    user_meta_differs: true,
                     unpublished: 2,
                 })
             });
@@ -1264,8 +1335,13 @@ mod tests {
             Some(ResolveData::Compared {
                 published_message: Some("Sent".to_string()),
                 differing: vec!["plate/a.csv".to_string()],
+                loss: LatestLoss {
+                    entries: 1,
+                    metadata: true,
+                },
                 unpublished: 2,
                 uncommitted: 1,
+                blocked: None,
             })
         );
         assert_eq!(page.header.state, PackageStateDto::Diverged);
@@ -1429,22 +1505,61 @@ mod tests {
         quilt::flow::ResolveComparison {
             published_message: Some("Add intake folder-upload note".to_string()),
             differing: differing.iter().map(PathBuf::from).collect(),
+            lost: 3,
+            user_meta_differs: true,
             unpublished,
         }
     }
 
     #[test]
     fn resolve_compared_wire_form_is_verbatim() {
+        let refused =
+            PausedReason::MergeRefused(MergeBlock::Paths(vec!["plate/a.csv".to_string()]));
         let data = resolve_data(
             &lineage_tracking(&["a.csv"]),
             comparison(&["plate/a.csv", "plate/b.csv"], 2),
             &modified("a.csv"),
+            Some(&refused),
         );
 
         assert_eq!(
             serde_json::to_string(&data).unwrap(),
-            r#"{"kind":"compared","publishedMessage":"Add intake folder-upload note","differing":["plate/a.csv","plate/b.csv"],"unpublished":2,"uncommitted":1}"#,
+            r#"{"kind":"compared","publishedMessage":"Add intake folder-upload note","differing":["plate/a.csv","plate/b.csv"],"loss":{"entries":3,"metadata":true},"unpublished":2,"uncommitted":1,"blocked":{"kind":"paths","paths":["plate/a.csv"]}}"#,
         );
+    }
+
+    #[test]
+    fn merge_block_wire_forms_are_verbatim() {
+        for (block, wire) in [
+            (MergeBlock::Metadata, r#"{"kind":"metadata"}"#),
+            (MergeBlock::LatestMoved, r#"{"kind":"latestMoved"}"#),
+        ] {
+            assert_eq!(
+                serde_json::to_string(&MergeBlockData::from(&block)).unwrap(),
+                wire
+            );
+        }
+    }
+
+    #[test]
+    fn a_copy_paused_for_another_reason_names_no_block() {
+        for paused in [
+            None,
+            Some(PausedReason::Diverged),
+            Some(PausedReason::Other("workflow rejected".to_string())),
+        ] {
+            let data = resolve_data(
+                &lineage_tracking(&[]),
+                comparison(&["a.csv"], 0),
+                &quilt::lineage::ChangeSet::new(),
+                paused.as_ref(),
+            );
+
+            let ResolveData::Compared { blocked, .. } = data else {
+                panic!("a comparison projects to Compared, got {data:?}");
+            };
+            assert_eq!(blocked, None, "{paused:?}");
+        }
     }
 
     #[test]
@@ -1483,6 +1598,7 @@ mod tests {
             &lineage_tracking(&["a.csv", "b.csv"]),
             comparison(&[], 0),
             &changes,
+            None,
         );
 
         let ResolveData::Compared { uncommitted, .. } = data else {
@@ -1505,6 +1621,7 @@ mod tests {
             &lineage_tracking(&[]),
             comparison(&refs, 0),
             &quilt::lineage::ChangeSet::new(),
+            None,
         );
 
         let ResolveData::Compared { differing, .. } = data else {
@@ -2641,7 +2758,7 @@ mod tests {
     }
 
     /// A download mock that asserts it installs `expected` and never opens
-    /// the file browser, as v1's install path does after every install.
+    /// the file browser.
     fn mock_download(expected: &'static [&'static str]) -> crate::engine::model::MockQuiltModel {
         let mut m = crate::engine::model::mocks::create();
         m.expect_get_installed_package()
@@ -3140,7 +3257,7 @@ mod tests {
     /// A denial is not a session failure, and must not be worded as one: the
     /// credentials vended, so signing in again re-vends the same denied role.
     /// It still resolves to a state rather than propagating, or the page draws
-    /// nothing for a package v1 says `No access` about.
+    /// nothing for a package the reader may not see.
     #[test]
     fn a_refused_role_is_a_denial_and_not_a_session_failure() {
         let err = quilt::Error::S3(quilt::S3Error {

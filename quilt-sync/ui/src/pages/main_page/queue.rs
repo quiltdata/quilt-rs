@@ -14,18 +14,18 @@ use super::super::main_page::list_class;
 use crate::commands::MainPagePackageData;
 use crate::commands::PausedPackageData;
 use crate::commands::PausedReasonData;
-use crate::kit::AttentionQueue;
-use crate::kit::Button;
-use crate::kit::CauseRow;
-use crate::kit::PackageAction;
-use crate::kit::PackageState;
-use crate::kit::QueueRow;
-use crate::kit::Remedy;
-use crate::kit::Site;
-use crate::kit::ZeroLine;
-use crate::kit::ZeroLineSkeleton;
-use crate::kit::render;
 use crate::routes::sign_in_href;
+use quilt_ui_kit::AttentionQueue;
+use quilt_ui_kit::Button;
+use quilt_ui_kit::CauseRow;
+use quilt_ui_kit::PackageAction;
+use quilt_ui_kit::PackageState;
+use quilt_ui_kit::QueueRow;
+use quilt_ui_kit::Remedy;
+use quilt_ui_kit::Site;
+use quilt_ui_kit::ZeroLine;
+use quilt_ui_kit::ZeroLineSkeleton;
+use quilt_ui_kit::render;
 
 /// One row in the queue, in draw order: a cause shared by several packages,
 /// or a package needing its own decision.
@@ -452,12 +452,7 @@ fn attention_line_text(count: usize) -> String {
 /// that drifts points the gallery's rows at pages the app does not use.
 pub fn action_href(action: PackageAction, namespace: &Namespace) -> String {
     match action {
-        // The package page's own resolve mode, not `/merge`: this queue is drawn
-        // only by the main page, which is v2's, and `/installed-package` renders
-        // v2 exactly when the main page does. The one exception is `/main`
-        // opened with the preview off, which lands this on v1's package page;
-        // that page ignores `resolve=1` and offers `[Merge]` in its status
-        // banner, so the reader is one click from where v1 would have sent them.
+        // The package page's own resolve mode.
         PackageAction::Resolve => crate::routes::resolve_href(namespace),
         // Shared with the list row's own link — `super::package_page_href`.
         //
@@ -521,8 +516,7 @@ fn cause_trailing(
 /// its own (global constraint): the caller resolves both lists and hands them
 /// in.
 #[component]
-// Owned, not borrowed, matching `components/buttons/merge.rs`'s own `Merge`:
-// a prop only borrowed inside the body still has to be owned by the caller,
+// Owned, not borrowed: a prop only borrowed inside the body still has to be owned by the caller,
 // since a component's arguments outlive the call that builds them.
 #[allow(clippy::needless_pass_by_value)]
 pub fn QueueRegion(
@@ -707,7 +701,7 @@ enum Shape {
 mod tests {
     use super::*;
     use crate::commands::MainPagePackageData;
-    use crate::kit::PackageState;
+    use quilt_ui_kit::PackageState;
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
@@ -1162,7 +1156,7 @@ mod tests {
     /// Inside a `Router`, which the queue's rows navigate through: `use_navigate`
     /// panics without one.
     fn mount<N: IntoView + 'static>(f: impl FnOnce() -> N + Send + 'static) -> web_sys::Element {
-        crate::test_support::mount(move || {
+        quilt_ui_kit::test_support::mount(move || {
             view! { <leptos_router::components::Router>{f()}</leptos_router::components::Router> }
         })
     }
@@ -1572,8 +1566,7 @@ mod tests {
         // Never produced by `action`, and mapped anyway so the vocabulary can
         // gain a verb without this match going stale.
         assert_eq!(href(SwitchRole), package_page);
-        // Resolve opens the package page's resolve mode — the page the main
-        // page's own generation renders there — rather than `/merge`.
+        // Resolve opens the package page's resolve mode.
         assert_eq!(
             href(Resolve),
             "/installed-package?namespace=org%2Fpkg&filter=unmodified&resolve=1"

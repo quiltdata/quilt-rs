@@ -550,15 +550,11 @@ async fn run_once_clears_an_arm_time_when_the_package_stops_waiting() -> Result<
 #[tokio::test]
 async fn run_once_clears_an_arm_time_when_the_package_pauses() -> Result<(), Error> {
     // A paused namespace is skipped by every later tick, so if the pause does
-    // not clear the entry nothing ever will.
+    // not clear the entry nothing ever will. With no base shared with
+    // `latest`, a Diverged copy has nothing to merge from and pauses.
     let ns: Namespace = ("acme", "demo").into();
     let lineage = quilt::lineage::PackageLineage {
-        commit: Some(quilt::lineage::CommitState {
-            hash: "local".to_string(),
-            ..quilt::lineage::CommitState::default()
-        }),
         remote_uri: Some(remote_for(&ns)),
-        base_hash: "h0".to_string(),
         latest_hash: "h1".to_string(),
         ..quilt::lineage::PackageLineage::default()
     };
@@ -670,47 +666,12 @@ async fn run_once_publishes_local_first_push() -> Result<(), Error> {
 }
 
 #[tokio::test]
-async fn run_once_pauses_on_classic_diverged() -> Result<(), Error> {
-    let ns: Namespace = ("acme", "demo").into();
-    // `Diverged` from the conventional source: differing base/latest and
-    // a local commit.
-    let lineage = quilt::lineage::PackageLineage {
-        commit: Some(quilt::lineage::CommitState {
-            hash: "local".to_string(),
-            ..quilt::lineage::CommitState::default()
-        }),
-        remote_uri: Some(remote_for(&ns)),
-        base_hash: "h0".to_string(),
-        latest_hash: "h1".to_string(),
-        ..quilt::lineage::PackageLineage::default()
-    };
-    let status = quiet_status(UpstreamState::Diverged, BTreeMap::new());
-
-    let (mut model, _) = fixture_with_lineage_and_status(lineage, status);
-    model.expect_locked_package_publish().times(0);
-    model.expect_locked_package_pull().times(0);
-
-    let reporter = Arc::new(RecordingReporter::default());
-    let inner = make_inner_for_run_once(reporter.clone()).await;
-    run_once(&model, &RoleCache::default(), &inner).await?;
-
-    assert!(reporter.published.lock().unwrap().is_empty());
-    {
-        let statuses = reporter.statuses.lock().unwrap();
-        assert_eq!(statuses.len(), 1);
-        assert_eq!(statuses[0].1.status, "diverged");
-    }
-    let paused = inner.paused.read().await;
-    assert!(matches!(paused.get(&ns), Some(PausedReason::Diverged)));
-    Ok(())
-}
-
-#[tokio::test]
 async fn run_once_pauses_on_foreign_remote_diverged() -> Result<(), Error> {
     let ns: Namespace = ("acme", "demo").into();
     let host = fixtures::host();
     // Foreign-remote `Diverged`: `remote.hash` empty, `latest_hash`
-    // non-empty (a teammate published under the same namespace).
+    // non-empty (a teammate published under the same namespace). Its edits
+    // are not published: a first push would certify over the teammate's.
     let lineage = quilt::lineage::PackageLineage {
         remote_uri: Some(quilt_uri::ManifestUri {
             bucket: "bucket".to_string(),
@@ -721,7 +682,12 @@ async fn run_once_pauses_on_foreign_remote_diverged() -> Result<(), Error> {
         latest_hash: "abc".to_string(),
         ..quilt::lineage::PackageLineage::default()
     };
-    let status = quiet_status(UpstreamState::Diverged, BTreeMap::new());
+    let mut changes = BTreeMap::new();
+    changes.insert(
+        std::path::PathBuf::from("file.txt"),
+        quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
+    );
+    let status = quiet_status(UpstreamState::Diverged, changes);
 
     let (mut model, _) = fixture_with_lineage_and_status(lineage, status);
     model.expect_locked_package_publish().times(0);

@@ -1,6 +1,7 @@
 name: Deploy Gallery
 
-# The kit's design record, never the app: stories from fixture data, no backend.
+# The kit's and the app's design record, never the app: stories from fixture
+# data, no backend.
 
 on:
   workflow_dispatch:
@@ -8,6 +9,7 @@ on:
     branches: [main]
     paths:
       - 'quilt-sync/ui/**'
+      - 'quilt-ui-kit/**'
       - 'quilt-uri/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
@@ -50,16 +52,23 @@ jobs:
       - name: Install just
         uses: taiki-e/install-action@just
 
-      # Matches the `stylance` crate in quilt-sync/ui/Cargo.toml: a skew breaks
+      # Matches the `stylance` crate in both UI crates' Cargo.toml: a skew breaks
       # styling silently.
       - name: Install stylance
         uses: taiki-e/install-action@v2
         with:
           tool: stylance-cli@0.8.4
 
-      # A project site lives under `/<repo>/`.
-      - name: Build
+      # A project site lives under `/<repo>/`: the app's gallery at its root,
+      # the kit's storybook under `kit/`.
+      - name: Build the app's gallery
         run: just gallery build "/${{ github.event.repository.name }}/"
+
+      - name: Build the kit's storybook
+        run: just storybook build "/${{ github.event.repository.name }}/kit/"
+
+      - name: Put the storybook under the gallery
+        run: cp -R quilt-ui-kit/dist-pages quilt-sync/ui/dist-pages/kit
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v5

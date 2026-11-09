@@ -55,20 +55,20 @@ use crate::Cell;
 use crate::Scene;
 use crate::commands;
 use crate::gallery::button_group::location;
-use crate::kit::ActionMenu;
-use crate::kit::BackLink;
-use crate::kit::Button;
-use crate::kit::ButtonVariant;
-use crate::kit::MenuAction;
-use crate::kit::PackageAction;
-use crate::kit::PackageState;
-use crate::kit::PageHeader;
-use crate::kit::Site;
-use crate::kit::SplitButton;
-use crate::kit::SplitOption;
-use crate::kit::StateLabel;
-use crate::kit::render;
 use crate::pages::{MenuItem, menu_items, remote_target};
+use quilt_ui_kit::ActionMenu;
+use quilt_ui_kit::BackLink;
+use quilt_ui_kit::Button;
+use quilt_ui_kit::ButtonVariant;
+use quilt_ui_kit::MenuAction;
+use quilt_ui_kit::PackageAction;
+use quilt_ui_kit::PackageState;
+use quilt_ui_kit::PageHeader;
+use quilt_ui_kit::Site;
+use quilt_ui_kit::SplitButton;
+use quilt_ui_kit::SplitOption;
+use quilt_ui_kit::StateLabel;
+use quilt_ui_kit::render;
 
 const NAMESPACE: &str = "user/plate-07";
 
@@ -229,14 +229,14 @@ fn state_payload(state: &PackageState) -> commands::PackageHeaderData {
 /// I choose to do*, which does not vary with state, so it lives in `[⋯]`.
 ///
 /// Three arrangements were rejected by looking at them. `[⋯]` alone buried a
-/// button v1 shows as a peer of publishing. A literal `or` between two buttons
+/// button that is a peer of publishing. A literal `or` between two buttons
 /// read correctly against `Publish` and produced `Create new revision or Get
 /// latest` against everything else, claiming a relationship that is not there.
 /// Keeping it as a standalone button left it the one thing on the row that was
 /// not state-driven — conspicuous in `Latest`, where it stood alone as the only
 /// control in the resting state, which is the state people see most.
 ///
-/// So: the states that publish get a [`SplitButton`](crate::kit::SplitButton)
+/// So: the states that publish get a [`SplitButton`](quilt_ui_kit::SplitButton)
 /// whose caret holds `Review before publishing…`, the states with another verb
 /// get that verb plainly, and the states with nothing to do get an empty slot.
 ///

@@ -1,20 +1,17 @@
-//! Create a package, as a modal over the main page.
-//!
-//! v2's own, not v1's `CreatePackagePopup`: the kit's `Dialog` traps focus and
-//! handles Escape, neither of which v1's four hand-rolled overlays did. The two
-//! commands underneath are v1's, unchanged.
+//! Create a package, as a modal over the main page. The kit's `Dialog` traps
+//! focus and handles Escape.
 
 use leptos::prelude::*;
 
 use crate::commands;
 use crate::engine;
-use crate::kit::Banner;
-use crate::kit::BannerVariant;
-use crate::kit::Button;
-use crate::kit::ButtonVariant;
-use crate::kit::Dialog;
-use crate::kit::FormControl;
-use crate::kit::TextInput;
+use quilt_ui_kit::Banner;
+use quilt_ui_kit::BannerVariant;
+use quilt_ui_kit::Button;
+use quilt_ui_kit::ButtonVariant;
+use quilt_ui_kit::Dialog;
+use quilt_ui_kit::FormControl;
+use quilt_ui_kit::TextInput;
 
 use crate::pages::path_field::PathField;
 
@@ -31,17 +28,16 @@ pub fn CreatePackageDialog(open: RwSignal<bool>, reload: Trigger) -> impl IntoVi
     // `PageLayout`'s banner slot: `Dialog` uses `show_modal()`, so anything in the page's
     // own flow sits behind the backdrop in a lower layer, dimmed and out of tab order.
     let failure = RwSignal::new(None::<String>);
-    // Trimmed, as v1 does: a name of spaces is not a name, and the backend
+    // Trimmed: a name of spaces is not a name, and the backend
     // would refuse it after a round trip.
     let can_create = Signal::derive(move || {
         !namespace.get().trim().is_empty() && !not_full.get() && !submitting.get()
     });
 
     // This dialog is mounted once, permanently, outside the page's `Transition`
-    // (a refetch must not close it mid-typing) — unlike v1's `CreatePackagePopup`,
-    // which sat inside a `Show` and so got a fresh instance, and a fresh form,
-    // every open. Without this the previous package's name would sit in the
-    // field on the next open, inviting an accidental duplicate submission.
+    // (a refetch must not close it mid-typing), so the form outlives a close.
+    // Without this the previous package's name would sit in the field on the
+    // next open, inviting an accidental duplicate submission.
     //
     // Resets only on the transition to `true`, tracked by `was_open` — never on
     // close, and never while already open. Closing on a failed create must keep
@@ -138,8 +134,7 @@ fn PackageFields(
     source: RwSignal<String>,
     not_full: RwSignal<bool>,
 ) -> impl IntoView {
-    // v1's directory picker, unchanged: the chosen path becomes the (disabled)
-    // field's text. A cancelled picker returns `Err`, and the field is left as
+    // The chosen path becomes the (disabled) field's text. A cancelled picker returns `Err`, and the field is left as
     // it was.
     let on_browse = move |_| {
         leptos::task::spawn_local(async move {
@@ -207,7 +202,7 @@ fn PackageFields(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::sleep_ms;
+    use quilt_ui_kit::test_support::sleep_ms;
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
@@ -216,7 +211,7 @@ mod tests {
     /// a later test could not focus anything.
     fn mount_dialog(open: RwSignal<bool>) -> web_sys::Element {
         let reload = Trigger::new();
-        crate::test_support::mount(move || {
+        quilt_ui_kit::test_support::mount(move || {
             view! { <CreatePackageDialog open=open reload=reload /> }
         })
     }
@@ -276,7 +271,7 @@ mod tests {
     }
 
     /// Types into a field the way a user does — set the property, then fire the
-    /// event `TextInput` listens for (`kit/text_input.rs:64`: `on:input`).
+    /// event `TextInput` listens for (`quilt-ui-kit/src/text_input.rs:64`: `on:input`).
     fn type_into(field: &web_sys::HtmlInputElement, text: &str) {
         field.set_value(text);
         field
@@ -297,7 +292,6 @@ mod tests {
 
     #[wasm_bindgen_test]
     async fn create_is_refused_while_the_namespace_is_empty() {
-        // v1 returns early on an empty namespace (`installed_packages_list.rs:848`).
         // A create with no name is not a thing the backend can do, and finding that
         // out through a rejected round trip would be worse than not offering it.
         let open = RwSignal::new(true);
@@ -317,8 +311,7 @@ mod tests {
 
     #[wasm_bindgen_test]
     async fn a_namespace_of_only_spaces_is_still_empty() {
-        // v1 trims before checking (`installed_packages_list.rs:847`). Without the
-        // trim the button enables on a space and the backend refuses it.
+        // Without the trim the button enables on a space and the backend refuses it.
         let open = RwSignal::new(true);
         let el = mount_dialog(open);
         leptos::task::tick().await;
@@ -335,7 +328,7 @@ mod tests {
     async fn create_is_refused_while_the_folder_is_relative() {
         use crate::engine::fake::{FakeEngine, ask};
 
-        crate::test_support::unmount_earlier();
+        quilt_ui_kit::test_support::unmount_earlier();
         let engine = FakeEngine::install();
         engine.as_headless();
         let _asked = ask("get_toasts");
@@ -379,7 +372,7 @@ mod tests {
         type_into(&folder, "/home/a/data");
         answer(false).await;
         assert!(!create_button(&el).disabled(), "a full path");
-        crate::test_support::unmount_earlier();
+        quilt_ui_kit::test_support::unmount_earlier();
     }
 
     #[wasm_bindgen_test]
@@ -430,10 +423,9 @@ mod tests {
 
     #[wasm_bindgen_test]
     async fn reopening_the_dialog_clears_what_was_typed_before() {
-        // This dialog is mounted once, permanently (unlike v1's `CreatePackagePopup`,
-        // which sat inside a `Show` and so got a fresh instance every open). Without
-        // a reset on the open transition, the previous package's name would still be
-        // sitting in the field, inviting an accidental duplicate-namespace submit.
+        // This dialog is mounted once, permanently. Without a reset on the open
+        // transition, the previous package's name would still be sitting in the
+        // field, inviting an accidental duplicate-namespace submit.
         let open = RwSignal::new(true);
         let el = mount_dialog(open);
         leptos::task::tick().await;

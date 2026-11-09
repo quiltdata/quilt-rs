@@ -43,7 +43,7 @@
 //!   `All`, the home a facet that empties falls back to. `All` leaves ignored
 //!   files out; only `Ignored` shows them, with no label and no box, since the
 //!   view already says it and an ignored file is never selectable. A tracked
-//!   file that is also ignored is two rows, as in v1, and counts under both.
+//!   file that is also ignored is two rows, and counts under both.
 //! - **A click does the thing the row can do.** A file that is here opens, a
 //!   missing one is `EntryRow`'s `Select` shape, and a deleted one is inert.
 //! - **Selection feeds one action.** Select-all, the headings' boxes and the
@@ -76,15 +76,15 @@ use std::time::Duration;
 use leptos::prelude::*;
 
 use crate::commands::{EntryCounts, EntryData, EntryList, FilesData, IgnoredBy};
-use crate::kit::state_label::StateTone;
-use crate::kit::{
+use crate::pages::copy_mark::CopyMark;
+use crate::pages::row_menu::{RowCommand, menu_actions};
+use crate::util::{format_size, thousands, with_deleted_here};
+use quilt_ui_kit::state_label::StateTone;
+use quilt_ui_kit::{
     Blankslate, Button, ButtonVariant, Card, EntryAction, EntryGroup, EntryRow, EntrySelection,
     GroupSelection, ListToolbar, LoadFailure, MenuAction, NameTooltip, Naming, SearchInput,
     Segment, SegmentedControl, Select, SelectAll, SkeletonBox, SkeletonText, publish_height,
 };
-use crate::pages::copy_mark::CopyMark;
-use crate::pages::row_menu::{RowCommand, menu_actions};
-use crate::util::{format_size, thousands, with_deleted_here};
 
 pub(crate) mod selection;
 
@@ -517,9 +517,9 @@ fn row_actions(r: &Row, menu: Option<RowMenu>) -> Signal<Vec<MenuAction>> {
 }
 
 /// The items a row offers, in their fixed order and groups: open and reveal;
-/// catalog, if any, and copy; then the `.quiltignore` item. v1's entries form
-/// gates its buttons the same way, but Ignore is on every row: the pane does
-/// not read `junky_pattern`, and the popup is prefilled with the path instead.
+/// catalog, if any, and copy; then the `.quiltignore` item. Ignore is on every
+/// row: the pane does not read `junky_pattern`, and the popup is prefilled with
+/// the path instead.
 fn row_commands(
     path: &str,
     folder: bool,
@@ -1875,7 +1875,7 @@ mod menu_tests {
 mod menu_pane_tests {
     use super::*;
     use crate::commands::{EntryCounts, EntryData};
-    use crate::test_support::mount;
+    use quilt_ui_kit::test_support::mount;
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
@@ -2086,7 +2086,10 @@ mod menu_pane_tests {
             }
         });
         let marked = el
-            .query_selector(&format!("[aria-describedby='{}']", crate::kit::DIFFERS_ID))
+            .query_selector(&format!(
+                "[aria-describedby='{}']",
+                quilt_ui_kit::DIFFERS_ID
+            ))
             .unwrap()
             .expect("the row is marked");
         assert!(
@@ -2139,7 +2142,7 @@ mod menu_pane_tests {
 mod pane_tests {
     use super::*;
     use crate::commands::{EntryCounts, EntryData};
-    use crate::test_support::{button_saying, element_saying, mount};
+    use quilt_ui_kit::test_support::{button_saying, element_saying, mount};
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
@@ -2430,7 +2433,7 @@ mod pane_tests {
         assert_eq!(heading_count(&el, "data/"), "2", "{}", el.inner_html());
     }
 
-    /// A tracked file that `.quiltignore` also matches is two rows, as in v1:
+    /// A tracked file that `.quiltignore` also matches is two rows:
     /// the ignored one under `Ignored`, and the tracked one — here deleted,
     /// since the walk skips it — under `All` and `Changed`. Counts follow rows.
     #[wasm_bindgen_test]
@@ -2940,7 +2943,7 @@ mod pane_tests {
         element_saying(&el, "Select all 2 shown");
         search.set("remote-a".to_string());
         // The list follows the search once typing settles.
-        crate::test_support::sleep_ms(40).await;
+        quilt_ui_kit::test_support::sleep_ms(40).await;
         element_saying(&el, "Select all 1 shown");
         // A search hides a tick without undoing it: `[Download]` counts both,
         // and sums both rows' bytes.
@@ -2958,25 +2961,24 @@ mod pane_tests {
         button_saying(&el, "Download 2 · 8.2\u{a0}kB");
     }
 
-    #[expect(dead_code, reason = "only the classes these tests need are loaded")]
     mod sheets {
-        stylance::import_crate_style!(pub row, "src/kit/entry_row.module.css");
-        stylance::import_crate_style!(pub group, "src/kit/entry_group.module.css");
-        stylance::import_crate_style!(pub check, "src/kit/checkbox.module.css");
-        stylance::import_crate_style!(pub toolbar, "src/kit/list_toolbar.module.css");
+        pub use quilt_ui_kit::checkbox::style as check;
+        pub use quilt_ui_kit::entry_group::style as group;
+        pub use quilt_ui_kit::entry_row::style as row;
+        pub use quilt_ui_kit::list_toolbar::style as toolbar;
     }
 
     /// The cap's notice sits right under the toolbar, whose bottom padding is
     /// the room above it, and keeps as much again below.
     #[wasm_bindgen_test]
     async fn the_cap_notice_has_one_gap_above_and_below() {
-        use crate::test_support::load_module_style;
+        use quilt_ui_kit::test_support::load_module_style;
         load_module_style(
             include_str!("file_pane.module.css"),
             &[("band", style::band), ("cap", style::cap)],
         );
         load_module_style(
-            include_str!("../../kit/list_toolbar.module.css"),
+            quilt_ui_kit::test_support::sheet("list_toolbar"),
             &[("root", sheets::toolbar::root)],
         );
         let el = mount(|| {
@@ -3037,7 +3039,7 @@ mod pane_tests {
     /// on one x after it.
     #[wasm_bindgen_test]
     async fn the_boxes_make_the_list_s_left_edge() {
-        use crate::test_support::load_module_style;
+        use quilt_ui_kit::test_support::load_module_style;
         load_module_style(
             include_str!("file_pane.module.css"),
             &[
@@ -3047,7 +3049,7 @@ mod pane_tests {
             ],
         );
         load_module_style(
-            include_str!("../../kit/entry_row.module.css"),
+            quilt_ui_kit::test_support::sheet("entry_row"),
             &[
                 ("root", sheets::row::root),
                 ("main", sheets::row::main),
@@ -3057,7 +3059,7 @@ mod pane_tests {
             ],
         );
         load_module_style(
-            include_str!("../../kit/entry_group.module.css"),
+            quilt_ui_kit::test_support::sheet("entry_group"),
             &[
                 ("head", sheets::group::head),
                 ("disclose", sheets::group::disclose),
@@ -3066,7 +3068,7 @@ mod pane_tests {
             ],
         );
         load_module_style(
-            include_str!("../../kit/checkbox.module.css"),
+            quilt_ui_kit::test_support::sheet("checkbox"),
             &[
                 ("root", sheets::check::root),
                 ("input", sheets::check::input),
@@ -3443,7 +3445,7 @@ mod pane_tests {
 
         facet.set(Facet::All.key().to_string());
         search.set(".md".to_string());
-        crate::test_support::sleep_ms(40).await;
+        quilt_ui_kit::test_support::sleep_ms(40).await;
         assert!(
             !text(&el).contains("c.txt"),
             "the search hides notes/c.txt; markup was {}",
@@ -3775,12 +3777,12 @@ mod pane_tests {
         );
         let el = driven_pane(downloaded_package(), Picking::default(), search, facet);
         search.set("nothing-matches".to_string());
-        crate::test_support::sleep_ms(40).await;
+        quilt_ui_kit::test_support::sleep_ms(40).await;
         element_saying(&el, "No files match");
         element_saying(&el, "All 3 files downloaded");
         search.set(String::new());
         facet.set(Facet::Ignored.key().to_string());
-        crate::test_support::sleep_ms(40).await;
+        quilt_ui_kit::test_support::sleep_ms(40).await;
         element_saying(&el, "All 3 files downloaded");
     }
 
@@ -3955,7 +3957,7 @@ mod pane_tests {
         disclosure()
             .unchecked_into::<web_sys::HtmlElement>()
             .click();
-        crate::test_support::sleep_ms(10).await;
+        quilt_ui_kit::test_support::sleep_ms(10).await;
         assert_eq!(
             disclosure().get_attribute("aria-expanded").as_deref(),
             Some("false")
@@ -3987,7 +3989,7 @@ mod pane_tests {
     /// settle on it.
     async fn type_search(el: &web_sys::Element, query: &str) {
         type_key(el, query).await;
-        crate::test_support::sleep_ms(40).await;
+        quilt_ui_kit::test_support::sleep_ms(40).await;
     }
 
     /// Type into the search field, one keystroke of a burst: no pause after.
@@ -4166,7 +4168,7 @@ mod pane_tests {
                 .expect("the notes/ disclosure")
         };
         notes().unchecked_into::<web_sys::HtmlElement>().click();
-        crate::test_support::sleep_ms(10).await;
+        quilt_ui_kit::test_support::sleep_ms(10).await;
         assert!(collapsed.get_untracked().contains("notes/"));
 
         type_search(&el, "plate").await;
@@ -4177,7 +4179,7 @@ mod pane_tests {
         );
 
         type_search(&el, "").await;
-        crate::test_support::sleep_ms(10).await;
+        quilt_ui_kit::test_support::sleep_ms(10).await;
         assert_eq!(
             notes().get_attribute("aria-expanded").as_deref(),
             Some("false"),
@@ -4326,7 +4328,7 @@ mod pane_tests {
                 );
             }
         }
-        crate::test_support::sleep_ms(40).await;
+        quilt_ui_kit::test_support::sleep_ms(40).await;
         assert!(titled(&el, "raw/plate-01.csv"), "{}", el.inner_html());
         assert!(!titled(&el, "raw/plate-02.csv"));
         assert!(!titled(&el, "notes/raw.md"));
@@ -4416,7 +4418,7 @@ mod marks_tests {
 
     use super::*;
     use crate::commands::{EntryCounts, EntryData};
-    use crate::test_support::mount;
+    use quilt_ui_kit::test_support::mount;
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
@@ -4476,9 +4478,12 @@ mod marks_tests {
             .query_selector(&format!("[data-full-name='{path}']"))
             .unwrap()
             .unwrap_or_else(|| panic!("{path} is drawn; markup was {}", el.inner_html()));
-        name.closest(&format!("[aria-describedby='{}']", crate::kit::DIFFERS_ID))
-            .unwrap()
-            .is_some()
+        name.closest(&format!(
+            "[aria-describedby='{}']",
+            quilt_ui_kit::DIFFERS_ID
+        ))
+        .unwrap()
+        .is_some()
     }
 
     /// Each drawn row whose path is in the set is marked, and no other.
@@ -4590,7 +4595,7 @@ mod marks_tests {
         );
 
         search.set("b.csv".to_string());
-        crate::test_support::sleep_ms(40).await;
+        quilt_ui_kit::test_support::sleep_ms(40).await;
         assert!(
             el.query_selector("[data-full-name='plate/a.csv']")
                 .unwrap()
@@ -4639,7 +4644,7 @@ mod marks_tests {
             .get_attribute("aria-describedby")
             .is_some_and(|ids| {
                 ids.split_whitespace()
-                    .any(|id| id == crate::kit::DIFFERS_ID)
+                    .any(|id| id == quilt_ui_kit::DIFFERS_ID)
             });
         let says = el
             .text_content()
@@ -4673,7 +4678,7 @@ mod marks_tests {
     async fn an_open_folder_leaves_the_mark_to_its_rows() {
         let el = folder_pane(Some(marks(&["plate/a.csv"])));
         disclosure(&el).click();
-        crate::test_support::sleep_ms(10).await;
+        quilt_ui_kit::test_support::sleep_ms(10).await;
         assert!(is_marked(&el, "plate/a.csv"), "opened, its row is marked");
         assert!(!is_marked(&el, "plate/b.csv"));
         assert!(!heading_marked(&el), "the rows say it now");

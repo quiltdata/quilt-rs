@@ -1,14 +1,13 @@
 //! The *Bucket and catalog* dialog: host, bucket and workflow before the first
 //! push, and the same dialog with the bucket fixed after it.
 //!
-//! # The fields are the gallery's; the machinery is v1's
+//! # The fields and the machinery
 //!
-//! The markup is `gallery/forms.rs`'s `BucketForm`, which is where the shape
-//! was settled. What makes it real — validation, the debounced workflow read,
-//! and the self-keying that ties a submitted workflow to the bucket on screen —
-//! is carried over from `components/set_remote_popup.rs`. What v1 hand-wrote
-//! around it (the overlay, Enter and Escape, the in-flight flag, the refusal)
-//! is `FormDialog`'s now, which is the reason the form moved.
+//! The markup is the kit story `BucketForm`, which is where the shape was
+//! settled. This module adds validation, the debounced workflow read, and the
+//! self-keying that ties a submitted workflow to the bucket on screen.
+//! `FormDialog` owns the overlay, Enter and Escape, the in-flight flag and the
+//! refusal.
 //!
 //! # Two shapes, two commands
 //!
@@ -29,16 +28,15 @@ use leptos::reactive::signal::ArcRwSignal;
 
 use crate::commands;
 use crate::commands::{CommitWorkflows, WorkflowIntent};
-use crate::components::build_workflow_view;
-use crate::components::workflow_select::{WorkflowView, WorkflowViewKind};
-use crate::kit::{BannerVariant, FormControl, FormDialog, Naming, Select, Submit, TextInput};
+use crate::pages::workflow::{WorkflowView, WorkflowViewKind, build_workflow_view};
 use crate::util;
+use quilt_ui_kit::{BannerVariant, FormControl, FormDialog, Naming, Select, Submit, TextInput};
 
 use super::{BucketDraft, Outcome, holding};
 
 const HOST_INVALID: &str = "Enter a valid hostname";
 const BUCKET_MISSING: &str = "Enter an S3 bucket name";
-/// v1's words for the workflow read in flight.
+/// The words for the workflow read in flight.
 const LOADING: &str = "Loading workflows…";
 
 /// Whether the typed pair can be submitted, and what is wrong when it cannot.
@@ -424,7 +422,7 @@ pub(crate) fn BucketDialog(
             }
             // The selected option's own intent, passed straight through, and
             // `BucketDefault` when the config is not loaded — never
-            // `Named("")`. v1's rule.
+            // `Named("")`.
             let workflow = wf_view
                 .get_untracked()
                 .and_then(|view| {
@@ -586,9 +584,9 @@ pub(crate) fn BucketDialog(
 mod tests {
     use super::super::Wiring;
     use super::*;
-    use crate::kit;
-    use crate::test_support::{element_saying, mount, sleep_ms};
     use leptos_router::components::Router;
+    use quilt_ui_kit as kit;
+    use quilt_ui_kit::test_support::{element_saying, mount, sleep_ms};
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
@@ -670,8 +668,7 @@ mod tests {
         input.dispatch_event(&event).unwrap();
     }
 
-    /// v1's rule, carried over: a host, when given, must be a hostname and a
-    /// bucket must be something. Both messages name the field's own problem,
+    /// A host, when given, must be a hostname and a bucket must be something. Both messages name the field's own problem,
     /// because the dialog banner is for the backend refusing the whole
     /// submission.
     #[test]
@@ -846,7 +843,7 @@ mod tests {
         type_into(&el, "Host", "quilt.test");
         leptos::task::tick().await;
 
-        crate::test_support::button_saying(&el, "Save").click();
+        quilt_ui_kit::test_support::button_saying(&el, "Save").click();
         sleep_ms(50).await;
 
         assert_eq!(
@@ -874,9 +871,9 @@ mod tests {
     }
 
     /// There is no engine under the runner, so the workflow fetch fails —
-    /// which is `CommitWorkflows::Unavailable`, the state v1 degrades to, and the
-    /// control says so rather than showing an empty list. Submit still carries
-    /// `BucketDefault`, so the real default re-resolves on the backend.
+    /// which is `CommitWorkflows::Unavailable`, and the control says so rather
+    /// than showing an empty list. Submit still carries `BucketDefault`, so the
+    /// real default re-resolves on the backend.
     #[wasm_bindgen_test]
     async fn a_failed_workflow_fetch_degrades_to_the_bucket_default() {
         let el = mount_dialog(data());
@@ -1247,7 +1244,7 @@ mod tests {
         leptos::task::tick().await;
         sleep_ms(SETTLED_MS).await;
 
-        crate::test_support::button_saying(&el, "Save").click();
+        quilt_ui_kit::test_support::button_saying(&el, "Save").click();
         sleep_ms(50).await;
         let alert = el
             .query_selector("dialog[open] [role=alert]")
@@ -1263,7 +1260,7 @@ mod tests {
         );
         assert_eq!(reloads.get_untracked(), 0, "not while the refusal is shown");
 
-        crate::test_support::button_saying(&el, "Cancel").click();
+        quilt_ui_kit::test_support::button_saying(&el, "Cancel").click();
         sleep_ms(50).await;
         assert_eq!(reloads.get_untracked(), 1, "read again on close");
         drop(owner);

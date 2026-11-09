@@ -269,7 +269,7 @@ impl PausedEvent {
         let (reason_str, message) = match reason {
             PausedReason::PendingChanges => ("pendingChanges", None),
             PausedReason::PendingCommit => ("pendingCommit", None),
-            PausedReason::Diverged => ("diverged", None),
+            PausedReason::Diverged | PausedReason::MergeRefused(_) => ("diverged", None),
             PausedReason::PullConflict(files) => ("pullConflict", Some(files.join(", "))),
             // The message is the role *name*, not a sentence: the wording
             // ("switch role to resume") is presentation and lives in the UI,
@@ -289,16 +289,11 @@ impl PausedEvent {
     }
 }
 
-/// Point-in-time view of the autosync watcher's per-namespace state.
-///
-/// Returned by the `get_autosync_snapshot` command so the UI can
-/// re-hydrate per-page banners on navigation — listening for the
-/// `autosync-paused` event only catches pauses that fire while the page
-/// is mounted, but the watcher's `paused` map persists across page
-/// loads. Each entry in `paused` has the same wire shape as the
-/// `autosync-paused` event payload.
-#[derive(Serialize, Clone, Debug, PartialEq, Eq, Default)]
-#[serde(rename_all = "camelCase")]
+/// Point-in-time view of the autosync watcher's per-namespace state, for
+/// tests. Each entry in `paused` has the wire shape of the `autosync-paused`
+/// event payload.
+#[cfg(test)]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct WatcherSnapshot {
     pub paused: Vec<PausedEvent>,
 }
@@ -1053,6 +1048,16 @@ mod tests {
         assert_eq!(
             PausedEvent::from_reason(&ns, &PausedReason::Diverged).reason,
             "diverged"
+        );
+        let refused = PausedEvent::from_reason(
+            &ns,
+            &PausedReason::MergeRefused(crate::engine::autopull::MergeBlock::Paths(vec![
+                "a.csv".to_string(),
+            ])),
+        );
+        assert_eq!(
+            (refused.reason.as_str(), refused.message),
+            ("diverged", None)
         );
     }
 

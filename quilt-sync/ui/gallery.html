@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>QuiltSync design system — gallery</title>
+  <title>QuiltSync pages — gallery</title>
 
   <!--
     Debug harness and design record. Its own Trunk target so it mounts
@@ -11,29 +11,30 @@
     `catch`, so in a plain browser it traps the wasm module. Run: `just gallery`
     (debug) or `just gallery preview` (release).
 
-    No fonts are linked: the system stack lives in tokens.css. v1's index.html
-    pulls 1.2 MB of Roboto; none of it is wanted here.
+    No fonts are linked: the system stack lives in tokens.css.
   -->
   <!--
-    Plain CSS, linked in cascade order: the reset, the tokens, the global base,
-    the generated CSS-Module bundle, and the gallery's own chrome. Tokens and
-    chrome stay hand-written and global on purpose: tokens declare `:root`
-    custom properties and chrome styles `body`, neither of which a CSS Module
-    can scope.
+    Plain CSS, linked in cascade order: the kit's reset, tokens and global base,
+    the generated CSS-Module bundles (the kit's, then the pages'), and the
+    gallery's own chrome. Tokens and chrome stay hand-written and global on
+    purpose: tokens declare `:root` custom properties and chrome styles `body`,
+    neither of which a CSS Module can scope.
 
-    Adding a component never touches this file, and never touches an index
-    either: a component declares its own stylesheet in Rust via
-    `import_crate_style!`, and `stylance-cli` discovers every
-    `src/kit/*.module.css` and concatenates them into `modules.css`.
+    Adding a component never touches this file: a component declares its own
+    stylesheet in Rust via `import_crate_style!`, and `stylance-cli` concatenates
+    every `.module.css` into its crate's bundle.
   -->
-  <link data-trunk rel="css" href="assets/css/kit/normalize.css" />
-  <link data-trunk rel="css" href="assets/css/kit/tokens.css" />
-  <link data-trunk rel="css" href="assets/css/kit/base.css" />
+  <link data-trunk rel="css" href="../../quilt-ui-kit/css/normalize.css" />
+  <link data-trunk rel="css" href="../../quilt-ui-kit/css/tokens.css" />
+  <link data-trunk rel="css" href="../../quilt-ui-kit/css/base.css" />
+  <link data-trunk rel="css" href="../../quilt-ui-kit/css/kit-modules.css" />
   <link data-trunk rel="css" href="assets/css/kit/modules.css" />
-  <link data-trunk rel="css" href="assets/css/kit/chrome.css" />
+  <link data-trunk rel="css" href="../../quilt-ui-kit/css/chrome.css" />
   <link data-trunk rel="css" href="assets/css/kit/old_revisions_inline.css" />
-  <!-- The appbar's mark, for the whole-page scenes; the app's index.html copies all of assets/. -->
+  <!-- The app's images, for the whole-page scenes, and the kit's appbar mark;
+       the app's index.html copies the same. -->
   <link data-trunk rel="copy-dir" href="assets/img" data-target-path="assets/img" />
+  <link data-trunk rel="copy-file" href="../../quilt-ui-kit/assets/img/quilt.png" data-target-path="assets/img" />
 
   <!-- The metadata editor, for the commit page scene: the same bundle the app's
        index.html loads, written by Trunk.toml's pre-build hook. -->

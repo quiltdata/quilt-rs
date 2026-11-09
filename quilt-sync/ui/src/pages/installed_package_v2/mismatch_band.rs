@@ -22,8 +22,8 @@ use std::pin::Pin;
 use leptos::prelude::*;
 
 use crate::commands;
-use crate::kit::{Banner, BannerVariant, PackageState};
 use crate::routes::RevisionMismatch;
+use quilt_ui_kit::{Banner, BannerVariant, PackageState};
 
 /// The requested revision's commit message, looked up by hash on its own
 /// remote, for the package at `namespace`.
@@ -86,9 +86,9 @@ pub(super) fn requested_message(
 ///
 /// # The line follows the page's own state
 ///
-/// v1 keys its line on the upstream state, which cannot tell a conflict from a
-/// divergence. This page has resolved the state already, so the line reads the
-/// same answer the header draws.
+/// The upstream state alone cannot tell a conflict from a divergence. This page
+/// has resolved the state already, so the line reads the same answer the header
+/// draws.
 ///
 /// # Nothing when the requested revision is installed
 ///
@@ -184,9 +184,11 @@ fn state_line(state: &PackageState) -> &'static str {
 mod tests {
     use super::super::{PackageScreen, PageRead, ResolveCommands};
     use super::*;
-    use crate::test_support::{button_saying, element_saying, mount, sleep_ms, unmount_earlier};
     use leptos_router::components::{Route, Router, Routes};
     use leptos_router::path;
+    use quilt_ui_kit::test_support::{
+        button_saying, element_saying, mount, sleep_ms, unmount_earlier,
+    };
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
@@ -236,8 +238,10 @@ mod tests {
         d.context.resolve = Some(commands::ResolveData::Compared {
             published_message: Some("Theirs".to_string()),
             differing: vec!["plate/a.csv".to_string()],
+            loss: commands::LatestLoss::default(),
             unpublished: 1,
             uncommitted: 0,
+            blocked: None,
         });
         Box::pin(async move { Ok(d) })
     }

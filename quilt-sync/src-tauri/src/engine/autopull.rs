@@ -35,6 +35,7 @@ pub use reporter::PackageStatusEvent;
 pub use reporter::StatusReporter;
 pub use settings::AutosyncSettings;
 pub use settings::PullSettings;
+#[cfg(test)]
 pub use settings::PushSettings;
 pub use settings::SharedAutosyncSettings;
 pub use settings::init as init_settings;
@@ -49,9 +50,12 @@ pub enum PausedReason {
     PendingChanges,
     PendingCommit,
     Diverged,
+    /// Diverged, and the tick's merge onto `latest` refused: the resolve pane
+    /// names what blocked it.
+    MergeRefused(MergeBlock),
     /// A surgical pull found a real conflict (`PullOutcome::Blocked`): a
     /// tracked path changed on both sides. Carries the conflicting file names
-    /// for the banner; the user resolves by committing → the merge page.
+    /// for the banner; the user resolves by committing, then resolving on the package page.
     PullConflict(Vec<String>),
     /// Storage refused the call with `AccessDenied`: the active role cannot
     /// reach this package's bucket. Retrying cannot help — the role has to
@@ -72,6 +76,18 @@ pub enum PausedReason {
     /// the per-package status banner so the user knows what to fix
     /// before clearing the pause.
     Other(String),
+}
+
+/// What stopped the tick merging a Diverged copy onto `latest`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MergeBlock {
+    /// Paths both sides changed to different results, or held as a file on
+    /// one side and a folder on the other.
+    Paths(Vec<String>),
+    /// Both sides changed the package metadata, to different values.
+    Metadata,
+    /// `latest` moved past each attempt before it could publish.
+    LatestMoved,
 }
 
 impl PausedReason {
@@ -454,10 +470,8 @@ impl Watcher {
         self.inner.reschedule_publish();
     }
 
-    /// Point-in-time view of the paused set, used by the
-    /// `get_autosync_snapshot` command so the UI can re-hydrate
-    /// per-page banners on navigation. Read-only — the lock is released
-    /// before the function returns.
+    /// Point-in-time view of the paused set, for tests.
+    #[cfg(test)]
     pub async fn snapshot(&self) -> reporter::WatcherSnapshot {
         let paused = self
             .inner

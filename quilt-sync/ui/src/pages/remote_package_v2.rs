@@ -12,11 +12,9 @@ use leptos_router::NavigateOptions;
 use leptos_router::hooks::use_navigate;
 
 use crate::commands;
-use crate::components::appbar::transit_appbar_actions;
-use crate::kit::{PageLayout, Spinner, SpinnerVariant, readable};
+use quilt_ui_kit::{Spinner, SpinnerVariant, readable};
 
 use super::error_v2::{ErrorSlate, open_dot_quilt};
-use super::remote_package::package_target;
 use super::v2_page::{PageHandle, PageRead, V2Page};
 
 const HEADING: &str = "Opening link";
@@ -30,17 +28,6 @@ fn running() -> AnyView {
 #[component]
 pub fn RemotePackageV2() -> impl IntoView {
     view! { <RelayScreen read=run_link /> }
-}
-
-/// What `/remote-package` draws while it reads which page it is, for a v2
-/// reader: the relay's own first paint, in its transit frame.
-#[component]
-pub fn RemotePackageV2Skeleton() -> impl IntoView {
-    view! {
-        <PageLayout heading=HEADING banner=().into_any() actions=transit_appbar_actions() replace=true>
-            {running()}
-        </PageLayout>
-    }
 }
 
 /// Run the link, and answer the package page to go to.
@@ -127,11 +114,34 @@ pub(crate) fn RelayScreen(read: PageRead<String>) -> impl IntoView {
     }
 }
 
+/// The package page a handled deep link lands on, keeping what the link asked
+/// for that the package does not have.
+fn package_target(result: &commands::RemotePackageResult) -> String {
+    let base = crate::routes::package_page_href(&result.namespace);
+    let outcome = match &result.banner {
+        Some(commands::RemoteBanner::DifferentVersion {
+            requested_hash,
+            requested_bucket,
+            requested_origin,
+            ..
+        }) => Some(crate::routes::DeepLinkOutcome::Mismatch(
+            crate::routes::RevisionMismatch {
+                hash: requested_hash.clone(),
+                bucket: requested_bucket.clone(),
+                catalog: requested_origin.as_ref().map(ToString::to_string),
+            },
+        )),
+        Some(commands::RemoteBanner::LocalOnly) => Some(crate::routes::DeepLinkOutcome::LocalOnly),
+        None => None,
+    };
+    crate::routes::keeping_outcome(base, outcome.as_ref())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{button_saying, mount, sleep_ms, unmount_earlier};
     use leptos_router::components::Router;
+    use quilt_ui_kit::test_support::{button_saying, mount, sleep_ms, unmount_earlier};
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
@@ -159,9 +169,7 @@ mod tests {
         let el = mount(|| {
             view! {
                 <Router>
-                    <Suspense fallback=|| ()>
-                        <RelayScreen read=refused />
-                    </Suspense>
+                    <RelayScreen read=refused />
                 </Router>
             }
         });
@@ -169,7 +177,7 @@ mod tests {
         el
     }
 
-    /// The rules v1's relay keeps: one bar, Refresh disabled, the failure
+    /// The relay's rules: one bar, Refresh disabled, the failure
     /// drawn inside the same frame.
     #[wasm_bindgen_test]
     async fn the_relay_draws_one_frame_with_refresh_disabled() {

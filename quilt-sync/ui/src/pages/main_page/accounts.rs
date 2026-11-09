@@ -20,12 +20,12 @@ use leptos_router::hooks::use_navigate;
 use crate::commands;
 use crate::commands::AccountHostData;
 use crate::commands::MainPageAccountsData;
-use crate::kit::ACKNOWLEDGE_FOR;
-use crate::kit::Blankslate;
-use crate::kit::Card;
-use crate::kit::HostRow;
-use crate::kit::HostRowSkeleton;
 use crate::routes::sign_in_href;
+use quilt_ui_kit::ACKNOWLEDGE_FOR;
+use quilt_ui_kit::Blankslate;
+use quilt_ui_kit::Card;
+use quilt_ui_kit::HostRow;
+use quilt_ui_kit::HostRowSkeleton;
 
 /// The card, on one payload — the shape [`AutosyncBody`](super::autosync) has,
 /// and testable without an engine for the same reason. A failed read renders
@@ -282,8 +282,8 @@ mod tests {
     use super::*;
     use crate::commands::AccountHostData;
     use crate::commands::MainPageAccountsData;
-    use crate::test_support::mount;
-    use crate::test_support::sleep_ms;
+    use quilt_ui_kit::test_support::mount;
+    use quilt_ui_kit::test_support::sleep_ms;
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 

@@ -33,7 +33,7 @@
 //!
 //! - The editor's context menu cuts some of its own labels short (`Edit valu`),
 //!   at its own 16px.
-//! - The `Metadata` label names the editor's hidden fallback textarea, as on v1.
+//! - The `Metadata` label names the editor's hidden fallback textarea.
 //! - The loading skeleton's header is 4px shorter than the real one.
 
 use leptos::prelude::*;
@@ -41,14 +41,14 @@ use leptos::prelude::*;
 use crate::Cell;
 use crate::Scene;
 use crate::gallery::button_group::location;
-use crate::kit::Button;
-use crate::kit::PageLayout;
-use crate::kit::icons;
 use crate::pages::commit_v2::{
     Change, CommitColumn, CommitHeader, CommitPageSkeleton, IncludedFile, IncludedList,
     MessageField, MetadataField, Primary, PrimaryWiring, Problem, ProblemBanner, WorkflowChoice,
     WorkflowField,
 };
+use quilt_ui_kit::Button;
+use quilt_ui_kit::PageLayout;
+use quilt_ui_kit::icons;
 
 const NAMESPACE: &str = "user/plate-07";
 const GENERATED: &str = "Updated 3 files: plate-03.csv, plate-04.csv, wells.csv";

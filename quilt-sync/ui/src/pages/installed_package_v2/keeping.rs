@@ -25,11 +25,11 @@ use leptos::prelude::*;
 
 use super::{Reread, Wiring, run};
 use crate::commands::{self, KeepingScope, NotDownloaded, PackageSize};
-use crate::kit::folder_list::filled;
-use crate::kit::{
+use crate::util::{Held, counted, format_size, thousands};
+use quilt_ui_kit::folder_list::filled;
+use quilt_ui_kit::{
     Button, ButtonVariant, Choice, ChoiceGroup, FolderList, FormDialog, PaneSection, Submit,
 };
-use crate::util::{Held, counted, format_size, thousands};
 
 type Answer<T> = Pin<Box<dyn Future<Output = Result<T, String>>>>;
 
@@ -384,10 +384,10 @@ mod tests {
     use super::{Answer, FoldersDialog, Held, KeepingCommands, KeepingSection, download_label};
     use crate::commands::KeepingScope::{self, EntirePackage, Folders, IndividualFiles};
     use crate::commands::{KeepingData, NotDownloaded, PackageSize};
-    use crate::kit::BannerVariant;
     use crate::pages::installed_package_v2::{Outcome, Wiring};
-    use crate::test_support::{button_saying, element_saying, mount, sleep_ms};
     use leptos::prelude::*;
+    use quilt_ui_kit::BannerVariant;
+    use quilt_ui_kit::test_support::{button_saying, element_saying, mount, sleep_ms};
     use std::cell::{Cell, RefCell};
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
@@ -565,8 +565,7 @@ mod tests {
     }
 
     /// Under individual-file scope the next revision can add a file and
-    /// falsify any promise about later files (v1's
-    /// `the_complete_caption_promises_nothing_about_later_files`).
+    /// falsify any promise about later files.
     #[test]
     fn only_the_whole_package_promises_later_files() {
         assert_eq!(

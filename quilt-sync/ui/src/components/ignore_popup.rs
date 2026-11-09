@@ -2,10 +2,16 @@ use leptos::prelude::*;
 use quilt_uri::S3PackageUri;
 
 use crate::commands;
-use crate::components::Notification;
 use crate::components::buttons;
-use crate::kit::{Choice, ChoiceGroup};
 use crate::util::{format_size, thousands};
+use quilt_ui_kit::{Choice, ChoiceGroup};
+
+/// What a popup's command reported, for the page that opened it to show.
+#[derive(Clone)]
+pub enum Notification {
+    Success(String),
+    Error(String),
+}
 
 // ── Ignore popup ──
 
@@ -40,7 +46,6 @@ pub fn IgnorePopup(
     /// A page's one-command lock. Given one, the popup does not add a pattern
     /// while another command holds it, and holds it while its own write runs,
     /// so `.quiltignore` never changes under a command writing the same tree.
-    /// v1 and the commit page pass none.
     #[prop(optional)]
     lock: Option<RwSignal<bool>>,
 ) -> impl IntoView {
@@ -274,7 +279,7 @@ pub fn UnignorePopup(
     on_close: impl Fn() + Clone + 'static,
     /// A page's one-command lock, as [`IgnorePopup`] takes it: given one, the
     /// popup does not write while another command holds it, and holds it while
-    /// its own write runs. v1 and the commit page pass none.
+    /// its own write runs.
     #[prop(optional)]
     lock: Option<RwSignal<bool>>,
 ) -> impl IntoView {
@@ -455,7 +460,7 @@ fn StopIgnoringForm(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{button_saying, element_saying, mount};
+    use quilt_ui_kit::test_support::{button_saying, element_saying, mount};
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 

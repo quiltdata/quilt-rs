@@ -2,8 +2,7 @@
 //! them.
 //!
 //! **Decisions only, never rendering** — so nothing drawn can go stale from what
-//! is remembered here. v1 makes the same split for the same reason
-//! (`installed_packages_list.rs:170-175`).
+//! is remembered here.
 //!
 //! Shared rather than copied. The main page and the v2 package page both gate a
 //! whole-page read on this stream, and the fingerprint rule is the part worth

@@ -50,9 +50,11 @@ request it skips the jobs the changed files cannot affect. `just ci` includes
 the live AWS tests, so it needs AWS credentials; without AWS access, run the
 individual recipes instead (`just lint`, `just test`, `just test frontend`).
 
-QuiltSync's frontend is a Rust-to-WebAssembly crate built by Trunk, so `just
-gallery` (the component gallery in a browser) and `just app dev` (the desktop
-app) need the frontend toolchain as well:
+QuiltSync's frontend is a Rust-to-WebAssembly crate built by Trunk, on top of the
+`quilt-ui-kit` crate (the components, the theme and the gallery harness). So
+`just storybook` (the kit's components in a browser), `just gallery` (the app's
+regions and pages in a browser) and `just app dev` (the desktop app) need the
+frontend toolchain as well:
 
 ```bash
 rustup target add wasm32-unknown-unknown
@@ -63,7 +65,8 @@ cargo install trunk stylance-cli       # the page bundler and the CSS-module com
 `just app dev` additionally needs `cargo install tauri-cli` and Tauri's platform
 dependencies, listed at <https://tauri.app/start/prerequisites/>.
 
-`just test frontend` runs the frontend's tests in a headless browser, and needs
+`just test frontend` runs the frontend's and the kit's tests in a headless
+browser, and needs
 the test runner and a browser driver:
 
 ```bash
@@ -81,17 +84,22 @@ for the app and `ui/dist-gallery` for the gallery, because Trunk writes every
 target it is given to `<dist>/index.html` and a shared directory would leave
 whichever rebuilt last owning the page both of them serve.
 
-The gallery's verbs mean what they mean in Vite:
+The gallery's and the storybook's verbs mean what they mean in Vite:
 
 - `just gallery dev` (or plain `just gallery`) serves a debug build: fast to
-  rebuild, full names in panics, but a large wasm.
-- `just gallery build` writes the release site to `ui/dist-pages`.
+  rebuild, full names in panics, but a large wasm. `just storybook dev` does
+  the same for the kit, at port 8788, so both can run at once.
+- `just gallery build` writes the release site to `ui/dist-pages`, and
+  `just storybook build` to `quilt-ui-kit/dist-pages`.
 - `just gallery preview` serves a release build as Pages does, at
-  `http://127.0.0.1:8787/quilt-rs/`. Builds are slower; use it for a final look.
+  `http://127.0.0.1:8787/quilt-rs/`, and `just storybook preview` at
+  `http://127.0.0.1:8788/quilt-rs/kit/`. Builds are slower; use them for a final
+  look.
 
-`main` publishes `build`'s output to GitHub Pages as the kit's design record.
-The site lives under `/quilt-rs/`, so a story must not load an asset by an
-absolute path such as `/assets/...`.
+`main` publishes both to GitHub Pages as the design record: the app's gallery
+under `/quilt-rs/` and the kit's storybook under `/quilt-rs/kit/`, each linking
+to the other. A story must not load an asset by an absolute path such as
+`/assets/...`.
 
 To work on one crate, narrow the tests you run rather than the packages you
 build:
