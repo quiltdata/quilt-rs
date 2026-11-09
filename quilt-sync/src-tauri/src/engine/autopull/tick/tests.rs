@@ -382,7 +382,7 @@ async fn run_once_disabled_is_a_noop() -> Result<(), Error> {
 async fn a_running_tick_advertises_the_next_tick_not_the_one_it_is_serving() -> Result<(), Error> {
     // The spawn loop arms `now + cadence` and then sleeps `cadence`, so when a
     // tick starts its deadline is already now, and it stays in the past while
-    // the tick runs. Without the arming in `run_once`, the v2 card reads a past
+    // the tick runs. Without the arming in `run_once`, the card reads a past
     // deadline, refetches after `REFETCH_DUE_FLOOR`, reads the same deadline
     // again, and restarts its ring from zero every 10s.
     //
@@ -516,7 +516,7 @@ async fn run_once_behind_and_clean_pulls_and_emits_up_to_date() -> Result<(), Er
 }
 
 /// A whole-package scope stored under the experiment is honoured with the
-/// experiment off: v2's Keeping promises files added later are downloaded too.
+/// experiment off: the package page's Keeping promises files added later are downloaded too.
 #[tokio::test]
 async fn a_stored_whole_package_scope_reaches_the_background_pull() -> Result<(), Error> {
     let ns: Namespace = ("acme", "demo").into();

@@ -77,7 +77,7 @@ use quilt_uri::S3PackageUri;
 use crate::commands::PullCheck;
 use crate::commands::PullOutcome;
 use crate::commands::PullPreview;
-use crate::pages::commit_v2::Change;
+use crate::pages::commit::Change;
 use crate::util::thousands;
 use quilt_ui_kit::Align;
 use quilt_ui_kit::AnchoredOverlay;
@@ -90,7 +90,7 @@ use quilt_ui_kit::state_label::StateTone;
 
 use super::file_pane::Kept;
 
-stylance::import_crate_style!(style, "src/pages/installed_package_v2/incoming.module.css");
+stylance::import_crate_style!(style, "src/pages/installed_package/incoming.module.css");
 
 /// The catalog link's name, as revision rows word theirs.
 pub const OPEN_LABEL: &str = "Open in catalog";
@@ -1317,7 +1317,7 @@ mod tests {
         );
     }
 
-    /// The v2 vocabulary holds in the row and the popover: none of the words
+    /// The vocabulary holds in the row and the popover: none of the words
     /// the package states keep out.
     #[test]
     fn the_words_use_no_banned_word() {

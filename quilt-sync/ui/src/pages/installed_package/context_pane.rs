@@ -21,10 +21,7 @@ use quilt_ui_kit::{
     SkeletonBox, SkeletonText,
 };
 
-stylance::import_crate_style!(
-    style,
-    "src/pages/installed_package_v2/context_pane.module.css"
-);
+stylance::import_crate_style!(style, "src/pages/installed_package/context_pane.module.css");
 
 /// Where the popover's rows come from. A function pointer rather than a
 /// direct call, so the DOM tests and the gallery answer without an engine.
@@ -389,9 +386,9 @@ mod tests {
     use crate::commands::{
         CurrentRevisionData, KeptReason, RevisionHistoryData, RevisionHistoryRow,
     };
-    use crate::pages::installed_package_v2::Wiring;
-    use crate::pages::installed_package_v2::keeping::KeepingCommands;
-    use crate::pages::installed_package_v2::old_revisions::RemoveRevisionsFn;
+    use crate::pages::installed_package::Wiring;
+    use crate::pages::installed_package::keeping::KeepingCommands;
+    use crate::pages::installed_package::old_revisions::RemoveRevisionsFn;
     use quilt_ui_kit::test_support::{element_saying, mount, sleep_ms};
     use std::cell::Cell;
     use std::future::Future;
@@ -1460,7 +1457,7 @@ mod tests {
     mod sheets {
         pub use quilt_ui_kit::pane_section::style as pane;
         pub use quilt_ui_kit::skeleton_box::style as bar;
-        stylance::import_crate_style!(pub page, "src/pages/installed_package_v2.module.css");
+        stylance::import_crate_style!(pub page, "src/pages/installed_package.module.css");
     }
 
     /// The sheets the pane is drawn with, and the page's, whose column is the
@@ -1491,7 +1488,7 @@ mod tests {
             ],
         );
         quilt_ui_kit::test_support::load_module_style(
-            include_str!("../installed_package_v2.module.css"),
+            include_str!("../installed_package.module.css"),
             &[("page", page::page)],
         );
     }

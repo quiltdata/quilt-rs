@@ -34,7 +34,7 @@
 /* In the frame the bar is one fixed height, which the sticky parts under it
  * take as their offset. A long activity line wraps past its bottom edge and is
  * drawn over the page below, so nothing moves and the text is never cut. */
-[data-v2-page] .bar {
+[data-page] .bar {
   height: var(--q-appbar-height);
   /* The row too, or it grows to the line and moves the logo and the controls. */
   grid-template-rows: minmax(0, 1fr);

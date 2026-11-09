@@ -1,8 +1,8 @@
-//! The setup page v2: on the first run, the folder `QuiltSync` keeps packages
+//! The setup page: on the first run, the folder `QuiltSync` keeps packages
 //! in.
 //!
 //! [`SetupCard`] is the page's one region over props: the gallery draws it
-//! over fixtures, and [`SetupV2`] fills it from `get_setup_data`. The folder
+//! over fixtures, and [`Setup`] fills it from `get_setup_data`. The folder
 //! starts at the read's suggestion; from then on it is the page's, so a
 //! re-read does not put the suggestion back over a folder picked or typed.
 
@@ -16,10 +16,10 @@ use quilt_ui_kit::{
     Button, ButtonVariant, Card, FormControl, LoadFailure, SkeletonBox, TextInput, readable,
 };
 
+use super::page::{Page, PageHandle, PageRead, critical, hold, still_here};
 use super::path_field::PathField;
-use super::v2_page::{PageHandle, PageRead, V2Page, critical, hold, still_here};
 
-stylance::import_crate_style!(style, "src/pages/setup_v2.module.css");
+stylance::import_crate_style!(style, "src/pages/setup.module.css");
 
 /// The read's only address.
 const HERE: &str = "setup";
@@ -114,9 +114,9 @@ pub fn SetupCardSkeleton() -> impl IntoView {
     }
 }
 
-/// What `/setup` renders in the v2 design.
+/// What `/setup` renders.
 #[component]
-pub fn SetupV2() -> impl IntoView {
+pub fn Setup() -> impl IntoView {
     view! { <SetupScreen read=read_setup /> }
 }
 
@@ -173,7 +173,7 @@ pub(crate) fn SetupScreen(read: PageRead<SetupData>) -> impl IntoView {
     });
 
     view! {
-        <V2Page
+        <Page
             heading="Set up QuiltSync"
             page=page
             answer=answer

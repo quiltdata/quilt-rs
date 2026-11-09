@@ -1,4 +1,4 @@
-//! The v2 main page, drawn in the v2 design.
+//! The main page.
 //!
 //! Three regions: the state strip — Autosync beside Accounts — the attention
 //! queue, and the list. The list region is two views of one roster, Packages and

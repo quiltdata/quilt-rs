@@ -1,4 +1,4 @@
-//! The machinery every v2 page that reads data and runs commands shares: one
+//! The machinery every page that reads data and runs commands shares: one
 //! read and its re-reads, one command at a time, and one band for what a
 //! command said.
 //!
@@ -21,7 +21,7 @@
 //!    rebuilds nothing: no focus lost, no row redrawn.
 //! 4. What the reader did lives above the rebuild line. The body is rebuilt
 //!    from each new answer; a page keeps typed text, a choice or an open dialog
-//!    in signals it creates before [`V2Page`], which a rebuild does not
+//!    in signals it creates before [`Page`], which a rebuild does not
 //!    dispose.
 //! 5. One lock, [`PageHandle::busy`], held by every command and every popup
 //!    that writes.
@@ -53,12 +53,12 @@ pub struct Outcome {
     pub detail: Option<String>,
 }
 
-/// A v2 page's read: the address in, the answer out.
+/// A page's read: the address in, the answer out.
 pub type PageRead<T> = fn(String) -> Pin<Box<dyn Future<Output = Result<T, String>>>>;
 
 /// The page's half of the scaffold: what the body and the commands hold.
 ///
-/// Created by the page before [`V2Page`], so the page can hand it to the
+/// Created by the page before [`Page`], so the page can hand it to the
 /// state it keeps above the rebuild line.
 #[derive(Clone, Copy)]
 pub struct PageHandle {
@@ -175,13 +175,13 @@ pub async fn hold<R>(
     answer
 }
 
-/// A v2 page's frame: the appbar with *Refresh*, the outcome band and the
+/// A page's frame: the appbar with *Refresh*, the outcome band and the
 /// page's own bands under it, and the body drawn from the answer.
 ///
 /// `body` runs once per new answer. Anything that must outlive one belongs to
 /// the page, created before this component; see the module's rule 4.
 #[component]
-pub fn V2Page<T, B, D, F>(
+pub fn Page<T, B, D, F>(
     /// The page's name, for a screen reader. Not reactive.
     heading: &'static str,
     page: PageHandle,
@@ -422,7 +422,7 @@ mod tests {
         let answer = page.read(key, read);
         let typed = RwSignal::new(String::new());
         view! {
-            <V2Page
+            <Page
                 heading="Probe"
                 page=page
                 answer=answer

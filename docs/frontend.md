@@ -54,18 +54,18 @@ quilt-sync/ui/
     │   └── update_checker.rs   # Auto-update polling
     ├── pages.rs                # Module re-exports
     ├── pages/
-    │   ├── v2_page.rs          # The scaffold most pages share
+    │   ├── page.rs             # The scaffold most pages share
     │   ├── main_page.rs        # `/`
     │   ├── main_page/          # Its regions and the Create package dialog
-    │   ├── installed_package_v2.rs  # `/installed-package`
-    │   ├── installed_package_v2/    # Header, context pane, file pane, dialogs
-    │   ├── commit_v2.rs        # `/commit`
-    │   ├── settings_v2.rs      # `/settings` cards
-    │   ├── settings_v2/        # `/settings` page
-    │   ├── login_v2.rs         # `/login`
-    │   ├── setup_v2.rs         # `/setup`
-    │   ├── error_v2.rs         # `/error` and the not-found page
-    │   ├── remote_package_v2.rs # `/remote-package`
+    │   ├── installed_package.rs # `/installed-package`
+    │   ├── installed_package/  # Header, context pane, file pane, dialogs
+    │   ├── commit.rs           # `/commit`
+    │   ├── settings.rs         # `/settings` cards
+    │   ├── settings/           # `/settings` page
+    │   ├── login.rs            # `/login`
+    │   ├── setup.rs            # `/setup`
+    │   ├── error.rs            # `/error` and the not-found page
+    │   ├── remote_package.rs   # `/remote-package`
     │   ├── *.module.css        # Each page's own styles
     │   └── ...                 # Shared parts: row menu, path field, ...
     ├── commands.rs             # Typed command wrappers + response DTOs
@@ -83,8 +83,8 @@ crate's (`quilt-ui-kit/src/`, styles in `quilt-ui-kit/css/`).
 
 ### Page load cycle
 
-Most pages share one scaffold, `V2Page` with its `PageHandle`
-(`pages/v2_page.rs`):
+Most pages share one scaffold, `Page` with its `PageHandle`
+(`pages/page.rs`):
 
 ```text
 Browser navigates to e.g. /setup
@@ -96,7 +96,7 @@ leptos_router matches route, mounts page component
 Page creates a PageHandle and calls page.read(key, read)
     |
     v
-V2Page draws the appbar and the page's skeleton while the read is out
+Page draws the appbar and the page's skeleton while the read is out
     |
     v
 read calls commands::get_setup_data() [typed wrapper]
@@ -111,7 +111,7 @@ dispatch runs the command, which returns a serializable struct
 serde_json deserializes the reply's `ok` into Rust DTO
     |
     v
-The answer lands in a signal; V2Page draws the body from it
+The answer lands in a signal; Page draws the body from it
 ```
 
 The scaffold's rules, written out in the module's own docs:
@@ -122,7 +122,7 @@ The scaffold's rules, written out in the module's own docs:
 - An answer equal to the one on screen changes nothing, so a re-read that finds
   nothing new rebuilds nothing.
 - What the reader did (typed text, a choice, an open dialog) lives in signals
-  the page creates before `V2Page`, so a rebuild keeps it.
+  the page creates before `Page`, so a rebuild keeps it.
 - A read that fails for a missing session or setup goes to `/login` or
   `/setup`, but only before the page has drawn an answer for its address.
 
@@ -217,14 +217,14 @@ route renders its page directly:
 | Path | Component | Query params |
 |---|---|---|
 | `/` | `MainPage` | |
-| `/installed-package` | `InstalledPackageV2` | `namespace`, `filter`, `resolve` (`1` opens resolve mode), `revision` (a hash opens revision mode); from a deep link, `mismatch`, `mrbucket`, `mrcatalog` (another revision was asked for) or `localOnly` (the package has no remote) |
-| `/commit` | `CommitV2` | `namespace`, `focus` |
-| `/login` | `LoginV2` | `host`, `back` |
-| `/error` | `ErrorV2` | `host`, `title`, `error` |
-| `/settings` | `SettingsV2` | |
-| `/setup` | `SetupV2` | |
-| `/remote-package` | `RemotePackageV2` | `uri` |
-| anything else | `NotFoundV2` | |
+| `/installed-package` | `InstalledPackage` | `namespace`, `filter`, `resolve` (`1` opens resolve mode), `revision` (a hash opens revision mode); from a deep link, `mismatch`, `mrbucket`, `mrcatalog` (another revision was asked for) or `localOnly` (the package has no remote) |
+| `/commit` | `Commit` | `namespace`, `focus` |
+| `/login` | `Login` | `host`, `back` |
+| `/error` | `Error` | `host`, `title`, `error` |
+| `/settings` | `Settings` | |
+| `/setup` | `Setup` | |
+| `/remote-package` | `RemotePackage` | `uri` |
+| anything else | `NotFound` | |
 
 Every page reads its query through `routes::use_query()`, which decodes each
 value once; never through `use_query_map`. Navigation uses `use_navigate()`
@@ -232,7 +232,7 @@ for client-side transitions. `routes.rs` builds the addresses the app links
 to, so a namespace is percent-encoded in one place.
 
 A deep link's parameters on `/installed-package` are its outcome
-(`routes::DeepLinkOutcome`): `pages/remote_package_v2.rs` writes one or the
+(`routes::DeepLinkOutcome`): `pages/remote_package.rs` writes one or the
 other, and the package page carries it through every address it builds for the
 same package — entering and leaving Resolve, and a replaced address — so
 switching mode does not end the band that reports it.
@@ -245,8 +245,8 @@ every login link in the UI points at an address with a `Paths` variant behind it
 
 ## Page Pattern
 
-A page that reads data and runs commands builds on `V2Page`. The setup page
-(`pages/setup_v2.rs`), shortened:
+A page that reads data and runs commands builds on `Page`. The setup page
+(`pages/setup.rs`), shortened:
 
 ```rust
 #[component]
@@ -277,7 +277,7 @@ pub(crate) fn SetupScreen(read: PageRead<SetupData>) -> impl IntoView {
     });
 
     view! {
-        <V2Page
+        <Page
             heading="Set up QuiltSync"
             page=page
             answer=answer
@@ -373,7 +373,7 @@ Leptos components own all rendering.
 
 ## Page Frame
 
-The kit's `PageLayout` is every page's frame, and `V2Page` fills it:
+The kit's `PageLayout` is every page's frame, and `Page` fills it:
 
 ```text
 +--[appbar]----------------------------------------------+
