@@ -34,6 +34,7 @@
 ### Fixed
 
 - A package task whose outcome loses `latest` to a revision published during the run lands its own changes on top of that revision instead of leaving the package Diverged, unless both changed the same file (<https://github.com/quiltdata/quilt-rs/pull/1320>)
+- A pull no longer deletes a file the new revision removed that you saved while it downloaded: the pull stops, or, once files are being replaced, the file stays as a new local file and the pull's notice names it (<https://github.com/quiltdata/quilt-rs/pull/1328>)
 
 ### Security
 

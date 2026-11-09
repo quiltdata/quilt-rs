@@ -241,6 +241,7 @@ mod tests {
                 added_not_fetched: Vec::new(),
                 updated: Vec::new(),
                 removed: Vec::new(),
+                kept_not_removed: Vec::new(),
                 message: None,
             }),
         };
