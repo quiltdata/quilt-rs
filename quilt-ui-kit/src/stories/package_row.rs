@@ -71,7 +71,7 @@ fn StatesStory() -> impl IntoView {
     }
 }
 
-/// The download markers. A v2 row only: the whole-package scope exists only there.
+/// The download markers.
 #[component]
 fn DownloadsStory() -> impl IntoView {
     let cells: Vec<(&str, RowDownloads, &str, StateTone)> = vec![

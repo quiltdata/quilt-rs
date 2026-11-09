@@ -57,7 +57,7 @@ use quilt_ui_kit::icons;
 
 stylance::import_crate_style!(
     style,
-    "src/pages/installed_package_v2/old_revisions.module.css"
+    "src/pages/installed_package/old_revisions.module.css"
 );
 
 /// What removes revisions. A function pointer, so the DOM tests answer without

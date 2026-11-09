@@ -4,7 +4,7 @@
 //! **Decisions only, never rendering** — so nothing drawn can go stale from what
 //! is remembered here.
 //!
-//! Shared rather than copied. The main page and the v2 package page both gate a
+//! Shared rather than copied. The main page and the package page both gate a
 //! whole-page read on this stream, and the fingerprint rule is the part worth
 //! getting right once: the producer is a firehose by design — the watcher
 //! re-reports whether or not anything moved — so each consumer decides for
@@ -58,7 +58,7 @@ impl StatusWatch {
     /// would be exactly the pull that completed while the page was open.
     ///
     /// So the first event after a page opens always re-reads, usually to find
-    /// what the page already shows. A v2 page reads through `v2_page`, which
+    /// what the page already shows. A page reads through the `page` scaffold, which
     /// drops an answer equal to the one on screen, so that read is not seen.
     pub(super) fn observe(self, event: &commands::PackageStatusEvent) {
         let known = self

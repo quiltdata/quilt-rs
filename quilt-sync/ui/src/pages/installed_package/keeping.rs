@@ -384,7 +384,7 @@ mod tests {
     use super::{Answer, FoldersDialog, Held, KeepingCommands, KeepingSection, download_label};
     use crate::commands::KeepingScope::{self, EntirePackage, Folders, IndividualFiles};
     use crate::commands::{KeepingData, NotDownloaded, PackageSize};
-    use crate::pages::installed_package_v2::{Outcome, Wiring};
+    use crate::pages::installed_package::{Outcome, Wiring};
     use leptos::prelude::*;
     use quilt_ui_kit::BannerVariant;
     use quilt_ui_kit::test_support::{button_saying, element_saying, mount, sleep_ms};

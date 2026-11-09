@@ -547,7 +547,7 @@ mod tests {
 
     /// The skeletons are the app's, and the app's appbar navigates: a scene that
     /// reached for a router would panic on mount here, where there is none. Both
-    /// pages drawn, each a v2 surface with a region that says it is busy.
+    /// pages drawn, each a surface with a region that says it is busy.
     #[wasm_bindgen_test]
     fn the_loading_scene_draws_both_pages_without_a_router() {
         use crate::gallery::page::LoadingScene;
@@ -558,11 +558,11 @@ mod tests {
         doc.body().unwrap().append_child(&container).unwrap();
         let handle = leptos::mount::mount_to(container.clone(), LoadingScene);
         let pages = container
-            .query_selector_all("[data-v2-page]")
+            .query_selector_all("[data-page]")
             .unwrap()
             .length();
         let busy = container
-            .query_selector_all("[data-v2-page] [aria-busy=true]")
+            .query_selector_all("[data-page] [aria-busy=true]")
             .unwrap()
             .length();
         drop(handle);

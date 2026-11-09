@@ -1,7 +1,7 @@
 //! The appbar: the home logo on the left, the [`ActivityLine`] centered, and a
 //! slot for controls on the right.
 //!
-//! It never carries `data-v2-page`: that marker darkens the surface it is on,
+//! It never carries `data-page`: that marker darkens the surface it is on,
 //! and belongs to the frame around the bar.
 
 use leptos::prelude::*;
@@ -63,7 +63,7 @@ mod tests {
         stylance::import_crate_style!(pub line, "src/activity_line.module.css");
     }
 
-    /// In the v2 frame the bar keeps its height, which the sticky parts under
+    /// In the frame the bar keeps its height, which the sticky parts under
     /// it take as their offset, and a long line hangs below it instead.
     #[wasm_bindgen_test]
     async fn a_long_line_hangs_below_a_bar_of_fixed_height() {
@@ -95,7 +95,7 @@ mod tests {
             provide_context(activities);
             view! {
                 <div
-                    data-v2-page
+                    data-page
                     data-bar-test
                     style="width:320px; --q-appbar-height:48px; --q-space-1:4px; \
                            --q-space-2:8px; --q-space-3:12px"
@@ -127,7 +127,7 @@ mod tests {
         let el = mount(
             || view! { <Appbar actions=Some(view! { <button>"Refresh"</button> }.into_any()) /> },
         );
-        assert!(el.query_selector("[data-v2-page]").unwrap().is_none());
+        assert!(el.query_selector("[data-page]").unwrap().is_none());
     }
 
     #[wasm_bindgen_test]

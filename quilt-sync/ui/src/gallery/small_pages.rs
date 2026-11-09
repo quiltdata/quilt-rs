@@ -1,4 +1,4 @@
-//! The small v2 pages — login, setup, error, an unknown address and the deep
+//! The small pages — login, setup, error, an unknown address and the deep
 //! link relay — one cell per state.
 //!
 //! Each region is the page's own (`LoginCard`, `SetupCard`, `ErrorSlate`)
@@ -10,9 +10,9 @@ use leptos::prelude::*;
 
 use crate::Cell;
 use crate::Scene;
-use crate::pages::error_v2::{ErrorSlate, ErrorSlateSkeleton};
-use crate::pages::login_v2::{LoginCard, LoginCardSkeleton, SignIn};
-use crate::pages::setup_v2::{SetupCard, SetupCardSkeleton};
+use crate::pages::error::{ErrorSlate, ErrorSlateSkeleton};
+use crate::pages::login::{LoginCard, LoginCardSkeleton, SignIn};
+use crate::pages::setup::{SetupCard, SetupCardSkeleton};
 use quilt_ui_kit::{Banner, BannerVariant, Button, PageLayout, Spinner, SpinnerVariant, icons};
 
 const HOST: &str = "open.quiltdata.com";
@@ -84,14 +84,14 @@ fn critical(words: &'static str) -> AnyView {
 
 const NOTE: &str = "The pages a reader passes through: Log in, Set up on the first run, Error, \
     an address no route matches, and the deep link relay. Routed at /login, /setup, /error, any \
-    unknown address and /remote-package in the v2 design. A failed command says so in \
+    unknown address and /remote-package. A failed command says so in \
     the band under the appbar.";
 
 #[component]
 #[allow(clippy::too_many_lines, reason = "one cell per state, read as a list")]
 pub fn SmallPagesScene() -> impl IntoView {
     view! {
-        <Scene title="The small pages v2" note=NOTE>
+        <Scene title="The small pages" note=NOTE>
             <Cell wide=true label="Log in — at rest, no code typed: Submit waits">
                 {window("Log in", None, false, login("", None))}
             </Cell>

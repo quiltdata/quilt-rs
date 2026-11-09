@@ -1,4 +1,4 @@
-//! The v2 package page, drawn in the v2 design, as the v2 main page is.
+//! The package page, drawn as the main page is.
 //!
 //! The header and the context pane are drawn from one authoritative read. The
 //! pane has two modes: the ordinary one, and Resolve, which `resolve=1` asks
@@ -30,11 +30,11 @@ use crate::util;
 use quilt_ui_kit::{Banner, BannerVariant, LoadFailure, PageLayout, publish_height};
 
 use super::copy_mark::CopyMark;
+#[cfg(test)]
+use super::page::outcome_band;
+use super::page::{Page, PageHandle};
 use super::row_menu::{COPY_FAILED, LocalPath, Ran, RowCommand, carry_out, local_path};
 use super::status_watch::StatusWatch;
-#[cfg(test)]
-use super::v2_page::outcome_band;
-use super::v2_page::{PageHandle, V2Page};
 use crate::components::{
     IgnorePopup, IgnorePopupData, Notification, UnignorePopup, UnignorePopupData,
 };
@@ -67,9 +67,9 @@ use quilt_ui_kit::PageHeaderSkeleton;
 use resolve::{ResolveCommands, ResolvePane};
 use revision_pane::RevisionPane;
 
-stylance::import_crate_style!(style, "src/pages/installed_package_v2.module.css");
+stylance::import_crate_style!(style, "src/pages/installed_package.module.css");
 
-pub use super::v2_page::Outcome;
+pub use super::page::Outcome;
 
 /// The page's half of a command: what it blocks while it runs, where it
 /// reports, what to re-read when it is done, where it goes, and which dialog
@@ -80,7 +80,7 @@ pub use super::v2_page::Outcome;
 /// Every re-read that finds news — the watcher's, Refresh, a command's own
 /// `reload` — re-runs the body and builds a new `PageHeader`, disposing
 /// everything the old one owned. (One that finds nothing new rebuilds nothing:
-/// see `v2_page`.) So anything that must outlive a re-read lives here: a dialog the
+/// see `page`.) So anything that must outlive a re-read lives here: a dialog the
 /// reader has open stays open, and a navigation asked for by a command that
 /// settles after the rebuild still happens.
 ///
@@ -123,7 +123,7 @@ async fn holding<T>(
     outcome: RwSignal<Option<Outcome>>,
     task: impl std::future::Future<Output = T>,
 ) -> T {
-    super::v2_page::hold(busy, outcome, task).await
+    super::page::hold(busy, outcome, task).await
 }
 
 /// Run a command, hold the page while it runs, and report only what the band
@@ -478,7 +478,7 @@ impl IncomingAnswer {
 /// Above the rebuild line, for `Wiring`'s reason: every re-read rebuilds the
 /// header, and an answer held there would go back to `checking…` on each of
 /// the watcher's reports. Signals, not a resource, for the scaffold's reason
-/// (`v2_page`'s rule 3).
+/// (`page`'s rule 3).
 ///
 /// It runs again after every read that shows the package behind or in
 /// conflict, since a local edit can make a conflict while the newer revision
@@ -1315,7 +1315,7 @@ fn package_failure(namespace: String, reload: Trigger) -> AnyView {
 
 /// What `/installed-package` renders.
 #[component]
-pub fn InstalledPackageV2() -> impl IntoView {
+pub fn InstalledPackage() -> impl IntoView {
     view! {
         <PackageScreen
             read=read_page
@@ -1327,7 +1327,7 @@ pub fn InstalledPackageV2() -> impl IntoView {
 }
 
 /// The page's one read: the header, the pane and the pause, for one namespace.
-pub(crate) type PageRead = super::v2_page::PageRead<commands::PackagePageData>;
+pub(crate) type PageRead = super::page::PageRead<commands::PackagePageData>;
 
 fn read_page(
     namespace: String,
@@ -1505,7 +1505,7 @@ fn PackageScreen(
     view! {
         <PackageEventListener reload=reload />
         {row_popups(files, w)}
-        <V2Page
+        <Page
             heading="Package"
             page_scroll=true
             page=page
@@ -1677,7 +1677,7 @@ fn PackageEventListener(reload: Trigger) -> impl IntoView {
 /// under them, and leave the page where it is otherwise. A held `el` is always
 /// in view.
 fn reveal(el: &web_sys::Element) {
-    let Some(frame) = el.closest("[data-v2-page]").ok().flatten() else {
+    let Some(frame) = el.closest("[data-page]").ok().flatten() else {
         return;
     };
     let Some(window) = web_sys::window() else {
@@ -1705,7 +1705,7 @@ fn reveal(el: &web_sys::Element) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pages::installed_package_v2::file_pane::{FileToolbarBand, FooterBand};
+    use crate::pages::installed_package::file_pane::{FileToolbarBand, FooterBand};
     use leptos_router::components::{Route, Router, Routes};
     use leptos_router::path;
     use quilt_ui_kit::test_support::{button_saying, element_saying, mount, sleep_ms};
@@ -2415,8 +2415,8 @@ mod tests {
     /// inline container releases it — and stacks the shell — when it narrows.
     #[test]
     fn the_shell_and_pane_styles_own_the_responsive_width() {
-        const PAGE: &str = include_str!("installed_package_v2.module.css");
-        const PANE: &str = include_str!("installed_package_v2/context_pane.module.css");
+        const PAGE: &str = include_str!("installed_package.module.css");
+        const PANE: &str = include_str!("installed_package/context_pane.module.css");
 
         assert!(PAGE.contains("container-type: inline-size"));
         assert!(PAGE.contains("@container (max-width: 800px)"));
@@ -2455,7 +2455,7 @@ mod tests {
             view! {
                 <Router>
                     <Routes fallback=|| view! { "no route" }>
-                        <Route path=path!("/installed-package") view=InstalledPackageV2 />
+                        <Route path=path!("/installed-package") view=InstalledPackage />
                     </Routes>
                 </Router>
             }
@@ -2557,7 +2557,7 @@ mod tests {
         );
     }
 
-    /// The appbar carries the v2 pair, in order.
+    /// The appbar carries the pair, in order.
     ///
     /// *Refresh* matters more here than it looks: the page follows the watcher,
     /// so this is not the staleness fix it would once have been — it is the
@@ -2565,8 +2565,7 @@ mod tests {
     /// CLEARING, which emits no event at all. A page showing the pause band can
     /// otherwise keep showing it after autosync is re-enabled.
     ///
-    /// *Settings* is the way off a page the logo cannot leave: `/` renders
-    /// whichever main page is switched on, so it is not an exit from v2.
+    /// *Settings* opens the settings page.
     #[wasm_bindgen_test]
     async fn the_appbar_offers_refresh_and_settings() {
         go_to("/installed-package?namespace=team%2Fdataset");
@@ -2574,7 +2573,7 @@ mod tests {
             view! {
                 <Router>
                     <Routes fallback=|| view! { "no route" }>
-                        <Route path=path!("/installed-package") view=InstalledPackageV2 />
+                        <Route path=path!("/installed-package") view=InstalledPackage />
                     </Routes>
                 </Router>
             }
@@ -2585,17 +2584,17 @@ mod tests {
         element_saying(&el, "Settings");
     }
 
-    /// `data-v2-page` is what the stylesheet keys the palette and
+    /// `data-page` is what the stylesheet keys the palette and
     /// `color-scheme` on, so without it the page is drawn in a fixed light
     /// chrome whatever the desktop is set to.
     #[wasm_bindgen_test]
-    async fn the_page_is_drawn_in_the_v2_frame() {
+    async fn the_page_is_drawn_in_the_page_frame() {
         go_to("/installed-package?namespace=team%2Fdataset");
         let el = mount(|| {
             view! {
                 <Router>
                     <Routes fallback=|| view! { "no route" }>
-                        <Route path=path!("/installed-package") view=InstalledPackageV2 />
+                        <Route path=path!("/installed-package") view=InstalledPackage />
                     </Routes>
                 </Router>
             }
@@ -2603,8 +2602,8 @@ mod tests {
         sleep_ms(50).await;
 
         assert!(
-            el.query_selector("[data-v2-page]").unwrap().is_some(),
-            "the placeholder sits in the v2 page frame; markup was {}",
+            el.query_selector("[data-page]").unwrap().is_some(),
+            "the placeholder sits in the page frame; markup was {}",
             el.inner_html()
         );
     }
@@ -2881,11 +2880,7 @@ mod tests {
         leptos::task::tick().await;
 
         let frame = |el: &web_sys::Element| {
-            shape(
-                &el.query_selector("[data-v2-page]")
-                    .unwrap()
-                    .expect("a v2 page"),
-            )
+            shape(&el.query_selector("[data-page]").unwrap().expect("a page"))
         };
         assert_eq!(frame(&skeleton), frame(&page));
     }
@@ -4176,7 +4171,7 @@ mod tests {
         pub use quilt_ui_kit::page_layout::style as layout;
         stylance::import_crate_style!(
             pub files,
-            "src/pages/installed_package_v2/file_pane.module.css"
+            "src/pages/installed_package/file_pane.module.css"
         );
         pub use quilt_ui_kit::card::style as card;
         pub use quilt_ui_kit::entry_group::style as group;
@@ -4205,7 +4200,7 @@ mod tests {
             ],
         );
         load_module_style(
-            include_str!("installed_package_v2.module.css"),
+            include_str!("installed_package.module.css"),
             &[
                 ("page", style::page),
                 ("shell", style::shell),
@@ -4213,7 +4208,7 @@ mod tests {
             ],
         );
         load_module_style(
-            include_str!("installed_package_v2/file_pane.module.css"),
+            include_str!("installed_package/file_pane.module.css"),
             &[
                 ("root", sheets::files::root),
                 ("band", sheets::files::band),

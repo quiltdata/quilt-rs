@@ -58,7 +58,7 @@ impl From<&quilt::quiltignore::IgnoredBy> for IgnoredByData {
     }
 }
 
-/// The v2 file pane's facet counts, over the whole package rather than the
+/// The file pane's facet counts, over the whole package rather than the
 /// capped entries. The facets are disjoint apart from `all`, which holds every
 /// entry except the ignored ones.
 #[derive(Serialize, Debug, Default, PartialEq, Eq)]
@@ -73,7 +73,7 @@ pub struct EntryCounts {
     pub ignored: usize,
     /// Also inside `ignored`: the folders among them.
     pub ignored_folders: usize,
-    /// Also inside `changed`; on its own because the v2 pane's all-downloaded
+    /// Also inside `changed`; on its own because the pane's all-downloaded
     /// caption must know about a deleted file past the list cap.
     pub deleted: usize,
 }

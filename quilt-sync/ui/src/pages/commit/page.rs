@@ -1,4 +1,4 @@
-//! The routed commit page v2: `get_commit_data` mapped onto the views above.
+//! The routed commit page: `get_commit_data` mapped onto the views above.
 //!
 //! The form is the page's, not the body's: an answer re-read after Ignore, or
 //! after a failed publish, rebuilds the column, and what the reader typed must
@@ -31,12 +31,12 @@ use crate::pages::workflow::{
 };
 use quilt_ui_kit::LoadFailure;
 
-use super::super::installed_package_v2::{
+use super::super::installed_package::{
     BucketDialog, BucketDraft, CopiedMark, MenuCommand, RemoveDialog, Uninstall, ask_to_remove,
     location, remote_target, run_reading,
 };
+use super::super::page::{Outcome, Page, PageHandle, critical};
 use super::super::row_menu::RowCommand;
-use super::super::v2_page::{Outcome, PageHandle, V2Page, critical};
 use crate::routes;
 
 use super::{
@@ -46,15 +46,15 @@ use super::{
 };
 
 /// The page's one read. A parameter so a test can answer without an engine.
-pub(crate) type CommitRead = super::super::v2_page::PageRead<CommitData>;
+pub(crate) type CommitRead = super::super::page::PageRead<CommitData>;
 
 fn read_commit(namespace: String) -> Pin<Box<dyn Future<Output = Result<CommitData, String>>>> {
     Box::pin(commands::get_commit_data(namespace))
 }
 
-/// What `/commit` renders in the v2 design.
+/// What `/commit` renders.
 #[component]
-pub fn CommitV2() -> impl IntoView {
+pub fn Commit() -> impl IntoView {
     view! { <CommitScreen read=read_commit /> }
 }
 
@@ -611,7 +611,7 @@ fn CommitScreen(
         .get("focus")
         .is_some_and(|f| focuses_message(Some(&f)));
 
-    // The page's frame, its one read, its lock and its band: the shared v2
+    // The page's frame, its one read, its lock and its band: the shared page
     // scaffold, whose rules say why a re-read keeps the form, the cursor in it
     // and the reader's choices. The live check below lands in a signal for the
     // same reason the read does.
@@ -832,7 +832,7 @@ fn CommitScreen(
                     }
                 })
         }}
-        <V2Page
+        <Page
             heading="New revision"
             page=page
             answer=answer
@@ -1211,7 +1211,7 @@ fn field_violations(violations: &[CommitViolation], field: ViolationField) -> Ve
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pages::commit_v2::SAVE_WITHOUT_PUBLISHING;
+    use crate::pages::commit::SAVE_WITHOUT_PUBLISHING;
     use leptos_router::components::{Route, Router, Routes};
     use leptos_router::path;
     use quilt_ui_kit::test_support::{button_saying, mount, sleep_ms, unmount_earlier};
@@ -2629,7 +2629,7 @@ mod tests {
         assert_eq!(blocked_reason(None, false, None, None), None);
     }
 
-    /// `commit_v2`'s banned words, over every string this page adds.
+    /// `commit`'s banned words, over every string this page adds.
     #[test]
     fn no_page_label_uses_a_banned_word() {
         let mut all = vec![

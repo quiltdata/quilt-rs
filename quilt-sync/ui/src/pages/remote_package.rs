@@ -1,4 +1,4 @@
-//! The deep link relay v2, `/remote-package`: runs the link in its `uri`,
+//! The deep link relay, `/remote-package`: runs the link in its `uri`,
 //! then hands over to the package it installed or opened.
 //!
 //! Mounting runs the link, so nothing here may run it again by accident: the
@@ -14,8 +14,8 @@ use leptos_router::hooks::use_navigate;
 use crate::commands;
 use quilt_ui_kit::{Spinner, SpinnerVariant, readable};
 
-use super::error_v2::{ErrorSlate, open_dot_quilt};
-use super::v2_page::{PageHandle, PageRead, V2Page};
+use super::error::{ErrorSlate, open_dot_quilt};
+use super::page::{Page, PageHandle, PageRead};
 
 const HEADING: &str = "Opening link";
 
@@ -24,9 +24,9 @@ fn running() -> AnyView {
     view! { <Spinner variant=SpinnerVariant::Region aria_label=HEADING /> }.into_any()
 }
 
-/// What `/remote-package` renders in the v2 design.
+/// What `/remote-package` renders.
 #[component]
-pub fn RemotePackageV2() -> impl IntoView {
+pub fn RemotePackage() -> impl IntoView {
     view! { <RelayScreen read=run_link /> }
 }
 
@@ -60,7 +60,7 @@ pub(crate) fn RelayScreen(read: PageRead<String>) -> impl IntoView {
     let answer = page.run(key, read);
 
     // On to the package. Sign-in and setup are the scaffold's, as for every
-    // v2 page.
+    // page.
     let navigate = use_navigate();
     Effect::new({
         let navigate = navigate.clone();
@@ -85,7 +85,7 @@ pub(crate) fn RelayScreen(read: PageRead<String>) -> impl IntoView {
     let on_home = Callback::new(move |()| navigate("/", replacing()));
 
     view! {
-        <V2Page
+        <Page
             heading=HEADING
             page=page
             answer=answer
@@ -421,7 +421,7 @@ mod tests {
         let back = query.with_untracked(|q| q.get("back").unwrap_or_default());
         Effect::new(move |_| {
             navigate(
-                crate::pages::login_v2::after_login(&back),
+                crate::pages::login::after_login(&back),
                 NavigateOptions::default(),
             );
         });

@@ -28,7 +28,7 @@
 //!
 //! # What is deliberately not here yet
 //!
-//! **Breadcrumbs** — not here, and the first v2 page with a parent did not add
+//! **Breadcrumbs** — not here, and the first page with a parent did not add
 //! them. The package page's trail is a `BackLink` in its own header: a trail of
 //! two is a back-link in costume, the second crumb restating the title an inch
 //! below it, and it costs a band against that page's vertical budget. The trail
@@ -79,9 +79,9 @@ pub fn PageLayout(
     let notice = NodeRef::new();
     publish_height(notice, "--q-banner-height");
     view! {
-        // `data-v2-page` marks the surface the theme's palette paints, which is
+        // `data-page` marks the surface the theme's palette paints, which is
         // what `color-scheme` keys on, so the document root stays light.
-        <div class=style::root data-v2-page data-page-scroll=page_scroll.then_some("")>
+        <div class=style::root data-page data-page-scroll=page_scroll.then_some("")>
             <h1 data-sr-only>{heading}</h1>
             <Appbar actions=actions replace=replace />
             {banner
@@ -136,7 +136,7 @@ pub fn publish_height(node: NodeRef<leptos::html::Div>, var: &'static str) {
             let mut found = found.borrow_mut();
             if found.is_none() {
                 *found = target
-                    .closest("[data-v2-page]")
+                    .closest("[data-page]")
                     .ok()
                     .flatten()
                     .map(JsCast::unchecked_into);
@@ -174,11 +174,11 @@ mod tests {
     /// The stylesheet hangs the dark `color-scheme` on this attribute, so a page
     /// that lost it would put `body`'s fixed ink on a dark canvas.
     #[wasm_bindgen_test]
-    fn the_frame_marks_itself_as_a_v2_surface() {
+    fn the_frame_marks_itself_as_a_page() {
         let el = mount(|| view! { <PageLayout heading="Page">"body"</PageLayout> });
         assert!(
-            el.query_selector("[data-v2-page]").unwrap().is_some(),
-            "the v2 frame has to name itself"
+            el.query_selector("[data-page]").unwrap().is_some(),
+            "the frame has to name itself"
         );
     }
     /// A sticky part below the measured one takes this as its offset, and a
@@ -202,7 +202,7 @@ mod tests {
             }
         });
         let frame: web_sys::HtmlElement = el
-            .query_selector("[data-v2-page]")
+            .query_selector("[data-page]")
             .unwrap()
             .expect("the frame")
             .unchecked_into();
@@ -234,7 +234,7 @@ mod tests {
             }
         });
         let frame: web_sys::HtmlElement = el
-            .query_selector("[data-v2-page]")
+            .query_selector("[data-page]")
             .unwrap()
             .expect("the frame")
             .unchecked_into();

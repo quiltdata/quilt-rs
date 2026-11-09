@@ -1,4 +1,4 @@
-//! The error page v2, `/error`, and the page an unknown address draws.
+//! The error page, `/error`, and the page an unknown address draws.
 //!
 //! Both are an [`ErrorSlate`]: what went wrong, and the ways on. The gallery
 //! draws it over fixtures. `/error` reads its title and message from
@@ -17,9 +17,9 @@ use quilt_ui_kit::{
     readable,
 };
 
-use super::v2_page::{Outcome, PageHandle, PageRead, V2Page, critical};
+use super::page::{Outcome, Page, PageHandle, PageRead, critical};
 
-stylance::import_crate_style!(style, "src/pages/error_v2.module.css");
+stylance::import_crate_style!(style, "src/pages/error.module.css");
 
 /// What went wrong, and a button for each way on that the caller offers.
 /// *Go home* is always one.
@@ -82,16 +82,16 @@ pub fn ErrorSlateSkeleton() -> impl IntoView {
     }
 }
 
-/// What `/error` renders in the v2 design.
+/// What `/error` renders.
 #[component]
-pub fn ErrorV2() -> impl IntoView {
+pub fn Error() -> impl IntoView {
     view! { <ErrorScreen read=read_error /> }
 }
 
-/// What an unknown address renders in the v2 design. It reads
+/// What an unknown address renders. It reads
 /// nothing, so it is also its own first paint.
 #[component]
-pub fn NotFoundV2() -> impl IntoView {
+pub fn NotFound() -> impl IntoView {
     let navigate = use_navigate();
     let on_home = Callback::new(move |()| navigate("/", NavigateOptions::default()));
     // Nothing is read here, so Refresh reloads the window.
@@ -187,7 +187,7 @@ pub(crate) fn ErrorScreen(read: PageRead<LoginErrorData>) -> impl IntoView {
     };
 
     view! {
-        <V2Page
+        <Page
             heading="Error"
             page=page
             answer=answer
@@ -319,12 +319,12 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn not_found_offers_the_way_home() {
-        let el = mount(|| view! { <Router><NotFoundV2 /></Router> });
+        let el = mount(|| view! { <Router><NotFound /></Router> });
         element_saying(&el, "Page not found");
         button_saying(&el, "Go home");
         button_saying(&el, "Settings");
         assert!(!button_saying(&el, "Refresh").disabled());
-        assert!(el.query_selector("[data-v2-page]").unwrap().is_some());
+        assert!(el.query_selector("[data-page]").unwrap().is_some());
     }
 
     #[test]

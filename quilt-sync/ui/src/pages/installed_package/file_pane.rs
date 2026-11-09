@@ -90,7 +90,7 @@ pub(crate) mod selection;
 
 pub use selection::{Kept, Picking};
 
-stylance::import_crate_style!(style, "src/pages/installed_package_v2/file_pane.module.css");
+stylance::import_crate_style!(style, "src/pages/installed_package/file_pane.module.css");
 
 /// How the list is grouped. Not remembered: every visit starts at
 /// [`Grouping::BaseFolder`], because which axis is useful depends on the shape

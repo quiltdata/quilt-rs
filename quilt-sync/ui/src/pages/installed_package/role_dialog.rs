@@ -20,10 +20,7 @@ use quilt_ui_kit::{FormControl, FormDialog, Naming, Select, Submit};
 
 use super::{Wiring, holding};
 
-stylance::import_crate_style!(
-    style,
-    "src/pages/installed_package_v2/role_dialog.module.css"
-);
+stylance::import_crate_style!(style, "src/pages/installed_package/role_dialog.module.css");
 
 /// The role switch, over the alternatives the payload offers. `refused` is the
 /// role the denial named, `None` when the backend could not name one.

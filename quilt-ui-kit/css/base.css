@@ -34,7 +34,7 @@ body {
   color-scheme: light;
 }
 
-:root[data-theme="dark"] [data-v2-page] {
+:root[data-theme="dark"] [data-page] {
   color-scheme: dark;
 }
 
