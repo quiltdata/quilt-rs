@@ -79,8 +79,9 @@ pub enum PackageStateDto {
     },
     /// Autosync stopped for this package for a reason no other state covers.
     /// The pause reasons that have a state resolve into it instead:
-    /// `PendingChanges`, `PendingCommit` and `Diverged` into the state the working
-    /// tree reports, and `PullConflict` and `RoleDenied` into their own states.
+    /// `PendingChanges`, `PendingCommit`, `Diverged` and `MergeRefused` into the
+    /// state the working tree reports, and `PullConflict` and `RoleDenied` into
+    /// their own states.
     /// Only `PausedReason::Other` resolves here (see `unexplained_pause`).
     ///
     /// Kept separate from `Unknown`, which makes a different and stronger claim:
