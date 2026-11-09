@@ -150,6 +150,9 @@ pub struct PullReport {
     pub updated: Vec<PathBuf>,
     /// A tracked path the remote dropped, deleted from the working tree.
     pub removed: Vec<PathBuf>,
+    /// A tracked path the remote dropped whose file was edited while the pull
+    /// ran: kept in the working tree, no longer tracked.
+    pub kept_not_removed: Vec<PathBuf>,
     /// The newest revision's own message, empty treated as absent.
     pub message: Option<String>,
 }
@@ -182,12 +185,14 @@ fn report_of(
     let installed: BTreeSet<&PathBuf> = applied.installed.iter().collect();
     let replaced: BTreeSet<&PathBuf> = applied.replaced.iter().collect();
     let uninstalled: BTreeSet<&PathBuf> = applied.uninstalled.iter().collect();
+    let kept: BTreeSet<&PathBuf> = applied.kept.iter().collect();
     let mut report = PullReport {
         manifest_uri,
         added: Vec::new(),
         added_not_fetched: Vec::new(),
         updated: Vec::new(),
         removed: Vec::new(),
+        kept_not_removed: Vec::new(),
         // An empty message is absent, which the desktop already assumes
         // elsewhere: `ManifestHeader::default` writes `Some(String::new())`.
         message: message.filter(|m| !m.is_empty()),
@@ -208,6 +213,7 @@ fn report_of(
             (true, _) => report.added.push(path.clone()),
             // Deleted with no replacement: absent from `latest`.
             (false, true) => report.removed.push(path.clone()),
+            (false, false) if kept.contains(path) => report.kept_not_removed.push(path.clone()),
             // Nothing moved, so the file on disk is already right — the
             // user's edit was kept, both sides agree, or this copy does not
             // track the path. Only an addition still on the remote is worth
@@ -351,9 +357,10 @@ pub async fn pull_package(
     // before it writes any of it, so a verdict reached here licenses a write a
     // whole fetch later — and a background pull running while someone works is
     // ordinary. The apply re-checks each destination against the row captured
-    // here immediately before replacing it (`LocalWork::Protect`), which is what
-    // shrinks the residual window back to the two syscalls between the check and
-    // the rename — also the window an editor could save into.
+    // here immediately before replacing or deleting it (`LocalWork::Protect`),
+    // which is what shrinks the residual window back to the two syscalls
+    // between the check and the rename or delete — also the window an editor
+    // could save into.
     //
     // Outside that window, an editor with the file open picks the new content up
     // cleanly (checked against nvim and GNOME Text Editor): editors read and
@@ -449,8 +456,8 @@ pub async fn pull_package(
         snapshot.latest,
         &touched,
         // The verify pass above checked every one of these against its base
-        // row; the apply re-checks each immediately before overwriting it,
-        // because staging puts the whole fetch in between.
+        // row; the apply re-checks each immediately before overwriting or
+        // deleting it, because staging puts the whole fetch in between.
         &LocalWork::Protect,
     )
     .await?;
@@ -537,6 +544,7 @@ mod tests {
             installed: paths(installed),
             replaced: paths(replaced),
             uninstalled: paths(uninstalled),
+            kept: Vec::new(),
         }
     }
 
@@ -558,16 +566,21 @@ mod tests {
                 RemoteChange::Modified(hash_of(b"c")),
             ),
             (PathBuf::from("dropped.csv"), RemoteChange::Removed),
+            (PathBuf::from("edited.csv"), RemoteChange::Removed),
         ]);
         // `changed.csv` was tracked, so the write replaced a file already
         // here; `fetched.csv` was written where there was nothing;
-        // `dropped.csv` was deleted with no replacement; `listed.csv` was left
-        // on the remote.
-        let applied = applied(
-            &["fetched.csv", "changed.csv"],
-            &["changed.csv"],
-            &["dropped.csv"],
-        );
+        // `dropped.csv` was deleted with no replacement; `edited.csv` was kept
+        // because it was edited during the pull; `listed.csv` was left on the
+        // remote.
+        let applied = Applied {
+            kept: paths(&["edited.csv"]),
+            ..applied(
+                &["fetched.csv", "changed.csv"],
+                &["changed.csv"],
+                &["dropped.csv"],
+            )
+        };
 
         let report = report_of(
             uri(),
@@ -581,6 +594,7 @@ mod tests {
         assert_eq!(report.added_not_fetched, paths(&["listed.csv"]));
         assert_eq!(report.updated, paths(&["changed.csv"]));
         assert_eq!(report.removed, paths(&["dropped.csv"]));
+        assert_eq!(report.kept_not_removed, paths(&["edited.csv"]));
         assert_eq!(report.message.as_deref(), Some("a message"));
         assert!(!report.is_empty());
     }

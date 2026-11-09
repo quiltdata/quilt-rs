@@ -30,8 +30,9 @@ use quilt_uri::Namespace;
 /// replace. A caller only knows which of the two operations it is running.
 pub(crate) enum LocalWork {
     /// A pull: it verified that every path it means to touch still holds its
-    /// `base` content, and the apply re-checks that immediately before each
-    /// overwrite, because staging puts a whole fetch in between.
+    /// `base` content, and the apply re-checks that before the first rename and
+    /// again immediately before each overwrite and each delete, because staging
+    /// puts a whole fetch in between.
     Protect,
     /// A reset: discarding local work is the operation.
     Discard,
@@ -48,6 +49,9 @@ pub(crate) struct Applied {
     pub replaced: Vec<PathBuf>,
     /// Paths deleted from the working tree and dropped from tracking.
     pub uninstalled: Vec<PathBuf>,
+    /// Paths `latest` dropped whose file was edited after the renames began:
+    /// kept in the working tree and dropped from tracking.
+    pub kept: Vec<PathBuf>,
 }
 
 /// Apply a set of `latest`-manifest path updates to the working tree, object
@@ -85,8 +89,8 @@ pub(crate) async fn apply_latest_update(
     // an interrupted apply retryable.
     // The rows the caller's verification was taken against, captured before the
     // manifest becomes `latest`. `Protect::BaseContent` re-checks a destination
-    // against these immediately before overwriting it, which is the only moment
-    // that means anything once the whole touch set is staged first.
+    // against these immediately before overwriting or deleting it, which is the
+    // only moment that means anything once the whole touch set is staged first.
     // Untracked paths keep their rows too: a file found at one is safe to
     // replace only while it still holds `base`'s bytes.
     let base_rows: BTreeMap<PathBuf, ManifestRow> = touched
@@ -150,6 +154,13 @@ pub(crate) async fn apply_latest_update(
         to_install.len()
     );
     let install_refs: Vec<&PathBuf> = to_install.iter().collect();
+    let protect = match local_work {
+        LocalWork::Protect => Protect::BaseContent {
+            rows: &base_rows,
+            removing: &to_uninstall,
+        },
+        LocalWork::Discard => Protect::Nothing,
+    };
     // `install_paths_over`, not `install_paths`: these paths are tracked and
     // stay tracked across the write, which the user-facing verb refuses by
     // design. Safe only because the touch set already excludes every path the
@@ -166,27 +177,37 @@ pub(crate) async fn apply_latest_update(
         storage,
         remote,
         &install_refs,
-        &match local_work {
-            LocalWork::Protect => Protect::BaseContent(&base_rows),
-            LocalWork::Discard => Protect::Nothing,
-        },
+        &protect,
         flow::OnMismatch::Refuse,
     )
     .await?;
 
     debug!("⏳ Uninstalling {} touched paths", to_uninstall.len());
-    lineage = flow::uninstall_paths(lineage, working_dir, storage, &to_uninstall).await?;
+    let mut uninstalled = Vec::new();
+    let mut kept = Vec::new();
+    for path in &to_uninstall {
+        // The renames have landed, so a file edited since can no longer refuse
+        // the apply with nothing written. It is kept, and the prune below
+        // stops tracking it.
+        if protect.edited_at(storage, &working_dir, path).await {
+            kept.push(path.clone());
+            continue;
+        }
+        lineage = flow::uninstall_paths(lineage, working_dir.clone(), storage, &vec![path.clone()])
+            .await?;
+        uninstalled.push(path.clone());
+    }
 
-    // Prune lineage paths that have no row in the new base manifest. This only
-    // catches trivially-resolved both-removed paths (locally deleted + absent
-    // from `latest`): they are filtered out of the touch-set, so they never go
-    // through `uninstall_paths`, yet the persisted lineage must not track a
-    // path with no manifest row — `create_status` hard-errors on that for
-    // remote-backed packages. Every other case is already handled: a
-    // locally-removed path the remote still has keeps its row; a
-    // remote-removed + locally-modified path is classified `Blocked` and never
-    // reaches apply; a remote-removed untouched path is in the touch-set and
-    // uninstalled normally. For reset (touch-set = every path) this is a no-op.
+    // Prune lineage paths that have no row in the new base manifest. This
+    // catches the paths kept above and trivially-resolved both-removed paths
+    // (locally deleted + absent from `latest`): neither goes through
+    // `uninstall_paths`, yet the persisted lineage must not track a path with
+    // no manifest row — `create_status` hard-errors on that for remote-backed
+    // packages. Every other case is already handled: a locally-removed path
+    // the remote still has keeps its row; a remote-removed + locally-modified
+    // path is classified `Blocked` and never reaches apply; a remote-removed
+    // untouched path is in the touch-set and uninstalled normally. For reset
+    // (touch-set = every path) this is a no-op.
     //
     // AFTER the uninstall, not before: pruning first would drop the very rows
     // `uninstall_paths` looks up, and it errors on a path whose row is gone.
@@ -199,7 +220,8 @@ pub(crate) async fn apply_latest_update(
         Applied {
             installed: to_install,
             replaced,
-            uninstalled: to_uninstall,
+            uninstalled,
+            kept,
         },
     ))
 }
@@ -210,6 +232,7 @@ mod tests {
     use test_log::test;
 
     use std::collections::BTreeMap;
+    use std::path::Path;
 
     use aws_sdk_s3::primitives::ByteStream;
 
@@ -1045,5 +1068,328 @@ mod tests {
             "pruning a stale row is not an uninstall, and must not be reported as one"
         );
         Ok(())
+    }
+
+    /// A copy at `base` whose working files hold `base`'s bytes, and a
+    /// published `latest` whose objects are all fetchable.
+    struct LocalCopy {
+        paths: DomainPaths,
+        _domain_tmp: tempfile::TempDir,
+        storage: MockStorage,
+        remote: MockRemote,
+        lineage: PackageLineage,
+        base: Manifest,
+        latest: ManifestUri,
+        touched: Vec<PathBuf>,
+    }
+
+    const USERS_SAVE: &[u8] = b"what the user saved while the pull ran";
+
+    async fn copy_at_base(base: &[(&str, &[u8])], latest: &[(&str, &[u8])]) -> Res<LocalCopy> {
+        let base_uri = ManifestUri {
+            bucket: "b".to_string(),
+            namespace: ("f", "a").into(),
+            hash: "OLD".to_string(),
+            origin: None,
+        };
+        let (paths, domain_tmp) = DomainPaths::from_temp_dir()?;
+        let storage = MockStorage::default();
+        paths
+            .scaffold_for_caching(&storage, &base_uri.bucket)
+            .await?;
+        for (key, body) in base {
+            storage
+                .write_byte_stream(wd().join(key), ByteStream::from(body.to_vec()))
+                .await?;
+        }
+        let remote = MockRemote::default();
+        for (key, body) in latest {
+            put_object_at(&remote, &format!("objects/new-{key}"), body).await?;
+        }
+        let latest_manifest = Manifest {
+            rows: latest
+                .iter()
+                .map(|(key, body)| row_at(key, body, &format!("objects/new-{key}")))
+                .collect(),
+            ..Manifest::default()
+        };
+        publish(&remote, "deadbeef", &latest_manifest).await?;
+        let mut touched: Vec<PathBuf> = base
+            .iter()
+            .chain(latest)
+            .map(|(key, _)| PathBuf::from(key))
+            .collect();
+        touched.sort();
+        touched.dedup();
+        Ok(LocalCopy {
+            paths,
+            _domain_tmp: domain_tmp,
+            storage,
+            remote,
+            lineage: PackageLineage {
+                remote_uri: Some(base_uri.clone()),
+                base_hash: "OLD".to_string(),
+                latest_hash: "NEW".to_string(),
+                paths: base
+                    .iter()
+                    .map(|(key, _)| (PathBuf::from(key), PathState::default()))
+                    .collect(),
+                ..PackageLineage::default()
+            },
+            base: Manifest {
+                rows: base
+                    .iter()
+                    .map(|(key, body)| row_at(key, body, &format!("objects/base-{key}")))
+                    .collect(),
+                ..Manifest::default()
+            },
+            latest: ManifestUri {
+                hash: "deadbeef".to_string(),
+                ..base_uri
+            },
+            touched,
+        })
+    }
+
+    impl LocalCopy {
+        async fn apply(
+            &self,
+            storage: &(impl Storage + Sync),
+            local_work: &LocalWork,
+        ) -> Res<(PackageLineage, Applied)> {
+            apply_latest_update(
+                self.lineage.clone(),
+                &mut self.base.clone(),
+                &self.paths,
+                storage,
+                &self.remote,
+                wd(),
+                Namespace::default(),
+                self.latest.clone(),
+                &self.touched,
+                local_work,
+            )
+            .await
+        }
+
+        async fn save(&self, key: &str) -> Res {
+            self.storage
+                .write_byte_stream(wd().join(key), ByteStream::from_static(USERS_SAVE))
+                .await
+        }
+
+        async fn on_disk(&self, key: &str) -> Option<Vec<u8>> {
+            self.storage.read_bytes(wd().join(key)).await.ok()
+        }
+    }
+
+    fn is_conflict_on(result: &Res<(PackageLineage, Applied)>, key: &str) -> bool {
+        matches!(
+            result,
+            Err(crate::Error::PackageOp(crate::error::PackageOpError::PullConflict(paths)))
+                if paths == &vec![PathBuf::from(key)]
+        )
+    }
+
+    /// A save to a file `latest` dropped, landing while the revision is
+    /// staged, refuses the apply before any rename, as a save to a file it
+    /// replaces does.
+    #[test(tokio::test)]
+    async fn a_removed_file_saved_during_staging_refuses_before_any_rename() -> Res {
+        let copy = copy_at_base(
+            &[("a.txt", b"base-a"), ("gone.txt", b"base-gone")],
+            &[("a.txt", b"new-a")],
+        )
+        .await?;
+        // The fetched object lands in the store mid-fetch.
+        let storage = SaveOnRename {
+            inner: &copy.storage,
+            renamed_onto: copy
+                .paths
+                .object(row_at("a.txt", b"new-a", "").hash.digest()),
+            saved: wd().join("gone.txt"),
+        };
+
+        let result = copy.apply(&storage, &LocalWork::Protect).await;
+
+        assert!(
+            is_conflict_on(&result, "gone.txt"),
+            "expected a PullConflict naming the saved file, got: {result:?}"
+        );
+        assert_eq!(copy.on_disk("gone.txt").await.as_deref(), Some(USERS_SAVE));
+        assert_eq!(
+            copy.on_disk("a.txt").await.as_deref(),
+            Some(&b"base-a"[..]),
+            "a file was renamed in before the refusal"
+        );
+        Ok(())
+    }
+
+    /// The same, where `latest` only drops files and nothing is staged.
+    #[test(tokio::test)]
+    async fn a_removed_file_saved_before_a_delete_only_apply_refuses_it() -> Res {
+        let copy = copy_at_base(&[("gone.txt", b"base-gone")], &[]).await?;
+        copy.save("gone.txt").await?;
+
+        let result = copy.apply(&copy.storage, &LocalWork::Protect).await;
+
+        assert!(
+            is_conflict_on(&result, "gone.txt"),
+            "expected a PullConflict naming the saved file, got: {result:?}"
+        );
+        assert_eq!(copy.on_disk("gone.txt").await.as_deref(), Some(USERS_SAVE));
+        Ok(())
+    }
+
+    /// A save that lands once the renames have begun can no longer refuse the
+    /// apply with nothing written, so the file is kept and untracked, and the
+    /// rest of the revision lands.
+    #[test(tokio::test)]
+    async fn a_removed_file_saved_after_the_renames_begin_is_kept_untracked() -> Res {
+        let copy = copy_at_base(
+            &[("a.txt", b"base-a"), ("gone.txt", b"base-gone")],
+            &[("a.txt", b"new-a")],
+        )
+        .await?;
+        let storage = SaveOnRename {
+            inner: &copy.storage,
+            renamed_onto: wd().join("a.txt"),
+            saved: wd().join("gone.txt"),
+        };
+
+        let (lineage, applied) = copy.apply(&storage, &LocalWork::Protect).await?;
+
+        assert_eq!(
+            copy.on_disk("gone.txt").await.as_deref(),
+            Some(USERS_SAVE),
+            "the user's save was deleted"
+        );
+        assert_eq!(applied.kept, vec![PathBuf::from("gone.txt")]);
+        assert_eq!(applied.uninstalled, [] as [PathBuf; 0]);
+        assert!(!lineage.paths.contains_key(Path::new("gone.txt")));
+        assert_eq!(copy.on_disk("a.txt").await.as_deref(), Some(&b"new-a"[..]));
+        assert!(lineage.paths.contains_key(Path::new("a.txt")));
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn an_unedited_removed_file_is_deleted() -> Res {
+        let copy = copy_at_base(
+            &[("a.txt", b"base-a"), ("gone.txt", b"base-gone")],
+            &[("a.txt", b"new-a")],
+        )
+        .await?;
+
+        let (lineage, applied) = copy.apply(&copy.storage, &LocalWork::Protect).await?;
+
+        assert!(!copy.storage.exists(wd().join("gone.txt")).await);
+        assert_eq!(applied.uninstalled, vec![PathBuf::from("gone.txt")]);
+        assert_eq!(applied.kept, [] as [PathBuf; 0]);
+        assert!(!lineage.paths.contains_key(Path::new("gone.txt")));
+        Ok(())
+    }
+
+    /// Reset discards local work, a save to a file `latest` dropped included.
+    #[test(tokio::test)]
+    async fn reset_deletes_a_saved_removed_file() -> Res {
+        let copy = copy_at_base(&[("gone.txt", b"base-gone")], &[]).await?;
+        copy.save("gone.txt").await?;
+
+        let (_, applied) = copy.apply(&copy.storage, &LocalWork::Discard).await?;
+
+        assert!(!copy.storage.exists(wd().join("gone.txt")).await);
+        assert_eq!(applied.uninstalled, vec![PathBuf::from("gone.txt")]);
+        Ok(())
+    }
+
+    /// [`MockStorage`] that saves [`USERS_SAVE`] to `saved` as soon as a file
+    /// is renamed onto `renamed_onto`: a save landing at a chosen step of the
+    /// apply, which an in-process test cannot otherwise interleave.
+    struct SaveOnRename<'a> {
+        inner: &'a MockStorage,
+        renamed_onto: PathBuf,
+        saved: PathBuf,
+    }
+
+    impl Storage for SaveOnRename<'_> {
+        async fn copy(
+            &self,
+            from: impl AsRef<Path> + Send,
+            to: impl AsRef<Path> + Send,
+        ) -> Res<u64> {
+            self.inner.copy(from, to).await
+        }
+        async fn create_dir_all(&self, path: impl AsRef<Path> + Send) -> Res {
+            self.inner.create_dir_all(path).await
+        }
+        async fn create_file(&self, path: impl AsRef<Path>) -> Res<tokio::fs::File> {
+            self.inner.create_file(path).await
+        }
+        async fn exists(&self, path: impl AsRef<Path>) -> bool {
+            self.inner.exists(path).await
+        }
+        async fn is_file(&self, path: impl AsRef<Path>) -> bool {
+            self.inner.is_file(path).await
+        }
+        async fn modified_timestamp(
+            &self,
+            path: impl AsRef<Path>,
+        ) -> Res<chrono::DateTime<chrono::Utc>> {
+            self.inner.modified_timestamp(path).await
+        }
+        async fn open_file(&self, path: impl AsRef<Path> + Send) -> Res<tokio::fs::File> {
+            self.inner.open_file(path).await
+        }
+        async fn read_byte_stream(&self, path: impl AsRef<Path> + Send + Sync) -> Res<ByteStream> {
+            self.inner.read_byte_stream(path).await
+        }
+        async fn read_dir(&self, path: impl AsRef<Path> + Send + Sync) -> Res<tokio::fs::ReadDir> {
+            self.inner.read_dir(path).await
+        }
+        async fn remove_dir_all(&self, path: impl AsRef<Path> + Send) -> Res {
+            self.inner.remove_dir_all(path).await
+        }
+        async fn remove_file(&self, path: impl AsRef<Path> + Send) -> Result<(), std::io::Error> {
+            self.inner.remove_file(path).await
+        }
+        async fn rename(&self, from: impl AsRef<Path> + Send, to: impl AsRef<Path> + Send) -> Res {
+            let onto = to.as_ref() == self.renamed_onto;
+            self.inner.rename(from, to).await?;
+            if onto {
+                self.inner
+                    .write_byte_stream(&self.saved, ByteStream::from_static(USERS_SAVE))
+                    .await?;
+            }
+            Ok(())
+        }
+        async fn write_byte_stream(
+            &self,
+            path: impl AsRef<Path> + Send + Sync,
+            body: ByteStream,
+        ) -> Res {
+            self.inner.write_byte_stream(path, body).await
+        }
+        async fn create_private_dir(&self, path: impl AsRef<Path> + Send) -> Res {
+            self.inner.create_private_dir(path).await
+        }
+        async fn write_private_byte_stream(
+            &self,
+            path: impl AsRef<Path> + Send + Sync,
+            body: ByteStream,
+        ) -> Res {
+            self.inner.write_private_byte_stream(path, body).await
+        }
+        async fn lock_exclusive(
+            &self,
+            path: impl AsRef<Path> + Send,
+        ) -> Res<crate::io::storage::LockGuard> {
+            self.inner.lock_exclusive(path).await
+        }
+        async fn try_lock_exclusive(
+            &self,
+            path: impl AsRef<Path> + Send,
+        ) -> Res<Option<crate::io::storage::LockGuard>> {
+            self.inner.try_lock_exclusive(path).await
+        }
     }
 }

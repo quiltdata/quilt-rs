@@ -181,6 +181,23 @@ async fn place_where_absent(
     Ok(())
 }
 
+/// Whether the file at `working_dest` holds `row`'s content. One that cannot be
+/// read does not, so a caller that refuses on `false` fails safe.
+async fn holds(storage: &impl Storage, working_dest: &Path, row: ManifestRow) -> bool {
+    matches!(refresh_hash(storage, working_dest, row).await, Ok(None))
+}
+
+/// Whether a file is at `working_dest` that no longer holds `row`'s content:
+/// edited since a caller verified it there. A missing file has nothing to lose;
+/// one that cannot be read counts as edited, as in [`holds`].
+async fn edited(storage: &impl Storage, working_dest: &Path, row: &ManifestRow) -> bool {
+    match refresh_hash(storage, working_dest, row.clone()).await {
+        Ok(None) => false,
+        Err(err) if err.is_not_found() => false,
+        Ok(Some(_)) | Err(_) => true,
+    }
+}
+
 /// Renames each staged file onto its destination, refusing to overwrite one a
 /// caller asked to protect that no longer holds the content it was verified at.
 /// [`Protect::Absent`] places files by [`place_where_absent`] instead.
@@ -197,33 +214,28 @@ async fn place_where_absent(
 async fn swap_staged_into_place(
     storage: &(impl Storage + Sync),
     staged: &[(PathBuf, PathBuf, ManifestRow)],
+    working_dir: &Path,
     protect: &Protect<'_>,
     lineage: &mut PackageLineage,
 ) -> Res {
+    protect.check_removals(storage, working_dir).await?;
     if let Protect::Absent = protect {
         return place_where_absent(storage, staged, lineage).await;
     }
     for (staged_path, working_dest, row) in staged {
-        if let Protect::BaseContent(expected) = protect {
+        if let Protect::BaseContent { rows, .. } = protect {
             // An untracked path with nothing on disk has nothing to lose. A
             // file at an untracked path may also already hold the incoming
             // bytes, as an interrupted pull leaves it; anything else at one
             // `base` never had is the user's own.
             let tracked = lineage.paths.contains_key(&row.logical_key);
-            let holds = |expected: ManifestRow| async move {
-                matches!(
-                    refresh_hash(storage, working_dest, expected).await,
-                    Ok(None)
-                )
+            let unchanged = if !tracked && !edited(storage, working_dest, row).await {
+                true
+            } else if let Some(base_row) = rows.get(&row.logical_key) {
+                holds(storage, working_dest, base_row.clone()).await
+            } else {
+                tracked
             };
-            let unchanged =
-                if !tracked && (!storage.exists(working_dest).await || holds(row.clone()).await) {
-                    true
-                } else if let Some(base_row) = expected.get(&row.logical_key) {
-                    holds((*base_row).clone()).await
-                } else {
-                    tracked
-                };
             if !unchanged {
                 debug!(
                     "❌ {} changed while the revision was being staged",
@@ -284,7 +296,12 @@ pub(crate) enum Protect<'a> {
     /// be recovered — there is no reflog. A destination with no row here, such
     /// as a path the new revision adds, is written only where nothing is or
     /// where the file already holds the incoming bytes.
-    BaseContent(&'a BTreeMap<PathBuf, ManifestRow>),
+    BaseContent {
+        rows: &'a BTreeMap<PathBuf, ManifestRow>,
+        /// The paths the caller deletes once the renames land. One edited since
+        /// it was verified refuses the install before the first rename.
+        removing: &'a [PathBuf],
+    },
     /// Overwrite whatever is there. Discarding local work is the operation, so
     /// there is nothing to protect.
     Nothing,
@@ -293,6 +310,44 @@ pub(crate) enum Protect<'a> {
     /// writing over it would lose it just as surely as an edit to a tracked one.
     /// See [`place_where_absent`].
     Absent,
+}
+
+impl Protect<'_> {
+    /// Whether the file at `path` was edited since it was verified at its row.
+    /// Always false outside [`Protect::BaseContent`].
+    pub(crate) async fn edited_at(
+        &self,
+        storage: &impl Storage,
+        working_dir: &Path,
+        path: &Path,
+    ) -> bool {
+        let Protect::BaseContent { rows, .. } = self else {
+            return false;
+        };
+        match rows.get(path) {
+            Some(row) => edited(storage, &working_dir.join(path), row).await,
+            None => false,
+        }
+    }
+
+    /// Refuses with [`PackageOpError::PullConflict`] naming every path in
+    /// `removing` that was edited since it was verified.
+    async fn check_removals(&self, storage: &impl Storage, working_dir: &Path) -> Res {
+        let Protect::BaseContent { removing, .. } = self else {
+            return Ok(());
+        };
+        let mut changed = Vec::new();
+        for path in *removing {
+            if self.edited_at(storage, working_dir, path).await {
+                changed.push(path.clone());
+            }
+        }
+        if changed.is_empty() {
+            return Ok(());
+        }
+        debug!("❌ Paths to delete changed while the revision was being staged: {changed:?}");
+        Err(Error::PackageOp(PackageOpError::PullConflict(changed)))
+    }
 }
 
 /// What an apply does with a row whose fetched bytes do not hash to it. On an
@@ -437,6 +492,7 @@ pub(crate) async fn install_paths_over(
 ) -> Res<(PackageLineage, InstallPathsReport)> {
     if entries_paths.is_empty() {
         info!("No paths to install");
+        protect.check_removals(storage, &working_dir).await?;
         let report = InstallPathsReport {
             paths: lineage.paths.clone(),
             ..InstallPathsReport::default()
@@ -553,7 +609,8 @@ pub(crate) async fn install_paths_over(
     //
     // Not a transaction: the renames are atomic one at a time and not as a set.
     debug!("⏳ Swapping {} staged files into place", staged.len());
-    let swapped = swap_staged_into_place(storage, &staged, protect, &mut lineage).await;
+    let swapped =
+        swap_staged_into_place(storage, &staged, &working_dir, protect, &mut lineage).await;
     // On every path out, not only the successful one: the renames empty this
     // directory when they all land, but any error above leaves the whole staged
     // set behind, and at one object apiece that accumulates across retries. A
@@ -1165,7 +1222,14 @@ mod tests {
         let staged = two_staged(&storage).await?;
         let mut lineage = PackageLineage::default();
 
-        swap_staged_into_place(&storage, &staged, &Protect::Absent, &mut lineage).await?;
+        swap_staged_into_place(
+            &storage,
+            &staged,
+            Path::new(""),
+            &Protect::Absent,
+            &mut lineage,
+        )
+        .await?;
 
         assert_eq!(storage.read_bytes("work/a").await?, b"remote bytes");
         assert_eq!(storage.read_bytes("work/sub/b").await?, b"remote bytes");
@@ -1186,8 +1250,14 @@ mod tests {
         let users_file = users_file_at_second(&storage).await?;
         let mut lineage = PackageLineage::default();
 
-        let result =
-            swap_staged_into_place(&storage, &staged, &Protect::Absent, &mut lineage).await;
+        let result = swap_staged_into_place(
+            &storage,
+            &staged,
+            Path::new(""),
+            &Protect::Absent,
+            &mut lineage,
+        )
+        .await;
 
         assert!(matches!(
             result,
