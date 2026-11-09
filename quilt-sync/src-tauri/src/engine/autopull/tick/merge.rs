@@ -122,7 +122,7 @@ struct Held<'a, M: QuiltModel> {
 /// Move the copy to `merged`, now `latest`, as a pull moves a Behind copy, and
 /// report what that brought into the folder. An edit to a path the other side
 /// changed keeps the copy Diverged at its own revision for the next tick; any
-/// other file in the way pauses it, as it pauses a pull.
+/// other file in the way pauses it as Diverged.
 async fn move_to<M: QuiltModel>(
     held: &Held<'_, M>,
     merged: &quilt_uri::ManifestUri,
@@ -152,15 +152,21 @@ async fn move_to<M: QuiltModel>(
     let pulled = match moved {
         Ok(quilt::flow::Pulled::Applied(report)) => Some(report),
         Ok(quilt::flow::Pulled::UpToDate) => None,
-        // An edit, which the next tick commits and merges again.
-        Err(paths) if paths.iter().any(|path| status.changes.contains_key(path)) => {
+        // Edits, which the next tick commits and merges again.
+        Err(paths) if paths.iter().all(|path| status.changes.contains_key(path)) => {
             warn!(
                 "autosync: {}: edited during the merge at {paths:?}; left Diverged",
                 held.namespace
             );
             None
         }
-        Err(paths) => return Err(WatchError::Conflict(PausedReason::pull_conflict(&paths))),
+        Err(paths) => {
+            warn!(
+                "autosync: {}: files in the way of the merged revision at {paths:?}",
+                held.namespace
+            );
+            return Err(WatchError::Conflict(PausedReason::Diverged));
+        }
     };
     Ok(RefreshOutcome {
         published,

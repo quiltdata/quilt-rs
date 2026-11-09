@@ -95,7 +95,7 @@ struct Remote {
     /// What another writer publishes just after the merge's push lands.
     late_writer: Option<quilt::manifest::Manifest>,
     /// Where a local file refuses the move, as a pull refuses.
-    conflict_at: Option<&'static str>,
+    conflict_at: Vec<&'static str>,
     /// Whether the tray counted the move as an apply, read as it ran.
     aggregator: Option<Arc<crate::engine::autopull::status::SyncTrayAggregator>>,
     applying_at_move: Option<bool>,
@@ -128,7 +128,7 @@ fn model_of(copy: Copy) -> (MockQuiltModel, Arc<Mutex<Remote>>) {
         latest: "h1".to_string(),
         writers: copy.writers.into(),
         late_writer: None,
-        conflict_at: None,
+        conflict_at: Vec::new(),
         aggregator: None,
         applying_at_move: None,
         pushes: 0,
@@ -212,12 +212,10 @@ fn expect_move(
                 .aggregator
                 .as_ref()
                 .map(|aggregator| aggregator.apply_in_progress());
-            if let Some(path) = remote.conflict_at {
+            if !remote.conflict_at.is_empty() {
+                let paths = remote.conflict_at.iter().map(PathBuf::from).collect();
                 return Err(
-                    quilt::Error::PackageOp(quilt::PackageOpError::PullConflict(vec![
-                        PathBuf::from(path),
-                    ]))
-                    .into(),
+                    quilt::Error::PackageOp(quilt::PackageOpError::PullConflict(paths)).into(),
                 );
             }
             let mut lineage = state.lock().unwrap();
@@ -584,7 +582,7 @@ async fn an_edit_during_the_merge_to_a_path_the_other_side_changed_keeps_the_cop
             vec![file("a.csv", "1"), file("b.csv", "theirs")],
         )
     });
-    remote.lock().unwrap().conflict_at = Some("b.csv");
+    remote.lock().unwrap().conflict_at = vec!["b.csv"];
 
     let (inner, reporter) = tick(&model).await;
 
@@ -602,23 +600,30 @@ async fn an_edit_during_the_merge_to_a_path_the_other_side_changed_keeps_the_cop
     );
 }
 
-/// A local file the walk does not list, such as an ignored one, where the
-/// other side added `b.csv`: no commit will change the next merge, so the
-/// copy pauses as such a pull pauses.
+/// Beside an edit to `b.csv`, a local file the walk does not list, such as an
+/// ignored one, where the other side added `c.csv`: no commit will change the
+/// next merge, so the copy pauses, still Diverged at its own revision.
 #[tokio::test]
-async fn a_move_refused_by_a_file_that_is_not_an_edit_pauses_as_a_pull_conflict() {
-    let (model, remote) = model_of(Copy::new(
-        vec![file("a.csv", "1")],
-        vec![file("a.csv", "mine")],
-        vec![file("a.csv", "1"), file("b.csv", "theirs")],
-    ));
-    remote.lock().unwrap().conflict_at = Some("b.csv");
+async fn a_move_refused_by_a_file_that_is_not_an_edit_pauses_the_copy_as_diverged() {
+    let (model, remote) = model_of(Copy {
+        walks: vec![BTreeMap::new(), change("b.csv")],
+        ..Copy::new(
+            vec![file("a.csv", "1")],
+            vec![file("a.csv", "mine")],
+            vec![
+                file("a.csv", "1"),
+                file("b.csv", "theirs"),
+                file("c.csv", "theirs"),
+            ],
+        )
+    });
+    remote.lock().unwrap().conflict_at = vec!["b.csv", "c.csv"];
 
     let (inner, _) = tick(&model).await;
 
     assert_eq!(
         inner.paused.read().await.get(&ns()),
-        Some(&PausedReason::pull_conflict(&[PathBuf::from("b.csv")]))
+        Some(&PausedReason::Diverged)
     );
 }
 
