@@ -23,8 +23,8 @@
 
 ### Added
 
-- When syncing stops until you act, such as a conflict or an expired sign-in, QuiltSync posts a system notification while its window is not in front. Clicking it opens the page that fixes it, and Settings can turn it off (<https://github.com/quiltdata/quilt-rs/pull/PR>)
-- The tray icon shows a dot while something needs you, and its tooltip says how many (<https://github.com/quiltdata/quilt-rs/pull/PR>)
+- When syncing stops until you act, such as a conflict or an expired sign-in, QuiltSync posts a system notification while its window is not in front. Clicking it opens the page that fixes it, and Settings can turn it off (<https://github.com/quiltdata/quilt-rs/pull/1330>)
+- The tray icon shows a dot while something needs you, and its tooltip says how many (<https://github.com/quiltdata/quilt-rs/pull/1330>)
 
 ### Changed
 
@@ -37,7 +37,7 @@
 
 ### Fixed
 
-- The package page drops its paused band as soon as the pause clears, also when autosync is turned back on (<https://github.com/quiltdata/quilt-rs/pull/PR>)
+- The package page drops its paused band as soon as the pause clears, also when autosync is turned back on (<https://github.com/quiltdata/quilt-rs/pull/1330>)
 - A package task whose outcome loses `latest` to a revision published during the run lands its own changes on top of that revision instead of leaving the package Diverged, unless both changed the same file (<https://github.com/quiltdata/quilt-rs/pull/1320>)
 
 ### Security
