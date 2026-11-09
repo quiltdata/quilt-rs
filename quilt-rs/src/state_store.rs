@@ -15,10 +15,8 @@ use std::time::UNIX_EPOCH;
 
 use multihash::Multihash;
 use quilt_uri::Namespace;
+use rusqlite::OptionalExtension;
 use tokio::sync::Mutex;
-use tokio_rusqlite::Connection;
-use tokio_rusqlite::rusqlite;
-use tokio_rusqlite::rusqlite::OptionalExtension;
 use tracing::info;
 use tracing::warn;
 
@@ -393,7 +391,7 @@ impl PackageStateStore {
                 .is_some_and(|o| o.on_disk && self.path.as_deref().is_some_and(|p| !p.exists()));
             if gone {
                 info!("state store: {:?} is gone, creating it again", self.path);
-                *open = None;
+                close(&mut open).await;
             }
             if open.is_none() {
                 *open = self.open_connection().await;
@@ -403,14 +401,10 @@ impl PackageStateStore {
             let op = op.clone();
             match connection.call(move |db| op(db)).await {
                 Ok(value) => return Some(value),
-                Err(tokio_rusqlite::Error::Error(err))
-                    if on_disk && !discarded && err.is_damage() =>
-                {
+                Err(err) if on_disk && !discarded && err.is_damage() => {
                     warn!("state store: {err}; starting a new one");
                     // Closed first: Windows refuses to delete an open file.
-                    if let Some(old) = open.take() {
-                        let _ = old.connection.close().await;
-                    }
+                    close(&mut open).await;
                     self.discard_file();
                     discarded = true;
                 }
@@ -419,6 +413,7 @@ impl PackageStateStore {
                 // as it is.
                 Err(err) if on_disk => {
                     warn!("state store: {err}; keeping state in memory");
+                    close(&mut open).await;
                     *open = open_memory_or_log().await;
                 }
                 Err(err) => {
@@ -504,6 +499,14 @@ async fn open_file(path: &Path) -> Result<Connection, StoreError> {
     Ok(connection)
 }
 
+/// Closes on a blocking thread: dropping the last handle would close on the
+/// async one.
+async fn close(open: &mut Option<Open>) {
+    if let Some(old) = open.take() {
+        let _ = old.connection.close().await;
+    }
+}
+
 async fn open_memory_or_log() -> Option<Open> {
     match open_memory().await {
         Ok(connection) => Some(Open {
@@ -545,10 +548,58 @@ async fn migrate(connection: &Connection) -> Result<(), StoreError> {
             Ok(())
         })
         .await
-        .map_err(|err| match err {
-            tokio_rusqlite::Error::Error(err) => err,
-            _ => StoreError::Closed,
+}
+
+/// A SQLite connection whose work runs on tokio's blocking threads.
+#[derive(Clone)]
+struct Connection(Arc<std::sync::Mutex<Option<rusqlite::Connection>>>);
+
+impl Connection {
+    async fn open(path: &Path) -> Result<Self, StoreError> {
+        let path = path.to_owned();
+        Self::open_with(move || rusqlite::Connection::open(path)).await
+    }
+
+    async fn open_in_memory() -> Result<Self, StoreError> {
+        Self::open_with(rusqlite::Connection::open_in_memory).await
+    }
+
+    async fn open_with<F>(open: F) -> Result<Self, StoreError>
+    where
+        F: FnOnce() -> rusqlite::Result<rusqlite::Connection> + Send + 'static,
+    {
+        let db = tokio::task::spawn_blocking(open)
+            .await
+            .map_err(|_| StoreError::Closed)??;
+        Ok(Self(Arc::new(std::sync::Mutex::new(Some(db)))))
+    }
+
+    async fn call<T, F>(&self, f: F) -> Result<T, StoreError>
+    where
+        T: Send + 'static,
+        F: FnOnce(&mut rusqlite::Connection) -> Result<T, StoreError> + Send + 'static,
+    {
+        let inner = self.0.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut guard = inner.lock().map_err(|_| StoreError::Closed)?;
+            f(guard.as_mut().ok_or(StoreError::Closed)?)
         })
+        .await
+        .map_err(|_| StoreError::Closed)?
+    }
+
+    async fn close(&self) -> Result<(), StoreError> {
+        let inner = self.0.clone();
+        tokio::task::spawn_blocking(move || {
+            let db = inner.lock().map_err(|_| StoreError::Closed)?.take();
+            match db {
+                Some(db) => db.close().map_err(|(_, err)| err.into()),
+                None => Ok(()),
+            }
+        })
+        .await
+        .map_err(|_| StoreError::Closed)?
+    }
 }
 
 /// A `file_stat` row as SQLite holds it.
