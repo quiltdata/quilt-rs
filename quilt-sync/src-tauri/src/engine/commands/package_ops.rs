@@ -186,7 +186,7 @@ pub async fn reset_local(
     // Reset re-installs every tracked path, so it is the most destructive
     // write to interrupt — and it reaches the working tree through the same
     // primitive a pull does. The boundary is deliberate: this and pull are the
-    // two writes that can leave the tree between revisions, joined by the v2
+    // two writes that can leave the tree between revisions, joined by the package
     // page's backlog download, which catches a whole package up. Installing
     // picked paths only adds files, and a commit writes `.quilt` rather than
     // the working tree.
@@ -659,7 +659,7 @@ async fn package_uninstall_command(
 /// other package uses.
 ///
 /// What the prune freed goes to the toast stack, not the returned line: the
-/// v2 page that confirms it returns to the package list on success, and only
+/// page that confirms it returns to the package list on success, and only
 /// the stack outlives that.
 pub async fn package_uninstall(
     s: &Services,
@@ -698,7 +698,7 @@ pub async fn package_uninstall(
 ///
 /// A prune that fails after the uninstall is not a failed uninstall: the
 /// package is gone, so the command succeeds and the page moves on, and the
-/// toast says what was left behind. Answering an error would leave the v2
+/// toast says what was left behind. Answering an error would leave the
 /// page's confirmation open on a package that no longer exists.
 fn settle_uninstall(
     namespace: &str,
@@ -954,7 +954,7 @@ fn left_out_toast(
 
 /// Create a package, from a folder when `source` is given.
 ///
-/// What the ignore rules left out goes to the toast stack: the v2 dialog
+/// What the ignore rules left out goes to the toast stack: the dialog
 /// closes on success, and only the stack outlives it.
 pub async fn package_create(
     s: &Services,

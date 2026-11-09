@@ -1,8 +1,8 @@
-//! The login page v2: sign in to one catalog, in the browser or with a code
+//! The login page: sign in to one catalog, in the browser or with a code
 //! from it.
 //!
 //! [`LoginCard`] is the page's one region over props: the gallery draws it
-//! over fixtures, and [`LoginV2`] fills it from `get_login_data`. The code
+//! over fixtures, and [`Login`] fills it from `get_login_data`. The code
 //! typed and which sign-in is out are the page's, above the rebuild line.
 //!
 //! A code that signs in goes to `back`, or to `/` without one. Browser sign-in
@@ -20,9 +20,9 @@ use quilt_ui_kit::{
     TextInput, icons, readable,
 };
 
-use super::v2_page::{Outcome, PageHandle, PageRead, V2Page, critical, hold, still_here};
+use super::page::{Outcome, Page, PageHandle, PageRead, critical, hold, still_here};
 
-stylance::import_crate_style!(style, "src/pages/login_v2.module.css");
+stylance::import_crate_style!(style, "src/pages/login.module.css");
 
 /// Which sign-in is out.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -138,9 +138,9 @@ pub fn LoginCardSkeleton() -> impl IntoView {
     }
 }
 
-/// What `/login` renders in the v2 design.
+/// What `/login` renders.
 #[component]
-pub fn LoginV2() -> impl IntoView {
+pub fn Login() -> impl IntoView {
     view! { <LoginScreen read=read_login /> }
 }
 
@@ -279,7 +279,7 @@ pub(crate) fn LoginScreen(read: PageRead<LoginData>) -> impl IntoView {
     let on_submit = code_sign_in(page, answer, key, code, running);
 
     view! {
-        <V2Page
+        <Page
             heading="Log in"
             page=page
             answer=answer

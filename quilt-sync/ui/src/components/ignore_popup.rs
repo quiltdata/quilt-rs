@@ -674,7 +674,7 @@ mod tests {
         );
     }
 
-    /// The pattern starts as the one the caller suggested: the v2 pane's path.
+    /// The pattern starts as the one the caller suggested: the pane's path.
     #[wasm_bindgen_test]
     async fn the_pattern_starts_as_suggested_and_no_lock_leaves_the_submit_live() {
         let el = popup(None);

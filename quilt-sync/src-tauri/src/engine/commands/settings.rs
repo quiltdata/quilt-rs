@@ -530,9 +530,9 @@ fn opt_from_string(s: &str) -> Option<String> {
     (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
-/// Flip one direction of autosync from the v2 main page.
+/// Flip one direction of autosync from the main page.
 ///
-/// v2's own command rather than a call into `update_autosync_settings`, for the
+/// Its own command rather than a call into `update_autosync_settings`, for the
 /// reason §8 decision 2 gives: the main page knows two booleans and that command
 /// takes all five settings fields, so calling it would mean the page first
 /// fetching a settings payload it has no other use for. The two rules that
@@ -553,7 +553,7 @@ pub async fn set_autosync_direction(
     write_autosync_patch(s, autosync_settings, watcher, &patch).await
 }
 
-/// Change some of autosync's settings and leave the rest as stored: the v2
+/// Change some of autosync's settings and leave the rest as stored: the
 /// settings page saves each control as it changes.
 pub async fn patch_autosync_settings(s: &Services, patch: AutosyncPatch) -> Result<(), String> {
     let autosync_settings = &s.autosync_settings;

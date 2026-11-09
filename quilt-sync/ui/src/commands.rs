@@ -5,7 +5,7 @@ use crate::engine;
 
 // ── Response types ──────────────────────────────────────────
 
-/// The v2 file pane's facet counts, over the whole package. The facets are
+/// The file pane's facet counts, over the whole package. The facets are
 /// disjoint apart from `all`, which excludes only the ignored entries.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -19,7 +19,7 @@ pub struct EntryCounts {
     /// Also inside `ignored`: the folders among them.
     #[serde(default)]
     pub ignored_folders: usize,
-    /// Also inside `changed`; on its own because the v2 pane's all-downloaded
+    /// Also inside `changed`; on its own because the pane's all-downloaded
     /// caption must know about a deleted file past the list cap.
     pub deleted: usize,
 }
@@ -453,7 +453,7 @@ pub enum RemoteBanner {
     LocalOnly,
 }
 
-/// The v2 package page's payload. Mirrors
+/// The package page's payload. Mirrors
 /// `src-tauri/src/engine/commands/package_page.rs` field for field.
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -494,7 +494,7 @@ pub enum FilesData {
     Unlisted { reason: String },
 }
 
-/// The read-only facts shown beside the v2 package page.
+/// The read-only facts shown beside the package page.
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PackageContextData {
@@ -734,7 +734,7 @@ pub struct UpdateInfo {
 
 // ── Data-fetching commands ──────────────────────────────────
 
-/// Read everything the v2 package page draws, for one package.
+/// Read everything the package page draws, for one package.
 ///
 /// One read for the page rather than one per region — see
 /// `src-tauri/src/engine/commands/package_page.rs`.
@@ -974,12 +974,12 @@ pub async fn get_setup_data() -> Result<SetupData, String> {
     engine::invoke_unit("get_setup_data").await
 }
 
-/// v2's package list, light phase. Every row arrives `provisional`.
+/// The package list, light phase. Every row arrives `provisional`.
 pub async fn get_main_page_packages() -> Result<MainPagePackagesData, String> {
     engine::invoke_unit("get_main_page_packages").await
 }
 
-/// v2's package list, heavy phase. One invocation per row, fired by the
+/// The package list, heavy phase. One invocation per row, fired by the
 /// page's resolve; `pages::main_page::record_refresh` applies the answer.
 pub async fn refresh_main_page_package(
     namespace: String,
@@ -1212,7 +1212,7 @@ pub struct MainPageWatcherData {
     pub paused: Vec<PausedPackageData>,
 }
 
-/// v2's watcher state: both toggles and the pause list. Drawn by
+/// The watcher state: both toggles and the pause list. Drawn by
 /// `pages::main_page::autosync::AutosyncCard`.
 pub async fn get_main_page_watcher() -> Result<MainPageWatcherData, String> {
     engine::invoke_unit("get_main_page_watcher").await
@@ -1259,7 +1259,7 @@ pub struct MainPageAccountsData {
     pub hosts: Vec<AccountHostData>,
 }
 
-/// v2's accounts list, light phase: one row per host, `signedIn` only.
+/// The accounts list, light phase: one row per host, `signedIn` only.
 pub async fn get_main_page_accounts() -> Result<MainPageAccountsData, String> {
     engine::invoke_unit("get_main_page_accounts").await
 }
@@ -1278,7 +1278,7 @@ pub async fn get_main_page_link_handlers() -> Result<Vec<ForeignHandler>, String
     engine::invoke_unit("get_main_page_link_handlers").await
 }
 
-/// v2's accounts list, heavy phase: fills in the given host's role.
+/// The accounts list, heavy phase: fills in the given host's role.
 pub async fn refresh_main_page_account(host: String) -> Result<AccountHostData, String> {
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
@@ -1313,7 +1313,7 @@ pub struct MainPageRecentFilesData {
     pub files: Vec<MainPageFileData>,
 }
 
-/// v2's recent files feed, single-phase: drawn by
+/// The recent files feed, single-phase: drawn by
 /// `pages::main_page::recent_files::RecentFilesRegion`, and read by the main
 /// page's own resource only once the reader asks for that view.
 pub async fn get_main_page_recent_files() -> Result<MainPageRecentFilesData, String> {
@@ -1530,7 +1530,7 @@ pub async fn patch_autosync_settings(patch: AutosyncPatch) -> Result<(), String>
     engine::invoke("patch_autosync_settings", &Args { patch }).await
 }
 
-/// Flip one direction of autosync. `None` leaves a direction alone — the v2 main
+/// Flip one direction of autosync. `None` leaves a direction alone — the main
 /// page knows two booleans, and `update_autosync_settings` takes all five settings
 /// fields, so writing through that one would mean fetching a payload this page has
 /// no other use for.

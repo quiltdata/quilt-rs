@@ -1,11 +1,11 @@
-//! The routed settings page v2: `get_settings_data` mapped onto the cards
+//! The routed settings page: `get_settings_data` mapped onto the cards
 //! above, each control saving as it changes.
 //!
 //! # Above the rebuild line
 //!
 //! The body is rebuilt only when what it draws as fixed text changes: the
 //! version, the folders, the log variable, the release notes ([`Fixed`]).
-//! Everything a reader changes is the page's, made before [`V2Page`], so no
+//! Everything a reader changes is the page's, made before [`Page`], so no
 //! re-read takes it away:
 //!
 //! - every control's value ([`Fields`]): the toggles, the minute fields as
@@ -63,7 +63,7 @@ use quilt_ui_kit::{
     ToggleRowSkeleton,
 };
 
-use super::super::v2_page::{PageHandle, PageRead, V2Page, critical, hold};
+use super::super::page::{Page, PageHandle, PageRead, critical, hold};
 use super::{
     AboutCard, AccountHost, AccountsCard, AgentDraft, AgentTasksCard, AgentTasksDialog, AppCard,
     BuiltInRule, ExperimentalCard, IgnoreRulesCard, IgnoreRulesDialog, PublishingCard,
@@ -171,9 +171,9 @@ const TAURI: SettingsIo = SettingsIo {
     edit_rules,
 };
 
-/// What `/settings` renders in the v2 design.
+/// What `/settings` renders.
 #[component]
-pub fn SettingsV2() -> impl IntoView {
+pub fn Settings() -> impl IntoView {
     view! { <SettingsScreen io=TAURI /> }
 }
 
@@ -1401,7 +1401,7 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
             save=save_publishing
             running=busy
         />
-        <V2Page
+        <Page
             heading="Settings"
             page=page
             answer=fixed
@@ -2287,9 +2287,7 @@ mod tests {
             let slot = el.query_selector(hook).unwrap().unwrap();
             assert!(slot.class_list().contains(super::style::slot), "{hook}");
         }
-        assert!(
-            include_str!("../settings_v2.module.css").contains(".slot {\n  display: contents;")
-        );
+        assert!(include_str!("../settings.module.css").contains(".slot {\n  display: contents;"));
     }
 
     /// Sign out, confirmed, erases that host's credentials through

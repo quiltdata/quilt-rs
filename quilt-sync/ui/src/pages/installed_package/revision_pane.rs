@@ -17,7 +17,7 @@ use super::Outcome;
 
 stylance::import_crate_style!(
     style,
-    "src/pages/installed_package_v2/revision_pane.module.css"
+    "src/pages/installed_package/revision_pane.module.css"
 );
 
 /// Whether the registry lists the revision, as the *History* read says.

@@ -25,7 +25,7 @@ use quilt_ui_kit::{
     RevisionRow, Submit, differs_id, unique_id,
 };
 
-stylance::import_crate_style!(style, "src/pages/installed_package_v2/resolve.module.css");
+stylance::import_crate_style!(style, "src/pages/installed_package/resolve.module.css");
 
 /// The pane's one sentence, counting the page's differing set.
 #[must_use]
@@ -110,8 +110,7 @@ pub(super) fn consequence(unpublished: usize, differing: usize, uncommitted: usi
 }
 
 /// What making this copy's revision the shared one takes from the published
-/// one, or `None` when it takes nothing and the choice need not ask. v1's
-/// *Promote my revision* asks with the same words.
+/// one, or `None` when it takes nothing and the choice need not ask.
 #[must_use]
 pub fn share_consequence(loss: commands::LatestLoss) -> Option<String> {
     let commands::LatestLoss { entries, metadata } = loss;
@@ -480,7 +479,7 @@ mod tests {
         differs_sentence, share_consequence,
     };
     use crate::commands::{CurrentRevisionData, LatestLoss, MergeBlock, ResolveData};
-    use crate::pages::installed_package_v2::{Outcome, Wiring};
+    use crate::pages::installed_package::{Outcome, Wiring};
     use leptos::prelude::*;
     use quilt_ui_kit::test_support::{button_saying, element_saying, mount, sleep_ms};
     use quilt_ui_kit::{BannerVariant, DIFFERS_ID};
@@ -737,7 +736,7 @@ mod tests {
         let el = mount(move || {
             provide_context(shown);
             view! {
-                <div data-v2-page style="height:200px; overflow-y:auto">
+                <div data-page style="height:200px; overflow-y:auto">
                     {move || {
                         rebuilt.track();
                         view! {
@@ -757,7 +756,7 @@ mod tests {
                 </div>
             }
         });
-        let frame = el.query_selector("[data-v2-page]").unwrap().unwrap();
+        let frame = el.query_selector("[data-page]").unwrap().unwrap();
         sleep_ms(50).await;
         frame.set_scroll_top(2000);
         rebuilt.update(|n| *n += 1);

@@ -30,7 +30,7 @@ use crate::engine::toast::ToastCenter;
 use crate::engine::toast::ToastDraft;
 use crate::engine::toast::ToastKind;
 
-/// Everything the v2 package page draws, for one package.
+/// Everything the package page draws, for one package.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PackagePageData {
@@ -75,7 +75,7 @@ pub enum FilesData {
     },
 }
 
-/// The read-only facts shown beside the v2 package page.
+/// The read-only facts shown beside the package page.
 #[derive(Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PackageContextData {
@@ -633,7 +633,7 @@ fn package_context_data(
     })
 }
 
-/// The v2 package page's one read.
+/// The package page's one read.
 ///
 /// One command for the page rather than one per region: the header's state and
 /// the file pane's entries fall out of a single status computation, so two

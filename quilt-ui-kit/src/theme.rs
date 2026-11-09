@@ -150,7 +150,7 @@ mod tests {
                 // would need a real parser.
                 for branch in selector.split(',').map(str::trim) {
                     assert!(
-                        branch.contains("[data-v2-page]") || branch.contains("[data-booting]"),
+                        branch.contains("[data-page]") || branch.contains("[data-booting]"),
                         "{file}: `{branch}` would darken the document's canvas"
                     );
                 }

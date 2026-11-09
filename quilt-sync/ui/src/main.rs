@@ -57,15 +57,15 @@ fn App() -> impl IntoView {
 #[component]
 fn PageRoutes() -> impl IntoView {
     view! {
-        <Routes fallback=pages::NotFoundV2>
+        <Routes fallback=pages::NotFound>
             <Route path=path!("/") view=pages::MainPage />
-            <Route path=path!("/commit") view=pages::CommitV2 />
-            <Route path=path!("/installed-package") view=pages::InstalledPackageV2 />
-            <Route path=path!("/login") view=pages::LoginV2 />
-            <Route path=path!("/error") view=pages::ErrorV2 />
-            <Route path=path!("/remote-package") view=pages::RemotePackageV2 />
-            <Route path=path!("/settings") view=pages::SettingsV2 />
-            <Route path=path!("/setup") view=pages::SetupV2 />
+            <Route path=path!("/commit") view=pages::Commit />
+            <Route path=path!("/installed-package") view=pages::InstalledPackage />
+            <Route path=path!("/login") view=pages::Login />
+            <Route path=path!("/error") view=pages::Error />
+            <Route path=path!("/remote-package") view=pages::RemotePackage />
+            <Route path=path!("/settings") view=pages::Settings />
+            <Route path=path!("/setup") view=pages::Setup />
         </Routes>
     }
 }
@@ -153,11 +153,7 @@ mod tests {
             let mounted = Mounted::at(address);
             quilt_ui_kit::test_support::sleep_ms(0).await;
             assert!(
-                mounted
-                    .el
-                    .query_selector("[data-v2-page]")
-                    .unwrap()
-                    .is_some(),
+                mounted.el.query_selector("[data-page]").unwrap().is_some(),
                 "{address}: markup was {}",
                 mounted.el.inner_html()
             );

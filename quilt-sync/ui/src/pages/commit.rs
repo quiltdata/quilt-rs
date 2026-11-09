@@ -1,10 +1,10 @@
-//! The commit page v2's regions, as views over props.
+//! The commit page's regions, as views over props.
 //!
-//! The gallery draws them over fixtures, and [`CommitV2`] fills the same
+//! The gallery draws them over fixtures, and [`Commit`] fills the same
 //! props from `get_commit_data`. Every effect is a callback.
 //! [`CommitColumn`] fixes the order: header, problem, message, workflow,
 //! metadata, then the files. Wide, the files are a column beside the form.
-//! v2 vocabulary only; a test holds the fixed strings to the banned words.
+//! Only the design's vocabulary; a test holds the fixed strings to the banned words.
 
 use leptos::prelude::*;
 
@@ -34,14 +34,14 @@ use quilt_ui_kit::Trail;
 use quilt_ui_kit::TwoColumns;
 use quilt_ui_kit::icons;
 
-use super::installed_package_v2::{MenuCommand, MenuItem, remote_item, remove_item};
+use super::installed_package::{MenuCommand, MenuItem, remote_item, remove_item};
 use super::json_editor::{JsonEditor, focus_json_editor};
 use super::row_menu::{RowCommand, menu_actions};
 
-stylance::import_crate_style!(style, "src/pages/commit_v2.module.css");
+stylance::import_crate_style!(style, "src/pages/commit.module.css");
 
 mod page;
-pub use page::CommitV2;
+pub use page::Commit;
 
 /// What the revision will do, which decides the primary's words.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -749,7 +749,7 @@ impl MetadataPreview {
     }
 }
 
-/// How a file differs, in the v2 file pane's words.
+/// How a file differs, in the file pane's words.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Change {
     Changed,
@@ -1017,7 +1017,7 @@ mod layout_tests {
             ],
         );
         load_module_style(
-            include_str!("commit_v2.module.css"),
+            include_str!("commit.module.css"),
             &[
                 ("column", style::column),
                 ("form", style::form),
@@ -1101,7 +1101,7 @@ mod layout_tests {
                 .collect::<Vec<_>>();
             view! {
                 <div
-                    data-page=""
+                    data-page-test=""
                     style=format!(
                         "{TOKENS}; width:{width}px; height:600px; display:flex; \
                          flex-direction:column; overflow-y:auto",
@@ -1130,7 +1130,7 @@ mod layout_tests {
     async fn a_long_list_scrolls_in_its_own_box() {
         for width in [1200, 800] {
             let el = page_with_files(width, 100).await;
-            let page = el.query_selector("[data-page]").unwrap().unwrap();
+            let page = el.query_selector("[data-page-test]").unwrap().unwrap();
             assert_eq!(
                 page.scroll_height(),
                 page.client_height(),

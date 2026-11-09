@@ -1,4 +1,4 @@
-//! The settings page v2's cards, as views over props.
+//! The settings page's cards, as views over props.
 //!
 //! The gallery draws them over fixtures; the port fills the same props from
 //! `get_settings_data`. Every effect is a callback. [`SettingsLayout`] fixes
@@ -45,12 +45,12 @@ use quilt_ui_kit::TextInput;
 use quilt_ui_kit::ToggleRow;
 use quilt_ui_kit::TwoColumns;
 
-use super::commit_v2::{MetadataEditorField, MetadataPreview};
+use super::commit::{MetadataEditorField, MetadataPreview};
 
-stylance::import_crate_style!(style, "src/pages/settings_v2.module.css");
+stylance::import_crate_style!(style, "src/pages/settings.module.css");
 
 mod page;
-pub use page::SettingsV2;
+pub use page::Settings;
 
 /// A row that saves as it changes, so it can say it did.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1712,7 +1712,7 @@ pub fn ReportDialog(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pages::commit_v2::tests::banned_in;
+    use crate::pages::commit::tests::banned_in;
 
     #[test]
     fn a_stored_interval_shows_in_whole_minutes() {
@@ -2327,7 +2327,7 @@ mod tests {
             ],
         );
         quilt_ui_kit::test_support::load_module_style(
-            include_str!("settings_v2.module.css"),
+            include_str!("settings.module.css"),
             &[
                 ("slot", style::slot),
                 ("row", style::row),
@@ -2432,7 +2432,7 @@ mod tests {
         // As the app's normalize sets every box.
         let css = format!(
             "{}\n[data-legend-test] legend {{ box-sizing: border-box; }}",
-            include_str!("settings_v2.module.css")
+            include_str!("settings.module.css")
         );
         quilt_ui_kit::test_support::load_module_style(
             &css,

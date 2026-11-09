@@ -333,9 +333,8 @@ fn verdict_held_still(
     reason = "one tick's inputs, each read from a different source; bundling them \
               would invent a struct that exists only to satisfy the count"
 )]
-// 106 lines, and it crossed the limit in the merge that brought
-// `feat/main-page-v2-tokens` together with main: this branch added the publish
-// deferral's arm time, main added the apply-epoch sampling and the verdict gate,
+// 106 lines, and it crossed the limit in a merge with main: the branch added the
+// publish deferral's arm time, main added the apply-epoch sampling and the verdict gate,
 // and neither alone was over.
 //
 // Not split, because the split is worse than the length. The body is two

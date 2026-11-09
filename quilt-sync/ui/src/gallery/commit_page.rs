@@ -1,7 +1,7 @@
-//! The commit page v2, one cell per state.
+//! The commit page, one cell per state.
 //!
-//! Every region is `pages::commit_v2`'s own, over fixture props, so the routed
-//! page (`pages::CommitV2`) and this scene cannot drift. Callbacks are dropped.
+//! Every region is `pages::commit`'s own, over fixture props, so the routed
+//! page (`pages::Commit`) and this scene cannot drift. Callbacks are dropped.
 //!
 //! # Measured in Chrome
 //!
@@ -41,7 +41,7 @@ use leptos::prelude::*;
 use crate::Cell;
 use crate::Scene;
 use crate::gallery::button_group::location;
-use crate::pages::commit_v2::{
+use crate::pages::commit::{
     Change, CommitColumn, CommitHeader, CommitPageSkeleton, IncludedFile, IncludedList,
     MessageField, MetadataField, Primary, PrimaryWiring, Problem, ProblemBanner, WorkflowChoice,
     WorkflowField,
@@ -278,7 +278,7 @@ fn loading() -> AnyView {
     .into_any()
 }
 
-const NOTE: &str = "The commit page v2. The header and any banner span the page; under them \
+const NOTE: &str = "The commit page. The header and any banner span the page; under them \
     the form is on the left and the changed files on the right, scrolling in their own box. \
     Narrower than about a 1024px window it is one column, the files last. The state cells are \
     at 1024×560; then the default 1280×900, one column at 1000, and the window's narrowest, 640.";
@@ -288,7 +288,7 @@ const FAILED_CHECK: &str = "The workflow requires an \"operator\" field in the m
 #[component]
 pub fn CommitPageScene() -> impl IntoView {
     view! {
-        <Scene title="The commit page v2" note=NOTE>
+        <Scene title="The commit page" note=NOTE>
             <Cell full=true label="files changed, at rest">
                 {page(Fixture::new("commit-rest"))}
             </Cell>

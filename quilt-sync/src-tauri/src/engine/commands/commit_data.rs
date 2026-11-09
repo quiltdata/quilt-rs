@@ -90,7 +90,7 @@ pub struct CommitData {
     pub ignored_count: usize,
     pub unmodified_count: usize,
     /// The package's entries by kind, over the whole package rather than the
-    /// capped `entries`, as the v2 package page counts them. `counts.changed`
+    /// capped `entries`, as the package page counts them. `counts.changed`
     /// is what `Publish N files` says.
     pub counts: EntryCounts,
     /// The bytes the revision brings in: the new and changed files' sizes,

@@ -1,6 +1,6 @@
-//! The settings page v2, one cell per state.
+//! The settings page, one cell per state.
 //!
-//! Every card is `pages::settings_v2`'s own, over fixture props, so the port
+//! Every card is `pages::settings`'s own, over fixture props, so the port
 //! and this scene cannot drift. Callbacks are dropped. Cards are drawn at the
 //! page column's width; the last cells are the whole page at four window
 //! sizes. Its appbar has no actions: Refresh and Settings belong to the
@@ -40,7 +40,7 @@ use leptos::prelude::*;
 
 use crate::Cell;
 use crate::Scene;
-use crate::pages::settings_v2::{
+use crate::pages::settings::{
     AboutCard, AccountHost, AccountsCard, AgentDraft, AgentTasksCard, AgentTasksDialog,
     AgentTasksForm, AppCard, BuiltInRule, ExperimentalCard, IgnoreRulesCard, IgnoreRulesForm,
     PublishingCard, PublishingDialog, PublishingForm, ReportBody, ReportDialog, ReportFooter,
@@ -526,7 +526,7 @@ fn whole_page(width: u32, height: u32) -> AnyView {
     .into_any()
 }
 
-const NOTE: &str = "The settings page v2. From a 1024px window, two cards to a row: Syncing and \
+const NOTE: &str = "The settings page. From a 1024px window, two cards to a row: Syncing and \
     Accounts, Storage and App, Publishing and Troubleshooting, Experimental and About, then Ignore \
     rules, with Agent tasks beside it while its experiment is on. Narrower, \
     the same order in one column. Toggles, selects and minute fields save as they change and say \
@@ -539,7 +539,7 @@ pub fn SettingsPageScene() -> impl IntoView {
     let report_open = RwSignal::new(false);
 
     view! {
-        <Scene title="The settings page v2" note=NOTE>
+        <Scene title="The settings page" note=NOTE>
             <Cell full=true label="Syncing — the defaults: Get new revisions on, every minute; Publish off">
                 {column(syncing(Syncing::default()))}
             </Cell>
