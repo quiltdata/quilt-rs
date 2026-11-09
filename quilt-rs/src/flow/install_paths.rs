@@ -191,11 +191,29 @@ async fn holds(storage: &impl Storage, working_dest: &Path, row: ManifestRow) ->
 /// edited since a caller verified it there. A missing file has nothing to lose.
 /// A file that cannot be read is an I/O failure, not an edit, as in the pull's
 /// verify pass.
+///
+/// The hash reads through an open handle, so an editor that saves by renaming
+/// a new file over this one leaves it hashing the old bytes; a modified time
+/// that moved during the hash counts as an edit.
 async fn edited(storage: &impl Storage, working_dest: &Path, row: &ManifestRow) -> Res<bool> {
-    match refresh_hash(storage, working_dest, row.clone()).await {
-        Ok(changed) => Ok(changed.is_some()),
-        Err(err) if err.is_not_found() => Ok(false),
-        Err(err) => Err(err),
+    let modified = || async {
+        match storage.modified_timestamp(working_dest).await {
+            Ok(at) => Ok(Some(at)),
+            Err(err) if err.is_not_found() => Ok(None),
+            Err(err) => Err(err),
+        }
+    };
+    let Some(before) = modified().await? else {
+        return Ok(false);
+    };
+    let changed = match refresh_hash(storage, working_dest, row.clone()).await {
+        Ok(changed) => changed.is_some(),
+        Err(err) if err.is_not_found() => return Ok(false),
+        Err(err) => return Err(err),
+    };
+    match modified().await? {
+        Some(after) => Ok(changed || after != before),
+        None => Ok(false),
     }
 }
 

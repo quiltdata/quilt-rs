@@ -1202,13 +1202,13 @@ mod tests {
         )
         .await?;
         // The fetched object lands in the store mid-fetch.
-        let storage = SaveOnRename {
-            inner: &copy.storage,
-            renamed_onto: copy
-                .paths
-                .object(row_at("a.txt", b"new-a", "").hash.digest()),
-            saved: wd().join("gone.txt"),
-        };
+        let storage = SaveDuring::new(
+            &copy.storage,
+            When::RenamedOnto(
+                copy.paths
+                    .object(row_at("a.txt", b"new-a", "").hash.digest()),
+            ),
+        );
 
         let result = copy.apply(&storage, &LocalWork::Protect).await;
 
@@ -1251,11 +1251,7 @@ mod tests {
             &[("a.txt", b"new-a")],
         )
         .await?;
-        let storage = SaveOnRename {
-            inner: &copy.storage,
-            renamed_onto: wd().join("a.txt"),
-            saved: wd().join("gone.txt"),
-        };
+        let storage = SaveDuring::new(&copy.storage, When::RenamedOnto(wd().join("a.txt")));
 
         let (lineage, applied) = copy.apply(&storage, &LocalWork::Protect).await?;
 
@@ -1269,6 +1265,31 @@ mod tests {
         assert!(!lineage.paths.contains_key(Path::new("gone.txt")));
         assert_eq!(copy.on_disk("a.txt").await.as_deref(), Some(&b"new-a"[..]));
         assert!(lineage.paths.contains_key(Path::new("a.txt")));
+        Ok(())
+    }
+
+    /// An editor that saves by renaming a new file over the old one, while the
+    /// check before the delete is reading the old one, leaves that read seeing
+    /// `base`'s bytes; the save is still kept.
+    #[test(tokio::test)]
+    async fn a_removed_file_replaced_while_checked_before_its_delete_is_kept() -> Res {
+        let copy = copy_at_base(
+            &[("a.txt", b"base-a"), ("gone.txt", b"base-gone")],
+            &[("a.txt", b"new-a")],
+        )
+        .await?;
+        // The first read is the check before the renames, the second the
+        // check before the delete.
+        let storage = SaveDuring::new(&copy.storage, When::ReadFor(2));
+
+        let (_, applied) = copy.apply(&storage, &LocalWork::Protect).await?;
+
+        assert_eq!(
+            copy.on_disk("gone.txt").await.as_deref(),
+            Some(USERS_SAVE),
+            "the user's save was deleted"
+        );
+        assert_eq!(applied.kept, vec![PathBuf::from("gone.txt")]);
         Ok(())
     }
 
@@ -1328,16 +1349,42 @@ mod tests {
         Ok(())
     }
 
-    /// [`MockStorage`] that saves [`USERS_SAVE`] to `saved` as soon as a file
-    /// is renamed onto `renamed_onto`: a save landing at a chosen step of the
-    /// apply, which an in-process test cannot otherwise interleave.
-    struct SaveOnRename<'a> {
-        inner: &'a MockStorage,
-        renamed_onto: PathBuf,
-        saved: PathBuf,
+    /// When [`SaveDuring`] saves.
+    enum When {
+        /// Once a file is renamed onto this path.
+        RenamedOnto(PathBuf),
+        /// Once `gone.txt` is opened for the nth time, after it is opened.
+        ReadFor(usize),
     }
 
-    impl Storage for SaveOnRename<'_> {
+    /// [`MockStorage`] that saves [`USERS_SAVE`] over `gone.txt` as an editor
+    /// does, renaming a new file over the old one, at a chosen step of the
+    /// apply, which an in-process test cannot otherwise interleave.
+    struct SaveDuring<'a> {
+        inner: &'a MockStorage,
+        when: When,
+        opens: std::sync::atomic::AtomicUsize,
+    }
+
+    impl<'a> SaveDuring<'a> {
+        fn new(inner: &'a MockStorage, when: When) -> Self {
+            Self {
+                inner,
+                when,
+                opens: std::sync::atomic::AtomicUsize::new(0),
+            }
+        }
+
+        async fn save(&self) -> Res {
+            let swap = wd().join(".gone.txt.swp");
+            self.inner
+                .write_byte_stream(&swap, ByteStream::from_static(USERS_SAVE))
+                .await?;
+            self.inner.rename(swap, wd().join("gone.txt")).await
+        }
+    }
+
+    impl Storage for SaveDuring<'_> {
         async fn copy(
             &self,
             from: impl AsRef<Path> + Send,
@@ -1364,7 +1411,15 @@ mod tests {
             self.inner.modified_timestamp(path).await
         }
         async fn open_file(&self, path: impl AsRef<Path> + Send) -> Res<tokio::fs::File> {
-            self.inner.open_file(path).await
+            let gone = path.as_ref() == wd().join("gone.txt");
+            let file = self.inner.open_file(path).await?;
+            if let When::ReadFor(nth) = self.when
+                && gone
+                && self.opens.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1 == nth
+            {
+                self.save().await?;
+            }
+            Ok(file)
         }
         async fn read_byte_stream(&self, path: impl AsRef<Path> + Send + Sync) -> Res<ByteStream> {
             self.inner.read_byte_stream(path).await
@@ -1379,12 +1434,10 @@ mod tests {
             self.inner.remove_file(path).await
         }
         async fn rename(&self, from: impl AsRef<Path> + Send, to: impl AsRef<Path> + Send) -> Res {
-            let onto = to.as_ref() == self.renamed_onto;
+            let onto = matches!(&self.when, When::RenamedOnto(onto) if to.as_ref() == onto);
             self.inner.rename(from, to).await?;
             if onto {
-                self.inner
-                    .write_byte_stream(&self.saved, ByteStream::from_static(USERS_SAVE))
-                    .await?;
+                self.save().await?;
             }
             Ok(())
         }
