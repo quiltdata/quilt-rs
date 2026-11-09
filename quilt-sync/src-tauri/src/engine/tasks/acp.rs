@@ -8,20 +8,20 @@ use agent_client_protocol::Agent;
 use agent_client_protocol::ByteStreams;
 use agent_client_protocol::Client;
 use agent_client_protocol::ConnectTo;
-use agent_client_protocol::ConnectionTo;
 use agent_client_protocol::ErrorCode;
 use agent_client_protocol::schema::ProtocolVersion;
-use agent_client_protocol::schema::v1::ContentBlock;
-use agent_client_protocol::schema::v1::InitializeRequest;
-use agent_client_protocol::schema::v1::NewSessionRequest;
-use agent_client_protocol::schema::v1::PermissionOptionKind;
-use agent_client_protocol::schema::v1::PromptRequest;
-use agent_client_protocol::schema::v1::RequestPermissionOutcome;
-use agent_client_protocol::schema::v1::RequestPermissionRequest;
-use agent_client_protocol::schema::v1::RequestPermissionResponse;
-use agent_client_protocol::schema::v1::SelectedPermissionOutcome;
-use agent_client_protocol::schema::v1::StopReason;
-use agent_client_protocol::schema::v1::TextContent;
+use agent_client_protocol::v1::ConnectionTo;
+use agent_client_protocol::v1::schema::ContentBlock;
+use agent_client_protocol::v1::schema::InitializeRequest;
+use agent_client_protocol::v1::schema::NewSessionRequest;
+use agent_client_protocol::v1::schema::PermissionOptionKind;
+use agent_client_protocol::v1::schema::PromptRequest;
+use agent_client_protocol::v1::schema::RequestPermissionOutcome;
+use agent_client_protocol::v1::schema::RequestPermissionRequest;
+use agent_client_protocol::v1::schema::RequestPermissionResponse;
+use agent_client_protocol::v1::schema::SelectedPermissionOutcome;
+use agent_client_protocol::v1::schema::StopReason;
+use agent_client_protocol::v1::schema::TextContent;
 use tokio_util::compat::TokioAsyncReadCompatExt;
 use tokio_util::compat::TokioAsyncWriteCompatExt;
 
@@ -121,7 +121,7 @@ async fn converse(
     let prompted = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let prompting = prompted.clone();
     let connected = Client
-        .builder()
+        .v1()
         .on_receive_request(
             async move |request: RequestPermissionRequest, responder, _cx| {
                 responder.respond(answer(&request, trust_all, &root))
@@ -180,7 +180,7 @@ async fn session(
 }
 
 fn signed_out(err: &agent_client_protocol::Error) -> bool {
-    err.code == ErrorCode::AuthRequired
+    err.code == ErrorCode::AUTH_REQUIRED
 }
 
 fn not_started(err: &agent_client_protocol::Error) -> RunOutcome {
@@ -298,13 +298,13 @@ mod tests {
     use super::*;
 
     use agent_client_protocol::Channel;
-    use agent_client_protocol::schema::v1::InitializeResponse;
-    use agent_client_protocol::schema::v1::NewSessionResponse;
-    use agent_client_protocol::schema::v1::PermissionOption;
-    use agent_client_protocol::schema::v1::PromptResponse;
-    use agent_client_protocol::schema::v1::ToolCallLocation;
-    use agent_client_protocol::schema::v1::ToolCallUpdate;
-    use agent_client_protocol::schema::v1::ToolCallUpdateFields;
+    use agent_client_protocol::v1::schema::InitializeResponse;
+    use agent_client_protocol::v1::schema::NewSessionResponse;
+    use agent_client_protocol::v1::schema::PermissionOption;
+    use agent_client_protocol::v1::schema::PromptResponse;
+    use agent_client_protocol::v1::schema::ToolCallLocation;
+    use agent_client_protocol::v1::schema::ToolCallUpdate;
+    use agent_client_protocol::v1::schema::ToolCallUpdateFields;
 
     const ROOT: &str = "/home/u/QuiltSync/acme/demo";
 
@@ -526,7 +526,7 @@ mod tests {
         let prompted = seen.clone();
         tokio::spawn(
             Agent
-                .builder()
+                .v1()
                 .on_receive_request(
                     async move |request: InitializeRequest, responder, _cx| {
                         responder.respond(InitializeResponse::new(request.protocol_version))

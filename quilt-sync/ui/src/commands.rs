@@ -530,12 +530,24 @@ pub enum ResolveData {
         published_message: Option<String>,
         /// Logical keys that differ, sorted and uncapped: the file pane's marks.
         differing: Vec<String>,
+        loss: LatestLoss,
         unpublished: usize,
         uncommitted: usize,
     },
     Refused {
         reason: String,
     },
+}
+
+/// What the published `latest` loses when this copy's revision replaces it.
+/// Mirrors `src-tauri/src/engine/commands/package_page.rs`; the serde attributes MUST match.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LatestLoss {
+    /// Published entries this copy's revision lacks or holds otherwise.
+    pub entries: usize,
+    /// Whether the published metadata is replaced.
+    pub metadata: bool,
 }
 
 /// Which files this copy keeps. Mirrors
@@ -2223,8 +2235,8 @@ pub async fn send_crash_report(
 mod tests {
     use super::{
         CommitViolation, CommitWorkflows, EntryCounts, EntryList, FilesData, KeepingScope,
-        KeptReason, PackageContextData, PackageSize, PullOutcome, PullPreview, ResolveData,
-        RevisionHistoryData, RolesData, ViolationField, WorkflowInfo, WorkflowIntent,
+        KeptReason, LatestLoss, PackageContextData, PackageSize, PullOutcome, PullPreview,
+        ResolveData, RevisionHistoryData, RolesData, ViolationField, WorkflowInfo, WorkflowIntent,
     };
     use quilt_ui_kit::RowDownloads;
 
@@ -2387,7 +2399,7 @@ mod tests {
     #[test]
     fn resolve_compared_wire_form_is_verbatim() {
         let resolve = serde_json::from_str::<ResolveData>(
-            r#"{"kind":"compared","publishedMessage":"Add intake folder-upload note","differing":["plate/a.csv","plate/b.csv"],"unpublished":2,"uncommitted":1}"#,
+            r#"{"kind":"compared","publishedMessage":"Add intake folder-upload note","differing":["plate/a.csv","plate/b.csv"],"loss":{"entries":3,"metadata":true},"unpublished":2,"uncommitted":1}"#,
         )
         .unwrap();
 
@@ -2396,6 +2408,10 @@ mod tests {
             ResolveData::Compared {
                 published_message: Some("Add intake folder-upload note".to_string()),
                 differing: vec!["plate/a.csv".to_string(), "plate/b.csv".to_string()],
+                loss: LatestLoss {
+                    entries: 3,
+                    metadata: true,
+                },
                 unpublished: 2,
                 uncommitted: 1,
             }

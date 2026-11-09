@@ -19,6 +19,17 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.53.0-dev]
+
+### Added
+
+- **Breaking:** `flow::ResolveComparison` says what making this revision `latest` takes from the published one: `lost`, the published rows it lacks or holds at another content hash or entry `meta`, and `user_meta_differs` (<https://github.com/quiltdata/quilt-rs/pull/1321>)
+- `flow::push_onto` and `LocalDomain::push_onto` publish a manifest whose rows are already on the remote as the revision after a given parent, and move `latest` to it only while `latest` still names that parent (<https://github.com/quiltdata/quilt-rs/pull/1320>)
+
+### Fixed
+
+- `reset_to_latest` on a copy already at `latest`'s revision records that revision as its base, so the copy reads up to date rather than Diverged (<https://github.com/quiltdata/quilt-rs/pull/1320>)
+
 ## [v0.52.0] - 2026-11-05
 
 ### Added

@@ -238,6 +238,7 @@ mod tests {
         d.context.resolve = Some(commands::ResolveData::Compared {
             published_message: Some("Theirs".to_string()),
             differing: vec!["plate/a.csv".to_string()],
+            loss: commands::LatestLoss::default(),
             unpublished: 1,
             uncommitted: 0,
         });

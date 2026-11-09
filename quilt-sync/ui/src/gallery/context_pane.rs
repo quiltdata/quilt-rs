@@ -38,6 +38,7 @@ use quilt_uri::Namespace;
 use crate::Cell;
 use crate::Scene;
 use crate::commands::CurrentRevisionData;
+use crate::commands::LatestLoss;
 use crate::commands::PackageSize;
 use crate::commands::ResolveData;
 use crate::commands::RevisionHistoryData;
@@ -575,6 +576,10 @@ fn compared() -> ResolveData {
     ResolveData::Compared {
         published_message: Some("Add intake folder-upload note".to_string()),
         differing: MARKED.iter().map(|&key| key.to_string()).collect(),
+        loss: LatestLoss {
+            entries: 2,
+            metadata: true,
+        },
         unpublished: 2,
         uncommitted: 1,
     }

@@ -189,6 +189,17 @@ pub trait QuiltModel {
             .await?)
     }
 
+    /// [`quilt::LocalDomain::push_onto`], with the domain released before
+    /// the round trips.
+    async fn push_onto(
+        &self,
+        parent: &quilt_uri::ManifestUri,
+        manifest: quilt::manifest::Manifest,
+    ) -> Result<quilt::PushOutcome, Error> {
+        let quilt = self.get_quilt().lock().await.clone();
+        Ok(quilt.push_onto(parent, manifest).await?)
+    }
+
     async fn get_installed_packages_list(&self) -> Result<Vec<quilt::InstalledPackage>, Error> {
         Ok(self
             .get_quilt()

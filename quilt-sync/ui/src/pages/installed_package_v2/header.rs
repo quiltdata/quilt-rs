@@ -750,8 +750,8 @@ pub fn PageHeader(
         remove: remove_open,
         // The menu resets it, and the dialog reads it, through `w`.
         remove_prune: _,
-        // The resolve pane's confirmation, not the header's.
-        replace: _,
+        // The resolve pane's confirmations, not the header's.
+        resolve: _,
     } = dialogs;
     let payload = StoredValue::new(data.clone());
     let rendered = render(&data.state, kit::Site::PageHeader);
@@ -1951,8 +1951,9 @@ mod tests {
     }
 
     /// Nothing else on the header confirms. A third `ConfirmDialog` here would be
-    /// a tone rule nobody decided; the pane's `Replace mine` is the
-    /// page's one other, decided in `replace-confirmation`.
+    /// a tone rule nobody decided; the pane's `Replace mine` and `Share mine`
+    /// are the page's others, decided in `replace-confirmation` and
+    /// `d-share-mine-names-loss`.
     #[wasm_bindgen_test]
     fn only_the_two_danger_items_are_followed_by_a_confirmation() {
         let el = mount_header(data(kit::PackageState::Latest));

@@ -218,7 +218,15 @@ pub struct Dialogs {
     /// Remove's *Also delete downloaded files from disk*. Here for the flags'
     /// reason: a re-read must not tick a box the reader just cleared.
     pub remove_prune: RwSignal<bool>,
-    /// Resolve's *Replace mine*: here, so a re-read mid-reset keeps it open.
+    /// Resolve's confirmations: here, so a re-read mid-command keeps them
+    /// open. One handle, as `bucket_draft` is, for the same reason.
+    pub resolve: StoredValue<ResolveDialogs>,
+}
+
+/// Resolve's confirmations' flags.
+#[derive(Clone, Copy)]
+pub struct ResolveDialogs {
+    pub share: RwSignal<bool>,
     pub replace: RwSignal<bool>,
 }
 
@@ -294,7 +302,10 @@ impl Wiring {
                 undo: RwSignal::new(false),
                 remove: RwSignal::new(false),
                 remove_prune: RwSignal::new(true),
-                replace: RwSignal::new(false),
+                resolve: StoredValue::new(ResolveDialogs {
+                    share: RwSignal::new(false),
+                    replace: RwSignal::new(false),
+                }),
             },
             removal: old_revisions::Removal::new(),
         }
@@ -626,6 +637,20 @@ fn normalized_address(
     Some(routes::keeping_outcome(to, outcome))
 }
 
+/// Resolve's confirmations' flags are the page's, so they outlive the mode
+/// unless closed here: a mode that reopens must not find one already open.
+fn close_with_the_mode(open: Memo<bool>, dialogs: ResolveDialogs) {
+    Effect::new(move |_| {
+        if !open.get() {
+            for flag in [dialogs.share, dialogs.replace] {
+                if flag.get_untracked() {
+                    flag.set(false);
+                }
+            }
+        }
+    });
+}
+
 /// Render one successful page payload. Kept pure so its atomic shape can be
 /// tested without pretending the wasm runner has an engine.
 ///
@@ -664,14 +689,7 @@ fn package_body(
         on_download: file_downloader(header.namespace.to_string(), w, files),
         kept: marks.kept,
     };
-    // The confirmation's flag is the page's, so it outlives the mode unless
-    // closed here: a mode that reopens must not find it already open.
-    let replace = w.dialogs.replace;
-    Effect::new(move |_| {
-        if !open.get() && replace.get_untracked() {
-            replace.set(false);
-        }
-    });
+    close_with_the_mode(open, w.dialogs.resolve.get_value());
 
     let ns = header.namespace.clone();
     let uri = header.uri.clone();
@@ -2598,6 +2616,7 @@ mod tests {
         commands::ResolveData::Compared {
             published_message: Some("Theirs".to_string()),
             differing: vec!["plate/a.csv".to_string(), "plate/b.csv".to_string()],
+            loss: commands::LatestLoss::default(),
             unpublished: 1,
             uncommitted: 0,
         }
@@ -3313,6 +3332,42 @@ mod tests {
         window
             .dispatch_event(&web_sys::Event::new("popstate").unwrap())
             .unwrap();
+    }
+
+    fn diverged_losing_a_file(_: String) -> Read {
+        let mut resolve = compared();
+        if let commands::ResolveData::Compared { loss, .. } = &mut resolve {
+            loss.entries = 1;
+        }
+        counted(diverged(resolve))
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_share_confirmation_left_open_does_not_come_back_with_the_mode() {
+        let el = screen_resolving(
+            RESOLVE,
+            diverged_losing_a_file,
+            ResolveCommands {
+                certify: |_, _| Box::pin(std::future::pending()),
+                reset: |_, _| Box::pin(std::future::pending()),
+            },
+        )
+        .await;
+        button_saying(&el, "Share mine").click();
+        sleep_ms(10).await;
+        let open = || el.query_selector("dialog[open]").unwrap();
+        assert!(open().is_some(), "the confirmation is open");
+
+        move_to(PLAIN);
+        sleep_ms(50).await;
+        move_to(RESOLVE);
+        sleep_ms(50).await;
+
+        assert!(
+            open().is_none(),
+            "the reopened mode has no confirmation; markup was {}",
+            el.inner_html()
+        );
     }
 
     #[wasm_bindgen_test]
