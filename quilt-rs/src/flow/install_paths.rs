@@ -248,14 +248,16 @@ async fn swap_staged_into_place(
             // bytes, as an interrupted pull leaves it; anything else at one
             // `base` never had is the user's own.
             let tracked = lineage.paths.contains_key(&row.logical_key);
-            let unchanged =
-                if !tracked && matches!(edited(storage, working_dest, row).await, Ok(false)) {
-                    true
-                } else if let Some(base_row) = rows.get(&row.logical_key) {
-                    holds(storage, working_dest, base_row.clone()).await
-                } else {
-                    tracked
-                };
+            let unchanged = if !tracked
+                && (!storage.exists(working_dest).await
+                    || holds(storage, working_dest, row.clone()).await)
+            {
+                true
+            } else if let Some(base_row) = rows.get(&row.logical_key) {
+                holds(storage, working_dest, base_row.clone()).await
+            } else {
+                tracked
+            };
             if !unchanged {
                 debug!(
                     "❌ {} changed while the revision was being staged",
