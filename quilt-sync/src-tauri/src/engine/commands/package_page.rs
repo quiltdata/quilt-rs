@@ -747,7 +747,7 @@ async fn get_package_page_data_from_model(
 
     match &status_read {
         Ok(status) => read_worked(needs_you, namespace, origin, paused, status),
-        Err(_) => read_blocked(needs_you, namespace, origin, &state),
+        Err(_) => read_blocked(m, needs_you, namespace, origin, &state).await,
     }
     // A blocked read counts from tracking alone.
     let status = status_read.as_ref().ok();

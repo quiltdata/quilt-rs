@@ -376,13 +376,29 @@ pub(super) fn read_worked(
 }
 
 /// A package's status read was refused: `state` is how it was classified, a
-/// lost session or a denial.
-pub(super) fn read_blocked(
+/// lost session or a denial. A read that finishes after the package was
+/// uninstalled or moved to another catalog changes nothing: its refusal is
+/// the old catalog's.
+pub(super) async fn read_blocked(
+    m: &impl model::QuiltModel,
     needs_you: &NeedsYou,
     namespace: &quilt_uri::Namespace,
     origin: Option<&Host>,
     state: &PackageStateDto,
 ) {
+    let current = match m.get_installed_package(namespace).await {
+        Ok(Some(installed)) => {
+            m.get_installed_package_lineage(&installed)
+                .await
+                .is_ok_and(|lineage| {
+                    lineage.remote_uri.and_then(|remote| remote.origin).as_ref() == origin
+                })
+        }
+        _ => false,
+    };
+    if !current {
+        return;
+    }
     match state {
         PackageStateDto::RoleDenied { role } => needs_you.enter(
             Subject::package(namespace),
@@ -966,7 +982,7 @@ pub(super) async fn refresh_main_page_package_from_model(
             // which is the invariant
             // `denied_row_hides_publish_that_a_readable_row_with_the_same_changes_offers`.
             let mark = denied_mark(m, roles, host.as_ref()).await;
-            read_blocked(needs_you, namespace, host.as_ref(), &mark.state());
+            read_blocked(m, needs_you, namespace, host.as_ref(), &mark.state()).await;
             Ok(MainPagePackageRefresh {
                 state: mark.state(),
                 role_switch_host: mark.role_switch_host,
@@ -981,7 +997,7 @@ pub(super) async fn refresh_main_page_package_from_model(
             // A pause still outranks it, as in the light phase: signing in
             // would not resolve a conflict, and the row must keep naming it.
             if let Some(state) = session_state(&err) {
-                read_blocked(needs_you, namespace, host.as_ref(), &state);
+                read_blocked(m, needs_you, namespace, host.as_ref(), &state).await;
                 return Ok(MainPagePackageRefresh {
                     state: pause_or(paused, || state),
                     role_switch_host: None,
@@ -2813,6 +2829,36 @@ mod tests {
                 host: Some("quilt.test".to_string()),
             }
         );
+    }
+
+    /// A refused read that finishes after the package moved to another
+    /// catalog is the old catalog's: it enters nothing.
+    #[tokio::test]
+    async fn a_read_from_the_old_catalog_enters_nothing() {
+        use crate::engine::needs_you::NeedsYou;
+        let ns: quilt_uri::Namespace = "team/one".try_into().unwrap();
+        let mut m = crate::engine::model::mocks::create();
+        m.expect_get_installed_package()
+            .returning(|ns| Ok(Some(make_installed_package(ns.clone()))));
+        m.expect_get_installed_package_lineage().returning(|pkg| {
+            Ok(quilt::lineage::PackageLineage::from_remote(
+                make_manifest_uri(&pkg.namespace.to_string()),
+                "abcdef".to_string(),
+            ))
+        });
+        let current = make_manifest_uri("team/one").origin;
+        let old: Host = "old.test".parse().unwrap();
+        let denied = PackageStateDto::RoleDenied { role: None };
+        let needs_you = NeedsYou::default();
+
+        read_blocked(&m, &needs_you, &ns, Some(&old), &denied).await;
+        assert!(
+            needs_you.get().is_empty(),
+            "the catalog changed under the read"
+        );
+
+        read_blocked(&m, &needs_you, &ns, current.as_ref(), &denied).await;
+        assert_eq!(needs_you.get().len(), 1);
     }
 
     /// A read that finds the session gone enters its host in the needs-you
