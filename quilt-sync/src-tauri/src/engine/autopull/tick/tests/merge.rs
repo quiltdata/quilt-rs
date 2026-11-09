@@ -648,11 +648,14 @@ async fn the_copy_moves_to_the_merged_revision_not_one_published_after_it() {
 }
 
 /// The tick after an edit kept the copy at its own revision: `latest` already
-/// holds that revision's change.
+/// holds that revision's change, under the message of a later revision.
 #[tokio::test]
 async fn a_copy_whose_change_latest_already_holds_moves_to_it_without_publishing() {
     let (model, remote) = model_of(Copy {
-        latest: revision("mine", vec![file("a.csv", "mine"), file("b.csv", "theirs")]),
+        latest: revision(
+            "a later revision",
+            vec![file("a.csv", "mine"), file("b.csv", "theirs")],
+        ),
         ..Copy::new(
             vec![file("a.csv", "1")],
             vec![file("a.csv", "mine")],

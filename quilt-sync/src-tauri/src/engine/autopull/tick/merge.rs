@@ -102,10 +102,12 @@ async fn read<M: QuiltModel>(
 }
 
 /// Whether the merge left `theirs` as it was, so there is nothing to publish.
+/// The merge always carries the copy's message, so the message is no sign of
+/// new work.
 fn is_unchanged(merged: &Manifest, theirs: &Manifest) -> bool {
     let mut rows = theirs.rows.clone();
     rows.sort_by(|a, b| a.logical_key.cmp(&b.logical_key));
-    merged.header == theirs.header && merged.rows == rows
+    merged.header.user_meta == theirs.header.user_meta && merged.rows == rows
 }
 
 /// The package the merge runs over, under its held lock.
