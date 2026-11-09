@@ -16,7 +16,7 @@ use crate::manifest::normalized_entry_meta;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MergeRefusal {
     /// Keys both sides changed to different rows, sorted; where there are
-    /// none, each key the result would hold as a file with a key under it.
+    /// none, each key the result would hold as a file and the first key under it.
     Paths(Vec<PathBuf>),
     /// Both sides changed the package `user_meta`, to different values.
     UserMeta,
@@ -31,17 +31,20 @@ pub fn merge_onto(
     theirs: Manifest,
 ) -> Result<Manifest, MergeRefusal> {
     let rows = merge_rows_onto(&base.rows, &ours.rows, theirs.rows).map_err(MergeRefusal::Paths)?;
-    let base_meta = base.header.user_meta.as_ref();
-    let ours_meta = ours.header.user_meta.as_ref();
-    let theirs_meta = theirs.header.user_meta.as_ref();
-    let user_meta =
-        if same_user_meta(ours_meta, base_meta) || same_user_meta(ours_meta, theirs_meta) {
-            theirs.header.user_meta
-        } else if same_user_meta(theirs_meta, base_meta) {
-            ours_meta.cloned()
-        } else {
-            return Err(MergeRefusal::UserMeta);
-        };
+    let [base_meta, ours_meta, theirs_meta] =
+        [&base.header, &ours.header, &theirs.header].map(|header| {
+            header
+                .user_meta
+                .as_ref()
+                .filter(|meta| holds_user_meta(meta))
+        });
+    let user_meta = if ours_meta == base_meta || ours_meta == theirs_meta {
+        theirs.header.user_meta
+    } else if theirs_meta == base_meta {
+        ours.header.user_meta.clone()
+    } else {
+        return Err(MergeRefusal::UserMeta);
+    };
     Ok(Manifest {
         header: ManifestHeader {
             message: ours.header.message.clone(),
@@ -88,13 +91,14 @@ pub fn merge_rows_onto(
     // Keys sort by component, so a key that is a folder of others sorts right
     // before one of them.
     let merged_keys: Vec<&PathBuf> = merged.keys().collect();
-    let folders: BTreeSet<PathBuf> = merged_keys
+    let mut folders: Vec<PathBuf> = merged_keys
         .windows(2)
         .filter(|pair| pair[1].starts_with(pair[0]))
         .flat_map(|pair| [pair[0].clone(), pair[1].clone()])
         .collect();
+    folders.dedup();
     if !folders.is_empty() {
-        return Err(folders.into_iter().collect());
+        return Err(folders);
     }
     Ok(merged.into_values().collect())
 }
@@ -114,11 +118,6 @@ fn same_row(a: Option<&ManifestRow>, b: Option<&ManifestRow>) -> bool {
         }
         _ => false,
     }
-}
-
-/// Null, absent and `{}` say nothing, alike.
-fn same_user_meta(a: Option<&serde_json::Value>, b: Option<&serde_json::Value>) -> bool {
-    a.filter(|meta| holds_user_meta(meta)) == b.filter(|meta| holds_user_meta(meta))
 }
 
 #[cfg(test)]
@@ -346,15 +345,15 @@ mod tests {
         ours.header.message = Some("Mine".to_string());
         let mut theirs = Manifest::default();
         theirs.header.message = Some("Theirs".to_string());
-        theirs.header.workflow = Some(crate::manifest::Workflow {
+        let workflow = crate::manifest::Workflow {
             config: "s3://b/.quilt/workflows/config.yml".parse().unwrap(),
             id: None,
-        });
-        let workflow = theirs.header.workflow.clone();
+        };
+        theirs.header.workflow = Some(workflow.clone());
 
         let merged = merge_onto(&Manifest::default(), &ours, theirs).expect("merged");
 
         assert_eq!(merged.header.message.as_deref(), Some("Mine"));
-        assert_eq!(merged.header.workflow, workflow);
+        assert_eq!(merged.header.workflow, Some(workflow));
     }
 }
