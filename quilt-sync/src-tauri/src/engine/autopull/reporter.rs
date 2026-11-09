@@ -226,6 +226,13 @@ pub struct PublishedEvent {
     pub message: String,
 }
 
+/// The `autosync-pause-cleared` payload.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PauseClearedEvent {
+    pub namespace: Namespace,
+}
+
 /// Payload emitted to the UI when autosync pauses a namespace. Carries
 /// both a stable `reason` discriminant (so the UI can branch by category)
 /// and an optional free-form `message` populated for
@@ -237,13 +244,6 @@ pub struct PublishedEvent {
 /// surfaces as `status = "error"` and a Login affordance in the UI) from
 /// "remote refused this push" (which is `status = "paused"` and renders a
 /// neutral banner showing `message`).
-/// The `autosync-pause-cleared` payload.
-#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct PauseClearedEvent {
-    pub namespace: Namespace,
-}
-
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PausedEvent {
