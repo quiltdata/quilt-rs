@@ -2627,6 +2627,7 @@ mod tests {
             loss: commands::LatestLoss::default(),
             unpublished: 1,
             uncommitted: 0,
+            blocked: None,
         }
     }
 

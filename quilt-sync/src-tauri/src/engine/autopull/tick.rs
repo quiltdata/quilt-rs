@@ -1130,7 +1130,7 @@ pub(crate) async fn pause(
     let (status, has_changes) = match reason {
         PausedReason::PendingChanges => ("behind", true),
         PausedReason::PendingCommit => ("ahead", false),
-        PausedReason::Diverged => ("diverged", false),
+        PausedReason::Diverged | PausedReason::MergeRefused(_) => ("diverged", false),
         PausedReason::PullConflict(ref files) => {
             warn!("autosync: paused namespace={namespace} pull conflict={files:?}");
             ("paused", true)
@@ -1164,7 +1164,7 @@ pub(crate) async fn pause(
     let aggregator_message = match &reason {
         PausedReason::PendingChanges => "pending changes".to_string(),
         PausedReason::PendingCommit => "pending commits".to_string(),
-        PausedReason::Diverged => "diverged".to_string(),
+        PausedReason::Diverged | PausedReason::MergeRefused(_) => "diverged".to_string(),
         PausedReason::PullConflict(_) => "pull conflict".to_string(),
         PausedReason::RoleDenied { role } => role_denied_summary(role),
         PausedReason::Other(msg) => msg.clone(),

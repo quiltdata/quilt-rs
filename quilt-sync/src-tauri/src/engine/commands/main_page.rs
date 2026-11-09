@@ -79,8 +79,9 @@ pub enum PackageStateDto {
     },
     /// Autosync stopped for this package for a reason no other state covers.
     /// The pause reasons that have a state resolve into it instead:
-    /// `PendingChanges`, `PendingCommit` and `Diverged` into the state the working
-    /// tree reports, and `PullConflict` and `RoleDenied` into their own states.
+    /// `PendingChanges`, `PendingCommit`, `Diverged` and `MergeRefused` into the
+    /// state the working tree reports, and `PullConflict` and `RoleDenied` into
+    /// their own states.
     /// Only `PausedReason::Other` resolves here (see `unexplained_pause`).
     ///
     /// Kept separate from `Unknown`, which makes a different and stronger claim:
@@ -132,7 +133,7 @@ impl From<&PausedReason> for PausedDto {
         match reason {
             PausedReason::PendingChanges => Self::PendingChanges,
             PausedReason::PendingCommit => Self::PendingCommit,
-            PausedReason::Diverged => Self::Diverged,
+            PausedReason::Diverged | PausedReason::MergeRefused(_) => Self::Diverged,
             PausedReason::PullConflict(files) => Self::PullConflict {
                 files: files.clone(),
             },
@@ -287,13 +288,14 @@ impl From<PackageState> for PackageStateDto {
 /// `Other` is deliberately absent: it has no state in the vocabulary, and
 /// folding it would destroy the case the queue exists to surface — a package
 /// `latest` by hash and paused by a workflow rejection. It travels as a pause on
-/// the watcher payload instead. The other three reasons are absent because the
-/// tree's own state already says what they say.
+/// the watcher payload instead. The other reasons are absent because the tree's
+/// own state already says what they say.
 /// Whether this pause has no state of its own to resolve into.
 ///
 /// Only `Other`. Every other reason either resolves into the state the working
-/// tree already reports (`PendingChanges`, `PendingCommit`, `Diverged`) or has a
-/// state of its own (`PullConflict`, `RoleDenied`). `Other` is the catch-all —
+/// tree already reports (`PendingChanges`, `PendingCommit`, `Diverged`,
+/// `MergeRefused`) or has a state of its own (`PullConflict`, `RoleDenied`).
+/// `Other` is the catch-all —
 /// a workflow rejection, a hash mismatch — and it is non-transient, so a package
 /// left in it stays stopped until something outside this app changes.
 pub(super) fn unexplained_pause(paused: Option<&PausedReason>) -> bool {
@@ -1311,8 +1313,8 @@ mod tests {
 
     #[test]
     fn the_reasons_that_carry_nothing_carry_nothing() {
-        // Three of the six are fully described by their kind. A `message: null` on
-        // these is the overloaded field surviving in a new shape.
+        // These are fully described by their kind. A `message: null` on them is
+        // the overloaded field surviving in a new shape.
         for (reason, expected) in [
             (
                 PausedReason::PendingChanges,
@@ -1320,6 +1322,12 @@ mod tests {
             ),
             (PausedReason::PendingCommit, r#"{"kind":"pending_commit"}"#),
             (PausedReason::Diverged, r#"{"kind":"diverged"}"#),
+            (
+                PausedReason::MergeRefused(crate::engine::autopull::MergeBlock::Paths(vec![
+                    "a.csv".to_string(),
+                ])),
+                r#"{"kind":"diverged"}"#,
+            ),
         ] {
             assert_eq!(
                 serde_json::to_string(&PausedDto::from(&reason)).unwrap(),

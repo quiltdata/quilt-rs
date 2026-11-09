@@ -12,6 +12,7 @@ use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::engine::autopull::MergeBlock;
 use crate::engine::autopull::PausedReason;
 use crate::engine::autopull::Watcher;
 use crate::engine::commands::RoleCache;
@@ -191,9 +192,36 @@ pub enum ResolveData {
         unpublished: usize,
         /// Tracked paths with a local change: the edits a reset overwrites.
         uncommitted: usize,
+        /// What stopped autosync merging the two, when it tried.
+        blocked: Option<MergeBlockData>,
     },
     /// The manifest fetch, the listing, the status or the session failed.
     Refused { reason: String },
+}
+
+/// [`MergeBlock`], for the resolve pane.
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum MergeBlockData {
+    Paths { paths: Vec<String> },
+    Metadata,
+    LatestMoved,
+}
+
+impl From<&MergeBlock> for MergeBlockData {
+    fn from(block: &MergeBlock) -> Self {
+        match block {
+            MergeBlock::Paths(paths) => Self::Paths {
+                paths: paths.clone(),
+            },
+            MergeBlock::Metadata => Self::Metadata,
+            MergeBlock::LatestMoved => Self::LatestMoved,
+        }
+    }
 }
 
 /// What the published `latest` loses when this copy's revision replaces it.
@@ -482,6 +510,7 @@ async fn resolve_for_page(
     installed: &quilt::InstalledPackage,
     lineage: &quilt::lineage::PackageLineage,
     status_read: &Result<quilt::lineage::InstalledPackageStatus, String>,
+    paused: Option<&PausedReason>,
 ) -> Option<ResolveData> {
     match status_read {
         Ok(status) if status.upstream_state == UpstreamState::Diverged => Some(
@@ -489,7 +518,7 @@ async fn resolve_for_page(
                 .get_installed_package_resolve_comparison(installed, lineage)
                 .await
             {
-                Ok(comparison) => resolve_data(lineage, comparison, &status.changes),
+                Ok(comparison) => resolve_data(lineage, comparison, &status.changes, paused),
                 Err(err) => ResolveData::Refused {
                     reason: err.to_frontend_string(),
                 },
@@ -554,6 +583,7 @@ fn resolve_data(
     lineage: &quilt::lineage::PackageLineage,
     comparison: quilt::flow::ResolveComparison,
     changes: &quilt::lineage::ChangeSet,
+    paused: Option<&PausedReason>,
 ) -> ResolveData {
     let mut differing: Vec<String> = comparison
         .differing
@@ -571,6 +601,10 @@ fn resolve_data(
             .keys()
             .filter(|p| lineage.paths.contains_key(*p))
             .count(),
+        blocked: match paused {
+            Some(PausedReason::MergeRefused(block)) => Some(block.into()),
+            _ => None,
+        },
     }
 }
 
@@ -723,7 +757,7 @@ async fn get_package_page_data_from_model(
         &m.get_installed_package_sizes(&installed, &lineage).await?,
         status.map(|s| &s.changes),
     );
-    let resolve = resolve_for_page(m, &installed, &lineage, &status_read).await;
+    let resolve = resolve_for_page(m, &installed, &lineage, &status_read, paused).await;
     let files = files_data(m, &installed, namespace, &lineage, &status_read).await;
     let context = package_context_data(
         namespace,
@@ -1210,8 +1244,15 @@ mod tests {
     }
 
     async fn read(model: &crate::engine::model::MockQuiltModel) -> Result<PackagePageData, Error> {
+        read_paused(model, None).await
+    }
+
+    async fn read_paused(
+        model: &crate::engine::model::MockQuiltModel,
+        paused: Option<&PausedReason>,
+    ) -> Result<PackagePageData, Error> {
         let ns: quilt_uri::Namespace = NS.try_into().unwrap();
-        get_package_page_data_from_model(model, &RoleCache::default(), &ns, None).await
+        get_package_page_data_from_model(model, &RoleCache::default(), &ns, paused).await
     }
 
     /// Diverged on disk: the remote at `b`, the registry's latest `l`, and a
@@ -1241,6 +1282,26 @@ mod tests {
         let page = page(&RoleCache::default(), Ok(settled()), None).await;
 
         assert_eq!(page.context.resolve, None);
+    }
+
+    #[tokio::test]
+    async fn a_diverged_read_paused_on_a_refused_merge_carries_what_blocked_it() {
+        let lineage = diverged_snapshot();
+        let mut model = mock_package(&lineage, Ok(diverged(modified("a.csv"))));
+        model
+            .expect_get_installed_package_resolve_comparison()
+            .returning(|_, _| Ok(comparison(&[], 0)));
+        let paused = PausedReason::MergeRefused(MergeBlock::Metadata);
+
+        let page = read_paused(&model, Some(&paused)).await.unwrap();
+
+        let Some(ResolveData::Compared { blocked, .. }) = page.context.resolve else {
+            panic!(
+                "a diverged read is compared, got {:?}",
+                page.context.resolve
+            );
+        };
+        assert_eq!(blocked, Some(MergeBlockData::Metadata));
     }
 
     #[tokio::test]
@@ -1274,6 +1335,7 @@ mod tests {
                 },
                 unpublished: 2,
                 uncommitted: 1,
+                blocked: None,
             })
         );
         assert_eq!(page.header.state, PackageStateDto::Diverged);
@@ -1439,16 +1501,53 @@ mod tests {
 
     #[test]
     fn resolve_compared_wire_form_is_verbatim() {
+        let refused =
+            PausedReason::MergeRefused(MergeBlock::Paths(vec!["plate/a.csv".to_string()]));
         let data = resolve_data(
             &lineage_tracking(&["a.csv"]),
             comparison(&["plate/a.csv", "plate/b.csv"], 2),
             &modified("a.csv"),
+            Some(&refused),
         );
 
         assert_eq!(
             serde_json::to_string(&data).unwrap(),
-            r#"{"kind":"compared","publishedMessage":"Add intake folder-upload note","differing":["plate/a.csv","plate/b.csv"],"loss":{"entries":3,"metadata":true},"unpublished":2,"uncommitted":1}"#,
+            r#"{"kind":"compared","publishedMessage":"Add intake folder-upload note","differing":["plate/a.csv","plate/b.csv"],"loss":{"entries":3,"metadata":true},"unpublished":2,"uncommitted":1,"blocked":{"kind":"paths","paths":["plate/a.csv"]}}"#,
         );
+    }
+
+    #[test]
+    fn merge_block_wire_forms_are_verbatim() {
+        for (block, wire) in [
+            (MergeBlock::Metadata, r#"{"kind":"metadata"}"#),
+            (MergeBlock::LatestMoved, r#"{"kind":"latestMoved"}"#),
+        ] {
+            assert_eq!(
+                serde_json::to_string(&MergeBlockData::from(&block)).unwrap(),
+                wire
+            );
+        }
+    }
+
+    #[test]
+    fn a_copy_paused_for_another_reason_names_no_block() {
+        for paused in [
+            None,
+            Some(PausedReason::Diverged),
+            Some(PausedReason::Other("workflow rejected".to_string())),
+        ] {
+            let data = resolve_data(
+                &lineage_tracking(&[]),
+                comparison(&["a.csv"], 0),
+                &quilt::lineage::ChangeSet::new(),
+                paused.as_ref(),
+            );
+
+            let ResolveData::Compared { blocked, .. } = data else {
+                panic!("a comparison projects to Compared, got {data:?}");
+            };
+            assert_eq!(blocked, None, "{paused:?}");
+        }
     }
 
     #[test]
@@ -1487,6 +1586,7 @@ mod tests {
             &lineage_tracking(&["a.csv", "b.csv"]),
             comparison(&[], 0),
             &changes,
+            None,
         );
 
         let ResolveData::Compared { uncommitted, .. } = data else {
@@ -1509,6 +1609,7 @@ mod tests {
             &lineage_tracking(&[]),
             comparison(&refs, 0),
             &quilt::lineage::ChangeSet::new(),
+            None,
         );
 
         let ResolveData::Compared { differing, .. } = data else {

@@ -7,6 +7,7 @@ use super::RefreshOutcome;
 use super::WatchError;
 use super::classify_sync_err;
 use super::classify_transient_or_login;
+use crate::engine::autopull::MergeBlock;
 use crate::engine::autopull::PausedReason;
 use crate::engine::autopull::activity::ActivityOp;
 use crate::engine::autopull::reporter::status_fingerprint;
@@ -22,7 +23,7 @@ const ATTEMPTS: usize = 3;
 
 /// Merge the change from the copy's base to its pushed revision onto
 /// `latest`, publish it as `latest`'s child, and move the copy to it. A
-/// refusal, or a `latest` that keeps moving, pauses the copy as Diverged.
+/// refusal, or a `latest` that keeps moving, pauses the copy on what blocked it.
 pub(super) async fn onto_latest<M: QuiltModel>(
     model: &M,
     locked: &M::Locked,
@@ -56,7 +57,13 @@ pub(super) async fn onto_latest<M: QuiltModel>(
             Ok(merged) => merged,
             Err(refusal) => {
                 warn!("autosync: {namespace}: cannot merge onto latest: {refusal:?}");
-                return Err(WatchError::Conflict(PausedReason::Diverged));
+                let block = match refusal {
+                    quilt::flow::MergeRefusal::Paths(paths) => {
+                        MergeBlock::Paths(paths.iter().map(|p| p.display().to_string()).collect())
+                    }
+                    quilt::flow::MergeRefusal::UserMeta => MergeBlock::Metadata,
+                };
+                return Err(WatchError::Conflict(PausedReason::MergeRefused(block)));
             }
         };
         if is_unchanged(&merged, &theirs) {
@@ -75,7 +82,9 @@ pub(super) async fn onto_latest<M: QuiltModel>(
         }
     }
     warn!("autosync: {namespace}: latest kept moving; left Diverged");
-    Err(WatchError::Conflict(PausedReason::Diverged))
+    Err(WatchError::Conflict(PausedReason::MergeRefused(
+        MergeBlock::LatestMoved,
+    )))
 }
 
 /// Move a Diverged copy onto `latest` before its new edits are committed, when
