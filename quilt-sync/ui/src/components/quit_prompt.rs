@@ -41,12 +41,22 @@ pub fn QuitPrompt() -> impl IntoView {
     on_cleanup(move || drop(listener));
 
     // A failed answer leaves the engine waiting for one, so the question comes
-    // back rather than leaving every later quit waiting on this one.
+    // back rather than leaving every later quit waiting on this one. On a
+    // timer, so the dialog's own queued `close` lands first and cannot shut it
+    // again.
+    let ask_again = move || {
+        set_timeout(
+            move || {
+                visible.try_set(true);
+            },
+            std::time::Duration::ZERO,
+        );
+    };
     let on_quit = move |()| {
         leptos::task::spawn_local(async move {
             if let Err(err) = commands::quit_confirm().await {
                 leptos::logging::error!("quit failed: {err}");
-                visible.try_set(true);
+                ask_again();
             }
         });
     };
@@ -54,7 +64,7 @@ pub fn QuitPrompt() -> impl IntoView {
         leptos::task::spawn_local(async move {
             if let Err(err) = commands::quit_cancel().await {
                 leptos::logging::error!("quit cancel failed: {err}");
-                visible.try_set(true);
+                ask_again();
             }
         });
     };
