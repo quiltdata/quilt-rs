@@ -119,10 +119,12 @@ async fn check(
                 checked_at: now,
                 latest: cache.and_then(|cache| cache.latest),
             };
-            save(path, &cache);
-            if let Some(found) = fetch.await {
+            // Unsaved, every run would ask again.
+            if save(path, &cache).is_ok()
+                && let Some(found) = fetch.await
+            {
                 cache.latest = Some(found.to_string());
-                save(path, &cache);
+                let _ = save(path, &cache);
             }
             cache.latest
         }
@@ -139,16 +141,13 @@ fn due(cache: &Cache, now: u64) -> bool {
 }
 
 /// Replaces the file whole, so a reader never sees half of it.
-fn save(path: &Path, cache: &Cache) {
-    let write = || -> std::io::Result<()> {
-        let dir = path.parent().unwrap_or(Path::new("."));
-        std::fs::create_dir_all(dir)?;
-        let mut file = tempfile::NamedTempFile::new_in(dir)?;
-        file.write_all(&serde_json::to_vec(cache)?)?;
-        file.persist(path)?;
-        Ok(())
-    };
-    let _ = write();
+fn save(path: &Path, cache: &Cache) -> std::io::Result<()> {
+    let dir = path.parent().unwrap_or(Path::new("."));
+    std::fs::create_dir_all(dir)?;
+    let mut file = tempfile::NamedTempFile::new_in(dir)?;
+    file.write_all(&serde_json::to_vec(cache)?)?;
+    file.persist(path)?;
+    Ok(())
 }
 
 async fn fetch_latest() -> Option<Version> {
@@ -259,7 +258,8 @@ not json
                 checked_at: 100,
                 latest: Some("0.41.0".into()),
             },
-        );
+        )
+        .unwrap();
         let line = check(&path, 100 + DAY - 1, &v("0.40.2"), async {
             panic!("asked the network within a day")
         })
@@ -276,7 +276,8 @@ not json
                 checked_at: 100,
                 latest: Some("0.41.0".into()),
             },
-        );
+        )
+        .unwrap();
         let line = check(&path, 100 + DAY, &v("0.40.2"), async { None }).await;
         assert!(line.is_some());
         assert_eq!(
@@ -298,7 +299,8 @@ not json
                 checked_at: 100,
                 latest: Some("0.41.0".into()),
             },
-        );
+        )
+        .unwrap();
         let fetch = async {
             assert_eq!(
                 read(&path),
@@ -310,6 +312,19 @@ not json
             None
         };
         check(&path, 100 + DAY, &v("0.40.2"), fetch).await;
+    }
+
+    #[tokio::test]
+    async fn a_cache_that_cannot_be_saved_skips_the_fetch() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("a file");
+        std::fs::write(&file, "").unwrap();
+        let path = file.join("update-check.json");
+        let line = check(&path, 100, &v("0.40.2"), async {
+            panic!("asked the network with no cache to record it")
+        })
+        .await;
+        assert_eq!(line, None);
     }
 
     #[tokio::test]
