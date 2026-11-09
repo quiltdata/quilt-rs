@@ -50,25 +50,34 @@ pub struct Pending {
     line: mpsc::Receiver<String>,
 }
 
-/// Starts the check on a thread of its own. The thread is never joined: a
-/// DNS lookup the timeout cannot cancel must not hold the process open.
-pub fn start() -> Pending {
+/// Starts the check on a thread of its own, unless this run skips it. The
+/// thread is never joined: a DNS lookup the timeout cannot cancel must not
+/// hold the process open.
+pub fn start() -> Option<Pending> {
+    if !std::io::stderr().is_terminal()
+        || std::env::var_os("CI").is_some()
+        || std::env::var_os("QUILT_NO_UPDATE_CHECK").is_some_and(|v| v == "1")
+    {
+        return None;
+    }
     let (send, line) = mpsc::channel();
-    std::thread::spawn(move || {
-        let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-        else {
-            return;
-        };
-        if let Some(found) = runtime.block_on(notice()) {
-            let _ = send.send(found);
-        }
-    });
-    Pending {
+    std::thread::Builder::new()
+        .spawn(move || {
+            let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            else {
+                return;
+            };
+            if let Some(found) = runtime.block_on(notice()) {
+                let _ = send.send(found);
+            }
+        })
+        .ok()?;
+    Some(Pending {
         started: Instant::now(),
         line,
-    }
+    })
 }
 
 impl Pending {
@@ -80,14 +89,8 @@ impl Pending {
     }
 }
 
-/// The line to print, if this run should check and a newer release is out.
+/// The line to print, if a newer release is out.
 async fn notice() -> Option<String> {
-    if !std::io::stderr().is_terminal()
-        || std::env::var_os("CI").is_some()
-        || std::env::var_os("QUILT_NO_UPDATE_CHECK").is_some_and(|v| v == "1")
-    {
-        return None;
-    }
     let path = dirs::cache_dir()?.join("quilt").join("update-check.json");
     let now = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)

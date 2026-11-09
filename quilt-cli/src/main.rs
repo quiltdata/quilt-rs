@@ -39,7 +39,7 @@ async fn main() {
 
     // Before the result, so under `--json` an error object stays the last
     // line on stderr.
-    if let Some(line) = update_notice.line() {
+    if let Some(line) = update_notice.and_then(update_check::Pending::line) {
         eprintln!("{line}");
     }
 
