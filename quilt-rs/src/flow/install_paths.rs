@@ -227,9 +227,9 @@ async fn edited(storage: &impl Storage, working_dest: &Path, row: &ManifestRow) 
 /// gap would otherwise be overwritten in silence. Checked immediately before
 /// each rename, the exposure is back to the two syscalls between them.
 ///
-/// Fail-safe in the same direction as the conflict rule: a file that cannot be
-/// read is treated as changed, so the worst case is a retryable refusal rather
-/// than lost work.
+/// Fail-safe in the same direction as the conflict rule: a file to be replaced
+/// that cannot be read is treated as changed, so the worst case is a retryable
+/// refusal rather than lost work.
 async fn swap_staged_into_place(
     storage: &(impl Storage + Sync),
     staged: &[(PathBuf, PathBuf, ManifestRow)],

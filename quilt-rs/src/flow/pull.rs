@@ -166,6 +166,7 @@ impl PullReport {
             && self.added_not_fetched.is_empty()
             && self.updated.is_empty()
             && self.removed.is_empty()
+            && self.kept_not_removed.is_empty()
     }
 }
 
@@ -796,6 +797,21 @@ mod tests {
         assert!(report.is_empty(), "a metadata-only revision named files");
         // Its message still travels — it is the only thing that changed.
         assert_eq!(report.message.as_deref(), Some("retagged"));
+    }
+
+    /// A pull that only drops files can keep every one of them, edited while
+    /// it ran; the report then names files and is not empty.
+    #[test]
+    fn a_report_of_kept_files_alone_is_not_empty() {
+        let delta = BTreeMap::from([(PathBuf::from("edited.csv"), RemoteChange::Removed)]);
+        let applied = Applied {
+            kept: paths(&["edited.csv"]),
+            ..Applied::default()
+        };
+
+        let report = report_of(uri(), &delta, &applied, &ChangeSet::new(), None);
+
+        assert!(!report.is_empty(), "a kept file was reported as nothing");
     }
 
     /// `ManifestHeader::default` writes `Some(String::new())`, which the desktop
