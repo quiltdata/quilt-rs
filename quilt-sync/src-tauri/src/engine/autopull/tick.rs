@@ -1005,11 +1005,14 @@ pub(crate) async fn sync_package(
             inner.backoff.write().await.remove(&namespace);
             inner.login_blocked.write().await.remove(&namespace);
             // It synced with the bucket: its session, its bucket and its
-            // publish all worked.
+            // publish all worked. With nothing left to publish, no publish is
+            // failing either way.
+            let package = Subject::package(&namespace);
             if reached || outcome.pulled.is_some() || outcome.published.is_some() {
-                let package = Subject::package(&namespace);
                 inner.needs_you.session_works(origin);
                 inner.needs_you.leave(&package, Kind::NoAccess);
+                inner.needs_you.leave(&package, Kind::PublishFailing);
+            } else if inner.last_change.get(&namespace).await.is_none() {
                 inner.needs_you.leave(&package, Kind::PublishFailing);
             }
             if let Some(message) = outcome.published.as_deref() {

@@ -864,6 +864,7 @@ pub async fn change_catalog(
         Ok(ns) => {
             // What the old catalog refused is not the new one's.
             watcher.forget_catalog(&ns).await;
+            watcher.prune_needs_you(&*s.model).await;
             let message = format!("Changed the catalog of {namespace}");
             ::tracing::debug!("{message}");
             Ok(message)

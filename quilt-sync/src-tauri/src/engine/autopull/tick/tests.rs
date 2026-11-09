@@ -2897,6 +2897,7 @@ async fn a_pass_drops_what_no_package_stands_behind() {
 #[tokio::test]
 async fn only_a_pass_that_reaches_the_bucket_clears_what_needs_you() {
     use crate::engine::needs_you::Cause;
+    use crate::engine::needs_you::Kind;
     use crate::engine::needs_you::Subject;
 
     let ns: Namespace = ("acme", "demo").into();
@@ -2951,9 +2952,26 @@ async fn only_a_pass_that_reaches_the_bucket_clears_what_needs_you() {
         quilt::LocalDomain::new(std::path::PathBuf::new()).create_installed_package(ns.clone());
     let roles = RoleCache::default();
 
+    inner.needs_you.enter(
+        Subject::package(&ns),
+        Cause::PublishFailing {
+            error: "offline".into(),
+        },
+    );
+
     let offline = pass(false);
     sync_package(&offline, &roles, &inner, &pkg, &run, Instant::now()).await;
-    assert_eq!(inner.needs_you.get().len(), 2, "the tip was not read");
+    let kinds: Vec<Kind> = inner
+        .needs_you
+        .get()
+        .iter()
+        .map(|e| e.cause.kind())
+        .collect();
+    assert_eq!(
+        kinds,
+        [Kind::SignIn, Kind::NoAccess],
+        "the tip was not read, and nothing is left to publish"
+    );
 
     let online = pass(true);
     sync_package(&online, &roles, &inner, &pkg, &run, Instant::now()).await;
