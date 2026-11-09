@@ -25,7 +25,7 @@ async fn main() {
     );
     let format = args.format();
     cli::notice_lock_waits(|line| eprintln!("{line}"));
-    let update_notice = tokio::spawn(update_check::notice());
+    let update_notice = update_check::start();
 
     // An error raised before dispatch — an unreadable domain, a rejected flag
     // combination — is a command failure like any other. It used to go out as a
@@ -39,7 +39,7 @@ async fn main() {
 
     // Before the result, so under `--json` an error object stays the last
     // line on stderr.
-    if let Ok(Some(line)) = update_notice.await {
+    if let Some(line) = update_notice.line() {
         eprintln!("{line}");
     }
 

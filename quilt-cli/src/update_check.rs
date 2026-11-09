@@ -7,7 +7,9 @@
 use std::future::Future;
 use std::io::IsTerminal;
 use std::path::Path;
+use std::sync::mpsc;
 use std::time::Duration;
+use std::time::Instant;
 use std::time::SystemTime;
 
 use semver::Version;
@@ -41,8 +43,44 @@ struct IndexLine {
     yanked: bool,
 }
 
+/// A check running beside the command.
+pub struct Pending {
+    started: Instant,
+    line: mpsc::Receiver<String>,
+}
+
+/// Starts the check on a thread of its own. The thread is never joined: a
+/// DNS lookup the timeout cannot cancel must not hold the process open.
+pub fn start() -> Pending {
+    let (send, line) = mpsc::channel();
+    std::thread::spawn(move || {
+        let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        else {
+            return;
+        };
+        if let Some(found) = runtime.block_on(notice()) {
+            let _ = send.send(found);
+        }
+    });
+    Pending {
+        started: Instant::now(),
+        line,
+    }
+}
+
+impl Pending {
+    /// The line to print, waiting at most until [`TIMEOUT`] after the start.
+    pub fn line(self) -> Option<String> {
+        self.line
+            .recv_timeout(TIMEOUT.saturating_sub(self.started.elapsed()))
+            .ok()
+    }
+}
+
 /// The line to print, if this run should check and a newer release is out.
-pub async fn notice() -> Option<String> {
+async fn notice() -> Option<String> {
     if !std::io::stderr().is_terminal()
         || std::env::var_os("CI").is_some()
         || std::env::var_os("QUILT_NO_UPDATE_CHECK").is_some_and(|v| v == "1")
