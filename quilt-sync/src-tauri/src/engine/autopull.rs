@@ -376,14 +376,18 @@ impl Watcher {
         self.inner.reschedule_publish();
     }
 
-    /// Forget what the package's old catalog left — its pause, sign-in block
-    /// and retry backoff — once its catalog has been saved. Under
+    /// Forget what the package's old catalog left — its pause, refused access,
+    /// sign-in block and retry backoff — once its catalog has been saved. Under
     /// [`WatcherInner::refusals`], so a pass that read the old catalog cannot
     /// record its refusal after this.
     pub async fn forget_catalog(&self, namespace: &Namespace) {
         let _gate = self.inner.refusals.lock().await;
         self.inner.backoff.write().await.remove(namespace);
         self.clear_paused(namespace).await;
+        // A page's read may have found the refusal with no pause to clear.
+        self.inner
+            .needs_you
+            .leave(&Subject::package(namespace), Kind::NoAccess);
     }
 
     /// Take back a [`PausedReason::PullConflict`] the pull dry run no longer
@@ -1064,6 +1068,23 @@ mod tests {
 
         assert_eq!(*reporter.pause_cleared.lock().unwrap(), vec![a, b, c]);
         assert!(watcher.needs_you().get().is_empty(), "every pause cleared");
+    }
+
+    /// A refusal a page's read found, with no pause behind it, is the old
+    /// catalog's and goes with it.
+    #[tokio::test]
+    async fn a_new_catalog_drops_the_old_refusal() {
+        use crate::engine::needs_you::Cause;
+        let watcher = Watcher::new_for_test(Arc::new(LogReporter));
+        let ns: Namespace = ("acme", "a").into();
+        watcher
+            .needs_you()
+            .enter(Subject::package(&ns), Cause::NoAccess { role: None });
+        watcher.forget_catalog(&ns).await;
+        assert!(
+            watcher.needs_you().get().is_empty(),
+            "the new catalog has not refused"
+        );
     }
 
     #[tokio::test]
