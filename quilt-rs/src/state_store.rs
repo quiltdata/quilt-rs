@@ -391,7 +391,7 @@ impl PackageStateStore {
                 .is_some_and(|o| o.on_disk && self.path.as_deref().is_some_and(|p| !p.exists()));
             if gone {
                 info!("state store: {:?} is gone, creating it again", self.path);
-                *open = None;
+                close(&mut open).await;
             }
             if open.is_none() {
                 *open = self.open_connection().await;
@@ -404,9 +404,7 @@ impl PackageStateStore {
                 Err(err) if on_disk && !discarded && err.is_damage() => {
                     warn!("state store: {err}; starting a new one");
                     // Closed first: Windows refuses to delete an open file.
-                    if let Some(old) = open.take() {
-                        let _ = old.connection.close().await;
-                    }
+                    close(&mut open).await;
                     self.discard_file();
                     discarded = true;
                 }
@@ -415,6 +413,7 @@ impl PackageStateStore {
                 // as it is.
                 Err(err) if on_disk => {
                     warn!("state store: {err}; keeping state in memory");
+                    close(&mut open).await;
                     *open = open_memory_or_log().await;
                 }
                 Err(err) => {
@@ -498,6 +497,14 @@ async fn open_file(path: &Path) -> Result<Connection, StoreError> {
         return Err(err);
     }
     Ok(connection)
+}
+
+/// Closes on a blocking thread: dropping the last handle would close on the
+/// async one.
+async fn close(open: &mut Option<Open>) {
+    if let Some(old) = open.take() {
+        let _ = old.connection.close().await;
+    }
 }
 
 async fn open_memory_or_log() -> Option<Open> {

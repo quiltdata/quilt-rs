@@ -32,7 +32,7 @@
 
 ### Security
 
-- QuiltSync's builds bundle SQLite 3.54.1 for [RUSTSEC-2026-0459](https://rustsec.org/advisories/RUSTSEC-2026-0459), where a database opened with a crafted `-wal` file could return leftover memory (<https://github.com/quiltdata/quilt-rs/pull/1326>)
+- QuiltSync bundles SQLite 3.54.1, which fixes [RUSTSEC-2026-0459](https://rustsec.org/advisories/RUSTSEC-2026-0459) (<https://github.com/quiltdata/quilt-rs/pull/1326>)
 
 ### quilt-rs
 
