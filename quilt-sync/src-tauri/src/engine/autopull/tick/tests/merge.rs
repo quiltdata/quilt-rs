@@ -96,6 +96,8 @@ struct Remote {
     late_writer: Option<quilt::manifest::Manifest>,
     /// Where a local file refuses the move, as a pull refuses.
     conflict_at: Vec<&'static str>,
+    /// How many moves fail with an error worth retrying.
+    failing_moves: usize,
     /// Whether the tray counted the move as an apply, read as it ran.
     aggregator: Option<Arc<crate::engine::autopull::status::SyncTrayAggregator>>,
     applying_at_move: Option<bool>,
@@ -129,6 +131,7 @@ fn model_of(copy: Copy) -> (MockQuiltModel, Arc<Mutex<Remote>>) {
         writers: copy.writers.into(),
         late_writer: None,
         conflict_at: Vec::new(),
+        failing_moves: 0,
         aggregator: None,
         applying_at_move: None,
         pushes: 0,
@@ -181,8 +184,19 @@ fn model_of(copy: Copy) -> (MockQuiltModel, Arc<Mutex<Remote>>) {
     let (state, events) = (Arc::clone(&lineage), Arc::clone(&remote));
     model
         .expect_locked_package_publish()
-        .returning(move |_, _, _, _, _, _| {
-            events.lock().unwrap().events.push("publish".to_string());
+        .returning(move |_, _, _, _, _, status| {
+            let mut remote = events.lock().unwrap();
+            remote.events.push("publish".to_string());
+            // The commit takes the walked changes into the copy's revision.
+            let ours = remote.revisions.get_mut("ours").expect("ours");
+            for (path, change) in status.map(|status| status.changes).unwrap_or_default() {
+                ours.rows.retain(|row| row.logical_key != path);
+                if let quilt::lineage::Change::Added(row) | quilt::lineage::Change::Modified(row) =
+                    change
+                {
+                    ours.rows.push(row);
+                }
+            }
             let mut lineage = state.lock().unwrap();
             lineage.commit = None;
             lineage.remote_uri = Some(at("ours"));
@@ -212,6 +226,14 @@ fn expect_move(
                 .aggregator
                 .as_ref()
                 .map(|aggregator| aggregator.apply_in_progress());
+            if remote.failing_moves > 0 {
+                remote.failing_moves -= 1;
+                return Err(quilt::Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionReset,
+                    "connection reset",
+                ))
+                .into());
+            }
             if !remote.conflict_at.is_empty() {
                 let paths = remote.conflict_at.iter().map(PathBuf::from).collect();
                 return Err(
@@ -567,6 +589,94 @@ async fn an_edit_during_the_merge_to_a_path_it_published_is_published_next_tick(
         "published as an ordinary change, not merged again"
     );
     assert!(inner.paused.read().await.is_empty());
+}
+
+/// The merge publishes and its move fails, so the copy keeps its old base, and
+/// `a.csv`, which the merge published, is edited during the backoff. The move
+/// is retried before the edit is committed, and the edit is then published as
+/// any change, not merged against the copy's own publication.
+#[tokio::test]
+async fn a_move_that_failed_after_the_merge_is_retried_before_an_edit_is_committed() {
+    let (model, remote) = model_of(Copy {
+        walks: vec![
+            BTreeMap::new(),
+            change("a.csv"),
+            change("a.csv"),
+            change("a.csv"),
+        ],
+        ..Copy::new(
+            vec![file("a.csv", "1")],
+            vec![file("a.csv", "mine")],
+            vec![file("a.csv", "1"), file("b.csv", "theirs")],
+        )
+    });
+    remote.lock().unwrap().failing_moves = 1;
+    let mut settings = enabled();
+    settings.push.idle_timeout_secs = 0;
+    let inner = WatcherInner {
+        last_change: LastChange::changed_for_test(&ns(), Duration::from_hours(1)).await,
+        ..make_inner(settings)
+    };
+
+    for _ in 0..3 {
+        run_once(&model, &RoleCache::default(), &inner)
+            .await
+            .expect("ticked");
+        inner.backoff.write().await.clear();
+    }
+
+    assert_eq!(
+        seen(&remote).events,
+        ["push onto h1", "move to r1", "move to r1", "publish"],
+        "moved, then published as an ordinary change"
+    );
+    assert!(inner.paused.read().await.is_empty());
+}
+
+/// `latest` holds the copy's change, but the copy edited `b.csv`, which the
+/// other side changed, so the move is refused. The edit is committed and the
+/// merge refuses on it, rather than the move being retried every tick.
+#[tokio::test]
+async fn an_edit_that_blocks_the_retried_move_is_committed_and_the_copy_pauses() {
+    let (model, remote) = model_of(Copy {
+        walks: vec![change("b.csv"), change("b.csv")],
+        latest: revision("mine", vec![file("a.csv", "mine"), file("b.csv", "theirs")]),
+        ..Copy::new(
+            vec![file("a.csv", "1"), file("b.csv", "1")],
+            vec![file("a.csv", "mine"), file("b.csv", "1")],
+            vec![],
+        )
+    });
+    remote.lock().unwrap().conflict_at = vec!["b.csv"];
+
+    let (inner, _) = tick(&model).await;
+
+    assert_eq!(seen(&remote).events, ["move to h1", "publish"]);
+    assert_eq!(
+        inner.paused.read().await.get(&ns()),
+        Some(&PausedReason::Diverged)
+    );
+}
+
+/// Edits on a copy whose pushed revision `latest` does not hold are committed
+/// and merged, without a move first.
+#[tokio::test]
+async fn edits_on_a_copy_whose_change_latest_lacks_are_committed_then_merged() {
+    let (model, remote) = model_of(Copy {
+        walks: vec![change("a.csv")],
+        ..Copy::new(
+            vec![file("a.csv", "1")],
+            vec![file("a.csv", "mine")],
+            vec![file("a.csv", "1"), file("b.csv", "theirs")],
+        )
+    });
+
+    tick(&model).await;
+
+    assert_eq!(
+        seen(&remote).events,
+        ["publish", "push onto h1", "move to r1"]
+    );
 }
 
 /// An edit to `b.csv`, which the other side changed, refuses the move as it

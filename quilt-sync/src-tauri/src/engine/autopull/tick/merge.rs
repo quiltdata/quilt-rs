@@ -38,26 +38,13 @@ pub(super) async fn onto_latest<M: QuiltModel>(
         namespace,
         scope,
     };
-    let lineage = model
-        .get_installed_package_lineage(installed)
-        .await
-        .map_err(WatchError::Transient)?;
-    // Merged only from a pushed revision.
-    let Some(ours_uri) = lineage
-        .remote_uri
-        .filter(|uri| lineage.commit.is_none() && !uri.hash.is_empty())
+    let Some(Sides {
+        base,
+        ours,
+        package,
+    }) = sides(model, installed).await?
     else {
         return Err(WatchError::Conflict(PausedReason::Diverged));
-    };
-    let base_uri = quilt_uri::ManifestUri {
-        hash: lineage.base_hash,
-        ..ours_uri.clone()
-    };
-    let base = read(model, &base_uri).await?;
-    let ours = read(model, &ours_uri).await?;
-    let package = quilt_uri::S3PackageUri {
-        revision: quilt_uri::RevisionPointer::Tag(quilt_uri::Tag::Latest),
-        ..(&ours_uri).into()
     };
     for _ in 0..ATTEMPTS {
         let theirs_uri = model
@@ -91,6 +78,87 @@ pub(super) async fn onto_latest<M: QuiltModel>(
     Err(WatchError::Conflict(PausedReason::Diverged))
 }
 
+/// Move a Diverged copy onto `latest` before its new edits are committed, when
+/// `latest` already holds its pushed revision: committed onto that revision, an
+/// edit to a file the copy published would collide with `latest`'s copy of it.
+/// `None` when `latest` lacks the copy's change or edits block the move; the
+/// tick then commits and merges.
+pub(super) async fn landed<M: QuiltModel>(
+    model: &M,
+    locked: &M::Locked,
+    installed: &quilt::InstalledPackage,
+    aggregator: &SyncTrayAggregator,
+    scope: SyncScope,
+) -> Result<Option<RefreshOutcome>, WatchError> {
+    let Some(Sides {
+        base,
+        ours,
+        package,
+    }) = sides(model, installed).await?
+    else {
+        return Ok(None);
+    };
+    let latest_uri = model
+        .resolve_manifest_uri(&package)
+        .await
+        .map_err(classify_transient_or_login)?;
+    let latest = read(model, &latest_uri).await?;
+    match quilt::flow::merge_onto(&base, &ours, latest.clone()) {
+        Ok(merged) if is_unchanged(&merged, &latest) => {}
+        _ => return Ok(None),
+    }
+    info!(
+        "autosync: {}: latest already holds this copy's change; moving before committing",
+        installed.namespace
+    );
+    let held = Held {
+        model,
+        locked,
+        aggregator,
+        namespace: &installed.namespace,
+        scope,
+    };
+    let (pulled, status) = try_move(&held, &latest_uri).await?;
+    Ok(pulled.map(|pulled| outcome(None, Some(pulled), &status)))
+}
+
+/// What a merge starts from: the copy's base and its pushed revision, and the
+/// package whose `latest` it merges onto. `None` for a copy with no pushed
+/// revision.
+struct Sides {
+    base: Manifest,
+    ours: Manifest,
+    package: quilt_uri::S3PackageUri,
+}
+
+async fn sides<M: QuiltModel>(
+    model: &M,
+    installed: &quilt::InstalledPackage,
+) -> Result<Option<Sides>, WatchError> {
+    let lineage = model
+        .get_installed_package_lineage(installed)
+        .await
+        .map_err(WatchError::Transient)?;
+    let Some(ours_uri) = lineage
+        .remote_uri
+        .filter(|uri| lineage.commit.is_none() && !uri.hash.is_empty())
+    else {
+        return Ok(None);
+    };
+    let base_uri = quilt_uri::ManifestUri {
+        hash: lineage.base_hash,
+        ..ours_uri.clone()
+    };
+    Ok(Some(Sides {
+        base: read(model, &base_uri).await?,
+        ours: read(model, &ours_uri).await?,
+        package: quilt_uri::S3PackageUri {
+            revision: quilt_uri::RevisionPointer::Tag(quilt_uri::Tag::Latest),
+            ..(&ours_uri).into()
+        },
+    }))
+}
+
 async fn read<M: QuiltModel>(
     model: &M,
     uri: &quilt_uri::ManifestUri,
@@ -119,22 +187,38 @@ struct Held<'a, M: QuiltModel> {
     scope: SyncScope,
 }
 
-/// Move the copy to `merged`, now `latest`, as a pull moves a Behind copy, and
-/// report what that brought into the folder. An edit to a path the other side
-/// changed keeps the copy Diverged at its own revision for the next tick; any
-/// other file in the way pauses it as Diverged.
+/// Move the copy to `merged`, now `latest`, and report what that brought into
+/// the folder.
 async fn move_to<M: QuiltModel>(
     held: &Held<'_, M>,
     merged: &quilt_uri::ManifestUri,
     published: Option<String>,
 ) -> Result<RefreshOutcome, WatchError> {
+    let (pulled, status) = try_move(held, merged).await?;
+    Ok(outcome(published, pulled, &status))
+}
+
+/// Move the copy to `target`, `latest`, as a pull moves a Behind copy, and walk
+/// the folder after. `None` when edits to paths the other side changed block
+/// it, which keeps the copy Diverged at its own revision; any other file in the
+/// way pauses it as Diverged.
+async fn try_move<M: QuiltModel>(
+    held: &Held<'_, M>,
+    target: &quilt_uri::ManifestUri,
+) -> Result<
+    (
+        Option<quilt::flow::Pulled>,
+        quilt::lineage::InstalledPackageStatus,
+    ),
+    WatchError,
+> {
     let moved = {
         let _applying = held.aggregator.apply_guard(held.namespace);
         let _activity = held
             .aggregator
             .activity_guard(ActivityOp::Pull, held.namespace);
         held.model
-            .locked_package_move_to(held.locked, merged, held.scope.clone())
+            .locked_package_move_to(held.locked, target, held.scope.clone())
             .await
     };
     let moved = match moved {
@@ -149,34 +233,45 @@ async fn move_to<M: QuiltModel>(
         .locked_package_status(held.locked, None)
         .await
         .map_err(classify_transient_or_login)?;
-    let pulled = match moved {
-        Ok(quilt::flow::Pulled::Applied(report)) => Some(report),
-        Ok(quilt::flow::Pulled::UpToDate) => None,
-        // Edits, which the next tick commits and merges again.
+    match moved {
+        Ok(pulled) => Ok((Some(pulled), status)),
+        // Edits, which the tick commits and merges.
         Err(paths) if paths.iter().all(|path| status.changes.contains_key(path)) => {
             warn!(
-                "autosync: {}: edited during the merge at {paths:?}; left Diverged",
+                "autosync: {}: edits at {paths:?} block the move; left Diverged",
                 held.namespace
             );
-            None
+            Ok((None, status))
         }
         Err(paths) => {
             warn!(
-                "autosync: {}: files in the way of the merged revision at {paths:?}",
+                "autosync: {}: files in the way of latest at {paths:?}",
                 held.namespace
             );
-            return Err(WatchError::Conflict(PausedReason::Diverged));
+            Err(WatchError::Conflict(PausedReason::Diverged))
         }
-    };
-    Ok(RefreshOutcome {
+    }
+}
+
+/// The copy after its move, `None` where edits blocked it, as the walk after
+/// the move found it.
+fn outcome(
+    published: Option<String>,
+    pulled: Option<quilt::flow::Pulled>,
+    status: &quilt::lineage::InstalledPackageStatus,
+) -> RefreshOutcome {
+    RefreshOutcome {
         published,
-        pulled,
+        pulled: match pulled {
+            Some(quilt::flow::Pulled::Applied(report)) => Some(report),
+            Some(quilt::flow::Pulled::UpToDate) | None => None,
+        },
         ..RefreshOutcome::observed(
             status.upstream_state,
             !status.changes.is_empty(),
-            status_fingerprint(&status),
+            status_fingerprint(status),
         )
-    })
+    }
 }
 
 /// [`classify_sync_err`]'s classification, which is never `Ok`.

@@ -629,6 +629,15 @@ pub(crate) async fn refresh_then_maybe_sync(
         } else {
             status
         };
+        // A copy whose merge landed but whose move did not moves before its
+        // edits are committed, so they reach `latest` as an ordinary change.
+        if diverged
+            && !has_pending_commit
+            && let Some(moved) =
+                merge::landed(model, &locked, &installed, aggregator, scope.clone()).await?
+        {
+            return Ok(Some(moved));
+        }
         // `publish_locked_with_settings` is the manual one-click Publish
         // command's path too, so a change to publish settings (new
         // placeholder, new field) applies identically regardless of who

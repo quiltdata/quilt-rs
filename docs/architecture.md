@@ -299,7 +299,9 @@ publishing both on, a `Diverged` copy that shares a published base with
 `latest` is committed and pushed as before a publish, merged onto `latest` with
 `flow::merge_onto`, and published as `latest`'s child. The copy then moves to
 the merged revision with `LockedPackage::move_to`, as a pull moves a `Behind`
-copy. Any other `Diverged` copy pauses, and so does one whose merge refuses or
+copy. One whose pushed revision `latest` already holds moves the same way,
+before any new edit is committed, and publishes nothing. Any other `Diverged`
+copy pauses, and so does one whose merge refuses or
 whose `latest` keeps moving. Resolution of a pause is user-action only.
 
 ### Uninstall
