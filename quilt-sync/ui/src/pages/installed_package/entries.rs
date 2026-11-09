@@ -419,8 +419,8 @@ pub(super) fn EntryRow(
 #[cfg(test)]
 mod tests {
     use super::EntriesToolbar;
-    use crate::test_support::mount;
     use leptos::prelude::*;
+    use quilt_ui_kit::test_support::mount;
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::wasm_bindgen_test;
 

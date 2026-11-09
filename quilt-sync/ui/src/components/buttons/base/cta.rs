@@ -52,7 +52,7 @@ pub fn CtaLink(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::mount;
+    use quilt_ui_kit::test_support::mount;
     use std::cell::Cell;
     use std::rc::Rc;
     use wasm_bindgen::JsCast;

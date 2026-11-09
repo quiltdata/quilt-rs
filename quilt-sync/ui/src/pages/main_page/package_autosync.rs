@@ -14,11 +14,11 @@ use leptos::prelude::*;
 use crate::commands::AutosyncStateData;
 use crate::commands::PausedReasonData;
 use crate::commands::PublishStateData;
-use crate::kit::Countdown;
-use crate::kit::Spinner;
-use crate::kit::StateLabel;
-use crate::kit::StateTone;
-use crate::kit::countdown::EpochMillis;
+use quilt_ui_kit::Countdown;
+use quilt_ui_kit::Spinner;
+use quilt_ui_kit::StateLabel;
+use quilt_ui_kit::StateTone;
+use quilt_ui_kit::countdown::EpochMillis;
 
 stylance::import_crate_style!(style, "src/pages/main_page/package_autosync.module.css");
 

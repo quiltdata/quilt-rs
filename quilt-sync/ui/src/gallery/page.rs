@@ -29,15 +29,15 @@ use crate::Scene;
 use crate::gallery::packages::PackagesRegion;
 use crate::gallery::queue::QueueRegion;
 use crate::gallery::state_strip::StateStripRegion;
-use crate::kit::Activities;
-use crate::kit::Activity;
-use crate::kit::ActivityKind;
-use crate::kit::Button;
-use crate::kit::PageLayout;
-use crate::kit::ZeroLine;
-use crate::kit::ZeroLineSkeleton;
-use crate::kit::icons;
 use crate::pages;
+use quilt_ui_kit::Activities;
+use quilt_ui_kit::Activity;
+use quilt_ui_kit::ActivityKind;
+use quilt_ui_kit::Button;
+use quilt_ui_kit::PageLayout;
+use quilt_ui_kit::ZeroLine;
+use quilt_ui_kit::ZeroLineSkeleton;
+use quilt_ui_kit::icons;
 
 /// The bar a settled page draws. The app's own is
 /// `components::appbar::appbar_actions` over the same `refresh_button`; its
@@ -141,7 +141,7 @@ pub fn PageScene() -> impl IntoView {
                   the bar. Buttons with an icon and a label; the bar removes their frame \
                   (see PageLayout), like v1's link buttons. Hover and focus them here: the \
                   focus ring uses the bar's text colour. Refresh is the app's own \
-                  refresh_button, and both glyphs come from kit/icons.rs."
+                  refresh_button, and both glyphs come from the kit's icons.rs."
         >
             <div class="g-window g-window--bar">
                 <PageLayout heading="QuiltSync" actions=appbar_actions()>""</PageLayout>

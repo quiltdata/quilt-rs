@@ -34,15 +34,15 @@ use crate::gallery::context_pane::ContextPaneRegion;
 use crate::gallery::file_pane::FilePaneRegion;
 use crate::gallery::installed_package::appbar_actions;
 use crate::gallery::package_header::PackageHeaderRegion;
-use crate::kit::DiffersId;
-use crate::kit::PackageState;
-use crate::kit::PageLayout;
 use crate::pages::Catalog;
 use crate::pages::IncomingSummary;
 use crate::pages::Kept;
 use crate::pages::conflicting;
 use crate::pages::header_state;
 use crate::pages::{PackageHeaderBand, package_page_class, package_shell_class};
+use quilt_ui_kit::DiffersId;
+use quilt_ui_kit::PackageState;
+use quilt_ui_kit::PageLayout;
 
 /// The id of the conflict sentence the marked rows' `Differs` points at.
 const DIFFERS: &str = "incoming-differing";

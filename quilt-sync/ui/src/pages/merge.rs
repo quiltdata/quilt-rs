@@ -2,6 +2,9 @@ use leptos::prelude::*;
 use leptos_router::NavigateOptions;
 use leptos_router::hooks::use_navigate;
 
+use quilt_ui_kit::{ConfirmDialog, Submit, readable};
+
+use super::installed_package_v2::resolve::share_consequence;
 use crate::commands::{self, MergeData};
 use crate::components::buttons;
 use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
@@ -77,26 +80,62 @@ fn MergeContent(
     let ns_for_certify = namespace.clone();
     let uri_for_certify = uri.clone();
     let navigate_for_certify = navigate.clone();
-    let on_certify = move |_| {
+    let certify = move || {
         let ns = ns_for_certify.clone();
         let uri = uri_for_certify.clone();
         let navigate = navigate_for_certify.clone();
+        async move {
+            let msg = commands::certify_latest(ns.to_string(), uri).await?;
+            notification.set(Some(Notification::Success(msg)));
+            navigate(
+                &crate::routes::package_page_href(&ns),
+                NavigateOptions::default(),
+            );
+            Ok::<(), String>(())
+        }
+    };
+
+    // The confirmation's sentence, read at the press: `latest` may have moved
+    // since the page loaded.
+    let promote_open = RwSignal::new(false);
+    let promote_says = RwSignal::new(None::<String>);
+    let ns_for_loss = namespace.clone();
+    let certify_at_once = certify.clone();
+    let on_certify = move |_| {
+        let ns = ns_for_loss.clone();
+        let certify = certify_at_once.clone();
         ui_locked.set(true);
         leptos::task::spawn_local(async move {
-            match commands::certify_latest(ns.to_string(), uri).await {
-                Ok(msg) => {
-                    notification.set(Some(Notification::Success(msg)));
-                    navigate(
-                        &crate::routes::package_page_href(&ns),
-                        NavigateOptions::default(),
-                    );
-                }
-                Err(e) => {
-                    ui_locked.set(false);
-                    notification.set(Some(Notification::Error(e)));
+            let answer = async {
+                let loss = commands::get_latest_loss(ns.to_string()).await?;
+                match share_consequence(loss) {
+                    None => certify().await,
+                    Some(sentence) => {
+                        ui_locked.set(false);
+                        promote_says.set(Some(sentence));
+                        promote_open.set(true);
+                        Ok(())
+                    }
                 }
             }
+            .await;
+            if let Err(e) = answer {
+                ui_locked.set(false);
+                notification.set(Some(Notification::Error(readable(&e))));
+            }
         });
+    };
+    let promote_confirmation = move || {
+        promote_says.get().map(|consequence| {
+            view! {
+                <ConfirmDialog
+                    open=promote_open
+                    title="Promote your revision to latest"
+                    consequence=consequence
+                    confirm=Submit::new("Promote my revision", certify.clone())
+                />
+            }
+        })
     };
 
     let ns_for_reset = namespace.clone();
@@ -155,6 +194,7 @@ fn MergeContent(
                     <buttons::ResetLocal on_click=on_reset />
                 </div>
             </div>
+            {promote_confirmation}
         </div>
     }
 }
@@ -235,4 +275,143 @@ fn build_toolbar_actions(
         }
         .into_any()
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use leptos::prelude::*;
+    use leptos_router::components::Router;
+    use quilt_ui_kit::test_support::{
+        button_saying, element_saying, mount, sleep_ms, unmount_earlier,
+    };
+    use serde_json::{Value, json};
+    use wasm_bindgen_test::*;
+
+    use super::MergeContent;
+    use crate::commands::MergeData;
+    use crate::components::Notification;
+    use crate::engine::fake::FakeEngine;
+
+    async fn merge_page() -> web_sys::Element {
+        merge_page_telling(RwSignal::new(None)).await
+    }
+
+    async fn merge_page_telling(notification: RwSignal<Option<Notification>>) -> web_sys::Element {
+        unmount_earlier();
+        let el = mount(move || {
+            view! {
+                <Router>
+                    <MergeContent
+                        data=MergeData {
+                            namespace: ("team", "dataset").into(),
+                            uri: None,
+                        }
+                        notification=notification
+                        ui_locked=RwSignal::new(false)
+                    />
+                </Router>
+            }
+        });
+        sleep_ms(0).await;
+        el
+    }
+
+    fn asked(engine: &FakeEngine, cmd: &str) -> Option<Value> {
+        engine.requests().into_iter().find(|r| r["cmd"] == cmd)
+    }
+
+    /// Press *Promote my revision*; the engine's ask for what `latest` would lose.
+    async fn press_promote(engine: &FakeEngine, el: &web_sys::Element) -> Value {
+        button_saying(el, "Promote my revision").click();
+        sleep_ms(0).await;
+        // The first ask opened the socket; it waits for the hello.
+        engine.hello();
+        sleep_ms(0).await;
+        let ask = asked(engine, "get_latest_loss").expect("the loss is asked");
+        assert_eq!(ask["args"]["namespace"], "team/dataset");
+        ask
+    }
+
+    /// Press *Promote my revision* and answer what `latest` would lose.
+    async fn promote(engine: &FakeEngine, el: &web_sys::Element, loss: Value) {
+        let ask = press_promote(engine, el).await;
+        engine.reply(&ask["id"], &loss);
+        sleep_ms(0).await;
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_refused_loss_read_says_why_and_promotes_nothing() {
+        const DENIED: &str = "The active role does not have access to this object.";
+        let engine = FakeEngine::install();
+        let notification = RwSignal::new(None);
+        let el = merge_page_telling(notification).await;
+        let ask = press_promote(&engine, &el).await;
+        engine.refuse(
+            &ask["id"],
+            &json!({"kind": "access_denied", "message": DENIED}).to_string(),
+        );
+        sleep_ms(0).await;
+
+        assert!(
+            matches!(notification.get_untracked(), Some(Notification::Error(m)) if m == DENIED),
+            "the message, not its JSON envelope"
+        );
+        assert!(asked(&engine, "certify_latest").is_none(), "nothing ran");
+        unmount_earlier();
+    }
+
+    fn open_dialog(el: &web_sys::Element) -> Option<web_sys::Element> {
+        el.query_selector("dialog[open]").unwrap()
+    }
+
+    #[wasm_bindgen_test]
+    async fn promoting_what_latest_holds_runs_without_asking() {
+        let engine = FakeEngine::install();
+        let el = merge_page().await;
+        promote(&engine, &el, json!({"entries": 0, "metadata": false})).await;
+
+        assert!(open_dialog(&el).is_none(), "no confirmation");
+        assert!(asked(&engine, "certify_latest").is_some(), "it certifies");
+        unmount_earlier();
+    }
+
+    #[wasm_bindgen_test]
+    async fn promoting_over_published_files_asks_first_and_counts_them() {
+        let engine = FakeEngine::install();
+        let el = merge_page().await;
+        promote(&engine, &el, json!({"entries": 2, "metadata": false})).await;
+
+        let dialog = open_dialog(&el).expect("the confirmation is open");
+        element_saying(
+            &dialog,
+            "Everyone who syncs loses the published version of 2 files.",
+        );
+        assert!(
+            asked(&engine, "certify_latest").is_none(),
+            "nothing ran yet"
+        );
+
+        button_saying(&dialog, "Promote my revision").click();
+        sleep_ms(0).await;
+        assert!(
+            asked(&engine, "certify_latest").is_some(),
+            "confirming certifies"
+        );
+        unmount_earlier();
+    }
+
+    #[wasm_bindgen_test]
+    async fn promoting_over_other_published_metadata_asks_first() {
+        let engine = FakeEngine::install();
+        let el = merge_page().await;
+        promote(&engine, &el, json!({"entries": 0, "metadata": true})).await;
+
+        let dialog = open_dialog(&el).expect("the confirmation is open");
+        element_saying(&dialog, "The published metadata is replaced with yours.");
+        assert!(
+            asked(&engine, "certify_latest").is_none(),
+            "nothing ran yet"
+        );
+        unmount_earlier();
+    }
 }

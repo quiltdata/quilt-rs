@@ -7,16 +7,16 @@ use leptos::prelude::*;
 
 use crate::Scene;
 use crate::gallery::recent_files_parts::Reach;
-use crate::kit::FileRow;
-use crate::kit::GroupHeading;
-use crate::kit::ListToolbar;
-use crate::kit::MenuAction;
-use crate::kit::NameTooltip;
-use crate::kit::Naming;
-use crate::kit::SearchInput;
-use crate::kit::SegmentedControl;
-use crate::kit::Select;
 use crate::pages::row_menu::{RowCommand, menu_actions};
+use quilt_ui_kit::FileRow;
+use quilt_ui_kit::GroupHeading;
+use quilt_ui_kit::ListToolbar;
+use quilt_ui_kit::MenuAction;
+use quilt_ui_kit::NameTooltip;
+use quilt_ui_kit::Naming;
+use quilt_ui_kit::SearchInput;
+use quilt_ui_kit::SegmentedControl;
+use quilt_ui_kit::Select;
 
 const MINUTE: f64 = 60_000.0;
 const HOUR: f64 = 60.0 * MINUTE;

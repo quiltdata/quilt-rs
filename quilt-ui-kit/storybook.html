@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>QuiltSync UI kit — storybook</title>
+
+  <!--
+    The kit's stories, mounted by `src/storybook.rs`. Run: `just storybook dev`.
+
+    Plain CSS, linked in cascade order: the reset, the tokens, the global base,
+    the generated CSS-Module bundle, and the storybook's own chrome. No fonts:
+    the system stack lives in tokens.css.
+  -->
+  <link data-trunk rel="css" href="css/normalize.css" />
+  <link data-trunk rel="css" href="css/tokens.css" />
+  <link data-trunk rel="css" href="css/base.css" />
+  <link data-trunk rel="css" href="css/kit-modules.css" />
+  <link data-trunk rel="css" href="css/chrome.css" />
+  <!-- The appbar's mark. -->
+  <link data-trunk rel="copy-dir" href="assets/img" data-target-path="assets/img" />
+
+  <link data-trunk rel="rust" data-bin="storybook" data-wasm-opt="z" />
+</head>
+<body></body>
+</html>

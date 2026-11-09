@@ -5,7 +5,7 @@
 use leptos::prelude::*;
 
 use crate::commands;
-use crate::kit::{FormControl, TextInput};
+use quilt_ui_kit::{FormControl, TextInput};
 
 stylance::import_crate_style!(style, "src/pages/path_field.module.css");
 
@@ -160,7 +160,7 @@ mod tests {
 
     use super::*;
     use crate::engine::fake::FakeEngine;
-    use crate::test_support::{mount, unmount_earlier};
+    use quilt_ui_kit::test_support::{mount, unmount_earlier};
 
     fn input(root: &web_sys::Element) -> web_sys::HtmlInputElement {
         root.query_selector("input")

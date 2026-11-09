@@ -26,9 +26,9 @@ use leptos::task::spawn_local;
 use crate::commands;
 use crate::commands::ActivityOp;
 use crate::engine;
-use crate::kit;
-use crate::kit::Activity;
-use crate::kit::ActivityKind;
+use quilt_ui_kit as kit;
+use quilt_ui_kit::Activity;
+use quilt_ui_kit::ActivityKind;
 
 /// The words for autopull's activity: one [`Activity`] while a transfer runs,
 /// none when it is idle.

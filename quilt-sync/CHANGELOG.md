@@ -24,9 +24,11 @@
 ### Changed
 
 - The settings page's *Saved* shows for 1.5 seconds, as long as *Copied* does (<https://github.com/quiltdata/quilt-rs/pull/1310>)
+- *Share mine* and *Promote my revision* say what the published revision would lose, its files and its metadata, and ask before replacing it (<https://github.com/quiltdata/quilt-rs/pull/1321>)
 
 ### Fixed
 
+- A package task whose outcome loses `latest` to a revision published during the run lands its own changes on top of that revision instead of leaving the package Diverged, unless both changed the same file (<https://github.com/quiltdata/quilt-rs/pull/1320>)
 - *Open file*, *Reveal in folder* and *Copy path* refuse a path outside the package folder, and so does a catalog link that opens a file
 
 ### quilt-rs

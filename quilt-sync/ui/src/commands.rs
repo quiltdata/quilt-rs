@@ -656,12 +656,24 @@ pub enum ResolveData {
         published_message: Option<String>,
         /// Logical keys that differ, sorted and uncapped: the file pane's marks.
         differing: Vec<String>,
+        loss: LatestLoss,
         unpublished: usize,
         uncommitted: usize,
     },
     Refused {
         reason: String,
     },
+}
+
+/// What the published `latest` loses when this copy's revision replaces it.
+/// Mirrors `src-tauri/src/engine/commands/package_page.rs`; the serde attributes MUST match.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LatestLoss {
+    /// Published entries this copy's revision lacks or holds otherwise.
+    pub entries: usize,
+    /// Whether the published metadata is replaced.
+    pub metadata: bool,
 }
 
 /// Which files this copy keeps. Mirrors
@@ -772,7 +784,7 @@ pub struct PackageHeaderData {
     /// entry-level link from the same value, and `util::catalog_url` owns that
     /// formatting.
     pub uri: Option<S3PackageUri>,
-    pub state: crate::kit::PackageState,
+    pub state: quilt_ui_kit::PackageState,
     /// Whether the remote is pinned by a push — decides whether the menu offers
     /// to change the bucket or only to show it.
     pub remote_locked: bool,
@@ -990,6 +1002,15 @@ pub async fn get_merge_data(namespace: String) -> Result<MergeData, String> {
     engine::invoke("get_merge_data", &Args { namespace }).await
 }
 
+pub async fn get_latest_loss(namespace: String) -> Result<LatestLoss, String> {
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Args {
+        namespace: String,
+    }
+    engine::invoke("get_latest_loss", &Args { namespace }).await
+}
+
 pub async fn get_login_data(host: String, back: String) -> Result<LoginData, String> {
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
@@ -1112,7 +1133,7 @@ pub async fn refresh_main_page_package(
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MainPagePackageRefreshData {
-    pub state: crate::kit::PackageState,
+    pub state: quilt_ui_kit::PackageState,
     pub role_switch_host: Option<String>,
     /// `None` when the status check did not run or failed.
     pub downloads: Option<MainPageDownloadsData>,
@@ -1153,7 +1174,7 @@ impl From<MainPageDownloadsData> for crate::util::Held {
     }
 }
 
-impl From<MainPageDownloadsData> for crate::kit::RowDownloads {
+impl From<MainPageDownloadsData> for quilt_ui_kit::RowDownloads {
     fn from(data: MainPageDownloadsData) -> Self {
         match data.scope {
             KeepingScope::EntirePackage => Self::EntirePackage {
@@ -1181,7 +1202,7 @@ pub struct MainPagePackagesData {
 #[serde(rename_all = "camelCase")]
 pub struct MainPagePackageData {
     pub namespace: Namespace,
-    pub state: crate::kit::PackageState,
+    pub state: quilt_ui_kit::PackageState,
     /// Epoch milliseconds, from the last commit or the last installed path — see
     /// `last_changed` on the engine's side. `None` only when nothing has ever been
     /// written to the package.
@@ -2476,10 +2497,11 @@ pub async fn send_crash_report(
 mod tests {
     use super::{
         CommitViolation, CommitWorkflows, EntryCounts, EntryList, FilesData, KeepingScope,
-        KeptReason, PackageContextData, PackageItemData, PackageSize, PullOutcome, PullPreview,
-        ResolveData, RevisionHistoryData, RolesData, ViolationField, WorkflowInfo, WorkflowIntent,
+        KeptReason, LatestLoss, PackageContextData, PackageItemData, PackageSize, PullOutcome,
+        PullPreview, ResolveData, RevisionHistoryData, RolesData, ViolationField, WorkflowInfo,
+        WorkflowIntent,
     };
-    use crate::kit::RowDownloads;
+    use quilt_ui_kit::RowDownloads;
 
     /// Headless draws v2 whatever design is saved, also after a reconnect
     /// to a desktop engine restarted as headless; a desktop engine draws the
@@ -2487,7 +2509,7 @@ mod tests {
     #[wasm_bindgen_test::wasm_bindgen_test]
     async fn headless_draws_v2_over_a_saved_v1() {
         use crate::engine::fake::{FakeEngine, ask};
-        use crate::test_support::sleep_ms;
+        use quilt_ui_kit::test_support::sleep_ms;
 
         let engine = FakeEngine::install();
         let _asked = ask("get_toasts");
@@ -2510,7 +2532,7 @@ mod tests {
     #[wasm_bindgen_test::wasm_bindgen_test]
     async fn headless_opens_https_here_and_sends_http_to_the_engine() {
         use crate::engine::fake::{FakeEngine, ask};
-        use crate::test_support::sleep_ms;
+        use quilt_ui_kit::test_support::sleep_ms;
 
         let engine = FakeEngine::install();
         engine.as_headless();
@@ -2666,7 +2688,7 @@ mod tests {
     #[test]
     fn resolve_compared_wire_form_is_verbatim() {
         let resolve = serde_json::from_str::<ResolveData>(
-            r#"{"kind":"compared","publishedMessage":"Add intake folder-upload note","differing":["plate/a.csv","plate/b.csv"],"unpublished":2,"uncommitted":1}"#,
+            r#"{"kind":"compared","publishedMessage":"Add intake folder-upload note","differing":["plate/a.csv","plate/b.csv"],"loss":{"entries":3,"metadata":true},"unpublished":2,"uncommitted":1}"#,
         )
         .unwrap();
 
@@ -2675,6 +2697,10 @@ mod tests {
             ResolveData::Compared {
                 published_message: Some("Add intake folder-upload note".to_string()),
                 differing: vec!["plate/a.csv".to_string(), "plate/b.csv".to_string()],
+                loss: LatestLoss {
+                    entries: 3,
+                    metadata: true,
+                },
                 unpublished: 2,
                 uncommitted: 1,
             }
@@ -2962,7 +2988,7 @@ mod tests {
         assert_eq!(data.packages.len(), 1);
         let pkg = &data.packages[0];
         assert_eq!(pkg.namespace.to_string(), "team/latest");
-        assert_eq!(pkg.state, crate::kit::PackageState::Latest);
+        assert_eq!(pkg.state, quilt_ui_kit::PackageState::Latest);
         assert_eq!(pkg.changed_at, None);
         assert_eq!(pkg.host.as_deref(), Some("quilt.test"));
         assert!(pkg.provisional);
@@ -3002,12 +3028,12 @@ mod tests {
         )
         .unwrap();
         assert!(
-            !matches!(pending.state, crate::kit::PackageState::Unknown),
+            !matches!(pending.state, quilt_ui_kit::PackageState::Unknown),
             "a kind drift would silently land here, via #[serde(other)]"
         );
         assert_eq!(
             pending.state,
-            crate::kit::PackageState::PendingChanges { files: 3 }
+            quilt_ui_kit::PackageState::PendingChanges { files: 3 }
         );
 
         let denied = serde_json::from_str::<super::MainPagePackageRefreshData>(
@@ -3015,12 +3041,12 @@ mod tests {
         )
         .unwrap();
         assert!(
-            !matches!(denied.state, crate::kit::PackageState::Unknown),
+            !matches!(denied.state, quilt_ui_kit::PackageState::Unknown),
             "a kind drift would silently land here, via #[serde(other)]"
         );
         assert_eq!(
             denied.state,
-            crate::kit::PackageState::RoleDenied { role: None }
+            quilt_ui_kit::PackageState::RoleDenied { role: None }
         );
         assert_eq!(denied.role_switch_host.as_deref(), Some("h"));
         assert_eq!(denied.downloads, None);

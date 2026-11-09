@@ -12,7 +12,7 @@ use leptos_router::hooks::use_navigate;
 
 use crate::commands::{self, SetupData};
 use crate::engine;
-use crate::kit::{
+use quilt_ui_kit::{
     Button, ButtonVariant, Card, FormControl, LoadFailure, PageLayout, SkeletonBox, TextInput,
     readable,
 };
@@ -259,8 +259,8 @@ fn pick_folder(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{button_saying, mount, sleep_ms, unmount_earlier};
     use leptos_router::components::Router;
+    use quilt_ui_kit::test_support::{button_saying, mount, sleep_ms, unmount_earlier};
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 

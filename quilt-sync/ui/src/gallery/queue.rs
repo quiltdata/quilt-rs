@@ -8,14 +8,14 @@ use leptos::prelude::*;
 
 use crate::Scene;
 use crate::gallery::queue_parts::{REJECTION, actionable, queue_row};
-use crate::kit::AttentionQueue;
-use crate::kit::Button;
-use crate::kit::CauseRow;
-use crate::kit::PackageAction;
-use crate::kit::PackageState;
-use crate::kit::QueueRow;
-use crate::kit::ZeroLine;
 use quilt_sync_ui::pages::action_href;
+use quilt_ui_kit::AttentionQueue;
+use quilt_ui_kit::Button;
+use quilt_ui_kit::CauseRow;
+use quilt_ui_kit::PackageAction;
+use quilt_ui_kit::PackageState;
+use quilt_ui_kit::QueueRow;
+use quilt_ui_kit::ZeroLine;
 
 /// The remedy points wherever the page would point it.
 fn page_href(action: PackageAction, namespace: &'static str) -> String {

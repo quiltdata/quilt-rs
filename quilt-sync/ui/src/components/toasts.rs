@@ -319,7 +319,7 @@ fn ToastCard(toast: Toast, store: Store) -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::mount;
+    use quilt_ui_kit::test_support::mount;
 
     use wasm_bindgen_test::*;
 

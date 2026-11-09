@@ -21,12 +21,18 @@
 
 ## [v0.53.0-dev]
 
+### Added
+
+- **Breaking:** `flow::ResolveComparison` says what making this revision `latest` takes from the published one: `lost`, the published rows it lacks or holds at another content hash or entry `meta`, and `user_meta_differs` (<https://github.com/quiltdata/quilt-rs/pull/1321>)
+- `flow::push_onto` and `LocalDomain::push_onto` publish a manifest whose rows are already on the remote as the revision after a given parent, and move `latest` to it only while `latest` still names that parent (<https://github.com/quiltdata/quilt-rs/pull/1320>)
+
 ### Changed
 
 - **Breaking:** a manifest row's `logical_key` is a `LogicalKey`, which refuses a key that leaves the package folder: a `.` or `..` folder, an empty folder name, or a leading `/`, `\\` or drive. Reading a manifest that holds one fails, and `LogicalKey::join_to` is how a key becomes a local path. `ManifestRow` implements `Default` only with the `testing` feature
 
 ### Fixed
 
+- `reset_to_latest` on a copy already at `latest`'s revision records that revision as its base, so the copy reads up to date rather than Diverged (<https://github.com/quiltdata/quilt-rs/pull/1320>)
 - Install, status, commit, pull and undo only touch files inside the package folder, whatever keys a manifest holds; a local file whose path can't be a logical key is left out of status and new packages
 
 ## [v0.52.0] - 2026-11-05

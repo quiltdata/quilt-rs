@@ -21,7 +21,7 @@
 
 use leptos::prelude::*;
 
-use crate::kit::{Banner, BannerVariant, PackageState};
+use quilt_ui_kit::{Banner, BannerVariant, PackageState};
 
 /// The band itself, drawn in the mismatch band's place.
 ///
@@ -60,9 +60,11 @@ mod tests {
     use super::super::{PackageScreen, PageRead, ResolveCommands};
     use super::*;
     use crate::commands;
-    use crate::test_support::{button_saying, element_saying, mount, sleep_ms, unmount_earlier};
     use leptos_router::components::{Route, Router, Routes};
     use leptos_router::path;
+    use quilt_ui_kit::test_support::{
+        button_saying, element_saying, mount, sleep_ms, unmount_earlier,
+    };
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
@@ -105,6 +107,7 @@ mod tests {
         d.context.resolve = Some(commands::ResolveData::Compared {
             published_message: Some("Theirs".to_string()),
             differing: vec!["plate/a.csv".to_string()],
+            loss: commands::LatestLoss::default(),
             unpublished: 1,
             uncommitted: 0,
         });

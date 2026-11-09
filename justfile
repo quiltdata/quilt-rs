@@ -7,8 +7,11 @@ default:
 # The desktop app: `dev`
 mod app "quilt-sync/app.just"
 
-# The component gallery: `dev`, `build` and `preview`
+# The app's gallery: `dev`, `build` and `preview`
 mod gallery "quilt-sync/ui/gallery.just"
+
+# The UI kit's storybook: `dev`, `build` and `preview`
+mod storybook "quilt-ui-kit/storybook.just"
 
 # The test suites: plain `just test`, `live`, `frontend`, `doc` and `e2e`
 mod test "test.just"
@@ -23,7 +26,7 @@ export SCOPE := env("SCOPE", "--workspace --all-targets")
 
 # Report every formatting and lint failure; writes nothing
 lint: lint-md lint-css check wasm-check
-    cargo clippy --target wasm32-unknown-unknown -p quilt-sync-ui --all-targets --all-features -- --deny warnings
+    cargo clippy --target wasm32-unknown-unknown -p quilt-sync-ui -p quilt-ui-kit --all-targets --all-features -- --deny warnings
 
 # `rumdl fmt` looks equivalent but exits 0 with unfixable issues outstanding.
 #

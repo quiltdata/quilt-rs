@@ -187,12 +187,32 @@ pub enum ResolveData {
         /// Sorted logical keys, the whole package: neither capped nor filtered,
         /// because the pane's count and the file pane's marks read this one value.
         differing: Vec<String>,
+        loss: LatestLoss,
         unpublished: usize,
         /// Tracked paths with a local change: the edits a reset overwrites.
         uncommitted: usize,
     },
     /// The manifest fetch, the listing, the status or the session failed.
     Refused { reason: String },
+}
+
+/// What the published `latest` loses when this copy's revision replaces it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LatestLoss {
+    /// Published entries this copy's revision lacks or holds otherwise.
+    pub entries: usize,
+    /// Whether the published metadata is replaced.
+    pub metadata: bool,
+}
+
+impl From<&quilt::flow::ResolveComparison> for LatestLoss {
+    fn from(comparison: &quilt::flow::ResolveComparison) -> Self {
+        Self {
+            entries: comparison.lost,
+            metadata: comparison.user_meta_differs,
+        }
+    }
 }
 
 /// The current revision's user-facing facts.
@@ -543,6 +563,7 @@ fn resolve_data(
     // `PathBuf` orders by component, so `a-b` and `a/b` swap once they are strings.
     differing.sort();
     ResolveData::Compared {
+        loss: LatestLoss::from(&comparison),
         published_message: comparison.published_message,
         differing,
         unpublished: comparison.unpublished,
@@ -1234,6 +1255,8 @@ mod tests {
                 Ok(quilt::flow::ResolveComparison {
                     published_message: Some("Sent".to_string()),
                     differing: vec![PathBuf::from("plate/a.csv")],
+                    lost: 1,
+                    user_meta_differs: true,
                     unpublished: 2,
                 })
             });
@@ -1245,6 +1268,10 @@ mod tests {
             Some(ResolveData::Compared {
                 published_message: Some("Sent".to_string()),
                 differing: vec!["plate/a.csv".to_string()],
+                loss: LatestLoss {
+                    entries: 1,
+                    metadata: true,
+                },
                 unpublished: 2,
                 uncommitted: 1,
             })
@@ -1404,6 +1431,8 @@ mod tests {
         quilt::flow::ResolveComparison {
             published_message: Some("Add intake folder-upload note".to_string()),
             differing: differing.iter().map(PathBuf::from).collect(),
+            lost: 3,
+            user_meta_differs: true,
             unpublished,
         }
     }
@@ -1418,7 +1447,7 @@ mod tests {
 
         assert_eq!(
             serde_json::to_string(&data).unwrap(),
-            r#"{"kind":"compared","publishedMessage":"Add intake folder-upload note","differing":["plate/a.csv","plate/b.csv"],"unpublished":2,"uncommitted":1}"#,
+            r#"{"kind":"compared","publishedMessage":"Add intake folder-upload note","differing":["plate/a.csv","plate/b.csv"],"loss":{"entries":3,"metadata":true},"unpublished":2,"uncommitted":1}"#,
         );
     }
 

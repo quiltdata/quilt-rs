@@ -9,8 +9,8 @@ use leptos::prelude::*;
 use leptos_router::NavigateOptions;
 use leptos_router::hooks::use_navigate;
 
-use crate::kit::Button;
-use crate::kit::icons;
+use quilt_ui_kit::Button;
+use quilt_ui_kit::icons;
 
 /// `busy` is the page's own in-flight state, not the button's, so a read the
 /// page started without a press still shows.

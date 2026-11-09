@@ -58,7 +58,7 @@ use crate::commands::{
     PublishSettingsData, SettingsData, TaskSettings, TaskSettingsData,
 };
 use crate::engine;
-use crate::kit::{
+use quilt_ui_kit::{
     ACKNOWLEDGE_FOR, Button, ButtonVariant, Card, Dialog, HostRowSkeleton, LoadFailure, PageLayout,
     ToggleRowSkeleton,
 };
@@ -1514,7 +1514,9 @@ mod tests {
         AutosyncSettingsData, DefaultRuleData, ExperimentalSettingsData, FsWatcherSettingsData,
         IgnoreRulesData,
     };
-    use crate::test_support::{button_saying, element_saying, mount, sleep_ms, unmount_earlier};
+    use quilt_ui_kit::test_support::{
+        button_saying, element_saying, mount, sleep_ms, unmount_earlier,
+    };
     use std::cell::{Cell, RefCell};
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;

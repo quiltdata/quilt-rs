@@ -5891,6 +5891,7 @@ dependencies = [
  "js-sys",
  "leptos",
  "leptos_router",
+ "quilt-ui-kit",
  "quilt-uri",
  "send_wrapper",
  "serde",
@@ -5898,6 +5899,22 @@ dependencies = [
  "serde_json",
  "stylance",
  "urlencoding",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "wasm-bindgen-test",
+ "web-sys",
+]
+
+[[package]]
+name = "quilt-ui-kit"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "js-sys",
+ "leptos",
+ "serde",
+ "serde_json",
+ "stylance",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "wasm-bindgen-test",

@@ -3,8 +3,8 @@ use leptos::prelude::*;
 use crate::commands::{self, LogEnv};
 use crate::components::Notification;
 use crate::components::buttons;
-use crate::kit::{Naming, Select};
 use crate::pages::settings_v2::{LOG_LEVELS, log_env_hint, log_level_label};
+use quilt_ui_kit::{Naming, Select};
 
 /// The saved log level. Disabled while a valid `QUILT_LOG` replaces it.
 #[component]

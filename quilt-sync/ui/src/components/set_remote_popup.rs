@@ -429,7 +429,7 @@ pub fn SetRemotePopup(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{element_saying, mount};
+    use quilt_ui_kit::test_support::{element_saying, mount};
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
@@ -485,7 +485,7 @@ mod tests {
         assert!(bucket.disabled(), "the bucket is fixed");
         assert_eq!(bucket.value(), "data-bucket");
         element_saying(&el, "Add catalog");
-        crate::test_support::button_saying(&el, "Save");
+        quilt_ui_kit::test_support::button_saying(&el, "Save");
         assert!(
             el.query_selector("select").unwrap().is_none(),
             "no workflow"
@@ -525,7 +525,7 @@ mod tests {
             &web_sys::KeyboardEvent::new_with_keyboard_event_init_dict("keydown", &init).unwrap(),
         )
         .unwrap();
-        crate::test_support::sleep_ms(50).await;
+        quilt_ui_kit::test_support::sleep_ms(50).await;
 
         assert!(
             matches!(notification.get_untracked(), Some(Notification::Error(_))),
