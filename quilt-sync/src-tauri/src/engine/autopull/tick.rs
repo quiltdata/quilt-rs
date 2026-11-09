@@ -440,13 +440,13 @@ pub(crate) async fn refresh_then_maybe_sync(
     // make `has_pending_commit` stale relative to `upstream`.
     let has_pending_commit = lineage.commit.is_some();
 
-    // A `Diverged` state needs explicit user action (Certify Latest or
-    // Reset Local). Neither the pull nor the publish branch would touch
-    // it, but leaving it as an `Ok(_)` outcome means we'd re-emit
-    // `diverged` every tick without pausing — the UI then looks healthy
-    // even though no progress can be made. Surface as a Conflict so the
-    // namespace lands in the paused set on the first observation.
-    if upstream == quilt::lineage::UpstreamState::Diverged {
+    // A `Diverged` copy is merged onto `latest` after the publish branch has
+    // committed and pushed what it holds, which needs both directions on and
+    // a base shared with `latest`: a first push would certify over it.
+    // Otherwise it pauses on the first observation, rather than re-emitting
+    // `diverged` every tick while the UI looks healthy.
+    let diverged = upstream == quilt::lineage::UpstreamState::Diverged;
+    if diverged && !(pull_enabled && push_enabled && !lineage.base_hash.is_empty()) {
         return Err(WatchError::Conflict(PausedReason::Diverged));
     }
 
@@ -580,7 +580,8 @@ pub(crate) async fn refresh_then_maybe_sync(
             upstream,
             quilt::lineage::UpstreamState::UpToDate
                 | quilt::lineage::UpstreamState::Ahead
-                | quilt::lineage::UpstreamState::Local,
+                | quilt::lineage::UpstreamState::Local
+                | quilt::lineage::UpstreamState::Diverged,
         )
         && (has_changes || has_pending_commit);
     if publish_eligible {
@@ -628,6 +629,15 @@ pub(crate) async fn refresh_then_maybe_sync(
         } else {
             status
         };
+        // A copy whose merge landed but whose move did not moves before its
+        // edits are committed, so they reach `latest` as an ordinary change.
+        if diverged
+            && !has_pending_commit
+            && let Some(moved) =
+                merge::landed(model, &locked, &installed, aggregator, scope.clone()).await?
+        {
+            return Ok(Some(moved));
+        }
         // `publish_locked_with_settings` is the manual one-click Publish
         // command's path too, so a change to publish settings (new
         // placeholder, new field) applies identically regardless of who
@@ -646,6 +656,18 @@ pub(crate) async fn refresh_then_maybe_sync(
             )
             .await
         };
+        // A Diverged copy's own revision does not become `latest`; it is merged
+        // onto it instead.
+        if diverged
+            && published
+                .as_ref()
+                .is_ok_and(|(outcome, _)| outcome.push().is_none_or(|push| !push.certified_latest))
+        {
+            last_change.on_published(namespace).await;
+            return merge::onto_latest(model, &locked, &installed, aggregator, scope)
+                .await
+                .map(Some);
+        }
         return match published {
             // No new hash and no pending commit: nothing is left to publish,
             // and nothing to say. The observed state stays.
@@ -690,6 +712,11 @@ pub(crate) async fn refresh_then_maybe_sync(
                     .map(|()| Some(RefreshOutcome::observed(upstream, has_changes, fingerprint)))
             }
         };
+    }
+    if diverged {
+        return merge::onto_latest(model, &locked, &installed, aggregator, scope)
+            .await
+            .map(Some);
     }
 
     Ok(Some(RefreshOutcome::observed(
@@ -1145,6 +1172,8 @@ pub(crate) async fn pause(
     inner.aggregator.note_paused(namespace, &aggregator_message);
     inner.aggregator.note_status(namespace, has_changes);
 }
+
+mod merge;
 
 #[cfg(test)]
 mod tests;

@@ -1196,6 +1196,53 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         Ok(pulled)
     }
 
+    async fn move_to_unlocked(&self, target: ManifestUri, scope: SyncScope) -> Res<flow::Pulled> {
+        self.scaffold_paths().await?;
+
+        let (package_home, mut lineage) = self.lineage.read(&self.storage).await?;
+
+        self.scaffold_paths_for_caching(&target.bucket).await?;
+
+        let mut manifest = self.manifest_from_lineage(&lineage).await?;
+        let host_config = self.remote.host_config(target.origin.as_ref()).await?;
+
+        // The pull runs from the copy's own revision, not from the base it
+        // shared with `latest` before.
+        lineage.base_hash = lineage.remote()?.hash.clone();
+        lineage.latest_hash.clone_from(&target.hash);
+        // Fetch first and walk last, as `flow::snapshot_for_pull` does.
+        let latest_manifest =
+            cache_remote_manifest(&self.paths, &self.storage, &*self.remote, &target).await?;
+        let (lineage, status) = flow::status(
+            lineage,
+            &self.storage,
+            &self.paths,
+            &manifest,
+            &package_home,
+            host_config,
+        )
+        .await?;
+        let snapshot = flow::PullSnapshot {
+            status,
+            latest: target,
+            latest_manifest,
+        };
+        let (lineage, pulled) = flow::pull(
+            lineage,
+            &mut manifest,
+            &self.paths,
+            &self.storage,
+            &*self.remote,
+            package_home,
+            snapshot,
+            self.namespace.clone(),
+            scope,
+        )
+        .await?;
+        self.lineage.write(&self.storage, lineage).await?;
+        Ok(pulled)
+    }
+
     /// Dry-run: what would `pull` do right now, without mutating anything?
     ///
     /// Sequence:
@@ -1803,6 +1850,15 @@ impl<S: Storage + Clone + Sync, R: Remote> LockedPackage<S, R> {
         self.package.pull_unlocked(host_config_opt, scope).await
     }
 
+    /// Moves a copy whose pushed revision `target` already holds onto
+    /// `target`, as [`Self::pull`] moves a `Behind` copy from its base: only
+    /// the paths the two revisions differ at are written, and a local change
+    /// at one of them refuses the whole move with a
+    /// [`PackageOpError::PullConflict`]. Any other local change is kept.
+    pub async fn move_to(&self, target: ManifestUri, scope: SyncScope) -> Res<flow::Pulled> {
+        self.package.move_to_unlocked(target, scope).await
+    }
+
     pub async fn certify_latest(&self) -> Res<ManifestUri> {
         self.package.certify_latest_unlocked().await
     }
@@ -1835,6 +1891,8 @@ impl<S: Storage + Clone + Sync, R: Remote> LockedPackage<S, R> {
 mod change_catalog_tests;
 #[cfg(test)]
 mod current_revision_tests;
+#[cfg(test)]
+mod move_to_tests;
 #[cfg(test)]
 mod older_revision_tests;
 #[cfg(test)]

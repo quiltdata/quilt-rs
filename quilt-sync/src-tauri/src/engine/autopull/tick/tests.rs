@@ -33,6 +33,7 @@ fn pulled(uri: quilt_uri::ManifestUri) -> quilt::flow::PullReport {
     }
 }
 
+mod merge;
 mod publish;
 mod watched;
 

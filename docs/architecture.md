@@ -294,8 +294,15 @@ tick. Autosync's autopull tick is a state-driven dispatcher over the same
 operations the manual UI buttons invoke: refresh, classify, then route to
 pull (`Behind` with a non-conflicting `PullOutcome` — local work is preserved)
 or publish (changes or a pending commit, quiet tree). A `Behind` tree with a
-`Blocked` outcome pauses with `PausedReason::PullConflict`; `Diverged` pauses
-the namespace. Resolution of either is user-action only.
+`Blocked` outcome pauses with `PausedReason::PullConflict`. With pulling and
+publishing both on, a `Diverged` copy that shares a published base with
+`latest` is committed and pushed as before a publish, merged onto `latest` with
+`flow::merge_onto`, and published as `latest`'s child. The copy then moves to
+the merged revision with `LockedPackage::move_to`, as a pull moves a `Behind`
+copy. One whose pushed revision `latest` already holds moves the same way,
+before any new edit is committed, and publishes nothing. Any other `Diverged`
+copy pauses, and so does one whose merge refuses or
+whose `latest` keeps moving. Resolution of a pause is user-action only.
 
 ### Uninstall
 
