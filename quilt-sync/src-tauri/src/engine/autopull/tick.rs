@@ -129,7 +129,11 @@ const AMBIENT_CREDENTIALS_UNUSABLE: &str =
 #[derive(Debug)]
 pub(crate) enum WatchError {
     Conflict(PausedReason),
-    LoginRequired(Option<Host>),
+    /// `expired` tells a rejected session from a missing one.
+    LoginRequired {
+        host: Option<Host>,
+        expired: bool,
+    },
     Transient(Error),
 }
 
@@ -215,12 +219,18 @@ pub(crate) fn classify_sync_err(err: Error) -> Result<(), WatchError> {
         // credential is an `Error::S3`, and retrying one never succeeds. It is
         // the fact the `Login` arm below carries, reached when S3 answers 403
         // with a credential code rather than the provider refusing to vend.
-        _ if err.is_invalid_credentials() => Err(WatchError::LoginRequired(err.s3_host().cloned())),
+        _ if err.is_invalid_credentials() => Err(WatchError::LoginRequired {
+            host: err.s3_host().cloned(),
+            expired: true,
+        }),
         Error::Quilt(quilt::Error::Reqwest(_) | quilt::Error::Io(_) | quilt::Error::S3(_)) => {
             Err(WatchError::Transient(err))
         }
         Error::Quilt(quilt::Error::Login(quilt::LoginError::NoSession(host))) => {
-            Err(WatchError::LoginRequired(host.clone()))
+            Err(WatchError::LoginRequired {
+                host: host.clone(),
+                expired: false,
+            })
         }
         _ => Err(WatchError::Conflict(PausedReason::Other(err.to_string()))),
     }
@@ -233,7 +243,10 @@ pub(crate) fn classify_sync_err(err: Error) -> Result<(), WatchError> {
 fn classify_transient_or_login(err: Error) -> WatchError {
     match &err {
         Error::Quilt(quilt::Error::Login(quilt::LoginError::NoSession(host))) => {
-            WatchError::LoginRequired(host.clone())
+            WatchError::LoginRequired {
+                host: host.clone(),
+                expired: false,
+            }
         }
         // A denial is neither a broken session nor a blip: the credentials
         // vended fine and the role simply cannot read this bucket. It must
@@ -247,7 +260,10 @@ fn classify_transient_or_login(err: Error) -> WatchError {
         // rejected credential never succeeds. It is the fact the `Login` arm
         // above carries, reached when S3 answers 403 with a credential code
         // rather than the provider refusing to vend.
-        _ if err.is_invalid_credentials() => WatchError::LoginRequired(err.s3_host().cloned()),
+        _ if err.is_invalid_credentials() => WatchError::LoginRequired {
+            host: err.s3_host().cloned(),
+            expired: true,
+        },
         _ => WatchError::Transient(err),
     }
 }
@@ -1016,10 +1032,7 @@ pub(crate) async fn sync_package(
                 inner.needs_you.session_works(origin);
                 inner.needs_you.leave(&package, Kind::NoAccess);
             }
-            if reached
-                || outcome.published.is_some()
-                || inner.last_change.get(&namespace).await.is_none()
-            {
+            if outcome.published.is_some() || inner.last_change.get(&namespace).await.is_none() {
                 inner.needs_you.leave(&package, Kind::PublishFailing);
             }
             if let Some(message) = outcome.published.as_deref() {
@@ -1048,7 +1061,7 @@ pub(crate) async fn sync_package(
                 .aggregator
                 .note_status(&namespace, outcome.has_changes);
         }
-        Err(WatchError::LoginRequired(host)) => {
+        Err(WatchError::LoginRequired { host, expired }) => {
             // A refusal the old catalog gave is not this package's any more;
             // the next pass asks the new one. See `WatcherInner::refusals`.
             let _gate = inner.refusals.lock().await;
@@ -1075,7 +1088,7 @@ pub(crate) async fn sync_package(
                 block
             };
             inner.reporter.report_login_required(host.as_ref(), block);
-            inner.needs_you.session_failed(host.as_ref(), true);
+            inner.needs_you.session_failed(host.as_ref(), expired);
             inner.aggregator.note_login_required(&namespace, host);
         }
         Err(WatchError::Conflict(reason)) => {
@@ -1107,7 +1120,6 @@ pub(crate) async fn sync_package(
             note_publish_failing(
                 inner,
                 &namespace,
-                run,
                 now.saturating_duration_since(failing_since),
                 &err,
             )
@@ -1155,15 +1167,19 @@ pub(crate) async fn prune_needs_you(
 
 /// A publish that has kept failing for [`PUBLISH_FAILING_AFTER`] needs the
 /// reader; one with nothing left to publish, or publishing off, does not.
+///
+/// Reads the setting now, not the pass's snapshot, and holds it through the
+/// update: turning publishing off mid-pass then either comes first and is
+/// seen, or comes after and clears the entry.
 async fn note_publish_failing(
     inner: &WatcherInner,
     namespace: &Namespace,
-    run: &PassSettings,
     failing_for: Duration,
     err: &Error,
 ) {
+    let settings = inner.settings.read().await;
     let package = Subject::package(namespace);
-    let to_publish = run.push_enabled && inner.last_change.get(namespace).await.is_some();
+    let to_publish = settings.push.enabled && inner.last_change.get(namespace).await.is_some();
     if !to_publish {
         inner.needs_you.leave(&package, Kind::PublishFailing);
     } else if failing_for >= PUBLISH_FAILING_AFTER {

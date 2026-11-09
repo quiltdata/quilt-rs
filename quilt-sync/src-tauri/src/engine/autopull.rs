@@ -15,6 +15,7 @@ use crate::engine::autopull::status::SyncTrayAggregator;
 use crate::engine::commands::RoleCache;
 use crate::engine::model::Model;
 use crate::engine::model::QuiltModel;
+use crate::engine::needs_you::Cause;
 use crate::engine::needs_you::Kind;
 use crate::engine::needs_you::NeedsYou;
 use crate::engine::needs_you::Subject;
@@ -164,12 +165,16 @@ impl WatcherInner {
         self.reporter.report_autosync_changed();
     }
 
-    /// A pause on `namespace` was cleared: announce it and leave the set.
-    /// Refused access leaves too; a read or a pass still refused enters again.
-    pub(crate) fn unpaused(&self, namespace: &Namespace) {
+    /// A pause on `namespace` was cleared: announce it and leave the set. A
+    /// denial pause takes its refused access with it; a refusal a page's read
+    /// found stays until the bucket answers.
+    pub(crate) fn unpaused(&self, namespace: &Namespace, reason: &PausedReason) {
         let package = Subject::package(namespace);
-        self.needs_you.leave(&package, Kind::Paused);
-        self.needs_you.leave(&package, Kind::NoAccess);
+        let kind = match Cause::of_pause(reason) {
+            Cause::NoAccess { .. } => Kind::NoAccess,
+            _ => Kind::Paused,
+        };
+        self.needs_you.leave(&package, kind);
         self.reporter.report_pause_cleared(namespace);
     }
 }
@@ -367,11 +372,11 @@ impl Watcher {
     /// explicit action (push / pull / commit / publish / reset / set
     /// remote) that resolves the underlying conflict.
     pub async fn clear_paused(&self, namespace: &Namespace) {
-        let was_paused = self.inner.paused.write().await.remove(namespace).is_some();
+        let was_paused = self.inner.paused.write().await.remove(namespace);
         self.inner.login_blocked.write().await.remove(namespace);
         self.inner.aggregator.note_cleared(namespace);
-        if was_paused {
-            self.inner.unpaused(namespace);
+        if let Some(reason) = was_paused {
+            self.inner.unpaused(namespace, &reason);
         }
         self.inner.reschedule_publish();
     }
@@ -410,13 +415,13 @@ impl Watcher {
         namespace: &Namespace,
         status: &quilt_rs::lineage::InstalledPackageStatus,
     ) -> bool {
-        {
+        let reason = {
             let mut paused = self.inner.paused.write().await;
             if !matches!(paused.get(namespace), Some(PausedReason::PullConflict(_))) {
                 return false;
             }
-            paused.remove(namespace);
-        }
+            paused.remove(namespace).expect("checked above")
+        };
         // Only the pause: a safe verdict can keep local edits in place, so the
         // tray's change count is set from the observation, not dropped.
         self.inner.aggregator.clear_error(namespace);
@@ -426,7 +431,7 @@ impl Watcher {
         let mut event = PackageStatusEvent::from_status(namespace, status);
         event.fingerprint = format!("unpaused;{}", event.fingerprint);
         self.inner.reporter.report_status(namespace, event);
-        self.inner.unpaused(namespace);
+        self.inner.unpaused(namespace, &reason);
         self.inner.reschedule_publish();
         true
     }
@@ -438,15 +443,15 @@ impl Watcher {
         let mut login_blocked = self.inner.login_blocked.write().await;
         let namespaces: BTreeSet<Namespace> =
             paused.keys().chain(login_blocked.keys()).cloned().collect();
-        let unpaused: Vec<Namespace> = std::mem::take(&mut *paused).into_keys().collect();
+        let unpaused = std::mem::take(&mut *paused);
         login_blocked.clear();
         drop(paused);
         drop(login_blocked);
         for ns in &namespaces {
             self.inner.aggregator.note_cleared(ns);
         }
-        for ns in &unpaused {
-            self.inner.unpaused(ns);
+        for (ns, reason) in &unpaused {
+            self.inner.unpaused(ns, reason);
         }
         self.inner.reschedule_publish();
     }
@@ -478,8 +483,11 @@ impl Watcher {
         drop(paused);
         for namespace in &cleared {
             self.inner.aggregator.note_cleared(namespace);
-            self.inner.unpaused(namespace);
+            self.inner.reporter.report_pause_cleared(namespace);
         }
+        // The old role's refusals, paused or found by a page's read, are not
+        // the new role's; a read still refused enters again.
+        self.inner.needs_you.forget(Kind::NoAccess);
         self.inner.reschedule_publish();
     }
 
@@ -528,6 +536,28 @@ impl Watcher {
             .await
             .remove(namespace);
         self.inner.reporter.report_autosync_changed();
+    }
+
+    /// A hand-run pull or publish reached the package's bucket: its session
+    /// and its access work, and after a publish no publish is failing.
+    pub async fn transfer_worked(
+        &self,
+        model: &impl QuiltModel,
+        namespace: &Namespace,
+        published: bool,
+    ) {
+        let package = Subject::package(namespace);
+        let needs_you = &self.inner.needs_you;
+        if let Ok(Some(installed)) = model.get_installed_package(namespace).await
+            && let Ok(lineage) = model.get_installed_package_lineage(&installed).await
+            && let Some(remote) = lineage.remote_uri
+        {
+            needs_you.session_works(remote.origin.as_ref());
+        }
+        needs_you.leave(&package, Kind::NoAccess);
+        if published {
+            needs_you.leave(&package, Kind::PublishFailing);
+        }
     }
 
     /// Publishing was just turned on: every package with changes waits a full
@@ -1068,6 +1098,67 @@ mod tests {
 
         assert_eq!(*reporter.pause_cleared.lock().unwrap(), vec![a, b, c]);
         assert!(watcher.needs_you().get().is_empty(), "every pause cleared");
+    }
+
+    /// A hand-run publish reached the bucket: the package's catalog, its
+    /// access and its failing publish leave the set.
+    #[tokio::test]
+    async fn a_hand_run_publish_clears_what_it_proves() {
+        use crate::engine::needs_you::Cause;
+        let watcher = Watcher::new_for_test(Arc::new(LogReporter));
+        let ns: Namespace = ("acme", "a").into();
+        let host = quilt_uri::fixtures::host();
+        let lineage = crate::engine::quilt::lineage::PackageLineage::from_remote(
+            quilt_uri::ManifestUri {
+                bucket: "bucket".to_string(),
+                namespace: ns.clone(),
+                hash: "h0".to_string(),
+                origin: Some(host.clone()),
+            },
+            "h0".to_string(),
+        );
+        let mut model = crate::engine::model::MockQuiltModel::new();
+        model.expect_get_installed_package().returning(|ns| {
+            Ok(Some(
+                crate::engine::quilt::LocalDomain::new(std::path::PathBuf::new())
+                    .create_installed_package(ns.clone()),
+            ))
+        });
+        model
+            .expect_get_installed_package_lineage()
+            .returning(move |_| Ok(lineage.clone()));
+        let set = watcher.needs_you();
+        set.session_failed(Some(&host), true);
+        set.enter(Subject::package(&ns), Cause::NoAccess { role: None });
+        set.enter(
+            Subject::package(&ns),
+            Cause::PublishFailing {
+                error: "offline".into(),
+            },
+        );
+        watcher.transfer_worked(&model, &ns, true).await;
+        assert!(set.get().is_empty(), "the publish reached the bucket");
+    }
+
+    /// Clearing a pause takes only what the pause put in the set: a refusal a
+    /// page's read found stays until the bucket answers.
+    #[tokio::test]
+    async fn a_clear_keeps_a_refusal_a_read_found() {
+        use crate::engine::needs_you::Cause;
+        let watcher = Watcher::new_for_test(Arc::new(LogReporter));
+        let ns: Namespace = ("acme", "a").into();
+        watcher.pause(&ns, None, PausedReason::Diverged).await;
+        watcher
+            .needs_you()
+            .enter(Subject::package(&ns), Cause::NoAccess { role: None });
+        watcher.clear_paused(&ns).await;
+        let kinds: Vec<Kind> = watcher
+            .needs_you()
+            .get()
+            .iter()
+            .map(|e| e.cause.kind())
+            .collect();
+        assert_eq!(kinds, [Kind::NoAccess]);
     }
 
     /// A refusal a page's read found, with no pause behind it, is the old

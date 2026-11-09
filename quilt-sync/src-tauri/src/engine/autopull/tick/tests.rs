@@ -128,7 +128,7 @@ fn classify_sync_login_required() {
         host.clone(),
     ))));
     match classify_sync_err(err) {
-        Err(WatchError::LoginRequired(Some(h))) => assert_eq!(h, host),
+        Err(WatchError::LoginRequired { host: Some(h), .. }) => assert_eq!(h, host),
         other => panic!("expected LoginRequired(Some(_)), got {other:?}"),
     }
 }
@@ -266,8 +266,8 @@ fn invalid_credentials_ask_for_login_rather_than_retrying_forever() {
     let classified = classify_sync_err(invalid_credentials_error()).unwrap_err();
 
     assert!(
-        matches!(classified, WatchError::LoginRequired(_)),
-        "expected LoginRequired, got: {classified:?}"
+        matches!(classified, WatchError::LoginRequired { expired: true, .. }),
+        "expected an expired LoginRequired, got: {classified:?}"
     );
 }
 
@@ -276,7 +276,7 @@ fn invalid_credentials_ask_for_login_rather_than_retrying_forever() {
 #[test]
 fn invalid_credentials_on_status_refresh_ask_for_login() {
     match classify_transient_or_login(invalid_credentials_error()) {
-        WatchError::LoginRequired(_) => {}
+        WatchError::LoginRequired { .. } => {}
         other => panic!("expected LoginRequired, got {other:?}"),
     }
 }
@@ -1096,7 +1096,7 @@ async fn dry_run_login_required_is_classified() -> Result<(), Error> {
     .await;
 
     match result {
-        Err(WatchError::LoginRequired(Some(h))) => assert_eq!(h, host),
+        Err(WatchError::LoginRequired { host: Some(h), .. }) => assert_eq!(h, host),
         other => panic!("expected LoginRequired(Some(_)), got {other:?}"),
     }
     Ok(())
@@ -1277,7 +1277,8 @@ async fn run_once_login_required_bumps_backoff() -> Result<(), Error> {
     assert_eq!(logins.len(), 1);
     assert_eq!(logins[0].as_ref(), Some(&host));
 
-    // The host, not the package, needs the reader.
+    // The host, not the package, needs the reader, signed out rather than
+    // expired.
     let entered: Vec<_> = inner
         .needs_you
         .get()
@@ -1288,7 +1289,7 @@ async fn run_once_login_required_bumps_backoff() -> Result<(), Error> {
         entered,
         vec![(
             crate::engine::needs_you::Subject::Host { host },
-            crate::engine::needs_you::Cause::SignIn { expired: true }
+            crate::engine::needs_you::Cause::SignIn { expired: false }
         )]
     );
     Ok(())
@@ -1308,13 +1309,6 @@ async fn a_publish_failing_for_an_hour_needs_you() {
         .await,
         ..make_inner(enabled())
     };
-    let run = |push_enabled| PassSettings {
-        publish: PublishSettings::default(),
-        wait: Duration::from_secs(300),
-        pull_enabled: true,
-        push_enabled,
-        tasks: None,
-    };
     let err = Error::General("offline".to_string());
     let kinds = || -> Vec<Kind> {
         inner
@@ -1326,11 +1320,12 @@ async fn a_publish_failing_for_an_hour_needs_you() {
     };
 
     let not_yet = PUBLISH_FAILING_AFTER.saturating_sub(Duration::from_secs(1));
-    note_publish_failing(&inner, &ns, &run(true), not_yet, &err).await;
+    note_publish_failing(&inner, &ns, not_yet, &err).await;
     assert!(kinds().is_empty(), "not an hour yet");
-    note_publish_failing(&inner, &ns, &run(true), PUBLISH_FAILING_AFTER, &err).await;
+    note_publish_failing(&inner, &ns, PUBLISH_FAILING_AFTER, &err).await;
     assert_eq!(kinds(), [Kind::PublishFailing]);
-    note_publish_failing(&inner, &ns, &run(false), PUBLISH_FAILING_AFTER, &err).await;
+    inner.settings.write().await.push.enabled = false;
+    note_publish_failing(&inner, &ns, PUBLISH_FAILING_AFTER, &err).await;
     assert!(kinds().is_empty(), "nothing will publish");
 }
 

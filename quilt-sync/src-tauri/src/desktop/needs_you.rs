@@ -54,12 +54,16 @@ pub fn spawn(app: &AppHandle, services: &Arc<Services>) -> async_runtime::JoinHa
     })
 }
 
-/// The entries in `now` that `before` did not hold.
+/// The entries in `now` that `before` did not hold. An entry keeps its time
+/// while its details change, and one that left and came back between two
+/// reads has a new time, so it counts as entered.
 fn entered<'a>(before: &[Entry], now: &'a [Entry]) -> impl Iterator<Item = &'a Entry> {
     now.iter().filter(|entry| {
-        !before
-            .iter()
-            .any(|was| was.subject == entry.subject && was.cause.kind() == entry.cause.kind())
+        !before.iter().any(|was| {
+            was.subject == entry.subject
+                && was.cause.kind() == entry.cause.kind()
+                && was.since == entry.since
+        })
     })
 }
 
@@ -105,6 +109,7 @@ fn open(app: &AppHandle, page: Option<&serde_json::Value>) {
 
 #[cfg(test)]
 mod tests {
+    use chrono::DateTime;
     use chrono::Utc;
 
     use super::*;
@@ -115,7 +120,7 @@ mod tests {
         Entry {
             subject,
             cause,
-            since: Utc::now(),
+            since: DateTime::from_timestamp(0, 0).unwrap(),
         }
     }
 
@@ -137,6 +142,20 @@ mod tests {
         let before = [watcher];
         let now = [reworded, credentials.clone()];
         assert_eq!(entered(&before, &now).collect::<Vec<_>>(), [&credentials]);
+    }
+
+    /// Left and back between two reads of the set: posted again.
+    #[test]
+    fn an_entry_that_came_back_enters_again() {
+        let before = [entry(Subject::App, Cause::Credentials)];
+        let back = Entry {
+            since: Utc::now(),
+            ..before[0].clone()
+        };
+        assert_eq!(
+            entered(&before, std::slice::from_ref(&back)).collect::<Vec<_>>(),
+            [&back]
+        );
     }
 
     #[test]

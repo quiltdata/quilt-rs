@@ -310,6 +310,7 @@ pub async fn package_publish(
         Ok((ns, _)) => {
             watcher.clear_paused(ns).await;
             watcher.note_published(ns).await;
+            watcher.transfer_worked(m, ns, true).await;
         }
         Err(_) => note_publish_failed(m, watcher, &namespace).await,
     }
@@ -396,6 +397,7 @@ pub async fn package_commit_and_push(
         Ok((ns, _)) => {
             watcher.clear_paused(ns).await;
             watcher.note_published(ns).await;
+            watcher.transfer_worked(m, ns, true).await;
         }
         Err(_) => note_publish_failed(m, watcher, &namespace).await,
     }
@@ -534,6 +536,7 @@ async fn pull_and_report(
     let mut msg_ok = String::new();
     if let Ok((ns, pulled)) = &result {
         watcher.clear_paused(ns).await;
+        watcher.transfer_worked(m, ns, false).await;
         msg_ok = match pulled {
             quilt::flow::Pulled::UpToDate => format!("Package {namespace} is already up to date"),
             quilt::flow::Pulled::Applied(report) => {
