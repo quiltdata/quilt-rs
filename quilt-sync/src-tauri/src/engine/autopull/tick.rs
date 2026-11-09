@@ -360,6 +360,7 @@ pub(crate) async fn refresh_then_maybe_sync(
     push_enabled: bool,
     scope: SyncScope,
     aggregator: &SyncTrayAggregator,
+    reached: &mut bool,
 ) -> Result<Option<RefreshOutcome>, WatchError> {
     let installed = model
         .get_installed_package(namespace)
@@ -419,6 +420,7 @@ pub(crate) async fn refresh_then_maybe_sync(
         Some(status) => status,
         None => walk_locked(model, &locked, walks, namespace, lineage).await?,
     };
+    *reached = status.latest_refreshed;
     let upstream = status.upstream_state;
     let has_changes = !status.changes.is_empty();
     // Observed-tree fingerprint, taken before the publish path consumes `status`.
@@ -957,6 +959,8 @@ pub(crate) async fn sync_package(
         return Pass::LeftToTasks;
     }
 
+    // Whether the status read reached the bucket, not only the last-known tip.
+    let mut reached = false;
     let result = refresh_then_maybe_sync(
         model,
         &namespace,
@@ -969,6 +973,7 @@ pub(crate) async fn sync_package(
         run.push_enabled,
         lineage.sync_scope.clone(),
         &inner.aggregator,
+        &mut reached,
     )
     .await;
     // Another writer holds the package: nothing was observed, so nothing
@@ -999,11 +1004,14 @@ pub(crate) async fn sync_package(
         Ok(outcome) => {
             inner.backoff.write().await.remove(&namespace);
             inner.login_blocked.write().await.remove(&namespace);
-            // It synced: its session, its bucket and its publish all worked.
-            let package = Subject::package(&namespace);
-            inner.needs_you.session_works(origin);
-            inner.needs_you.leave(&package, Kind::NoAccess);
-            inner.needs_you.leave(&package, Kind::PublishFailing);
+            // It synced with the bucket: its session, its bucket and its
+            // publish all worked.
+            if reached || outcome.pulled.is_some() || outcome.published.is_some() {
+                let package = Subject::package(&namespace);
+                inner.needs_you.session_works(origin);
+                inner.needs_you.leave(&package, Kind::NoAccess);
+                inner.needs_you.leave(&package, Kind::PublishFailing);
+            }
             if let Some(message) = outcome.published.as_deref() {
                 inner.reporter.report_published(&namespace, origin, message);
             }
@@ -1106,7 +1114,7 @@ pub(crate) async fn sync_package(
 /// Drop the entries no installed package stands behind any more: an
 /// uninstalled package, and a session or the computer's credentials that no
 /// package syncs on. Sessions stay when a package's catalog can't be read.
-async fn prune_needs_you(
+pub(crate) async fn prune_needs_you(
     model: &impl QuiltModel,
     inner: &WatcherInner,
     packages: &[quilt::InstalledPackage],

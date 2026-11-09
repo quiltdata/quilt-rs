@@ -682,6 +682,7 @@ pub async fn package_uninstall(
         toasts.post(toast).await;
     }
     if result.is_ok() {
+        s.watcher.prune_needs_you(m).await;
         s.events.emit(PACKAGES_CHANGED_EVENT, ());
     }
     Notify::new(msg_init)

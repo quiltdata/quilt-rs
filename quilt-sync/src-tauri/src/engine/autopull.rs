@@ -252,6 +252,15 @@ impl Watcher {
         &self.inner.needs_you
     }
 
+    /// Drop what needs the reader that no installed package stands behind,
+    /// for a removal while autosync's passes are off.
+    pub async fn prune_needs_you(&self, model: &impl QuiltModel) {
+        match model.get_installed_packages_list().await {
+            Ok(packages) => tick::prune_needs_you(model, &self.inner, &packages).await,
+            Err(err) => warn!("could not list packages to prune what needs you: {err}"),
+        }
+    }
+
     /// Spawn the background tick task and return a handle.
     ///
     /// The tasks share the services' `Model` and `RoleCache`: a private

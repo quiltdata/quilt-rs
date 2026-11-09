@@ -1091,6 +1091,7 @@ async fn dry_run_login_required_is_classified() -> Result<(), Error> {
         true,
         SyncScope::IndividualFiles,
         &test_aggregator(),
+        &mut false,
     )
     .await;
 
@@ -1382,6 +1383,7 @@ async fn no_action_tick_carries_status_fingerprint() -> Result<(), Error> {
         false,
         SyncScope::IndividualFiles,
         &test_aggregator(),
+        &mut false,
     )
     .await
     .expect("no-action tick should be Ok")
@@ -2887,4 +2889,73 @@ async fn a_pass_drops_what_no_package_stands_behind() {
             (Subject::App, Kind::Watcher),
         ]
     );
+}
+
+/// A pass that observes from the last-known tip, because the bucket did not
+/// answer, proves nothing about the session or the bucket: their entries
+/// stand. One that reaches the bucket leaves them.
+#[tokio::test]
+async fn only_a_pass_that_reaches_the_bucket_clears_what_needs_you() {
+    use crate::engine::needs_you::Cause;
+    use crate::engine::needs_you::Subject;
+
+    let ns: Namespace = ("acme", "demo").into();
+    let host = fixtures::host();
+    let lineage = quilt::lineage::PackageLineage::from_remote(
+        quilt_uri::ManifestUri {
+            bucket: "bucket".to_string(),
+            namespace: ns.clone(),
+            hash: "h0".to_string(),
+            origin: Some(host.clone()),
+        },
+        "h0".to_string(),
+    );
+    let pass = |refreshed: bool| {
+        let lineage = lineage.clone();
+        let mut model = MockQuiltModel::new();
+        model
+            .expect_get_installed_package_lineage()
+            .returning(move |_| Ok(lineage.clone()));
+        model.expect_get_installed_package().returning(|ns| {
+            Ok(Some(
+                quilt::LocalDomain::new(std::path::PathBuf::new())
+                    .create_installed_package(ns.clone()),
+            ))
+        });
+        model
+            .expect_try_lock_package()
+            .returning(|p| Ok(Some(p.namespace.clone())));
+        model.expect_locked_package_status().returning(move |_, _| {
+            let mut status = quilt::lineage::InstalledPackageStatus::new(
+                UpstreamState::UpToDate,
+                BTreeMap::new(),
+            );
+            status.latest_refreshed = refreshed;
+            Ok(status)
+        });
+        model
+    };
+    let run = PassSettings {
+        publish: PublishSettings::default(),
+        wait: Duration::from_secs(300),
+        pull_enabled: true,
+        push_enabled: false,
+        tasks: None,
+    };
+    let inner = make_inner(enabled());
+    inner.needs_you.session_failed(Some(&host), true);
+    inner
+        .needs_you
+        .enter(Subject::package(&ns), Cause::NoAccess { role: None });
+    let pkg =
+        quilt::LocalDomain::new(std::path::PathBuf::new()).create_installed_package(ns.clone());
+    let roles = RoleCache::default();
+
+    let offline = pass(false);
+    sync_package(&offline, &roles, &inner, &pkg, &run, Instant::now()).await;
+    assert_eq!(inner.needs_you.get().len(), 2, "the tip was not read");
+
+    let online = pass(true);
+    sync_package(&online, &roles, &inner, &pkg, &run, Instant::now()).await;
+    assert!(inner.needs_you.get().is_empty(), "the bucket answered");
 }
