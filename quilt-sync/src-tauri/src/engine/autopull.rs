@@ -556,7 +556,7 @@ impl Watcher {
         }
         needs_you.leave(&package, Kind::NoAccess);
         if published {
-            needs_you.leave(&package, Kind::PublishFailing);
+            needs_you.publish_settled(namespace);
         }
     }
 
@@ -960,7 +960,6 @@ mod tests {
             ns.clone(),
             tick::BackoffState {
                 next_attempt: std::time::Instant::now() + Duration::from_secs(60),
-                failing_since: std::time::Instant::now(),
                 consecutive_failures: 3,
                 error: "Sign in to quilt.test".to_string(),
             },
@@ -1138,6 +1137,26 @@ mod tests {
         );
         watcher.transfer_worked(&model, &ns, true).await;
         assert!(set.get().is_empty(), "the publish reached the bucket");
+    }
+
+    /// A conflict replacing a denial pause takes its place: the package
+    /// counts once.
+    #[tokio::test]
+    async fn a_new_pause_replaces_the_old_in_the_set() {
+        let watcher = Watcher::new_for_test(Arc::new(LogReporter));
+        let ns: Namespace = ("acme", "a").into();
+        let denied = PausedReason::RoleDenied {
+            role: "ReadOnly".to_string(),
+        };
+        watcher.pause(&ns, None, denied).await;
+        watcher.pause(&ns, None, PausedReason::Diverged).await;
+        let kinds: Vec<Kind> = watcher
+            .needs_you()
+            .get()
+            .iter()
+            .map(|e| e.cause.kind())
+            .collect();
+        assert_eq!(kinds, [Kind::Paused]);
     }
 
     /// Clearing a pause takes only what the pause put in the set: a refusal a
@@ -1564,7 +1583,6 @@ mod tests {
             ns.clone(),
             tick::BackoffState {
                 next_attempt: std::time::Instant::now() + Duration::from_secs(30),
-                failing_since: std::time::Instant::now(),
                 consecutive_failures: 1,
                 error: "Could not reach S3".to_string(),
             },
@@ -1591,7 +1609,6 @@ mod tests {
             ns.clone(),
             tick::BackoffState {
                 next_attempt: std::time::Instant::now(),
-                failing_since: std::time::Instant::now(),
                 consecutive_failures: 1,
                 error: "Could not reach S3".to_string(),
             },
@@ -1618,7 +1635,6 @@ mod tests {
             ns.clone(),
             tick::BackoffState {
                 next_attempt: std::time::Instant::now(),
-                failing_since: std::time::Instant::now(),
                 consecutive_failures: 1,
                 error: "Could not reach S3".to_string(),
             },
@@ -1641,7 +1657,6 @@ mod tests {
             ns.clone(),
             tick::BackoffState {
                 next_attempt: std::time::Instant::now(),
-                failing_since: std::time::Instant::now(),
                 consecutive_failures: 1,
                 error: "Could not reach S3".to_string(),
             },

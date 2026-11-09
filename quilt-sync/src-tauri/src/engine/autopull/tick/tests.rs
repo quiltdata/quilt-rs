@@ -1320,13 +1320,19 @@ async fn a_publish_failing_for_an_hour_needs_you() {
             .collect()
     };
 
-    let not_yet = PUBLISH_FAILING_AFTER.saturating_sub(Duration::from_secs(1));
+    let start = Instant::now();
+    note_publish_failing(&inner, &ns, start, &err).await;
+    // A pass that only waits for the quiet window drops the retry backoff;
+    // the failing run's start is kept apart from it.
+    inner.backoff.write().await.clear();
+    let not_yet = start + PUBLISH_FAILING_AFTER.saturating_sub(Duration::from_secs(1));
     note_publish_failing(&inner, &ns, not_yet, &err).await;
     assert!(kinds().is_empty(), "not an hour yet");
-    note_publish_failing(&inner, &ns, PUBLISH_FAILING_AFTER, &err).await;
+    let later = start + PUBLISH_FAILING_AFTER;
+    note_publish_failing(&inner, &ns, later, &err).await;
     assert_eq!(kinds(), [Kind::PublishFailing]);
     inner.settings.write().await.push.enabled = false;
-    note_publish_failing(&inner, &ns, PUBLISH_FAILING_AFTER, &err).await;
+    note_publish_failing(&inner, &ns, later, &err).await;
     assert!(kinds().is_empty(), "nothing will publish");
 }
 

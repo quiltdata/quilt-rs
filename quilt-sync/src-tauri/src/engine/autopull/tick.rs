@@ -770,8 +770,6 @@ async fn walk_locked<M: QuiltModel>(
 #[derive(Debug, Clone)]
 pub(crate) struct BackoffState {
     pub next_attempt: Instant,
-    /// When this run of failures began.
-    pub failing_since: Instant,
     pub consecutive_failures: u32,
     /// What the last attempt failed on, for the Autosync card.
     pub error: String,
@@ -799,7 +797,6 @@ fn bump_backoff(
 ) {
     let entry = backoff.entry(namespace.clone()).or_insert(BackoffState {
         next_attempt: now,
-        failing_since: now,
         consecutive_failures: 0,
         error: String::new(),
     });
@@ -1033,7 +1030,7 @@ pub(crate) async fn sync_package(
                 inner.needs_you.leave(&package, Kind::NoAccess);
             }
             if outcome.published.is_some() || inner.last_change.get(&namespace).await.is_none() {
-                inner.needs_you.leave(&package, Kind::PublishFailing);
+                inner.needs_you.publish_settled(&namespace);
             }
             if let Some(message) = outcome.published.as_deref() {
                 inner.reporter.report_published(&namespace, origin, message);
@@ -1111,19 +1108,14 @@ pub(crate) async fn sync_package(
                 inner.reporter.report_autosync_changed();
                 return Pass::Done;
             }
-            let failing_since = {
-                let mut backoff = inner.backoff.write().await;
-                bump_backoff(&mut backoff, &namespace, now, err.to_string());
-                backoff[&namespace].failing_since
-            };
-            warn!("autosync: transient error for {namespace}: {err}");
-            note_publish_failing(
-                inner,
+            bump_backoff(
+                &mut *inner.backoff.write().await,
                 &namespace,
-                now.saturating_duration_since(failing_since),
-                &err,
-            )
-            .await;
+                now,
+                err.to_string(),
+            );
+            warn!("autosync: transient error for {namespace}: {err}");
+            note_publish_failing(inner, &namespace, now, &err).await;
             // Transient: don't touch the aggregator's error map — a
             // network blip should not flip the tray to Error. The
             // next tick either clears or escalates.
@@ -1174,15 +1166,15 @@ pub(crate) async fn prune_needs_you(
 async fn note_publish_failing(
     inner: &WatcherInner,
     namespace: &Namespace,
-    failing_for: Duration,
+    now: Instant,
     err: &Error,
 ) {
     let settings = inner.settings.read().await;
     let package = Subject::package(namespace);
     let to_publish = settings.push.enabled && inner.last_change.get(namespace).await.is_some();
     if !to_publish {
-        inner.needs_you.leave(&package, Kind::PublishFailing);
-    } else if failing_for >= PUBLISH_FAILING_AFTER {
+        inner.needs_you.publish_settled(namespace);
+    } else if inner.needs_you.publish_failed(namespace, now) >= PUBLISH_FAILING_AFTER {
         inner.needs_you.enter(
             package,
             Cause::PublishFailing {
@@ -1220,14 +1212,22 @@ pub(crate) async fn pause(
     origin: Option<&Host>,
     reason: PausedReason,
 ) {
-    inner
+    let replaced = inner
         .paused
         .write()
         .await
         .insert(namespace.clone(), reason.clone());
-    inner
-        .needs_you
-        .enter(Subject::package(namespace), Cause::of_pause(&reason));
+    let package = Subject::package(namespace);
+    let cause = Cause::of_pause(&reason);
+    // A pause replacing another of the other kind takes its place in the set.
+    if let Some(replaced) = replaced
+        && Cause::of_pause(&replaced).kind() != cause.kind()
+    {
+        inner
+            .needs_you
+            .leave(&package, Cause::of_pause(&replaced).kind());
+    }
+    inner.needs_you.enter(package, cause);
     inner
         .reporter
         .report_paused(namespace, origin, reason.clone());

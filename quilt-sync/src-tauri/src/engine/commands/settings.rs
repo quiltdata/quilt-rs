@@ -14,7 +14,6 @@ use crate::engine::log_settings::LogEnv;
 use crate::engine::log_settings::LogLevel;
 use crate::engine::log_settings::LogSettings;
 use crate::engine::model::QuiltModel;
-use crate::engine::needs_you::Kind;
 use crate::engine::publish_settings::PublishSettings;
 use crate::engine::quilt;
 use crate::engine::services::Services;
@@ -588,7 +587,7 @@ async fn write_autosync_patch(
         watcher.clear_all_paused().await;
     }
     if publishing_off {
-        watcher.needs_you().forget(Kind::PublishFailing);
+        watcher.needs_you().publishing_off();
     }
     watcher.settings_changed();
     Ok(())

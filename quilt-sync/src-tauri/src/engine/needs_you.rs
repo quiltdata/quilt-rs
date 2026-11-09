@@ -6,7 +6,10 @@
 //! carrying the whole set on every change, and a read for a window that
 //! mounts. An entry enters when its cause starts and leaves when it clears.
 
+use std::collections::BTreeMap;
+use std::sync::Mutex;
 use std::time::Duration;
+use std::time::Instant;
 
 use chrono::DateTime;
 use chrono::Utc;
@@ -189,12 +192,17 @@ fn pause_words(reason: &PausedDto) -> String {
 /// The set. Every surface that says something needs the reader reads it.
 pub struct NeedsYou {
     tx: watch::Sender<Vec<Entry>>,
+    /// When each package's current run of failing publishes began. Kept apart
+    /// from the retry backoff, which a pass that only waits for the quiet
+    /// window resets.
+    publish_failing_since: Mutex<BTreeMap<Namespace, Instant>>,
 }
 
 impl Default for NeedsYou {
     fn default() -> Self {
         Self {
             tx: watch::Sender::new(Vec::new()),
+            publish_failing_since: Mutex::default(),
         }
     }
 }
@@ -236,6 +244,35 @@ impl NeedsYou {
     /// The cause of `kind` for `subject` cleared.
     pub fn leave(&self, subject: &Subject, kind: Kind) {
         self.retain(|entry| !entry.is(subject, kind));
+    }
+
+    /// A pass with something to publish failed at `now`: how long the
+    /// package's publishes have kept failing.
+    pub fn publish_failed(&self, namespace: &Namespace, now: Instant) -> Duration {
+        let mut since = self
+            .publish_failing_since
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        now.saturating_duration_since(*since.entry(namespace.clone()).or_insert(now))
+    }
+
+    /// The package published, or has nothing left to: its failing run is
+    /// over.
+    pub fn publish_settled(&self, namespace: &Namespace) {
+        self.publish_failing_since
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(namespace);
+        self.leave(&Subject::package(namespace), Kind::PublishFailing);
+    }
+
+    /// Publishing was turned off: no publish is failing.
+    pub fn publishing_off(&self) {
+        self.publish_failing_since
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
+        self.forget(Kind::PublishFailing);
     }
 
     /// Every entry of `kind` no longer applies.
