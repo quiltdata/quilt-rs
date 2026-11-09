@@ -188,13 +188,14 @@ async fn holds(storage: &impl Storage, working_dest: &Path, row: ManifestRow) ->
 }
 
 /// Whether a file is at `working_dest` that no longer holds `row`'s content:
-/// edited since a caller verified it there. A missing file has nothing to lose;
-/// one that cannot be read counts as edited, as in [`holds`].
-async fn edited(storage: &impl Storage, working_dest: &Path, row: &ManifestRow) -> bool {
+/// edited since a caller verified it there. A missing file has nothing to lose.
+/// A file that cannot be read is an I/O failure, not an edit, as in the pull's
+/// verify pass.
+async fn edited(storage: &impl Storage, working_dest: &Path, row: &ManifestRow) -> Res<bool> {
     match refresh_hash(storage, working_dest, row.clone()).await {
-        Ok(None) => false,
-        Err(err) if err.is_not_found() => false,
-        Ok(Some(_)) | Err(_) => true,
+        Ok(changed) => Ok(changed.is_some()),
+        Err(err) if err.is_not_found() => Ok(false),
+        Err(err) => Err(err),
     }
 }
 
@@ -229,13 +230,14 @@ async fn swap_staged_into_place(
             // bytes, as an interrupted pull leaves it; anything else at one
             // `base` never had is the user's own.
             let tracked = lineage.paths.contains_key(&row.logical_key);
-            let unchanged = if !tracked && !edited(storage, working_dest, row).await {
-                true
-            } else if let Some(base_row) = rows.get(&row.logical_key) {
-                holds(storage, working_dest, base_row.clone()).await
-            } else {
-                tracked
-            };
+            let unchanged =
+                if !tracked && matches!(edited(storage, working_dest, row).await, Ok(false)) {
+                    true
+                } else if let Some(base_row) = rows.get(&row.logical_key) {
+                    holds(storage, working_dest, base_row.clone()).await
+                } else {
+                    tracked
+                };
             if !unchanged {
                 debug!(
                     "❌ {} changed while the revision was being staged",
@@ -320,13 +322,13 @@ impl Protect<'_> {
         storage: &impl Storage,
         working_dir: &Path,
         path: &Path,
-    ) -> bool {
+    ) -> Res<bool> {
         let Protect::BaseContent { rows, .. } = self else {
-            return false;
+            return Ok(false);
         };
         match rows.get(path) {
             Some(row) => edited(storage, &working_dir.join(path), row).await,
-            None => false,
+            None => Ok(false),
         }
     }
 
@@ -338,7 +340,7 @@ impl Protect<'_> {
         };
         let mut changed = Vec::new();
         for path in *removing {
-            if self.edited_at(storage, working_dir, path).await {
+            if self.edited_at(storage, working_dir, path).await? {
                 changed.push(path.clone());
             }
         }

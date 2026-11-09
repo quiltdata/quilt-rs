@@ -189,7 +189,7 @@ pub(crate) async fn apply_latest_update(
         // The renames have landed, so a file edited since can no longer refuse
         // the apply with nothing written. It is kept, and the prune below
         // stops tracking it.
-        if protect.edited_at(storage, &working_dir, path).await {
+        if protect.edited_at(storage, &working_dir, path).await? {
             kept.push(path.clone());
             continue;
         }
@@ -1269,6 +1269,32 @@ mod tests {
         assert!(!lineage.paths.contains_key(Path::new("gone.txt")));
         assert_eq!(copy.on_disk("a.txt").await.as_deref(), Some(&b"new-a"[..]));
         assert!(lineage.paths.contains_key(Path::new("a.txt")));
+        Ok(())
+    }
+
+    /// A removed path that cannot be read is an I/O failure, not an edit: the
+    /// apply fails with it before any rename, rather than keeping the file or
+    /// naming it a conflict.
+    #[test(tokio::test)]
+    async fn an_unreadable_removed_file_fails_the_apply_before_any_rename() -> Res {
+        let copy = copy_at_base(
+            &[("a.txt", b"base-a"), ("gone.txt", b"base-gone")],
+            &[("a.txt", b"new-a")],
+        )
+        .await?;
+        copy.storage.remove_file(wd().join("gone.txt")).await?;
+        copy.storage.create_dir_all(wd().join("gone.txt")).await?;
+
+        let result = copy.apply(&copy.storage, &LocalWork::Protect).await;
+
+        assert!(
+            matches!(&result, Err(err) if !matches!(
+                err,
+                crate::Error::PackageOp(crate::error::PackageOpError::PullConflict(_))
+            )),
+            "expected the read failure itself, got: {result:?}"
+        );
+        assert_eq!(copy.on_disk("a.txt").await.as_deref(), Some(&b"base-a"[..]));
         Ok(())
     }
 
