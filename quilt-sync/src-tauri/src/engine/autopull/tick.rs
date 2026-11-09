@@ -655,7 +655,7 @@ pub(crate) async fn refresh_then_maybe_sync(
                 .is_ok_and(|(outcome, _)| outcome.push().is_none_or(|push| !push.certified_latest))
         {
             last_change.on_published(namespace).await;
-            return merge::onto_latest(model, &locked, &installed, aggregator, &ignored)
+            return merge::onto_latest(model, &locked, &installed, aggregator, scope)
                 .await
                 .map(Some);
         }
@@ -705,7 +705,7 @@ pub(crate) async fn refresh_then_maybe_sync(
         };
     }
     if diverged {
-        return merge::onto_latest(model, &locked, &installed, aggregator, &ignored)
+        return merge::onto_latest(model, &locked, &installed, aggregator, scope)
             .await
             .map(Some);
     }
