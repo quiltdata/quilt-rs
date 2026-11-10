@@ -38,17 +38,25 @@ pub async fn spawn(
 
     // Use `try_read` so a poisoned/contended lock on settings doesn't
     // block startup; fall back to the type default.
-    let debounce_ms = settings.try_read().map_or_else(
-        |_| FsWatcherSettings::default().debounce_ms,
-        |s| s.debounce_ms,
+    let (debounce_ms, enabled) = settings.try_read().map_or_else(
+        |_| {
+            let default = FsWatcherSettings::default();
+            (default.debounce_ms, default.enabled)
+        },
+        |s| (s.debounce_ms, s.enabled),
     );
     let subscription =
         match Subscription::new(Duration::from_millis(debounce_ms), signal_tx, reporter) {
             Ok(sub) => sub,
             Err(err) => {
                 // We can't build a debouncer — most likely a fatal platform
-                // issue. Report and return; the reactor never starts.
-                emit_subscriber_error(reporter.as_ref(), &err);
+                // issue. Report and return; the reactor never starts. With
+                // watching off, nothing the reader turned on has failed.
+                if enabled {
+                    emit_subscriber_error(reporter.as_ref(), &err);
+                } else {
+                    warn!("fswatcher: cannot start, and watching is off: {err}");
+                }
                 return;
             }
         };
@@ -64,8 +72,13 @@ pub async fn spawn(
     };
 
     // Initial reconcile up front so existing packages are watched
-    // immediately, instead of waiting for the first periodic tick.
-    let initial = snapshot_mappings(&*model).await;
+    // immediately, instead of waiting for the first periodic tick. With
+    // watching off there is nothing to watch.
+    let initial = if enabled {
+        snapshot_mappings(&*model).await
+    } else {
+        None
+    };
     if let Some(initial) = initial {
         reactor::note_volumes(&mut state, &initial.packages);
         if let Err(err) = state

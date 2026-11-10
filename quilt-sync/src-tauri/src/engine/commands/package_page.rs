@@ -7,12 +7,15 @@ use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::engine::action_needed::ActionNeeded;
 use crate::engine::autopull::MergeBlock;
 use crate::engine::autopull::PausedReason;
 use crate::engine::autopull::Watcher;
 use crate::engine::commands::RoleCache;
 use crate::engine::commands::main_page::PackageStateDto;
-use crate::engine::commands::main_page::{conflict_files, session_state, unexplained_pause};
+use crate::engine::commands::main_page::{
+    conflict_files, read_blocked, read_worked, session_state, unexplained_pause,
+};
 use crate::engine::commands::package_entries::{EntryList, entry_list};
 use crate::engine::error::Error;
 use crate::engine::model;
@@ -681,16 +684,27 @@ pub async fn get_package_page_data(
     // says a package stopped syncing.
     let paused = watcher.paused_reason(&namespace).await;
 
-    get_package_page_data_from_model(m, roles, &namespace, paused.as_ref())
-        .await
-        .map_err(|e| e.to_frontend_string())
+    get_package_page_data_from_model(
+        m,
+        roles,
+        &namespace,
+        paused.as_ref(),
+        watcher.action_needed(),
+    )
+    .await
+    .map_err(|e| e.to_frontend_string())
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "one read of the page's parts, in the order the page draws them"
+)]
 async fn get_package_page_data_from_model(
     m: &impl model::QuiltModel,
     roles: &RoleCache,
     namespace: &quilt_uri::Namespace,
     paused: Option<&PausedReason>,
+    action_needed: &ActionNeeded,
 ) -> Result<PackagePageData, Error> {
     let installed = m.get_installed_package(namespace).await?.ok_or_else(|| {
         Error::from(quilt::InstallPackageError::NotInstalled(
@@ -717,6 +731,10 @@ async fn get_package_page_data_from_model(
         .remote_uri
         .as_ref()
         .map(quilt_uri::S3PackageUri::from);
+    let origin = lineage
+        .remote_uri
+        .as_ref()
+        .and_then(|remote| remote.origin.as_ref());
 
     let mut role_switch = None;
     // A blocked read is a state, not an error: the page still draws, and the
@@ -767,6 +785,10 @@ async fn get_package_page_data_from_model(
         }
     };
 
+    match &status_read {
+        Ok(status) => read_worked(action_needed, namespace, origin, paused, status),
+        Err(_) => read_blocked(m, action_needed, namespace, origin, &state).await,
+    }
     // A blocked read counts from tracking alone.
     let status = status_read.as_ref().ok();
     let newer = status.and_then(newer_revision);
@@ -1269,7 +1291,14 @@ mod tests {
         paused: Option<&PausedReason>,
     ) -> Result<PackagePageData, Error> {
         let ns: quilt_uri::Namespace = NS.try_into().unwrap();
-        get_package_page_data_from_model(model, &RoleCache::default(), &ns, paused).await
+        get_package_page_data_from_model(
+            model,
+            &RoleCache::default(),
+            &ns,
+            paused,
+            &crate::engine::action_needed::ActionNeeded::default(),
+        )
+        .await
     }
 
     /// Diverged on disk: the remote at `b`, the registry's latest `l`, and a
@@ -1455,9 +1484,15 @@ mod tests {
     ) -> PackagePageData {
         let m = mock_one_package(status);
         let ns: quilt_uri::Namespace = NS.try_into().unwrap();
-        get_package_page_data_from_model(&m, roles, &ns, paused)
-            .await
-            .expect("a blocked read is a state, not an error")
+        get_package_page_data_from_model(
+            &m,
+            roles,
+            &ns,
+            paused,
+            &crate::engine::action_needed::ActionNeeded::default(),
+        )
+        .await
+        .expect("a blocked read is a state, not an error")
     }
 
     async fn header_state(
@@ -3180,10 +3215,16 @@ mod tests {
         );
         let roles = RoleCache::default();
         let ns: quilt_uri::Namespace = NS.try_into().unwrap();
-        let header = get_package_page_data_from_model(&m, &roles, &ns, None)
-            .await
-            .expect("a denial is a state, not an error")
-            .header;
+        let header = get_package_page_data_from_model(
+            &m,
+            &roles,
+            &ns,
+            None,
+            &crate::engine::action_needed::ActionNeeded::default(),
+        )
+        .await
+        .expect("a denial is a state, not an error")
+        .header;
 
         assert_eq!(
             header.state,
@@ -3220,10 +3261,16 @@ mod tests {
         );
         let roles = RoleCache::default();
         let ns: quilt_uri::Namespace = NS.try_into().unwrap();
-        let header = get_package_page_data_from_model(&m, &roles, &ns, None)
-            .await
-            .expect("a denial is a state")
-            .header;
+        let header = get_package_page_data_from_model(
+            &m,
+            &roles,
+            &ns,
+            None,
+            &crate::engine::action_needed::ActionNeeded::default(),
+        )
+        .await
+        .expect("a denial is a state")
+        .header;
 
         assert_eq!(
             header.state,
@@ -3249,10 +3296,16 @@ mod tests {
             .returning(|_| Err(Error::General("role query unavailable".to_string())));
         let roles = RoleCache::default();
         let ns: quilt_uri::Namespace = NS.try_into().unwrap();
-        let header = get_package_page_data_from_model(&m, &roles, &ns, None)
-            .await
-            .expect("a failed remedy read is never a page error")
-            .header;
+        let header = get_package_page_data_from_model(
+            &m,
+            &roles,
+            &ns,
+            None,
+            &crate::engine::action_needed::ActionNeeded::default(),
+        )
+        .await
+        .expect("a failed remedy read is never a page error")
+        .header;
 
         assert_eq!(
             header.state,
@@ -3271,9 +3324,15 @@ mod tests {
         m.expect_refresh_roles().times(0);
         let roles = RoleCache::default();
         let ns: quilt_uri::Namespace = NS.try_into().unwrap();
-        let page = get_package_page_data_from_model(&m, &roles, &ns, None)
-            .await
-            .expect("a settled read");
+        let page = get_package_page_data_from_model(
+            &m,
+            &roles,
+            &ns,
+            None,
+            &crate::engine::action_needed::ActionNeeded::default(),
+        )
+        .await
+        .expect("a settled read");
 
         assert_eq!(page.header.state, PackageStateDto::Latest);
         assert!(page.header.role_switch.is_none());

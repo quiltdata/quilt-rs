@@ -70,6 +70,7 @@ fn make_inner(settings: AutosyncSettings) -> WatcherInner {
         last_change: LastChange::new(
             crate::engine::quilt::state_store::PackageStateStore::in_memory(),
         ),
+        action_needed: Arc::default(),
     }
 }
 
@@ -84,6 +85,7 @@ fn enabled() -> AutosyncSettings {
             ..PushSettings::default()
         },
         close_to_tray: false,
+        notify_action_needed: true,
     }
 }
 
@@ -127,7 +129,7 @@ fn classify_sync_login_required() {
         host.clone(),
     ))));
     match classify_sync_err(err) {
-        Err(WatchError::LoginRequired(Some(h))) => assert_eq!(h, host),
+        Err(WatchError::LoginRequired { host: Some(h), .. }) => assert_eq!(h, host),
         other => panic!("expected LoginRequired(Some(_)), got {other:?}"),
     }
 }
@@ -265,8 +267,8 @@ fn invalid_credentials_ask_for_login_rather_than_retrying_forever() {
     let classified = classify_sync_err(invalid_credentials_error()).unwrap_err();
 
     assert!(
-        matches!(classified, WatchError::LoginRequired(_)),
-        "expected LoginRequired, got: {classified:?}"
+        matches!(classified, WatchError::LoginRequired { expired: true, .. }),
+        "expected an expired LoginRequired, got: {classified:?}"
     );
 }
 
@@ -275,7 +277,7 @@ fn invalid_credentials_ask_for_login_rather_than_retrying_forever() {
 #[test]
 fn invalid_credentials_on_status_refresh_ask_for_login() {
     match classify_transient_or_login(invalid_credentials_error()) {
-        WatchError::LoginRequired(_) => {}
+        WatchError::LoginRequired { .. } => {}
         other => panic!("expected LoginRequired, got {other:?}"),
     }
 }
@@ -488,6 +490,7 @@ async fn run_once_behind_and_clean_pulls_and_emits_up_to_date() -> Result<(), Er
         last_change: crate::engine::autopull::last_change::LastChange::new(
             crate::engine::quilt::state_store::PackageStateStore::in_memory(),
         ),
+        action_needed: Arc::default(),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -594,6 +597,7 @@ async fn a_stored_whole_package_scope_reaches_the_background_pull() -> Result<()
         last_change: crate::engine::autopull::last_change::LastChange::new(
             crate::engine::quilt::state_store::PackageStateStore::in_memory(),
         ),
+        action_needed: Arc::default(),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -682,6 +686,7 @@ async fn a_pull_reports_what_it_brought() -> Result<(), Error> {
         last_change: crate::engine::autopull::last_change::LastChange::new(
             crate::engine::quilt::state_store::PackageStateStore::in_memory(),
         ),
+        action_needed: Arc::default(),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -794,6 +799,7 @@ async fn behind_with_kept_changes_pulls() -> Result<(), Error> {
         last_change: crate::engine::autopull::last_change::LastChange::new(
             crate::engine::quilt::state_store::PackageStateStore::in_memory(),
         ),
+        action_needed: Arc::default(),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -910,6 +916,7 @@ async fn behind_trivially_resolved_reports_clean() -> Result<(), Error> {
         last_change: crate::engine::autopull::last_change::LastChange::new(
             crate::engine::quilt::state_store::PackageStateStore::in_memory(),
         ),
+        action_needed: Arc::default(),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -1012,6 +1019,7 @@ async fn behind_clean_update_ignores_stale_pre_pull_changes() -> Result<(), Erro
         last_change: crate::engine::autopull::last_change::LastChange::new(
             crate::engine::quilt::state_store::PackageStateStore::in_memory(),
         ),
+        action_needed: Arc::default(),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -1084,11 +1092,12 @@ async fn dry_run_login_required_is_classified() -> Result<(), Error> {
         true,
         SyncScope::IndividualFiles,
         &test_aggregator(),
+        &mut false,
     )
     .await;
 
     match result {
-        Err(WatchError::LoginRequired(Some(h))) => assert_eq!(h, host),
+        Err(WatchError::LoginRequired { host: Some(h), .. }) => assert_eq!(h, host),
         other => panic!("expected LoginRequired(Some(_)), got {other:?}"),
     }
     Ok(())
@@ -1169,6 +1178,7 @@ async fn behind_blocked_pauses() -> Result<(), Error> {
         last_change: crate::engine::autopull::last_change::LastChange::new(
             crate::engine::quilt::state_store::PackageStateStore::in_memory(),
         ),
+        action_needed: Arc::default(),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -1245,6 +1255,7 @@ async fn run_once_login_required_bumps_backoff() -> Result<(), Error> {
         last_change: crate::engine::autopull::last_change::LastChange::new(
             crate::engine::quilt::state_store::PackageStateStore::in_memory(),
         ),
+        action_needed: Arc::default(),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -1266,7 +1277,63 @@ async fn run_once_login_required_bumps_backoff() -> Result<(), Error> {
     let logins = reporter.logins.lock().unwrap();
     assert_eq!(logins.len(), 1);
     assert_eq!(logins[0].as_ref(), Some(&host));
+
+    // The host, not the package, needs action, signed out rather than
+    // expired.
+    let entered: Vec<_> = inner
+        .action_needed
+        .get()
+        .into_iter()
+        .map(|e| (e.subject, e.cause))
+        .collect();
+    assert_eq!(
+        entered,
+        vec![(
+            crate::engine::action_needed::Subject::Host { host },
+            crate::engine::action_needed::Cause::SignIn { expired: false }
+        )]
+    );
     Ok(())
+}
+
+/// A publish that has kept failing for an hour needs action; with
+/// publishing off it does not.
+#[tokio::test]
+async fn a_publish_failing_for_an_hour_action_needed() {
+    use crate::engine::action_needed::{Kind, PUBLISH_FAILING_AFTER};
+    let ns: Namespace = ("acme", "demo").into();
+    let inner = WatcherInner {
+        last_change: crate::engine::autopull::last_change::LastChange::changed_for_test(
+            &ns,
+            Duration::from_secs(60),
+        )
+        .await,
+        ..make_inner(enabled())
+    };
+    let err = Error::General("offline".to_string());
+    let kinds = || -> Vec<Kind> {
+        inner
+            .action_needed
+            .get()
+            .iter()
+            .map(|e| e.cause.kind())
+            .collect()
+    };
+
+    let start = Instant::now();
+    note_publish_failing(&inner, &ns, start, &err).await;
+    // A pass that only waits for the quiet window drops the retry backoff;
+    // the failing run's start is kept apart from it.
+    inner.backoff.write().await.clear();
+    let not_yet = start + PUBLISH_FAILING_AFTER.saturating_sub(Duration::from_secs(1));
+    note_publish_failing(&inner, &ns, not_yet, &err).await;
+    assert!(kinds().is_empty(), "not an hour yet");
+    let later = start + PUBLISH_FAILING_AFTER;
+    note_publish_failing(&inner, &ns, later, &err).await;
+    assert_eq!(kinds(), [Kind::PublishFailing]);
+    inner.settings.write().await.push.enabled = false;
+    note_publish_failing(&inner, &ns, later, &err).await;
+    assert!(kinds().is_empty(), "nothing will publish");
 }
 
 /// A no-action tick (up-to-date, local changes, nothing to pull or publish)
@@ -1318,6 +1385,7 @@ async fn no_action_tick_carries_status_fingerprint() -> Result<(), Error> {
         false,
         SyncScope::IndividualFiles,
         &test_aggregator(),
+        &mut false,
     )
     .await
     .expect("no-action tick should be Ok")
@@ -1408,6 +1476,7 @@ async fn conflict_emit_carries_stable_fingerprint() -> Result<(), Error> {
         last_change: crate::engine::autopull::last_change::LastChange::new(
             crate::engine::quilt::state_store::PackageStateStore::in_memory(),
         ),
+        action_needed: Arc::default(),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -2762,4 +2831,151 @@ async fn a_transient_failure_from_the_old_catalog_leaves_no_backoff() -> Result<
 
     assert!(inner.backoff.read().await.get(&ns).is_none());
     Ok(())
+}
+
+/// What no installed package stands behind leaves the set: an uninstalled
+/// package, a catalog no package syncs on, and the computer's credentials
+/// once every package has a catalog.
+#[tokio::test]
+async fn a_pass_drops_what_no_package_stands_behind() {
+    use crate::engine::action_needed::Cause;
+    use crate::engine::action_needed::Kind;
+    use crate::engine::action_needed::Subject;
+
+    let installed: Namespace = ("acme", "demo").into();
+    let gone: Namespace = ("acme", "gone").into();
+    let host = fixtures::host();
+    let other: quilt_uri::Host = "other.test".parse().unwrap();
+    let lineage = quilt::lineage::PackageLineage::from_remote(
+        quilt_uri::ManifestUri {
+            bucket: "bucket".to_string(),
+            namespace: installed.clone(),
+            hash: "h0".to_string(),
+            origin: Some(host.clone()),
+        },
+        "h1".to_string(),
+    );
+    let mut model = MockQuiltModel::new();
+    model
+        .expect_get_installed_package_lineage()
+        .returning(move |_| Ok(lineage.clone()));
+    let packages = [quilt::LocalDomain::new(std::path::PathBuf::new())
+        .create_installed_package(installed.clone())];
+
+    let inner = make_inner(enabled());
+    let set = &inner.action_needed;
+    set.enter(Subject::package(&installed), Cause::NoAccess { role: None });
+    set.enter(Subject::package(&gone), Cause::NoAccess { role: None });
+    set.session_failed(Some(&host), true);
+    set.session_failed(Some(&other), true);
+    set.session_failed(None, true);
+    set.enter(
+        Subject::App,
+        Cause::Watcher {
+            message: "limit".into(),
+        },
+    );
+
+    prune_action_needed(&model, &inner, &packages).await;
+
+    let left: Vec<(Subject, Kind)> = set
+        .get()
+        .into_iter()
+        .map(|e| (e.subject, e.cause.kind()))
+        .collect();
+    assert_eq!(
+        left,
+        vec![
+            (Subject::package(&installed), Kind::NoAccess),
+            (Subject::Host { host }, Kind::SignIn),
+            (Subject::App, Kind::Watcher),
+        ]
+    );
+}
+
+/// A pass that observes from the last-known tip, because the bucket did not
+/// answer, proves nothing about the session or the bucket: their entries
+/// stand. One that reaches the bucket leaves them.
+#[tokio::test]
+async fn only_a_pass_that_reaches_the_bucket_clears_what_action_needed() {
+    use crate::engine::action_needed::Cause;
+    use crate::engine::action_needed::Kind;
+    use crate::engine::action_needed::Subject;
+
+    let ns: Namespace = ("acme", "demo").into();
+    let host = fixtures::host();
+    let lineage = quilt::lineage::PackageLineage::from_remote(
+        quilt_uri::ManifestUri {
+            bucket: "bucket".to_string(),
+            namespace: ns.clone(),
+            hash: "h0".to_string(),
+            origin: Some(host.clone()),
+        },
+        "h0".to_string(),
+    );
+    let pass = |refreshed: bool| {
+        let lineage = lineage.clone();
+        let mut model = MockQuiltModel::new();
+        model
+            .expect_get_installed_package_lineage()
+            .returning(move |_| Ok(lineage.clone()));
+        model.expect_get_installed_package().returning(|ns| {
+            Ok(Some(
+                quilt::LocalDomain::new(std::path::PathBuf::new())
+                    .create_installed_package(ns.clone()),
+            ))
+        });
+        model
+            .expect_try_lock_package()
+            .returning(|p| Ok(Some(p.namespace.clone())));
+        model.expect_locked_package_status().returning(move |_, _| {
+            let mut status = quilt::lineage::InstalledPackageStatus::new(
+                UpstreamState::UpToDate,
+                BTreeMap::new(),
+            );
+            status.latest_refreshed = refreshed;
+            Ok(status)
+        });
+        model
+    };
+    let run = PassSettings {
+        publish: PublishSettings::default(),
+        wait: Duration::from_secs(300),
+        pull_enabled: true,
+        push_enabled: false,
+        tasks: None,
+    };
+    let inner = make_inner(enabled());
+    inner.action_needed.session_failed(Some(&host), true);
+    inner
+        .action_needed
+        .enter(Subject::package(&ns), Cause::NoAccess { role: None });
+    let pkg =
+        quilt::LocalDomain::new(std::path::PathBuf::new()).create_installed_package(ns.clone());
+    let roles = RoleCache::default();
+
+    inner.action_needed.enter(
+        Subject::package(&ns),
+        Cause::PublishFailing {
+            error: "offline".into(),
+        },
+    );
+
+    let offline = pass(false);
+    sync_package(&offline, &roles, &inner, &pkg, &run, Instant::now()).await;
+    let kinds: Vec<Kind> = inner
+        .action_needed
+        .get()
+        .iter()
+        .map(|e| e.cause.kind())
+        .collect();
+    assert_eq!(
+        kinds,
+        [Kind::SignIn, Kind::NoAccess],
+        "the tip was not read, and nothing is left to publish"
+    );
+
+    let online = pass(true);
+    sync_package(&online, &roles, &inner, &pkg, &run, Instant::now()).await;
+    assert!(inner.action_needed.get().is_empty(), "the bucket answered");
 }

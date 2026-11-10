@@ -16,6 +16,10 @@ use quilt_uri::Host;
 
 use super::package_page::KeepingScope;
 use super::package_page::PackageSize;
+use crate::engine::action_needed::ActionNeeded;
+use crate::engine::action_needed::Cause;
+use crate::engine::action_needed::Kind;
+use crate::engine::action_needed::Subject;
 use crate::engine::autopull::PackageAutosync;
 use crate::engine::autopull::PausedReason;
 use crate::engine::autopull::WatcherFacts;
@@ -352,6 +356,60 @@ pub(super) fn session_state(err: &Error) -> Option<PackageStateDto> {
         })
     } else {
         None
+    }
+}
+
+/// A package's status read worked. When it reached the bucket, its session or
+/// credentials are good and the bucket answered; a read from the last-known
+/// tip proves neither. A denial pause stands until it is cleared.
+pub(super) fn read_worked(
+    action_needed: &ActionNeeded,
+    namespace: &quilt_uri::Namespace,
+    origin: Option<&Host>,
+    paused: Option<&PausedReason>,
+    status: &quilt::lineage::InstalledPackageStatus,
+) {
+    if !status.latest_refreshed {
+        return;
+    }
+    action_needed.session_works(origin);
+    if !matches!(paused, Some(PausedReason::RoleDenied { .. })) {
+        action_needed.leave(&Subject::package(namespace), Kind::NoAccess);
+    }
+}
+
+/// A package's status read was refused: `state` is how it was classified, a
+/// lost session or a denial. A read that finishes after the package was
+/// uninstalled or moved to another catalog changes nothing: its refusal is
+/// the old catalog's.
+pub(super) async fn read_blocked(
+    m: &impl model::QuiltModel,
+    action_needed: &ActionNeeded,
+    namespace: &quilt_uri::Namespace,
+    origin: Option<&Host>,
+    state: &PackageStateDto,
+) {
+    let current = match m.get_installed_package(namespace).await {
+        Ok(Some(installed)) => {
+            m.get_installed_package_lineage(&installed)
+                .await
+                .is_ok_and(|lineage| {
+                    lineage.remote_uri.and_then(|remote| remote.origin).as_ref() == origin
+                })
+        }
+        _ => false,
+    };
+    if !current {
+        return;
+    }
+    match state {
+        PackageStateDto::RoleDenied { role } => action_needed.enter(
+            Subject::package(namespace),
+            Cause::NoAccess { role: role.clone() },
+        ),
+        PackageStateDto::SignInExpired { .. } => action_needed.session_failed(origin, true),
+        PackageStateDto::NoSession { .. } => action_needed.session_failed(origin, false),
+        _ => {}
     }
 }
 
@@ -858,6 +916,7 @@ pub(super) async fn refresh_main_page_package_from_model(
     tracing: &crate::engine::telemetry::Telemetry,
     namespace: &quilt_uri::Namespace,
     paused: Option<&PausedReason>,
+    action_needed: &ActionNeeded,
 ) -> Result<MainPagePackageRefresh, Error> {
     let installed_package = m.get_installed_package(namespace).await?.ok_or_else(|| {
         Error::from(quilt::InstallPackageError::NotInstalled(
@@ -909,30 +968,34 @@ pub(super) async fn refresh_main_page_package_from_model(
                 installed_package.namespace
             )))
         }
-        Ok((status, counts)) => Ok(MainPagePackageRefresh {
-            // The pause checks go here rather than at the top of the function,
-            // because the access-denied arm below has higher precedence and must
-            // still be able to win.
-            state: pause_or(paused, || {
-                PackageState::resolve(
-                    status.upstream_state,
-                    has_local_commit,
-                    has_remote,
-                    Some(status.changes.len()),
-                )
-                .into()
-            }),
-            // The refresh did not deny, so any pre-filter mark is cleared.
-            role_switch_host: None,
-            downloads: Some(counts.into()),
-            changed_files: Some(status.changes.len()),
-        }),
+        Ok((status, counts)) => {
+            read_worked(action_needed, namespace, host.as_ref(), paused, &status);
+            Ok(MainPagePackageRefresh {
+                // The pause checks go here rather than at the top of the function,
+                // because the access-denied arm below has higher precedence and must
+                // still be able to win.
+                state: pause_or(paused, || {
+                    PackageState::resolve(
+                        status.upstream_state,
+                        has_local_commit,
+                        has_remote,
+                        Some(status.changes.len()),
+                    )
+                    .into()
+                }),
+                // The refresh did not deny, so any pre-filter mark is cleared.
+                role_switch_host: None,
+                downloads: Some(counts.into()),
+                changed_files: Some(status.changes.len()),
+            })
+        }
         Err(err) if err.is_access_denied() => {
             // Ruling R3: denial is precedence rank 1, so it REPLACES the state
             // rather than riding beside it, and `render` gives it no action —
             // which is the invariant
             // `denied_row_hides_publish_that_a_readable_row_with_the_same_changes_offers`.
             let mark = denied_mark(m, roles, host.as_ref()).await;
+            read_blocked(m, action_needed, namespace, host.as_ref(), &mark.state()).await;
             Ok(MainPagePackageRefresh {
                 state: mark.state(),
                 role_switch_host: mark.role_switch_host,
@@ -947,6 +1010,7 @@ pub(super) async fn refresh_main_page_package_from_model(
             // A pause still outranks it, as in the light phase: signing in
             // would not resolve a conflict, and the row must keep naming it.
             if let Some(state) = session_state(&err) {
+                read_blocked(m, action_needed, namespace, host.as_ref(), &state).await;
                 return Ok(MainPagePackageRefresh {
                     state: pause_or(paused, || state),
                     role_switch_host: None,
@@ -989,9 +1053,16 @@ pub async fn refresh_main_page_package(
     // between-phases staleness `provisional` already exists to express.
     let paused = watcher.paused_reason(&namespace).await;
 
-    refresh_main_page_package_from_model(m, roles, tracing, &namespace, paused.as_ref())
-        .await
-        .map_err(|e| e.to_frontend_string())
+    refresh_main_page_package_from_model(
+        m,
+        roles,
+        tracing,
+        &namespace,
+        paused.as_ref(),
+        watcher.action_needed(),
+    )
+    .await
+    .map_err(|e| e.to_frontend_string())
 }
 
 // ── The watcher's payload ──
@@ -2547,6 +2618,7 @@ mod tests {
             &crate::engine::telemetry::Telemetry::default(),
             &ns,
             paused,
+            &crate::engine::action_needed::ActionNeeded::default(),
         )
         .await
         .expect("refresh")
@@ -2723,6 +2795,7 @@ mod tests {
             &crate::engine::telemetry::Telemetry::default(),
             &ns,
             None,
+            &crate::engine::action_needed::ActionNeeded::default(),
         )
         .await;
         assert!(
@@ -2748,6 +2821,7 @@ mod tests {
             &crate::engine::telemetry::Telemetry::default(),
             &ns,
             None,
+            &crate::engine::action_needed::ActionNeeded::default(),
         )
         .await
         .expect_err("a generic status failure must surface as an error, not a manufactured state");
@@ -2784,6 +2858,7 @@ mod tests {
             &crate::engine::telemetry::Telemetry::default(),
             &ns,
             None,
+            &crate::engine::action_needed::ActionNeeded::default(),
         )
         .await
         .expect("a missing session is a state this page can word, not a failed check");
@@ -2795,6 +2870,97 @@ mod tests {
                 host: Some("quilt.test".to_string()),
             }
         );
+    }
+
+    /// A refused read that finishes after the package moved to another
+    /// catalog is the old catalog's: it enters nothing.
+    #[tokio::test]
+    async fn a_read_from_the_old_catalog_enters_nothing() {
+        use crate::engine::action_needed::ActionNeeded;
+        let ns: quilt_uri::Namespace = "team/one".try_into().unwrap();
+        let mut m = crate::engine::model::mocks::create();
+        m.expect_get_installed_package()
+            .returning(|ns| Ok(Some(make_installed_package(ns.clone()))));
+        m.expect_get_installed_package_lineage().returning(|pkg| {
+            Ok(quilt::lineage::PackageLineage::from_remote(
+                make_manifest_uri(&pkg.namespace.to_string()),
+                "abcdef".to_string(),
+            ))
+        });
+        let current = make_manifest_uri("team/one").origin;
+        let old: Host = "old.test".parse().unwrap();
+        let denied = PackageStateDto::RoleDenied { role: None };
+        let action_needed = ActionNeeded::default();
+
+        read_blocked(&m, &action_needed, &ns, Some(&old), &denied).await;
+        assert!(
+            action_needed.get().is_empty(),
+            "the catalog changed under the read"
+        );
+
+        read_blocked(&m, &action_needed, &ns, current.as_ref(), &denied).await;
+        assert_eq!(action_needed.get().len(), 1);
+    }
+
+    /// A read that finds the session gone enters its host in the action-needed
+    /// set, and a read that reaches the bucket leaves it, autosync on or off.
+    #[tokio::test]
+    async fn a_read_enters_a_lost_session_and_a_working_read_leaves_it() {
+        use crate::engine::action_needed::{ActionNeeded, Cause, Subject};
+        let ns: quilt_uri::Namespace = "team/one".try_into().unwrap();
+        let action_needed = ActionNeeded::default();
+        let read = |status| {
+            let m = mock_one_package(status, None);
+            let (ns, action_needed) = (ns.clone(), &action_needed);
+            async move {
+                refresh_main_page_package_from_model(
+                    &m,
+                    &RoleCache::default(),
+                    &crate::engine::telemetry::Telemetry::default(),
+                    &ns,
+                    None,
+                    action_needed,
+                )
+                .await
+            }
+        };
+
+        read(Err(Error::from(quilt::Error::Login(
+            quilt::LoginError::NoSession(Some(fixtures::host())),
+        ))))
+        .await
+        .expect("a missing session is a state, not an error");
+        let entered: Vec<_> = action_needed
+            .get()
+            .into_iter()
+            .map(|e| (e.subject, e.cause))
+            .collect();
+        assert_eq!(
+            entered,
+            vec![(
+                Subject::Host {
+                    host: fixtures::host()
+                },
+                Cause::SignIn { expired: false }
+            )]
+        );
+
+        read(Ok(quilt::lineage::InstalledPackageStatus {
+            latest_refreshed: false,
+            ..status_with(UpstreamState::UpToDate, 0)
+        }))
+        .await
+        .expect_err("a read that did not reach the bucket is left unchecked");
+        assert_eq!(
+            action_needed.get().len(),
+            1,
+            "a read that did not reach the bucket proves nothing"
+        );
+
+        read(Ok(status_with(UpstreamState::UpToDate, 0)))
+            .await
+            .expect("the bucket answered");
+        assert!(action_needed.get().is_empty(), "the session works");
     }
 
     #[tokio::test]
@@ -2816,6 +2982,7 @@ mod tests {
             &crate::engine::telemetry::Telemetry::default(),
             &ns,
             None,
+            &crate::engine::action_needed::ActionNeeded::default(),
         )
         .await
         .expect("a rejected credential is a state this page can word, not a failed check");
@@ -2994,6 +3161,7 @@ mod tests {
             &crate::engine::telemetry::Telemetry::default(),
             &ns,
             None,
+            &crate::engine::action_needed::ActionNeeded::default(),
         )
         .await
         .expect_err("an uninstalled package has no state to report");

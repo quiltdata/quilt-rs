@@ -11,6 +11,8 @@ use tokio::sync::RwLock;
 use tokio::sync::watch;
 
 use crate::engine::Result;
+use crate::engine::action_needed;
+use crate::engine::action_needed::ActionNeeded;
 use crate::engine::app::App;
 use crate::engine::autopull;
 use crate::engine::autopull::StatusReporter;
@@ -131,13 +133,8 @@ impl Services {
             events.clone(),
         ))));
 
-        // Telemetry wraps the UI reporter rather than replacing it: the
-        // engine's outcomes reach the window exactly as before, and telemetry
-        // observes them on the way past.
-        let reporter: Arc<dyn StatusReporter> = Arc::new(TelemetryReporter::wrapping(
-            Arc::new(SinkEventReporter::new(events.clone(), Arc::clone(&toasts))),
-            Arc::clone(&telemetry),
-        ));
+        let action_needed = Arc::new(ActionNeeded::default());
+        let reporter = reporter(&events, &toasts, &action_needed, &telemetry);
         let (watcher, tray_status) = Watcher::spawn(
             data_dir.clone(),
             Arc::clone(&model),
@@ -146,8 +143,10 @@ impl Services {
             publish_settings.clone(),
             reporter.clone(),
             last_change,
+            Arc::clone(&action_needed),
         );
         autopull::activity::spawn_forwarder(events.clone(), watcher.subscribe_activity());
+        action_needed::spawn_forwarder(events.clone(), action_needed.subscribe());
         fswatcher::spawn(
             Arc::clone(&model),
             watcher.shared_arc(),
@@ -178,6 +177,25 @@ impl Services {
             tray_status,
         }))
     }
+}
+
+/// The watcher's reporter. Telemetry wraps the UI reporter rather than
+/// replacing it: the engine's outcomes reach the window exactly as before, and
+/// telemetry observes them on the way past.
+fn reporter(
+    events: &EventSink,
+    toasts: &Arc<ToastCenter>,
+    action_needed: &Arc<ActionNeeded>,
+    telemetry: &Arc<Telemetry>,
+) -> Arc<dyn StatusReporter> {
+    Arc::new(TelemetryReporter::wrapping(
+        Arc::new(SinkEventReporter::new(
+            events.clone(),
+            Arc::clone(toasts),
+            Arc::clone(action_needed),
+        )),
+        Arc::clone(telemetry),
+    ))
 }
 
 #[cfg(test)]

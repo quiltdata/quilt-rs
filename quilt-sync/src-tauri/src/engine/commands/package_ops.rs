@@ -296,6 +296,21 @@ async fn package_publish_command(
     Ok((namespace, outcome))
 }
 
+/// A publish by hand succeeded. One that pushed reached the bucket; one with
+/// nothing to publish proves nothing about access, but no publish is failing.
+async fn note_publish_worked(
+    m: &impl model::QuiltModel,
+    watcher: &Watcher,
+    namespace: &quilt_uri::Namespace,
+    pushed: bool,
+) {
+    if pushed {
+        watcher.transfer_worked(m, namespace, true).await;
+    } else {
+        watcher.action_needed().publish_settled(namespace);
+    }
+}
+
 pub async fn package_publish(
     s: &Services,
     namespace: String,
@@ -307,9 +322,10 @@ pub async fn package_publish(
     let watcher = &s.watcher;
     let result = package_publish_command(m, settings, &namespace).await;
     match &result {
-        Ok((ns, _)) => {
+        Ok((ns, outcome)) => {
             watcher.clear_paused(ns).await;
             watcher.note_published(ns).await;
+            note_publish_worked(m, watcher, ns, outcome.push().is_some()).await;
         }
         Err(_) => note_publish_failed(m, watcher, &namespace).await,
     }
@@ -393,9 +409,10 @@ pub async fn package_commit_and_push(
     let result =
         package_commit_and_push_command(m, &namespace, &message, &metadata, workflow).await;
     match &result {
-        Ok((ns, _)) => {
+        Ok((ns, outcome)) => {
             watcher.clear_paused(ns).await;
             watcher.note_published(ns).await;
+            note_publish_worked(m, watcher, ns, outcome.push().is_some()).await;
         }
         Err(_) => note_publish_failed(m, watcher, &namespace).await,
     }
@@ -534,6 +551,7 @@ async fn pull_and_report(
     let mut msg_ok = String::new();
     if let Ok((ns, pulled)) = &result {
         watcher.clear_paused(ns).await;
+        watcher.transfer_worked(m, ns, false).await;
         msg_ok = match pulled {
             quilt::flow::Pulled::UpToDate => format!("Package {namespace} is already up to date"),
             quilt::flow::Pulled::Applied(report) => {
@@ -682,6 +700,7 @@ pub async fn package_uninstall(
         toasts.post(toast).await;
     }
     if result.is_ok() {
+        s.watcher.prune_action_needed(m).await;
         s.events.emit(PACKAGES_CHANGED_EVENT, ());
     }
     Notify::new(msg_init)
@@ -823,7 +842,9 @@ pub async fn set_remote(
             tracing.track(MixpanelEvent::RemoteSet(RemotePackageEvent::for_host(
                 origin_host,
             )));
-            watcher.clear_paused(&ns).await;
+            // What the old bucket or catalog refused is not the new one's.
+            watcher.forget_catalog(&ns).await;
+            watcher.prune_action_needed(m).await;
             let message = format!("Successfully set remote for {namespace}");
             ::tracing::debug!("{message}");
             Ok(SetRemoteResponse {
@@ -863,6 +884,7 @@ pub async fn change_catalog(
         Ok(ns) => {
             // What the old catalog refused is not the new one's.
             watcher.forget_catalog(&ns).await;
+            watcher.prune_action_needed(&*s.model).await;
             let message = format!("Changed the catalog of {namespace}");
             ::tracing::debug!("{message}");
             Ok(message)

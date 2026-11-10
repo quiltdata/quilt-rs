@@ -507,7 +507,7 @@ fn whole_page(width: u32, height: u32) -> AnyView {
                     syncing=syncing(Syncing::default())
                     publishing=publishing(Publishing::default())
                     accounts=accounts(several_hosts())
-                    app=view! { <AppCard tray=RwSignal::new(false) /> }.into_any()
+                    app=view! { <AppCard tray=RwSignal::new(false) notify=RwSignal::new(true) /> }.into_any()
                     storage=storage(StorageSize::NotMeasured, false, None)
                     experimental=view! {
                         <ExperimentalCard
@@ -626,7 +626,7 @@ pub fn SettingsPageScene() -> impl IntoView {
                 {sign_out_inline()}
             </Cell>
             <Cell full=true label="App">
-                {column(view! { <AppCard tray=RwSignal::new(true) /> }.into_any())}
+                {column(view! { <AppCard tray=RwSignal::new(true) notify=RwSignal::new(false) /> }.into_any())}
             </Cell>
             <Cell full=true label="Storage — not measured: Check size, and Free up space works anyway">
                 {column(storage(StorageSize::NotMeasured, false, None))}

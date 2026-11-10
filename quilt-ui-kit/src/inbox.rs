@@ -10,14 +10,14 @@
 //!
 //! # What leads it
 //!
-//! While anything needs the reader, the panel leads with live lines drawn
-//! from [`NeedsYou`]: one counting what the main page's queue holds, and one
+//! While anything needs action, the panel leads with live lines drawn
+//! from [`ActionNeeded`]: one counting what the main page's queue holds, and one
 //! for each cause the queue does not show, with its remedy. They are state,
 //! not entries, so they leave when the cause clears.
 //!
 //! # The bell's badge
 //!
-//! Two levels. An amber count of what needs the reader, which drops only when
+//! Two levels. An amber count of what needs action, which drops only when
 //! a cause clears, so looking cannot clear it. Otherwise a grey dot while any
 //! entry is unread. The count wins when both hold, and the button's name says
 //! the same in words.
@@ -28,7 +28,7 @@
 //! panel is open keeps its highlight until the panel closes: the panel
 //! remembers every entry it has seen unread since it opened.
 //!
-//! Presentation only. The record, reading and the needs-you set are the
+//! Presentation only. The record, reading and the action-needed set are the
 //! caller's.
 
 use std::collections::BTreeSet;
@@ -133,7 +133,7 @@ pub struct InboxEntry {
     pub href: String,
 }
 
-/// A needs-you cause the main page's queue does not show, with where it is
+/// A action-needed cause the main page's queue does not show, with where it is
 /// fixed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Cause {
@@ -170,7 +170,7 @@ impl Cause {
 }
 
 /// `for an hour`, `for 2 hours`, `for 3 days`. Never under an hour: that is
-/// when a failing publish starts to need the reader.
+/// when a failing publish starts to need action.
 fn for_how_long(ms: f64) -> String {
     #[expect(
         clippy::cast_possible_truncation,
@@ -185,9 +185,9 @@ fn for_how_long(ms: f64) -> String {
     }
 }
 
-/// Everything that needs the reader now.
+/// Everything that needs action now.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct NeedsYou {
+pub struct ActionNeeded {
     /// How many the main page's queue holds.
     pub in_queue: usize,
     /// The main page, where the queue is.
@@ -195,7 +195,7 @@ pub struct NeedsYou {
     pub elsewhere: Vec<Cause>,
 }
 
-impl NeedsYou {
+impl ActionNeeded {
     #[must_use]
     pub fn count(&self) -> usize {
         self.in_queue + self.elsewhere.len()
@@ -207,16 +207,16 @@ impl NeedsYou {
 pub enum Badge {
     None,
     Unread,
-    NeedsYou(usize),
+    ActionNeeded(usize),
 }
 
 impl Badge {
     #[must_use]
-    pub fn of(needs_you: usize, unread: bool) -> Self {
-        match (needs_you, unread) {
+    pub fn of(action_needed: usize, unread: bool) -> Self {
+        match (action_needed, unread) {
             (0, false) => Self::None,
             (0, true) => Self::Unread,
-            (n, _) => Self::NeedsYou(n),
+            (n, _) => Self::ActionNeeded(n),
         }
     }
 
@@ -226,8 +226,8 @@ impl Badge {
         match self {
             Self::None => "Inbox".to_string(),
             Self::Unread => "Inbox, unread news".to_string(),
-            Self::NeedsYou(1) => "Inbox, 1 needs you".to_string(),
-            Self::NeedsYou(n) => format!("Inbox, {n} need you"),
+            Self::ActionNeeded(1) => "Inbox, 1 needs action".to_string(),
+            Self::ActionNeeded(n) => format!("Inbox, {n} need action"),
         }
     }
 }
@@ -244,14 +244,14 @@ fn queue_line(count: usize) -> String {
 #[component]
 pub fn Inbox(
     #[prop(into)] entries: Signal<Vec<InboxEntry>>,
-    #[prop(into)] needs_you: Signal<NeedsYou>,
+    #[prop(into)] action_needed: Signal<ActionNeeded>,
     /// The caller's, so it can tell when the panel has stayed open long enough
     /// to read it.
     open: RwSignal<bool>,
 ) -> impl IntoView {
     let badge = Signal::derive(move || {
         let unread = entries.with(|all| all.iter().any(|e| e.unread));
-        Badge::of(needs_you.with(NeedsYou::count), unread)
+        Badge::of(action_needed.with(ActionNeeded::count), unread)
     });
 
     let trigger = move |surface_id: String| {
@@ -270,7 +270,7 @@ pub fn Inbox(
                     Badge::Unread => {
                         Some(view! { <span class=style::dot aria-hidden="true"></span> }.into_any())
                     }
-                    Badge::NeedsYou(n) => Some(
+                    Badge::ActionNeeded(n) => Some(
                         view! { <span class=style::count aria-hidden="true">{n}</span> }
                             .into_any(),
                     ),
@@ -289,7 +289,7 @@ pub fn Inbox(
             tight=true
             contained=true
         >
-            <InboxPanel entries=entries needs_you=needs_you open=open />
+            <InboxPanel entries=entries action_needed=action_needed open=open />
         </AnchoredOverlay>
     }
 }
@@ -299,7 +299,7 @@ pub fn Inbox(
 #[component]
 pub fn InboxPanel(
     #[prop(into)] entries: Signal<Vec<InboxEntry>>,
-    #[prop(into)] needs_you: Signal<NeedsYou>,
+    #[prop(into)] action_needed: Signal<ActionNeeded>,
     /// Whether the panel shows. Absent, it always does.
     #[prop(optional, into)]
     open: Option<Signal<bool>>,
@@ -334,11 +334,11 @@ pub fn InboxPanel(
     };
 
     let lead = move || {
-        let NeedsYou {
+        let ActionNeeded {
             in_queue,
             queue_href,
             elsewhere,
-        } = needs_you.get();
+        } = action_needed.get();
         let queue = (in_queue > 0).then(|| (queue_line(in_queue), queue_href));
         let lines: Vec<(String, String)> = queue
             .into_iter()
@@ -431,8 +431,8 @@ mod tests {
         }
     }
 
-    fn queue(n: usize) -> NeedsYou {
-        NeedsYou {
+    fn queue(n: usize) -> ActionNeeded {
+        ActionNeeded {
             in_queue: n,
             queue_href: "/".to_string(),
             elsewhere: Vec::new(),
@@ -443,9 +443,9 @@ mod tests {
     fn the_count_wins_and_the_name_says_it() {
         assert_eq!(Badge::of(0, false).name(), "Inbox");
         assert_eq!(Badge::of(0, true).name(), "Inbox, unread news");
-        assert_eq!(Badge::of(1, false).name(), "Inbox, 1 needs you");
-        assert_eq!(Badge::of(2, true), Badge::NeedsYou(2));
-        assert_eq!(Badge::of(2, true).name(), "Inbox, 2 need you");
+        assert_eq!(Badge::of(1, false).name(), "Inbox, 1 needs action");
+        assert_eq!(Badge::of(2, true), Badge::ActionNeeded(2));
+        assert_eq!(Badge::of(2, true).name(), "Inbox, 2 need action");
     }
 
     #[test]
@@ -476,7 +476,7 @@ mod tests {
             view! {
                 <InboxPanel
                     entries=vec![entry(1, 10.0, false), entry(2, 30.0, false), entry(3, 20.0, false)]
-                    needs_you=NeedsYou::default()
+                    action_needed=ActionNeeded::default()
                 />
             }
         });
@@ -498,7 +498,7 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn with_no_entries_it_says_nothing_new() {
-        let el = mount(|| view! { <InboxPanel entries=Vec::new() needs_you=queue(2) /> });
+        let el = mount(|| view! { <InboxPanel entries=Vec::new() action_needed=queue(2) /> });
         let text = el.text_content().unwrap_or_default();
         assert!(text.contains("Nothing new"), "{text}");
         assert!(text.contains("2 things need your attention"), "{text}");
@@ -507,7 +507,7 @@ mod tests {
     /// The whole line is the link, not only a word in it.
     #[wasm_bindgen_test]
     fn the_queue_line_is_one_link_to_the_main_page() {
-        let el = mount(|| view! { <InboxPanel entries=Vec::new() needs_you=queue(1) /> });
+        let el = mount(|| view! { <InboxPanel entries=Vec::new() action_needed=queue(1) /> });
         let link = el
             .query_selector("ul[aria-label='Needs you'] a")
             .unwrap()
@@ -525,7 +525,7 @@ mod tests {
             view! {
                 <InboxPanel
                     entries=Vec::new()
-                    needs_you=NeedsYou {
+                    action_needed=ActionNeeded {
                         in_queue: 1,
                         queue_href: "/".to_string(),
                         elsewhere: vec![Cause::watcher_stopped("/settings")],
@@ -546,7 +546,7 @@ mod tests {
         let entries = RwSignal::new(vec![entry(1, 10.0, true), entry(2, 5.0, false)]);
         let open = RwSignal::new(false);
         let el = mount(move || {
-            view! { <InboxPanel entries=entries needs_you=NeedsYou::default() open=open /> }
+            view! { <InboxPanel entries=entries action_needed=ActionNeeded::default() open=open /> }
         });
         let marked = || {
             let all = el.query_selector_all("ol a").unwrap();
@@ -592,7 +592,7 @@ mod tests {
     async fn reading_an_entry_keeps_its_link() {
         let entries = RwSignal::new(vec![entry(1, 10.0, true)]);
         let el = mount(move || {
-            view! { <InboxPanel entries=entries needs_you=NeedsYou::default() /> }
+            view! { <InboxPanel entries=entries action_needed=ActionNeeded::default() /> }
         });
         sleep_ms(0).await;
         let before = el.query_selector("ol a").unwrap().expect("the entry");
@@ -612,7 +612,7 @@ mod tests {
             view! {
                 <InboxPanel
                     entries=vec![entry(1, at, false)]
-                    needs_you=NeedsYou::default()
+                    action_needed=ActionNeeded::default()
                     open=open
                 />
             }
@@ -641,7 +641,7 @@ mod tests {
             view! {
                 <Inbox
                     entries=vec![entry(1, 10.0, true)]
-                    needs_you=queue(3)
+                    action_needed=queue(3)
                     open=RwSignal::new(false)
                 />
             }
@@ -649,7 +649,7 @@ mod tests {
         let bell = el.query_selector("button").unwrap().expect("the bell");
         assert_eq!(
             bell.get_attribute("aria-label").as_deref(),
-            Some("Inbox, 3 need you")
+            Some("Inbox, 3 need action")
         );
         assert_eq!(
             bell.get_attribute("aria-expanded").as_deref(),

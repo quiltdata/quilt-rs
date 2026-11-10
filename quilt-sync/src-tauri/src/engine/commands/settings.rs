@@ -41,12 +41,17 @@ impl From<PublishSettings> for PublishSettingsData {
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+#[allow(clippy::struct_excessive_bools, reason = "one field per toggle")]
 pub struct AutosyncSettingsData {
     pub pull_enabled: bool,
     pub push_enabled: bool,
     pub pull_interval_secs: u64,
     pub idle_timeout_secs: u64,
     pub close_to_tray: bool,
+    /// Read only: a full write keeps what is stored, since only the v2
+    /// settings page has the control, and it saves by patch.
+    #[serde(default)]
+    pub notify_action_needed: bool,
 }
 
 impl From<AutosyncSettings> for AutosyncSettingsData {
@@ -58,6 +63,7 @@ impl From<AutosyncSettings> for AutosyncSettingsData {
             pull_interval_secs: s.pull.focused_secs,
             idle_timeout_secs: s.push.idle_timeout_secs,
             close_to_tray: s.close_to_tray,
+            notify_action_needed: s.notify_action_needed,
         }
     }
 }
@@ -76,6 +82,7 @@ pub struct AutosyncPatch {
     pub pull_interval_secs: Option<u64>,
     pub idle_timeout_secs: Option<u64>,
     pub close_to_tray: Option<bool>,
+    pub notify_action_needed: Option<bool>,
 }
 
 impl AutosyncPatch {
@@ -99,6 +106,9 @@ impl AutosyncPatch {
         }
         if let Some(on) = self.close_to_tray {
             next.close_to_tray = on;
+        }
+        if let Some(on) = self.notify_action_needed {
+            next.notify_action_needed = on;
         }
         Ok(next.normalised())
     }
@@ -559,7 +569,7 @@ async fn write_autosync_patch(
     let _writing = s.settings_writes.lock().await;
     let data_dir = s.data_dir.clone();
 
-    let clear = {
+    let (clear, publishing_off) = {
         let mut current = autosync_settings.write().await;
         let next = patch.apply(&current)?;
         next.save(&data_dir).await.map_err(|e| e.to_string())?;
@@ -569,11 +579,15 @@ async fn write_autosync_patch(
         if turns_publishing_on(&current, &next) {
             watcher.note_publishing_on().await;
         }
+        let publishing_off = !next.push.enabled;
         *current = next;
-        clear
+        (clear, publishing_off)
     };
     if clear {
         watcher.clear_all_paused().await;
+    }
+    if publishing_off {
+        watcher.action_needed().publishing_off();
     }
     watcher.settings_changed();
     Ok(())
@@ -586,6 +600,14 @@ pub async fn get_autopull_activity(
 ) -> Result<Option<crate::engine::autopull::activity::AutopullActivity>, String> {
     let watcher = &s.watcher;
     Ok(watcher.activity())
+}
+
+/// What needs action now, for a window that mounts; it then follows the
+/// `action-needed` event.
+pub async fn get_action_needed(
+    s: &Services,
+) -> Result<Vec<crate::engine::action_needed::Entry>, String> {
+    Ok(s.watcher.action_needed().get())
 }
 
 pub async fn update_fswatcher_settings(s: &Services, enabled: bool) -> Result<(), String> {
@@ -604,6 +626,13 @@ pub async fn update_fswatcher_settings(s: &Services, enabled: bool) -> Result<()
 
     new.save(&data_dir).await.map_err(|e| e.to_string())?;
     *fswatcher_settings.write().await = new;
+    if !enabled {
+        // Turned off, it is not failing, also when it never started.
+        s.watcher.action_needed().leave(
+            &crate::engine::action_needed::Subject::App,
+            crate::engine::action_needed::Kind::Watcher,
+        );
+    }
     Ok(())
 }
 
@@ -737,6 +766,7 @@ mod tests {
                 idle_timeout_secs: 22,
             },
             close_to_tray: false,
+            notify_action_needed: true,
         };
         let data = AutosyncSettingsData::from(s);
         assert!(data.pull_enabled);
@@ -772,6 +802,7 @@ mod tests {
                 idle_timeout_secs: 45,
             },
             close_to_tray: true,
+            notify_action_needed: true,
         };
         let next = AutosyncPatch {
             pull_enabled: Some(true),
@@ -804,6 +835,7 @@ mod tests {
                 idle_timeout_secs: 300,
             },
             close_to_tray: false,
+            notify_action_needed: true,
         };
         let next = AutosyncPatch {
             pull_interval_secs: Some(180),
@@ -835,6 +867,7 @@ mod tests {
             pull_interval_secs: Some(60),
             idle_timeout_secs: Some(120),
             close_to_tray: Some(true),
+            notify_action_needed: None,
         }
         .apply(&AutosyncSettings::default())
         .unwrap();
@@ -910,6 +943,7 @@ mod tests {
                     ..Default::default()
                 },
                 close_to_tray: false,
+                notify_action_needed: true,
             }
         }
         assert!(clears_pauses(&enabled(false, false), &enabled(true, false)));

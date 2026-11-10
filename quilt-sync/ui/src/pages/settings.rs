@@ -59,6 +59,7 @@ pub enum Saved {
     Publish,
     Watch,
     Tray,
+    Notify,
     AgentTasks,
     LogLevel,
 }
@@ -1226,10 +1227,14 @@ pub const TRAY_SUBLABEL: &str = "Closing the window leaves QuiltSync running in 
      (system tray), so autosync keeps working. Leave off if your desktop has no tray, such as \
      stock GNOME.";
 
-/// The window and the tray. A card of its own: more tray settings will join it.
+pub const NOTIFY_SUBLABEL: &str = "A system notification when syncing stops until you act, \
+     such as a conflict or an expired sign-in, while QuiltSync is not in front.";
+
+/// The window, the tray and the system notifications.
 #[component]
 pub fn AppCard(
     tray: RwSignal<bool>,
+    notify: RwSignal<bool>,
     #[prop(optional, into)] saved: Signal<Option<Saved>>,
     #[prop(optional, into)] pending: Signal<Vec<Saved>>,
 ) -> impl IntoView {
@@ -1241,6 +1246,13 @@ pub fn AppCard(
                 checked=tray
                 disabled=saving(pending, Saved::Tray)
                 trailing=saved_note(saved, Saved::Tray)
+            />
+            <ToggleRow
+                label="Notify me when syncing stops until I act"
+                sublabel=NOTIFY_SUBLABEL
+                checked=notify
+                disabled=saving(pending, Saved::Notify)
+                trailing=saved_note(saved, Saved::Notify)
             />
         </Card>
     }

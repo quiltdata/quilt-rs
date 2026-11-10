@@ -11,6 +11,7 @@ use quilt_uri::S3PackageUri;
 use serde::Deserialize;
 use serde_json::Value;
 
+use crate::engine::action_needed::Entry as ActionNeededEntry;
 use crate::engine::autopull::activity::AutopullActivity;
 use crate::engine::commands::{
     AccountHost, AutosyncPatch, CommitData, CommitViolation, CommitWorkflows, FreedSpace,
@@ -194,6 +195,7 @@ commands! {
         set_autosync_direction(pull: Option<bool>, push: Option<bool>) -> ();
         patch_autosync_settings(patch: AutosyncPatch) -> ();
         get_autopull_activity() -> Option<AutopullActivity>;
+        get_action_needed() -> Vec<ActionNeededEntry>;
         update_fswatcher_settings(enabled: bool) -> ();
         update_log_settings(level: LogLevel) -> ();
         update_experimental_settings(agent_tasks: Option<bool>) -> ();

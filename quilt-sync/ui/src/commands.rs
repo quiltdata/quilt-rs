@@ -291,12 +291,19 @@ pub struct PublishSettingsData {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+#[allow(clippy::struct_excessive_bools, reason = "one field per toggle")]
 pub struct AutosyncSettingsData {
     pub pull_enabled: bool,
     pub push_enabled: bool,
     pub pull_interval_secs: u64,
     pub idle_timeout_secs: u64,
     pub close_to_tray: bool,
+    #[serde(default = "notify_by_default")]
+    pub notify_action_needed: bool,
+}
+
+const fn notify_by_default() -> bool {
+    true
 }
 
 impl Default for AutosyncSettingsData {
@@ -307,6 +314,7 @@ impl Default for AutosyncSettingsData {
             pull_interval_secs: 60,
             idle_timeout_secs: 300,
             close_to_tray: false,
+            notify_action_needed: true,
         }
     }
 }
@@ -1517,6 +1525,7 @@ pub struct AutosyncPatch {
     pub pull_interval_secs: Option<u64>,
     pub idle_timeout_secs: Option<u64>,
     pub close_to_tray: Option<bool>,
+    pub notify_action_needed: Option<bool>,
 }
 
 /// Change the autosync settings `patch` names and leave the rest as stored.
@@ -3141,6 +3150,106 @@ pub async fn get_autopull_activity() -> Result<Option<AutopullActivity>, String>
     #[derive(Serialize)]
     struct Args {}
     engine::invoke("get_autopull_activity", &Args {}).await
+}
+
+// ── What needs action ──
+
+/// Event carrying the whole action-needed set each time it changes. Kept in
+/// lockstep with the backend.
+pub const ACTION_NEEDED_EVENT: &str = "action-needed";
+
+/// Event sent on every clear of a pause. Kept in lockstep with the backend.
+pub const AUTOSYNC_PAUSE_CLEARED_EVENT: &str = "autosync-pause-cleared";
+
+/// Payload of the `autosync-pause-cleared` event.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PauseClearedEvent {
+    pub namespace: Namespace,
+}
+
+/// Who a action-needed entry is about. Mirrors the backend's `Subject`.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ActionNeededSubject {
+    Package { namespace: Namespace },
+    Host { host: Host },
+    App,
+}
+
+/// Why it needs action. Mirrors the backend's `Cause`; a cause added
+/// there degrades to `Unrecognised`.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum ActionNeededCause {
+    Paused {
+        reason: PausedReasonData,
+    },
+    NoAccess {
+        role: Option<String>,
+    },
+    SignIn {
+        expired: bool,
+    },
+    Credentials,
+    PublishFailing {
+        error: String,
+    },
+    Watcher {
+        message: String,
+    },
+    #[serde(other)]
+    Unrecognised,
+}
+
+/// One thing that needs action. Mirrors the backend's `action_needed::Entry`.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ActionNeededEntry {
+    pub subject: ActionNeededSubject,
+    pub cause: ActionNeededCause,
+    /// When the cause started, RFC 3339.
+    pub since: String,
+}
+
+/// What needs action now: the mount-time read before following
+/// [`ACTION_NEEDED_EVENT`].
+pub async fn get_action_needed() -> Result<Vec<ActionNeededEntry>, String> {
+    #[derive(Serialize)]
+    struct Args {}
+    engine::invoke("get_action_needed", &Args {}).await
+}
+
+#[cfg(test)]
+mod action_needed_tests {
+    use super::*;
+
+    #[test]
+    fn an_entry_reads_from_the_backend_wire_form() {
+        let entry: ActionNeededEntry = serde_json::from_str(
+            r#"{"subject":{"kind":"package","namespace":"a/b"},
+                "cause":{"kind":"paused","reason":{"kind":"pull_conflict","files":["x"]}},
+                "since":"1970-01-01T00:00:00Z"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            entry.cause,
+            ActionNeededCause::Paused {
+                reason: PausedReasonData::PullConflict {
+                    files: vec!["x".into()]
+                }
+            }
+        );
+        let host: ActionNeededSubject =
+            serde_json::from_str(r#"{"kind":"host","host":"quilt.test"}"#).unwrap();
+        assert!(matches!(host, ActionNeededSubject::Host { .. }));
+        let later: ActionNeededCause = serde_json::from_str(r#"{"kind":"somethingNew"}"#).unwrap();
+        assert_eq!(later, ActionNeededCause::Unrecognised);
+    }
 }
 
 #[cfg(test)]

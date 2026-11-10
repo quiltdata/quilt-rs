@@ -418,9 +418,17 @@ pub async fn login(s: &Services, host: String, code: String) -> Result<String, S
 
     let result = login_command(m, tracing, &host, code).await;
     if result.is_ok() {
+        signed_in(s, &host);
         s.events.emit(ACCOUNTS_CHANGED_EVENT, ());
     }
     Notify::new(msg_init).map(result, msg_ok, msg_err)
+}
+
+/// A sign-in to `host` worked, so its session no longer needs action.
+pub fn signed_in(s: &Services, host: &str) {
+    if let Ok(host) = Host::from_str(host) {
+        s.watcher.action_needed().session_works(Some(&host));
+    }
 }
 
 /// Initiate OAuth 2.1 login: register client via DCR if needed,

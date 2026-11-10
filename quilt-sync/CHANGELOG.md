@@ -21,6 +21,11 @@
 
 ## [v0.28.0-dev]
 
+### Added
+
+- When syncing stops until you act, such as a conflict or an expired sign-in, QuiltSync posts a system notification while its window is not in front. Clicking it opens the page that fixes it, and Settings can turn it off (<https://github.com/quiltdata/quilt-rs/pull/1330>)
+- The tray icon shows a red dot while some action is needed, and its menu lists what needs it, each line opening the page that fixes it (<https://github.com/quiltdata/quilt-rs/pull/1330>)
+
 ### Changed
 
 - QuiltSync tells you about a new release while it runs, not only when it opens, and a dismissed update bar comes back after five minutes (<https://github.com/quiltdata/quilt-rs/pull/1336>)
@@ -35,6 +40,7 @@
 
 ### Fixed
 
+- The package page drops its paused band as soon as the pause clears, also when autosync is turned back on (<https://github.com/quiltdata/quilt-rs/pull/1330>)
 - The package page opens when the catalog can't be reached, and says the information may be out of date; the commit page says so too and waits to publish (<https://github.com/quiltdata/quilt-rs/pull/1338>)
 - A package task whose outcome loses `latest` to a revision published during the run lands its own changes on top of that revision instead of leaving the package Diverged, unless both changed the same file (<https://github.com/quiltdata/quilt-rs/pull/1320>)
 - A pull no longer deletes a file the new revision removed that you saved while it downloaded: the pull stops, or, once files are being replaced, the file stays as a new local file and the pull's notice names it (<https://github.com/quiltdata/quilt-rs/pull/1328>)

@@ -4,6 +4,7 @@
 //! Nothing here names Tauri or reaches outside this folder (`just
 //! check-engine`), so it can become its own crate by moving the folder.
 
+pub mod action_needed;
 pub mod app;
 pub mod autopull;
 pub mod changelog;

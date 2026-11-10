@@ -8,6 +8,10 @@ use quilt_uri::Host;
 use quilt_uri::Namespace;
 
 use crate::engine::Error;
+use crate::engine::action_needed::Cause;
+use crate::engine::action_needed::Kind;
+use crate::engine::action_needed::PUBLISH_FAILING_AFTER;
+use crate::engine::action_needed::Subject;
 use crate::engine::autopull::PausedReason;
 use crate::engine::autopull::WatcherInner;
 use crate::engine::autopull::activity::ActivityOp;
@@ -125,7 +129,11 @@ const AMBIENT_CREDENTIALS_UNUSABLE: &str =
 #[derive(Debug)]
 pub(crate) enum WatchError {
     Conflict(PausedReason),
-    LoginRequired(Option<Host>),
+    /// `expired` tells a rejected session from a missing one.
+    LoginRequired {
+        host: Option<Host>,
+        expired: bool,
+    },
     Transient(Error),
 }
 
@@ -211,12 +219,18 @@ pub(crate) fn classify_sync_err(err: Error) -> Result<(), WatchError> {
         // credential is an `Error::S3`, and retrying one never succeeds. It is
         // the fact the `Login` arm below carries, reached when S3 answers 403
         // with a credential code rather than the provider refusing to vend.
-        _ if err.is_invalid_credentials() => Err(WatchError::LoginRequired(err.s3_host().cloned())),
+        _ if err.is_invalid_credentials() => Err(WatchError::LoginRequired {
+            host: err.s3_host().cloned(),
+            expired: true,
+        }),
         Error::Quilt(quilt::Error::Reqwest(_) | quilt::Error::Io(_) | quilt::Error::S3(_)) => {
             Err(WatchError::Transient(err))
         }
         Error::Quilt(quilt::Error::Login(quilt::LoginError::NoSession(host))) => {
-            Err(WatchError::LoginRequired(host.clone()))
+            Err(WatchError::LoginRequired {
+                host: host.clone(),
+                expired: false,
+            })
         }
         _ => Err(WatchError::Conflict(PausedReason::Other(err.to_string()))),
     }
@@ -229,7 +243,10 @@ pub(crate) fn classify_sync_err(err: Error) -> Result<(), WatchError> {
 fn classify_transient_or_login(err: Error) -> WatchError {
     match &err {
         Error::Quilt(quilt::Error::Login(quilt::LoginError::NoSession(host))) => {
-            WatchError::LoginRequired(host.clone())
+            WatchError::LoginRequired {
+                host: host.clone(),
+                expired: false,
+            }
         }
         // A denial is neither a broken session nor a blip: the credentials
         // vended fine and the role simply cannot read this bucket. It must
@@ -243,7 +260,10 @@ fn classify_transient_or_login(err: Error) -> WatchError {
         // rejected credential never succeeds. It is the fact the `Login` arm
         // above carries, reached when S3 answers 403 with a credential code
         // rather than the provider refusing to vend.
-        _ if err.is_invalid_credentials() => WatchError::LoginRequired(err.s3_host().cloned()),
+        _ if err.is_invalid_credentials() => WatchError::LoginRequired {
+            host: err.s3_host().cloned(),
+            expired: true,
+        },
         _ => WatchError::Transient(err),
     }
 }
@@ -355,6 +375,7 @@ pub(crate) async fn refresh_then_maybe_sync(
     push_enabled: bool,
     scope: SyncScope,
     aggregator: &SyncTrayAggregator,
+    reached: &mut bool,
 ) -> Result<Option<RefreshOutcome>, WatchError> {
     let installed = model
         .get_installed_package(namespace)
@@ -414,6 +435,7 @@ pub(crate) async fn refresh_then_maybe_sync(
         Some(status) => status,
         None => walk_locked(model, &locked, walks, namespace, lineage).await?,
     };
+    *reached = status.latest_refreshed;
     let upstream = status.upstream_state;
     let has_changes = !status.changes.is_empty();
     // Observed-tree fingerprint, taken before the publish path consumes `status`.
@@ -844,6 +866,7 @@ pub(crate) async fn run_once(
         .await
         .retain(|ns| current.contains(ns));
     inner.aggregator.retain_namespaces(&current);
+    prune_action_needed(model, inner, &packages).await;
 
     // Snapshot publish settings once per tick so we don't reacquire the
     // RwLock per package. Same lifetime for `wait`, which is
@@ -948,6 +971,8 @@ pub(crate) async fn sync_package(
         return Pass::LeftToTasks;
     }
 
+    // Whether the status read reached the bucket, not only the last-known tip.
+    let mut reached = false;
     let result = refresh_then_maybe_sync(
         model,
         &namespace,
@@ -960,6 +985,7 @@ pub(crate) async fn sync_package(
         run.push_enabled,
         lineage.sync_scope.clone(),
         &inner.aggregator,
+        &mut reached,
     )
     .await;
     // Another writer holds the package: nothing was observed, so nothing
@@ -986,10 +1012,26 @@ pub(crate) async fn sync_package(
         }
     }
 
+    // The bucket answered the status read: its session and its access work,
+    // whatever the pass then decided. A refusal below enters again.
+    let package = Subject::package(&namespace);
+    if reached {
+        inner.action_needed.session_works(origin);
+        inner.action_needed.leave(&package, Kind::NoAccess);
+    }
     match result {
         Ok(outcome) => {
             inner.backoff.write().await.remove(&namespace);
             inner.login_blocked.write().await.remove(&namespace);
+            // A pull or publish reached the bucket too. With nothing left to
+            // publish, no publish is failing either way.
+            if outcome.pulled.is_some() || outcome.published.is_some() {
+                inner.action_needed.session_works(origin);
+                inner.action_needed.leave(&package, Kind::NoAccess);
+            }
+            if outcome.published.is_some() || inner.last_change.get(&namespace).await.is_none() {
+                inner.action_needed.publish_settled(&namespace);
+            }
             if let Some(message) = outcome.published.as_deref() {
                 inner.reporter.report_published(&namespace, origin, message);
             }
@@ -1016,7 +1058,7 @@ pub(crate) async fn sync_package(
                 .aggregator
                 .note_status(&namespace, outcome.has_changes);
         }
-        Err(WatchError::LoginRequired(host)) => {
+        Err(WatchError::LoginRequired { host, expired }) => {
             // A refusal the old catalog gave is not this package's any more;
             // the next pass asks the new one. See `WatcherInner::refusals`.
             let _gate = inner.refusals.lock().await;
@@ -1043,6 +1085,7 @@ pub(crate) async fn sync_package(
                 block
             };
             inner.reporter.report_login_required(host.as_ref(), block);
+            inner.action_needed.session_failed(host.as_ref(), expired);
             inner.aggregator.note_login_required(&namespace, host);
         }
         Err(WatchError::Conflict(reason)) => {
@@ -1072,6 +1115,7 @@ pub(crate) async fn sync_package(
                 err.to_string(),
             );
             warn!("autosync: transient error for {namespace}: {err}");
+            note_publish_failing(inner, &namespace, now, &err).await;
             // Transient: don't touch the aggregator's error map — a
             // network blip should not flip the tray to Error. The
             // next tick either clears or escalates.
@@ -1079,6 +1123,68 @@ pub(crate) async fn sync_package(
     }
     inner.reporter.report_autosync_changed();
     Pass::Done
+}
+
+/// Drop the entries no installed package stands behind any more: an
+/// uninstalled package, and a session or the computer's credentials that no
+/// package syncs on. Sessions stay when a package's catalog can't be read.
+pub(crate) async fn prune_action_needed(
+    model: &impl QuiltModel,
+    inner: &WatcherInner,
+    packages: &[quilt::InstalledPackage],
+) {
+    let mut origins = Vec::new();
+    let mut read_all = true;
+    for pkg in packages {
+        match model.get_installed_package_lineage(pkg).await {
+            Ok(lineage) => {
+                if let Some(remote) = lineage.remote_uri.filter(|r| !r.bucket.is_empty()) {
+                    origins.push(remote.origin);
+                }
+            }
+            Err(_) => read_all = false,
+        }
+    }
+    inner
+        .action_needed
+        .retain(|entry| match (&entry.subject, entry.cause.kind()) {
+            (Subject::Package { namespace }, _) => {
+                packages.iter().any(|pkg| pkg.namespace == *namespace)
+            }
+            (Subject::Host { host }, _) => !read_all || origins.contains(&Some(host.clone())),
+            (Subject::App, Kind::Credentials) => !read_all || origins.contains(&None),
+            (Subject::App, _) => true,
+        });
+    inner
+        .action_needed
+        .keep_publish_runs(|namespace| packages.iter().any(|pkg| pkg.namespace == *namespace));
+}
+
+/// A publish that has kept failing for [`PUBLISH_FAILING_AFTER`] needs
+/// action; one with nothing left to publish, or publishing off, does not.
+///
+/// Reads the setting now, not the pass's snapshot, and holds it through the
+/// update: turning publishing off mid-pass then either comes first and is
+/// seen, or comes after and clears the entry.
+async fn note_publish_failing(
+    inner: &WatcherInner,
+    namespace: &Namespace,
+    now: Instant,
+    err: &Error,
+) {
+    let settings = inner.settings.read().await;
+    let package = Subject::package(namespace);
+    let to_publish = settings.push.enabled && inner.last_change.get(namespace).await.is_some();
+    if !to_publish {
+        inner.action_needed.publish_settled(namespace);
+    } else if inner.action_needed.publish_failed(namespace, now) >= PUBLISH_FAILING_AFTER {
+        inner.action_needed.enter(
+            package,
+            Cause::PublishFailing {
+                error: err.to_string(),
+            },
+        );
+    }
 }
 
 /// Whether the package's catalog is no longer `origin`, the one this pass
@@ -1109,11 +1215,22 @@ pub(crate) async fn pause(
     origin: Option<&Host>,
     reason: PausedReason,
 ) {
-    inner
+    let replaced = inner
         .paused
         .write()
         .await
         .insert(namespace.clone(), reason.clone());
+    let package = Subject::package(namespace);
+    let cause = Cause::of_pause(&reason);
+    // A pause replacing another of the other kind takes its place in the set.
+    if let Some(replaced) = replaced
+        && Cause::of_pause(&replaced).kind() != cause.kind()
+    {
+        inner
+            .action_needed
+            .leave(&package, Cause::of_pause(&replaced).kind());
+    }
+    inner.action_needed.enter(package, cause);
     inner
         .reporter
         .report_paused(namespace, origin, reason.clone());
