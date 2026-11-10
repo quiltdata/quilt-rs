@@ -23,7 +23,7 @@
 
 ### Changed
 
-- QuiltSync tells you about a new release while it runs, not only when it opens, and a dismissed update bar comes back after five minutes (<https://github.com/quiltdata/quilt-rs/pull/PRNUM>)
+- QuiltSync tells you about a new release while it runs, not only when it opens, and a dismissed update bar comes back after five minutes (<https://github.com/quiltdata/quilt-rs/pull/1336>)
 - QuiltSync has one design: the classic design and the *New design* switch in Settings are gone (<https://github.com/quiltdata/quilt-rs/pull/1319>)
 - Popups, the quit prompt and the update bar follow the dark theme (<https://github.com/quiltdata/quilt-rs/pull/1331>)
 - The settings page's *Saved* shows for 1.5 seconds, as long as *Copied* does (<https://github.com/quiltdata/quilt-rs/pull/1310>)
