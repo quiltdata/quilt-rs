@@ -547,6 +547,14 @@
   --q-bgColor-danger-muted: var(--red-a3);
   --q-borderColor-danger-muted: var(--red-7);
 
+  /* JSON VALUES in the metadata editor, by type, in the hues the editor drew
+   * them before it took the kit's palette. Step 11, the scales' text step, so
+   * each reads on the card in both themes. */
+  --q-fgColor-json-string: var(--green-11);
+  --q-fgColor-json-number: var(--red-11);
+  --q-fgColor-json-boolean: var(--amber-11);
+  --q-fgColor-json-null: var(--blue-11);
+
   /* SPACE — a 4px grid, named by multiples of the unit. Use for layout: gaps
    * between regions, page padding, row rhythm.
    *

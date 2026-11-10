@@ -70,6 +70,11 @@ pub enum PackageState {
     SignInExpired {
         host: Option<String>,
     },
+    /// The read did not reach the bucket's `latest`, so the page shows the last
+    /// known state. `host` is the catalog; `None` for a bucket with no catalog.
+    Unreachable {
+        host: Option<String>,
+    },
     /// Autosync stopped for this package for a reason no other state covers.
     /// Pause reasons that have a state of their own resolve into that state on
     /// the backend.
@@ -137,6 +142,8 @@ pub enum PackageAction {
     /// and this file only words it — which keeps the words in one place without
     /// pretending the state knows something it does not.
     SwitchRole,
+    /// Read the package again, once its host may be back.
+    TryAgain,
 }
 
 impl PackageAction {
@@ -151,6 +158,7 @@ impl PackageAction {
             Self::ChooseS3Bucket => "Choose S3 bucket",
             Self::SignIn => "Sign in",
             Self::SwitchRole => "Switch role",
+            Self::TryAgain => "Try again",
         }
     }
 }
@@ -293,6 +301,20 @@ fn words(state: &PackageState, site: Site) -> String {
         (PackageState::NoSession { host: Some(host) }, _) => format!("Signed out of {host}"),
         (PackageState::SignInExpired { .. }, _) => "Sign-in expired".to_string(),
 
+        // No cause: an outage and a blocked network look the same from here.
+        (PackageState::Unreachable { host: Some(host) }, Site::ListRow) => {
+            format!("Can't reach {host}")
+        }
+        (PackageState::Unreachable { host: None }, Site::ListRow) => {
+            "Can't reach the S3 bucket".to_string()
+        }
+        (PackageState::Unreachable { host: Some(host) }, Site::QueueRow) => {
+            format!("can't reach {host}")
+        }
+        (PackageState::Unreachable { host: None }, Site::QueueRow) => {
+            "can't reach its S3 bucket".to_string()
+        }
+
         // Every remaining cause and header. Delegated rather than written out,
         // because a heading, a header chip and a list chip all want the same noun
         // phrase; the arms above still force a new state to answer for both of the
@@ -313,10 +335,13 @@ fn tone(state: &PackageState) -> StateTone {
 
         PackageState::PendingChanges { .. } => StateTone::Neutral,
 
+        // Attention, not Danger: nothing is wrong with the package, and the
+        // page still shows it.
         PackageState::Behind
         | PackageState::PendingCommit
         | PackageState::NoRemote
-        | PackageState::Unpublished => StateTone::Attention,
+        | PackageState::Unpublished
+        | PackageState::Unreachable { .. } => StateTone::Attention,
 
         // Danger and not Attention: the split is an ordinary step outstanding
         // versus something having gone wrong, and a refused bucket, a failed
@@ -350,6 +375,8 @@ fn action(state: &PackageState) -> Option<PackageAction> {
         PackageState::Diverged => Some(PackageAction::Resolve),
 
         PackageState::NoRemote => Some(PackageAction::ChooseS3Bucket),
+
+        PackageState::Unreachable { .. } => Some(PackageAction::TryAgain),
 
         // The one remedy that is not about this package at all, and the only
         // one gated on the state's own payload rather than its variant. A
@@ -600,6 +627,20 @@ mod tests {
                 Attention,
                 Some(Publish),
             ),
+            (
+                PackageState::Unreachable {
+                    host: Some("quilt.test".to_string()),
+                },
+                "can't reach quilt.test",
+                Attention,
+                Some(TryAgain),
+            ),
+            (
+                PackageState::Unreachable { host: None },
+                "can't reach its S3 bucket",
+                Attention,
+                Some(TryAgain),
+            ),
             (PackageState::Paused, "has stopped syncing", Danger, None),
             (PackageState::Unknown, "cannot be checked", Danger, None),
         ]
@@ -737,6 +778,25 @@ mod tests {
         assert_eq!(render(&parsed, Site::ListRow).words, "No access");
     }
 
+    /// The page names the host it can't reach, and offers to read again.
+    #[test]
+    fn an_unreachable_host_is_named_in_the_header_with_try_again() {
+        let parsed: PackageState =
+            serde_json::from_str(r#"{"kind":"unreachable","host":"quilt.test"}"#).unwrap();
+        let rendered = render(&parsed, Site::PageHeader);
+        assert_eq!(rendered.words, "Can't reach quilt.test");
+        assert_eq!(rendered.tone, StateTone::Attention);
+        assert_eq!(rendered.action, Some(PackageAction::TryAgain));
+        assert_eq!(PackageAction::TryAgain.label(), "Try again");
+
+        let bucket: PackageState =
+            serde_json::from_str(r#"{"kind":"unreachable","host":null}"#).unwrap();
+        assert_eq!(
+            render(&bucket, Site::PageHeader).words,
+            "Can't reach the S3 bucket"
+        );
+    }
+
     #[test]
     fn an_unrecognised_kind_deserialises_to_unknown_rather_than_failing() {
         let parsed: PackageState =
@@ -773,6 +833,9 @@ mod tests {
                 host: Some("quilt.test".to_string()),
             },
             PackageState::SignInExpired { host: None },
+            PackageState::Unreachable {
+                host: Some("quilt.test".to_string()),
+            },
             PackageState::Paused,
             PackageState::Unknown,
         ];
@@ -791,6 +854,7 @@ mod tests {
                 | PackageState::Unpublished
                 | PackageState::NoSession { .. }
                 | PackageState::SignInExpired { .. }
+                | PackageState::Unreachable { .. }
                 | PackageState::Paused
                 | PackageState::Unknown => {}
             }

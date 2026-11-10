@@ -223,6 +223,9 @@ pub enum Problem {
     NoAccess { reason: String },
     /// No session; blocks saving too. `host` is `None` for ambient credentials.
     SignedOut { host: Option<String> },
+    /// The read didn't reach the bucket; blocks saving too. `host` is the
+    /// catalog, `None` for a bucket with no catalog.
+    Unreachable { host: Option<String> },
     // A newer published revision: deferred.
 }
 
@@ -247,13 +250,17 @@ impl Problem {
             Self::SignedOut { host: None } => {
                 "There are no credentials for this bucket. Add some to publish.".to_string()
             }
+            Self::Unreachable { host } => {
+                let host = host.as_deref().unwrap_or("the S3 bucket");
+                format!("Can't reach {host}. Publishing and saving wait until it can be reached.")
+            }
         }
     }
 
     const fn variant(&self) -> BannerVariant {
         match self {
             Self::NoAccess { .. } | Self::SignedOut { .. } => BannerVariant::Critical,
-            Self::Junk { .. } => BannerVariant::Warning,
+            Self::Junk { .. } | Self::Unreachable { .. } => BannerVariant::Warning,
         }
     }
 }

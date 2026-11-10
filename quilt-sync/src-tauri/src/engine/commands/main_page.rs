@@ -80,6 +80,12 @@ pub enum PackageStateDto {
     SignInExpired {
         host: Option<String>,
     },
+    /// The read did not reach the bucket's `latest`, so the remote facts are
+    /// the last known ones. `host` is the catalog; `None` for a bucket with no
+    /// catalog.
+    Unreachable {
+        host: Option<String>,
+    },
     /// Autosync stopped for this package for a reason no other state covers.
     /// The pause reasons that have a state resolve into it instead:
     /// `PendingChanges`, `PendingCommit`, `Diverged` and `MergeRefused` into the
@@ -950,6 +956,18 @@ pub(super) async fn refresh_main_page_package_from_model(
         .get_installed_package_status_with_downloads(&installed_package, None)
         .await
     {
+        // A status that did not read the bucket's `latest` is local data
+        // alone, so it is answered like a failure to reach the bucket below.
+        Ok((status, _)) if !status.latest_refreshed => {
+            tracing::warn!(
+                "Could not read the latest revision for {}",
+                installed_package.namespace,
+            );
+            Err(Error::General(format!(
+                "Could not reach the bucket for {}",
+                installed_package.namespace
+            )))
+        }
         Ok((status, counts)) => {
             read_worked(action_needed, namespace, host.as_ref(), paused, &status);
             Ok(MainPagePackageRefresh {
@@ -2576,7 +2594,10 @@ mod tests {
                 quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
             );
         }
-        quilt::lineage::InstalledPackageStatus::new(upstream, changes)
+        quilt::lineage::InstalledPackageStatus {
+            latest_refreshed: true,
+            ..quilt::lineage::InstalledPackageStatus::new(upstream, changes)
+        }
     }
 
     async fn refresh(m: &impl model::QuiltModel, roles: &RoleCache) -> MainPagePackageRefresh {
@@ -2755,6 +2776,34 @@ mod tests {
         );
     }
 
+    /// A status that did not read the bucket's `latest` is no more evidence
+    /// than a failed one, so the row stays as the light phase guessed it.
+    #[tokio::test]
+    async fn an_unread_latest_leaves_the_row_unchecked() {
+        let m = mock_one_package(
+            Ok(quilt::lineage::InstalledPackageStatus {
+                latest_refreshed: false,
+                ..status_with(UpstreamState::UpToDate, 1)
+            }),
+            None,
+        );
+        let ns: quilt_uri::Namespace = "team/one".try_into().unwrap();
+
+        let refreshed = refresh_main_page_package_from_model(
+            &m,
+            &RoleCache::default(),
+            &crate::engine::telemetry::Telemetry::default(),
+            &ns,
+            None,
+            &crate::engine::action_needed::ActionNeeded::default(),
+        )
+        .await;
+        assert!(
+            refreshed.is_err(),
+            "an unread latest must not settle the row"
+        );
+    }
+
     #[tokio::test]
     async fn a_generic_status_failure_is_propagated_not_a_denial() {
         // A failure to reach the remote is not evidence about the package. Manufacturing
@@ -2873,14 +2922,14 @@ mod tests {
                     action_needed,
                 )
                 .await
-                .unwrap();
             }
         };
 
         read(Err(Error::from(quilt::Error::Login(
             quilt::LoginError::NoSession(Some(fixtures::host())),
         ))))
-        .await;
+        .await
+        .expect("a missing session is a state, not an error");
         let entered: Vec<_> = action_needed
             .get()
             .into_iter()
@@ -2896,16 +2945,21 @@ mod tests {
             )]
         );
 
-        read(Ok(status_with(UpstreamState::UpToDate, 0))).await;
+        read(Ok(quilt::lineage::InstalledPackageStatus {
+            latest_refreshed: false,
+            ..status_with(UpstreamState::UpToDate, 0)
+        }))
+        .await
+        .expect_err("a read that did not reach the bucket is left unchecked");
         assert_eq!(
             action_needed.get().len(),
             1,
             "a read that did not reach the bucket proves nothing"
         );
 
-        let mut reached = status_with(UpstreamState::UpToDate, 0);
-        reached.latest_refreshed = true;
-        read(Ok(reached)).await;
+        read(Ok(status_with(UpstreamState::UpToDate, 0)))
+            .await
+            .expect("the bucket answered");
         assert!(action_needed.get().is_empty(), "the session works");
     }
 
