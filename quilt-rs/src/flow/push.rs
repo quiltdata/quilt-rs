@@ -1040,7 +1040,7 @@ mod tests {
             .put_object(
                 None,
                 &S3Uri::try_from("s3://b/.quilt/named_packages/a/c/latest")?,
-                b"abcdef".to_vec(),
+                b"abcdef0000000000000000000000000000000000000000000000000000000000".to_vec(),
             )
             .await?;
         let mut manifest = Manifest::default();
@@ -1107,7 +1107,7 @@ mod tests {
             .put_object(
                 None,
                 &S3Uri::try_from("s3://b/.quilt/named_packages/f/a/latest")?,
-                b"latest-hash-abcdef".to_vec(),
+                b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_vec(),
             )
             .await?;
 

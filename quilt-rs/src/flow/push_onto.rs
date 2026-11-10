@@ -102,12 +102,14 @@ mod tests {
     use quilt_uri::S3Uri;
 
     const LATEST: &str = "s3://b/.quilt/named_packages/a/c/latest";
+    const PARENT: &str = "1111111111111111111111111111111111111111111111111111111111111111";
+    const SOMEONE_ELSE: &str = "5555555555555555555555555555555555555555555555555555555555555555";
 
     fn parent() -> ManifestUri {
         ManifestUri {
             bucket: "b".to_string(),
             namespace: ("a", "c").into(),
-            hash: "parent".to_string(),
+            hash: PARENT.to_string(),
             origin: None,
         }
     }
@@ -161,7 +163,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn a_revision_onto_the_latest_it_read_becomes_latest() -> Res {
-        let remote = remote_with_latest("parent").await?;
+        let remote = remote_with_latest(PARENT).await?;
 
         let pushed = push(&remote, manifest("s3://b/a/c/out.md?versionId=v1")).await?;
 
@@ -173,19 +175,19 @@ mod tests {
 
     #[test(tokio::test)]
     async fn a_latest_that_moved_past_the_parent_is_kept() -> Res {
-        let remote = remote_with_latest("someone-else").await?;
+        let remote = remote_with_latest(SOMEONE_ELSE).await?;
 
         let pushed = push(&remote, manifest("s3://b/a/c/out.md?versionId=v1")).await?;
 
         assert!(!pushed.certified_latest);
-        assert_eq!(read(&remote, LATEST).await?, "someone-else");
+        assert_eq!(read(&remote, LATEST).await?, SOMEONE_ELSE);
         assert!(uploaded(&remote, &pushed).await?, "the revision is kept");
         Ok(())
     }
 
     #[test(tokio::test)]
     async fn a_row_not_on_the_remote_publishes_nothing() -> Res {
-        let remote = remote_with_latest("parent").await?;
+        let remote = remote_with_latest(PARENT).await?;
 
         let pushed = push(&remote, manifest("file:///foo/objects/out.md")).await;
 
@@ -193,13 +195,13 @@ mod tests {
             matches!(pushed, Err(Error::PackageOp(PackageOpError::Push(_)))),
             "{pushed:?}"
         );
-        assert_eq!(read(&remote, LATEST).await?, "parent");
+        assert_eq!(read(&remote, LATEST).await?, PARENT);
         Ok(())
     }
 
     #[test(tokio::test)]
     async fn a_revision_its_workflow_rejects_publishes_nothing() -> Res {
-        let remote = remote_with_latest("parent").await?;
+        let remote = remote_with_latest(PARENT).await?;
         remote
             .put_object(
                 None,
@@ -229,7 +231,7 @@ mod tests {
             matches!(pushed, Err(Error::WorkflowValidation(_))),
             "expected a workflow rejection, got: {pushed:?}"
         );
-        assert_eq!(read(&remote, LATEST).await?, "parent");
+        assert_eq!(read(&remote, LATEST).await?, PARENT);
         Ok(())
     }
 }

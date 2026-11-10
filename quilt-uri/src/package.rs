@@ -308,7 +308,8 @@ impl TryFrom<&str> for S3PackageUri {
 }
 
 /// A top hash is the hex SHA-256 of a manifest, as `TopHasher` writes it.
-fn is_top_hash(hash: &str) -> bool {
+#[must_use]
+pub fn is_top_hash(hash: &str) -> bool {
     hash.len() == 64 && hash.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
