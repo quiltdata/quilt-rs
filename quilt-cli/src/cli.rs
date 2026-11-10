@@ -37,6 +37,7 @@ mod status;
 mod text;
 mod undo_commit;
 mod uninstall;
+mod upgrade;
 
 #[cfg(test)]
 mod fixtures;
@@ -324,6 +325,12 @@ impl Args {
         } else {
             self.log.clone()
         }
+    }
+
+    /// Whether this run may show the newer-release notice: not while
+    /// `quilt upgrade` acts on it.
+    pub fn shows_update_notice(&self) -> bool {
+        !matches!(self.command, Commands::Upgrade)
     }
 
     /// The format of the command's result: `--json` or `--format`, then
@@ -615,6 +622,12 @@ enum Commands {
         #[arg(long)]
         prune: bool,
     },
+    /// Install the latest quilt-cli with cargo
+    ///
+    /// Runs `cargo binstall quilt-cli` when cargo-binstall is installed, else
+    /// `cargo install --locked quilt-cli`, which builds from source. On
+    /// Windows it prints the command to run instead.
+    Upgrade,
 }
 
 /// The line a writer prints when another quilt process, such as `QuiltSync`,
@@ -655,6 +668,7 @@ impl Commands {
                 | Commands::Browse { .. }
                 | Commands::Role { .. }
                 | Commands::Home { dir: Some(_), .. }
+                | Commands::Upgrade
         )
     }
 }
@@ -881,6 +895,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             log::debug!("Uninstalling {args:?}");
             Ok(uninstall::command(m, args).await)
         }
+        Commands::Upgrade => Ok(upgrade::command()),
     }
 }
 
@@ -933,6 +948,17 @@ Then run:
         "--workflow/--no-workflow apply only to a first push; pass --bucket to set the remote, or omit them (the workflow was chosen at commit time)"
     )]
     WorkflowRequiresBucket,
+
+    #[error(
+        "cargo is not installed. Download the latest quilt-cli from https://github.com/quiltdata/quilt-rs/releases"
+    )]
+    CargoMissing,
+
+    #[error("\"{0}\" failed; its output is above")]
+    UpgradeFailed(upgrade::Installer),
+
+    #[error("quilt cannot replace itself on Windows while it runs. Run \"{0}\" instead")]
+    UpgradeUnsupported(upgrade::Installer),
 
     #[error("QUILT_LOG={0}")]
     LogEnv(quilt_rs::logging::InvalidLogFilter),
@@ -993,6 +1019,9 @@ impl Error {
             Error::CommitMetaInvalid(_) => "commit_meta_invalid",
             Error::WorkflowEmpty => "workflow_empty",
             Error::WorkflowRequiresBucket => "workflow_requires_bucket",
+            Error::CargoMissing => "cargo_missing",
+            Error::UpgradeFailed(_) => "upgrade_failed",
+            Error::UpgradeUnsupported(_) => "upgrade_unsupported",
             Error::LogEnv(_) => "invalid_log_filter",
             Error::Json(_) => "invalid_json",
             #[cfg(test)]
@@ -1080,6 +1109,15 @@ mod tests {
                 "home_in_use",
             ),
             (Error::HomeTwice, "home_twice"),
+            (Error::CargoMissing, "cargo_missing"),
+            (
+                Error::UpgradeFailed(upgrade::Installer::Install),
+                "upgrade_failed",
+            ),
+            (
+                Error::UpgradeUnsupported(upgrade::Installer::Binstall),
+                "upgrade_unsupported",
+            ),
             (Error::NamespaceRequired, "namespace_required"),
             (Error::WorkflowEmpty, "workflow_empty"),
             (Error::WorkflowRequiresBucket, "workflow_requires_bucket"),

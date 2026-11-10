@@ -230,11 +230,18 @@ pushes the same way.
 
 When a newer `quilt-cli` is published, `quilt` prints one yellow line on
 stderr below the command's output, for example
-`quilt 0.41.0 is available (you have 0.40.2): cargo binstall quilt-cli`.
+`quilt 0.41.0 is available (you have 0.40.2). Run "quilt upgrade"`.
 It asks crates.io at most every six hours and remembers the answer in your
 cache folder; a check that fails or takes over two seconds is skipped without
 a word. `NO_COLOR` drops the colour. Nothing is printed when stderr is not a
 terminal or `CI` is set, and `QUILT_NO_UPDATE_CHECK=1` turns it off.
+
+`quilt upgrade` installs the latest release with
+`cargo binstall --no-confirm quilt-cli`, or with
+`cargo install --locked quilt-cli` (a build from source that takes a few
+minutes) when cargo-binstall is not installed. Without cargo it points at the
+releases page, and on Windows it prints the command to run instead. If cargo's
+bin folder is not where your `quilt` lives, it says so.
 
 ### JSON output
 
