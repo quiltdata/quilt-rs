@@ -59,29 +59,31 @@ pub struct UpdateCheck {
     /// While a dismiss lasts. Checks go on underneath, so the band comes back
     /// with the latest answer.
     hidden: RwSignal<bool>,
+    /// What brings the band back; a new dismiss replaces it.
+    unhide: StoredValue<Option<TimeoutHandle>>,
     dismiss_ms: f64,
 }
 
 impl UpdateCheck {
-    fn dismiss_left(self) -> Option<f64> {
-        dismiss_left(dismissed_at(), js_sys::Date::now(), self.dismiss_ms)
+    /// Hide the band for `ms`. The deadline lives here; storage only tells
+    /// windows opened later, and a write that fails still dismisses.
+    fn hide_for(self, ms: f64) {
+        if let Some(handle) = self.unhide.get_value() {
+            handle.clear();
+        }
+        self.hidden.set(true);
+        let handle = set_timeout_with_handle(
+            move || {
+                let _ = self.hidden.try_set(false);
+            },
+            Duration::from_secs_f64(ms / 1000.0),
+        );
+        self.unhide.set_value(handle.ok());
     }
 
-    /// Hide the band for what is left of the last dismiss.
-    fn hide_while_dismissed(self) {
-        let Some(left) = self.dismiss_left() else {
-            return;
-        };
-        self.hidden.set(true);
-        set_timeout(
-            move || {
-                // A later dismiss has its own timer.
-                if self.dismiss_left().is_none() {
-                    let _ = self.hidden.try_set(false);
-                }
-            },
-            Duration::from_secs_f64(left / 1000.0),
-        );
+    fn dismiss(self) {
+        set_dismissed();
+        self.hide_for(self.dismiss_ms);
     }
 }
 
@@ -104,10 +106,14 @@ where
     let update_check = UpdateCheck {
         found,
         hidden: RwSignal::new(false),
+        unhide: StoredValue::new(None),
         dismiss_ms,
     };
     provide_context(update_check);
-    update_check.hide_while_dismissed();
+    // A dismiss in another window, or before a restart, still counts.
+    if let Some(left) = dismiss_left(dismissed_at(), js_sys::Date::now(), dismiss_ms) {
+        update_check.hide_for(left);
+    }
     // An install running or failed is on the band; a check must not replace
     // it. Gone with the app, an answer has nowhere to go.
     let busy = move || {
@@ -154,8 +160,7 @@ pub fn UpdateNotice() -> impl IntoView {
     let found = check.found;
 
     let snooze = move |()| {
-        set_dismissed();
-        check.hide_while_dismissed();
+        check.dismiss();
     };
 
     // Install, where the engine can; headless can't install itself, so the
