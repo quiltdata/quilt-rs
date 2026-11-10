@@ -3,6 +3,7 @@
 
 use leptos::prelude::*;
 
+use crate::ActionNeeded;
 use crate::Appbar;
 use crate::Button;
 use crate::Cause;
@@ -13,7 +14,6 @@ use crate::FileReport;
 use crate::Inbox;
 use crate::InboxEntry;
 use crate::InboxPanel;
-use crate::NeedsYou;
 use crate::Revision;
 use crate::icons;
 use crate::story::Cell;
@@ -158,17 +158,17 @@ fn three_pulls() -> Vec<InboxEntry> {
         .collect()
 }
 
-pub fn needs_you_in_queue(count: usize) -> NeedsYou {
-    NeedsYou {
+pub fn action_needed_in_queue(count: usize) -> ActionNeeded {
+    ActionNeeded {
         in_queue: count,
         queue_href: "#/".to_string(),
         elsewhere: Vec::new(),
     }
 }
 
-fn needs_you_everywhere() -> NeedsYou {
+fn action_needed_everywhere() -> ActionNeeded {
     let now = js_sys::Date::now();
-    NeedsYou {
+    ActionNeeded {
         in_queue: 2,
         queue_href: "#/".to_string(),
         elsewhere: vec![
@@ -205,15 +205,15 @@ fn bar(bell: AnyView) -> AnyView {
     .into_any()
 }
 
-fn bell(entries: Vec<InboxEntry>, needs_you: NeedsYou) -> AnyView {
+fn bell(entries: Vec<InboxEntry>, action_needed: ActionNeeded) -> AnyView {
     let open = RwSignal::new(false);
-    bar(view! { <Inbox entries=entries needs_you=needs_you open=open /> }.into_any())
+    bar(view! { <Inbox entries=entries action_needed=action_needed open=open /> }.into_any())
 }
 
-fn panel(entries: Vec<InboxEntry>, needs_you: NeedsYou) -> AnyView {
+fn panel(entries: Vec<InboxEntry>, action_needed: ActionNeeded) -> AnyView {
     view! {
         <div class="g-popover-inline">
-            <InboxPanel entries=entries needs_you=needs_you />
+            <InboxPanel entries=entries action_needed=action_needed />
         </div>
     }
     .into_any()
@@ -237,22 +237,22 @@ fn Bells() -> impl IntoView {
                   any entry is unread, and an amber count of what needs you, which wins \
                   when both hold and drops only when a cause clears — opening the inbox \
                   does not clear it. The accessible name says the same in words: \
-                  Inbox, Inbox, unread news, or Inbox, 2 need you. Each bell opens."
+                  Inbox, Inbox, unread news, or Inbox, 2 need action. Each bell opens."
         >
             <Cell full=true label="nothing new — Inbox">
-                {bell(Vec::new(), NeedsYou::default())}
+                {bell(Vec::new(), ActionNeeded::default())}
             </Cell>
             <Cell full=true label="unread news — Inbox, unread news">
-                {bell(every_kind(), NeedsYou::default())}
+                {bell(every_kind(), ActionNeeded::default())}
             </Cell>
-            <Cell full=true label="needs you — Inbox, 1 needs you">
-                {bell(Vec::new(), needs_you_in_queue(1))}
+            <Cell full=true label="needs you — Inbox, 1 needs action">
+                {bell(Vec::new(), action_needed_in_queue(1))}
             </Cell>
-            <Cell full=true label="both hold: the count wins — Inbox, 5 need you">
-                {bell(every_kind(), needs_you_everywhere())}
+            <Cell full=true label="both hold: the count wins — Inbox, 5 need action">
+                {bell(every_kind(), action_needed_everywhere())}
             </Cell>
-            <Cell full=true label="two digits — Inbox, 12 need you">
-                {bell(Vec::new(), needs_you_in_queue(12))}
+            <Cell full=true label="two digits — Inbox, 12 need action">
+                {bell(Vec::new(), action_needed_in_queue(12))}
             </Cell>
         </Story>
     }
@@ -271,21 +271,21 @@ fn Panels() -> impl IntoView {
                   the rest. Unread entries are tinted and edged. Drawn inline here, at the \
                   panel's width; the last story opens the real popover."
         >
-            <Cell label="nothing new">{panel(Vec::new(), NeedsYou::default())}</Cell>
-            <Cell label="nothing new, but 2 need you">
-                {panel(Vec::new(), needs_you_in_queue(2))}
+            <Cell label="nothing new">{panel(Vec::new(), ActionNeeded::default())}</Cell>
+            <Cell label="nothing new, but 2 need action">
+                {panel(Vec::new(), action_needed_in_queue(2))}
             </Cell>
             <Cell wide=true label="every kind, the newest two unread">
-                {panel(every_kind(), NeedsYou::default())}
+                {panel(every_kind(), ActionNeeded::default())}
             </Cell>
             <Cell wide=true label="needs you: the queue's count, then the causes it does not show">
-                {panel(every_kind(), needs_you_everywhere())}
+                {panel(every_kind(), action_needed_everywhere())}
             </Cell>
             <Cell label="three pulls are three entries">
-                {panel(three_pulls(), NeedsYou::default())}
+                {panel(three_pulls(), ActionNeeded::default())}
             </Cell>
             <Cell label="a long name and 283 files, 200 of them kept">
-                {panel(big_pull(), NeedsYou::default())}
+                {panel(big_pull(), ActionNeeded::default())}
             </Cell>
         </Story>
     }
@@ -296,7 +296,7 @@ fn Panels() -> impl IntoView {
 #[component]
 fn Live() -> impl IntoView {
     let entries = RwSignal::new(every_kind());
-    let needs_you = RwSignal::new(needs_you_in_queue(0));
+    let action_needed = RwSignal::new(action_needed_in_queue(0));
     let open = RwSignal::new(false);
     // The backend's dwell: read once the panel has stayed open for 2 s. One
     // timer per opening, dropped when the panel closes or the story goes.
@@ -336,7 +336,7 @@ fn Live() -> impl IntoView {
         });
     };
     let toggle_needs = move |_| {
-        needs_you.update(|n| n.in_queue = if n.in_queue == 0 { 2 } else { 0 });
+        action_needed.update(|n| n.in_queue = if n.in_queue == 0 { 2 } else { 0 });
     };
 
     view! {
@@ -346,12 +346,12 @@ fn Live() -> impl IntoView {
                   it. Open it and wait two seconds: a stand-in for the backend reads the \
                   entries, the dot goes, and the entries that were unread keep their tint \
                   until the panel closes. Close it at once and nothing is read. A new pull \
-                  arrives unread and lights the dot again; the count is the needs-you \
+                  arrives unread and lights the dot again; the count is the action-needed \
                   set's alone."
         >
             <Cell full=true label="live">
                 <div class="g-stack">
-                    {bar(view! { <Inbox entries=entries needs_you=needs_you open=open /> }.into_any())}
+                    {bar(view! { <Inbox entries=entries action_needed=action_needed open=open /> }.into_any())}
                     <div class="g-inline">
                         <Button on_click=arrive>"A pull arrives"</Button>
                         <Button on_click=toggle_needs>"Needs you: 0 or 2"</Button>

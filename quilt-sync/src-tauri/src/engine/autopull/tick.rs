@@ -8,6 +8,10 @@ use quilt_uri::Host;
 use quilt_uri::Namespace;
 
 use crate::engine::Error;
+use crate::engine::action_needed::Cause;
+use crate::engine::action_needed::Kind;
+use crate::engine::action_needed::PUBLISH_FAILING_AFTER;
+use crate::engine::action_needed::Subject;
 use crate::engine::autopull::PausedReason;
 use crate::engine::autopull::WatcherInner;
 use crate::engine::autopull::activity::ActivityOp;
@@ -125,7 +129,11 @@ const AMBIENT_CREDENTIALS_UNUSABLE: &str =
 #[derive(Debug)]
 pub(crate) enum WatchError {
     Conflict(PausedReason),
-    LoginRequired(Option<Host>),
+    /// `expired` tells a rejected session from a missing one.
+    LoginRequired {
+        host: Option<Host>,
+        expired: bool,
+    },
     Transient(Error),
 }
 
@@ -211,12 +219,18 @@ pub(crate) fn classify_sync_err(err: Error) -> Result<(), WatchError> {
         // credential is an `Error::S3`, and retrying one never succeeds. It is
         // the fact the `Login` arm below carries, reached when S3 answers 403
         // with a credential code rather than the provider refusing to vend.
-        _ if err.is_invalid_credentials() => Err(WatchError::LoginRequired(err.s3_host().cloned())),
+        _ if err.is_invalid_credentials() => Err(WatchError::LoginRequired {
+            host: err.s3_host().cloned(),
+            expired: true,
+        }),
         Error::Quilt(quilt::Error::Reqwest(_) | quilt::Error::Io(_) | quilt::Error::S3(_)) => {
             Err(WatchError::Transient(err))
         }
         Error::Quilt(quilt::Error::Login(quilt::LoginError::NoSession(host))) => {
-            Err(WatchError::LoginRequired(host.clone()))
+            Err(WatchError::LoginRequired {
+                host: host.clone(),
+                expired: false,
+            })
         }
         _ => Err(WatchError::Conflict(PausedReason::Other(err.to_string()))),
     }
@@ -229,7 +243,10 @@ pub(crate) fn classify_sync_err(err: Error) -> Result<(), WatchError> {
 fn classify_transient_or_login(err: Error) -> WatchError {
     match &err {
         Error::Quilt(quilt::Error::Login(quilt::LoginError::NoSession(host))) => {
-            WatchError::LoginRequired(host.clone())
+            WatchError::LoginRequired {
+                host: host.clone(),
+                expired: false,
+            }
         }
         // A denial is neither a broken session nor a blip: the credentials
         // vended fine and the role simply cannot read this bucket. It must
@@ -243,7 +260,10 @@ fn classify_transient_or_login(err: Error) -> WatchError {
         // rejected credential never succeeds. It is the fact the `Login` arm
         // above carries, reached when S3 answers 403 with a credential code
         // rather than the provider refusing to vend.
-        _ if err.is_invalid_credentials() => WatchError::LoginRequired(err.s3_host().cloned()),
+        _ if err.is_invalid_credentials() => WatchError::LoginRequired {
+            host: err.s3_host().cloned(),
+            expired: true,
+        },
         _ => WatchError::Transient(err),
     }
 }
@@ -329,9 +349,8 @@ fn verdict_held_still(
     reason = "one tick's inputs, each read from a different source; bundling them \
               would invent a struct that exists only to satisfy the count"
 )]
-// 106 lines, and it crossed the limit in the merge that brought
-// `feat/main-page-v2-tokens` together with main: this branch added the publish
-// deferral's arm time, main added the apply-epoch sampling and the verdict gate,
+// 106 lines, and it crossed the limit in a merge with main: the branch added the
+// publish deferral's arm time, main added the apply-epoch sampling and the verdict gate,
 // and neither alone was over.
 //
 // Not split, because the split is worse than the length. The body is two
@@ -356,6 +375,7 @@ pub(crate) async fn refresh_then_maybe_sync(
     push_enabled: bool,
     scope: SyncScope,
     aggregator: &SyncTrayAggregator,
+    reached: &mut bool,
 ) -> Result<Option<RefreshOutcome>, WatchError> {
     let installed = model
         .get_installed_package(namespace)
@@ -415,6 +435,7 @@ pub(crate) async fn refresh_then_maybe_sync(
         Some(status) => status,
         None => walk_locked(model, &locked, walks, namespace, lineage).await?,
     };
+    *reached = status.latest_refreshed;
     let upstream = status.upstream_state;
     let has_changes = !status.changes.is_empty();
     // Observed-tree fingerprint, taken before the publish path consumes `status`.
@@ -440,13 +461,13 @@ pub(crate) async fn refresh_then_maybe_sync(
     // make `has_pending_commit` stale relative to `upstream`.
     let has_pending_commit = lineage.commit.is_some();
 
-    // A `Diverged` state needs explicit user action (Certify Latest or
-    // Reset Local). Neither the pull nor the publish branch would touch
-    // it, but leaving it as an `Ok(_)` outcome means we'd re-emit
-    // `diverged` every tick without pausing — the UI then looks healthy
-    // even though no progress can be made. Surface as a Conflict so the
-    // namespace lands in the paused set on the first observation.
-    if upstream == quilt::lineage::UpstreamState::Diverged {
+    // A `Diverged` copy is merged onto `latest` after the publish branch has
+    // committed and pushed what it holds, which needs both directions on and
+    // a base shared with `latest`: a first push would certify over it.
+    // Otherwise it pauses on the first observation, rather than re-emitting
+    // `diverged` every tick while the UI looks healthy.
+    let diverged = upstream == quilt::lineage::UpstreamState::Diverged;
+    if diverged && !(pull_enabled && push_enabled && !lineage.base_hash.is_empty()) {
         return Err(WatchError::Conflict(PausedReason::Diverged));
     }
 
@@ -580,7 +601,8 @@ pub(crate) async fn refresh_then_maybe_sync(
             upstream,
             quilt::lineage::UpstreamState::UpToDate
                 | quilt::lineage::UpstreamState::Ahead
-                | quilt::lineage::UpstreamState::Local,
+                | quilt::lineage::UpstreamState::Local
+                | quilt::lineage::UpstreamState::Diverged,
         )
         && (has_changes || has_pending_commit);
     if publish_eligible {
@@ -628,6 +650,15 @@ pub(crate) async fn refresh_then_maybe_sync(
         } else {
             status
         };
+        // A copy whose merge landed but whose move did not moves before its
+        // edits are committed, so they reach `latest` as an ordinary change.
+        if diverged
+            && !has_pending_commit
+            && let Some(moved) =
+                merge::landed(model, &locked, &installed, aggregator, scope.clone()).await?
+        {
+            return Ok(Some(moved));
+        }
         // `publish_locked_with_settings` is the manual one-click Publish
         // command's path too, so a change to publish settings (new
         // placeholder, new field) applies identically regardless of who
@@ -646,6 +677,18 @@ pub(crate) async fn refresh_then_maybe_sync(
             )
             .await
         };
+        // A Diverged copy's own revision does not become `latest`; it is merged
+        // onto it instead.
+        if diverged
+            && published
+                .as_ref()
+                .is_ok_and(|(outcome, _)| outcome.push().is_none_or(|push| !push.certified_latest))
+        {
+            last_change.on_published(namespace).await;
+            return merge::onto_latest(model, &locked, &installed, aggregator, scope)
+                .await
+                .map(Some);
+        }
         return match published {
             // No new hash and no pending commit: nothing is left to publish,
             // and nothing to say. The observed state stays.
@@ -690,6 +733,11 @@ pub(crate) async fn refresh_then_maybe_sync(
                     .map(|()| Some(RefreshOutcome::observed(upstream, has_changes, fingerprint)))
             }
         };
+    }
+    if diverged {
+        return merge::onto_latest(model, &locked, &installed, aggregator, scope)
+            .await
+            .map(Some);
     }
 
     Ok(Some(RefreshOutcome::observed(
@@ -818,6 +866,7 @@ pub(crate) async fn run_once(
         .await
         .retain(|ns| current.contains(ns));
     inner.aggregator.retain_namespaces(&current);
+    prune_action_needed(model, inner, &packages).await;
 
     // Snapshot publish settings once per tick so we don't reacquire the
     // RwLock per package. Same lifetime for `wait`, which is
@@ -922,6 +971,8 @@ pub(crate) async fn sync_package(
         return Pass::LeftToTasks;
     }
 
+    // Whether the status read reached the bucket, not only the last-known tip.
+    let mut reached = false;
     let result = refresh_then_maybe_sync(
         model,
         &namespace,
@@ -934,6 +985,7 @@ pub(crate) async fn sync_package(
         run.push_enabled,
         lineage.sync_scope.clone(),
         &inner.aggregator,
+        &mut reached,
     )
     .await;
     // Another writer holds the package: nothing was observed, so nothing
@@ -960,10 +1012,26 @@ pub(crate) async fn sync_package(
         }
     }
 
+    // The bucket answered the status read: its session and its access work,
+    // whatever the pass then decided. A refusal below enters again.
+    let package = Subject::package(&namespace);
+    if reached {
+        inner.action_needed.session_works(origin);
+        inner.action_needed.leave(&package, Kind::NoAccess);
+    }
     match result {
         Ok(outcome) => {
             inner.backoff.write().await.remove(&namespace);
             inner.login_blocked.write().await.remove(&namespace);
+            // A pull or publish reached the bucket too. With nothing left to
+            // publish, no publish is failing either way.
+            if outcome.pulled.is_some() || outcome.published.is_some() {
+                inner.action_needed.session_works(origin);
+                inner.action_needed.leave(&package, Kind::NoAccess);
+            }
+            if outcome.published.is_some() || inner.last_change.get(&namespace).await.is_none() {
+                inner.action_needed.publish_settled(&namespace);
+            }
             if let Some(message) = outcome.published.as_deref() {
                 inner.reporter.report_published(&namespace, origin, message);
             }
@@ -990,7 +1058,7 @@ pub(crate) async fn sync_package(
                 .aggregator
                 .note_status(&namespace, outcome.has_changes);
         }
-        Err(WatchError::LoginRequired(host)) => {
+        Err(WatchError::LoginRequired { host, expired }) => {
             // A refusal the old catalog gave is not this package's any more;
             // the next pass asks the new one. See `WatcherInner::refusals`.
             let _gate = inner.refusals.lock().await;
@@ -1017,6 +1085,7 @@ pub(crate) async fn sync_package(
                 block
             };
             inner.reporter.report_login_required(host.as_ref(), block);
+            inner.action_needed.session_failed(host.as_ref(), expired);
             inner.aggregator.note_login_required(&namespace, host);
         }
         Err(WatchError::Conflict(reason)) => {
@@ -1046,6 +1115,7 @@ pub(crate) async fn sync_package(
                 err.to_string(),
             );
             warn!("autosync: transient error for {namespace}: {err}");
+            note_publish_failing(inner, &namespace, now, &err).await;
             // Transient: don't touch the aggregator's error map — a
             // network blip should not flip the tray to Error. The
             // next tick either clears or escalates.
@@ -1053,6 +1123,68 @@ pub(crate) async fn sync_package(
     }
     inner.reporter.report_autosync_changed();
     Pass::Done
+}
+
+/// Drop the entries no installed package stands behind any more: an
+/// uninstalled package, and a session or the computer's credentials that no
+/// package syncs on. Sessions stay when a package's catalog can't be read.
+pub(crate) async fn prune_action_needed(
+    model: &impl QuiltModel,
+    inner: &WatcherInner,
+    packages: &[quilt::InstalledPackage],
+) {
+    let mut origins = Vec::new();
+    let mut read_all = true;
+    for pkg in packages {
+        match model.get_installed_package_lineage(pkg).await {
+            Ok(lineage) => {
+                if let Some(remote) = lineage.remote_uri.filter(|r| !r.bucket.is_empty()) {
+                    origins.push(remote.origin);
+                }
+            }
+            Err(_) => read_all = false,
+        }
+    }
+    inner
+        .action_needed
+        .retain(|entry| match (&entry.subject, entry.cause.kind()) {
+            (Subject::Package { namespace }, _) => {
+                packages.iter().any(|pkg| pkg.namespace == *namespace)
+            }
+            (Subject::Host { host }, _) => !read_all || origins.contains(&Some(host.clone())),
+            (Subject::App, Kind::Credentials) => !read_all || origins.contains(&None),
+            (Subject::App, _) => true,
+        });
+    inner
+        .action_needed
+        .keep_publish_runs(|namespace| packages.iter().any(|pkg| pkg.namespace == *namespace));
+}
+
+/// A publish that has kept failing for [`PUBLISH_FAILING_AFTER`] needs
+/// action; one with nothing left to publish, or publishing off, does not.
+///
+/// Reads the setting now, not the pass's snapshot, and holds it through the
+/// update: turning publishing off mid-pass then either comes first and is
+/// seen, or comes after and clears the entry.
+async fn note_publish_failing(
+    inner: &WatcherInner,
+    namespace: &Namespace,
+    now: Instant,
+    err: &Error,
+) {
+    let settings = inner.settings.read().await;
+    let package = Subject::package(namespace);
+    let to_publish = settings.push.enabled && inner.last_change.get(namespace).await.is_some();
+    if !to_publish {
+        inner.action_needed.publish_settled(namespace);
+    } else if inner.action_needed.publish_failed(namespace, now) >= PUBLISH_FAILING_AFTER {
+        inner.action_needed.enter(
+            package,
+            Cause::PublishFailing {
+                error: err.to_string(),
+            },
+        );
+    }
 }
 
 /// Whether the package's catalog is no longer `origin`, the one this pass
@@ -1083,11 +1215,22 @@ pub(crate) async fn pause(
     origin: Option<&Host>,
     reason: PausedReason,
 ) {
-    inner
+    let replaced = inner
         .paused
         .write()
         .await
         .insert(namespace.clone(), reason.clone());
+    let package = Subject::package(namespace);
+    let cause = Cause::of_pause(&reason);
+    // A pause replacing another of the other kind takes its place in the set.
+    if let Some(replaced) = replaced
+        && Cause::of_pause(&replaced).kind() != cause.kind()
+    {
+        inner
+            .action_needed
+            .leave(&package, Cause::of_pause(&replaced).kind());
+    }
+    inner.action_needed.enter(package, cause);
     inner
         .reporter
         .report_paused(namespace, origin, reason.clone());
@@ -1097,13 +1240,11 @@ pub(crate) async fn pause(
     // directly. The string `"error"` is **reserved** for "we
     // couldn't talk to the remote" — the UI renders a Login
     // affordance on that one. Surface autosync refusals as
-    // `"paused"` so the row banner is neutral, and let the UI
-    // pull the message out of the `autosync-paused` event the
-    // reporter emits.
+    // `"paused"`; the page reads why from the paused map.
     let (status, has_changes) = match reason {
         PausedReason::PendingChanges => ("behind", true),
         PausedReason::PendingCommit => ("ahead", false),
-        PausedReason::Diverged => ("diverged", false),
+        PausedReason::Diverged | PausedReason::MergeRefused(_) => ("diverged", false),
         PausedReason::PullConflict(ref files) => {
             warn!("autosync: paused namespace={namespace} pull conflict={files:?}");
             ("paused", true)
@@ -1129,15 +1270,15 @@ pub(crate) async fn pause(
             // paused re-emits the same reason every tick, so the
             // same `(status, has_changes)` yields the same
             // fingerprint and the consumer skips the repeat. The
-            // paused *detail* (which files) rides the separate
-            // `autosync-paused` event, not this one.
+            // separate `autosync-paused` event tells the page to
+            // refetch, and the refetch reads the paused detail.
             fingerprint: format!("{status};{has_changes}"),
         },
     );
     let aggregator_message = match &reason {
         PausedReason::PendingChanges => "pending changes".to_string(),
         PausedReason::PendingCommit => "pending commits".to_string(),
-        PausedReason::Diverged => "diverged".to_string(),
+        PausedReason::Diverged | PausedReason::MergeRefused(_) => "diverged".to_string(),
         PausedReason::PullConflict(_) => "pull conflict".to_string(),
         PausedReason::RoleDenied { role } => role_denied_summary(role),
         PausedReason::Other(msg) => msg.clone(),
@@ -1145,6 +1286,8 @@ pub(crate) async fn pause(
     inner.aggregator.note_paused(namespace, &aggregator_message);
     inner.aggregator.note_status(namespace, has_changes);
 }
+
+mod merge;
 
 #[cfg(test)]
 mod tests;

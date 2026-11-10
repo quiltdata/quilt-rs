@@ -464,8 +464,8 @@ jobs:
       #
       # DOM tests cannot run here, because `mount_to` and similar helpers are
       # wasm-bindgen bindings into JS. Pure-logic tests could move to wasm
-      # instead. Once v1 is deleted only about twenty host tests remain, and
-      # converting them and removing this step becomes the cheaper option.
+      # instead: few host tests remain, so converting them and removing this
+      # step may be the cheaper option.
       #
       # `--lib --bins`, not `--bin quilt-sync-ui`: most of the tests are in the
       # library target, and `--bin` alone runs only the few in the binary.

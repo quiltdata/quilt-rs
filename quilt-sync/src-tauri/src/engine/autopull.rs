@@ -11,6 +11,10 @@ use quilt_uri::Namespace;
 use tokio::sync::RwLock;
 use tokio::sync::watch;
 
+use crate::engine::action_needed::ActionNeeded;
+use crate::engine::action_needed::Cause;
+use crate::engine::action_needed::Kind;
+use crate::engine::action_needed::Subject;
 use crate::engine::autopull::status::SyncTrayAggregator;
 use crate::engine::commands::RoleCache;
 use crate::engine::model::Model;
@@ -32,6 +36,7 @@ pub use reporter::PackageStatusEvent;
 pub use reporter::StatusReporter;
 pub use settings::AutosyncSettings;
 pub use settings::PullSettings;
+#[cfg(test)]
 pub use settings::PushSettings;
 pub use settings::SharedAutosyncSettings;
 pub use settings::init as init_settings;
@@ -46,9 +51,12 @@ pub enum PausedReason {
     PendingChanges,
     PendingCommit,
     Diverged,
+    /// Diverged, and the tick's merge onto `latest` refused: the resolve pane
+    /// names what blocked it.
+    MergeRefused(MergeBlock),
     /// A surgical pull found a real conflict (`PullOutcome::Blocked`): a
     /// tracked path changed on both sides. Carries the conflicting file names
-    /// for the banner; the user resolves by committing → the merge page.
+    /// for the banner; the user resolves by committing, then resolving on the package page.
     PullConflict(Vec<String>),
     /// Storage refused the call with `AccessDenied`: the active role cannot
     /// reach this package's bucket. Retrying cannot help — the role has to
@@ -63,12 +71,21 @@ pub enum PausedReason {
     },
     /// Catch-all for non-transient errors we haven't enumerated:
     /// workflow validation failures, hash mismatches, remote
-    /// configuration drift. The string travels to the UI in the
-    /// `autosync-paused` event payload (see
-    /// [`crate::engine::autopull::reporter::PausedEvent`]) and is rendered in
-    /// the per-package status banner so the user knows what to fix
-    /// before clearing the pause.
+    /// configuration drift. The string reaches the package page through
+    /// `PausedDto` so the user knows what to fix before clearing the pause.
     Other(String),
+}
+
+/// What stopped the tick merging a Diverged copy onto `latest`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MergeBlock {
+    /// Paths both sides changed to different results, or held as a file on
+    /// one side and a folder on the other.
+    Paths(Vec<String>),
+    /// Both sides changed the package metadata, to different values.
+    Metadata,
+    /// `latest` moved past each attempt before it could publish.
+    LatestMoved,
 }
 
 impl PausedReason {
@@ -127,6 +144,7 @@ pub(crate) struct WatcherInner {
     pub refusals: tokio::sync::Mutex<()>,
     pub reporter: Arc<dyn StatusReporter>,
     pub aggregator: Arc<SyncTrayAggregator>,
+    pub action_needed: Arc<ActionNeeded>,
     pub clocks: Clocks,
     pub last_change: last_change::LastChange,
     /// The folder watcher's walks, which the tick reuses for the packages it
@@ -142,6 +160,19 @@ impl WatcherInner {
     pub(crate) fn reschedule_publish(&self) {
         self.clocks.publish_timer.notify_one();
         self.reporter.report_autosync_changed();
+    }
+
+    /// A pause on `namespace` was cleared: announce it and leave the set. A
+    /// denial pause takes its refused access with it; a refusal a page's read
+    /// found stays until the bucket answers.
+    pub(crate) fn unpaused(&self, namespace: &Namespace, reason: &PausedReason) {
+        let package = Subject::package(namespace);
+        let kind = match Cause::of_pause(reason) {
+            Cause::NoAccess { .. } => Kind::NoAccess,
+            _ => Kind::Paused,
+        };
+        self.action_needed.leave(&package, kind);
+        self.reporter.report_pause_cleared(namespace);
     }
 }
 
@@ -217,11 +248,27 @@ impl Watcher {
         self.inner.aggregator.subscribe_activity()
     }
 
+    /// What needs action.
+    #[must_use]
+    pub fn action_needed(&self) -> &Arc<ActionNeeded> {
+        &self.inner.action_needed
+    }
+
+    /// Drop what needs action that no installed package stands behind,
+    /// for a removal while autosync's passes are off.
+    pub async fn prune_action_needed(&self, model: &impl QuiltModel) {
+        match model.get_installed_packages_list().await {
+            Ok(packages) => tick::prune_action_needed(model, &self.inner, &packages).await,
+            Err(err) => warn!("could not list packages to prune what needs you: {err}"),
+        }
+    }
+
     /// Spawn the background tick task and return a handle.
     ///
     /// The tasks share the services' `Model` and `RoleCache`: a private
     /// `RoleCache` would keep naming the role the user switched away from,
     /// since `switch_role` invalidates only the shared one.
+    #[allow(clippy::too_many_arguments, reason = "the parts the watcher shares")]
     pub fn spawn(
         data_dir: std::path::PathBuf,
         model: Arc<Model>,
@@ -230,6 +277,7 @@ impl Watcher {
         publish_settings: SharedPublishSettings,
         reporter: Arc<dyn StatusReporter>,
         last_change: last_change::LastChange,
+        action_needed: Arc<ActionNeeded>,
     ) -> (Self, watch::Receiver<SyncTrayStatus>) {
         let (tx, rx) = watch::channel(SyncTrayStatus::default());
         let aggregator = Arc::new(SyncTrayAggregator::new(tx));
@@ -252,6 +300,7 @@ impl Watcher {
             refusals: tokio::sync::Mutex::default(),
             reporter,
             aggregator,
+            action_needed,
             clocks: Clocks::default(),
             walks: crate::engine::autopull::watched::WatchedWalks::default(),
             last_change,
@@ -320,20 +369,27 @@ impl Watcher {
     /// explicit action (push / pull / commit / publish / reset / set
     /// remote) that resolves the underlying conflict.
     pub async fn clear_paused(&self, namespace: &Namespace) {
-        self.inner.paused.write().await.remove(namespace);
+        let was_paused = self.inner.paused.write().await.remove(namespace);
         self.inner.login_blocked.write().await.remove(namespace);
         self.inner.aggregator.note_cleared(namespace);
+        if let Some(reason) = was_paused {
+            self.inner.unpaused(namespace, &reason);
+        }
         self.inner.reschedule_publish();
     }
 
-    /// Forget what the package's old catalog left — its pause, sign-in block
-    /// and retry backoff — once its catalog has been saved. Under
+    /// Forget what the package's old catalog left — its pause, refused access,
+    /// sign-in block and retry backoff — once its catalog has been saved. Under
     /// [`WatcherInner::refusals`], so a pass that read the old catalog cannot
     /// record its refusal after this.
     pub async fn forget_catalog(&self, namespace: &Namespace) {
         let _gate = self.inner.refusals.lock().await;
         self.inner.backoff.write().await.remove(namespace);
         self.clear_paused(namespace).await;
+        // A page's read may have found the refusal with no pause to clear.
+        self.inner
+            .action_needed
+            .leave(&Subject::package(namespace), Kind::NoAccess);
     }
 
     /// Take back a [`PausedReason::PullConflict`] the pull dry run no longer
@@ -356,13 +412,13 @@ impl Watcher {
         namespace: &Namespace,
         status: &quilt_rs::lineage::InstalledPackageStatus,
     ) -> bool {
-        {
+        let reason = {
             let mut paused = self.inner.paused.write().await;
             if !matches!(paused.get(namespace), Some(PausedReason::PullConflict(_))) {
                 return false;
             }
-            paused.remove(namespace);
-        }
+            paused.remove(namespace).expect("checked above")
+        };
         // Only the pause: a safe verdict can keep local edits in place, so the
         // tray's change count is set from the observation, not dropped.
         self.inner.aggregator.clear_error(namespace);
@@ -372,6 +428,7 @@ impl Watcher {
         let mut event = PackageStatusEvent::from_status(namespace, status);
         event.fingerprint = format!("unpaused;{}", event.fingerprint);
         self.inner.reporter.report_status(namespace, event);
+        self.inner.unpaused(namespace, &reason);
         self.inner.reschedule_publish();
         true
     }
@@ -383,12 +440,15 @@ impl Watcher {
         let mut login_blocked = self.inner.login_blocked.write().await;
         let namespaces: BTreeSet<Namespace> =
             paused.keys().chain(login_blocked.keys()).cloned().collect();
-        paused.clear();
+        let unpaused = std::mem::take(&mut *paused);
         login_blocked.clear();
         drop(paused);
         drop(login_blocked);
         for ns in &namespaces {
             self.inner.aggregator.note_cleared(ns);
+        }
+        for (ns, reason) in &unpaused {
+            self.inner.unpaused(ns, reason);
         }
         self.inner.reschedule_publish();
     }
@@ -409,35 +469,27 @@ impl Watcher {
     /// invalidated cache.
     pub async fn clear_role_denied_pauses(&self) {
         let mut paused = self.inner.paused.write().await;
-        let cleared: Vec<Namespace> = paused
+        let denied: Vec<Namespace> = paused
             .iter()
             .filter(|(_, reason)| matches!(reason, PausedReason::RoleDenied { .. }))
             .map(|(namespace, _)| namespace.clone())
             .collect();
-        for namespace in &cleared {
-            paused.remove(namespace);
-        }
+        let cleared: Vec<(Namespace, PausedReason)> = denied
+            .into_iter()
+            .filter_map(|namespace| paused.remove_entry(&namespace))
+            .collect();
         drop(paused);
-        for namespace in &cleared {
+        for (namespace, reason) in &cleared {
             self.inner.aggregator.note_cleared(namespace);
+            self.inner.unpaused(namespace, reason);
         }
         self.inner.reschedule_publish();
     }
 
-    /// Point-in-time view of the paused set, used by the
-    /// `get_autosync_snapshot` command so the UI can re-hydrate
-    /// per-page banners on navigation. Read-only — the lock is released
-    /// before the function returns.
-    pub async fn snapshot(&self) -> reporter::WatcherSnapshot {
-        let paused = self
-            .inner
-            .paused
-            .read()
-            .await
-            .iter()
-            .map(|(ns, reason)| reporter::PausedEvent::from_reason(ns, reason))
-            .collect();
-        reporter::WatcherSnapshot { paused }
+    /// Point-in-time copy of the paused map, for tests.
+    #[cfg(test)]
+    pub async fn paused_snapshot(&self) -> BTreeMap<Namespace, PausedReason> {
+        self.inner.paused.read().await.clone()
     }
 
     /// A package committed by hand, leaving `commit` pending: its push waits a
@@ -471,6 +523,28 @@ impl Watcher {
             .await
             .remove(namespace);
         self.inner.reporter.report_autosync_changed();
+    }
+
+    /// A hand-run pull or publish reached the package's bucket: its session
+    /// and its access work, and after a publish no publish is failing.
+    pub async fn transfer_worked(
+        &self,
+        model: &impl QuiltModel,
+        namespace: &Namespace,
+        published: bool,
+    ) {
+        let package = Subject::package(namespace);
+        let action_needed = &self.inner.action_needed;
+        if let Ok(Some(installed)) = model.get_installed_package(namespace).await
+            && let Ok(lineage) = model.get_installed_package_lineage(&installed).await
+            && let Some(remote) = lineage.remote_uri
+        {
+            action_needed.session_works(remote.origin.as_ref());
+        }
+        action_needed.leave(&package, Kind::NoAccess);
+        if published {
+            action_needed.publish_settled(namespace);
+        }
     }
 
     /// Publishing was just turned on: every package with changes waits a full
@@ -547,6 +621,7 @@ impl Watcher {
                 refusals: tokio::sync::Mutex::default(),
                 reporter,
                 aggregator,
+                action_needed: Arc::default(),
                 clocks: Clocks::default(),
                 walks: crate::engine::autopull::watched::WatchedWalks::default(),
                 last_change: last_change::LastChange::new(
@@ -753,6 +828,7 @@ pub(crate) fn inner_for_tests(settings: AutosyncSettings) -> WatcherInner {
         refusals: tokio::sync::Mutex::default(),
         reporter: Arc::new(reporter::LogReporter),
         aggregator: Arc::new(status::SyncTrayAggregator::new(tx)),
+        action_needed: Arc::default(),
         clocks: Clocks::default(),
         walks: crate::engine::autopull::watched::WatchedWalks::default(),
         last_change: last_change::LastChange::new(
@@ -914,10 +990,7 @@ mod tests {
         let ns_a: Namespace = ("acme", "demo").into();
         let ns_b: Namespace = ("acme", "other").into();
 
-        assert_eq!(
-            watcher.snapshot().await.paused,
-            [] as [reporter::PausedEvent; 0]
-        );
+        assert!(watcher.paused_snapshot().await.is_empty());
 
         watcher
             .pause_for_test(ns_a.clone(), PausedReason::PendingChanges)
@@ -929,30 +1002,12 @@ mod tests {
             )
             .await;
 
-        let snapshot = watcher.snapshot().await;
-        assert_eq!(snapshot.paused.len(), 2);
-
-        let entry_a = snapshot
-            .paused
-            .iter()
-            .find(|p| p.namespace.to_string() == ns_a.to_string())
-            .expect("acme/demo missing from snapshot");
-        assert_eq!(entry_a.reason, "pendingChanges");
-        assert!(entry_a.message.is_none());
-
-        let entry_b = snapshot
-            .paused
-            .iter()
-            .find(|p| p.namespace.to_string() == ns_b.to_string())
-            .expect("acme/other missing from snapshot");
-        assert_eq!(entry_b.reason, "other");
-        let msg_b = entry_b
-            .message
-            .as_deref()
-            .expect("Other should carry a message");
-        assert!(
-            msg_b.starts_with("workflow rejected"),
-            "raw error should lead the message, got: {msg_b}"
+        let snapshot = watcher.paused_snapshot().await;
+        assert_eq!(snapshot.len(), 2);
+        assert_eq!(snapshot.get(&ns_a), Some(&PausedReason::PendingChanges));
+        assert_eq!(
+            snapshot.get(&ns_b),
+            Some(&PausedReason::Other("workflow rejected".to_string()))
         );
     }
 
@@ -979,9 +1034,164 @@ mod tests {
 
         watcher.clear_role_denied_pauses().await;
 
-        let paused = watcher.snapshot().await.paused;
-        assert_eq!(paused.len(), 1, "only the denial should clear: {paused:?}");
-        assert_eq!(paused[0].namespace.to_string(), diverged.to_string());
+        let paused = watcher.paused_snapshot().await;
+        assert_eq!(
+            paused.keys().collect::<Vec<_>>(),
+            [&diverged],
+            "only the denial should clear: {paused:?}"
+        );
+    }
+
+    /// Every route that clears a pause announces it, once per package it
+    /// unpauses, and the package leaves the action-needed set.
+    #[tokio::test]
+    async fn every_pause_clear_is_announced_and_leaves_the_set() {
+        let reporter = Arc::new(reporter::test_support::RecordingReporter::default());
+        let watcher = Watcher::new_for_test(reporter.clone());
+        let a: Namespace = ("acme", "a").into();
+        let b: Namespace = ("acme", "b").into();
+        let c: Namespace = ("acme", "c").into();
+        watcher.pause(&a, None, PausedReason::Diverged).await;
+        let denied = PausedReason::RoleDenied {
+            role: "ReadOnly".to_string(),
+        };
+        watcher.pause(&b, None, denied).await;
+        watcher.pause(&c, None, PausedReason::PendingCommit).await;
+        assert_eq!(watcher.action_needed().get().len(), 3);
+
+        watcher.clear_paused(&a).await;
+        watcher.clear_paused(&a).await;
+        watcher.clear_role_denied_pauses().await;
+        watcher.clear_all_paused().await;
+
+        assert_eq!(*reporter.pause_cleared.lock().unwrap(), vec![a, b, c]);
+        assert!(
+            watcher.action_needed().get().is_empty(),
+            "every pause cleared"
+        );
+    }
+
+    /// A hand-run publish reached the bucket: the package's catalog, its
+    /// access and its failing publish leave the set.
+    #[tokio::test]
+    async fn a_hand_run_publish_clears_what_it_proves() {
+        use crate::engine::action_needed::Cause;
+        let watcher = Watcher::new_for_test(Arc::new(LogReporter));
+        let ns: Namespace = ("acme", "a").into();
+        let host = quilt_uri::fixtures::host();
+        let lineage = crate::engine::quilt::lineage::PackageLineage::from_remote(
+            quilt_uri::ManifestUri {
+                bucket: "bucket".to_string(),
+                namespace: ns.clone(),
+                hash: "h0".to_string(),
+                origin: Some(host.clone()),
+            },
+            "h0".to_string(),
+        );
+        let mut model = crate::engine::model::MockQuiltModel::new();
+        model.expect_get_installed_package().returning(|ns| {
+            Ok(Some(
+                crate::engine::quilt::LocalDomain::new(std::path::PathBuf::new())
+                    .create_installed_package(ns.clone()),
+            ))
+        });
+        model
+            .expect_get_installed_package_lineage()
+            .returning(move |_| Ok(lineage.clone()));
+        let set = watcher.action_needed();
+        set.session_failed(Some(&host), true);
+        set.enter(Subject::package(&ns), Cause::NoAccess { role: None });
+        set.enter(
+            Subject::package(&ns),
+            Cause::PublishFailing {
+                error: "offline".into(),
+            },
+        );
+        watcher.transfer_worked(&model, &ns, true).await;
+        assert!(set.get().is_empty(), "the publish reached the bucket");
+    }
+
+    /// A role switch takes the denial pauses' entries, not a refusal a page's
+    /// read found on another package, which its next read settles.
+    #[tokio::test]
+    async fn a_role_switch_takes_only_the_denial_pauses() {
+        use crate::engine::action_needed::Cause;
+        let watcher = Watcher::new_for_test(Arc::new(LogReporter));
+        let paused: Namespace = ("acme", "a").into();
+        let read: Namespace = ("acme", "b").into();
+        let denied = PausedReason::RoleDenied {
+            role: "ReadOnly".to_string(),
+        };
+        watcher.pause(&paused, None, denied).await;
+        watcher
+            .action_needed()
+            .enter(Subject::package(&read), Cause::NoAccess { role: None });
+        watcher.clear_role_denied_pauses().await;
+        let left: Vec<Subject> = watcher
+            .action_needed()
+            .get()
+            .into_iter()
+            .map(|e| e.subject)
+            .collect();
+        assert_eq!(left, [Subject::package(&read)]);
+    }
+
+    /// A conflict replacing a denial pause takes its place: the package
+    /// counts once.
+    #[tokio::test]
+    async fn a_new_pause_replaces_the_old_in_the_set() {
+        let watcher = Watcher::new_for_test(Arc::new(LogReporter));
+        let ns: Namespace = ("acme", "a").into();
+        let denied = PausedReason::RoleDenied {
+            role: "ReadOnly".to_string(),
+        };
+        watcher.pause(&ns, None, denied).await;
+        watcher.pause(&ns, None, PausedReason::Diverged).await;
+        let kinds: Vec<Kind> = watcher
+            .action_needed()
+            .get()
+            .iter()
+            .map(|e| e.cause.kind())
+            .collect();
+        assert_eq!(kinds, [Kind::Paused]);
+    }
+
+    /// Clearing a pause takes only what the pause put in the set: a refusal a
+    /// page's read found stays until the bucket answers.
+    #[tokio::test]
+    async fn a_clear_keeps_a_refusal_a_read_found() {
+        use crate::engine::action_needed::Cause;
+        let watcher = Watcher::new_for_test(Arc::new(LogReporter));
+        let ns: Namespace = ("acme", "a").into();
+        watcher.pause(&ns, None, PausedReason::Diverged).await;
+        watcher
+            .action_needed()
+            .enter(Subject::package(&ns), Cause::NoAccess { role: None });
+        watcher.clear_paused(&ns).await;
+        let kinds: Vec<Kind> = watcher
+            .action_needed()
+            .get()
+            .iter()
+            .map(|e| e.cause.kind())
+            .collect();
+        assert_eq!(kinds, [Kind::NoAccess]);
+    }
+
+    /// A refusal a page's read found, with no pause behind it, is the old
+    /// catalog's and goes with it.
+    #[tokio::test]
+    async fn a_new_catalog_drops_the_old_refusal() {
+        use crate::engine::action_needed::Cause;
+        let watcher = Watcher::new_for_test(Arc::new(LogReporter));
+        let ns: Namespace = ("acme", "a").into();
+        watcher
+            .action_needed()
+            .enter(Subject::package(&ns), Cause::NoAccess { role: None });
+        watcher.forget_catalog(&ns).await;
+        assert!(
+            watcher.action_needed().get().is_empty(),
+            "the new catalog has not refused"
+        );
     }
 
     #[tokio::test]

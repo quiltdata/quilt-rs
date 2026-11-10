@@ -23,8 +23,7 @@ use quilt_uri::S3PackageUri;
 /// every link to this screen has always carried.
 ///
 /// The `[Get latest]` and `[Choose S3 bucket]` queue actions land here too,
-/// because neither has a page of its own — v1 puts `Pull` in this page's status
-/// banner and `SetRemote` in its toolbar.
+/// because neither has a page of its own: this page offers both.
 pub fn package_page_href(namespace: &Namespace) -> String {
     let namespace = namespace.to_string();
     let namespace = urlencoding::encode(&namespace);
@@ -95,8 +94,8 @@ pub struct RevisionMismatch {
 }
 
 impl RevisionMismatch {
-    /// `mismatch` alone decides. A missing `mrbucket` reads as empty, as v1
-    /// has always read it, so the lookup fails and the band shows the hash.
+    /// `mismatch` alone decides. A missing `mrbucket` reads as empty, so the
+    /// lookup fails and the band shows the hash.
     fn from_query(query: &Query) -> Option<Self> {
         Some(Self {
             hash: query.get("mismatch")?,
@@ -154,13 +153,6 @@ pub fn commit_href(namespace: &Namespace) -> String {
 /// nothing.
 pub fn new_revision_href(namespace: &Namespace) -> String {
     format!("{}&focus=message", commit_href(namespace))
-}
-
-/// The merge screen for one package.
-pub fn merge_href(namespace: &Namespace) -> String {
-    let namespace = namespace.to_string();
-    let namespace = urlencoding::encode(&namespace);
-    format!("/merge?namespace={namespace}")
 }
 
 /// A page's query string, each value decoded once.
@@ -227,7 +219,6 @@ pub fn page_title(path: &str, query: &Query) -> String {
     };
     let page = match path {
         "/commit" => Some("Commit"),
-        "/merge" => Some("Merge"),
         "/login" => Some("Login"),
         "/settings" => Some("Settings"),
         "/setup" => Some("Setup"),
@@ -265,14 +256,18 @@ mod tests {
         assert_eq!(
             page_title(
                 "/remote-package",
-                &uri("quilt+s3://bucket#package=org/pkg@abc123&path=a.csv")
+                &uri(
+                    "quilt+s3://bucket#package=org/pkg@abc1230000000000000000000000000000000000000000000000000000000000&path=a.csv"
+                )
             ),
             "org/pkg · QuiltSync"
         );
         assert_eq!(
             page_title(
                 "/remote-package",
-                &uri("quilt+s3://bucket#package=org%2Fpkg%40abc123")
+                &uri(
+                    "quilt+s3://bucket#package=org%2Fpkg%40abc1230000000000000000000000000000000000000000000000000000000000"
+                )
             ),
             "org/pkg · QuiltSync"
         );
@@ -334,7 +329,6 @@ mod tests {
             new_revision_href(&ns("org/pkg")),
             "/commit?namespace=org%2Fpkg&focus=message"
         );
-        assert_eq!(merge_href(&ns("org/pkg")), "/merge?namespace=org%2Fpkg");
     }
 
     /// The mode is the plain address plus one parameter, so leaving it is
@@ -445,8 +439,7 @@ mod tests {
     }
 
     /// What the address carries is what is read back: `mismatch` alone
-    /// decides, and a missing bucket reads as empty, as v1 has always read
-    /// it. In the browser, because [`Query`] parses through `URLSearchParams`.
+    /// decides, and a missing bucket reads as empty. In the browser, because [`Query`] parses through `URLSearchParams`.
     #[wasm_bindgen_test::wasm_bindgen_test]
     fn the_query_reads_back_what_was_carried() {
         let href = package_page_href(&ns("org/pkg"));

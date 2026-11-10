@@ -13,6 +13,9 @@
 
 use crate::Host;
 
+/// A well-formed top hash: 64 lowercase hex characters.
+pub const TOP_HASH: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
 /// The default catalog host for tests: `quilt.test`.
 #[must_use]
 pub fn host() -> Host {

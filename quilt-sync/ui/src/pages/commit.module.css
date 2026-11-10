@@ -1,0 +1,432 @@
+/* biome-ignore-all lint/complexity/noImportantStyles: the metadata editor's rules below must outrank its own. */
+/* Tighter than `PageLayout`'s gap: these read as one form. It fills the page,
+ * so the file list can take what is left and scroll inside it. `min-height: 0`
+ * lets it be shorter than its content; when the list's floor does not fit,
+ * `PageLayout` scrolls the whole page instead. A container, as the package
+ * page is, so the header's location group collapses to icons with it. */
+.column {
+  display: flex;
+  flex-direction: column;
+  container-type: inline-size;
+  gap: var(--q-space-4);
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* The message, the workflow and the metadata, spaced as the column is. */
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-4);
+  min-width: 0;
+}
+
+/* A test handle that adds no box. */
+.slot {
+  display: contents;
+}
+
+.remedy_link {
+  color: var(--q-fgColor-accent);
+}
+
+/* Fields that are not a `FormControl`, drawn to match one. */
+.field {
+  min-width: 0;
+}
+
+.field_name {
+  display: block;
+  margin-bottom: var(--q-space-1);
+  font-weight: 600;
+}
+
+/* The name, then the editor's toggle on the same line. */
+.field_head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--q-space-2);
+  margin-bottom: var(--q-space-1);
+}
+
+/* A small text button with a dashed underline, so it reads as part of the
+ * label line and not as a second control row. */
+.inline_action {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--q-fgColor-accent);
+  text-decoration: underline dashed;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.inline_action:focus-visible {
+  outline: var(--q-focus-outlineWidth) solid var(--q-focus-outlineColor);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.field_head .field_name {
+  margin-bottom: 0;
+}
+
+/* Full width: `JsonDisplay` fits its line to the width it is given. */
+.field_value {
+  min-width: 0;
+  margin: 0;
+}
+
+.field_empty {
+  color: var(--q-fgColor-muted);
+}
+
+.field_hint {
+  margin: var(--q-space-1) 0 0;
+  color: var(--q-fgColor-muted);
+}
+
+/* As `FormControl`'s error. */
+.field_error {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  margin: var(--q-space-1) 0 0;
+  color: var(--q-fgColor-danger);
+}
+
+.field_error svg {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  margin-top: 3px;
+}
+
+/* The fallback textarea. */
+.metadata {
+  width: 100%;
+  min-width: 0;
+  padding: var(--q-space-2);
+  border: 1px solid var(--q-borderColor-field);
+  border-radius: var(--q-radius);
+  background: var(--q-bgColor-default);
+  color: var(--q-fgColor-default);
+  font-family: var(--q-font-mono);
+  font-size: var(--q-text-body);
+  line-height: var(--q-line-body);
+  resize: vertical;
+}
+
+/* The editor fills its parent, whose height the grip sets. No `overflow` here
+ * or above: it crops the editor's context menu. */
+.editor {
+  height: 100%;
+}
+
+/* A short bar centred on a strip as wide as the editor, so the whole strip
+ * takes the drag. */
+.grip {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: var(--q-space-3);
+  border-radius: var(--q-radius);
+  cursor: ns-resize;
+  touch-action: none;
+}
+
+.grip::before {
+  content: "";
+  width: var(--q-space-8);
+  height: 3px;
+  border-radius: 2px;
+  background: var(--q-borderColor-default);
+}
+
+.grip:hover::before {
+  background: var(--q-fgColor-muted);
+}
+
+.grip:focus-visible {
+  outline: var(--q-focus-outlineWidth) solid var(--q-focus-outlineColor);
+  outline-offset: -2px;
+}
+
+/* On the editor itself, which sets its own border below. */
+.invalid .editor {
+  --jse-main-border: 1px solid var(--q-borderColor-danger-muted);
+}
+
+/* Wide, the files' column; narrow, what the form leaves. The floor is the
+ * heading and about two rows and a half, so the list stays a list when the
+ * editor is open in a short window; below it the page scrolls. On the
+ * section, not the box, so a short list's box is no taller than its rows. */
+.included {
+  display: flex;
+  flex-direction: column;
+  /* As a field's label: the box's border lines up with the message's. */
+  gap: var(--q-space-1);
+  flex: 1 1 auto;
+  min-height: 116px;
+}
+
+.included_head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--q-space-1) var(--q-space-3);
+}
+
+/* The rows' box shrinks to what is left and scrolls; the lines under it stay
+ * on screen. */
+.rows {
+  display: flex;
+  flex-direction: column;
+  flex: 0 1 auto;
+  min-height: 0;
+}
+
+.included_heading {
+  margin: 0;
+  font-size: var(--q-text-body);
+  font-weight: 600;
+}
+
+.tally {
+  font-weight: 400;
+  color: var(--q-fgColor-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.quiet {
+  margin: 0;
+  color: var(--q-fgColor-muted);
+}
+
+.skeleton_field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-2);
+}
+
+/* The metadata editor, `vanilla-jsoneditor`, drawn from the kit's tokens. Its
+ * palette is its `--jse-*` variables; the tokens behind them already follow
+ * the theme, so one set serves both. Keys in the default text colour,
+ * values coloured by type, punctuation muted.
+ *
+ * The rules after this block reach into the editor's own classes, so they are
+ * global inside it, and `!important` because its scoped rules outrank them. */
+.editor {
+  --jse-font-family: var(--q-font-sans);
+  --jse-font-family-mono: var(--q-font-mono);
+  --jse-font-size: var(--q-text-body);
+  --jse-font-size-main-menu: var(--q-text-body);
+  --jse-font-size-mono: var(--q-text-body);
+  --jse-padding: var(--q-space-2);
+  --jse-menu-button-size: var(--q-control-height);
+
+  --jse-theme-color: var(--q-bgColor-muted);
+  --jse-theme-color-highlight: var(--q-overlay-hover);
+  --jse-background-color: var(--q-bgColor-default);
+  --jse-text-color: var(--q-fgColor-default);
+  --jse-text-readonly: var(--q-fgColor-muted);
+  --jse-text-color-inverse: var(--q-bgColor-default);
+  --jse-error-color: var(--q-fgColor-danger);
+  --jse-warning-color: var(--q-fgColor-attention);
+  --jse-info-color: var(--q-fgColor-accent);
+
+  --jse-main-border: 1px solid var(--q-borderColor-default);
+  --jse-menu-color: var(--q-fgColor-default);
+  --jse-modal-background: var(--q-bgColor-default);
+  --jse-modal-code-background: var(--q-bgColor-inset);
+  --jse-modal-editor-theme-color: var(--q-bgColor-muted);
+  --jse-modal-editor-theme-color-highlight: var(--q-overlay-hover);
+
+  --jse-tooltip-background: var(--q-bgColor-default);
+  --jse-tooltip-action-button-color: var(--q-fgColor-onEmphasis);
+  --jse-tooltip-action-button-background: var(--q-bgColor-accent-emphasis);
+
+  --jse-panel-background: var(--q-bgColor-muted);
+  --jse-panel-color-readonly: var(--q-fgColor-disabled);
+  --jse-panel-border: var(--jse-main-border);
+  --jse-panel-button-background-highlight: var(--q-overlay-hover);
+
+  --jse-context-menu-background: var(--q-bgColor-default);
+  --jse-context-menu-background-highlight: var(--q-overlay-hover);
+  --jse-context-menu-color: var(--q-fgColor-default);
+  --jse-context-menu-color-disabled: var(--q-fgColor-disabled);
+  --jse-context-menu-separator-color: var(--q-borderColor-muted);
+  --jse-context-menu-pointer-background: var(--q-bgColor-inset);
+  --jse-context-menu-pointer-background-highlight: var(--q-overlay-active);
+  --jse-context-menu-pointer-hover-background: var(--q-overlay-hover);
+  --jse-context-menu-tip-background: var(--q-bgColor-muted);
+
+  --jse-key-color: var(--q-fgColor-default);
+  --jse-value-color: var(--q-fgColor-default);
+  --jse-value-color-number: var(--q-fgColor-json-number);
+  --jse-value-color-boolean: var(--q-fgColor-json-boolean);
+  --jse-value-color-null: var(--q-fgColor-json-null);
+  --jse-value-color-string: var(--q-fgColor-json-string);
+  --jse-value-color-url: var(--q-fgColor-accent);
+  --jse-delimiter-color: var(--q-fgColor-muted);
+  --jse-edit-outline: var(--q-focus-outlineWidth) solid
+    var(--q-focus-outlineColor);
+
+  --jse-selection-background-color: var(--q-bgColor-accent-muted);
+  --jse-selection-background-inactive-color: var(--q-overlay-selected);
+  --jse-hover-background-color: var(--q-overlay-hover);
+  --jse-active-line-background-color: var(--q-overlay-hover);
+  --jse-search-match-background-color: var(--q-bgColor-attention-muted);
+  --jse-search-match-color: var(--q-bgColor-attention-muted);
+  --jse-search-match-outline: none;
+  --jse-search-match-active-color: var(--q-bgColor-attention-muted);
+  --jse-search-match-active-outline: 1px solid
+    var(--q-borderColor-attention-muted);
+
+  --jse-collapsed-items-background-color: var(--q-bgColor-muted);
+  --jse-collapsed-items-selected-background-color: var(--q-overlay-selected);
+  --jse-collapsed-items-link-color: var(--q-fgColor-muted);
+  --jse-collapsed-items-link-color-highlight: var(--q-fgColor-accent);
+
+  --jse-tag-background: var(--q-bgColor-inset);
+  --jse-tag-color: var(--q-fgColor-muted);
+
+  --jse-table-header-background: var(--q-bgColor-muted);
+  --jse-table-header-background-highlight: var(--q-overlay-hover);
+  --jse-table-row-odd-background: var(--q-overlay-hover);
+
+  --jse-controls-box-shadow: var(--q-shadow-overlay);
+  --jse-input-background: var(--q-bgColor-default);
+  --jse-input-border: 1px solid var(--q-borderColor-field);
+  --jse-input-border-focus: 1px solid var(--q-focus-outlineColor);
+  --jse-input-radius: var(--q-radius);
+  --jse-button-background: var(--q-bgColor-default);
+  --jse-button-background-highlight: var(--q-overlay-hover);
+  --jse-button-color: var(--q-fgColor-default);
+  --jse-button-primary-background: var(--q-bgColor-accent-emphasis);
+  --jse-button-primary-background-highlight: var(
+    --q-bgColor-accent-emphasis-hover
+  );
+  --jse-button-primary-background-disabled: var(--q-overlay-hover);
+  --jse-button-primary-color: var(--q-fgColor-onEmphasis);
+  --jse-button-secondary-background: var(--q-bgColor-default);
+  --jse-button-secondary-background-highlight: var(--q-overlay-hover);
+  --jse-button-secondary-background-disabled: var(--q-overlay-hover);
+  --jse-button-secondary-color: var(--q-fgColor-default);
+  --jse-a-color: var(--q-fgColor-accent);
+  --jse-a-color-highlight: var(--q-fgColor-accent);
+
+  --jse-message-error-background: var(--q-bgColor-danger-muted);
+  --jse-message-error-color: var(--q-fgColor-danger-onMuted);
+  --jse-message-warning-background: var(--q-bgColor-attention-muted);
+  --jse-message-warning-color: var(--q-fgColor-attention-onMuted);
+  --jse-message-success-background: var(--q-bgColor-success-muted);
+  --jse-message-success-color: var(--q-fgColor-success-onMuted);
+  --jse-message-info-background: var(--q-bgColor-neutral-muted);
+  --jse-message-info-color: var(--q-fgColor-neutral-onMuted);
+  --jse-message-action-background: var(--q-overlay-hover);
+  --jse-message-action-background-highlight: var(--q-overlay-active);
+
+  --jse-item-is-active-bg: var(--q-overlay-selected);
+  --jse-svelte-select-background: var(--q-bgColor-default);
+  --jse-svelte-select-border: var(--jse-input-border);
+  --jse-svelte-select-border-radius: var(--q-radius);
+  --list-background: var(--q-bgColor-default);
+  --item-hover-bg: var(--q-overlay-hover);
+  --input-color: var(--q-fgColor-default);
+
+  --jse-color-picker-background: var(--q-bgColor-muted);
+}
+
+/* Text mode's focused selection, which the editor otherwise takes from a
+ * theme it reads once, at mount. */
+.editor :global(.cm-focused) :global(.cm-selectionBackground) {
+  background: var(--jse-selection-background-color) !important;
+}
+
+/* The menu: the mode switch on the right, as the kit's segmented control. */
+.editor :global(.jse-menu) {
+  justify-content: flex-end;
+  border: var(--jse-main-border);
+  border-radius: var(--q-radius) var(--q-radius) 0 0;
+}
+
+.editor :global(.jse-menu) :global(.jse-space) {
+  display: none;
+}
+
+.editor :global(.jse-menu) :global(.jse-group-button) {
+  border-color: var(--q-borderColor-field) !important;
+  background: var(--q-bgColor-default) !important;
+  color: var(--q-fgColor-muted) !important;
+  padding: 0 11px !important;
+  text-transform: capitalize;
+}
+
+.editor :global(.jse-menu) :global(.jse-group-button):hover {
+  color: var(--q-fgColor-default) !important;
+}
+
+.editor :global(.jse-menu) :global(.jse-group-button):global(.jse-first) {
+  border-radius: var(--q-radius) 0 0 var(--q-radius);
+}
+
+.editor :global(.jse-menu) :global(.jse-group-button):global(.jse-last) {
+  border-radius: 0 var(--q-radius) var(--q-radius) 0;
+}
+
+.editor :global(.jse-menu) :global(.jse-group-button):global(.jse-selected) {
+  background: var(--q-bgColor-inset) !important;
+  color: var(--q-fgColor-default) !important;
+  font-weight: 600;
+}
+
+/* The context menu, as the kit's anchored surfaces: bordered, so it has an
+ * edge in dark where the shadow does not show. */
+.editor :global(.jse-contextmenu) {
+  border: 1px solid var(--q-borderColor-default);
+  border-radius: var(--q-radius);
+}
+
+/* The empty document's buttons, as the kit's. */
+.editor :global(.jse-welcome) {
+  border: var(--jse-main-border);
+  border-top: 0;
+  border-radius: 0 0 var(--q-radius) var(--q-radius);
+}
+
+.editor :global(.jse-welcome) :global(.jse-contents) {
+  display: grid !important;
+  gap: var(--q-space-2) !important;
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.editor :global(.jse-welcome) button {
+  align-self: center;
+  min-height: var(--q-control-height);
+  padding: 0 12px !important;
+  border: 1px solid var(--q-borderColor-default) !important;
+  border-radius: var(--q-radius) !important;
+  background: var(--q-bgColor-default) !important;
+  color: var(--q-fgColor-default) !important;
+}
+
+.editor :global(.jse-welcome) button:hover {
+  background: var(--q-overlay-hover) !important;
+}
+
+.editor :global(.jse-welcome-title),
+.editor :global(.jse-welcome-info) {
+  grid-column: 1 / 4;
+}
+
+.editor :global(.jse-welcome-info) {
+  color: var(--q-fgColor-muted);
+  margin-bottom: var(--q-space-2);
+}
+
+.editor :global(.jse-welcome-weight) {
+  font-weight: 600;
+}

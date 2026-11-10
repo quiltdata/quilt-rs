@@ -1,4 +1,4 @@
-//! The v2 main page, drawn in the v2 design.
+//! The main page.
 //!
 //! Three regions: the state strip — Autosync beside Accounts — the attention
 //! queue, and the list. The list region is two views of one roster, Packages and
@@ -386,8 +386,7 @@ fn record_refresh(
 ///
 /// What the appbar's Refresh cannot do: that notifies the page's trigger and
 /// reloads every payload. This re-fires only the heavy-phase calls a cause names,
-/// which is the affordance v1 had per row and this design moved to the cause
-/// (`gallery/unchecked.rs`).
+/// so the affordance sits on the cause rather than on each row.
 ///
 /// The rows are looked up BEFORE the counter is raised, so a namespace with no row
 /// cannot leave `outstanding` permanently above zero and the queue silent forever
@@ -697,8 +696,7 @@ impl ListControls {
         }
     }
 
-    /// Store each `Group:` and `Sort:` choice when the reader changes it. The
-    /// page's own set only: the loading frame's is inert.
+    /// Store each `Group:` and `Sort:` choice when the reader changes it.
     fn remember(self) {
         for (signal, choice) in [
             (self.group_packages_by, &PACKAGES_GROUP),
@@ -750,27 +748,27 @@ fn regions_skeleton(toolbar: AnyView, inert: bool) -> AnyView {
 /// The whole main page before any of its reads have answered: the appbar, the
 /// strip's two cards, and [`regions_skeleton`].
 ///
-/// What `/` draws while it reads which main page the reader has switched on,
-/// when the root marker says it will be this one — see `main.rs`'s
-/// `design_loading`. It is the page's own first paint, element for element, so
-/// the handover to [`MainPage`] moves nothing: the appbar, the zero line and the
-/// toolbar land on the pixels they already hold.
+/// [`MainPage`]'s own first paint, element for element, drawn alone by the
+/// gallery.
 ///
 /// The strip's two cards are their own skeletons, as the page's cards draw
 /// them until their reads answer. The toolbar is drawn, for its place, and
-/// inert: its signals are the frame's own and the page builds fresh ones, so a
-/// search typed or a view picked during the wait would vanish at the handover,
-/// and *Create package* would open nothing — its dialog belongs to the page.
-/// Inert rather than disabled, which would grey it and so change how the frame
-/// looks against the page that replaces it. The page's own fallback leaves the
-/// same toolbar live, over the page's signals and beside its dialog.
+/// inert: its signals lead nowhere and *Create package* has no dialog to open.
+/// Inert rather than disabled, which would grey it and so change how it looks
+/// against the page. The page's own fallback leaves the same toolbar live, over
+/// the page's signals and beside its dialog.
 ///
 /// `actions` is the appbar's, passed in because the app's Settings button
 /// navigates and the gallery, which draws this too, has no router.
 #[component]
 pub fn MainPageSkeleton(actions: AnyView) -> impl IntoView {
     view! {
-        <PageLayout heading="QuiltSync" actions=actions page_scroll=true>
+        <PageLayout
+            heading="QuiltSync"
+            actions=actions
+            banner=view! { <crate::components::UpdateNotice /> }.into_any()
+            page_scroll=true
+        >
             <StateStrip>
                 {autosync::autosync_skeleton()}
                 {accounts::accounts_skeleton()}
@@ -919,7 +917,7 @@ fn files_view(
                         }
                             .into_any()
                     }
-                    // A missing session or setup goes where v1 sends it.
+                    // A missing session or setup goes to sign-in or setup.
                     Err(err) if first_load.redirect(&err) => ().into_any(),
                     Err(err) => {
                         web_sys::console::error_1(
@@ -935,8 +933,8 @@ fn files_view(
     .into_any()
 }
 
-/// Whether a failed read may still send the reader to sign-in or setup, as
-/// v1 does: only while the page has drawn no answer. After that the reader
+/// Whether a failed read may still send the reader to sign-in or setup: only
+/// while the page has drawn no answer. After that the reader
 /// may be reading or working, and a failed re-read is reported in place.
 #[derive(Clone, Copy)]
 struct FirstLoad {
@@ -1143,7 +1141,7 @@ fn MainPageRegions(
                             view! { <accounts::AccountsBody data=data refresh=reload /> }
                                 .into_any()
                         }
-                        // A missing session or setup goes where v1 sends it.
+                        // A missing session or setup goes to sign-in or setup.
                         Err(err) if first_load.redirect(&err) => ().into_any(),
                         Err(err) => {
                             // Logged once, here. The card says it could not read:
@@ -1452,7 +1450,7 @@ fn MainPageRegions(
                                 .into_any()
                         })
                     }
-                    // A missing session or setup goes where v1 sends it.
+                    // A missing session or setup goes to sign-in or setup.
                     Err(err) if first_load.redirect(&err) => ().into_any(),
                     Err(err) => {
                         web_sys::console::error_1(
@@ -1541,7 +1539,10 @@ pub fn MainPage() -> impl IntoView {
             heading="QuiltSync"
             page_scroll=true
             actions=appbar_actions(move || reload.notify(), Signal::derive(move || outstanding.get() > 0))
-            banner=view! { {move || link_handlers.get().and_then(Result::ok).map(|handlers| link_handler_banner(&handlers))} }
+            banner=view! {
+                <crate::components::UpdateNotice />
+                {move || link_handlers.get().and_then(Result::ok).map(|handlers| link_handler_banner(&handlers))}
+            }
                 .into_any()
         >
             <PackageStatusListener reload=reload />
@@ -1600,8 +1601,8 @@ pub(crate) fn link_handler_message(handlers: &[ForeignHandler]) -> String {
 /// rather than rebuilt with a payload.
 ///
 /// The page read this drives is the one the list rows AND the attention queue are
-/// derived from, so a row cannot be patched in place the way v1 patches its own
-/// (`installed_packages_list.rs:427-442`) — the queue would keep the old cause.
+/// derived from, so a row cannot be patched in place: the queue would keep the
+/// old cause.
 #[component]
 fn PackageStatusListener(reload: Trigger) -> impl IntoView {
     let watch = StatusWatch::new(reload);
@@ -3721,8 +3722,7 @@ mod tests {
     }
 
     /// A fresh app with no data folder: the reads say so, and the page goes to
-    /// `/setup`, replacing its entry, as v1's does, instead of drawing two
-    /// failures.
+    /// `/setup`, replacing its entry, instead of drawing two failures.
     #[wasm_bindgen_test]
     async fn reads_that_need_setup_go_to_setup() {
         let window = web_sys::window().unwrap();
@@ -4212,10 +4212,9 @@ mod tests {
         );
     }
 
-    /// `MainPageSkeleton` is the page's own first paint, so `/` handing its
-    /// loading frame over to the page moves nothing: under the appbar, the same
-    /// column children in the same boxes as the page draws before its reads
-    /// answer.
+    /// `MainPageSkeleton` is the page's own first paint: under the appbar, the
+    /// same column children in the same boxes as the page draws before its
+    /// reads answer.
     ///
     /// The strip's two card skeletons included. One exception, which takes no
     /// box: the `<dialog>` is closed, so it is not laid out.
@@ -4254,13 +4253,13 @@ mod tests {
         );
     }
 
-    /// The loading frame's toolbar is inert and the page's own fallback's is
-    /// not. The frame's controls sit over signals the page does not inherit, and
-    /// its *Create package* has no dialog to open, so anything done there would
-    /// be lost; the page's fallback is over the page's signals and dialog, where
-    /// a reader may start work before the rows arrive.
+    /// The skeleton's toolbar is inert and the page's own fallback's is not.
+    /// The skeleton's controls sit over signals nothing reads, and its *Create
+    /// package* has no dialog to open; the page's fallback is over the page's
+    /// signals and dialog, where a reader may start work before the rows
+    /// arrive.
     #[wasm_bindgen_test]
-    async fn only_the_loading_frame_s_toolbar_is_inert() {
+    async fn only_the_skeleton_s_toolbar_is_inert() {
         let frame = mount(|| {
             view! {
                 <leptos_router::components::Router>

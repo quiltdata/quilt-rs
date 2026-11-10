@@ -4,12 +4,12 @@
 //! Nothing here names Tauri or reaches outside this folder (`just
 //! check-engine`), so it can become its own crate by moving the folder.
 
+pub mod action_needed;
 pub mod app;
 pub mod autopull;
 pub mod changelog;
 pub mod commands;
 pub mod commit_message;
-pub mod design_settings;
 pub mod desktop;
 pub mod dispatch;
 #[cfg(all(test, feature = "e2e"))]

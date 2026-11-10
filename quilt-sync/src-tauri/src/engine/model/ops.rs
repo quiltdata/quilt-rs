@@ -61,40 +61,6 @@ pub async fn package_commit(
         .await
 }
 
-/// Installs `paths`, then shows them in the file browser. Returns the report,
-/// whose `skipped` and `hash_mismatch` paths were left out.
-pub async fn install_paths(
-    model: &impl QuiltModel,
-    installed_package: &quilt::InstalledPackage,
-    paths: Vec<PathBuf>,
-) -> Result<quilt::flow::InstallPathsReport, Error> {
-    if paths.is_empty() {
-        return Err(Error::General(
-            "Cannot install paths: empty paths vector provided".to_string(),
-        ));
-    }
-
-    let namespace = &installed_package.namespace;
-
-    let report = model
-        .package_install_paths(installed_package, &paths)
-        .await?;
-    let left = report.skipped.len() + report.hash_mismatch.len();
-
-    // Post-installation actions based on number of paths. A file left out is
-    // not there to reveal, so the folder opens instead.
-    if paths.len() == 1 && left == 0 {
-        let path = &paths[0];
-        info!("Installed {:?}", path);
-        let key = quilt::LogicalKey::new(path.as_path()).map_err(quilt::Error::from)?;
-        model.reveal_in_file_browser(namespace, &key).await?;
-    } else {
-        info!("Installed {} paths, left out {left}", paths.len() - left);
-        model.open_in_file_browser(namespace).await?;
-    }
-    Ok(report)
-}
-
 pub async fn install_package_only(
     model: &impl QuiltModel,
     uri: &quilt_uri::S3PackageUri,
@@ -129,19 +95,6 @@ pub async fn install_package_only(
             Ok(InstallOutcome::Installed)
         }
     }
-}
-
-pub async fn install_paths_only(
-    model: &impl QuiltModel,
-    namespace: &quilt_uri::Namespace,
-    paths: Vec<PathBuf>,
-) -> Result<quilt::flow::InstallPathsReport, Error> {
-    let installed_package = model
-        .get_installed_package(namespace)
-        .await?
-        .ok_or_else(|| Error::General("Package not found for path installation".to_string()))?;
-
-    install_paths(model, &installed_package, paths).await
 }
 
 pub async fn package_uninstall(
@@ -201,18 +154,6 @@ pub async fn package_undo_commit(
         })?;
     model.package_undo_commit(&installed_package).await?;
     Ok(())
-}
-
-pub async fn package_push(
-    model: &impl QuiltModel,
-    namespace: &quilt_uri::Namespace,
-    host_config: Option<HostConfig>,
-) -> Result<quilt::Pushed, Error> {
-    let installed_package = model
-        .get_installed_package(namespace)
-        .await?
-        .unwrap_or_else(|| panic!("Package {namespace} not found"));
-    model.package_push(&installed_package, host_config).await
 }
 
 /// What `settings` say to publish `status` with: the rendered commit message,

@@ -1,1224 +1,1540 @@
-use std::time::Duration;
+//! The commit page's regions, as views over props.
+//!
+//! The gallery draws them over fixtures, and [`Commit`] fills the same
+//! props from `get_commit_data`. Every effect is a callback.
+//! [`CommitColumn`] fixes the order: header, problem, message, workflow,
+//! metadata, then the files. Wide, the files are a column beside the form.
+//! Only the design's vocabulary; a test holds the fixed strings to the banned words.
 
-use leptos::html;
 use leptos::prelude::*;
-use leptos_router::NavigateOptions;
-use leptos_router::hooks::use_navigate;
 
-use quilt_uri::S3PackageUri;
-
-use crate::commands::{
-    self, CommitData, CommitViolation, CommitWorkflows, EntryData, ViolationField, WorkflowInfo,
-    WorkflowIntent,
-};
-use crate::components::buttons;
-use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
-use crate::components::{
-    IgnorePopup, IgnorePopupData, Layout, Notification, PreviousWorkflow, Spinner, ToolbarActions,
-    UnignorePopup, UnignorePopupData, WorkflowSection, build_workflow_view, previous_workflow_note,
-    settings_hint_view, with_popover,
-};
-use crate::util;
 use crate::util::format_size;
+use quilt_ui_kit::ActionMenu;
+use quilt_ui_kit::Banner;
+use quilt_ui_kit::BannerVariant;
+use quilt_ui_kit::Blankslate;
+use quilt_ui_kit::Button;
+use quilt_ui_kit::ButtonVariant;
+use quilt_ui_kit::Card;
+use quilt_ui_kit::EntryRow;
+use quilt_ui_kit::FormControl;
+use quilt_ui_kit::JsonDisplay;
+use quilt_ui_kit::NameTooltip;
+use quilt_ui_kit::Naming;
+use quilt_ui_kit::PageHeader;
+use quilt_ui_kit::PageHeaderSkeleton;
+use quilt_ui_kit::Select;
+use quilt_ui_kit::SkeletonBox;
+use quilt_ui_kit::SplitButton;
+use quilt_ui_kit::SplitOption;
+use quilt_ui_kit::StateTone;
+use quilt_ui_kit::TextInput;
+use quilt_ui_kit::Tooltip;
+use quilt_ui_kit::Trail;
+use quilt_ui_kit::TwoColumns;
+use quilt_ui_kit::icons;
 
-use super::json_editor::{JsonEditor, get_json_editor_value};
+use super::installed_package::{MenuCommand, MenuItem, remote_item, remove_item};
+use super::json_editor::{JsonEditor, focus_json_editor};
+use super::row_menu::{RowCommand, menu_actions};
 
-// ── Commit page ──
+stylance::import_crate_style!(style, "src/pages/commit.module.css");
 
-#[component]
-pub fn Commit() -> impl IntoView {
-    let notification = RwSignal::new(None);
-    let ui_locked = RwSignal::new(false);
-    let refetch = Trigger::new();
+mod page;
+pub use page::Commit;
 
-    let query = crate::routes::use_query();
-    let data = LocalResource::new(move || {
-        refetch.track();
-        let namespace = query.read().get("namespace").unwrap_or_default();
-        async move { commands::get_commit_data(namespace).await }
-    });
+/// What the revision will do, which decides the primary's words.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Primary {
+    /// `Publish N files`.
+    Files(usize),
+    /// Only metadata changed: `Publish revision`.
+    MetadataOnly,
+    /// No bucket: `Save revision`, with no caret.
+    LocalOnly,
+}
 
-    // A `Transition` (not `Suspense`) is deliberate: the live-validation
-    // `LocalResource` in `CommitContent` is read (via `live_violations`) inside
-    // this boundary's reactive scope, so reading it registers the resource with
-    // this boundary's `SuspenseContext` — and every debounced refetch re-arms
-    // that pending set. Under a plain `Suspense` the re-armed pending state flips
-    // the boundary back to its fallback, which unmounts the whole `CommitContent`
-    // subtree — including the JSON editor's container `<div>` — detaching it from
-    // the DOM and blurring the metadata editor on every keystroke. `Transition`
-    // keeps the already-rendered children mounted while later resource loads are
-    // pending (it only shows the fallback on the initial load), so the editor is
-    // mounted once per dialog open and validation round-trips never touch its DOM.
-    view! {
-        <Transition fallback=move || {
-            view! {
-                <Layout breadcrumbs=vec![] notification=notification ui_locked=ui_locked>
-                    <Spinner />
-                </Layout>
-            }
-        }>
-            {move || Suspend::new(async move {
-                match data.await {
-                    Ok(d) => {
-                        let ns = d.namespace.clone();
-                        let pkg_href = crate::routes::package_page_href(&d.namespace);
-                        let breadcrumbs = vec![
-                            BreadcrumbItem::Link(BreadcrumbLink {
-                                href: "/".to_string(),
-                                title: String::new(),
-                            }),
-                            BreadcrumbItem::Link(BreadcrumbLink {
-                                href: pkg_href,
-                                title: ns.to_string(),
-                            }),
-                            BreadcrumbItem::Current("Commit".to_string()),
-                        ];
-                        let actions = build_toolbar_actions(&d, notification, ui_locked);
-                        view! {
-                            <Layout breadcrumbs=breadcrumbs notification=notification actions=actions ui_locked=ui_locked>
-                                <CommitContent data=d notification=notification ui_locked=ui_locked refetch=refetch />
-                            </Layout>
-                        }
-                            .into_any()
-                    }
-                    Err(e) => {
-                        crate::error_handler::handle_or_display(&e, notification)
-                    }
-                }
-            })}
-        </Transition>
+impl Primary {
+    #[must_use]
+    pub fn label(self) -> String {
+        match self {
+            Self::Files(1) => "Publish 1 file".to_string(),
+            Self::Files(n) => format!("Publish {n} files"),
+            Self::MetadataOnly => "Publish revision".to_string(),
+            Self::LocalOnly => "Save revision".to_string(),
+        }
     }
 }
 
-// ── Main content ──
+pub const SAVE_WITHOUT_PUBLISHING: &str = "Save without publishing";
 
+/// The primary's callbacks and state, which the page owns.
+#[derive(Clone, Copy)]
+pub struct PrimaryWiring {
+    /// The split button's face: `0` publishes, `1` saves.
+    pub choice: RwSignal<usize>,
+    pub on_publish: Callback<()>,
+    pub on_save: Callback<()>,
+    /// Why it cannot run; disables it and is its tooltip.
+    pub blocked: Signal<Option<String>>,
+    pub running: Signal<bool>,
+}
+
+fn primary_face(primary: Primary, w: PrimaryWiring) -> AnyView {
+    let PrimaryWiring {
+        choice,
+        on_publish,
+        on_save,
+        blocked,
+        running,
+    } = w;
+    let disabled = Signal::derive(move || blocked.with(Option::is_some));
+    match primary {
+        Primary::LocalOnly => view! {
+            <Button
+                variant=ButtonVariant::Primary
+                disabled=disabled
+                loading=running
+                on_click=move |_| on_save.run(())
+            >
+                {primary.label()}
+            </Button>
+        }
+        .into_any(),
+        Primary::Files(_) | Primary::MetadataOnly => view! {
+            <SplitButton
+                options=vec![
+                    SplitOption::new(primary.label(), on_publish),
+                    SplitOption::new(SAVE_WITHOUT_PUBLISHING, on_save),
+                ]
+                selected=choice
+                menu_label="Change what this button does"
+                variant=ButtonVariant::Primary
+                disabled=disabled
+                loading=running
+            />
+        }
+        .into_any(),
+    }
+}
+
+/// The header's `[⋯]`: the package page's bucket item while there is one,
+/// then Remove below a rule. Of the package page's other items, *Create new
+/// revision* is this page, and undoing a revision belongs on the package page,
+/// where the files it restores are in view.
+#[must_use]
+pub fn header_menu(remote_locked: bool, busy: bool) -> Vec<MenuItem> {
+    let bucket = remote_item(remote_locked, busy);
+    let separated = bucket.is_some();
+    bucket
+        .into_iter()
+        .chain([MenuItem {
+            separated,
+            ..remove_item(busy)
+        }])
+        .collect()
+}
+
+/// The page's header. No state label: it would be about the package, not the
+/// revision being written.
 #[component]
-fn CommitContent(
-    data: CommitData,
-    notification: RwSignal<Option<Notification>>,
-    ui_locked: RwSignal<bool>,
-    refetch: Trigger,
+pub fn CommitHeader(
+    #[prop(into)] namespace: String,
+    #[prop(into)] package_href: String,
+    primary: Primary,
+    w: PrimaryWiring,
+    /// The package header's location group, which the page wires and the
+    /// gallery draws inert.
+    location: AnyView,
+    /// The package has been pushed, so `[⋯]` drops *Change bucket*.
+    remote_locked: bool,
+    /// The command chosen in `[⋯]`.
+    on_menu: Callback<MenuCommand>,
+    /// The trail's first crumb; `/` by default.
+    #[prop(optional, into)]
+    home_href: Option<String>,
 ) -> impl IntoView {
-    let navigate = use_navigate();
-    let filter_unmodified = RwSignal::new(false);
-    let filter_ignored = RwSignal::new(false);
-    let show_ignore_popup = RwSignal::new(None::<IgnorePopupData>);
-    let show_unignore_popup = RwSignal::new(None::<UnignorePopupData>);
-
-    // Element handles for the metadata editor and its textarea fallback. Passed
-    // to the JSON editor glue by element identity (not id) so the keep-alive
-    // `Transition` swap can never mount/destroy the wrong dialog's editor, and
-    // read at submit to pull the committed metadata from this dialog's editor.
-    let editor_ref = NodeRef::<html::Div>::new();
-    let textarea_ref = NodeRef::<html::Textarea>::new();
-
-    let namespace = data.namespace.clone();
-    let message = RwSignal::new(data.message.clone());
-    // The editor starts from the publish settings' default metadata, as
-    // one-click Publish would send it; with none set, from the current
-    // revision's metadata, since a form can't show "keep".
-    let starting_meta = starting_metadata(data.settings_user_meta.as_deref(), &data.user_meta);
-    let user_meta = starting_meta.clone();
-    let user_meta_for_editor = starting_meta.clone();
-    let user_meta_error = data.user_meta_error.clone();
-    let message_hint = message_settings_hint(data.has_message_template);
-    let metadata_from_settings = data.settings_user_meta.is_some();
-    let settings_workflow = data.settings_workflow.clone();
-    let entries = data.entries;
-    let ignored_count = data.ignored_count;
-    let unmodified_count = data.unmodified_count;
-
-    // Workflow state: the backend's `CommitWorkflows` state maps to a render
-    // model whose option list carries, per entry, the `WorkflowIntent` it
-    // submits. The selected index into that list is the whole client-side
-    // state.
-    let previous_workflow = PreviousWorkflow::from_stamp(data.workflow.as_ref());
-    let wf_view = build_workflow_view(
-        &data.workflows,
-        previous_workflow.preselect_id(),
-        data.settings_workflow.as_deref(),
-    );
-    // `wf_view.initial` is the single source of truth for the starting
-    // selection: it both seeds this signal (which submit reads) and is passed
-    // to `WorkflowSection` to render the `selected` attribute, so display and
-    // submit start from the same index into the same option list.
-    let initial_workflow = wf_view.initial;
-    let selected_workflow = RwSignal::new(initial_workflow);
-    // Intents mirrored for the submit path — the selected option's intent is
-    // passed straight through, so `Named("")` can never be constructed. On the
-    // NotConfigured/Unavailable states this is a single `BucketDefault` entry.
-    let workflow_intents: Vec<WorkflowIntent> =
-        wf_view.options.iter().map(|o| o.intent.clone()).collect();
-
-    // Neutral override note: recomputed as the selection changes, it surfaces
-    // when the current pick diverges from what the previous revision stamped
-    // (the bucket default winning over the previous pick in `preselected_index`
-    // can silently override the user's earlier choice). Only the `Available`
-    // state declares workflows to name; the other states carry an empty list
-    // and never render the note.
-    let note_workflows: Vec<WorkflowInfo> = match &data.workflows {
-        CommitWorkflows::Available { workflows, .. } => workflows.clone(),
-        CommitWorkflows::NotConfigured
-        | CommitWorkflows::Unavailable
-        | CommitWorkflows::Invalid { .. } => Vec::new(),
-    };
-    let note_intents = workflow_intents.clone();
-    let workflow_note = Memo::new(move |_| {
-        let current = note_intents
-            .get(selected_workflow.get())
-            .cloned()
-            .unwrap_or(WorkflowIntent::BucketDefault);
-        previous_workflow_note(&previous_workflow, &current, &note_workflows)
-    });
-
-    // ── Live (advisory) workflow validation ──
-    // As the user edits the message / metadata, validate against the selected
-    // workflow's rules and show inline violations before the commit attempt.
-    // Advisory only: the buttons stay enabled and the commit-time gate remains
-    // the authority. The package name is read-only here, so `handle_pattern`
-    // is validated once the rules load (it can't change) rather than per keystroke.
-    // Two clones of the same value on purpose: the namespace doubles as the
-    // full package handle (e.g. "team/dataset") that `handle_pattern` matches.
-    let validation_ns = data.namespace.clone();
-    let validation_handle = data.namespace.clone();
-    // Reactive mirror of the metadata editor's current text: the JSON editor
-    // writes edits into the hidden `#metadata` textarea and dispatches an
-    // `input` event (see json-editor-glue.js), so this tracks edits from either
-    // the editor or the textarea fallback.
-    let metadata_text = RwSignal::new(starting_meta);
-    // The previous revision's metadata, which an empty editor keeps — not
-    // necessarily what the editor was seeded with. Used as the effective
-    // candidate when the editor is left empty — see
-    // `effective_metadata` and the parity note at the validation send site.
-    let seeded_previous_meta = data.user_meta.clone();
-    // Per-field dirtiness: validation runs eagerly (the Name check must fire on
-    // rules load, since the name is read-only), but Message / Metadata
-    // violations are advisory "as you type" feedback — they must stay hidden on
-    // a pristine form so a preselected workflow never paints errors before the
-    // user has touched the field. A workflow-selection change does NOT reset
-    // these: the user's edits persist across selections.
-    let message_dirty = RwSignal::new(false);
-    let metadata_dirty = RwSignal::new(false);
-    // The concretely-selected workflow id, or `None` for the `None` /
-    // bucket-default selections — which the commit gate does not enforce a
-    // named workflow's rules against, so there is nothing to validate live.
-    let id_intents = workflow_intents.clone();
-    let selected_workflow_id = Memo::new(move |_| match id_intents.get(selected_workflow.get()) {
-        Some(WorkflowIntent::Named(id)) => Some(id.clone()),
-        _ => None,
-    });
-
-    // The current validation input; the debounced mirror keys the fetch so it
-    // fires once per settled edit (~400ms) instead of on every keystroke.
-    let live_key = Memo::new(move |_| {
-        (
-            message.get(),
-            metadata_text.get(),
-            selected_workflow_id.get(),
-        )
-    });
-    let debounced_key = RwSignal::new(live_key.get_untracked());
-    let debounce_timer: StoredValue<Option<TimeoutHandle>> = StoredValue::new(None);
-    Effect::new(move |_| {
-        let key = live_key.get();
-        // Skip arming the timer when the input already equals the debounced
-        // mirror. The Effect runs once on mount with `key` equal to the value
-        // `debounced_key` was seeded with; `RwSignal::set` notifies
-        // unconditionally (no `PartialEq` dedupe), so scheduling that set would
-        // re-run the validation resource with identical input — a redundant IPC
-        // round-trip. Only settled *edits* should (re)arm the timer.
-        if !should_debounce(&key, &debounced_key.get_untracked()) {
-            return;
-        }
-        if let Some(handle) = debounce_timer.get_value() {
-            handle.clear();
-        }
-        if let Ok(handle) =
-            set_timeout_with_handle(move || debounced_key.set(key), Duration::from_millis(400))
-        {
-            debounce_timer.set_value(Some(handle));
-        }
-    });
-    on_cleanup(move || {
-        if let Some(Some(handle)) = debounce_timer.try_get_value() {
-            handle.clear();
-        }
-    });
-
-    // Validate the debounced input. `load_workflow_rules` fetches + caches the
-    // rules on the backend once per workflow id (a no-op after the first call,
-    // so no network on later keystrokes); `validate_commit_candidate` then reads
-    // the cache with no I/O. A `None` workflow id short-circuits to no
-    // violations. The result carries the input key it was computed from.
-    // The rules cache is app-lifetime backend state; the first rules load of
-    // this dialog session forces a refresh so a config.yml change since the last
-    // open is picked up. The flag is consumed only when an actual load happens
-    // (a `None` workflow selection loads nothing), so the refresh still fires on
-    // the first real load even if the dialog opens on the bucket-default pick.
-    let first_load = StoredValue::new(true);
-    let validation = LocalResource::new(move || {
-        let (message, metadata, workflow_id) = debounced_key.get();
-        let ns = validation_ns.clone();
-        let handle = validation_handle.clone();
-        let seeded_previous_meta = seeded_previous_meta.clone();
-        async move {
-            let key = (message.clone(), metadata.clone(), workflow_id.clone());
-            let Some(id) = workflow_id else {
-                return (key, Vec::new());
-            };
-            let refresh = first_load.try_get_value().unwrap_or(false);
-            first_load.set_value(false);
-            let _ = commands::load_workflow_rules(ns.to_string(), id.clone(), refresh).await;
-            // Parity with the commit path's `UserMeta::Keep`: an empty/whitespace
-            // editor keeps the previous revision's metadata, so the commit gate
-            // validates that seeded value — not `{}`. Live validation must check
-            // the same thing, so substitute the seeded previous metadata here.
-            // (Both empty collapse to `{}` on both paths — consistent.)
-            let effective_meta = effective_metadata(&metadata, &seeded_previous_meta);
-            let violations = commands::validate_commit_candidate(
-                ns.to_string(),
-                id,
-                message,
-                effective_meta,
-                handle.to_string(),
-            )
-            .await
-            .unwrap_or_default();
-            (key, violations)
-        }
-    });
-
-    // Self-keyed: only surface a response matching the CURRENT input and
-    // workflow selection, so a slow in-flight response never paints over newer
-    // input (the stale-response discipline from the workflow selector).
-    let live_violations = Memo::new(move |_| {
-        let violations = match validation.get() {
-            Some((key, violations)) if key == live_key.get() => violations,
-            _ => Vec::new(),
-        };
-        displayed_violations(&violations, message_dirty.get(), metadata_dirty.get())
-    });
-
-    // Filtered entries
-    let entries_for_view = entries.clone();
-    let filtered_entries = Memo::new(move |_| {
-        entries_for_view
-            .iter()
-            .enumerate()
-            .filter(|(_, e)| {
-                if e.ignored_by.is_some() {
-                    return filter_ignored.get();
-                }
-                if e.status == "pristine" || e.status == "remote" {
-                    return filter_unmodified.get();
-                }
-                true
+    let blocked = w.blocked;
+    let running = w.running;
+    // Derived, so the items follow the lock while the menu is open.
+    let menu = Signal::derive(move || {
+        header_menu(remote_locked, running.get())
+            .into_iter()
+            .map(|item| {
+                let command = item.command.clone();
+                item.action(Callback::new(move |()| on_menu.run(command.clone())))
             })
-            .map(|(i, e)| (i, e.clone()))
-            .collect::<Vec<_>>()
+            .collect()
     });
-
-    let show_filter = ignored_count > 0 || unmodified_count > 0;
-
-    // Whether this package has a bucket to push to. Without one, the
-    // `[Commit and Push]` primary is hidden and only `[Commit]` is shown.
-    let has_remote = util::has_bucket(data.uri.as_ref());
-
-    // A role denial on this package's bucket. Both action-bar buttons are
-    // disabled by it (not hidden: the user navigated here on purpose, and a
-    // vanished button explains nothing) and both carry the same tooltip saying
-    // why and what to do about it.
-    let no_access_reason = data.no_access_reason.clone();
-    let no_session = data.no_session;
-    let no_session_host = data.no_session_host.clone();
-    let commit_hint = util::commit_denied_hint(no_access_reason.as_deref())
-        .or_else(|| util::commit_no_session_hint(no_session, no_session_host.as_deref()));
-    let commit_blocked = commit_hint.is_some();
-    let commit_is_disabled =
-        Signal::derive(move || commit_disabled(&message.get(), commit_blocked));
-
-    let ns_for_action = namespace.clone();
-    let uri_for_action = data.uri.clone();
-    let committing = RwSignal::new(false);
-    let navigate_for_action = navigate.clone();
-    // `action` decides whether we do a plain commit or a commit-and-push.
-    let run_action = std::rc::Rc::new(move |push: bool| {
-        let navigate = navigate_for_action.clone();
-        if committing.get_untracked() {
-            return;
-        }
-        let msg = message.get_untracked();
-        if msg.trim().is_empty() {
-            return;
-        }
-        committing.set(true);
-        ui_locked.set(true);
-        let ns = ns_for_action.clone();
-        let uri = uri_for_action.clone();
-        let meta = get_json_editor_value(editor_ref, textarea_ref);
-        let wf = workflow_intents
-            .get(selected_workflow.get_untracked())
-            .cloned()
-            .unwrap_or(WorkflowIntent::BucketDefault);
-        leptos::task::spawn_local(async move {
-            let result = if push {
-                commands::package_commit_and_push(ns.to_string(), msg, meta, wf, uri).await
-            } else {
-                commands::package_commit(ns.to_string(), msg, meta, wf, uri).await
-            };
-            match result {
-                Ok(msg) => {
-                    notification.set(Some(Notification::Success(msg)));
-                    navigate(
-                        &crate::routes::package_page_href(&ns),
-                        NavigateOptions::default(),
-                    );
+    let home_href = home_href.unwrap_or_else(|| "/".to_string());
+    // The reason is also on the page: a disabled button takes no focus, and
+    // touch shows no tooltip.
+    let face = move || match blocked.get() {
+        Some(reason) => view! {
+            <Tooltip
+                text=reason
+                align=quilt_ui_kit::Align::End
+                trigger=move |id| {
+                    view! {
+                        <span class=style::slot data-primary-action aria-describedby=id>
+                            {primary_face(primary, w)}
+                        </span>
+                    }
+                    .into_any()
                 }
-                Err(e) => {
-                    ui_locked.set(false);
-                    notification.set(Some(Notification::Error(e)));
-                    committing.set(false);
-                }
-            }
-        });
-    });
-
-    let run_commit_only = {
-        let run = run_action.clone();
-        move |_| run(false)
-    };
-    let run_commit_and_push = {
-        let run = run_action.clone();
-        move |_| run(true)
+            />
+        }
+        .into_any(),
+        None => view! {
+            <span class=style::slot data-primary-action>
+                {primary_face(primary, w)}
+            </span>
+        }
+        .into_any(),
     };
 
     view! {
-        <div class="qui-page-commit container container-wide">
-            // ── Left column: form ──
-            <div class="main">
-                <div class="form">
-                    // ── Workflow ──
-                    <WorkflowSection
-                        view=wf_view
-                        selected=selected_workflow
-                        note=workflow_note
-                        settings_workflow=settings_workflow
-                    />
-
-                    // ── Namespace (readonly) ──
-                    <div class="field-group">
-                        <p class="field">
-                            <label class="label" for="namespace">"Name"</label>
-                            <input
-                                class="input"
-                                id="namespace"
-                                name="namespace"
-                                readonly
-                                prop:value=namespace.to_string()
-                            />
-                        </p>
-                        {move || field_violation_view(&live_violations.get(), ViolationField::Name)}
-                    </div>
-
-                    // ── Message ──
-                    <div class="field-group">
-                        <p class="field">
-                            <label class="label" for="message">"Message"</label>
-                            <input
-                                autofocus
-                                class="input"
-                                id="message"
-                                name="message"
-                                required
-                                prop:value=move || message.get()
-                                on:input=move |ev| {
-                                    message_dirty.set(true);
-                                    message.set(event_target_value(&ev));
-                                }
-                            />
-                        </p>
-                        {settings_hint_view(message_hint)}
-                        {move || field_violation_view(&live_violations.get(), ViolationField::Message)}
-                    </div>
-
-                    // ── Metadata (textarea + JSON editor) ──
-                    <div class="field-group">
-                        <p class="field">
-                            <label class="label" for="metadata">"User metadata"</label>
-                            <textarea
-                                node_ref=textarea_ref
-                                class="textarea"
-                                id="metadata"
-                                name="metadata"
-                                placeholder="{ \"key\": \"value\" }"
-                                on:input=move |ev| {
-                                    metadata_dirty.set(true);
-                                    metadata_text.set(event_target_value(&ev));
-                                }
-                            >
-                                {user_meta}
-                            </textarea>
-                            {user_meta_error.map(|err| view! {
-                                <span class="error">{err}</span>
-                            })}
-                        </p>
-                        <JsonEditor
-                            node_ref=editor_ref
-                            textarea_ref=textarea_ref
-                            initial_value=user_meta_for_editor
-                        />
-                        // Only when Settings set it: no nudge to set one.
-                        {metadata_from_settings
-                            .then(|| settings_hint_view("This metadata is your default in"))}
-                        // After the editor so the error sits below it and its
-                        // toggling never shifts the editor; a separate reactive
-                        // node, so validation updates don't re-render the editor.
-                        {move || field_violation_view(&live_violations.get(), ViolationField::Metadata)}
-                    </div>
-                </div>
-            </div>
-
-            // ── Right column: file list ──
-            <div class="files">
-                <div class="list">
-                    <div>
-                        <Show when=move || show_filter>
-                            <div class="qui-entries-filter">
-                                <span>"Show"</span>
-                                <label>
-                                    <input
-                                        type="checkbox"
-                                        prop:checked=move || filter_unmodified.get()
-                                        on:change=move |_| {
-                                            filter_unmodified.set(!filter_unmodified.get_untracked());
-                                        }
-                                    />
-                                    "unmodified"
-                                    <Show when=move || !filter_unmodified.get() && (unmodified_count > 0)>
-                                        <span class="qui-filter-count">
-                                            {format!("({unmodified_count})")}
-                                        </span>
-                                    </Show>
-                                </label>
-                                <label>
-                                    <input
-                                        type="checkbox"
-                                        prop:checked=move || filter_ignored.get()
-                                        on:change=move |_| {
-                                            filter_ignored.set(!filter_ignored.get_untracked());
-                                        }
-                                    />
-                                    "ignored"
-                                    <Show when=move || !filter_ignored.get() && (ignored_count > 0)>
-                                        <span class="qui-filter-count">
-                                            {format!("({ignored_count})")}
-                                        </span>
-                                    </Show>
-                                </label>
-                            </div>
-                            {(ignored_count > 0 || unmodified_count > 0).then(|| view! {
-                                <div class="list-separator"></div>
-                            })}
-                        </Show>
-
-                        <For
-                            each=move || filtered_entries.get()
-                            key=|(i, _)| *i
-                            let:item
-                        >
-                            <CommitEntryRow
-                                entry=item.1
-                                pkg_uri=data.uri.clone()
-                                notification=notification
-                                show_ignore_popup=show_ignore_popup
-                                show_unignore_popup=show_unignore_popup
-                            />
-                        </For>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        // ── Action bar ──
-        <div class="qui-actionbar">
-            {with_popover(
-                commit_hint.clone(),
-                view! {
-                    <buttons::CommitRevision
-                        on_click=run_commit_only
-                        busy=committing
-                        disabled=commit_is_disabled
-                        primary=!has_remote
-                    />
-                }
-                    .into_any(),
-            )}
-            {has_remote.then(|| view! {
-                <span class="actions-divider">"or"</span>
-                {with_popover(
-                    commit_hint,
-                    view! {
-                        <buttons::CommitAndPush
-                            on_click=run_commit_and_push
-                            busy=committing
-                            disabled=commit_is_disabled
-                        />
-                    }
-                        .into_any(),
-                )}
-            })}
-        </div>
-
-        // ── Popups ──
-        <Show when=move || show_ignore_popup.get().is_some()>
-            {move || show_ignore_popup.get().map(|data| {
-                view! {
-                    <IgnorePopup
-                        data=data
-                        notification=notification
-                        refetch=refetch
-                        on_close=move || show_ignore_popup.set(None)
-                    />
-                }
-            })}
-        </Show>
-
-        <Show when=move || show_unignore_popup.get().is_some()>
-            {move || show_unignore_popup.get().map(|data| {
-                view! {
-                    <UnignorePopup
-                        data=data
-                        notification=notification
-                        refetch=refetch
-                        on_close=move || show_unignore_popup.set(None)
-                    />
-                }
-            })}
-        </Show>
+        <PageHeader
+            trail=view! {
+                <Trail crumbs=vec![
+                    (home_href, "Packages".to_string()),
+                    (package_href, namespace),
+                ] />
+            }
+                .into_any()
+            title="New revision"
+            actions=view! {
+                {face}
+                {location}
+                <ActionMenu aria_label="More actions for this package" actions=menu />
+            }
+                .into_any()
+        />
     }
 }
 
-// ── Toolbar actions ──
+/// What the problems banner reports.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Problem {
+    /// System files such as `.DS_Store`.
+    Junk { count: usize, names: Vec<String> },
+    /// The role cannot write to the bucket. Blocks saving too: saving checks
+    /// the workflow, which reads the bucket's config.
+    NoAccess { reason: String },
+    /// No session; blocks saving too. `host` is `None` for ambient credentials.
+    SignedOut { host: Option<String> },
+    /// The read didn't reach the bucket; blocks saving too. `host` is the
+    /// catalog, `None` for a bucket with no catalog.
+    Unreachable { host: Option<String> },
+    // A newer published revision: deferred.
+}
 
-fn build_toolbar_actions(
-    data: &CommitData,
-    notification: RwSignal<Option<Notification>>,
-    ui_locked: RwSignal<bool>,
-) -> ToolbarActions {
-    let namespace = data.namespace.clone();
-    let uri = data.uri.clone();
-    let origin_url = data.uri.as_ref().and_then(util::catalog_url);
-    let has_catalog = origin_url.is_some();
-    let catalog_disabled = data.status == "local";
-
-    ToolbarActions::new(move || {
-        let navigate = use_navigate();
-
-        let ns_for_open = namespace.clone();
-        let uri_for_open = uri.clone();
-        let on_open_file_browser = move |_| {
-            let ns = ns_for_open.clone();
-            let uri = uri_for_open.clone();
-            leptos::task::spawn_local(async move {
-                match commands::open_in_file_browser(ns.to_string(), uri).await {
-                    Ok(msg) => notification.set(Some(Notification::Success(msg))),
-                    Err(e) => notification.set(Some(Notification::Error(e))),
+impl Problem {
+    #[must_use]
+    pub fn words(&self) -> String {
+        match self {
+            Self::Junk { count, names } => {
+                let files = if *count == 1 {
+                    "1 system file would be published".to_string()
+                } else {
+                    format!("{count} system files would be published")
+                };
+                if names.is_empty() {
+                    files
+                } else {
+                    format!("{files} ({})", names.join(", "))
                 }
-            });
-        };
-
-        let url_for_catalog = origin_url.clone();
-        let on_open_catalog = move |_| {
-            if let Some(url) = url_for_catalog.clone() {
-                leptos::task::spawn_local(async move {
-                    let _ = commands::open_in_web_browser(url).await;
-                });
             }
-        };
+            Self::NoAccess { reason } => format!("{reason}."),
+            Self::SignedOut { host: Some(host) } => format!("You are signed out of {host}."),
+            Self::SignedOut { host: None } => {
+                "There are no credentials for this bucket. Add some to publish.".to_string()
+            }
+            Self::Unreachable { host } => {
+                let host = host.as_deref().unwrap_or("the S3 bucket");
+                format!("Can't reach {host}. Publishing and saving wait until it can be reached.")
+            }
+        }
+    }
 
-        let ns_for_uninstall = namespace.clone();
-        let uri_for_uninstall = uri.clone();
-        let on_uninstall = move |_| {
-            let ns = ns_for_uninstall.clone();
-            let uri = uri_for_uninstall.clone();
-            let navigate = navigate.clone();
-            ui_locked.set(true);
-            leptos::task::spawn_local(async move {
-                // v1 keeps the downloaded files: only the v2 confirmation
-                // offers to delete them.
-                match commands::package_uninstall(ns.to_string(), uri, false).await {
-                    Ok(msg) => {
-                        notification.set(Some(Notification::Success(msg)));
-                        navigate("/", NavigateOptions::default());
-                    }
-                    Err(e) => {
-                        ui_locked.set(false);
-                        notification.set(Some(Notification::Error(e)));
-                    }
-                }
-            });
-        };
+    const fn variant(&self) -> BannerVariant {
+        match self {
+            Self::NoAccess { .. } | Self::SignedOut { .. } => BannerVariant::Critical,
+            Self::Junk { .. } | Self::Unreachable { .. } => BannerVariant::Warning,
+        }
+    }
+}
 
-        view! {
-            <li>
-                <buttons::OpenInFileBrowser on_click=on_open_file_browser />
-            </li>
-            {if has_catalog {
+/// The problems banner, with its remedy as the banner's action.
+#[component]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "a component's props are owned; the body reads them from there"
+)]
+pub fn ProblemBanner(
+    problem: Problem,
+    #[prop(optional)] on_ignore_junk: Option<Callback<()>>,
+    #[prop(optional, into)] sign_in_href: Option<String>,
+) -> impl IntoView {
+    let remedy = match &problem {
+        Problem::Junk { .. } => on_ignore_junk.map(|ignore| {
+            view! {
+                <Button on_click=move |_| ignore.run(())>
+                    "Ignore them"
+                </Button>
+            }
+            .into_any()
+        }),
+        Problem::SignedOut { host: Some(_) } => sign_in_href
+            .map(|href| view! { <a class=style::remedy_link href=href>"Sign in"</a> }.into_any()),
+        _ => None,
+    };
+    match remedy {
+        Some(remedy) => view! {
+            <Banner variant=problem.variant() action=remedy>
+                {problem.words()}
+            </Banner>
+        }
+        .into_any(),
+        None => view! { <Banner variant=problem.variant()>{problem.words()}</Banner> }.into_any(),
+    }
+}
+
+/// The message. The placeholder is what an empty field publishes.
+#[component]
+pub fn MessageField(
+    value: RwSignal<String>,
+    #[prop(into)] placeholder: String,
+    #[prop(optional, into)] error: MaybeProp<String>,
+    /// Set when arriving from `Create new revision`.
+    #[prop(optional)]
+    autofocus: bool,
+) -> impl IntoView {
+    let invalid = Signal::derive(move || error.get().is_some());
+    view! {
+        <FormControl
+            label="Message"
+            error=error
+            control=move |id| {
                 view! {
-                    <li>
-                        <buttons::OpenInCatalog on_click=on_open_catalog disabled=catalog_disabled />
-                    </li>
+                    <TextInput
+                        id=id
+                        value=value
+                        placeholder=placeholder
+                        invalid=invalid
+                        autofocus=autofocus
+                    />
                 }
-                .into_any()
-            } else {
-                ().into_any()
-            }}
-            <li>
-                <buttons::Remove on_click=on_uninstall />
-            </li>
+                    .into_any()
+            }
+        />
+    }
+}
+
+#[derive(Clone)]
+pub struct WorkflowChoice {
+    pub options: Vec<String>,
+    pub selected: RwSignal<String>,
+}
+
+/// The workflow: a live `Select`, or its words when there is nothing to choose.
+#[component]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "a component's props are owned; the body reads them from there"
+)]
+pub fn WorkflowField(
+    /// `None` shows `no_workflow` instead.
+    #[prop(default = None)]
+    workflow: Option<WorkflowChoice>,
+    #[prop(optional, into)] no_workflow: Option<String>,
+    #[prop(optional, into)] error: MaybeProp<String>,
+    /// The value came from the publish settings, the one source worth naming.
+    #[prop(optional, into)]
+    from_settings: Signal<bool>,
+    /// `/settings` by default.
+    #[prop(optional, into)]
+    settings_href: Option<String>,
+    /// A warning under the field that is not the check's: the Settings
+    /// workflow this bucket cannot use.
+    #[prop(optional, into)]
+    note: Option<String>,
+) -> impl IntoView {
+    let hint = settings_hint(from_settings, settings_href);
+    let note = note.map(|note| view! { <p class=style::field_hint>{note}</p> });
+    let Some(choice) = workflow else {
+        let words = no_workflow.unwrap_or_else(|| "None".to_string());
+        return view! {
+            <div class=style::field>
+                <div class=style::field_name>"Workflow"</div>
+                <div class=style::field_value>{words}</div>
+                {note}
+                {hint}
+            </div>
+        }
+        .into_any();
+    };
+    view! {
+        <div class=style::field>
+            <FormControl
+                label="Workflow"
+                error=error
+                control=move |id| {
+                    view! {
+                        <Select
+                            naming=Naming::FormControl(id)
+                            options=choice.options.clone()
+                            selected=choice.selected
+                        />
+                    }
+                        .into_any()
+                }
+            />
+            {note}
+            {hint}
+        </div>
+    }
+    .into_any()
+}
+
+/// The metadata: a [`JsonDisplay`] preview until `Edit` swaps in the JSON editor,
+/// the one tall control on the page. Nothing above the editor may set
+/// `overflow`, or its context menu is cropped. A failed check opens it.
+#[component]
+pub fn MetadataField(
+    metadata: RwSignal<String>,
+    editing: RwSignal<bool>,
+    #[prop(optional, into)] error: MaybeProp<String>,
+    /// See [`WorkflowField`].
+    #[prop(optional, into)]
+    from_settings: Signal<bool>,
+    #[prop(optional, into)] settings_href: Option<String>,
+    /// `Metadata` by default; Settings' reads `Default metadata`.
+    #[prop(optional, into)]
+    label: Option<String>,
+) -> impl IntoView {
+    let label = label.unwrap_or_else(|| "Metadata".to_string());
+    let failing = Signal::derive(move || error.get().is_some());
+    // On the edge into failure only, so folding it over an error sticks.
+    Effect::new(move |was: Option<bool>| {
+        let now = failing.get();
+        if now && !was.unwrap_or(false) && !editing.get_untracked() {
+            editing.set(true);
+        }
+        now
+    });
+    // Not a `FormControl`: the name shares its line with the editor's toggle.
+    let control_id = quilt_ui_kit::unique_id("metadata");
+    let error_id = format!("{control_id}-error");
+    let label_id = format!("{control_id}-label");
+    let body_id = format!("{control_id}-body");
+    let preview = move || match MetadataPreview::of(&metadata.get()) {
+        MetadataPreview::None => {
+            view! { <span class=style::field_empty>"No metadata"</span> }.into_any()
+        }
+        MetadataPreview::Invalid => view! { <span>"Not valid JSON"</span> }.into_any(),
+        MetadataPreview::Json(value) => view! { <JsonDisplay value=value /> }.into_any(),
+    };
+    // Here rather than in the editor, so a height the reader dragged to
+    // survives `Done` and `Edit`.
+    let height = RwSignal::new(EDITOR_HEIGHT);
+    // Here so the label can reach it: the label names the hidden textarea,
+    // and a click on it must land in the editor the reader sees.
+    let editor_ref = NodeRef::<leptos::html::Div>::new();
+    let editor = {
+        let control_id = control_id.clone();
+        let label_id = label_id.clone();
+        let error_id = error_id.clone();
+        move || {
+            metadata_editor(
+                control_id.clone(),
+                label_id.clone(),
+                error_id.clone(),
+                metadata,
+                failing,
+                height,
+                editor_ref,
+            )
+        }
+    };
+
+    view! {
+        <div class=style::field>
+            <div class=style::field_head>
+                {
+                    let control_id = control_id.clone();
+                    move || {
+                        let label = label.clone();
+                        let label_id = label_id.clone();
+                        if editing.get() {
+                            view! {
+                                <label
+                                    class=style::field_name
+                                    id=label_id
+                                    for=control_id.clone()
+                                    on:click=move |ev| {
+                                        if focus_json_editor(editor_ref) {
+                                            ev.prevent_default();
+                                        }
+                                    }
+                                >
+                                    {label}
+                                </label>
+                            }
+                                .into_any()
+                        } else {
+                            view! { <span class=style::field_name id=label_id>{label}</span> }
+                                .into_any()
+                        }
+                    }
+                }
+                <button
+                    type="button"
+                    class=style::inline_action
+                    aria-expanded=move || editing.get().to_string()
+                    aria-controls=body_id.clone()
+                    on:click=move |_| editing.update(|open| *open = !*open)
+                >
+                    {move || {
+                        if editing.get() {
+                            "Close editor"
+                        } else if MetadataPreview::of(&metadata.get()) == MetadataPreview::None {
+                            "Add"
+                        } else {
+                            "Edit"
+                        }
+                    }}
+                </button>
+            </div>
+            <div class=style::field_value id=body_id>
+                {move || if editing.get() { editor.clone()() } else { preview().into_any() }}
+            </div>
+            <Show when=move || error.get().is_some()>
+                <p class=style::field_error id=error_id.clone()>
+                    {StateTone::Danger.glyph()}
+                    <span>{move || error.get().unwrap_or_default()}</span>
+                </p>
+            </Show>
+            {settings_hint(from_settings, settings_href)}
+        </div>
+    }
+}
+
+/// The metadata editor alone, always open, with its label and its error:
+/// Settings' publishing popup. The editor reads `metadata` once, as it
+/// mounts, so it is drawn again whenever `fresh` changes: a value set from
+/// outside it, such as a reset, reaches it that way.
+#[component]
+pub fn MetadataEditorField(
+    metadata: RwSignal<String>,
+    #[prop(optional, into)] error: MaybeProp<String>,
+    #[prop(into)] label: String,
+    /// Changes when `metadata` was set from outside the editor.
+    #[prop(optional, into)]
+    fresh: Signal<u64>,
+    /// The editor's opening height, in px. The grip's lower limit still applies.
+    #[prop(optional)]
+    height: Option<i32>,
+) -> impl IntoView {
+    let failing = Signal::derive(move || error.get().is_some());
+    let control_id = quilt_ui_kit::unique_id("metadata");
+    let error_id = format!("{control_id}-error");
+    let label_id = format!("{control_id}-label");
+    // Here so a height the reader dragged to survives a reset.
+    let height = RwSignal::new(height.map_or(EDITOR_HEIGHT, |h| dragged_height(h, 0)));
+    let editor_ref = NodeRef::<leptos::html::Div>::new();
+    let editor = {
+        let control_id = control_id.clone();
+        let label_id = label_id.clone();
+        let error_id = error_id.clone();
+        move || {
+            fresh.track();
+            metadata_editor(
+                control_id.clone(),
+                label_id.clone(),
+                error_id.clone(),
+                metadata,
+                failing,
+                height,
+                editor_ref,
+            )
+        }
+    };
+    view! {
+        <div class=style::field>
+            <label
+                class=style::field_name
+                id=label_id
+                for=control_id
+                on:click=move |ev| {
+                    if focus_json_editor(editor_ref) {
+                        ev.prevent_default();
+                    }
+                }
+            >
+                {label}
+            </label>
+            <div class=style::field_value>{editor}</div>
+            <Show when=move || error.get().is_some()>
+                <p class=style::field_error id=error_id.clone()>
+                    {StateTone::Danger.glyph()}
+                    <span>{move || error.get().unwrap_or_default()}</span>
+                </p>
+            </Show>
+        </div>
+    }
+}
+
+/// Shown while the publish settings supplied the value: a global default can
+/// fail in a bucket that does not expect it.
+fn settings_hint(from_settings: Signal<bool>, href: Option<String>) -> impl IntoView {
+    let href = href.unwrap_or_else(|| "/settings".to_string());
+    move || {
+        from_settings.get().then(|| {
+            view! {
+                <p class=style::field_hint>
+                    "From your publish settings. "
+                    <a class=style::remedy_link href=href.clone()>"Change it in Settings"</a>
+                </p>
+            }
+        })
+    }
+}
+
+/// The editor's height on opening, and the least it can be dragged to. 150px
+/// keeps a failed check's error inside the 560px window.
+const EDITOR_HEIGHT: i32 = 150;
+
+/// The most the grip drags the editor to: about 30 lines of JSON, and short
+/// of the 900px default window.
+const EDITOR_MAX_HEIGHT: i32 = 600;
+
+/// How far one arrow key moves the editor's lower edge.
+const EDITOR_STEP: i32 = 24;
+
+/// The editor's height after a drag of `dy` from `start`.
+fn dragged_height(start: i32, dy: i32) -> i32 {
+    (start + dy).clamp(EDITOR_HEIGHT, EDITOR_MAX_HEIGHT)
+}
+
+/// The editor's height after `key` on its grip, or `None` for another key.
+fn keyed_height(height: i32, key: &str) -> Option<i32> {
+    match key {
+        "ArrowDown" => Some(dragged_height(height, EDITOR_STEP)),
+        "ArrowUp" => Some(dragged_height(height, -EDITOR_STEP)),
+        "Home" => Some(EDITOR_HEIGHT),
+        "End" => Some(EDITOR_MAX_HEIGHT),
+        _ => None,
+    }
+}
+
+/// The metadata control: the JSON editor over its fallback textarea, with a grip
+/// under it that drags it taller. Not CSS `resize`: that needs `overflow` on
+/// the box, which crops the editor's context menu.
+fn metadata_editor(
+    id: String,
+    labelled_by: String,
+    described_by: String,
+    metadata: RwSignal<String>,
+    invalid: Signal<bool>,
+    height: RwSignal<i32>,
+    editor_ref: NodeRef<leptos::html::Div>,
+) -> AnyView {
+    let textarea_ref = NodeRef::<leptos::html::Textarea>::new();
+    let editor_described_by = described_by.clone();
+    view! {
+        // Its own wrapper: the glue hides the textarea's parent on mount.
+        <div>
+            <textarea
+                node_ref=textarea_ref
+                id=id
+                aria-describedby=move || invalid.get().then(|| described_by.clone())
+                aria-invalid=move || invalid.get().then_some("true")
+                class=style::metadata
+                rows=6
+                spellcheck="false"
+                prop:value=move || metadata.get_untracked()
+                on:input=move |ev| metadata.set(event_target_value(&ev))
+            />
+        </div>
+        // The glue hides the textarea, so the editor a reader sees carries
+        // the field's name and its error too, as a named group.
+        <div
+            role="group"
+            aria-labelledby=labelled_by
+            aria-describedby=move || invalid.get().then(|| editor_described_by.clone())
+            class=move || invalid.get().then_some(style::invalid)
+            style:height=move || format!("{}px", height.get())
+        >
+            <JsonEditor
+                node_ref=editor_ref
+                textarea_ref=textarea_ref
+                initial_value=metadata.get_untracked()
+                class=style::editor
+            />
+        </div>
+        {editor_grip(height)}
+    }
+    .into_any()
+}
+
+/// The bar under the editor: drag it, or focus it and use the arrow keys.
+fn editor_grip(height: RwSignal<i32>) -> impl IntoView {
+    // (pointer, its y, height) where the drag began. Only that pointer moves
+    // or ends it, so a second finger cannot take over.
+    let drag = StoredValue::new(None::<(i32, i32, i32)>);
+    let end = move |ev: leptos::ev::PointerEvent| {
+        if drag
+            .get_value()
+            .is_some_and(|(id, _, _)| id == ev.pointer_id())
+        {
+            drag.set_value(None);
+        }
+    };
+    view! {
+        <div
+            class=style::grip
+            role="separator"
+            aria-orientation="horizontal"
+            aria-label="Resize the metadata editor"
+            aria-valuemin=EDITOR_HEIGHT
+            aria-valuemax=EDITOR_MAX_HEIGHT
+            aria-valuenow=move || height.get()
+            tabindex="0"
+            on:pointerdown=move |ev: leptos::ev::PointerEvent| {
+                if ev.button() != 0 || drag.get_value().is_some() {
+                    return;
+                }
+                ev.prevent_default();
+                if let Some(grip) = ev
+                    .current_target()
+                    .and_then(|t| wasm_bindgen::JsCast::dyn_into::<web_sys::Element>(t).ok())
+                {
+                    let _ = grip.set_pointer_capture(ev.pointer_id());
+                }
+                drag.set_value(Some((ev.pointer_id(), ev.client_y(), height.get_untracked())));
+            }
+            on:pointermove=move |ev: leptos::ev::PointerEvent| {
+                if let Some((id, y, start)) = drag.get_value()
+                    && id == ev.pointer_id()
+                {
+                    height.set(dragged_height(start, ev.client_y() - y));
+                }
+            }
+            on:pointerup=end
+            on:pointercancel=end
+            on:keydown=move |ev: leptos::ev::KeyboardEvent| {
+                if let Some(next) = keyed_height(height.get_untracked(), &ev.key()) {
+                    ev.prevent_default();
+                    height.set(next);
+                }
+            }
+        ></div>
+    }
+}
+
+/// What the folded metadata shows.
+#[derive(Debug, PartialEq)]
+pub enum MetadataPreview {
+    /// Empty text or `{}`.
+    None,
+    Invalid,
+    Json(serde_json::Value),
+}
+
+impl MetadataPreview {
+    #[must_use]
+    pub fn of(text: &str) -> Self {
+        if text.trim().is_empty() {
+            return Self::None;
+        }
+        match serde_json::from_str::<serde_json::Value>(text) {
+            Ok(serde_json::Value::Object(fields)) if fields.is_empty() => Self::None,
+            Ok(value) => Self::Json(value),
+            Err(_) => Self::Invalid,
+        }
+    }
+}
+
+/// How a file differs, in the file pane's words.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Change {
+    Changed,
+    New,
+    Deleted,
+}
+
+impl Change {
+    #[must_use]
+    pub const fn words(self) -> &'static str {
+        match self {
+            Self::Changed => "Changed",
+            Self::New => "New",
+            Self::Deleted => "Deleted",
+        }
+    }
+
+    #[must_use]
+    pub const fn tone(self) -> StateTone {
+        match self {
+            Self::Changed | Self::New => StateTone::Attention,
+            Self::Deleted => StateTone::Danger,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IncludedFile {
+    pub path: String,
+    pub size: u64,
+    pub change: Change,
+}
+
+pub const NO_FILE_CHANGES: &str = "No file changes";
+pub const METADATA_ONLY: &str = "This revision only updates metadata.";
+
+fn files_words(n: usize) -> String {
+    if n == 1 {
+        "1 file".to_string()
+    } else {
+        format!("{n} files")
+    }
+}
+
+/// Said when the list shows fewer files than the revision includes: the
+/// page's read is capped, the revision is not.
+#[must_use]
+pub fn cut_words(shown: usize, total: usize) -> String {
+    format!("Showing {shown} of {total} files. All {total} are included.")
+}
+
+/// How many ignored files and folders the revision leaves out; `None` when
+/// it leaves out nothing.
+fn ignored_words(files: usize, folders: usize) -> Option<String> {
+    let plural = |n: usize, one: &str| {
+        if n == 1 {
+            format!("1 ignored {one}")
+        } else {
+            format!("{n} ignored {one}s")
+        }
+    };
+    let words = match (files, folders) {
+        (0, 0) => return None,
+        (files, 0) => plural(files, "file"),
+        (0, folders) => plural(folders, "folder"),
+        (files, folders) => format!(
+            "{} and {}",
+            plural(files, "file"),
+            plural(folders, "folder")
+        ),
+    };
+    Some(format!("{words} not included"))
+}
+
+/// The items a row's `[⋯]` offers. Every file here is changed, new or
+/// deleted, so no published revision holds it as it is here: there is no
+/// catalog item and no *Copy URI*, and *Copy path* copies where the file is on
+/// disk. A deleted file
+/// has nothing on disk to open, reveal or copy.
+fn row_commands(file: &IncludedFile) -> Vec<RowCommand> {
+    let path = file.path.clone();
+    let mut commands = Vec::new();
+    if file.change != Change::Deleted {
+        commands.push(RowCommand::Open(path.clone()));
+        commands.push(RowCommand::Reveal(path.clone()));
+        commands.push(RowCommand::CopyPath(path.clone()));
+    }
+    commands.push(RowCommand::Ignore(path));
+    commands
+}
+
+/// The changed files, then how many ignored files and folders are left out.
+/// No facets and no search: narrowing what will be published only hides some
+/// of it.
+#[component]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "a component's props are owned; the body reads them from there"
+)]
+pub fn IncludedList(
+    files: Vec<IncludedFile>,
+    /// Ignored files, not counting `ignored_folders`.
+    ignored: usize,
+    /// Ignored folders, each counted once whatever it holds.
+    #[prop(optional)]
+    ignored_folders: usize,
+    /// What a row's `[⋯]` chose.
+    on_command: Callback<RowCommand>,
+    /// The heading's `(files, bytes)` when `files` is not all of them: the
+    /// page's list is capped, its totals are not. Counted from `files` by
+    /// default.
+    #[prop(optional)]
+    totals: Option<(usize, u64)>,
+) -> impl IntoView {
+    let (count, total) =
+        totals.unwrap_or_else(|| (files.len(), files.iter().map(|f| f.size).sum()));
+    let cut = (count > files.len() && !files.is_empty()).then(|| cut_words(files.len(), count));
+    let heading_id = quilt_ui_kit::unique_id("included");
+    let labelled_by = heading_id.clone();
+    let tally = (count > 0).then(|| format!(" · {} · {}", files_words(count), format_size(total)));
+    let rows = if files.is_empty() {
+        view! {
+            <Blankslate
+                visual=icons::file()
+                heading=NO_FILE_CHANGES
+                description=METADATA_ONLY
+            />
         }
         .into_any()
-    })
+    } else {
+        view! {
+            // A box of its own, so the rows scroll under a header that stays.
+            <NameTooltip>
+            <div class=style::rows>
+            <Card flush=true list=true fill=true>
+                {files
+                    .into_iter()
+                    .map(|file| {
+                        let actions = menu_actions(&row_commands(&file), on_command);
+                        view! {
+                            <li>
+                                <EntryRow
+                                    name=file.path
+                                    state=file.change.words().to_string()
+                                    tone=file.change.tone()
+                                    size=format_size(file.size)
+                                    actions=actions
+                                    plain=true
+                                />
+                            </li>
+                        }
+                    })
+                    .collect_view()}
+            </Card>
+            </div>
+            </NameTooltip>
+        }
+        .into_any()
+    };
+    view! {
+        <section class=style::included aria-labelledby=labelled_by>
+            // The ignored line shares the heading's row: under the box it
+            // took a row from the list in a short window.
+            <div class=style::included_head>
+                <h3 class=style::included_heading id=heading_id>
+                    "What's included"
+                    <span class=style::tally>{tally}</span>
+                </h3>
+                {ignored_words(ignored, ignored_folders)
+                    .map(|words| view! { <p class=style::quiet>{words}</p> })}
+            </div>
+            {rows}
+            {cut.map(|words| view! { <p class=style::quiet>{words}</p> })}
+        </section>
+    }
 }
 
-// ── Entry row (commit variant — no checkboxes) ──
-
+/// The page's column, in the order the reader confirms. The header and the
+/// banner span it; under them the form and the files are two columns on a
+/// wide page and one column on a narrow one.
+///
+/// It must be a direct child of `PageLayout`'s main: it fills that height,
+/// and the list's own scroll box takes what is left of it. A wrapper between
+/// them sizes to the content, and the whole page scrolls again.
 #[component]
-fn CommitEntryRow(
-    entry: EntryData,
-    pkg_uri: Option<S3PackageUri>,
-    notification: RwSignal<Option<Notification>>,
-    show_ignore_popup: RwSignal<Option<IgnorePopupData>>,
-    show_unignore_popup: RwSignal<Option<UnignorePopupData>>,
+pub fn CommitColumn(
+    /// For the page to reach the column's fields, in place of a wrapper.
+    #[prop(optional)]
+    node_ref: NodeRef<leptos::html::Div>,
+    header: AnyView,
+    #[prop(optional)] problem: Option<AnyView>,
+    message: AnyView,
+    workflow: AnyView,
+    metadata: AnyView,
+    included: AnyView,
 ) -> impl IntoView {
-    let is_deleted = entry.status == "deleted";
-    let is_ignored = entry.ignored_by.is_some();
-    let is_junky = entry.junky_pattern.is_some();
-
-    let class_mods = {
-        let mut classes = vec![entry.status.as_str()];
-        if is_junky {
-            classes.push("junky");
-        }
-        if is_ignored {
-            classes.push("ignored");
-        }
-        format!("qui-entry {}", classes.join(" "))
-    };
-
-    let status_display = match entry.status.as_str() {
-        "added" => "New",
-        "deleted" => "Deleted",
-        "modified" => "Modified",
-        "pristine" => "Downloaded",
-        "remote" => "Remote",
-        _ => "",
-    };
-
-    let size_display = format_size(entry.size);
-    let status_text = format!("{status_display}, {size_display}");
-
-    let filename_display = entry.filename.clone();
-    let filename_title = entry.filename.clone();
-
-    // Action buttons
-    let show_open_reveal = !is_deleted && !is_ignored && entry.status != "remote";
-    let show_catalog = (entry.status == "remote" || entry.status == "pristine")
-        && pkg_uri.as_ref().is_some_and(|u| u.catalog.is_some());
-
-    let ns_for_open = entry.namespace.clone();
-    let path_for_open = entry.filename.clone();
-    let uri_for_open = pkg_uri.clone();
-    let uri_for_ignore = pkg_uri.clone();
-    let uri_for_unignore = pkg_uri.clone();
-    let on_open = move |_| {
-        let ns = ns_for_open.clone();
-        let path = path_for_open.clone();
-        let uri = uri_for_open.clone();
-        leptos::task::spawn_local(async move {
-            match commands::open_in_default_application(ns.to_string(), path, uri).await {
-                Ok(msg) => notification.set(Some(Notification::Success(msg))),
-                Err(e) => notification.set(Some(Notification::Error(e))),
-            }
-        });
-    };
-
-    let ns_for_reveal = entry.namespace.clone();
-    let path_for_reveal = entry.filename.clone();
-    let uri_for_reveal = pkg_uri.clone();
-    let on_reveal = move |_| {
-        let ns = ns_for_reveal.clone();
-        let path = path_for_reveal.clone();
-        let uri = uri_for_reveal.clone();
-        leptos::task::spawn_local(async move {
-            match commands::reveal_in_file_browser(ns.to_string(), path, uri).await {
-                Ok(msg) => notification.set(Some(Notification::Success(msg))),
-                Err(e) => notification.set(Some(Notification::Error(e))),
-            }
-        });
-    };
-
-    let path_for_catalog = entry.filename.clone();
-    let on_open_catalog = move |_| {
-        let Some(url) = pkg_uri
-            .as_ref()
-            .and_then(|u| util::entry_catalog_url(u, &path_for_catalog))
-        else {
-            return;
-        };
-        leptos::task::spawn_local(async move {
-            let _ = commands::open_in_web_browser(url).await;
-        });
-    };
-
-    let junky_pattern = entry.junky_pattern.clone();
-    let ns_for_ignore = entry.namespace.clone();
-    let path_for_ignore = entry.filename.clone();
-    let on_ignore = move |_| {
-        if let Some(pattern) = junky_pattern.clone() {
-            show_ignore_popup.set(Some(IgnorePopupData {
-                namespace: ns_for_ignore.to_string(),
-                path: path_for_ignore.clone(),
-                suggested_pattern: pattern,
-                uri: uri_for_ignore.clone(),
-            }));
-        }
-    };
-
-    let ignored_by = entry.ignored_by.as_ref().map(|by| by.pattern.clone());
-    let ns_for_unignore = entry.namespace.clone();
-    let path_for_unignore = entry.filename.clone();
-    let folder = entry.folder;
-    let on_unignore = move |_| {
-        if let Some(pattern) = ignored_by.clone() {
-            show_unignore_popup.set(Some(UnignorePopupData {
-                namespace: ns_for_unignore.to_string(),
-                path: path_for_unignore.clone(),
-                folder,
-                pattern,
-                uri: uri_for_unignore.clone(),
-            }));
-        }
-    };
-
     view! {
-        <div class=class_mods>
-            <div class="text">
-                <p class="text-primary" title=filename_title data-testid="entry-name">
-                    {filename_display}
-                </p>
-                <p class="text-secondary">{status_text}</p>
-            </div>
-
-            <div class="menu">
-                <ul class="menu-list">
-                    {if show_open_reveal {
-                        view! {
-                            <li class="menu-item">
-                                <buttons::Open on_click=on_open small=true />
-                            </li>
-                            <li class="menu-item">
-                                <buttons::Reveal on_click=on_reveal small=true />
-                            </li>
-                        }
-                        .into_any()
-                    } else {
-                        ().into_any()
-                    }}
-                    {if show_catalog {
-                        view! {
-                            <li class="menu-item">
-                                <buttons::OpenInCatalog on_click=on_open_catalog small=true />
-                            </li>
-                        }
-                        .into_any()
-                    } else {
-                        ().into_any()
-                    }}
-                    {if is_junky {
-                        view! {
-                            <li class="menu-item">
-                                <buttons::Ignore on_click=on_ignore small=true />
-                            </li>
-                        }
-                        .into_any()
-                    } else {
-                        ().into_any()
-                    }}
-                    {if is_ignored {
-                        view! {
-                            <li class="menu-item">
-                                <buttons::Unignore on_click=on_unignore small=true />
-                            </li>
-                        }
-                        .into_any()
-                    } else {
-                        ().into_any()
-                    }}
-                </ul>
-            </div>
+        <div class=style::column node_ref=node_ref>
+            {header}
+            {problem}
+            // Two columns from about a 1024px window, as on Settings.
+            <TwoColumns min_column=480 fill_height=true>
+                <div class=style::form>{message} {workflow} {metadata}</div>
+                {included}
+            </TwoColumns>
         </div>
     }
 }
 
-// ── Action-bar gate ──
-
-/// Whether the action bar's Commit / Commit and Push buttons must be inert.
-///
-/// An empty message (the manifest header requires one), or anything that makes
-/// the click a guaranteed failure — a role that cannot read the bucket, or no
-/// session for the deployment.
-///
-/// The non-obvious part: committing looks like offline work, but the workflow
-/// quality gate reads the bucket's `.quilt/workflows/config.yml` before any
-/// manifest is written. Disabled rather than hidden, with a hint saying which
-/// of the two it is and what fixes it.
-fn commit_disabled(message: &str, blocked: bool) -> bool {
-    message.trim().is_empty() || blocked
-}
-
-// ── Live-validation view model ──
-
-/// Whether a settled edit should (re)arm the debounce timer: only when the
-/// current input key differs from the value the debounced mirror already holds.
-/// Guards the mount-time Effect run, which observes the initial key equal to the
-/// seeded mirror — scheduling a `set` there would re-run the validation resource
-/// with identical input (`RwSignal::set` has no `PartialEq` dedupe).
-pub(super) fn should_debounce<T: PartialEq>(key: &T, debounced: &T) -> bool {
-    key != debounced
-}
-
-/// The metadata the live validation should check for a given editor state.
-/// Mirrors the commit path's `UserMeta::Keep` semantics: an empty/whitespace
-/// editor means "keep the previous revision's metadata", which the commit gate
-/// validates — so live validation substitutes that seeded previous value rather
-/// than validating `{}`. A non-empty editor is validated as typed. When both are
-/// empty they collapse to `{}` on both paths, keeping live and commit consistent.
-/// Where the form's message comes from, ahead of a link to Settings. The
-/// message always has a default there, so the hint shows either way.
-fn message_settings_hint(has_template: bool) -> &'static str {
-    if has_template {
-        "This message follows your template in"
-    } else {
-        "You can change the default message in"
+/// The page while `get_commit_data` is in flight.
+#[component]
+pub fn CommitPageSkeleton() -> impl IntoView {
+    view! {
+        <div class=style::column aria-busy="true">
+            <PageHeaderSkeleton />
+            <div class=style::skeleton_field>
+                <SkeletonBox width="64px" height="16px" />
+                <SkeletonBox width="100%" height="var(--q-control-height)" />
+            </div>
+            <SkeletonBox width="100%" height="var(--q-control-height)" />
+            <SkeletonBox width="200px" height="16px" />
+        </div>
     }
-}
-
-/// The text the metadata editor starts with: the publish settings' default
-/// metadata when there is one, else the previous revision's metadata.
-pub(super) fn starting_metadata(settings: Option<&str>, previous: &str) -> String {
-    settings.unwrap_or(previous).to_string()
-}
-
-pub(super) fn effective_metadata(editor_text: &str, seeded_previous: &str) -> String {
-    if editor_text.trim().is_empty() {
-        seeded_previous.to_string()
-    } else {
-        editor_text.to_string()
-    }
-}
-
-/// Gate advisory violations for display against per-field dirtiness. Name
-/// violations always show: the Name field is read-only and validated once on
-/// rules load, so a legitimate `handle_pattern` mismatch (the fixed name not
-/// matching the picked workflow) must surface without any interaction. Message
-/// and Metadata violations show only once the user has edited that field, so a
-/// pristine form — e.g. empty seeded metadata live-validated against a schema
-/// with required fields — never paints "as you type" errors before the user
-/// types.
-pub(super) fn displayed_violations(
-    violations: &[CommitViolation],
-    message_dirty: bool,
-    metadata_dirty: bool,
-) -> Vec<CommitViolation> {
-    violations
-        .iter()
-        .filter(|violation| match violation.field {
-            ViolationField::Name => true,
-            ViolationField::Message => message_dirty,
-            ViolationField::Metadata => metadata_dirty,
-        })
-        .cloned()
-        .collect()
-}
-
-/// The messages of the violations that belong under `field`, in order. Pure
-/// mapping from the backend's per-field violation list to the strings one field
-/// renders, so the routing is unit-testable without a DOM.
-pub(super) fn field_violations(
-    violations: &[CommitViolation],
-    field: ViolationField,
-) -> Vec<String> {
-    violations
-        .iter()
-        .filter(|violation| violation.field == field)
-        .map(|violation| violation.message.clone())
-        .collect()
-}
-
-/// Render a field's advisory violations as a modest error list, or nothing when
-/// the field is clean.
-fn field_violation_view(
-    violations: &[CommitViolation],
-    field: ViolationField,
-) -> Option<impl IntoView + use<>> {
-    let messages = field_violations(violations, field);
-    (!messages.is_empty()).then(|| {
-        let items = messages
-            .into_iter()
-            .map(|message| view! { <li>{message}</li> })
-            .collect::<Vec<_>>();
-        view! { <ul class="qui-field-violations">{items}</ul> }
-    })
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{
-        commit_disabled, displayed_violations, effective_metadata, field_violations,
-        message_settings_hint, should_debounce, starting_metadata,
-    };
-    use crate::commands::{CommitViolation, ViolationField};
-    use crate::util::commit_denied_hint;
+mod layout_tests {
+    use super::*;
+    use quilt_ui_kit::test_support::{load_module_style, mount, sleep_ms};
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_test::*;
 
-    const DENIED: &str = "Current role ReadOnly has no access to this bucket";
+    use quilt_ui_kit::card::style as card;
+    use quilt_ui_kit::form_control::style as form_control;
+    use quilt_ui_kit::text_input::style as text_input;
+    use quilt_ui_kit::two_columns::style as columns;
 
-    fn violation(field: ViolationField, message: &str) -> CommitViolation {
-        CommitViolation {
-            field,
-            message: message.to_string(),
-        }
+    /// The kit's spacing tokens, which the test page does not load.
+    const TOKENS: &str = "--q-space-3:12px; --q-space-4:16px";
+
+    fn region(name: &'static str, height: u32) -> AnyView {
+        view! { <div data-region=name style=format!("height:{height}px")></div> }.into_any()
     }
 
-    /// A blocked bucket makes both action-bar buttons inert, and — the contrast
-    /// that keeps this test honest — an otherwise identical unblocked package
-    /// leaves them live. Same message on both sides, so the only thing under
-    /// test is the blocked term.
-    #[test]
-    fn a_blocked_bucket_disables_the_commit_buttons_an_open_one_does_not() {
-        assert!(commit_disabled("a message", true));
-        assert!(!commit_disabled("a message", false));
-    }
-
-    /// The disabled buttons are not silent, and the two reasons do not borrow
-    /// each other's remedy: a denial says switch role, an absent session says
-    /// sign in. Telling someone to switch role when the role was never the
-    /// problem is the failure this pair exists to prevent.
-    #[test]
-    fn the_disabled_commit_buttons_explain_themselves() {
-        assert_eq!(
-            commit_denied_hint(Some(DENIED)).as_deref(),
-            Some("Current role ReadOnly has no access to this bucket. Switch role to commit.")
+    /// The page's, the layout's and the card's stylesheets, as the app has them.
+    fn load_styles() {
+        load_module_style(
+            quilt_ui_kit::test_support::sheet("two_columns"),
+            &[
+                ("grid", columns::grid),
+                ("tight", columns::tight),
+                ("fill", columns::fill),
+            ],
         );
-        assert_eq!(commit_denied_hint(None), None);
-
-        assert_eq!(
-            crate::util::commit_no_session_hint(true, Some("quilt.test")).as_deref(),
-            Some("Not signed in to quilt.test. Sign in to commit.")
+        load_module_style(
+            quilt_ui_kit::test_support::sheet("card"),
+            &[
+                ("root", card::root),
+                ("title", card::title),
+                ("count", card::count),
+                ("body", card::body),
+                ("flush", card::flush),
+                ("fill", card::fill),
+                ("bare", card::bare),
+            ],
         );
-        // A bare bucket on ambient credentials has no deployment to sign in
-        // to, and must still block rather than falling through to enabled.
-        assert_eq!(
-            crate::util::commit_no_session_hint(true, None).as_deref(),
-            Some("No usable AWS credentials. Update ~/.aws or run aws sso login to commit.")
-        );
-        assert_eq!(crate::util::commit_no_session_hint(false, None), None);
-    }
-
-    /// The message gate is unchanged and independent of the rest: an empty
-    /// message still disables on an unblocked bucket.
-    #[test]
-    fn an_empty_message_still_disables_on_a_readable_bucket() {
-        assert!(commit_disabled("", false));
-        assert!(commit_disabled("   ", false));
-    }
-
-    #[test]
-    fn effective_metadata_keeps_previous_when_editor_empty() {
-        // Empty/whitespace editor → validate the seeded previous metadata (the
-        // commit path's `UserMeta::Keep`), not `{}`.
-        assert_eq!(
-            effective_metadata("   ", r#"{"owner":"alice"}"#),
-            r#"{"owner":"alice"}"#
-        );
-        // A non-empty editor is validated as typed.
-        assert_eq!(effective_metadata(r#"{"x":1}"#, "prev"), r#"{"x":1}"#);
-        // Both empty collapse to the same empty string → `{}` on both paths.
-        assert_eq!(effective_metadata("", ""), "");
-    }
-
-    #[test]
-    fn editor_starts_from_settings_but_an_emptied_editor_keeps_the_previous() {
-        let settings = r#"{"source":"desktop"}"#;
-        let previous = r#"{"owner":"alice"}"#;
-        // The editor starts from the settings' default metadata.
-        let start = starting_metadata(Some(settings), previous);
-        assert_eq!(start, settings);
-        // Left as seeded, it is validated as the settings value.
-        assert_eq!(effective_metadata(&start, previous), settings);
-        // Cleared, it keeps the previous revision's metadata, not the settings'.
-        assert_eq!(effective_metadata("", previous), previous);
-        // With no settings metadata, the editor starts from the previous one.
-        assert_eq!(starting_metadata(None, previous), previous);
-    }
-
-    #[test]
-    fn message_hint_says_whether_a_template_is_set() {
-        assert_eq!(
-            message_settings_hint(true),
-            "This message follows your template in"
-        );
-        assert_eq!(
-            message_settings_hint(false),
-            "You can change the default message in"
+        load_module_style(
+            include_str!("commit.module.css"),
+            &[
+                ("column", style::column),
+                ("form", style::form),
+                ("included", style::included),
+                ("included_head", style::included_head),
+                ("included_heading", style::included_heading),
+                ("rows", style::rows),
+                ("tally", style::tally),
+                ("quiet", style::quiet),
+            ],
         );
     }
 
-    #[test]
-    fn should_debounce_skips_equal_key() {
-        // Mount-time: the input equals the seeded debounced mirror, so no timer.
-        let key = ("msg".to_string(), "{}".to_string(), Some("wf".to_string()));
-        assert!(!should_debounce(&key, &key.clone()));
-        // A settled edit differs, so the timer arms.
-        let edited = ("msg2".to_string(), "{}".to_string(), Some("wf".to_string()));
-        assert!(should_debounce(&edited, &key));
-    }
-
-    #[test]
-    fn pristine_form_hides_message_and_metadata_but_shows_name() {
-        let violations = vec![
-            violation(ViolationField::Name, "handle mismatch"),
-            violation(ViolationField::Message, "message required"),
-            violation(ViolationField::Metadata, "missing owner"),
-        ];
-        // Pristine: neither field edited → only the Name violation surfaces.
-        let shown = displayed_violations(&violations, false, false);
-        let fields: Vec<_> = shown.iter().map(|v| v.field).collect();
-        assert_eq!(fields, vec![ViolationField::Name]);
-    }
-
-    #[test]
-    fn editing_a_field_reveals_its_violations() {
-        let violations = vec![
-            violation(ViolationField::Name, "handle mismatch"),
-            violation(ViolationField::Message, "message required"),
-            violation(ViolationField::Metadata, "missing owner"),
-        ];
-        // Message edited only → Name + Message show, Metadata still hidden.
-        let shown = displayed_violations(&violations, true, false);
-        let fields: Vec<_> = shown.iter().map(|v| v.field).collect();
-        assert_eq!(fields, vec![ViolationField::Name, ViolationField::Message]);
-        // Both edited → every violation shows.
-        let shown = displayed_violations(&violations, true, true);
-        assert_eq!(shown.len(), 3);
-    }
-
-    #[test]
-    fn field_violations_routes_messages_to_their_field() {
-        let violations = vec![
-            violation(ViolationField::Message, "message required"),
-            violation(ViolationField::Metadata, "missing owner"),
-            violation(ViolationField::Name, "handle mismatch"),
-            violation(ViolationField::Metadata, "bad json"),
-        ];
-        assert_eq!(
-            field_violations(&violations, ViolationField::Message),
-            vec!["message required".to_string()]
-        );
-        // Two metadata violations preserve their order.
-        assert_eq!(
-            field_violations(&violations, ViolationField::Metadata),
-            vec!["missing owner".to_string(), "bad json".to_string()]
-        );
-        assert_eq!(
-            field_violations(&violations, ViolationField::Name),
-            vec!["handle mismatch".to_string()]
-        );
-    }
-
-    #[test]
-    fn field_violations_empty_when_field_clean() {
-        let violations = vec![violation(ViolationField::Message, "x")];
-        assert_eq!(
-            field_violations(&violations, ViolationField::Name),
-            [] as [String; 0]
-        );
-        assert_eq!(
-            field_violations(&[], ViolationField::Message),
-            [] as [String; 0]
-        );
-    }
-
-    fn commit_data(uri: Option<&str>) -> crate::commands::CommitData {
-        crate::commands::CommitData {
-            namespace: "org/pkg".try_into().unwrap(),
-            uri: uri.map(|u| quilt_uri::S3PackageUri::try_from(u).unwrap()),
-            remote_locked: false,
-            newer: None,
-            status: "up_to_date".to_string(),
-            message: "Updated 1 file".to_string(),
-            user_meta: String::new(),
-            user_meta_error: None,
-            settings_user_meta: None,
-            settings_workflow: None,
-            has_message_template: false,
-            workflow: None,
-            workflows: crate::commands::CommitWorkflows::NotConfigured,
-            no_access_reason: None,
-            no_session: false,
-            no_session_host: None,
-            entries: Vec::new(),
-            ignored_count: 0,
-            unmodified_count: 0,
-            counts: crate::commands::EntryCounts::default(),
-            changed_bytes: 0,
-            junk: None,
-        }
-    }
-
-    async fn action_bar(uri: Option<&'static str>) -> Vec<String> {
-        use leptos::prelude::*;
-        use leptos_router::components::Router;
-        use wasm_bindgen::JsCast;
-
-        quilt_ui_kit::test_support::unmount_earlier();
-        let el = quilt_ui_kit::test_support::mount(move || {
+    /// The column with stand-in regions, `width` px wide.
+    async fn column(width: u32) -> web_sys::Element {
+        load_styles();
+        let el = mount(move || {
             view! {
-                <Router>
-                    <super::CommitContent
-                        data=commit_data(uri)
-                        notification=RwSignal::new(None)
-                        ui_locked=RwSignal::new(false)
-                        refetch=Trigger::new()
+                <div style=format!(
+                    "{TOKENS}; width:{width}px; height:600px; display:flex; flex-direction:column",
+                )>
+                    <CommitColumn
+                        header=region("header", 60)
+                        problem=region("problem", 40)
+                        message=region("message", 60)
+                        workflow=region("workflow", 60)
+                        metadata=region("metadata", 60)
+                        included=region("included", 100)
                     />
-                </Router>
+                </div>
             }
         });
-        quilt_ui_kit::test_support::sleep_ms(80).await;
-        let all = el.query_selector_all(".qui-actionbar button").unwrap();
-        (0..all.length())
-            .map(|i| {
-                all.item(i)
-                    .unwrap()
-                    .unchecked_into::<web_sys::Element>()
-                    .text_content()
-                    .unwrap_or_default()
-                    .trim()
-                    .to_string()
+        sleep_ms(0).await;
+        el
+    }
+
+    fn rect(el: &web_sys::Element, name: &str) -> web_sys::DomRect {
+        el.query_selector(&format!("[data-region={name}]"))
+            .unwrap()
+            .unwrap()
+            .get_bounding_client_rect()
+    }
+
+    /// Wide: the files beside the form, and the header and the banner across
+    /// both.
+    #[wasm_bindgen_test]
+    #[allow(clippy::float_cmp, reason = "box edges here are whole pixels")]
+    async fn wide_puts_the_files_beside_the_form() {
+        let el = column(1200).await;
+        let (message, included) = (rect(&el, "message"), rect(&el, "included"));
+        assert_eq!(included.top(), message.top(), "side by side");
+        assert!(included.left() > message.right(), "files on the right");
+        assert_eq!(rect(&el, "header").width(), 1200.0, "the header spans");
+        assert_eq!(rect(&el, "problem").width(), 1200.0, "the banner spans");
+    }
+
+    /// Narrow: one column, the files last.
+    #[wasm_bindgen_test]
+    #[allow(clippy::float_cmp, reason = "box edges here are whole pixels")]
+    async fn narrow_puts_the_files_last() {
+        let el = column(800).await;
+        let (metadata, included) = (rect(&el, "metadata"), rect(&el, "included"));
+        assert!(
+            included.top() >= metadata.bottom(),
+            "the files under the form"
+        );
+        assert_eq!(included.left(), metadata.left(), "one column");
+    }
+
+    /// The column with a real list of `n` files, in a 600px page that scrolls
+    /// as `PageLayout`'s frame does.
+    async fn page_with_files(width: u32, n: usize) -> web_sys::Element {
+        load_styles();
+        let el = mount(move || {
+            let files = (0..n)
+                .map(|i| IncludedFile {
+                    path: format!("data/file-{i:03}.csv"),
+                    size: 1000,
+                    change: Change::New,
+                })
+                .collect::<Vec<_>>();
+            view! {
+                <div
+                    data-page-test=""
+                    style=format!(
+                        "{TOKENS}; width:{width}px; height:600px; display:flex; \
+                         flex-direction:column; overflow-y:auto",
+                    )
+                >
+                    <CommitColumn
+                        header=region("header", 60)
+                        message=region("message", 60)
+                        workflow=region("workflow", 60)
+                        metadata=region("metadata", 60)
+                        included=view! {
+                            <IncludedList files=files ignored=0 on_command=Callback::new(|_| ()) />
+                        }
+                            .into_any()
+                    />
+                </div>
+            }
+        });
+        sleep_ms(0).await;
+        el
+    }
+
+    /// A long list scrolls in its own box, so the page does not scroll and
+    /// the header stays in view, wide and narrow.
+    #[wasm_bindgen_test]
+    async fn a_long_list_scrolls_in_its_own_box() {
+        for width in [1200, 800] {
+            let el = page_with_files(width, 100).await;
+            let page = el.query_selector("[data-page-test]").unwrap().unwrap();
+            assert_eq!(
+                page.scroll_height(),
+                page.client_height(),
+                "{width}: the page does not scroll"
+            );
+            let ul = el.query_selector("ul").unwrap().unwrap();
+            assert!(
+                ul.client_height() > 0 && ul.scroll_height() > ul.client_height(),
+                "{width}: the rows scroll in their box ({} of {})",
+                ul.client_height(),
+                ul.scroll_height()
+            );
+        }
+    }
+
+    /// The message field's border and the file box's border start on one
+    /// line: a field's label and the files' heading leave the same room.
+    #[wasm_bindgen_test]
+    async fn the_message_and_the_files_line_up() {
+        load_styles();
+        load_module_style(
+            quilt_ui_kit::test_support::sheet("form_control"),
+            &[
+                ("root", form_control::root),
+                ("name", form_control::name),
+                ("required", form_control::required),
+                ("caption", form_control::caption),
+                ("error", form_control::error),
+            ],
+        );
+        load_module_style(
+            quilt_ui_kit::test_support::sheet("text_input"),
+            &[("root", text_input::root), ("invalid", text_input::invalid)],
+        );
+        // The app's baseline (modern-normalize) zeroes a control's margin,
+        // which browsers otherwise set differently on each platform.
+        load_module_style("input { margin: 0; }", &[]);
+        let el = mount(|| {
+            let files = vec![IncludedFile {
+                path: "data/a.csv".to_string(),
+                size: 10,
+                change: Change::New,
+            }];
+            view! {
+                <div style=format!(
+                    "{TOKENS}; --q-space-1:4px; --q-space-2:8px; --q-text-body:14px; \
+                     --q-line-body:20px; font-size:14px; line-height:20px; width:1200px; \
+                     height:600px; display:flex; flex-direction:column",
+                )>
+                    <CommitColumn
+                        header=region("header", 60)
+                        message=view! {
+                            <MessageField value=RwSignal::new(String::new()) placeholder="m" />
+                        }
+                            .into_any()
+                        workflow=region("workflow", 60)
+                        metadata=region("metadata", 60)
+                        included=view! {
+                            <IncludedList files=files ignored=0 on_command=Callback::new(|_| ()) />
+                        }
+                            .into_any()
+                    />
+                </div>
+            }
+        });
+        sleep_ms(0).await;
+        let top = |sel: &str| {
+            el.query_selector(sel)
+                .unwrap()
+                .unwrap()
+                .get_bounding_client_rect()
+                .top()
+        };
+        let card = el
+            .query_selector("ul")
+            .unwrap()
+            .and_then(|ul| ul.parent_element())
+            .unwrap()
+            .get_bounding_client_rect()
+            .top();
+        // Within a pixel: fonts differ by platform, and so does the fraction.
+        let (input, card) = (top("input"), card);
+        assert!(
+            (input - card).abs() < 1.0,
+            "the input's top {input}, the card's {card}"
+        );
+    }
+
+    /// The editor's toggle sits right after the field's name and says what
+    /// it does: `Edit`, then `Close editor`.
+    #[wasm_bindgen_test]
+    async fn the_editor_toggle_follows_the_name() {
+        let el = mount(|| {
+            view! {
+                <MetadataField
+                    metadata=RwSignal::new("{\"plate\": 7}".to_string())
+                    editing=RwSignal::new(false)
+                />
+            }
+        });
+        let toggle = |el: &web_sys::Element| {
+            el.query_selector("[aria-expanded][aria-controls]")
+                .unwrap()
+                .expect("the toggle")
+        };
+        let name = toggle(&el).previous_element_sibling().expect("the name");
+        assert_eq!(name.text_content().as_deref(), Some("Metadata"));
+        assert_eq!(toggle(&el).text_content().as_deref(), Some("Edit"));
+        let button: web_sys::HtmlElement = toggle(&el).unchecked_into();
+        button.click();
+        sleep_ms(0).await;
+        assert_eq!(toggle(&el).text_content().as_deref(), Some("Close editor"));
+    }
+
+    /// With no file changes, a blank state with a glyph says so.
+    #[wasm_bindgen_test]
+    fn metadata_only_is_a_blank_state() {
+        let el = mount(|| {
+            view! { <IncludedList files=Vec::new() ignored=0 on_command=Callback::new(|_| ()) /> }
+        });
+        let text = el.text_content().unwrap_or_default();
+        assert!(text.contains(NO_FILE_CHANGES), "{text}");
+        assert!(text.contains(METADATA_ONLY), "{text}");
+        assert!(el.query_selector("svg").unwrap().is_some(), "the glyph");
+    }
+
+    /// The rows have no checkboxes, so they start with the path.
+    #[wasm_bindgen_test]
+    fn rows_start_with_the_path() {
+        let el = mount(|| {
+            let files = vec![IncludedFile {
+                path: "data/a.csv".to_string(),
+                size: 10,
+                change: Change::New,
+            }];
+            view! { <IncludedList files=files ignored=0 on_command=Callback::new(|_| ()) /> }
+        });
+        let row = el
+            .query_selector("li")
+            .unwrap()
+            .and_then(|li| li.first_element_child())
+            .unwrap();
+        let main = row.first_element_child().unwrap();
+        let first = main.first_element_child().unwrap();
+        assert_eq!(first.text_content().as_deref(), Some("data/a.csv"));
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+
+    /// `package_state.rs`'s list, plus `commits` and `hash`.
+    const BANNED: &[&str] = &[
+        "commit", "commits", "push", "pull", "remote", "behind", "ahead", "diverged", "dirty",
+        "hash",
+    ];
+
+    pub(crate) fn banned_in(words: &str) -> Option<&'static str> {
+        let lower = words.to_lowercase();
+        BANNED.iter().copied().find(|bad| {
+            lower
+                .split_whitespace()
+                .any(|w| w.trim_matches(|c: char| !c.is_alphanumeric()) == *bad)
+        })
+    }
+
+    #[test]
+    fn no_fixed_string_uses_a_banned_word() {
+        let mut all = vec![
+            SAVE_WITHOUT_PUBLISHING.to_string(),
+            NO_FILE_CHANGES.to_string(),
+            METADATA_ONLY.to_string(),
+            "New revision".to_string(),
+            "Ignore them".to_string(),
+            "Metadata".to_string(),
+            "What's included".to_string(),
+            cut_words(1000, 2000),
+        ];
+        all.extend(ignored_words(3, 1));
+        for primary in [
+            Primary::Files(1),
+            Primary::Files(3),
+            Primary::MetadataOnly,
+            Primary::LocalOnly,
+        ] {
+            all.push(primary.label());
+        }
+        for problem in [
+            Problem::Junk {
+                count: 2,
+                names: vec![".DS_Store".to_string()],
+            },
+            Problem::NoAccess {
+                reason: "Your role cannot write to this bucket".to_string(),
+            },
+            Problem::SignedOut {
+                host: Some("example.com".to_string()),
+            },
+            Problem::SignedOut { host: None },
+        ] {
+            all.push(problem.words());
+        }
+        for change in [Change::Changed, Change::New, Change::Deleted] {
+            all.push(change.words().to_string());
+        }
+        for words in &all {
+            assert_eq!(banned_in(words), None, "{words:?}");
+        }
+    }
+
+    #[test]
+    fn the_ignored_line_counts_files_and_folders_apart() {
+        assert_eq!(ignored_words(0, 0), None);
+        let cases = [
+            (1, 0, "1 ignored file not included"),
+            (5, 0, "5 ignored files not included"),
+            (0, 1, "1 ignored folder not included"),
+            (0, 2, "2 ignored folders not included"),
+            (3, 1, "3 ignored files and 1 ignored folder not included"),
+            (1, 2, "1 ignored file and 2 ignored folders not included"),
+        ];
+        for (files, folders, words) in cases {
+            assert_eq!(ignored_words(files, folders).as_deref(), Some(words));
+        }
+    }
+
+    /// Before the first publish the bucket can change, and Remove follows
+    /// below a rule; both wait for the page's lock. After, Remove is alone.
+    #[test]
+    fn the_header_menu_offers_the_bucket_then_remove() {
+        let words = |items: Vec<MenuItem>| -> Vec<(String, bool, bool)> {
+            items
+                .into_iter()
+                .map(|i| (i.label, i.separated, i.disabled.is_some()))
+                .collect()
+        };
+        let menu = |label: &str, busy: bool| {
+            vec![
+                (label.to_string(), false, busy),
+                ("Remove".to_string(), true, busy),
+            ]
+        };
+        assert_eq!(
+            words(header_menu(false, false)),
+            menu("Change bucket", false)
+        );
+        assert_eq!(
+            words(header_menu(true, false)),
+            [("Remove".to_string(), false, false)],
+            "once published the bucket is fixed, and the package page shows it"
+        );
+        assert_eq!(words(header_menu(false, true)), menu("Change bucket", true));
+        let items = header_menu(false, false);
+        assert_eq!(items[0].command, MenuCommand::Remote);
+        assert_eq!(items[1].command, MenuCommand::Remove);
+        assert_eq!(items[1].tone, quilt_ui_kit::ActionTone::Danger);
+    }
+
+    #[test]
+    fn the_editor_grows_between_its_opening_height_and_its_cap() {
+        assert_eq!(dragged_height(EDITOR_HEIGHT, 90), EDITOR_HEIGHT + 90);
+        assert_eq!(dragged_height(EDITOR_HEIGHT + 30, -90), EDITOR_HEIGHT);
+        assert_eq!(
+            dragged_height(EDITOR_MAX_HEIGHT - 10, 90),
+            EDITOR_MAX_HEIGHT
+        );
+        assert_eq!(
+            keyed_height(EDITOR_MAX_HEIGHT, "ArrowDown"),
+            Some(EDITOR_MAX_HEIGHT)
+        );
+        assert_eq!(keyed_height(EDITOR_HEIGHT, "End"), Some(EDITOR_MAX_HEIGHT));
+        assert_eq!(
+            keyed_height(EDITOR_HEIGHT, "ArrowDown"),
+            Some(EDITOR_HEIGHT + EDITOR_STEP)
+        );
+        assert_eq!(keyed_height(EDITOR_HEIGHT, "ArrowUp"), Some(EDITOR_HEIGHT));
+        assert_eq!(keyed_height(EDITOR_HEIGHT * 2, "Home"), Some(EDITOR_HEIGHT));
+        assert_eq!(keyed_height(EDITOR_HEIGHT, "Enter"), None);
+    }
+
+    #[test]
+    fn the_metadata_preview_draws_json_and_words_for_the_rest() {
+        assert_eq!(
+            MetadataPreview::of("{\"plate\": 7}"),
+            MetadataPreview::Json(serde_json::json!({"plate": 7}))
+        );
+        assert_eq!(MetadataPreview::of("  "), MetadataPreview::None);
+        assert_eq!(MetadataPreview::of("{}"), MetadataPreview::None);
+        assert_eq!(MetadataPreview::of("{\"a\": "), MetadataPreview::Invalid);
+    }
+
+    #[test]
+    fn the_primary_counts_its_files() {
+        assert_eq!(Primary::Files(1).label(), "Publish 1 file");
+        assert_eq!(Primary::Files(12).label(), "Publish 12 files");
+    }
+
+    fn file(change: Change) -> IncludedFile {
+        IncludedFile {
+            path: "raw/a.csv".to_string(),
+            size: 4_100,
+            change,
+        }
+    }
+
+    /// A row's items with a `|` where a rule goes.
+    fn grouped(change: Change) -> String {
+        menu_actions(&row_commands(&file(change)), Callback::new(|_| ()))
+            .iter()
+            .map(|a| {
+                if a.separated {
+                    format!("| {}", a.label)
+                } else {
+                    a.label.clone()
+                }
             })
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    /// The local file, where it is, then `.quiltignore`; a deleted file has
+    /// only the last, with no rule above it.
+    #[test]
+    fn rules_fall_between_the_groups_a_row_has() {
+        let local = "Open file, Reveal in folder, | Copy path, | Ignore";
+        assert_eq!(grouped(Change::Changed), local);
+        assert_eq!(grouped(Change::New), local);
+        assert_eq!(grouped(Change::Deleted), "Ignore");
+    }
+
+    async fn open_items(el: &web_sys::Element) -> Vec<web_sys::HtmlElement> {
+        use wasm_bindgen::JsCast;
+        el.query_selector("button[aria-label='More actions for this file']")
+            .unwrap()
+            .expect("the row's [⋯]")
+            .unchecked_into::<web_sys::HtmlElement>()
+            .click();
+        leptos::task::tick().await;
+        let found = el.query_selector_all("[popover] button").unwrap();
+        (0..found.length())
+            .map(|i| found.item(i).unwrap().unchecked_into())
             .collect()
     }
 
-    /// Commit and Push follows the bucket, not the catalog: a package with a
-    /// bucket and no catalog pushes on the computer's AWS credentials, and
-    /// one with no bucket only commits.
+    /// The row's `[⋯]` lists its items, and each hands the page its command.
     #[wasm_bindgen_test::wasm_bindgen_test]
-    async fn a_bucket_without_a_catalog_offers_commit_and_push() {
-        let pushes = action_bar(Some("quilt+s3://team-bucket#package=org/pkg")).await;
-        assert!(pushes.iter().any(|b| b == "Commit and Push"), "{pushes:?}");
+    async fn a_row_s_menu_hands_the_chosen_command_to_the_page() {
+        let chosen = RwSignal::new(None);
+        let el = quilt_ui_kit::test_support::mount(move || {
+            view! {
+                <IncludedList
+                    files=vec![file(Change::New)]
+                    ignored=0
+                    on_command=Callback::new(move |c| chosen.set(Some(c)))
+                />
+            }
+        });
+        let words: Vec<String> = open_items(&el)
+            .await
+            .iter()
+            .map(|b| b.text_content().unwrap_or_default())
+            .collect();
+        assert_eq!(
+            words,
+            ["Open file", "Reveal in folder", "Copy path", "Ignore"]
+        );
+        assert_eq!(
+            el.query_selector_all("[popover] [role='separator']")
+                .unwrap()
+                .length(),
+            2,
+        );
+        let path = || "raw/a.csv".to_string();
+        for (i, command) in [
+            RowCommand::Open(path()),
+            RowCommand::Reveal(path()),
+            RowCommand::CopyPath(path()),
+            RowCommand::Ignore(path()),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            open_items(&el).await[i].click();
+            assert_eq!(chosen.get_untracked(), Some(command));
+        }
+    }
 
-        let local = action_bar(None).await;
-        assert!(!local.iter().any(|b| b == "Commit and Push"), "{local:?}");
-        assert!(!local.is_empty(), "the commit button stays");
+    #[test]
+    fn the_junk_banner_names_what_it_found() {
+        let problem = Problem::Junk {
+            count: 2,
+            names: vec![".DS_Store".to_string()],
+        };
+        assert_eq!(
+            problem.words(),
+            "2 system files would be published (.DS_Store)"
+        );
     }
 }

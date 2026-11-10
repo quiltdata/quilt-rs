@@ -140,7 +140,7 @@ impl From<&crate::engine::autopull::PausedReason> for PausedKind {
         match reason {
             R::PendingChanges => Self::PendingChanges,
             R::PendingCommit => Self::PendingCommit,
-            R::Diverged => Self::Diverged,
+            R::Diverged | R::MergeRefused(_) => Self::Diverged,
             R::PullConflict(_) => Self::PullConflict,
             R::RoleDenied { .. } => Self::RoleDenied,
             R::Other(_) => Self::Other,

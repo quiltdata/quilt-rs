@@ -1,4 +1,4 @@
-//! `QuiltSync`'s UI kit: hand-written components for the v2 pages, the theme
+//! `QuiltSync`'s UI kit: hand-written components for the pages, the theme
 //! switch, and the story harness the galleries are built on.
 //!
 //! **Components here are presentation only:** props in, view out, callbacks for
@@ -159,6 +159,7 @@ pub use host_row::HostRow;
 pub use host_row::HostRowSkeleton;
 pub use icon_button::IconButton;
 pub use icon_button::IconButtonVariant;
+pub use inbox::ActionNeeded;
 pub use inbox::Badge;
 pub use inbox::Cause;
 pub use inbox::EntryKind;
@@ -168,7 +169,6 @@ pub use inbox::FileReport;
 pub use inbox::Inbox;
 pub use inbox::InboxEntry;
 pub use inbox::InboxPanel;
-pub use inbox::NeedsYou;
 pub use inbox::Revision;
 pub use json_display::Expanded;
 pub use json_display::JsonDisplay;

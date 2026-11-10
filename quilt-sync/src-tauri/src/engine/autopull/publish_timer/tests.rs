@@ -105,6 +105,7 @@ fn inner(wait: Duration, pull: bool, push: bool) -> (WatcherInner, Arc<Recording
                 idle_timeout_secs: wait.as_secs(),
             },
             close_to_tray: false,
+            notify_action_needed: true,
         })
     };
     (inner, reporter)

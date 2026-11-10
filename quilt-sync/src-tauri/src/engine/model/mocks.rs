@@ -140,13 +140,6 @@ pub fn mock_remote_package_local_only(model: &mut MockQuiltModel) -> &MockQuiltM
     model
 }
 
-pub fn mock_installed_packages_list(model: &mut MockQuiltModel) -> &MockQuiltModel {
-    model
-        .expect_get_installed_packages_list()
-        .returning(|| Ok(Vec::new()));
-    model
-}
-
 #[tokio::test]
 async fn live_install_package_only_with_timestamp_tag() -> Result {
     crate::engine::env::init();
@@ -259,8 +252,9 @@ async fn test_install_package_only_local_only() -> Result {
     let mut model = create();
     mock_remote_package_local_only(&mut model);
 
-    let uri =
-        quilt_uri::S3PackageUri::try_from("quilt+s3://quilt-example#package=foo/bar@some_hash")?;
+    let uri = quilt_uri::S3PackageUri::try_from(
+        "quilt+s3://quilt-example#package=foo/bar@cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    )?;
 
     let result = install_package_only(&model, &uri).await?;
     assert!(
@@ -276,8 +270,9 @@ async fn test_install_package_only_different_version() -> Result {
     let mut model = create();
     mock_remote_package_different_version(&mut model);
 
-    let uri =
-        quilt_uri::S3PackageUri::try_from("quilt+s3://quilt-example#package=foo/bar@bbbb2222")?;
+    let uri = quilt_uri::S3PackageUri::try_from(
+        "quilt+s3://quilt-example#package=foo/bar@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    )?;
 
     let result = install_package_only(&model, &uri).await?;
     match result {
@@ -285,7 +280,10 @@ async fn test_install_package_only_different_version() -> Result {
             requested_hash,
             installed_hash,
         } => {
-            assert_eq!(requested_hash, "bbbb2222");
+            assert_eq!(
+                requested_hash,
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            );
             assert_eq!(installed_hash, "aaaa1111");
         }
         other => panic!("expected DifferentVersion, got {other:?}"),

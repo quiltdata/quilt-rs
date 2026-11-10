@@ -1,127 +1,300 @@
+//! The setup page: on the first run, the folder `QuiltSync` keeps packages
+//! in.
+//!
+//! [`SetupCard`] is the page's one region over props: the gallery draws it
+//! over fixtures, and [`Setup`] fills it from `get_setup_data`. The folder
+//! starts at the read's suggestion; from then on it is the page's, so a
+//! re-read does not put the suggestion back over a folder picked or typed.
+
 use leptos::prelude::*;
 use leptos_router::NavigateOptions;
 use leptos_router::hooks::use_navigate;
 
-use crate::commands;
-use crate::components::buttons;
-use crate::components::{Layout, Spinner};
+use crate::commands::{self, SetupData};
+use crate::engine;
+use quilt_ui_kit::{
+    Button, ButtonVariant, Card, FormControl, LoadFailure, SkeletonBox, TextInput, readable,
+};
 
-// ── Setup page ──
+use super::page::{Page, PageHandle, PageRead, critical, hold, still_here};
+use super::path_field::PathField;
 
+stylance::import_crate_style!(style, "src/pages/setup.module.css");
+
+/// The read's only address.
+const HERE: &str = "setup";
+
+/// The folder, chosen with the system's picker or typed, and Save.
 #[component]
-pub fn Setup() -> impl IntoView {
-    let notification = RwSignal::new(None);
-
-    let data = LocalResource::new(move || async { commands::get_setup_data().await });
-
+pub fn SetupCard(
+    directory: RwSignal<String>,
+    /// Typed rather than picked: headless has no picker.
+    #[prop(optional, into)]
+    typed: Signal<bool>,
+    /// The picker is open.
+    #[prop(into)]
+    choosing: Signal<bool>,
+    /// The save is out.
+    #[prop(into)]
+    saving: Signal<bool>,
+    on_choose: Callback<()>,
+    on_save: Callback<()>,
+) -> impl IntoView {
+    let locked = move || choosing.get() || saving.get();
     view! {
-        <Layout breadcrumbs=vec![] notification=notification>
-            <Suspense fallback=move || {
-                view! { <Spinner /> }
-            }>
-                {move || Suspend::new(async move {
-                    match data.await {
-                        Ok(d) => {
-                            view! {
-                                <SetupContent default_home=d.default_home />
-                            }
-                                .into_any()
-                        }
-                        Err(e) => {
-                            let msg = format!("Failed to load setup data: {e}");
-                            view! {
-                                <div class="qui-page-setup container">
-                                    <p>{msg}</p>
-                                </div>
-                            }
-                                .into_any()
-                        }
+        <div class=style::page>
+            <Card title="Set up QuiltSync">
+                <form
+                    class=style::form
+                    on:submit=move |ev| {
+                        ev.prevent_default();
+                        on_save.run(());
                     }
-                })}
-            </Suspense>
-        </Layout>
+                >
+                    <p class=style::quiet>
+                        "Select a directory where QuiltSync will store your packages, ex. ~/QuiltSync"
+                    </p>
+                    <Show
+                        when=move || !typed.get()
+                        fallback=move || {
+                            view! {
+                                <PathField label="Set home directory" value=directory may_be_new=true />
+                            }
+                        }
+                    >
+                        <div class=style::choose>
+                            <FormControl
+                                label="Set home directory"
+                                control=move |id| {
+                                    view! { <TextInput id=id value=directory readonly=true /> }
+                                        .into_any()
+                                }
+                            />
+                            <Button
+                                loading=choosing
+                                disabled=Signal::derive(locked)
+                                on_click=move |_| on_choose.run(())
+                            >
+                                "Browse"
+                            </Button>
+                        </div>
+                    </Show>
+                    <div>
+                        <Button
+                            variant=ButtonVariant::Primary
+                            submit=true
+                            loading=saving
+                            disabled=Signal::derive(move || {
+                                locked() || directory.with(String::is_empty)
+                            })
+                            on_click=|_| {}
+                        >
+                            "Save"
+                        </Button>
+                    </div>
+                </form>
+            </Card>
+        </div>
     }
 }
 
-// ── Main content (rendered after data loads) ──
+/// The card before the read answers: its outline, busy.
+#[component]
+pub fn SetupCardSkeleton() -> impl IntoView {
+    view! {
+        <div class=style::page>
+            <Card title="Set up QuiltSync" busy=true>
+                <div class=style::form>
+                    <SkeletonBox width="80%" />
+                    <SkeletonBox width="100%" height="32px" />
+                    <SkeletonBox width="64px" height="32px" />
+                </div>
+            </Card>
+        </div>
+    }
+}
+
+/// What `/setup` renders.
+#[component]
+pub fn Setup() -> impl IntoView {
+    view! { <SetupScreen read=read_setup /> }
+}
+
+fn read_setup(_: String) -> std::pin::Pin<Box<dyn Future<Output = Result<SetupData, String>>>> {
+    Box::pin(commands::get_setup_data())
+}
 
 #[component]
-fn SetupContent(default_home: String) -> impl IntoView {
-    let directory = RwSignal::new(default_home);
-    let hint = RwSignal::new(String::new());
-    let saving = RwSignal::new(false);
-    let browsing = RwSignal::new(false);
+pub(crate) fn SetupScreen(read: PageRead<SetupData>) -> impl IntoView {
+    let key = Memo::new(|_| HERE.to_string());
+    let page = PageHandle::new();
+    let PageHandle {
+        busy,
+        outcome,
+        reload,
+        ..
+    } = page;
+    let answer = page.read(key, read);
 
-    let on_browse = move |_| {
-        if browsing.get_untracked() {
+    let directory = RwSignal::new(String::new());
+    let chosen = StoredValue::new(false);
+    Effect::new(move |_| {
+        if let Some(Ok(d)) = answer.get()
+            && !chosen.get_value()
+        {
+            chosen.set_value(true);
+            directory.set(d.default_home);
+        }
+    });
+
+    let choosing = RwSignal::new(false);
+    let on_choose = pick_folder(page, choosing, chosen, directory);
+
+    let navigate = use_navigate();
+    let on_save = Callback::new(move |()| {
+        let chosen = directory.get_untracked();
+        if busy.get_untracked() || choosing.get_untracked() || chosen.is_empty() {
             return;
         }
-        browsing.set(true);
-        hint.set(String::new());
+        let navigate = navigate.clone();
+        leptos::task::spawn_local(async move {
+            match hold(busy, outcome, commands::setup(chosen)).await {
+                Ok(_) if still_here(key, HERE) => navigate("/", NavigateOptions::default()),
+                Ok(_) => {}
+                Err(e) => {
+                    outcome.try_set(Some(critical(
+                        HERE.into(),
+                        "Could not set up the directory.",
+                        Some(e),
+                    )));
+                }
+            }
+        });
+    });
+
+    view! {
+        <Page
+            heading="Set up QuiltSync"
+            page=page
+            answer=answer
+            showing=key
+            skeleton=|| view! { <SetupCardSkeleton /> }.into_any()
+            bands=|_| ().into_any()
+            body=move |_: SetupData| {
+                view! {
+                    <SetupCard
+                        directory=directory
+                        typed=engine::headless()
+                        choosing=choosing
+                        saving=busy
+                        on_choose=on_choose
+                        on_save=on_save
+                    />
+                }
+                .into_any()
+            }
+            failure=move || {
+                let detail = match answer.get_untracked() {
+                    Some(Err(e)) => readable(&e),
+                    _ => String::new(),
+                };
+                view! {
+                    <LoadFailure
+                        words="Could not load the setup page."
+                        detail=detail
+                        on_retry=Callback::new(move |()| reload.notify())
+                    />
+                }
+                .into_any()
+            }
+        />
+    }
+}
+
+/// Browse: the system's picker fills the folder.
+fn pick_folder(
+    page: PageHandle,
+    choosing: RwSignal<bool>,
+    chosen: StoredValue<bool>,
+    directory: RwSignal<String>,
+) -> Callback<()> {
+    let PageHandle { busy, outcome, .. } = page;
+    Callback::new(move |()| {
+        if choosing.get_untracked() || busy.get_untracked() {
+            return;
+        }
+        choosing.set(true);
+        outcome.set(None);
         leptos::task::spawn_local(async move {
             match commands::open_directory_picker().await {
                 Ok(path) => {
-                    directory.set(path);
-                    hint.set(String::new());
-                }
-                Err(e) => hint.set(e),
-            }
-            browsing.set(false);
-        });
-    };
-
-    let navigate = use_navigate();
-    let on_save = move |_| {
-        if saving.get_untracked() {
-            return;
-        }
-        saving.set(true);
-        hint.set(String::new());
-        let navigate = navigate.clone();
-        leptos::task::spawn_local(async move {
-            match commands::setup(directory.get_untracked()).await {
-                Ok(_) => {
-                    navigate("/", NavigateOptions::default());
+                    chosen.try_set_value(true);
+                    directory.try_set(path);
                 }
                 Err(e) => {
-                    hint.set(e);
-                    saving.set(false);
+                    outcome.try_set(Some(critical(
+                        HERE.into(),
+                        "Could not choose the directory.",
+                        Some(e),
+                    )));
                 }
             }
+            choosing.try_set(false);
         });
-    };
+    })
+}
 
-    view! {
-        <div class="qui-page-setup container">
-            <div class="main">
-                <p class="message">
-                    "Select a directory where QuiltSync will store your packages, ex. ~/QuiltSync"
-                </p>
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use leptos_router::components::Router;
+    use quilt_ui_kit::test_support::{button_saying, mount, sleep_ms, unmount_earlier};
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_test::*;
 
-                <form class="form" on:submit=|ev| ev.prevent_default()>
-                    <p class="field">
-                        <label class="label" for="directory">
-                            "Set home directory"
-                        </label>
-                        <input
-                            class="input"
-                            id="directory"
-                            name="directory"
-                            required
-                            readonly
-                            prop:value=move || directory.get()
-                        />
-                        <span class="hint">{move || hint.get()}</span>
-                    </p>
+    fn suggests(_: String) -> std::pin::Pin<Box<dyn Future<Output = Result<SetupData, String>>>> {
+        Box::pin(async {
+            Ok(SetupData {
+                default_home: "/home/a-user/QuiltSync".to_string(),
+            })
+        })
+    }
 
-                    <buttons::Browse on_click=on_browse disabled=browsing />
-                </form>
-            </div>
-        </div>
+    fn refused(_: String) -> std::pin::Pin<Box<dyn Future<Output = Result<SetupData, String>>>> {
+        Box::pin(async { Err("no home".to_string()) })
+    }
 
-        // Action bar with Save button
-        <div class="qui-actionbar">
-            <buttons::Save on_click=on_save busy=saving />
-        </div>
+    async fn setup(read: PageRead<SetupData>) -> web_sys::Element {
+        unmount_earlier();
+        let el = mount(move || {
+            view! {
+                <Router>
+                    <SetupScreen read=read />
+                </Router>
+            }
+        });
+        sleep_ms(30).await;
+        el
+    }
+
+    /// The field starts at the suggestion and is chosen, not typed.
+    #[wasm_bindgen_test]
+    async fn the_field_starts_at_the_suggested_directory() {
+        let el = setup(suggests).await;
+        let input: web_sys::HtmlInputElement = el
+            .query_selector("form input")
+            .unwrap()
+            .expect("the directory field")
+            .unchecked_into();
+        assert_eq!(input.value(), "/home/a-user/QuiltSync");
+        assert!(input.read_only(), "the picker chooses it");
+        button_saying(&el, "Browse");
+        assert!(!button_saying(&el, "Save").disabled());
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_failed_read_offers_to_try_again() {
+        let el = setup(refused).await;
+        button_saying(&el, "Try again");
     }
 }

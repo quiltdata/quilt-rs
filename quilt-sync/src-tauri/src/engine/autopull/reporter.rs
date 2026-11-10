@@ -6,6 +6,10 @@ use serde::Serialize;
 use quilt_uri::Host;
 use quilt_uri::Namespace;
 
+use crate::engine::action_needed::ActionNeeded;
+use crate::engine::action_needed::Cause;
+use crate::engine::action_needed::Kind;
+use crate::engine::action_needed::Subject;
 use crate::engine::autopull::PausedReason;
 use crate::engine::autopull::pull_toast::ReportToast;
 use crate::engine::events::EventSink;
@@ -38,6 +42,8 @@ pub const LOGIN_REQUIRED_EVENT: &str = "autosync-login-required";
 pub const SUBSCRIBER_ERROR_EVENT: &str = "fswatcher-subscriber-error";
 pub const PUBLISHED_EVENT: &str = "autosync-published";
 pub const PAUSED_EVENT: &str = "autosync-paused";
+/// Sent on every clear of a pause, with the namespace.
+pub const PAUSE_CLEARED_EVENT: &str = "autosync-pause-cleared";
 /// Tells the window a package's autosync state may have changed, so it reads
 /// the main page's watcher payload again. No payload.
 pub const AUTOSYNC_CHANGED_EVENT: &str = "autosync-changed";
@@ -220,74 +226,22 @@ pub struct PublishedEvent {
     pub message: String,
 }
 
-/// Payload emitted to the UI when autosync pauses a namespace. Carries
-/// both a stable `reason` discriminant (so the UI can branch by category)
-/// and an optional free-form `message` populated for
-/// [`PausedReason::Other`] — workflow validation failures, hash mismatches,
-/// JSON parse errors, etc.
+/// The `autosync-pause-cleared` payload.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PauseClearedEvent {
+    pub namespace: Namespace,
+}
+
+/// Payload of the `autosync-paused` event: which package paused.
 ///
-/// This is distinct from the `package-status-changed` event because the
-/// status string alone cannot disambiguate "remote unreachable" (which
-/// surfaces as `status = "error"` and a Login affordance in the UI) from
-/// "remote refused this push" (which is `status = "paused"` and renders a
-/// neutral banner showing `message`).
+/// The page uses it only as a nudge to refetch; why the package paused is read
+/// from the watcher's map through `PausedDto`. A pause does not move the status
+/// fingerprint, so `package-status-changed` cannot carry this news.
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PausedEvent {
     pub namespace: quilt_uri::Namespace,
-    /// Stable category: `"pendingChanges"`, `"pendingCommit"`,
-    /// `"diverged"`, `"pullConflict"`, `"roleDenied"`, or `"other"`. Kept as
-    /// a string so the wire format is independent of the Rust enum's variant
-    /// layout.
-    pub reason: String,
-    /// Free-form description: the raw refusal reason for `reason = "other"`,
-    /// the comma-joined conflicting file names for `reason =
-    /// "pullConflict"`, or the active role's name for `reason =
-    /// "roleDenied"` (absent when the name could not be resolved).
-    pub message: Option<String>,
-}
-
-impl PausedEvent {
-    /// `message` carries only the raw refusal reason. The "resolve, then
-    /// push manually to resume" guidance is presentation and lives in the
-    /// UI (it once was appended here, which mixed data with guidance and
-    /// made the banner unreadable).
-    pub fn from_reason(namespace: &Namespace, reason: &PausedReason) -> Self {
-        let (reason_str, message) = match reason {
-            PausedReason::PendingChanges => ("pendingChanges", None),
-            PausedReason::PendingCommit => ("pendingCommit", None),
-            PausedReason::Diverged => ("diverged", None),
-            PausedReason::PullConflict(files) => ("pullConflict", Some(files.join(", "))),
-            // The message is the role *name*, not a sentence: the wording
-            // ("switch role to resume") is presentation and lives in the UI,
-            // the same split `pullConflict` uses for its file list. An
-            // unresolved name sends no message, so the UI falls back to the
-            // role-less phrasing.
-            PausedReason::RoleDenied { role } => {
-                ("roleDenied", (!role.is_empty()).then(|| role.clone()))
-            }
-            PausedReason::Other(msg) => ("other", Some(msg.clone())),
-        };
-        Self {
-            namespace: namespace.clone(),
-            reason: reason_str.to_string(),
-            message,
-        }
-    }
-}
-
-/// Point-in-time view of the autosync watcher's per-namespace state.
-///
-/// Returned by the `get_autosync_snapshot` command so the UI can
-/// re-hydrate per-page banners on navigation — listening for the
-/// `autosync-paused` event only catches pauses that fire while the page
-/// is mounted, but the watcher's `paused` map persists across page
-/// loads. Each entry in `paused` has the same wire shape as the
-/// `autosync-paused` event payload.
-#[derive(Serialize, Clone, Debug, PartialEq, Eq, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct WatcherSnapshot {
-    pub paused: Vec<PausedEvent>,
 }
 
 /// Payload emitted when the filesystem watcher hits an OS-level error
@@ -342,6 +296,15 @@ pub trait StatusReporter: Send + Sync + 'static {
     /// a commit or a settings change. Without a default, for the same reason
     /// as [`Self::report_pulled`].
     fn report_autosync_changed(&self);
+
+    /// A pause on `namespace` was cleared, by whatever route. Without a
+    /// default, for the same reason as [`Self::report_pulled`].
+    fn report_pause_cleared(&self, namespace: &Namespace);
+
+    /// The file watcher's reconciliation subscribed again after a
+    /// [subscriber error](Self::report_subscriber_error). Without a default,
+    /// for the same reason as [`Self::report_pulled`].
+    fn report_subscriber_recovered(&self);
 }
 
 /// Stderr/log-only reporter. Used in tests where no Tauri runtime is
@@ -352,6 +315,12 @@ pub struct LogReporter;
 
 impl StatusReporter for LogReporter {
     fn report_autosync_changed(&self) {}
+
+    fn report_pause_cleared(&self, namespace: &Namespace) {
+        info!("autosync: pause cleared namespace={namespace}");
+    }
+
+    fn report_subscriber_recovered(&self) {}
 
     fn report_pulled(&self, namespace: &Namespace, toast: ReportToast) {
         info!(
@@ -477,11 +446,21 @@ impl StatusReporter for TelemetryReporter {
     fn report_autosync_changed(&self) {
         self.inner.report_autosync_changed();
     }
+
+    fn report_pause_cleared(&self, namespace: &Namespace) {
+        self.inner.report_pause_cleared(namespace);
+    }
+
+    fn report_subscriber_recovered(&self) {
+        self.inner.report_subscriber_recovered();
+    }
 }
 
 pub struct SinkEventReporter {
     events: EventSink,
     toasts: Arc<ToastCenter>,
+    /// Takes the file watcher's failure, the one cause only this seam hears.
+    action_needed: Arc<ActionNeeded>,
     logged: SeenFingerprints,
 }
 
@@ -513,10 +492,15 @@ impl SeenFingerprints {
 }
 
 impl SinkEventReporter {
-    pub fn new(events: EventSink, toasts: Arc<ToastCenter>) -> Self {
+    pub fn new(
+        events: EventSink,
+        toasts: Arc<ToastCenter>,
+        action_needed: Arc<ActionNeeded>,
+    ) -> Self {
         Self {
             events,
             toasts,
+            action_needed,
             logged: SeenFingerprints::default(),
         }
     }
@@ -545,7 +529,9 @@ impl StatusReporter for SinkEventReporter {
     fn report_paused(&self, namespace: &Namespace, host: Option<&Host>, reason: PausedReason) {
         let host = log_host(host);
         info!("autosync: paused namespace={namespace} host={host} reason={reason:?}");
-        let payload = PausedEvent::from_reason(namespace, &reason);
+        let payload = PausedEvent {
+            namespace: namespace.clone(),
+        };
         self.events.emit(PAUSED_EVENT, &payload);
     }
 
@@ -567,7 +553,27 @@ impl StatusReporter for SinkEventReporter {
             "fswatcher: kind={} namespace={:?} message={}",
             event.kind, event.namespace, event.message
         );
+        self.action_needed.enter(
+            Subject::App,
+            Cause::Watcher {
+                message: event.message.clone(),
+            },
+        );
         self.events.emit(SUBSCRIBER_ERROR_EVENT, &event);
+    }
+
+    fn report_subscriber_recovered(&self) {
+        self.action_needed.leave(&Subject::App, Kind::Watcher);
+    }
+
+    fn report_pause_cleared(&self, namespace: &Namespace) {
+        info!("autosync: pause cleared namespace={namespace}");
+        self.events.emit(
+            PAUSE_CLEARED_EVENT,
+            PauseClearedEvent {
+                namespace: namespace.clone(),
+            },
+        );
     }
 
     fn report_pulled(&self, namespace: &Namespace, toast: ReportToast) {
@@ -976,81 +982,41 @@ mod tests {
     }
 
     #[test]
-    fn paused_event_from_reason_known_variants_have_no_message() {
-        let ns = quilt_uri::Namespace::from(("acme", "demo"));
+    fn paused_event_carries_only_the_namespace() {
+        let ev = PausedEvent {
+            namespace: quilt_uri::Namespace::from(("acme", "demo")),
+        };
         assert_eq!(
-            PausedEvent::from_reason(&ns, &PausedReason::PendingChanges),
-            PausedEvent {
-                namespace: quilt_uri::Namespace::try_from("acme/demo")
-                    .expect("a valid fixture namespace"),
-                reason: "pendingChanges".to_string(),
-                message: None,
-            }
-        );
-        assert_eq!(
-            PausedEvent::from_reason(&ns, &PausedReason::PendingCommit).reason,
-            "pendingCommit"
-        );
-        assert_eq!(
-            PausedEvent::from_reason(&ns, &PausedReason::Diverged).reason,
-            "diverged"
+            serde_json::to_string(&ev).unwrap(),
+            r#"{"namespace":"acme/demo"}"#
         );
     }
+}
 
-    /// The banner needs the role name to say which role to switch away from,
-    /// so it rides in `message` — the same data-not-copy split `pullConflict`
-    /// uses for its file list.
+#[cfg(test)]
+mod action_needed_tests {
+    use super::*;
+
+    /// The file watcher's failure enters the set, and its next reconcile
+    /// that subscribes again leaves it.
     #[test]
-    fn paused_event_role_denied_carries_the_role_name() {
-        let ns = quilt_uri::Namespace::from(("acme", "demo"));
-        let ev = PausedEvent::from_reason(
-            &ns,
-            &PausedReason::RoleDenied {
-                role: "ReadOnly".to_string(),
-            },
+    fn the_file_watcher_action_needed_until_it_subscribes_again() {
+        let action_needed = Arc::new(ActionNeeded::default());
+        let toasts = Arc::new(ToastCenter::new(Box::new(
+            crate::engine::toast::SinkToastEmitter::new(EventSink::new()),
+        )));
+        let reporter = SinkEventReporter::new(EventSink::new(), toasts, Arc::clone(&action_needed));
+        reporter.report_subscriber_error(SubscriberErrorEvent {
+            kind: "inotify_limit".to_string(),
+            message: "no space".to_string(),
+            namespace: None,
+        });
+        assert_eq!(action_needed.get()[0].cause.kind(), Kind::Watcher);
+        reporter.report_subscriber_recovered();
+        assert!(
+            action_needed.get().is_empty(),
+            "the watcher subscribed again"
         );
-        assert_eq!(ev.reason, "roleDenied");
-        assert_eq!(ev.message.as_deref(), Some("ReadOnly"));
-    }
-
-    /// An unresolved role name sends no message at all, so the UI picks its
-    /// role-less phrasing instead of rendering an empty name.
-    #[test]
-    fn paused_event_role_denied_without_a_name_sends_no_message() {
-        let ns = quilt_uri::Namespace::from(("acme", "demo"));
-        let ev = PausedEvent::from_reason(
-            &ns,
-            &PausedReason::RoleDenied {
-                role: String::new(),
-            },
-        );
-        assert_eq!(ev.reason, "roleDenied");
-        assert!(ev.message.is_none(), "got: {:?}", ev.message);
-    }
-
-    #[test]
-    fn paused_event_from_reason_other_carries_raw_reason_only() {
-        let ns = quilt_uri::Namespace::from(("acme", "demo"));
-        let ev = PausedEvent::from_reason(
-            &ns,
-            &PausedReason::Other("workflow rejected metadata".to_string()),
-        );
-        assert_eq!(ev.reason, "other");
-
-        // `message` is exactly the raw refusal reason — no appended
-        // guidance. The "resolve, then push manually" line is presentation
-        // and is added by each UI surface, not baked into the data.
-        assert_eq!(
-            ev.message.as_deref(),
-            Some("workflow rejected metadata"),
-            "Other should carry the raw reason with no appended hint"
-        );
-
-        // Serializes as camelCase with the raw reason as the message.
-        let json = serde_json::to_string(&ev).unwrap();
-        assert!(json.contains(r#""reason":"other""#), "got: {json}");
-        assert!(json.contains("workflow rejected metadata"), "got: {json}");
-        assert!(json.contains(r#""namespace":"acme/demo""#), "got: {json}");
     }
 }
 
@@ -1078,9 +1044,17 @@ pub(crate) mod test_support {
         pub pulled: Mutex<Vec<(Namespace, ReportToast)>>,
         /// How many times the window was told a state may have changed.
         pub autosync_changed: std::sync::atomic::AtomicUsize,
+        /// Each pause clear, in order.
+        pub pause_cleared: Mutex<Vec<Namespace>>,
     }
 
     impl StatusReporter for RecordingReporter {
+        fn report_pause_cleared(&self, namespace: &Namespace) {
+            self.pause_cleared.lock().unwrap().push(namespace.clone());
+        }
+
+        fn report_subscriber_recovered(&self) {}
+
         fn report_autosync_changed(&self) {
             self.autosync_changed
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);

@@ -5,13 +5,9 @@ use serde::Serialize;
 
 use crate::engine::app;
 use crate::engine::autopull::AutosyncSettings;
-use crate::engine::autopull::PullSettings;
-use crate::engine::autopull::PushSettings;
 use crate::engine::autopull::SharedAutosyncSettings;
 use crate::engine::autopull::Watcher;
 use crate::engine::changelog;
-use crate::engine::design_settings::Design;
-use crate::engine::design_settings::DesignSettings;
 use crate::engine::experimental_settings::ExperimentalSettings;
 use crate::engine::fswatcher::FsWatcherSettings;
 use crate::engine::log_settings::LogEnv;
@@ -45,12 +41,17 @@ impl From<PublishSettings> for PublishSettingsData {
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+#[allow(clippy::struct_excessive_bools, reason = "one field per toggle")]
 pub struct AutosyncSettingsData {
     pub pull_enabled: bool,
     pub push_enabled: bool,
     pub pull_interval_secs: u64,
     pub idle_timeout_secs: u64,
     pub close_to_tray: bool,
+    /// Read only: a full write keeps what is stored, since only the v2
+    /// settings page has the control, and it saves by patch.
+    #[serde(default)]
+    pub notify_action_needed: bool,
 }
 
 impl From<AutosyncSettings> for AutosyncSettingsData {
@@ -62,41 +63,9 @@ impl From<AutosyncSettings> for AutosyncSettingsData {
             pull_interval_secs: s.pull.focused_secs,
             idle_timeout_secs: s.push.idle_timeout_secs,
             close_to_tray: s.close_to_tray,
+            notify_action_needed: s.notify_action_needed,
         }
     }
-}
-
-/// Only the quiet window is refused at 0: a check interval below a minute is
-/// raised to one ([`AutosyncSettings::normalised`]).
-fn validate_autosync_settings_data(data: &AutosyncSettingsData) -> Result<(), String> {
-    if data.idle_timeout_secs == 0 {
-        return Err("idle_timeout_secs must be > 0".to_string());
-    }
-    Ok(())
-}
-
-/// Project `AutosyncSettingsData` onto a full `AutosyncSettings` by
-/// overwriting only the UI-owned fields on top of the current disk
-/// state. `unfocused_secs` and `closed_secs` — and any future disk-only
-/// field — flow through untouched. The interval comes out in whole minutes.
-fn merge_autosync_settings_data(
-    current: &AutosyncSettings,
-    incoming: &AutosyncSettingsData,
-) -> AutosyncSettings {
-    AutosyncSettings {
-        pull: PullSettings {
-            enabled: incoming.pull_enabled,
-            focused_secs: incoming.pull_interval_secs,
-            unfocused_secs: current.pull.unfocused_secs,
-            closed_secs: current.pull.closed_secs,
-        },
-        push: PushSettings {
-            enabled: incoming.push_enabled,
-            idle_timeout_secs: incoming.idle_timeout_secs,
-        },
-        close_to_tray: incoming.close_to_tray,
-    }
-    .normalised()
 }
 
 /// Some of autosync's settings, changed; every `None` stays as stored.
@@ -113,6 +82,7 @@ pub struct AutosyncPatch {
     pub pull_interval_secs: Option<u64>,
     pub idle_timeout_secs: Option<u64>,
     pub close_to_tray: Option<bool>,
+    pub notify_action_needed: Option<bool>,
 }
 
 impl AutosyncPatch {
@@ -136,6 +106,9 @@ impl AutosyncPatch {
         }
         if let Some(on) = self.close_to_tray {
             next.close_to_tray = on;
+        }
+        if let Some(on) = self.notify_action_needed {
+            next.notify_action_needed = on;
         }
         Ok(next.normalised())
     }
@@ -175,14 +148,12 @@ impl From<FsWatcherSettings> for FsWatcherSettingsData {
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ExperimentalSettingsData {
-    pub entire_package_sync: bool,
     pub agent_tasks: bool,
 }
 
 impl From<ExperimentalSettings> for ExperimentalSettingsData {
     fn from(s: ExperimentalSettings) -> Self {
         Self {
-            entire_package_sync: s.entire_package_sync,
             agent_tasks: s.agent_tasks,
         }
     }
@@ -380,7 +351,6 @@ pub struct SettingsData {
     pub autosync: AutosyncSettingsData,
     pub fswatcher: FsWatcherSettingsData,
     pub experimental: ExperimentalSettingsData,
-    pub design: Design,
     pub ignore_rules: IgnoreRulesData,
     pub tasks: TaskSettingsData,
 }
@@ -415,11 +385,6 @@ pub async fn get_settings_data(s: &Services) -> Result<SettingsData, String> {
     let autosync_data = AutosyncSettingsData::from(autosync_settings.read().await.clone());
     let fswatcher_data = FsWatcherSettingsData::from(fswatcher_settings.read().await.clone());
     let experimental_data = ExperimentalSettingsData::from(experimental.read().await.clone());
-    // A broken file shows v2, the default, as a failed read in the UI does.
-    let design = DesignSettings::load(&data_dir)
-        .await
-        .map(|s| s.design)
-        .unwrap_or_default();
     let user_rules = m.get_quilt().lock().await.user_quiltignore();
     let tasks = TaskSettingsData::read(&data_dir).await;
 
@@ -441,7 +406,6 @@ pub async fn get_settings_data(s: &Services) -> Result<SettingsData, String> {
         autosync: autosync_data,
         fswatcher: fswatcher_data,
         experimental: experimental_data,
-        design,
         ignore_rules: IgnoreRulesData::read(&user_rules),
         tasks,
     })
@@ -565,40 +529,9 @@ fn opt_from_string(s: &str) -> Option<String> {
     (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
-pub async fn update_autosync_settings(
-    s: &Services,
-    settings: AutosyncSettingsData,
-) -> Result<(), String> {
-    let _writing = s.settings_writes.lock().await;
-    let autosync_settings = &s.autosync_settings;
-    let watcher = &s.watcher;
-    validate_autosync_settings_data(&settings)?;
-
-    let data_dir = s.data_dir.clone();
-
-    let clear = {
-        let mut current = autosync_settings.write().await;
-        let merged = merge_autosync_settings_data(&current, &settings);
-        merged.save(&data_dir).await.map_err(|e| e.to_string())?;
-        let clear = clears_pauses(&current, &merged);
-        // Under the settings lock: a check that sees publishing on must also
-        // see the new times.
-        if turns_publishing_on(&current, &merged) {
-            watcher.note_publishing_on().await;
-        }
-        *current = merged;
-        clear
-    };
-    if clear {
-        watcher.clear_all_paused().await;
-    }
-    watcher.settings_changed();
-    Ok(())
-}
-
-/// Flip one direction of autosync from the v2 main page.
+/// Flip one direction of autosync from the main page.
 ///
-/// v2's own command rather than a call into `update_autosync_settings`, for the
+/// Its own command rather than a call into `update_autosync_settings`, for the
 /// reason §8 decision 2 gives: the main page knows two booleans and that command
 /// takes all five settings fields, so calling it would mean the page first
 /// fetching a settings payload it has no other use for. The two rules that
@@ -619,7 +552,7 @@ pub async fn set_autosync_direction(
     write_autosync_patch(s, autosync_settings, watcher, &patch).await
 }
 
-/// Change some of autosync's settings and leave the rest as stored: the v2
+/// Change some of autosync's settings and leave the rest as stored: the
 /// settings page saves each control as it changes.
 pub async fn patch_autosync_settings(s: &Services, patch: AutosyncPatch) -> Result<(), String> {
     let autosync_settings = &s.autosync_settings;
@@ -636,7 +569,7 @@ async fn write_autosync_patch(
     let _writing = s.settings_writes.lock().await;
     let data_dir = s.data_dir.clone();
 
-    let clear = {
+    let (clear, publishing_off) = {
         let mut current = autosync_settings.write().await;
         let next = patch.apply(&current)?;
         next.save(&data_dir).await.map_err(|e| e.to_string())?;
@@ -646,27 +579,18 @@ async fn write_autosync_patch(
         if turns_publishing_on(&current, &next) {
             watcher.note_publishing_on().await;
         }
+        let publishing_off = !next.push.enabled;
         *current = next;
-        clear
+        (clear, publishing_off)
     };
     if clear {
         watcher.clear_all_paused().await;
     }
+    if publishing_off {
+        watcher.action_needed().publishing_off();
+    }
     watcher.settings_changed();
     Ok(())
-}
-
-/// Point-in-time view of the autosync watcher's per-namespace state.
-///
-/// Used by the UI to re-hydrate paused-state banners after navigation:
-/// listening for the `autosync-paused` event only catches pauses that
-/// fire while a page is mounted, while the watcher's state persists
-/// across page loads.
-pub async fn get_autosync_snapshot(
-    s: &Services,
-) -> Result<crate::engine::autopull::reporter::WatcherSnapshot, String> {
-    let watcher = &s.watcher;
-    Ok(watcher.snapshot().await)
 }
 
 /// The transfer autopull is running now, for a window that mounts
@@ -676,6 +600,14 @@ pub async fn get_autopull_activity(
 ) -> Result<Option<crate::engine::autopull::activity::AutopullActivity>, String> {
     let watcher = &s.watcher;
     Ok(watcher.activity())
+}
+
+/// What needs action now, for a window that mounts; it then follows the
+/// `action-needed` event.
+pub async fn get_action_needed(
+    s: &Services,
+) -> Result<Vec<crate::engine::action_needed::Entry>, String> {
+    Ok(s.watcher.action_needed().get())
 }
 
 pub async fn update_fswatcher_settings(s: &Services, enabled: bool) -> Result<(), String> {
@@ -694,6 +626,13 @@ pub async fn update_fswatcher_settings(s: &Services, enabled: bool) -> Result<()
 
     new.save(&data_dir).await.map_err(|e| e.to_string())?;
     *fswatcher_settings.write().await = new;
+    if !enabled {
+        // Turned off, it is not failing, also when it never started.
+        s.watcher.action_needed().leave(
+            &crate::engine::action_needed::Subject::App,
+            crate::engine::action_needed::Kind::Watcher,
+        );
+    }
     Ok(())
 }
 
@@ -708,15 +647,9 @@ pub async fn update_log_settings(s: &Services, level: LogLevel) -> Result<(), St
         .map_err(|e| e.to_string())
 }
 
-/// Turn an experiment on or off.
-///
-/// A gate on a *control*, not on behaviour: enabling this downloads nothing by
-/// itself, and disabling it leaves every per-package choice written where it
-/// is, so re-enabling resumes them. Clearing those would destroy a decision the
-/// user made in order to undo a setting that only ever hid a control.
+/// Turn an experiment on or off. `None` leaves it as it is.
 pub async fn update_experimental_settings(
     s: &Services,
-    entire_package_sync: Option<bool>,
     agent_tasks: Option<bool>,
 ) -> Result<(), String> {
     let _writing = s.settings_writes.lock().await;
@@ -725,24 +658,17 @@ pub async fn update_experimental_settings(
 
     // Read guard dropped before the write guard is taken.
     let mut new = { experimental.read().await.clone() };
-    new.patch(entire_package_sync, agent_tasks);
+    new.patch(agent_tasks);
     new.save(&data_dir).await.map_err(|e| e.to_string())?;
     *experimental.write().await = new;
     Ok(())
 }
 
-/// Choose the design generation. The next page that asks draws it.
-pub async fn update_design_settings(s: &Services, design: Design) -> Result<(), String> {
-    let _writing = s.settings_writes.lock().await;
-    DesignSettings { design }
-        .save(&s.data_dir)
-        .await
-        .map_err(|e| e.to_string())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::autopull::PullSettings;
+    use crate::engine::autopull::PushSettings;
 
     use tempfile::TempDir;
 
@@ -840,108 +766,13 @@ mod tests {
                 idle_timeout_secs: 22,
             },
             close_to_tray: false,
+            notify_action_needed: true,
         };
         let data = AutosyncSettingsData::from(s);
         assert!(data.pull_enabled);
         assert!(data.push_enabled);
         assert_eq!(data.pull_interval_secs, 180, "the one interval");
         assert_eq!(data.idle_timeout_secs, 22);
-    }
-
-    #[tokio::test]
-    async fn merge_preserves_the_retired_intervals() -> Result<(), Error> {
-        // Save a settings file with non-default `unfocused_secs` and
-        // `closed_secs`, then run the merge logic with arbitrary UI-owned
-        // values, and verify both survive.
-        let dir = TempDir::new().unwrap();
-        let initial = AutosyncSettings {
-            pull: PullSettings {
-                enabled: true,
-                focused_secs: 60,
-                unfocused_secs: 77,
-                closed_secs: 999,
-            },
-            push: PushSettings {
-                enabled: false,
-                idle_timeout_secs: 30,
-            },
-            close_to_tray: false,
-        };
-        initial.save(dir.path()).await?;
-
-        let incoming = AutosyncSettingsData {
-            pull_enabled: false,
-            push_enabled: true,
-            pull_interval_secs: 7,
-            idle_timeout_secs: 9,
-            close_to_tray: false,
-        };
-        let merged = merge_autosync_settings_data(&initial, &incoming);
-
-        assert!(!merged.pull.enabled);
-        assert!(merged.push.enabled);
-        assert_eq!(merged.pull.focused_secs, 60, "7 s runs as one minute");
-        assert_eq!(
-            merged.pull.unfocused_secs, 77,
-            "unfocused_secs must flow through untouched"
-        );
-        assert_eq!(
-            merged.pull.closed_secs, 999,
-            "closed_secs must flow through untouched"
-        );
-        assert_eq!(merged.push.idle_timeout_secs, 9);
-        Ok(())
-    }
-
-    /// The v1 popup's seconds field: what it saves is what runs, and what
-    /// its next load shows.
-    #[test]
-    fn a_v1_save_runs_in_whole_minutes() {
-        for (typed, runs) in [
-            (0, 60),
-            (30, 60),
-            (45, 60),
-            (90, 120),
-            (150, 180),
-            (300, 300),
-        ] {
-            let incoming = AutosyncSettingsData {
-                pull_interval_secs: typed,
-                ..AutosyncSettingsData::from(AutosyncSettings::default())
-            };
-            assert!(validate_autosync_settings_data(&incoming).is_ok());
-            let merged = merge_autosync_settings_data(&AutosyncSettings::default(), &incoming);
-            assert_eq!(merged.pull.focused_secs, runs, "{typed} s");
-            assert_eq!(
-                AutosyncSettingsData::from(merged).pull_interval_secs,
-                runs,
-                "and shows it"
-            );
-        }
-    }
-
-    #[test]
-    fn validate_rejects_zero_idle_timeout() {
-        let bad = AutosyncSettingsData {
-            pull_enabled: true,
-            push_enabled: true,
-            pull_interval_secs: 30,
-            idle_timeout_secs: 0,
-            close_to_tray: false,
-        };
-        assert!(validate_autosync_settings_data(&bad).is_err());
-    }
-
-    #[test]
-    fn validate_accepts_positive_values() {
-        let ok = AutosyncSettingsData {
-            pull_enabled: true,
-            push_enabled: true,
-            pull_interval_secs: 1,
-            idle_timeout_secs: 1,
-            close_to_tray: false,
-        };
-        assert!(validate_autosync_settings_data(&ok).is_ok());
     }
 
     #[test]
@@ -971,6 +802,7 @@ mod tests {
                 idle_timeout_secs: 45,
             },
             close_to_tray: true,
+            notify_action_needed: true,
         };
         let next = AutosyncPatch {
             pull_enabled: Some(true),
@@ -1003,6 +835,7 @@ mod tests {
                 idle_timeout_secs: 300,
             },
             close_to_tray: false,
+            notify_action_needed: true,
         };
         let next = AutosyncPatch {
             pull_interval_secs: Some(180),
@@ -1034,6 +867,7 @@ mod tests {
             pull_interval_secs: Some(60),
             idle_timeout_secs: Some(120),
             close_to_tray: Some(true),
+            notify_action_needed: None,
         }
         .apply(&AutosyncSettings::default())
         .unwrap();
@@ -1109,6 +943,7 @@ mod tests {
                     ..Default::default()
                 },
                 close_to_tray: false,
+                notify_action_needed: true,
             }
         }
         assert!(clears_pauses(&enabled(false, false), &enabled(true, false)));
@@ -1133,19 +968,5 @@ mod tests {
             &enabled(false, true),
             &enabled(false, false)
         ));
-    }
-
-    #[test]
-    fn merge_preserves_close_to_tray_from_incoming() {
-        let initial = AutosyncSettings::default();
-        let incoming = AutosyncSettingsData {
-            pull_enabled: true,
-            push_enabled: false,
-            pull_interval_secs: 30,
-            idle_timeout_secs: 60,
-            close_to_tray: true,
-        };
-        let merged = merge_autosync_settings_data(&initial, &incoming);
-        assert!(merged.close_to_tray);
     }
 }

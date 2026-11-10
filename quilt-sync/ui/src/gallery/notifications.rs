@@ -14,8 +14,8 @@ use leptos::prelude::*;
 use crate::Cell;
 use crate::Scene;
 use crate::Story;
+use crate::gallery::inbox::action_needed_in_queue;
 use crate::gallery::inbox::every_kind;
-use crate::gallery::inbox::needs_you_in_queue;
 use crate::gallery::packages::PackagesRegion;
 use crate::pages;
 use quilt_ui_kit::ACKNOWLEDGE_FOR;
@@ -63,7 +63,7 @@ fn activities(autopull: Option<&str>, removing: Option<&str>) -> Activities {
 fn controls() -> AnyView {
     let open = RwSignal::new(false);
     view! {
-        <Inbox entries=every_kind() needs_you=needs_you_in_queue(1) open=open />
+        <Inbox entries=every_kind() action_needed=action_needed_in_queue(1) open=open />
         <Button leading_visual=icons::sync() on_click=|_| ()>
             "Refresh"
         </Button>

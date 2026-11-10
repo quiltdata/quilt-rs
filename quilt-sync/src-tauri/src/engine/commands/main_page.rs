@@ -1,5 +1,4 @@
-//! v2's main-page payloads. Nothing here is shared with `package_list.rs`, which
-//! is v1's, frozen, and deleted once v2 ships.
+//! The main page's payloads.
 
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -17,6 +16,10 @@ use quilt_uri::Host;
 
 use super::package_page::KeepingScope;
 use super::package_page::PackageSize;
+use crate::engine::action_needed::ActionNeeded;
+use crate::engine::action_needed::Cause;
+use crate::engine::action_needed::Kind;
+use crate::engine::action_needed::Subject;
 use crate::engine::autopull::PackageAutosync;
 use crate::engine::autopull::PausedReason;
 use crate::engine::autopull::WatcherFacts;
@@ -77,10 +80,17 @@ pub enum PackageStateDto {
     SignInExpired {
         host: Option<String>,
     },
+    /// The read did not reach the bucket's `latest`, so the remote facts are
+    /// the last known ones. `host` is the catalog; `None` for a bucket with no
+    /// catalog.
+    Unreachable {
+        host: Option<String>,
+    },
     /// Autosync stopped for this package for a reason no other state covers.
     /// The pause reasons that have a state resolve into it instead:
-    /// `PendingChanges`, `PendingCommit` and `Diverged` into the state the working
-    /// tree reports, and `PullConflict` and `RoleDenied` into their own states.
+    /// `PendingChanges`, `PendingCommit`, `Diverged` and `MergeRefused` into the
+    /// state the working tree reports, and `PullConflict` and `RoleDenied` into
+    /// their own states.
     /// Only `PausedReason::Other` resolves here (see `unexplained_pause`).
     ///
     /// Kept separate from `Unknown`, which makes a different and stronger claim:
@@ -93,15 +103,13 @@ pub enum PackageStateDto {
 
 /// Why the watcher stopped syncing one package, as sent to the UI.
 ///
-/// v2's own type. v1's `reporter::PausedEvent` is frozen: its `reason` is a plain
-/// string, and its single `message` means something different for each reason
-/// (the raw refusal for `other`, comma-joined file names for `pullConflict`, the
-/// role name for `roleDenied`). A comma-joined list cannot be split back apart
-/// when a file name contains a comma. Here each meaning has its own field.
+/// Each reason's detail has its own field: the conflicting files stay a list,
+/// because a comma-joined string cannot be split back apart when a file name
+/// contains a comma.
 ///
-/// Kinds are `snake_case`, matching [`PackageStateDto`] rather than v1's
-/// camelCase reason strings. The queue reads a pause and a state side by side,
-/// so those two vocabularies are the pair that must agree.
+/// Kinds are `snake_case`, matching [`PackageStateDto`]. The queue reads a pause
+/// and a state side by side, so those two vocabularies are the pair that must
+/// agree.
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum PausedDto {
@@ -132,7 +140,7 @@ impl From<&PausedReason> for PausedDto {
         match reason {
             PausedReason::PendingChanges => Self::PendingChanges,
             PausedReason::PendingCommit => Self::PendingCommit,
-            PausedReason::Diverged => Self::Diverged,
+            PausedReason::Diverged | PausedReason::MergeRefused(_) => Self::Diverged,
             PausedReason::PullConflict(files) => Self::PullConflict {
                 files: files.clone(),
             },
@@ -287,13 +295,14 @@ impl From<PackageState> for PackageStateDto {
 /// `Other` is deliberately absent: it has no state in the vocabulary, and
 /// folding it would destroy the case the queue exists to surface — a package
 /// `latest` by hash and paused by a workflow rejection. It travels as a pause on
-/// the watcher payload instead. The other three reasons are absent because the
-/// tree's own state already says what they say.
+/// the watcher payload instead. The other reasons are absent because the tree's
+/// own state already says what they say.
 /// Whether this pause has no state of its own to resolve into.
 ///
 /// Only `Other`. Every other reason either resolves into the state the working
-/// tree already reports (`PendingChanges`, `PendingCommit`, `Diverged`) or has a
-/// state of its own (`PullConflict`, `RoleDenied`). `Other` is the catch-all —
+/// tree already reports (`PendingChanges`, `PendingCommit`, `Diverged`,
+/// `MergeRefused`) or has a state of its own (`PullConflict`, `RoleDenied`).
+/// `Other` is the catch-all —
 /// a workflow rejection, a hash mismatch — and it is non-transient, so a package
 /// left in it stays stopped until something outside this app changes.
 pub(super) fn unexplained_pause(paused: Option<&PausedReason>) -> bool {
@@ -350,6 +359,60 @@ pub(super) fn session_state(err: &Error) -> Option<PackageStateDto> {
     }
 }
 
+/// A package's status read worked. When it reached the bucket, its session or
+/// credentials are good and the bucket answered; a read from the last-known
+/// tip proves neither. A denial pause stands until it is cleared.
+pub(super) fn read_worked(
+    action_needed: &ActionNeeded,
+    namespace: &quilt_uri::Namespace,
+    origin: Option<&Host>,
+    paused: Option<&PausedReason>,
+    status: &quilt::lineage::InstalledPackageStatus,
+) {
+    if !status.latest_refreshed {
+        return;
+    }
+    action_needed.session_works(origin);
+    if !matches!(paused, Some(PausedReason::RoleDenied { .. })) {
+        action_needed.leave(&Subject::package(namespace), Kind::NoAccess);
+    }
+}
+
+/// A package's status read was refused: `state` is how it was classified, a
+/// lost session or a denial. A read that finishes after the package was
+/// uninstalled or moved to another catalog changes nothing: its refusal is
+/// the old catalog's.
+pub(super) async fn read_blocked(
+    m: &impl model::QuiltModel,
+    action_needed: &ActionNeeded,
+    namespace: &quilt_uri::Namespace,
+    origin: Option<&Host>,
+    state: &PackageStateDto,
+) {
+    let current = match m.get_installed_package(namespace).await {
+        Ok(Some(installed)) => {
+            m.get_installed_package_lineage(&installed)
+                .await
+                .is_ok_and(|lineage| {
+                    lineage.remote_uri.and_then(|remote| remote.origin).as_ref() == origin
+                })
+        }
+        _ => false,
+    };
+    if !current {
+        return;
+    }
+    match state {
+        PackageStateDto::RoleDenied { role } => action_needed.enter(
+            Subject::package(namespace),
+            Cause::NoAccess { role: role.clone() },
+        ),
+        PackageStateDto::SignInExpired { .. } => action_needed.session_failed(origin, true),
+        PackageStateDto::NoSession { .. } => action_needed.session_failed(origin, false),
+        _ => {}
+    }
+}
+
 /// The deployment a session failure was for, by either route.
 ///
 /// [`Error::s3_host`] answers for the S3 route only — a rejected credential
@@ -369,9 +432,6 @@ fn session_host(err: &Error) -> Option<String> {
 /// covers the readable-bucket query and the role query behind a denial
 /// together.
 ///
-/// A copy of `BUCKET_LIST_BUDGET` in `package_list.rs`, not shared with it,
-/// because v1 is frozen and will be deleted as a whole. Keep the two in sync.
-///
 /// Apart from these queries the roster is local data and renders without the
 /// network. The bucket query adds two round trips per host (`config.json`, then
 /// a GraphQL POST), serialised under the host's credential lock behind a retry
@@ -387,9 +447,8 @@ const BUCKET_LIST_BUDGET: Duration = Duration::from_secs(2);
 
 /// Whether the active role can reach a row's bucket, and what to say about it.
 ///
-/// COPIED from `package_list.rs:81-87`. v2 carries the ROLE NAME rather than
-/// v1's rendered `reason` string: §2 keeps prose off the wire, and
-/// `kit::render` already words `RoleDenied` for both sites.
+/// Carries the role name, not a sentence: prose stays off the wire, and
+/// `kit::render` words `RoleDenied`.
 struct AccessMark {
     role: Option<String>,
     role_switch_host: Option<String>,
@@ -550,20 +609,18 @@ async fn load_rows(
     Ok(rows)
 }
 
-async fn get_main_page_packages_from_model(
+pub(super) async fn get_main_page_packages_from_model(
     m: &impl model::QuiltModel,
     roles: &RoleCache,
     tracing: &crate::engine::telemetry::Telemetry,
     paused_reasons: &HashMap<quilt_uri::Namespace, PausedReason>,
 ) -> Result<MainPagePackages, Error> {
-    // Clear the role cache on every load, as v1's
-    // `get_installed_packages_list_data_from_model` does (a copy, not shared).
-    // A role switch is server-side and global, so it can happen in the web
-    // catalog without the app knowing. If the cached name lived for the whole
-    // session, a row could name a role that in fact has access, and
-    // `observe_role` would never run again, so the S3 clients would keep signing
-    // as the old role until Settings is opened or the ~1h credential TTL
-    // expires. All hosts are cleared because the roster's hosts are known only
+    // Clear the role cache on every load. A role switch is server-side and
+    // global, so it can happen in the web catalog without the app knowing. If
+    // the cached name lived for the whole session, a row could name a role that
+    // in fact has access, and `observe_role` would never run again, so the S3
+    // clients would keep signing as the old role until Settings is opened or the
+    // ~1h credential TTL expires. All hosts are cleared because the roster's hosts are known only
     // after `load_rows` below, and a cache entry is only a name.
     roles.invalidate(None).await;
 
@@ -619,8 +676,6 @@ async fn load_main_page_package(
         .as_ref()
         .map(quilt_uri::S3PackageUri::from);
     // Crash reports are attributed to the deployment of the most recent action.
-    // v1 does this in its own light phase (`package_list.rs:334`); without it here,
-    // the attribution dies with v1.
     if let Some(host) = typed_uri.as_ref().and_then(|uri| uri.catalog.as_ref()) {
         tracing.add_host(host);
     }
@@ -676,10 +731,8 @@ pub async fn get_main_page_packages(s: &Services) -> Result<MainPagePackages, St
     let roles = &*s.roles;
     let tracing = &*s.telemetry;
     let watcher = &s.watcher;
-    // From the same one read the watcher payload uses. The old route went
-    // through `PausedEvent` and `filter_map`ped away every pause with no
-    // message — `PendingChanges`, `PendingCommit` and `Diverged` — so three of
-    // the six reasons never reached this map at all.
+    // From the same one read the watcher payload uses, so every pause reason
+    // reaches this map.
     // Keyed by the type the watcher already hands over: this map used to flatten
     // each key to a string, and every lookup below then had one too.
     let paused_reasons: HashMap<quilt_uri::Namespace, PausedReason> =
@@ -863,6 +916,7 @@ pub(super) async fn refresh_main_page_package_from_model(
     tracing: &crate::engine::telemetry::Telemetry,
     namespace: &quilt_uri::Namespace,
     paused: Option<&PausedReason>,
+    action_needed: &ActionNeeded,
 ) -> Result<MainPagePackageRefresh, Error> {
     let installed_package = m.get_installed_package(namespace).await?.ok_or_else(|| {
         Error::from(quilt::InstallPackageError::NotInstalled(
@@ -902,30 +956,46 @@ pub(super) async fn refresh_main_page_package_from_model(
         .get_installed_package_status_with_downloads(&installed_package, None)
         .await
     {
-        Ok((status, counts)) => Ok(MainPagePackageRefresh {
-            // The pause checks go here rather than at the top of the function,
-            // because the access-denied arm below has higher precedence and must
-            // still be able to win.
-            state: pause_or(paused, || {
-                PackageState::resolve(
-                    status.upstream_state,
-                    has_local_commit,
-                    has_remote,
-                    Some(status.changes.len()),
-                )
-                .into()
-            }),
-            // The refresh did not deny, so any pre-filter mark is cleared.
-            role_switch_host: None,
-            downloads: Some(counts.into()),
-            changed_files: Some(status.changes.len()),
-        }),
+        // A status that did not read the bucket's `latest` is local data
+        // alone, so it is answered like a failure to reach the bucket below.
+        Ok((status, _)) if !status.latest_refreshed => {
+            tracing::warn!(
+                "Could not read the latest revision for {}",
+                installed_package.namespace,
+            );
+            Err(Error::General(format!(
+                "Could not reach the bucket for {}",
+                installed_package.namespace
+            )))
+        }
+        Ok((status, counts)) => {
+            read_worked(action_needed, namespace, host.as_ref(), paused, &status);
+            Ok(MainPagePackageRefresh {
+                // The pause checks go here rather than at the top of the function,
+                // because the access-denied arm below has higher precedence and must
+                // still be able to win.
+                state: pause_or(paused, || {
+                    PackageState::resolve(
+                        status.upstream_state,
+                        has_local_commit,
+                        has_remote,
+                        Some(status.changes.len()),
+                    )
+                    .into()
+                }),
+                // The refresh did not deny, so any pre-filter mark is cleared.
+                role_switch_host: None,
+                downloads: Some(counts.into()),
+                changed_files: Some(status.changes.len()),
+            })
+        }
         Err(err) if err.is_access_denied() => {
             // Ruling R3: denial is precedence rank 1, so it REPLACES the state
             // rather than riding beside it, and `render` gives it no action —
             // which is the invariant
             // `denied_row_hides_publish_that_a_readable_row_with_the_same_changes_offers`.
             let mark = denied_mark(m, roles, host.as_ref()).await;
+            read_blocked(m, action_needed, namespace, host.as_ref(), &mark.state()).await;
             Ok(MainPagePackageRefresh {
                 state: mark.state(),
                 role_switch_host: mark.role_switch_host,
@@ -940,6 +1010,7 @@ pub(super) async fn refresh_main_page_package_from_model(
             // A pause still outranks it, as in the light phase: signing in
             // would not resolve a conflict, and the row must keep naming it.
             if let Some(state) = session_state(&err) {
+                read_blocked(m, action_needed, namespace, host.as_ref(), &state).await;
                 return Ok(MainPagePackageRefresh {
                     state: pause_or(paused, || state),
                     role_switch_host: None,
@@ -982,9 +1053,16 @@ pub async fn refresh_main_page_package(
     // between-phases staleness `provisional` already exists to express.
     let paused = watcher.paused_reason(&namespace).await;
 
-    refresh_main_page_package_from_model(m, roles, tracing, &namespace, paused.as_ref())
-        .await
-        .map_err(|e| e.to_frontend_string())
+    refresh_main_page_package_from_model(
+        m,
+        roles,
+        tracing,
+        &namespace,
+        paused.as_ref(),
+        watcher.action_needed(),
+    )
+    .await
+    .map_err(|e| e.to_frontend_string())
 }
 
 // ── The watcher's payload ──
@@ -1250,9 +1328,8 @@ mod tests {
 
     #[test]
     fn a_conflict_crosses_the_wire_as_a_list_not_a_joined_string() {
-        // v1's `reporter` sends `files.join(", ")`. Counting files for
-        // "conflicts in N files" from that string means splitting on ", ", which
-        // gives the wrong count for this file name.
+        // Counting files for "conflicts in N files" from a joined string means
+        // splitting on ", ", which gives the wrong count for this file name.
         let reason =
             PausedReason::PullConflict(vec!["plate, run 3.csv".to_string(), "b.csv".to_string()]);
         let json = serde_json::to_string(&PausedDto::from(&reason)).unwrap();
@@ -1268,9 +1345,7 @@ mod tests {
 
     #[test]
     fn the_three_meanings_of_one_field_become_three_named_fields() {
-        // `PausedEvent.message` is one `Option<String>` carrying a raw error for
-        // `other`, comma-joined filenames for `pullConflict`, and a role name for
-        // `roleDenied`. Each gets its own field and its own name here.
+        // A raw error, a file list and a role name each get their own field.
         assert_eq!(
             serde_json::to_string(&PausedDto::from(&PausedReason::Other(
                 "workflow rejected metadata".to_string()
@@ -1311,8 +1386,8 @@ mod tests {
 
     #[test]
     fn the_reasons_that_carry_nothing_carry_nothing() {
-        // Three of the six are fully described by their kind. A `message: null` on
-        // these is the overloaded field surviving in a new shape.
+        // These are fully described by their kind. A `message: null` on them is
+        // the overloaded field surviving in a new shape.
         for (reason, expected) in [
             (
                 PausedReason::PendingChanges,
@@ -1320,6 +1395,12 @@ mod tests {
             ),
             (PausedReason::PendingCommit, r#"{"kind":"pending_commit"}"#),
             (PausedReason::Diverged, r#"{"kind":"diverged"}"#),
+            (
+                PausedReason::MergeRefused(crate::engine::autopull::MergeBlock::Paths(vec![
+                    "a.csv".to_string(),
+                ])),
+                r#"{"kind":"diverged"}"#,
+            ),
         ] {
             assert_eq!(
                 serde_json::to_string(&PausedDto::from(&reason)).unwrap(),
@@ -2399,13 +2480,10 @@ mod tests {
         );
     }
 
-    /// COPIED judgement 4's own regression guard: `roles.invalidate(None)` runs
-    /// at the top of every load. Without it, a `RoleCache` shared across two
-    /// loads would serve the first load's cached role forever, and
-    /// `refresh_roles` would be called once rather than once per load.
-    ///
-    /// v1's analogue is `package_list.rs:1126-1132`; this is v2's own version,
-    /// against v2's own `roster` helper.
+    /// `roles.invalidate(None)` runs at the top of every load. Without it, a
+    /// `RoleCache` shared across two loads would serve the first load's cached
+    /// role forever, and `refresh_roles` would be called once rather than once
+    /// per load.
     #[tokio::test]
     async fn a_second_load_re_fetches_the_role_rather_than_serving_the_cache() {
         let mut model = crate::engine::model::mocks::create();
@@ -2516,7 +2594,10 @@ mod tests {
                 quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
             );
         }
-        quilt::lineage::InstalledPackageStatus::new(upstream, changes)
+        quilt::lineage::InstalledPackageStatus {
+            latest_refreshed: true,
+            ..quilt::lineage::InstalledPackageStatus::new(upstream, changes)
+        }
     }
 
     async fn refresh(m: &impl model::QuiltModel, roles: &RoleCache) -> MainPagePackageRefresh {
@@ -2537,6 +2618,7 @@ mod tests {
             &crate::engine::telemetry::Telemetry::default(),
             &ns,
             paused,
+            &crate::engine::action_needed::ActionNeeded::default(),
         )
         .await
         .expect("refresh")
@@ -2594,10 +2676,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_denial_outranks_a_pull_conflict_pause() {
-        // The named invariant `a_denial_outranks_a_pause_even_a_pull_conflict`, from
-        // v1's `installed_packages_list.rs`. Denial is rank 1 and the conflict is
-        // rank 2, so the fold must sit AFTER the denial arm has had its chance — an
-        // early return at the top of the heavy phase would silently invert this.
+        // Denial is rank 1 and the conflict is rank 2, so the fold must sit
+        // AFTER the denial arm has had its chance — an early return at the top of the heavy phase would silently invert this.
         let m = mock_one_package(Err(access_denied_error()), Some(two_roles()));
 
         let refreshed = refresh_with_pause(
@@ -2696,6 +2776,34 @@ mod tests {
         );
     }
 
+    /// A status that did not read the bucket's `latest` is no more evidence
+    /// than a failed one, so the row stays as the light phase guessed it.
+    #[tokio::test]
+    async fn an_unread_latest_leaves_the_row_unchecked() {
+        let m = mock_one_package(
+            Ok(quilt::lineage::InstalledPackageStatus {
+                latest_refreshed: false,
+                ..status_with(UpstreamState::UpToDate, 1)
+            }),
+            None,
+        );
+        let ns: quilt_uri::Namespace = "team/one".try_into().unwrap();
+
+        let refreshed = refresh_main_page_package_from_model(
+            &m,
+            &RoleCache::default(),
+            &crate::engine::telemetry::Telemetry::default(),
+            &ns,
+            None,
+            &crate::engine::action_needed::ActionNeeded::default(),
+        )
+        .await;
+        assert!(
+            refreshed.is_err(),
+            "an unread latest must not settle the row"
+        );
+    }
+
     #[tokio::test]
     async fn a_generic_status_failure_is_propagated_not_a_denial() {
         // A failure to reach the remote is not evidence about the package. Manufacturing
@@ -2713,6 +2821,7 @@ mod tests {
             &crate::engine::telemetry::Telemetry::default(),
             &ns,
             None,
+            &crate::engine::action_needed::ActionNeeded::default(),
         )
         .await
         .expect_err("a generic status failure must surface as an error, not a manufactured state");
@@ -2749,6 +2858,7 @@ mod tests {
             &crate::engine::telemetry::Telemetry::default(),
             &ns,
             None,
+            &crate::engine::action_needed::ActionNeeded::default(),
         )
         .await
         .expect("a missing session is a state this page can word, not a failed check");
@@ -2760,6 +2870,97 @@ mod tests {
                 host: Some("quilt.test".to_string()),
             }
         );
+    }
+
+    /// A refused read that finishes after the package moved to another
+    /// catalog is the old catalog's: it enters nothing.
+    #[tokio::test]
+    async fn a_read_from_the_old_catalog_enters_nothing() {
+        use crate::engine::action_needed::ActionNeeded;
+        let ns: quilt_uri::Namespace = "team/one".try_into().unwrap();
+        let mut m = crate::engine::model::mocks::create();
+        m.expect_get_installed_package()
+            .returning(|ns| Ok(Some(make_installed_package(ns.clone()))));
+        m.expect_get_installed_package_lineage().returning(|pkg| {
+            Ok(quilt::lineage::PackageLineage::from_remote(
+                make_manifest_uri(&pkg.namespace.to_string()),
+                "abcdef".to_string(),
+            ))
+        });
+        let current = make_manifest_uri("team/one").origin;
+        let old: Host = "old.test".parse().unwrap();
+        let denied = PackageStateDto::RoleDenied { role: None };
+        let action_needed = ActionNeeded::default();
+
+        read_blocked(&m, &action_needed, &ns, Some(&old), &denied).await;
+        assert!(
+            action_needed.get().is_empty(),
+            "the catalog changed under the read"
+        );
+
+        read_blocked(&m, &action_needed, &ns, current.as_ref(), &denied).await;
+        assert_eq!(action_needed.get().len(), 1);
+    }
+
+    /// A read that finds the session gone enters its host in the action-needed
+    /// set, and a read that reaches the bucket leaves it, autosync on or off.
+    #[tokio::test]
+    async fn a_read_enters_a_lost_session_and_a_working_read_leaves_it() {
+        use crate::engine::action_needed::{ActionNeeded, Cause, Subject};
+        let ns: quilt_uri::Namespace = "team/one".try_into().unwrap();
+        let action_needed = ActionNeeded::default();
+        let read = |status| {
+            let m = mock_one_package(status, None);
+            let (ns, action_needed) = (ns.clone(), &action_needed);
+            async move {
+                refresh_main_page_package_from_model(
+                    &m,
+                    &RoleCache::default(),
+                    &crate::engine::telemetry::Telemetry::default(),
+                    &ns,
+                    None,
+                    action_needed,
+                )
+                .await
+            }
+        };
+
+        read(Err(Error::from(quilt::Error::Login(
+            quilt::LoginError::NoSession(Some(fixtures::host())),
+        ))))
+        .await
+        .expect("a missing session is a state, not an error");
+        let entered: Vec<_> = action_needed
+            .get()
+            .into_iter()
+            .map(|e| (e.subject, e.cause))
+            .collect();
+        assert_eq!(
+            entered,
+            vec![(
+                Subject::Host {
+                    host: fixtures::host()
+                },
+                Cause::SignIn { expired: false }
+            )]
+        );
+
+        read(Ok(quilt::lineage::InstalledPackageStatus {
+            latest_refreshed: false,
+            ..status_with(UpstreamState::UpToDate, 0)
+        }))
+        .await
+        .expect_err("a read that did not reach the bucket is left unchecked");
+        assert_eq!(
+            action_needed.get().len(),
+            1,
+            "a read that did not reach the bucket proves nothing"
+        );
+
+        read(Ok(status_with(UpstreamState::UpToDate, 0)))
+            .await
+            .expect("the bucket answered");
+        assert!(action_needed.get().is_empty(), "the session works");
     }
 
     #[tokio::test]
@@ -2781,6 +2982,7 @@ mod tests {
             &crate::engine::telemetry::Telemetry::default(),
             &ns,
             None,
+            &crate::engine::action_needed::ActionNeeded::default(),
         )
         .await
         .expect("a rejected credential is a state this page can word, not a failed check");
@@ -2959,6 +3161,7 @@ mod tests {
             &crate::engine::telemetry::Telemetry::default(),
             &ns,
             None,
+            &crate::engine::action_needed::ActionNeeded::default(),
         )
         .await
         .expect_err("an uninstalled package has no state to report");

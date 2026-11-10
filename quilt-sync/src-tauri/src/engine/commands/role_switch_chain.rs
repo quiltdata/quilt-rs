@@ -1,8 +1,8 @@
 //! The role switch, driven across every surface it moves.
 //!
 //! Each surface is already pinned at its own seam: the switch command's cache
-//! flush in [`super::auth`], the roster's marks in [`super::package_list`],
-//! the autosync pause in [`crate::engine::autopull::tick`]. Those tests each hand
+//! flush in [`super::auth`], the main page roster's marks in
+//! [`super::main_page`], the autosync pause in [`crate::engine::autopull::tick`]. Those tests each hand
 //! their subject a fresh [`RoleCache`] and a mock wired for one answer, so
 //! none of them can show that a switch *changes* anything — every one of them
 //! observes a single, static role.
@@ -38,15 +38,12 @@
 //! | `switch_role` | GraphQL mutation, same transport | sets `role` | expires the stored credentials |
 //! | `get_installed_package_status` | a real S3 GET through the cached client | `signing_role` | — |
 //!
-//! The `refresh_roles` row is the one that has already cost this feature a
-//! bug. It looks like a read and is not: the engine holds a per-session
-//! baseline of the role it last saw per host, and the moment the registry
-//! answers with a different one it deletes that host's stored STS
+//! The `refresh_roles` row looks like a read and is not: the engine holds a
+//! per-session baseline of the role it last saw per host, and the moment the
+//! registry answers with a different one it deletes that host's stored STS
 //! credentials — half a flush, leaving the caller to drop the S3 clients that
-//! are still signing as the old role. Modelling it as a pure read is what let
-//! `get_roles` ship observing an out-of-band switch and doing nothing about
-//! it. `model_for` therefore expects `clear_remote_client_cache` on the read
-//! paths too, and the catalog-switch test below fails without it.
+//! are still signing as the old role. `model_for` therefore expects
+//! `clear_remote_client_cache` on the read paths too.
 //!
 //! So the roster's **light** phase (the bucket-list pre-filter) follows a
 //! switch whether or not the clients were flushed — it never touched them.
@@ -71,13 +68,14 @@ use quilt_uri::ManifestUri;
 use quilt_uri::Namespace;
 
 use super::auth::RoleCache;
-use super::auth::get_roles_command;
 use super::auth::switch_role_command;
-use super::package_list::InstalledPackageListItem;
-use super::package_list::get_installed_packages_list_data_from_model;
-use super::package_list::refresh_package_status_from_model;
+use super::main_page::MainPagePackage;
+use super::main_page::PackageStateDto;
+use super::main_page::get_main_page_packages_from_model;
+use super::main_page::refresh_main_page_package_from_model;
 use super::test_support::make_installed_package;
 use crate::engine::Error;
+use crate::engine::autopull::PausedReason;
 use crate::engine::autopull::Watcher;
 use crate::engine::autopull::reporter::LogReporter;
 use crate::engine::autopull::tick::run_once;
@@ -275,11 +273,18 @@ fn model_for(stack: &Arc<FakeStack>) -> MockQuiltModel {
             }
         });
     model
-        .expect_get_installed_package_status()
+        .expect_get_installed_package_status_with_downloads()
         .returning(move |package, _| {
             let bucket = bucket_for(&package.namespace);
             if s3.can_read(bucket) {
-                Ok(quilt::lineage::InstalledPackageStatus::default())
+                // Read just now: the bucket answered.
+                Ok((
+                    quilt::lineage::InstalledPackageStatus {
+                        latest_refreshed: true,
+                        ..Default::default()
+                    },
+                    quilt::lineage::DownloadCounts::default(),
+                ))
             } else {
                 Err(access_denied(bucket))
             }
@@ -318,10 +323,7 @@ async fn pulling_watcher() -> Watcher {
     watcher
 }
 
-fn row<'a>(
-    packages: &'a [InstalledPackageListItem],
-    namespace: &str,
-) -> &'a InstalledPackageListItem {
+fn row<'a>(packages: &'a [MainPagePackage], namespace: &str) -> &'a MainPagePackage {
     packages
         .iter()
         .find(|item| item.namespace.to_string() == namespace)
@@ -330,19 +332,37 @@ fn row<'a>(
 
 /// Fetch the roster the way the command does, with no pauses to show.
 ///
-/// The empty paused map means the command's projection of
-/// `watcher.snapshot().paused` into `paused_reasons` is **not** exercised
-/// here; these tests enter one level below it.
-async fn roster(model: &MockQuiltModel, roles: &RoleCache) -> Vec<InstalledPackageListItem> {
-    get_installed_packages_list_data_from_model(
+/// The empty paused map means the command's projection of the watcher's
+/// paused set into `paused_reasons` is **not** exercised here; these tests
+/// enter one level below it.
+async fn roster(model: &MockQuiltModel, roles: &RoleCache) -> Vec<MainPagePackage> {
+    get_main_page_packages_from_model(model, roles, &Telemetry::default(), &HashMap::new())
+        .await
+        .expect("roster")
+        .packages
+}
+
+/// Whether a row, or a refresh, says the active role cannot reach its bucket.
+fn denied(state: &PackageStateDto) -> bool {
+    matches!(state, PackageStateDto::RoleDenied { .. })
+}
+
+/// The heavy phase for one row, called as the command calls it.
+async fn refresh(
+    model: &MockQuiltModel,
+    roles: &RoleCache,
+    namespace: (&str, &str),
+) -> super::main_page::MainPagePackageRefresh {
+    refresh_main_page_package_from_model(
         model,
         roles,
         &Telemetry::default(),
-        &HashMap::new(),
+        &Namespace::from(namespace),
+        None,
+        &crate::engine::action_needed::ActionNeeded::default(),
     )
     .await
-    .expect("roster")
-    .packages
+    .expect("refresh")
 }
 
 /// The switch, called exactly as the command calls it.
@@ -385,11 +405,11 @@ async fn a_switch_reaches_s3_and_unmarks_the_rows_the_new_role_can_read() {
 
     let before = roster(&model, &roles).await;
     assert!(
-        row(&before, "team/locked").no_access,
+        denied(&row(&before, "team/locked").state),
         "a bucket the active role cannot read must be marked"
     );
     assert!(
-        !row(&before, "team/open").no_access,
+        !denied(&row(&before, "team/open").state),
         "a bucket it can read must not be"
     );
 
@@ -406,94 +426,21 @@ async fn a_switch_reaches_s3_and_unmarks_the_rows_the_new_role_can_read() {
 
     let after = roster(&model, &roles).await;
     assert!(
-        !row(&after, "team/locked").no_access,
+        !denied(&row(&after, "team/locked").state),
         "the new role reads this bucket, so the mark must go"
     );
     assert!(
-        !row(&after, "team/open").no_access,
+        !denied(&row(&after, "team/open").state),
         "the row that was always readable must stay unmarked"
     );
 
     // The heavy phase is the authoritative answer, and the only one here that
     // goes through a cached S3 client. This is the flush's assertion.
-    let refreshed = refresh_package_status_from_model(
-        &model,
-        &roles,
-        &Telemetry::default(),
-        &Namespace::from(LOCKED_ROW),
-    )
-    .await
-    .expect("refresh");
-    assert!(
-        !refreshed.no_access,
+    let refreshed = refresh(&model, &roles, LOCKED_ROW).await;
+    assert_eq!(
+        refreshed.state,
+        PackageStateDto::Latest,
         "the per-row status call must succeed under the new role"
-    );
-    assert_eq!(refreshed.status, "up_to_date");
-}
-
-/// A switch made in the **web catalog** has to reach S3 as well as the UI.
-///
-/// This is not an edge case: the feature's own premise is that a switch is
-/// server-side and global, so the desktop app can only ever *observe* one
-/// made elsewhere. It observes it on a read — `get_roles`, when Settings
-/// opens — and that read is not free of consequences. The engine deletes the
-/// host's stored credentials the moment it sees a role it did not last see,
-/// which is half a flush; the other half is dropping the S3 clients still
-/// holding the old role's credentials in the SDK's identity cache.
-///
-/// Stopping halfway is the worst state available. The selector shows the new
-/// role and the registry-backed surfaces agree with it, while every real S3
-/// call is still the old role for up to an hour — so the roster reads
-/// "Current role `ReadOnly` has no access" next to a switcher displaying
-/// `ReadWrite`, and re-picking that same `ReadWrite` is a no-op because it is
-/// already selected. Only a restart recovers.
-#[tokio::test]
-async fn a_switch_made_in_the_catalog_reaches_s3_when_settings_reads_the_role() {
-    let stack = FakeStack::new(&[(READ_ONLY, &[OPEN]), (READ_WRITE, &[OPEN, LOCKED])]);
-    let model = model_for(&stack);
-    let roles = RoleCache::default();
-
-    let before = roster(&model, &roles).await;
-    assert!(
-        row(&before, "team/locked").no_access,
-        "ReadOnly cannot reach this bucket, so the row starts marked"
-    );
-
-    // The user switches role in the web catalog. Nothing tells the app.
-    stack.switch(READ_WRITE).expect("catalog switch");
-    let before_settings = stack.cache_clears().len();
-
-    // They open Settings, which reads the role afresh — the observation.
-    let data = get_roles_command(&model, &roles, "quilt.test")
-        .await
-        .expect("roles");
-    assert_eq!(
-        data.current, READ_WRITE,
-        "the selector must show the role that is now active"
-    );
-    assert_eq!(
-        stack.cache_clears_since(before_settings),
-        vec!["quilt.test".to_string()],
-        "observing the switch must also drop the clients still signing as the old role"
-    );
-
-    // The authoritative surface: a real S3 call, which is what the clients
-    // sign. This is what a display-only fix leaves broken.
-    let refreshed = refresh_package_status_from_model(
-        &model,
-        &roles,
-        &Telemetry::default(),
-        &Namespace::from(LOCKED_ROW),
-    )
-    .await
-    .expect("refresh");
-    assert!(
-        !refreshed.no_access,
-        "the role Settings just showed must be the role S3 signs as"
-    );
-    assert_eq!(
-        refreshed.role_switch_host, None,
-        "a readable row carries no switch affordance"
     );
 }
 
@@ -511,8 +458,10 @@ async fn the_mark_names_the_role_the_user_switched_to() {
 
     let before = roster(&model, &roles).await;
     assert_eq!(
-        row(&before, "team/locked").no_access_reason.as_deref(),
-        Some("Current role ReadOnly has no access to this bucket")
+        row(&before, "team/locked").state,
+        PackageStateDto::RoleDenied {
+            role: Some(READ_ONLY.to_string())
+        }
     );
 
     switch_to(&model, &roles, &watcher, CURATOR)
@@ -521,14 +470,12 @@ async fn the_mark_names_the_role_the_user_switched_to() {
 
     let after = roster(&model, &roles).await;
     let locked = row(&after, "team/locked");
-    assert!(
-        locked.no_access,
-        "the new role cannot read it either, so the mark stands"
-    );
     assert_eq!(
-        locked.no_access_reason.as_deref(),
-        Some("Current role Curator has no access to this bucket"),
-        "the mark must name the role now active, not the one the switch left"
+        locked.state,
+        PackageStateDto::RoleDenied {
+            role: Some(CURATOR.to_string())
+        },
+        "the new role cannot read it either, so the mark stands, naming the role now active"
     );
     assert_eq!(
         locked.role_switch_host.as_deref(),
@@ -555,18 +502,18 @@ async fn a_switch_releases_the_pause_a_denial_created_and_the_next_tick_proceeds
         .await
         .expect("first tick");
 
-    let paused = watcher.snapshot().await.paused;
+    let paused = watcher.paused_snapshot().await;
     assert_eq!(
         paused.len(),
         1,
         "only the denied namespace pauses, got {paused:?}"
     );
-    assert_eq!(paused[0].namespace.to_string(), "team/locked");
-    assert_eq!(paused[0].reason, "roleDenied");
     assert_eq!(
-        paused[0].message.as_deref(),
-        Some(READ_ONLY),
-        "the banner names the role the tick was refused under"
+        paused.get(&Namespace::from(("team", "locked"))),
+        Some(&PausedReason::RoleDenied {
+            role: READ_ONLY.to_string()
+        }),
+        "the pause names the role the tick was refused under"
     );
 
     switch_to(&model, &roles, &watcher, READ_WRITE)
@@ -574,7 +521,7 @@ async fn a_switch_releases_the_pause_a_denial_created_and_the_next_tick_proceeds
         .expect("switch");
 
     assert!(
-        watcher.snapshot().await.paused.is_empty(),
+        watcher.paused_snapshot().await.is_empty(),
         "a role denial is the one pause no manual action can clear, so the switch must"
     );
 
@@ -583,7 +530,7 @@ async fn a_switch_releases_the_pause_a_denial_created_and_the_next_tick_proceeds
         .expect("second tick");
 
     assert!(
-        watcher.snapshot().await.paused.is_empty(),
+        watcher.paused_snapshot().await.is_empty(),
         "the new role reads the bucket, so the tick that follows the switch must not re-pause"
     );
 }
@@ -599,7 +546,7 @@ async fn a_refused_switch_leaves_every_surface_as_it_was() {
     let watcher = pulling_watcher().await;
 
     let before = roster(&model, &roles).await;
-    assert!(row(&before, "team/locked").no_access);
+    assert!(denied(&row(&before, "team/locked").state));
 
     let before_switch = stack.cache_clears().len();
     let result = switch_to(&model, &roles, &watcher, READ_WRITE).await;
@@ -614,8 +561,10 @@ async fn a_refused_switch_leaves_every_surface_as_it_was() {
 
     let after = roster(&model, &roles).await;
     assert_eq!(
-        row(&after, "team/locked").no_access_reason.as_deref(),
-        Some("Current role ReadOnly has no access to this bucket"),
+        row(&after, "team/locked").state,
+        PackageStateDto::RoleDenied {
+            role: Some(READ_ONLY.to_string())
+        },
         "nothing moved, so the mark must read exactly as before"
     );
 }

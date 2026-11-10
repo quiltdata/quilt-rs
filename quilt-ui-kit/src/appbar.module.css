@@ -1,14 +1,10 @@
-/* Brand ground in both themes, same as v1's bar.
+/* Brand ground in both themes.
  *
- * States its own ink and type: outside the v2 frame it would inherit v1's
- * `body` (Roboto, unthemed black).
- *
- * Hosts other than the v2 frame may set `--q-appbar-min-height`,
- * `--q-appbar-container` and `--q-appbar-gutter`; see `layout.css`. */
+ * States its own ink and type, so it reads the same outside the frame. */
 .appbar {
   display: flex;
   align-items: center;
-  min-height: var(--q-appbar-min-height, 0);
+  min-height: 0;
   background: var(--q-bgColor-brand);
   color: var(--q-fgColor-onBrand);
   font-family: var(--q-font-sans);
@@ -25,20 +21,19 @@
   align-items: center;
   gap: var(--q-space-3);
   width: 100%;
-  max-width: var(--q-appbar-container, var(--q-container));
+  max-width: var(--q-container);
   margin-inline: auto;
-  padding-inline: var(--q-appbar-gutter, var(--q-space-4));
+  padding-inline: var(--q-space-4);
   padding-block: var(--q-space-2);
   min-height: var(--q-appbar-height);
   /* Both themes' rings are under 3:1 on the brand ground. */
   --q-focus-outlineColor: var(--q-fgColor-onBrand);
 }
 
-/* In the v2 frame the bar is one fixed height, which the sticky parts under it
+/* In the frame the bar is one fixed height, which the sticky parts under it
  * take as their offset. A long activity line wraps past its bottom edge and is
- * drawn over the page below, so nothing moves and the text is never cut. v1's
- * bar still grows with it. */
-[data-v2-page] .bar {
+ * drawn over the page below, so nothing moves and the text is never cut. */
+[data-page] .bar {
   height: var(--q-appbar-height);
   /* The row too, or it grows to the line and moves the logo and the controls. */
   grid-template-rows: minmax(0, 1fr);
@@ -64,7 +59,7 @@
   gap: var(--q-space-2);
 }
 
-/* Unframed on the brand ground, like v1's link buttons. */
+/* Unframed on the brand ground. */
 .actions button {
   background: transparent;
   border-color: transparent;

@@ -22,8 +22,8 @@ pub struct SyncTrayStatus {
     pub mode: TrayMode,
     pub last_sync: Option<DateTime<Utc>>,
     /// Count of namespaces with `has_changes = true` after the most
-    /// recent observation. Cheaper than counting files; for v1 the
-    /// tray surfaces it as "N package(s) with changes" in the tooltip.
+    /// recent observation. Cheaper than counting files; the tray
+    /// surfaces it as "N package(s) with changes" in the tooltip.
     pub pending_changes: u32,
     /// Latest non-empty error message across namespaces.
     /// Sticky per namespace — cleared when the namespace clears.

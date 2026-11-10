@@ -6,7 +6,7 @@
  * TIER 2 — semantic roles. The only tier component CSS may reference.
  *
  * That split is what makes dark mode and a colourblind-safe variant a matter of
- * re-pointing tier 2. Additive — `theme.css` is untouched, so v1 is unaffected.
+ * re-pointing tier 2.
  *
  * Hex only: the generator's `oklch()`/display-p3 twins were dropped, since these
  * scales sit far inside sRGB and two copies of every value drift. Worth
@@ -408,11 +408,9 @@
    * the override block below and does not go through a Radix scale. A brand
    * colour is a brand colour; `--blue-9` would have been the tempting shortcut
    * and is wrong, because it is `#282b50` in light and `#3d63dd` in dark, so
-   * the bar would change hue with the theme. The value is v1's
-   * `--q-ui-palette-primary`, unchanged, so the two appbars agree for as long
-   * as both exist.
+   * the bar would change hue with the theme.
    *
-   * `onBrand` is white at 11.9:1 over it — the ink v1's `quilt.png` is already
+   * `onBrand` is white at 11.9:1 over it — the ink `quilt.png` is already
    * drawn in. Measured, not assumed. */
   --q-bgColor-brand: #2d306d;
   --q-fgColor-onBrand: #fff;
@@ -428,7 +426,7 @@
    * so they are stated once, as white, like the ground they are for. */
   --q-overlay-onBrand-hover: rgb(255 255 255 / 0.14);
   --q-overlay-onBrand-active: rgb(255 255 255 / 0.22);
-  /* The inbox bell's needs-you count: amber-9, the same in both themes, with the
+  /* The inbox bell's action-needed count: amber-9, the same in both themes, with the
    * brand literal as its ink, 7.6:1. The pill measures 7.6:1 against the ground
    * too. The bell's unread dot is the muted ink above, 7.0:1. */
   --q-bgColor-attention-onBrand-emphasis: var(--amber-9);
@@ -549,10 +547,16 @@
   --q-bgColor-danger-muted: var(--red-a3);
   --q-borderColor-danger-muted: var(--red-7);
 
-  /* SPACE — a 4px grid, mirroring v1's `--q-ui-size-*` but named by multiples of
-   * the unit rather than by half-steps (`--q-space-3` reads better than
-   * `--q-ui-size-1-5`). Use for layout: gaps between regions, page padding, row
-   * rhythm.
+  /* JSON VALUES in the metadata editor, by type, in the hues the editor drew
+   * them before it took the kit's palette. Step 11, the scales' text step, so
+   * each reads on the card in both themes. */
+  --q-fgColor-json-string: var(--green-11);
+  --q-fgColor-json-number: var(--red-11);
+  --q-fgColor-json-boolean: var(--amber-11);
+  --q-fgColor-json-null: var(--blue-11);
+
+  /* SPACE — a 4px grid, named by multiples of the unit. Use for layout: gaps
+   * between regions, page padding, row rhythm.
    *
    * Horizontal control padding need not land on the grid; height does, see below. */
   --q-space-1: 4px;
@@ -580,9 +584,8 @@
    * the first line of every row under it. A control plus a hair of air. */
   --q-queue-line-height: calc(var(--q-control-height) + var(--q-space-1));
 
-  /* Page width cap. v1 sets 1280px, which exactly equals the default window
-   * width, so its container has zero margin at the size users actually get —
-   * almost certainly unintentional. Held slightly under so gutters exist. */
+  /* Page width cap, held slightly under the default window width so gutters
+   * exist. */
   --q-container: 1200px;
 
   /* SHAPE — ONE radius, deliberately. There were four (4/6/8/pill) and no reason
@@ -603,10 +606,9 @@
   --q-shadow-overlay: 0 8px 24px rgb(0 0 0 / 14%);
 
   /* TYPE — system stack: no webfont, no FOUT, native on all three platforms.
-   * `system-ui` first and no Roboto: v1 still links Roboto as a swap-display
-   * webfont, and on WebKitGTK it would otherwise win the fallback and bring the
-   * swap flash with it. Whatever face the desktop chooses is the right one, a light
-   * one included — this is a desktop app, not a web page (decided 2026-09-14).
+   * `system-ui` first and no Roboto, so on WebKitGTK the desktop's own face wins.
+   * Whatever face the desktop chooses is the right one, a light one included —
+   * this is a desktop app, not a web page (decided 2026-09-14).
    *
    * 14px IS THE FLOOR and there is deliberately no token below it, so nobody
    * can reach for one; hierarchy comes from weight and colour. The layout

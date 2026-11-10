@@ -37,6 +37,7 @@ use quilt_uri::Namespace;
 use quilt_uri::S3Uri;
 
 const BUCKET: &str = "b";
+const REV2: &str = "2222222222222222222222222222222222222222222222222222222222222222";
 
 /// A published row for `body` at `logical_key`, with its object put on the
 /// remote. `Some(version)` pins the key to that S3 version, the way a push to a
@@ -135,12 +136,12 @@ impl Rev1Installed {
         )
         .await?;
         publish_manifest(&remote, "REV1", vec![old, same.clone()]).await?;
-        publish_manifest(&remote, "REV2", vec![new, same]).await?;
+        publish_manifest(&remote, REV2, vec![new, same]).await?;
         remote
             .put_object(
                 None,
                 &S3Uri::from_str(&format!("s3://{BUCKET}/.quilt/named_packages/f/a/latest"))?,
-                b"REV2".to_vec(),
+                REV2.as_bytes().to_vec(),
             )
             .await?;
 
@@ -159,7 +160,7 @@ impl Rev1Installed {
         let domain_lineage =
             flow::install_package(domain_lineage, &domain_paths, &storage, &remote, &rev1).await?;
         let lineage = domain_lineage.packages[&namespace].clone();
-        assert_eq!(lineage.latest_hash, "REV2");
+        assert_eq!(lineage.latest_hash, REV2);
 
         Ok(Self {
             package_home: paths::package_home(&home, &namespace),

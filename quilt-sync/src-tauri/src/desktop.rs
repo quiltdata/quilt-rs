@@ -10,6 +10,7 @@ use tauri::WebviewUrl;
 use tauri::WebviewWindow;
 use tauri::WebviewWindowBuilder;
 
+pub mod action_needed;
 pub mod commands;
 pub mod link_handler;
 pub mod tray;

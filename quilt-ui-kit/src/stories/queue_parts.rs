@@ -23,8 +23,8 @@ use crate::story::Story;
 /// Two of the pairings are corrections worth re-reading rather than trusting from
 /// memory, and both live in `package_state.rs` where the verbs are chosen:
 ///
-/// - a pull conflict offers **`Publish`**, not `Resolve`. It is not resolvable on
-///   the merge page until the changes are committed, so publishing commits the local
+/// - a pull conflict offers **`Publish`**, not `Resolve`. It is not resolvable
+///   until the changes are committed, so publishing commits the local
 ///   version and lands the package in `Diverged` — at which point the row says
 ///   `changed in both places` and *does* offer `Resolve`.
 /// - `Diverged` offers **`Resolve`**, not `Merge`. No merge operation exists:

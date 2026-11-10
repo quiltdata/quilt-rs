@@ -115,7 +115,7 @@ Local-only package created as `H1`; a teammate has already pushed
 Push exits this `Diverged` unaided: an empty `base_hash` on entry
 marks the push as first, which short-circuits the certify guard —
 the first push always certifies, de-certifying the teammate's `H2`
-without a merge-page gesture. Only non-first pushes decline the
+without a resolve step. Only non-first pushes decline the
 tag and report `certified_latest: false` (see the Push contract in
 [`docs/architecture.md`](architecture.md)).
 

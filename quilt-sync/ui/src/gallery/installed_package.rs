@@ -10,8 +10,8 @@
 //! and given as much height as it wanted. The design's central bet is that two
 //! panes buy enough horizontal room to be worth a header and two control rows
 //! above them, and §9 records that bet as *unsolved*: measured at the floor when
-//! the layout was first drawn, four rows of list survived, which is what v1
-//! manages. Nothing has re-measured it since the regions were built.
+//! the layout was first drawn, four rows of list survived. Nothing has
+//! re-measured it since the regions were built.
 //!
 //! The first two cells are that measurement, at 1024×560, the window's minimum
 //! size when it was taken (the minimum width is now 640, which
@@ -35,10 +35,9 @@
 //! rows scrolled in a box of their own; they now scroll the page, under the
 //! same parts.
 //!
-//! v1 manages about four at the same window. The difference is not layout
-//! cleverness: **the header came in at 60px against the 108 §1 budgeted**,
-//! because the built header is two lines — a `BackLink` over one 32px row — and
-//! the bucket it used to carry moved into the context pane. §9's own number,
+//! The difference is not layout cleverness: **the header came in at 60px
+//! against the 108 §1 budgeted**, because the built header is two lines — a
+//! `BackLink` over one 32px row — and the bucket it used to carry moved into the context pane. §9's own number,
 //! 264px and five rows, turns out to describe the resting state rather than the
 //! selecting one, and to be about right for it.
 //!
@@ -202,8 +201,8 @@ fn page(
 
 const NOTE: &str = "The page at 1024×560, the floor it was designed at, which is where the vertical bet \
     is settled. It is won: 269px of list resting and 220 with the footer up — eight rows \
-    and six, against the four §1 measured when the layout was first drawn and the four v1 \
-    manages. The header is what paid for it, at 60px against the 108 budgeted. The third \
+    and six, against the four §1 measured when the layout was first drawn. The header \
+    is what paid for it, at 60px against the 108 budgeted. The third \
     cell is the 900px default for comparison, the fourth is 760px wide where the shell \
     stacks itself, and the fifth is resolve mode, the app's own resolve pane beside the \
     marked rows, so the rows and the sentence naming them are finally on screen together. \

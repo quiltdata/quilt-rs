@@ -38,6 +38,7 @@ use quilt_uri::Seconds;
 use quilt_uri::Tag;
 use quilt_uri::TagUri;
 use quilt_uri::UriError;
+use quilt_uri::is_top_hash;
 
 pub(crate) async fn bytestream_to_string(bytestream: ByteStream) -> Res<String> {
     let mut reader = bytestream.into_async_read();
@@ -146,6 +147,12 @@ pub async fn resolve_tag(
         .get_object_stream(host, &S3Uri::from(&tag_uri))
         .await?;
     let hash = bytestream_to_string(stream.body).await?;
+    if !is_top_hash(&hash) {
+        return Err(UriError::Package(format!(
+            "hash must be 64 lowercase hex characters, got {hash:?}"
+        ))
+        .into());
+    }
     let S3PackageHandle { bucket, namespace } = tag_uri.into();
     let origin = host.cloned();
     Ok(ManifestUri {
@@ -328,10 +335,15 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_resolve_existing_hash() -> Res {
-        let uri = S3PackageUri::try_from("quilt+s3://b#package=foo/bar@hjknlmn")?;
+        let uri = S3PackageUri::try_from(
+            "quilt+s3://b#package=foo/bar@0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        )?;
         let remote = MockRemote::default();
         let top_hash = resolve_top_hash(&remote, None, &uri).await?;
-        assert_eq!(top_hash, "hjknlmn".to_string(),);
+        assert_eq!(
+            top_hash,
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
+        );
         Ok(())
     }
 
@@ -343,11 +355,38 @@ mod tests {
             .put_object(
                 None,
                 &S3Uri::try_from("s3://b/.quilt/named_packages/foo/bar/latest")?,
-                b"abcdef".to_vec(),
+                b"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_vec(),
             )
             .await?;
         let top_hash = resolve_top_hash(&remote, None, &uri).await?;
-        assert_eq!(top_hash, "abcdef".to_string(),);
+        assert_eq!(
+            top_hash,
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
+        );
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn resolve_tag_rejects_a_pointer_that_is_not_a_top_hash() -> Res {
+        let pointer = S3Uri::try_from("s3://b/.quilt/named_packages/foo/bar/latest")?;
+        let handle = S3PackageHandle {
+            bucket: "b".to_string(),
+            namespace: ("foo", "bar").into(),
+        };
+        for body in [
+            "abcdef",
+            "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF",
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde/",
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde.",
+            "",
+        ] {
+            let remote = MockRemote::default();
+            remote
+                .put_object(None, &pointer, body.as_bytes().to_vec())
+                .await?;
+            let result = resolve_tag(&remote, None, handle.clone(), Tag::Latest).await;
+            assert!(result.is_err(), "accepted {body:?}");
+        }
         Ok(())
     }
 

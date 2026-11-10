@@ -28,10 +28,10 @@ use crate::paths::DomainPaths;
 use quilt_uri::Namespace;
 use quilt_uri::S3Uri;
 
-const BUCKET: &str = "b";
+pub(super) const BUCKET: &str = "b";
 
 /// A published row for `body` at `logical_key`, pinned to S3 `version`.
-async fn publish_row(
+pub(super) async fn publish_row(
     remote: &MockRemote,
     scratch: &Path,
     logical_key: &str,
@@ -62,7 +62,7 @@ async fn publish_row(
 
 /// Publishes a manifest under its real top hash, as a push would, and returns
 /// that hash.
-async fn publish_manifest(remote: &MockRemote, rows: Vec<ManifestRow>) -> Res<String> {
+pub(super) async fn publish_manifest(remote: &MockRemote, rows: Vec<ManifestRow>) -> Res<String> {
     let manifest = Manifest {
         rows,
         ..Manifest::default()
