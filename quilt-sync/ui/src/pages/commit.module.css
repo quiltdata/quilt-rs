@@ -213,8 +213,8 @@
 
 /* The metadata editor, `vanilla-jsoneditor`, drawn from the kit's tokens. Its
  * palette is its `--jse-*` variables; the tokens behind them already follow
- * the theme, so one set serves both. Keys and values in the default text
- * colour and punctuation muted, as the kit's JSON display draws them.
+ * the theme, so one set serves both. Keys in the default text colour,
+ * values coloured by type, punctuation muted.
  *
  * The rules after this block reach into the editor's own classes, so they are
  * global inside it, and `!important` because its scoped rules outrank them. */
@@ -265,10 +265,10 @@
 
   --jse-key-color: var(--q-fgColor-default);
   --jse-value-color: var(--q-fgColor-default);
-  --jse-value-color-number: var(--q-fgColor-default);
-  --jse-value-color-boolean: var(--q-fgColor-default);
-  --jse-value-color-null: var(--q-fgColor-default);
-  --jse-value-color-string: var(--q-fgColor-default);
+  --jse-value-color-number: var(--q-fgColor-json-number);
+  --jse-value-color-boolean: var(--q-fgColor-json-boolean);
+  --jse-value-color-null: var(--q-fgColor-json-null);
+  --jse-value-color-string: var(--q-fgColor-json-string);
   --jse-value-color-url: var(--q-fgColor-accent);
   --jse-delimiter-color: var(--q-fgColor-muted);
   --jse-edit-outline: var(--q-focus-outlineWidth) solid
