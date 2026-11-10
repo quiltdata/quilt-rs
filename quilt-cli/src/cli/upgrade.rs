@@ -135,10 +135,11 @@ fn run(installer: Installer) -> Result<bool, Error> {
     Ok(status.success())
 }
 
-/// Asks before building from source; without a terminal there is no one to
-/// ask, and the answer is no.
+/// Asks before building from source. The question goes to stderr and the
+/// answer comes from stdin, so both must be a terminal; otherwise there is no
+/// one to ask, and the answer is no.
 fn confirm_build(why: &str) -> Result<bool, Error> {
-    if !std::io::stdin().is_terminal() {
+    if !std::io::stdin().is_terminal() || !std::io::stderr().is_terminal() {
         return Ok(false);
     }
     eprint!(
