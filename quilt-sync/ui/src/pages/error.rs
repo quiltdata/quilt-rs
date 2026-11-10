@@ -102,7 +102,11 @@ pub fn NotFound() -> impl IntoView {
         Signal::stored(false),
     );
     view! {
-        <PageLayout heading="Page not found" actions=actions>
+        <PageLayout
+            heading="Page not found"
+            actions=actions
+            banner=view! { <crate::components::UpdateNotice /> }.into_any()
+        >
             <ErrorSlate
                 title="Page not found"
                 message="The page you are looking for does not exist."

@@ -4,7 +4,7 @@
 //!
 //! Its own Trunk target (`gallery.html`), mounting `Gallery` and never `App`. A
 //! deliberate separation, not just a style choice: `App` mounts the real router
-//! and app-level effects such as `UpdateChecker`'s on-mount version check, none
+//! and app-level effects such as the update check on mount, none
 //! of which belong in a harness whose whole point is rendering component
 //! stories in isolation, outside any page's own data-fetching and navigation.
 //! (With no engine to talk to, every command here fails quietly, so nothing
@@ -30,7 +30,7 @@ wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 // A plain `mod`, no `#[path]`: this file lives in `src/`, so `mod gallery`'s
 // children resolve to `src/gallery/`. Declared as a second `[[bin]]` in
 // Cargo.toml.
-pub(crate) use quilt_sync_ui::{commands, pages};
+pub(crate) use quilt_sync_ui::{commands, components, pages};
 
 // One module per region or page. Adding a scene means adding a file here and one
 // `entry!` line in `ENTRIES` below — the nav, the routes and the page all read
@@ -42,6 +42,7 @@ mod gallery {
     pub mod commit_page;
     pub mod context_pane;
     pub mod file_pane;
+    pub mod ignore_popups;
     pub mod incoming_files;
     pub mod installed_package;
     pub mod notifications;
@@ -217,6 +218,11 @@ const ENTRIES: &[Entry] = &[
         SCENES / "Dialogs",
         "The quit prompt",
         kit quit_confirm::QuitScene
+    ),
+    entry!(
+        SCENES / "Dialogs",
+        "The ignore popups",
+        ignore_popups::IgnorePopupsScene
     ),
     entry!(
         SCENES / "Notifications",

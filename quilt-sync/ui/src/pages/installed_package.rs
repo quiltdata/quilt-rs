@@ -35,9 +35,7 @@ use super::page::outcome_band;
 use super::page::{Page, PageHandle};
 use super::row_menu::{COPY_FAILED, LocalPath, Ran, RowCommand, carry_out, local_path};
 use super::status_watch::StatusWatch;
-use crate::components::{
-    IgnorePopup, IgnorePopupData, Notification, UnignorePopup, UnignorePopupData,
-};
+use crate::components::{IgnorePopup, IgnorePopupData, UnignorePopup, UnignorePopupData};
 
 mod bucket_form;
 pub(crate) mod context_pane;
@@ -1057,41 +1055,21 @@ fn copy_outcome(namespace: String, command: &RowCommand) -> Outcome {
 /// The popups a row's `[⋯]` opens, drawn outside the body so a re-read keeps
 /// them.
 ///
-/// They report through a `Notification`; this page reports on its band
-/// instead, so a failure becomes the band's, keyed to the package the
-/// popup was opened for ([`report_popup`]), and a success says nothing there:
-/// the re-read is the report. Each popup re-reads the page itself once its
-/// write lands.
+/// Each shows its own refusal and re-reads the page once its write lands; the
+/// re-read is the report.
 ///
 /// The page survives a switch of package, so an answer can land after the
 /// reader moved on. Both popups hold the page's lock while they wait, so no
 /// other `.quiltignore` popup opens before the answer lands, and an answer
 /// closes only its own popup ([`close_own`]).
 fn row_popups(files: Files, w: Wiring) -> impl IntoView {
-    let said = RwSignal::new(None::<Notification>);
-    let unignore_said = RwSignal::new(None::<Notification>);
-    // The package each popup was opened for, so its answer is that package's
-    // news even if it lands after the reader moved on (the band drops it
-    // then). Sound because both popups hold the page's lock while they wait,
-    // so no other `.quiltignore` popup can open before the answer lands.
-    let ignore_for = StoredValue::new(String::new());
-    let unignore_for = StoredValue::new(String::new());
-    report_popup(said, ignore_for, "Could not ignore this file.", w.outcome);
-    report_popup(
-        unignore_said,
-        unignore_for,
-        "Could not stop ignoring this file.",
-        w.outcome,
-    );
     view! {
         {move || {
             files.ignoring.get().map(|data| {
-                ignore_for.set_value(data.namespace.clone());
                 let (ns, path) = (data.namespace.clone(), data.path.clone());
                 view! {
                     <IgnorePopup
                         data=data
-                        notification=said
                         refetch=w.reload
                         on_close=move || {
                             files
@@ -1107,12 +1085,10 @@ fn row_popups(files: Files, w: Wiring) -> impl IntoView {
         }}
         {move || {
             files.unignoring.get().map(|data| {
-                unignore_for.set_value(data.namespace.clone());
                 let (ns, path) = (data.namespace.clone(), data.path.clone());
                 view! {
                     <UnignorePopup
                         data=data
-                        notification=unignore_said
                         refetch=w.reload
                         on_close=move || {
                             files
@@ -1127,30 +1103,6 @@ fn row_popups(files: Files, w: Wiring) -> impl IntoView {
             })
         }}
     }
-}
-
-/// Turn a popup's `Notification` into this page's band: a failure is news
-/// about `opened_for`, the package the popup was opened for, whichever package
-/// is on screen when it lands (the band drops it if that is another one). A
-/// success says nothing: the popup re-reads the page itself.
-fn report_popup(
-    notice: RwSignal<Option<Notification>>,
-    opened_for: StoredValue<String>,
-    lead: &'static str,
-    outcome: RwSignal<Option<Outcome>>,
-) {
-    Effect::new(move |_| {
-        let Some(n) = notice.get() else { return };
-        notice.set(None);
-        if let Notification::Error(detail) = n {
-            outcome.set(Some(Outcome {
-                namespace: opened_for.get_value(),
-                variant: BannerVariant::Critical,
-                lead: lead.to_string(),
-                detail: Some(detail),
-            }));
-        }
-    });
 }
 
 /// Close the popup `open` holds only if it is the one `mine` names: an answer
@@ -1246,7 +1198,7 @@ fn open_file(
 /// [`PackageScreen`]'s own first paint, drawn alone by the gallery: the
 /// appbar, the header and both panes in the boxes the page fills.
 ///
-/// The banner is passed empty, not left out. The page always fills
+/// The banner is passed with only the update band, not left out. The page always fills
 /// `PageLayout`'s slot — its bands are drawn from the answer, inside the slot —
 /// and the slot's row takes its padding whether a band is in it or not, so a
 /// skeleton without one would sit that much higher than the page it hands to.
@@ -1256,7 +1208,12 @@ fn open_file(
 #[component]
 pub fn PackagePageSkeleton(actions: AnyView) -> impl IntoView {
     view! {
-        <PageLayout heading="Package" banner=().into_any() actions=actions page_scroll=true>
+        <PageLayout
+            heading="Package"
+            banner=view! { <crate::components::UpdateNotice /> }.into_any()
+            actions=actions
+            page_scroll=true
+        >
             {package_skeleton()}
         </PageLayout>
     }
@@ -1781,43 +1738,6 @@ mod tests {
                 truncated: false,
             }),
         }
-    }
-
-    /// A popup's failure is news about the package it was opened for, even
-    /// when it lands after the reader moved to another: the band, keyed by
-    /// package, then shows it on neither the new package nor under its name.
-    #[wasm_bindgen_test]
-    async fn a_popup_s_failure_is_the_package_it_was_opened_for() {
-        // Scoped, not `set`: the wasm tests share one thread, and an owner left
-        // current would outlive this test and own the next one's reactive work.
-        let owner = Owner::new();
-        let (notice, outcome) = owner.with(|| {
-            let notice = RwSignal::new(None);
-            let outcome = RwSignal::new(None);
-            let opened_for = StoredValue::new("team/a".to_string());
-            report_popup(notice, opened_for, "Could not ignore this file.", outcome);
-            (notice, outcome)
-        });
-
-        // The reader is on team/b by now; nothing the popup recorded moves.
-        notice.set(Some(Notification::Error("denied".to_string())));
-        leptos::task::tick().await;
-        assert_eq!(
-            outcome.get_untracked(),
-            Some(said(
-                "team/a",
-                BannerVariant::Critical,
-                "Could not ignore this file.",
-                Some("denied"),
-            ))
-        );
-        assert!(notice.get_untracked().is_none(), "the notice is consumed");
-
-        let el = mount(move || outcome_band(outcome, Signal::stored("team/b".to_string())));
-        assert!(
-            !el.inner_html().contains("Could not ignore"),
-            "team/b's band does not carry team/a's failure",
-        );
     }
 
     /// A popup's answer closes that popup only: one that lands after the
@@ -3089,7 +3009,7 @@ mod tests {
         button_saying(&el, "Ignore").click();
         sleep_ms(10).await;
         let field = || -> web_sys::HtmlInputElement {
-            el.query_selector(".ignore-input")
+            el.query_selector("dialog[aria-label='Ignore'] input[type=text]")
                 .unwrap()
                 .unwrap_or_else(|| panic!("the ignore popup; markup was {}", el.inner_html()))
                 .unchecked_into()
