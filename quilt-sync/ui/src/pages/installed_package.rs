@@ -99,8 +99,6 @@ pub struct Wiring {
     /// this page's news — see `outcome_band`.
     pub outcome: RwSignal<Option<Outcome>>,
     pub reload: Trigger,
-    /// Whether a read is out: the scaffold's, which spins *Refresh*.
-    pub in_flight: RwSignal<bool>,
     /// Where the header wants to go. A signal because a `Callback` must be
     /// `Send + Sync` and `use_navigate`'s closure is neither; [`Wiring::follow`]
     /// performs it.
@@ -294,7 +292,6 @@ impl Wiring {
             downloading: RwSignal::new(false),
             outcome: page.outcome,
             reload: page.reload,
-            in_flight: page.in_flight,
             goto: RwSignal::new(None),
             replace_to: RwSignal::new(None),
             dialogs: Dialogs {
@@ -1342,9 +1339,11 @@ fn PackageScreen(
             shown.0.set_value(None);
         }
     });
-    // For the header's *Copied* and Keeping's folders dialog. Not on `Wiring`,
+    // For the header's *Copied*, its *Try again* spinner and Keeping's folders
+    // dialog. Not on `Wiring`,
     // which every part of the page takes by value.
     provide_context(header::CopiedMark::new());
+    provide_context(header::Reading(page.in_flight));
     let folders = keeping::FoldersDialog::new();
     provide_context(folders);
     // Another package never opens on this one's draft, whatever it draws.

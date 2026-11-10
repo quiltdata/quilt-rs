@@ -390,7 +390,7 @@ fn primary_action(
         Some(PackageAction::Publish | PackageAction::ChooseS3Bucket) | None => (),
     };
 
-    let retrying = retrying(action, w.in_flight);
+    let retrying = retrying(action);
     action.map_or_else(
         || ().into_any(),
         |action| {
@@ -411,10 +411,17 @@ fn primary_action(
     )
 }
 
+/// Whether the page's read is out: the signal *Refresh* spins on.
+#[derive(Clone, Copy)]
+pub(crate) struct Reading(pub RwSignal<bool>);
+
 /// Whether *Try again* spins: it is a read, so it spins on the read *Refresh*
-/// spins on.
-fn retrying(action: Option<PackageAction>, in_flight: RwSignal<bool>) -> Signal<bool> {
-    Signal::derive(move || action == Some(PackageAction::TryAgain) && in_flight.get())
+/// spins on. A header mounted without the page has no read to spin on.
+fn retrying(action: Option<PackageAction>) -> Signal<bool> {
+    let reading = use_context::<Reading>();
+    Signal::derive(move || {
+        action == Some(PackageAction::TryAgain) && reading.is_some_and(|Reading(r)| r.get())
+    })
 }
 
 /// The confirmations behind the menu's two Danger items.
