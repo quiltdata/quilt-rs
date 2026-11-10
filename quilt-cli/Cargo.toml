@@ -5,7 +5,7 @@ readme = "README.md"
 keywords = ["data", "versioning", "cli", "s3", "reproducibility"]
 categories = ["command-line-utilities", "filesystem", "science"]
 
-version = "0.40.2"
+version = "0.41.0-dev"
 
 # Inherit from workspace
 edition.workspace = true
@@ -24,8 +24,13 @@ quilt-rs = { path = "../quilt-rs", version = "0.53.0-dev" }
 quilt-uri = { path = "../quilt-uri", version = "0.4.3" }
 
 # CLI-specific dependencies
+# Already in the lock through clap; colour the update notice.
+anstream = "1.0.0"
+anstyle = "1.0.14"
 clap.workspace = true
 dirs.workspace = true
+reqwest.workspace = true
+semver = "1.0.28"
 serde.workspace = true
 serde_json.workspace = true
 tabled.workspace = true
