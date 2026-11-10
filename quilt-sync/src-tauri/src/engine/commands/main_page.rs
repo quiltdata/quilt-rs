@@ -76,6 +76,12 @@ pub enum PackageStateDto {
     SignInExpired {
         host: Option<String>,
     },
+    /// The read did not reach the bucket's `latest`, so the remote facts are
+    /// the last known ones. `host` is the catalog; `None` for a bucket with no
+    /// catalog.
+    Unreachable {
+        host: Option<String>,
+    },
     /// Autosync stopped for this package for a reason no other state covers.
     /// The pause reasons that have a state resolve into it instead:
     /// `PendingChanges`, `PendingCommit`, `Diverged` and `MergeRefused` into the

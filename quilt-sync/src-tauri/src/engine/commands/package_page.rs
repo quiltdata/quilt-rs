@@ -411,6 +411,22 @@ fn blocked_state(err: &Error) -> Option<PackageStateDto> {
     }
 }
 
+/// The state of a status that did not read the bucket's `latest`. It
+/// outranks every state the status resolves to, because each of their actions
+/// needs the host.
+fn unreachable_state(
+    lineage: &quilt::lineage::PackageLineage,
+    status: &quilt::lineage::InstalledPackageStatus,
+) -> Option<PackageStateDto> {
+    let uri = lineage
+        .remote_uri
+        .as_ref()
+        .filter(|uri| !uri.bucket.is_empty())?;
+    (!status.latest_refreshed).then(|| PackageStateDto::Unreachable {
+        host: uri.origin.as_ref().map(ToString::to_string),
+    })
+}
+
 /// The remedy a denial offers: the role it was refused under, and the other
 /// roles the reader holds on that host.
 ///
@@ -706,7 +722,9 @@ async fn get_package_page_data_from_model(
         //
         // Below the denial the `Err` side catches: a denial is rank 1.
         Ok(status) => {
-            let state = if let Some(files) = conflict_files(paused) {
+            let state = if let Some(state) = unreachable_state(&lineage, &status) {
+                state
+            } else if let Some(files) = conflict_files(paused) {
                 PackageStateDto::PullConflict { files }
             } else {
                 quilt::lineage::PackageState::resolve(
@@ -1261,7 +1279,18 @@ mod tests {
     }
 
     fn diverged(changes: quilt::lineage::ChangeSet) -> quilt::lineage::InstalledPackageStatus {
-        quilt::lineage::InstalledPackageStatus::new(UpstreamState::Diverged, changes)
+        fresh(UpstreamState::Diverged, changes)
+    }
+
+    /// A status that read the bucket's `latest` just now.
+    fn fresh(
+        upstream: UpstreamState,
+        changes: quilt::lineage::ChangeSet,
+    ) -> quilt::lineage::InstalledPackageStatus {
+        quilt::lineage::InstalledPackageStatus {
+            latest_refreshed: true,
+            ..quilt::lineage::InstalledPackageStatus::new(upstream, changes)
+        }
     }
 
     #[tokio::test]
@@ -1401,10 +1430,7 @@ mod tests {
     }
 
     fn settled() -> quilt::lineage::InstalledPackageStatus {
-        quilt::lineage::InstalledPackageStatus::new(
-            UpstreamState::UpToDate,
-            quilt::lineage::ChangeSet::new(),
-        )
+        fresh(UpstreamState::UpToDate, quilt::lineage::ChangeSet::new())
     }
 
     fn revision(message: &str) -> quilt::flow::Revision {
@@ -2016,8 +2042,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_path_changed_here_is_not_outstanding() {
-        let status =
-            quilt::lineage::InstalledPackageStatus::new(UpstreamState::UpToDate, modified("b.csv"));
+        let status = fresh(UpstreamState::UpToDate, modified("b.csv"));
 
         let keeping = page(&RoleCache::default(), Ok(status), None)
             .await
@@ -2030,8 +2055,7 @@ mod tests {
     /// From the rows Keeping already read: three of 7 bytes, none here.
     #[tokio::test]
     async fn the_page_read_carries_the_package_size() {
-        let status =
-            quilt::lineage::InstalledPackageStatus::new(UpstreamState::UpToDate, removed("b.csv"));
+        let status = fresh(UpstreamState::UpToDate, removed("b.csv"));
 
         let context = page(&RoleCache::default(), Ok(status), None).await.context;
 
@@ -2070,8 +2094,7 @@ mod tests {
     /// status: `mock_one_package` expects exactly one status call.
     #[tokio::test]
     async fn the_page_read_carries_the_file_list_from_its_one_status() {
-        let status =
-            quilt::lineage::InstalledPackageStatus::new(UpstreamState::UpToDate, modified("b.csv"));
+        let status = fresh(UpstreamState::UpToDate, modified("b.csv"));
         let m = mock_one_package_reading_records(Ok(status), Some(1));
         let list = listed(read(&m).await.expect("a page").files);
 
@@ -2186,7 +2209,7 @@ mod tests {
 
     /// A local change, as the local walk sees it.
     fn changed_here(path: &str) -> quilt::lineage::InstalledPackageStatus {
-        quilt::lineage::InstalledPackageStatus::new(UpstreamState::UpToDate, modified(path))
+        fresh(UpstreamState::UpToDate, modified(path))
     }
 
     fn rows_of(list: &EntryList) -> Vec<(&str, &str)> {
@@ -2275,6 +2298,67 @@ mod tests {
         assert_eq!(page.header.state, PackageStateDto::NoSession { host: None });
         let list = listed(page.files);
         assert_eq!(rows_of(&list), vec![("a.csv", "modified")]);
+    }
+
+    /// A status from local data alone, the bucket's `latest` not read.
+    fn offline(
+        status: quilt::lineage::InstalledPackageStatus,
+    ) -> quilt::lineage::InstalledPackageStatus {
+        quilt::lineage::InstalledPackageStatus {
+            latest_refreshed: false,
+            ..status
+        }
+    }
+
+    /// A host that can't be reached is a state: the page draws from local
+    /// data and names the host.
+    #[tokio::test]
+    async fn an_unreachable_host_draws_the_page_and_names_the_host() {
+        let m = mock_rows(
+            make_manifest_uri(NS),
+            Some(Ok(offline(changed_here("a.csv")))),
+            None,
+            Some(Ok(records(&["a.csv"]))),
+        );
+        let page = read(&m).await.expect("an unreachable host is a state");
+
+        assert_eq!(
+            page.header.state,
+            PackageStateDto::Unreachable {
+                host: Some(fixtures::host().to_string())
+            }
+        );
+        let list = listed(page.files);
+        assert_eq!(rows_of(&list), vec![("a.csv", "modified")]);
+    }
+
+    /// Without a catalog the bucket itself is what can't be reached.
+    #[tokio::test]
+    async fn an_unreachable_bucket_with_no_catalog_names_no_host() {
+        let m = mock_rows(
+            make_manifest_uri_no_origin(NS),
+            Some(Ok(offline(changed_here("a.csv")))),
+            None,
+            Some(Ok(records(&["a.csv"]))),
+        );
+        let page = read(&m).await.expect("an unreachable bucket is a state");
+
+        assert_eq!(
+            page.header.state,
+            PackageStateDto::Unreachable { host: None }
+        );
+    }
+
+    /// A conflict's Publish needs the host too, so the host comes first.
+    #[tokio::test]
+    async fn an_unreachable_host_outranks_a_pull_conflict() {
+        let paused = PausedReason::PullConflict(vec!["a.csv".to_string()]);
+        assert_eq!(
+            header_state(&RoleCache::default(), Ok(offline(settled())), Some(&paused)).await,
+            PackageStateDto::Unreachable {
+                host: Some(fixtures::host().to_string())
+            },
+        );
     }
 
     /// With no status at all, no list: never one classified without a status,
