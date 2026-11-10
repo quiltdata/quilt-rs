@@ -93,12 +93,9 @@ pub enum PackageStateDto {
 
 /// Why the watcher stopped syncing one package, as sent to the UI.
 ///
-/// Not `reporter::PausedEvent`, the `autosync-paused` payload: its `reason` is a
-/// plain string, and its single `message` means something different for each
-/// reason (the raw refusal for `other`, comma-joined file names for
-/// `pullConflict`, the role name for `roleDenied`). A comma-joined list cannot be
-/// split back apart when a file name contains a comma. Here each meaning has its
-/// own field.
+/// Each reason's detail has its own field: the conflicting files stay a list,
+/// because a comma-joined string cannot be split back apart when a file name
+/// contains a comma.
 ///
 /// Kinds are `snake_case`, matching [`PackageStateDto`]. The queue reads a pause
 /// and a state side by side, so those two vocabularies are the pair that must
@@ -670,10 +667,8 @@ pub async fn get_main_page_packages(s: &Services) -> Result<MainPagePackages, St
     let roles = &*s.roles;
     let tracing = &*s.telemetry;
     let watcher = &s.watcher;
-    // From the same one read the watcher payload uses. The old route went
-    // through `PausedEvent` and `filter_map`ped away every pause with no
-    // message — `PendingChanges`, `PendingCommit` and `Diverged` — so three of
-    // the six reasons never reached this map at all.
+    // From the same one read the watcher payload uses, so every pause reason
+    // reaches this map.
     // Keyed by the type the watcher already hands over: this map used to flatten
     // each key to a string, and every lookup below then had one too.
     let paused_reasons: HashMap<quilt_uri::Namespace, PausedReason> =
@@ -1244,9 +1239,8 @@ mod tests {
 
     #[test]
     fn a_conflict_crosses_the_wire_as_a_list_not_a_joined_string() {
-        // `reporter::PausedEvent` sends `files.join(", ")`. Counting files for
-        // "conflicts in N files" from that string means splitting on ", ", which
-        // gives the wrong count for this file name.
+        // Counting files for "conflicts in N files" from a joined string means
+        // splitting on ", ", which gives the wrong count for this file name.
         let reason =
             PausedReason::PullConflict(vec!["plate, run 3.csv".to_string(), "b.csv".to_string()]);
         let json = serde_json::to_string(&PausedDto::from(&reason)).unwrap();
@@ -1262,9 +1256,7 @@ mod tests {
 
     #[test]
     fn the_three_meanings_of_one_field_become_three_named_fields() {
-        // `PausedEvent.message` is one `Option<String>` carrying a raw error for
-        // `other`, comma-joined filenames for `pullConflict`, and a role name for
-        // `roleDenied`. Each gets its own field and its own name here.
+        // A raw error, a file list and a role name each get their own field.
         assert_eq!(
             serde_json::to_string(&PausedDto::from(&PausedReason::Other(
                 "workflow rejected metadata".to_string()
