@@ -14,8 +14,7 @@ const DISMISS_DURATION_MS: f64 = 5.0 * 60.0 * 1000.0;
 const STORAGE_KEY: &str = "updateDismissedAt";
 
 /// How often a running app asks again. The engine reads the feed less often
-/// than this and answers from its last read in between, so this mostly sets
-/// how soon a dismissed band comes back.
+/// than this and answers from its last read in between.
 const RECHECK: Duration = Duration::from_hours(1);
 
 fn local_storage() -> Option<web_sys::Storage> {
@@ -31,8 +30,12 @@ fn dismissed_at() -> Option<f64> {
         .ok()
 }
 
-fn dismissed(at: Option<f64>, now: f64) -> bool {
-    at.is_some_and(|at| now - at < DISMISS_DURATION_MS)
+/// How much of a dismiss is left, in milliseconds; `None` once it is over.
+fn dismiss_left(at: Option<f64>, now: f64, dismiss_ms: f64) -> Option<f64> {
+    let left = at? + dismiss_ms - now;
+    // A stored time from a changed clock can end the dismiss late, never past
+    // one whole dismiss from now.
+    (left.is_finite() && left > 0.0).then(|| left.min(dismiss_ms))
 }
 
 fn set_dismissed() {
@@ -53,6 +56,33 @@ struct Found {
 #[derive(Clone, Copy)]
 pub struct UpdateCheck {
     found: RwSignal<Option<Found>>,
+    /// While a dismiss lasts. Checks go on underneath, so the band comes back
+    /// with the latest answer.
+    hidden: RwSignal<bool>,
+    dismiss_ms: f64,
+}
+
+impl UpdateCheck {
+    fn dismiss_left(self) -> Option<f64> {
+        dismiss_left(dismissed_at(), js_sys::Date::now(), self.dismiss_ms)
+    }
+
+    /// Hide the band for what is left of the last dismiss.
+    fn hide_while_dismissed(self) {
+        let Some(left) = self.dismiss_left() else {
+            return;
+        };
+        self.hidden.set(true);
+        set_timeout(
+            move || {
+                // A later dismiss has its own timer.
+                if self.dismiss_left().is_none() {
+                    let _ = self.hidden.try_set(false);
+                }
+            },
+            Duration::from_secs_f64(left / 1000.0),
+        );
+    }
 }
 
 /// Checks for an update at start and every [`RECHECK`] while the app runs,
@@ -62,30 +92,39 @@ pub struct UpdateCheck {
 /// "No update" and a failed check (network error, etc.) show nothing, to
 /// avoid distracting the user on every launch.
 pub fn provide_update_check() {
-    check_every(RECHECK, commands::check_for_update);
+    check_every(RECHECK, DISMISS_DURATION_MS, commands::check_for_update);
 }
 
-fn check_every<C, F>(every: Duration, check: C)
+fn check_every<C, F>(every: Duration, dismiss_ms: f64, check: C)
 where
     C: Fn() -> F + 'static,
     F: Future<Output = Result<Option<UpdateInfo>, String>> + 'static,
 {
     let found = RwSignal::new(None);
-    provide_context(UpdateCheck { found });
-    // An install running or failed is on the band; a check must not replace it.
+    let update_check = UpdateCheck {
+        found,
+        hidden: RwSignal::new(false),
+        dismiss_ms,
+    };
+    provide_context(update_check);
+    update_check.hide_while_dismissed();
+    // An install running or failed is on the band; a check must not replace
+    // it. Gone with the app, an answer has nowhere to go.
     let busy = move || {
-        found.with_untracked(|found| {
-            matches!(
-                found,
-                Some(Found {
-                    state: UpdateState::Installing | UpdateState::Failed { .. },
-                    ..
-                })
-            )
-        })
+        found
+            .try_with_untracked(|found| {
+                matches!(
+                    found,
+                    Some(Found {
+                        state: UpdateState::Installing | UpdateState::Failed { .. },
+                        ..
+                    })
+                )
+            })
+            .unwrap_or(true)
     };
     let tick = move || {
-        if dismissed(dismissed_at(), js_sys::Date::now()) || busy() {
+        if busy() {
             return;
         }
         let answer = check();
@@ -93,7 +132,7 @@ where
             if let Ok(Some(info)) = answer.await
                 && !busy()
             {
-                found.set(Some(Found {
+                let _ = found.try_set(Some(Found {
                     state: UpdateState::Available {
                         version: info.version,
                     },
@@ -116,7 +155,7 @@ pub fn UpdateNotice() -> impl IntoView {
 
     let snooze = move |()| {
         set_dismissed();
-        found.set(None);
+        check.hide_while_dismissed();
     };
 
     // Install, where the engine can; headless can't install itself, so the
@@ -155,7 +194,8 @@ pub fn UpdateNotice() -> impl IntoView {
         Signal::derive(move || engine::headless().get().then(|| "Download".to_string()));
 
     Some(move || {
-        found.get().map(|Found { state, .. }| {
+        let hidden = check.hidden.get();
+        found.get().filter(|_| !hidden).map(|Found { state, .. }| {
             view! {
                 <UpdateBand
                     state=state
@@ -213,12 +253,31 @@ mod tests {
         }
     }
 
+    fn dismiss(el: &web_sys::Element) {
+        use wasm_bindgen::JsCast;
+        el.query_selector("button[aria-label='Dismiss']")
+            .unwrap()
+            .expect("no dismiss on the band")
+            .unchecked_into::<web_sys::HtmlElement>()
+            .click();
+    }
+
     #[test]
     fn a_dismiss_lasts_five_minutes() {
         let now = 100.0 * MINUTE_MS;
-        assert!(!dismissed(None, now));
-        assert!(dismissed(Some(now - 4.0 * MINUTE_MS), now));
-        assert!(!dismissed(Some(now - 6.0 * MINUTE_MS), now));
+        let five = DISMISS_DURATION_MS;
+        assert_eq!(dismiss_left(None, now, five), None);
+        assert_eq!(
+            dismiss_left(Some(now - 4.0 * MINUTE_MS), now, five),
+            Some(MINUTE_MS)
+        );
+        assert_eq!(dismiss_left(Some(now - 6.0 * MINUTE_MS), now, five), None);
+        assert_eq!(dismiss_left(Some(f64::NAN), now, five), None);
+        assert_eq!(
+            dismiss_left(Some(now + 60.0 * MINUTE_MS), now, five),
+            Some(five),
+            "a time ahead of the clock hides for one dismiss at most"
+        );
     }
 
     #[wasm_bindgen_test]
@@ -226,7 +285,7 @@ mod tests {
         forget_dismiss();
         let (asked, check) = feed(1);
         let el = mount(move || {
-            check_every(Duration::from_millis(50), check);
+            check_every(Duration::from_millis(50), DISMISS_DURATION_MS, check);
             view! { <UpdateNotice /> }
         });
         assert_eq!(asked.get(), 1, "the first check runs at start");
@@ -238,25 +297,67 @@ mod tests {
         unmount_earlier();
     }
 
+    /// The band comes back when the dismiss ends, not at the next check.
     #[wasm_bindgen_test]
     async fn a_dismissed_band_comes_back_after_its_time() {
-        // Dismissed just short of five minutes ago: the first ticks ask
-        // nothing, a tick after the dismiss runs out shows the band.
-        let at = js_sys::Date::now() - DISMISS_DURATION_MS + 150.0;
+        forget_dismiss();
+        let (asked, check) = feed(0);
+        let el = mount(move || {
+            check_every(Duration::from_hours(1), 100.0, check);
+            view! { <UpdateNotice /> }
+        });
+        sleep_ms(0).await;
+        assert!(says_update(&el));
+
+        dismiss(&el);
+        sleep_ms(0).await;
+        assert!(!says_update(&el), "the dismiss did not hide the band");
+
+        sleep_ms(250).await;
+        assert!(says_update(&el), "the band did not come back");
+        assert_eq!(asked.get(), 1, "it came back on a check, not on its time");
+        forget_dismiss();
+        unmount_earlier();
+    }
+
+    /// A check that answers during a dismiss, one in flight when the user
+    /// dismissed included, leaves the band hidden.
+    #[wasm_bindgen_test]
+    async fn a_check_during_a_dismiss_keeps_the_band_hidden() {
+        forget_dismiss();
+        let (asked, check) = feed(0);
+        let el = mount(move || {
+            check_every(Duration::from_millis(30), DISMISS_DURATION_MS, check);
+            view! { <UpdateNotice /> }
+        });
+        sleep_ms(0).await;
+        dismiss(&el);
+        let before = asked.get();
+
+        sleep_ms(100).await;
+        assert!(asked.get() > before, "checks stopped during the dismiss");
+        assert!(!says_update(&el), "a check undid the dismiss");
+        forget_dismiss();
+        unmount_earlier();
+    }
+
+    /// A dismiss in another window, or before a restart, still counts.
+    #[wasm_bindgen_test]
+    async fn an_app_opened_within_a_dismiss_waits_out_the_rest() {
+        let at = js_sys::Date::now() - 100.0;
         local_storage()
             .unwrap()
             .set_item(STORAGE_KEY, &at.to_string())
             .unwrap();
-        let (asked, check) = feed(0);
+        let (_, check) = feed(0);
         let el = mount(move || {
-            check_every(Duration::from_millis(50), check);
+            check_every(Duration::from_hours(1), 250.0, check);
             view! { <UpdateNotice /> }
         });
-        assert_eq!(asked.get(), 0, "a check ran within the dismiss");
-        assert!(!says_update(&el));
+        sleep_ms(0).await;
+        assert!(!says_update(&el), "the band showed within the dismiss");
 
         sleep_ms(300).await;
-        assert!(asked.get() >= 1, "no check once the dismiss ran out");
         assert!(says_update(&el), "the band did not come back");
         forget_dismiss();
         unmount_earlier();
@@ -268,7 +369,7 @@ mod tests {
         let (asked, check) = feed(0);
         let page = RwSignal::new(true);
         mount(move || {
-            check_every(Duration::from_hours(1), check);
+            check_every(Duration::from_hours(1), DISMISS_DURATION_MS, check);
             view! {
                 <Show when=move || page.get()>
                     <UpdateNotice />
