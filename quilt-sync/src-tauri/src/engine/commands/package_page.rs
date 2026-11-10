@@ -512,6 +512,9 @@ fn keeping_data(
     (keeping, counts.size.map(PackageSize::from))
 }
 
+/// The resolve pane's refusal when the read did not reach the bucket.
+const UNREACHED: &str = "The bucket couldn't be reached to compare the two revisions.";
+
 /// The gate: the header's status decides, not the snapshot, whose `latest_hash` is stale here.
 /// A blocked status on a snapshot that says diverged refuses without comparing.
 /// A failed comparison refuses in the pane and never fails the page read.
@@ -523,6 +526,15 @@ async fn resolve_for_page(
     paused: Option<&PausedReason>,
 ) -> Option<ResolveData> {
     match status_read {
+        // The read already failed to reach the bucket; asking again would only
+        // wait for the same timeout before the page draws.
+        Ok(status)
+            if status.upstream_state == UpstreamState::Diverged && !status.latest_refreshed =>
+        {
+            Some(ResolveData::Refused {
+                reason: UNREACHED.to_string(),
+            })
+        }
         Ok(status) if status.upstream_state == UpstreamState::Diverged => Some(
             match m
                 .get_installed_package_resolve_comparison(installed, lineage)
@@ -1400,6 +1412,33 @@ mod tests {
             page.header.state,
             PackageStateDto::RoleDenied { role: None }
         );
+    }
+
+    /// The read already failed to reach the bucket, so it does not try again
+    /// for the comparison: the page draws without a second wait.
+    #[tokio::test]
+    async fn an_unread_latest_on_a_diverged_package_refuses_without_comparing() {
+        let lineage = diverged_snapshot();
+        let mut model = mock_package(
+            &lineage,
+            Ok(offline(diverged(quilt::lineage::ChangeSet::new()))),
+        );
+        model
+            .expect_get_installed_package_resolve_comparison()
+            .times(0);
+
+        let page = read(&model).await.unwrap();
+
+        assert_eq!(
+            page.context.resolve,
+            Some(ResolveData::Refused {
+                reason: UNREACHED.to_string(),
+            })
+        );
+        assert!(matches!(
+            page.header.state,
+            PackageStateDto::Unreachable { .. }
+        ));
     }
 
     #[tokio::test]
