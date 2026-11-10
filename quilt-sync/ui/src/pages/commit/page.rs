@@ -24,7 +24,7 @@ use leptos_router::hooks::use_navigate;
 
 use crate::commands::{self, CommitData, CommitViolation, EntryData, JunkSummary, ViolationField};
 use crate::commands::{CommitWorkflows, WorkflowIntent};
-use crate::components::{IgnorePopup, IgnorePopupData, Notification};
+use crate::components::{IgnorePopup, IgnorePopupData};
 use crate::pages::workflow::{
     PreviousWorkflow, WorkflowOption, WorkflowView, WorkflowViewKind, build_workflow_view,
     missing_settings_workflow, shows_settings_workflow_hint,
@@ -533,8 +533,6 @@ impl HeaderMenu {
     }
 }
 
-const IGNORE_FAILED: &str = "Could not ignore this file.";
-
 /// How long typing pauses before the live check runs.
 const CHECK_PAUSE_MS: u64 = 400;
 
@@ -756,35 +754,6 @@ fn CommitScreen(
     // The page's, so a re-read keeps the copy button's check.
     let copied = CopiedMark::new();
 
-    // The ignore popup reports through a `Notification`; its failure is this
-    // page's news, and its success re-reads the page, which is the report —
-    // so a success also takes down a failure an earlier try left up.
-    //
-    // The failure is news about the package the popup was opened for, which
-    // the address may no longer name by the time the write settles.
-    let popup_said = RwSignal::new(None::<Notification>);
-    let opened_for = StoredValue::new(String::new());
-    Effect::new(move |_| {
-        if let Some(data) = ignoring.get() {
-            opened_for.set_value(data.namespace);
-        }
-    });
-    Effect::new(move |_| match popup_said.get() {
-        Some(Notification::Error(detail)) => {
-            outcome.set(Some(critical(
-                opened_for.get_value(),
-                IGNORE_FAILED,
-                Some(detail),
-            )));
-        }
-        Some(Notification::Success(_))
-            if outcome.with_untracked(|s| s.as_ref().is_some_and(|s| s.lead == IGNORE_FAILED)) =>
-        {
-            outcome.set(None);
-        }
-        _ => {}
-    });
-
     let body = move |d: CommitData| {
         let Some(fixed) = form.get_untracked() else {
             return ().into_any();
@@ -824,7 +793,6 @@ fn CommitScreen(
                     view! {
                         <IgnorePopup
                             data=data
-                            notification=popup_said
                             refetch=reload
                             on_close=move || ignoring.set(None)
                             lock=running
@@ -2636,7 +2604,6 @@ mod tests {
             "Could not publish this revision.".to_string(),
             "Could not save this revision.".to_string(),
             "Could not open the folder.".to_string(),
-            IGNORE_FAILED.to_string(),
             "Could not load this package.".to_string(),
             missing_workflow_note("wrong-workflow"),
             blocked_reason(Some("No access"), false, None, None).unwrap(),

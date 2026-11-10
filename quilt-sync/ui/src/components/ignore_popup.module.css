@@ -1,0 +1,18 @@
+/* The ignore popups' lines of text, between the kit's fields. */
+
+.line,
+.hint,
+.error {
+  margin: 0;
+}
+
+/* What the typed pattern does to the file. Holds its line while the answer is
+ * out, so the buttons do not jump as it comes and goes. */
+.hint {
+  min-height: calc(var(--q-text-body) * var(--q-line-body));
+  color: var(--q-fgColor-muted);
+}
+
+.error {
+  color: var(--q-fgColor-danger);
+}
