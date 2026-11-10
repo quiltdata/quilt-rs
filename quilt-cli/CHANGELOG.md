@@ -25,6 +25,14 @@
 
 - `quilt` says on stderr when a newer release is out, e.g. `quilt 0.41.0 is available (you have 0.40.2): cargo binstall quilt-cli`. The line is yellow and comes below the command's output. It asks crates.io at most every six hours, never holds back the output or fails a command, and is skipped when stderr is not a terminal, when `CI` is set, or with `QUILT_NO_UPDATE_CHECK=1`
 
+### Fixed
+
+- `quilt status` and `quilt list --fetch` work when the catalog can't be reached (<https://github.com/quiltdata/quilt-rs/pull/1338>)
+
+### quilt-rs
+
+- Updated [from v0.52.0 to v0.53.0-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.52.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
 ## [v0.40.2] - 2026-11-05
 
 ### quilt-rs
