@@ -50,6 +50,7 @@ pub(crate) mod resolve;
 mod revision_history;
 mod revision_pane;
 mod role_dialog;
+mod unreachable_band;
 
 pub(crate) use bucket_form::BucketDialog;
 use context_pane::{CurrentRevisionPane, CurrentRevisionPaneSkeleton};
@@ -1472,6 +1473,7 @@ fn PackageScreen(
             bands=move |d: commands::PackagePageData| {
                 view! {
                     {pause_banner(d.sync_paused.clone(), dismissed)}
+                    {unreachable_band::unreachable_band(&d.header.state)}
                     {local_only_band::local_only_band(local_only, &d.header.state)}
                     {mismatch_band::mismatch_band(
                         mismatch,

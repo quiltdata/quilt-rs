@@ -170,6 +170,7 @@ fn state_line(state: &PackageState) -> &'static str {
         }
         PackageState::NoSession { .. }
         | PackageState::SignInExpired { .. }
+        | PackageState::Unreachable { .. }
         | PackageState::RoleDenied { .. }
         | PackageState::NoRemote
         | PackageState::Paused

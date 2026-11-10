@@ -385,6 +385,7 @@ fn primary_action(
         Some(PackageAction::Resolve) => goto.set(Some(resolve_to.clone())),
         Some(PackageAction::SignIn) => goto.set(sign_in_to.clone()),
         Some(PackageAction::SwitchRole) => role_open.set(true),
+        Some(PackageAction::TryAgain) => reload.notify(),
         // `Publish` returned above; the header never offers `ChooseS3Bucket`.
         Some(PackageAction::Publish | PackageAction::ChooseS3Bucket) | None => (),
     };
