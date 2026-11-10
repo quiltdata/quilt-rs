@@ -25,7 +25,11 @@ async fn main() {
     );
     let format = args.format();
     cli::notice_lock_waits(|line| eprintln!("{line}"));
-    let mut update_notice = update_check::start();
+    let mut update_notice = if args.shows_update_notice() {
+        update_check::start()
+    } else {
+        None
+    };
 
     // An error raised before dispatch — an unreadable domain, a rejected flag
     // combination — is a command failure like any other. It used to go out as a

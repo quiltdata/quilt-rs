@@ -137,9 +137,8 @@ async fn check(
         }
     };
     let latest = Version::parse(&latest?).ok()?;
-    (latest > *current).then(|| {
-        format!("quilt {latest} is available (you have {current}): cargo binstall quilt-cli")
-    })
+    (latest > *current)
+        .then(|| format!("quilt {latest} is available (you have {current}). Run \"quilt upgrade\""))
 }
 
 /// [`FRESH`] has passed, or the clock went back past the last check.
@@ -245,7 +244,7 @@ not json
         let line = check(&path, 100, &v("0.40.2"), async { Some(v("0.41.0")) }).await;
         assert_eq!(
             line.as_deref(),
-            Some("quilt 0.41.0 is available (you have 0.40.2): cargo binstall quilt-cli")
+            Some("quilt 0.41.0 is available (you have 0.40.2). Run \"quilt upgrade\"")
         );
         assert_eq!(
             read(&path),
