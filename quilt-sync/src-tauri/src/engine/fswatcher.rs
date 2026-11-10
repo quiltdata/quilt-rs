@@ -72,8 +72,13 @@ pub async fn spawn(
     };
 
     // Initial reconcile up front so existing packages are watched
-    // immediately, instead of waiting for the first periodic tick.
-    let initial = snapshot_mappings(&*model).await;
+    // immediately, instead of waiting for the first periodic tick. With
+    // watching off there is nothing to watch.
+    let initial = if enabled {
+        snapshot_mappings(&*model).await
+    } else {
+        None
+    };
     if let Some(initial) = initial {
         reactor::note_volumes(&mut state, &initial.packages);
         if let Err(err) = state
