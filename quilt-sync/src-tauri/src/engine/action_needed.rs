@@ -167,6 +167,22 @@ impl Entry {
         (title, body)
     }
 
+    /// The tray menu's line: what it is about, then the notice's first
+    /// sentence. An app entry needs no name in its own app's menu.
+    #[must_use]
+    pub fn menu_line(&self) -> String {
+        let (title, body) = self.notice();
+        let cause = body
+            .split(". ")
+            .next()
+            .unwrap_or(&body)
+            .trim_end_matches('.');
+        match self.subject {
+            Subject::App => cause.to_string(),
+            _ => format!("{title} — {cause}"),
+        }
+    }
+
     /// The page that fixes it: the package's page, the main page for a
     /// session or the computer's credentials (its queue offers the remedy),
     /// and Settings for the file watcher.
@@ -498,6 +514,37 @@ mod tests {
         assert_eq!(
             entry(Subject::App, Cause::Credentials).notice().0,
             "QuiltSync"
+        );
+    }
+
+    #[test]
+    fn a_menu_line_names_its_subject_and_the_cause() {
+        let entry = |subject, cause| Entry {
+            subject,
+            cause,
+            since: Utc::now(),
+        };
+        assert_eq!(
+            entry(
+                Subject::package(&ns("user/plate-07")),
+                Cause::of_pause(&PausedReason::PullConflict(vec!["a".into(), "b".into()])),
+            )
+            .menu_line(),
+            "user/plate-07 — Has conflicts in 2 files"
+        );
+        assert_eq!(
+            entry(
+                Subject::Host {
+                    host: host("open.quiltdata.com")
+                },
+                Cause::SignIn { expired: true },
+            )
+            .menu_line(),
+            "open.quiltdata.com — Sign-in expired"
+        );
+        assert_eq!(
+            entry(Subject::App, Cause::Credentials).menu_line(),
+            "AWS credentials on this computer aren't usable"
         );
     }
 

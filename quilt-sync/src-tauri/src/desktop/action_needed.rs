@@ -32,7 +32,10 @@ pub fn spawn(app: &AppHandle, services: &Arc<Services>) -> async_runtime::JoinHa
         }
         open(
             &clicked,
-            performed.notification().and_then(|n| n.extra().get(PAGE)),
+            performed
+                .notification()
+                .and_then(|n| n.extra().get(PAGE))
+                .and_then(serde_json::Value::as_str),
         );
     });
 
@@ -95,15 +98,12 @@ fn post(app: &AppHandle, entry: &Entry) {
 }
 
 /// Show the window on `page`, or as it was when the notice names none.
-fn open(app: &AppHandle, page: Option<&serde_json::Value>) {
+pub(super) fn open(app: &AppHandle, page: Option<&str>) {
     show_window(app);
     let Some(services) = app.try_state::<Arc<Services>>() else {
         return;
     };
-    let Some(path) = page
-        .and_then(serde_json::Value::as_str)
-        .and_then(|page| page.parse::<routes::Paths>().ok())
-    else {
+    let Some(path) = page.and_then(|page| page.parse::<routes::Paths>().ok()) else {
         return;
     };
     services
