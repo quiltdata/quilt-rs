@@ -21,8 +21,8 @@ fn editor(metadata: &str) -> AnyView {
     .into_any()
 }
 
-const NOTE: &str = "The metadata editor in the app's palette: keys and values in the text \
-    colour, punctuation muted, its menu and context menu on the kit's surfaces. Right-click a \
+const NOTE: &str = "The metadata editor in the app's palette: keys in the text colour, \
+    values coloured by type, punctuation muted, its menu and context menu on the kit's surfaces. Right-click a \
     key for the context menu.";
 
 #[component]
