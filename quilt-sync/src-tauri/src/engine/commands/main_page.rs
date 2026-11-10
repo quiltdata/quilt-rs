@@ -897,6 +897,18 @@ pub(super) async fn refresh_main_page_package_from_model(
         .get_installed_package_status_with_downloads(&installed_package, None)
         .await
     {
+        // A status that did not read the bucket's `latest` is local data
+        // alone, so it is answered like a failure to reach the bucket below.
+        Ok((status, _)) if !status.latest_refreshed => {
+            tracing::warn!(
+                "Could not read the latest revision for {}",
+                installed_package.namespace,
+            );
+            Err(Error::General(format!(
+                "Could not reach the bucket for {}",
+                installed_package.namespace
+            )))
+        }
         Ok((status, counts)) => Ok(MainPagePackageRefresh {
             // The pause checks go here rather than at the top of the function,
             // because the access-denied arm below has higher precedence and must
@@ -2511,7 +2523,10 @@ mod tests {
                 quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
             );
         }
-        quilt::lineage::InstalledPackageStatus::new(upstream, changes)
+        quilt::lineage::InstalledPackageStatus {
+            latest_refreshed: true,
+            ..quilt::lineage::InstalledPackageStatus::new(upstream, changes)
+        }
     }
 
     async fn refresh(m: &impl model::QuiltModel, roles: &RoleCache) -> MainPagePackageRefresh {
@@ -2687,6 +2702,31 @@ mod tests {
             serde_json::to_string(&refreshed).unwrap(),
             r#"{"state":{"kind":"latest"},"roleSwitchHost":null,"downloads":{"scope":"individualFiles","folders":0,"total":340,"outstanding":328,"backlog":0,"deletedHere":1,"size":{"total":3400000,"downloaded":1900000,"backlog":0}},"changedFiles":0}"#,
         );
+    }
+
+    /// A status that did not read the bucket's `latest` is no more evidence
+    /// than a failed one, so the row stays as the light phase guessed it.
+    #[tokio::test]
+    async fn an_unread_latest_leaves_the_row_unchecked() {
+        let m = mock_one_package(
+            Ok(quilt::lineage::InstalledPackageStatus {
+                latest_refreshed: false,
+                ..status_with(UpstreamState::UpToDate, 1)
+            }),
+            None,
+        );
+        let ns: quilt_uri::Namespace = "team/one".try_into().unwrap();
+
+        refresh_main_page_package_from_model(
+            &m,
+            &RoleCache::default(),
+            &crate::engine::telemetry::Telemetry::default(),
+            &ns,
+            None,
+        )
+        .await
+        .err()
+        .expect("an unread latest must not settle the row");
     }
 
     #[tokio::test]

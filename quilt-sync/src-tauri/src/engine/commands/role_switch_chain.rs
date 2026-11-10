@@ -277,8 +277,12 @@ fn model_for(stack: &Arc<FakeStack>) -> MockQuiltModel {
         .returning(move |package, _| {
             let bucket = bucket_for(&package.namespace);
             if s3.can_read(bucket) {
+                // Read just now: the bucket answered.
                 Ok((
-                    quilt::lineage::InstalledPackageStatus::default(),
+                    quilt::lineage::InstalledPackageStatus {
+                        latest_refreshed: true,
+                        ..Default::default()
+                    },
                     quilt::lineage::DownloadCounts::default(),
                 ))
             } else {
