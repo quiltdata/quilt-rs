@@ -270,7 +270,8 @@
   --jse-value-color-string: var(--q-fgColor-default);
   --jse-value-color-url: var(--q-fgColor-accent);
   --jse-delimiter-color: var(--q-fgColor-muted);
-  --jse-edit-outline: var(--q-focus-outlineWidth) solid var(--q-focus-outlineColor);
+  --jse-edit-outline: var(--q-focus-outlineWidth) solid
+    var(--q-focus-outlineColor);
 
   --jse-selection-background-color: var(--q-overlay-selected);
   --jse-selection-background-inactive-color: var(--q-overlay-hover);
@@ -280,7 +281,8 @@
   --jse-search-match-color: var(--q-bgColor-attention-muted);
   --jse-search-match-outline: none;
   --jse-search-match-active-color: var(--q-bgColor-attention-muted);
-  --jse-search-match-active-outline: 1px solid var(--q-borderColor-attention-muted);
+  --jse-search-match-active-outline: 1px solid
+    var(--q-borderColor-attention-muted);
 
   --jse-collapsed-items-background-color: var(--q-bgColor-muted);
   --jse-collapsed-items-selected-background-color: var(--q-overlay-selected);
@@ -303,7 +305,9 @@
   --jse-button-background-highlight: var(--q-overlay-hover);
   --jse-button-color: var(--q-fgColor-default);
   --jse-button-primary-background: var(--q-bgColor-accent-emphasis);
-  --jse-button-primary-background-highlight: var(--q-bgColor-accent-emphasis-hover);
+  --jse-button-primary-background-highlight: var(
+    --q-bgColor-accent-emphasis-hover
+  );
   --jse-button-primary-background-disabled: var(--q-overlay-hover);
   --jse-button-primary-color: var(--q-fgColor-onEmphasis);
   --jse-button-secondary-background: var(--q-bgColor-default);
