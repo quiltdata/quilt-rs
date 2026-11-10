@@ -2717,16 +2717,18 @@ mod tests {
         );
         let ns: quilt_uri::Namespace = "team/one".try_into().unwrap();
 
-        refresh_main_page_package_from_model(
+        let refreshed = refresh_main_page_package_from_model(
             &m,
             &RoleCache::default(),
             &crate::engine::telemetry::Telemetry::default(),
             &ns,
             None,
         )
-        .await
-        .err()
-        .expect("an unread latest must not settle the row");
+        .await;
+        assert!(
+            refreshed.is_err(),
+            "an unread latest must not settle the row"
+        );
     }
 
     #[tokio::test]
