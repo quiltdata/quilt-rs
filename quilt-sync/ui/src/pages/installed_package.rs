@@ -99,6 +99,8 @@ pub struct Wiring {
     /// this page's news — see `outcome_band`.
     pub outcome: RwSignal<Option<Outcome>>,
     pub reload: Trigger,
+    /// Whether a read is out: the scaffold's, which spins *Refresh*.
+    pub in_flight: RwSignal<bool>,
     /// Where the header wants to go. A signal because a `Callback` must be
     /// `Send + Sync` and `use_navigate`'s closure is neither; [`Wiring::follow`]
     /// performs it.
@@ -292,6 +294,7 @@ impl Wiring {
             downloading: RwSignal::new(false),
             outcome: page.outcome,
             reload: page.reload,
+            in_flight: page.in_flight,
             goto: RwSignal::new(None),
             replace_to: RwSignal::new(None),
             dialogs: Dialogs {

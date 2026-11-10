@@ -78,6 +78,18 @@ mod tests {
         }
     }
 
+    /// Unreachable every time; reads after the first take a while to answer.
+    fn slowly_unreachable(address: String) -> Read {
+        let first = READS.get() == 0;
+        let read = unreachable(address);
+        Box::pin(async move {
+            if !first {
+                sleep_ms(300).await;
+            }
+            read.await
+        })
+    }
+
     fn never_asked(
         _: crate::routes::RevisionMismatch,
         _: String,
@@ -154,5 +166,26 @@ mod tests {
 
         assert_eq!(READS.get(), 2);
         assert!(!says(&el, LINE), "{}", el.inner_html());
+    }
+
+    /// *Try again* spins and stays disabled while its read is out, as
+    /// *Refresh* does, and comes back when the read answers.
+    #[wasm_bindgen_test]
+    async fn try_again_is_busy_until_its_read_answers() {
+        let el = screen(slowly_unreachable).await;
+
+        button_saying(&el, "Try again").click();
+        sleep_ms(50).await;
+        let button = button_saying(&el, "Try again");
+        assert!(button.disabled(), "{}", button.outer_html());
+        let class = button.get_attribute("class").unwrap_or_default();
+        assert!(
+            class.split_whitespace().any(|c| c.starts_with("loading-")),
+            "class was {class}"
+        );
+
+        sleep_ms(400).await;
+        assert_eq!(READS.get(), 2);
+        assert!(!button_saying(&el, "Try again").disabled());
     }
 }

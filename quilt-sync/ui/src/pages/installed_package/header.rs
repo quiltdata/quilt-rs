@@ -390,6 +390,7 @@ fn primary_action(
         Some(PackageAction::Publish | PackageAction::ChooseS3Bucket) | None => (),
     };
 
+    let retrying = retrying(action, w.in_flight);
     action.map_or_else(
         || ().into_any(),
         |action| {
@@ -398,6 +399,7 @@ fn primary_action(
                     <Button
                         variant=ButtonVariant::Primary
                         disabled=Signal::derive(move || busy.get())
+                        loading=retrying
                         on_click=on_primary
                     >
                         {action.label()}
@@ -407,6 +409,12 @@ fn primary_action(
             .into_any()
         },
     )
+}
+
+/// Whether *Try again* spins: it is a read, so it spins on the read *Refresh*
+/// spins on.
+fn retrying(action: Option<PackageAction>, in_flight: RwSignal<bool>) -> Signal<bool> {
+    Signal::derive(move || action == Some(PackageAction::TryAgain) && in_flight.get())
 }
 
 /// The confirmations behind the menu's two Danger items.
