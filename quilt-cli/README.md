@@ -226,6 +226,16 @@ runs.
 <host>`, the name `login` and `role` already use. It prints a warning, then
 pushes the same way.
 
+### Newer releases
+
+When a newer `quilt-cli` is published, `quilt` prints one yellow line on
+stderr below the command's output, for example
+`quilt 0.41.0 is available (you have 0.40.2): cargo binstall quilt-cli`.
+It asks crates.io at most every six hours and remembers the answer in your
+cache folder; a check that fails or takes over two seconds is skipped without
+a word. `NO_COLOR` drops the colour. Nothing is printed when stderr is not a
+terminal or `CI` is set, and `QUILT_NO_UPDATE_CHECK=1` turns it off.
+
 ### JSON output
 
 Field names are stable; the human tables are not, so parse the JSON rather than
