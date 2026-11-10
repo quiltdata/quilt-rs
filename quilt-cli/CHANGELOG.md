@@ -23,7 +23,7 @@
 
 ### Added
 
-- `quilt` says on stderr when a newer release is out, e.g. `quilt 0.41.0 is available (you have 0.40.2): cargo binstall quilt-cli`. It asks crates.io at most once a day, never slows or fails a command, and is skipped when stderr is not a terminal, when `CI` is set, or with `QUILT_NO_UPDATE_CHECK=1`
+- `quilt` says on stderr when a newer release is out, e.g. `quilt 0.41.0 is available (you have 0.40.2): cargo binstall quilt-cli`. The line is yellow and comes below the command's output. It asks crates.io at most every six hours, never holds back the output or fails a command, and is skipped when stderr is not a terminal, when `CI` is set, or with `QUILT_NO_UPDATE_CHECK=1`
 
 ## [v0.40.2] - 2026-11-05
 

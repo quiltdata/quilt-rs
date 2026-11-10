@@ -5761,6 +5761,8 @@ dependencies = [
 name = "quilt-cli"
 version = "0.41.0-dev"
 dependencies = [
+ "anstream",
+ "anstyle",
  "clap",
  "dirs",
  "libc",

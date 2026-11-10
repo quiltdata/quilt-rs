@@ -1,5 +1,5 @@
 //! Whether a newer `quilt-cli` is published, read from crates.io's index at
-//! most once a day.
+//! most every six hours, as the desktop app reads its feed.
 //!
 //! The answer is one line for stderr. Every failure is silent: a check must
 //! never slow or fail a command.
@@ -23,9 +23,9 @@ const INDEX: &str = "https://index.crates.io/qu/il/quilt-cli";
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// How long an answer stands, a failed check's included.
-const DAY: u64 = 24 * 60 * 60;
+const FRESH: u64 = 6 * 60 * 60;
 
-/// The longest a check may add to a command, once a day.
+/// The longest a check may add to a command, when one is due.
 const TIMEOUT: Duration = Duration::from_secs(2);
 
 /// What the last check found, kept between runs.
@@ -89,6 +89,13 @@ impl Pending {
     }
 }
 
+/// Prints the notice in yellow, after a blank line. `anstream` drops the
+/// colour for `NO_COLOR` and terminals without it.
+pub fn print(line: &str) {
+    let yellow = anstyle::Style::new().fg_color(Some(anstyle::AnsiColor::Yellow.into()));
+    anstream::eprintln!("\n{yellow}{line}{yellow:#}");
+}
+
 /// The line to print, if a newer release is out.
 async fn notice() -> Option<String> {
     let path = dirs::cache_dir()?.join("quilt").join("update-check.json");
@@ -100,8 +107,8 @@ async fn notice() -> Option<String> {
     check(&path, now, &current, fetch_latest()).await
 }
 
-/// Reads the cache at `path`, awaits `fetch` only when the cache is a day
-/// old or missing, and saves what it learned. The attempt is saved before
+/// Reads the cache at `path`, awaits `fetch` only when the cache is
+/// [`FRESH`] old or missing, and saves what it learned. The attempt is saved before
 /// the fetch, since the process may exit before a slow one returns.
 async fn check(
     path: &Path,
@@ -135,9 +142,9 @@ async fn check(
     })
 }
 
-/// A day has passed, or the clock went back past the last check.
+/// [`FRESH`] has passed, or the clock went back past the last check.
 fn due(cache: &Cache, now: u64) -> bool {
-    now < cache.checked_at || now - cache.checked_at >= DAY
+    now < cache.checked_at || now - cache.checked_at >= FRESH
 }
 
 /// Replaces the file whole, so a reader never sees half of it.
@@ -211,14 +218,14 @@ not json
     }
 
     #[test]
-    fn a_check_is_due_after_a_day() {
+    fn a_check_is_due_after_six_hours() {
         let cache = Cache {
             checked_at: 1_000_000,
             latest: None,
         };
         assert!(!due(&cache, 1_000_000));
-        assert!(!due(&cache, 1_000_000 + DAY - 1));
-        assert!(due(&cache, 1_000_000 + DAY));
+        assert!(!due(&cache, 1_000_000 + FRESH - 1));
+        assert!(due(&cache, 1_000_000 + FRESH));
         assert!(due(&cache, 999_999), "the clock went back");
     }
 
@@ -250,7 +257,7 @@ not json
     }
 
     #[tokio::test]
-    async fn within_a_day_the_saved_answer_is_used() {
+    async fn within_six_hours_the_saved_answer_is_used() {
         let (_dir, path) = cache_file();
         save(
             &path,
@@ -260,8 +267,8 @@ not json
             },
         )
         .unwrap();
-        let line = check(&path, 100 + DAY - 1, &v("0.40.2"), async {
-            panic!("asked the network within a day")
+        let line = check(&path, 100 + FRESH - 1, &v("0.40.2"), async {
+            panic!("asked the network while the answer was fresh")
         })
         .await;
         assert!(line.is_some());
@@ -278,18 +285,18 @@ not json
             },
         )
         .unwrap();
-        let line = check(&path, 100 + DAY, &v("0.40.2"), async { None }).await;
+        let line = check(&path, 100 + FRESH, &v("0.40.2"), async { None }).await;
         assert!(line.is_some());
         assert_eq!(
             read(&path),
             Cache {
-                checked_at: 100 + DAY,
+                checked_at: 100 + FRESH,
                 latest: Some("0.41.0".into()),
             }
         );
     }
 
-    /// A process that exits during a slow fetch still skips the next day.
+    /// A process that exits during a slow fetch still skips the next checks.
     #[tokio::test]
     async fn the_attempt_is_saved_before_the_fetch() {
         let (_dir, path) = cache_file();
@@ -305,13 +312,13 @@ not json
             assert_eq!(
                 read(&path),
                 Cache {
-                    checked_at: 100 + DAY,
+                    checked_at: 100 + FRESH,
                     latest: Some("0.41.0".into()),
                 }
             );
             None
         };
-        check(&path, 100 + DAY, &v("0.40.2"), fetch).await;
+        check(&path, 100 + FRESH, &v("0.40.2"), fetch).await;
     }
 
     #[tokio::test]

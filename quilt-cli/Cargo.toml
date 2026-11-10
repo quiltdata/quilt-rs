@@ -24,6 +24,9 @@ quilt-rs = { path = "../quilt-rs", version = "0.53.0-dev" }
 quilt-uri = { path = "../quilt-uri", version = "0.4.3" }
 
 # CLI-specific dependencies
+# Already in the lock through clap; colour the update notice.
+anstream = "1.0.0"
+anstyle = "1.0.14"
 clap.workspace = true
 dirs.workspace = true
 reqwest.workspace = true

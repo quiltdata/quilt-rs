@@ -25,7 +25,7 @@ async fn main() {
     );
     let format = args.format();
     cli::notice_lock_waits(|line| eprintln!("{line}"));
-    let update_notice = update_check::start();
+    let mut update_notice = update_check::start();
 
     // An error raised before dispatch — an unreadable domain, a rejected flag
     // combination — is a command failure like any other. It used to go out as a
@@ -37,13 +37,14 @@ async fn main() {
         Err(err) => Std::Err(err),
     };
 
-    // Before the result, so under `--json` an error object stays the last
-    // line on stderr.
-    if let Some(line) = update_notice.and_then(update_check::Pending::line) {
-        eprintln!("{line}");
+    let failed = matches!(&result, Std::Err(_));
+    // Below the result, except above a `--json` error, which must stay the
+    // last line on stderr.
+    let notice_first = failed && matches!(format, cli::Format::Json);
+    if notice_first && let Some(line) = update_notice.take().and_then(update_check::Pending::line) {
+        update_check::print(&line);
     }
 
-    let failed = matches!(&result, Std::Err(_));
     let stdout = io::stdout();
     let stderr = io::stderr();
     let mut stdout_handle = stdout.lock();
@@ -52,6 +53,11 @@ async fn main() {
     if let Err(err) = print(result, format, &mut stdout_handle, &mut stderr_handle) {
         log::error!("Failed to print output: {err}");
         std::process::exit(1);
+    }
+    drop((stdout_handle, stderr_handle));
+
+    if let Some(line) = update_notice.and_then(update_check::Pending::line) {
+        update_check::print(&line);
     }
 
     if failed {
