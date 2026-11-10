@@ -289,7 +289,7 @@ mod tests {
 
     #[test]
     fn a_package_link_opens_its_package_page() {
-        let path = package_path("quilt+s3://bucket#package=foo/bar@hash").unwrap();
+        let path = package_path("quilt+s3://bucket#package=foo/bar@0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef").unwrap();
         assert!(
             routes::page(path).starts_with("/remote-package?"),
             "a remote package page"
@@ -299,7 +299,7 @@ mod tests {
 
     #[test]
     fn a_package_link_keeps_the_engine_and_its_token() {
-        let uri = "quilt+s3://bucket#package=foo/bar@hash";
+        let uri = "quilt+s3://bucket#package=foo/bar@0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
         let link = package_link("http://127.0.0.1:7878/?t=abc", uri).unwrap();
         let page = routes::page(package_path(uri).unwrap());
         assert_eq!(link, format!("http://127.0.0.1:7878{page}&t=abc"));
@@ -309,7 +309,7 @@ mod tests {
 
     #[test]
     fn a_package_launch_opens_its_page_with_the_token() {
-        let package: Url = "quilt+s3://bucket#package=foo/bar@hash".parse().unwrap();
+        let package: Url = "quilt+s3://bucket#package=foo/bar@0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".parse().unwrap();
         assert_eq!(
             launch_page(LINK.into(), Some(&package)),
             package_link(LINK, package.as_str()).unwrap()

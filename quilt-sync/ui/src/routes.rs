@@ -256,14 +256,18 @@ mod tests {
         assert_eq!(
             page_title(
                 "/remote-package",
-                &uri("quilt+s3://bucket#package=org/pkg@abc123&path=a.csv")
+                &uri(
+                    "quilt+s3://bucket#package=org/pkg@abc1230000000000000000000000000000000000000000000000000000000000&path=a.csv"
+                )
             ),
             "org/pkg · QuiltSync"
         );
         assert_eq!(
             page_title(
                 "/remote-package",
-                &uri("quilt+s3://bucket#package=org%2Fpkg%40abc123")
+                &uri(
+                    "quilt+s3://bucket#package=org%2Fpkg%40abc1230000000000000000000000000000000000000000000000000000000000"
+                )
             ),
             "org/pkg · QuiltSync"
         );
