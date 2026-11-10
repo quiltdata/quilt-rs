@@ -240,8 +240,9 @@ terminal or `CI` is set, and `QUILT_NO_UPDATE_CHECK=1` turns it off.
 `cargo binstall --no-confirm quilt-cli`, or with
 `cargo install --locked quilt-cli` (a build from source that takes a few
 minutes) when cargo-binstall is not installed. Without cargo it points at the
-releases page, and on Windows it prints the command to run instead. If cargo's
-bin folder is not where your `quilt` lives, it says so.
+releases page, and on Windows it prints the command to run instead. Afterwards
+it prints the version of the `quilt` on your PATH, so you can see whether that
+copy is the one cargo upgraded.
 
 ### JSON output
 

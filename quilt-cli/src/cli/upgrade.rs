@@ -1,7 +1,5 @@
 //! `quilt upgrade`: installs the latest quilt-cli with cargo.
 
-use std::path::Path;
-use std::path::PathBuf;
 use std::process::Command;
 use std::process::Stdio;
 
@@ -42,10 +40,9 @@ impl std::fmt::Display for Installer {
 
 pub struct Output {
     installer: Installer,
-    /// Where cargo put the binary, if known.
-    bin_dir: Option<PathBuf>,
-    /// The folder of the `quilt` that ran, when it is not `bin_dir`.
-    elsewhere: Option<PathBuf>,
+    /// What `quilt --version`, found through PATH, reports after the
+    /// install: the copy the next command runs, wherever cargo put the new one.
+    path_version: Option<String>,
 }
 
 impl std::fmt::Display for Output {
@@ -55,13 +52,8 @@ impl std::fmt::Display for Output {
             "Installed the latest quilt-cli with \"{}\"",
             self.installer
         )?;
-        if let (Some(bin_dir), Some(running)) = (&self.bin_dir, &self.elsewhere) {
-            write!(
-                f,
-                "\nIt is in {}, but this quilt runs from {}; PATH may still find the old one first",
-                bin_dir.display(),
-                running.display()
-            )?;
+        if let Some(version) = &self.path_version {
+            write!(f, "\nThe quilt on your PATH reports {version}")?;
         }
         Ok(())
     }
@@ -71,7 +63,7 @@ impl Render for Output {
     fn to_json(&self) -> serde_json::Value {
         serde_json::json!({
             "installer": self.installer.name(),
-            "bin_dir": self.bin_dir.as_ref().map(|dir| dir.to_string_lossy()),
+            "path_version": self.path_version,
         })
     }
 }
@@ -103,22 +95,16 @@ fn upgrade() -> Result<Output, Error> {
     if !status.success() {
         return Err(Error::UpgradeFailed(installer));
     }
-    let bin_dir = cargo_bin_dir(
-        std::env::var_os("CARGO_INSTALL_ROOT").map(PathBuf::from),
-        std::env::var_os("CARGO_HOME").map(PathBuf::from),
-        dirs::home_dir(),
-    );
-    let running = std::env::current_exe()
+    let path_version = Command::new("quilt")
+        .arg("--version")
+        .stderr(Stdio::null())
+        .output()
         .ok()
-        .and_then(|exe| exe.parent().map(Path::to_path_buf));
-    let elsewhere = match (&bin_dir, running) {
-        (Some(bin_dir), Some(running)) if !same_dir(bin_dir, &running) => Some(running),
-        _ => None,
-    };
+        .filter(|output| output.status.success())
+        .and_then(|output| version(&String::from_utf8_lossy(&output.stdout)));
     Ok(Output {
         installer,
-        bin_dir,
-        elsewhere,
+        path_version,
     })
 }
 
@@ -133,23 +119,14 @@ fn choose(probe: std::io::Result<bool>) -> Result<Installer, Error> {
     }
 }
 
-/// Where cargo installs binaries, by its own precedence.
-fn cargo_bin_dir(
-    install_root: Option<PathBuf>,
-    cargo_home: Option<PathBuf>,
-    home: Option<PathBuf>,
-) -> Option<PathBuf> {
-    install_root
-        .or(cargo_home)
-        .or_else(|| home.map(|home| home.join(".cargo")))
-        .map(|root| root.join("bin"))
-}
-
-fn same_dir(a: &Path, b: &Path) -> bool {
-    match (a.canonicalize(), b.canonicalize()) {
-        (Ok(a), Ok(b)) => a == b,
-        _ => a == b,
-    }
+/// The version in `quilt --version`'s first line, `quilt-cli 0.41.0`.
+fn version(stdout: &str) -> Option<String> {
+    stdout
+        .lines()
+        .next()?
+        .split_whitespace()
+        .last()
+        .map(str::to_owned)
 }
 
 #[cfg(test)]
@@ -183,38 +160,25 @@ mod tests {
     }
 
     #[test]
-    fn the_bin_dir_follows_cargo() {
-        let p = |s: &str| Some(PathBuf::from(s));
-        assert_eq!(
-            cargo_bin_dir(p("/root"), p("/cargo"), p("/home/u")),
-            p("/root/bin")
-        );
-        assert_eq!(
-            cargo_bin_dir(None, p("/cargo"), p("/home/u")),
-            p("/cargo/bin")
-        );
-        assert_eq!(
-            cargo_bin_dir(None, None, p("/home/u")),
-            p("/home/u/.cargo/bin")
-        );
-        assert_eq!(cargo_bin_dir(None, None, None), None);
+    fn the_version_is_read_from_quilt_version() {
+        assert_eq!(version("quilt-cli 0.41.0\n").as_deref(), Some("0.41.0"));
+        assert_eq!(version(""), None);
     }
 
     #[test]
-    fn a_quilt_outside_the_bin_dir_is_named() {
+    fn the_result_names_what_path_runs() {
         let output = Output {
             installer: Installer::Binstall,
-            bin_dir: Some(PathBuf::from("/home/u/.cargo/bin")),
-            elsewhere: Some(PathBuf::from("/usr/local/bin")),
+            path_version: Some("0.41.0".into()),
         };
         assert_eq!(
             output.to_string(),
             "Installed the latest quilt-cli with \"cargo binstall --no-confirm quilt-cli\"\n\
-             It is in /home/u/.cargo/bin, but this quilt runs from /usr/local/bin; PATH may still find the old one first"
+             The quilt on your PATH reports 0.41.0"
         );
         assert_eq!(
             output.to_json(),
-            serde_json::json!({"installer": "cargo-binstall", "bin_dir": "/home/u/.cargo/bin"})
+            serde_json::json!({"installer": "cargo-binstall", "path_version": "0.41.0"})
         );
     }
 }
