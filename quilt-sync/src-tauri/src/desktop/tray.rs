@@ -155,19 +155,25 @@ fn spawn_status_listener(
     })
 }
 
-/// The logo with an amber dot in its top-right corner.
+/// The logo with a red dot in its top-right corner, cut out from the logo by
+/// a clear ring so it reads apart from the logo's own orange. Red is the
+/// tone the main page's queue gives these causes.
 fn with_dot(icon: &Image<'_>) -> Image<'static> {
-    const AMBER: [u8; 4] = [0xF5, 0x9E, 0x0B, 0xFF];
+    const RED: [u8; 4] = [0xE5, 0x48, 0x4D, 0xFF];
     let (width, height) = (icon.width(), icon.height());
     let side = f64::from(width.min(height));
-    let radius = side * 0.22;
+    let radius = side * 0.25;
+    let gap = side * 0.07;
     let (cx, cy) = (f64::from(width) - radius, radius);
     let mut rgba = icon.rgba().to_vec();
     for (at, pixel) in rgba.as_chunks_mut::<4>().0.iter_mut().enumerate() {
         let at = u32::try_from(at).unwrap_or(u32::MAX);
         let (x, y) = (f64::from(at % width) + 0.5, f64::from(at / width) + 0.5);
-        if (x - cx).hypot(y - cy) <= radius {
-            pixel.copy_from_slice(&AMBER);
+        let distance = (x - cx).hypot(y - cy);
+        if distance <= radius {
+            pixel.copy_from_slice(&RED);
+        } else if distance <= radius + gap {
+            pixel.copy_from_slice(&[0; 4]);
         }
     }
     Image::new_owned(rgba, width, height)
@@ -297,18 +303,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_tooltip_leads_with_what_action_needed() {
+    fn the_tooltip_leads_with_what_needs_action() {
         let status = SyncTrayStatus::default();
         assert_eq!(tooltip(0, &status), "Quilt — idle");
         assert_eq!(tooltip(2, &status), "2 need action\nQuilt — idle");
     }
 
     #[test]
-    fn the_dot_sits_in_the_top_right_corner() {
-        let icon = Image::new_owned(vec![0; 10 * 10 * 4], 10, 10);
+    fn the_dot_sits_in_the_top_right_corner_apart_from_the_logo() {
+        let icon = Image::new_owned(vec![0xFF; 100 * 100 * 4], 100, 100);
         let dotted = with_dot(&icon);
-        let pixel = |x: usize, y: usize| &dotted.rgba()[(y * 10 + x) * 4..][..4];
-        assert_eq!(pixel(8, 1), [0xF5, 0x9E, 0x0B, 0xFF]);
-        assert_eq!(pixel(1, 8), [0, 0, 0, 0]);
+        let pixel = |x: usize, y: usize| &dotted.rgba()[(y * 100 + x) * 4..][..4];
+        assert_eq!(pixel(80, 20), [0xE5, 0x48, 0x4D, 0xFF], "the dot");
+        assert_eq!(pixel(46, 24), [0, 0, 0, 0], "the clear ring");
+        assert_eq!(pixel(10, 90), [0xFF; 4], "the logo");
     }
 }
