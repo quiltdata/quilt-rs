@@ -329,9 +329,8 @@ fn verdict_held_still(
     reason = "one tick's inputs, each read from a different source; bundling them \
               would invent a struct that exists only to satisfy the count"
 )]
-// 106 lines, and it crossed the limit in the merge that brought
-// `feat/main-page-v2-tokens` together with main: this branch added the publish
-// deferral's arm time, main added the apply-epoch sampling and the verdict gate,
+// 106 lines, and it crossed the limit in a merge with main: the branch added the
+// publish deferral's arm time, main added the apply-epoch sampling and the verdict gate,
 // and neither alone was over.
 //
 // Not split, because the split is worse than the length. The body is two
@@ -440,13 +439,13 @@ pub(crate) async fn refresh_then_maybe_sync(
     // make `has_pending_commit` stale relative to `upstream`.
     let has_pending_commit = lineage.commit.is_some();
 
-    // A `Diverged` state needs explicit user action (Certify Latest or
-    // Reset Local). Neither the pull nor the publish branch would touch
-    // it, but leaving it as an `Ok(_)` outcome means we'd re-emit
-    // `diverged` every tick without pausing — the UI then looks healthy
-    // even though no progress can be made. Surface as a Conflict so the
-    // namespace lands in the paused set on the first observation.
-    if upstream == quilt::lineage::UpstreamState::Diverged {
+    // A `Diverged` copy is merged onto `latest` after the publish branch has
+    // committed and pushed what it holds, which needs both directions on and
+    // a base shared with `latest`: a first push would certify over it.
+    // Otherwise it pauses on the first observation, rather than re-emitting
+    // `diverged` every tick while the UI looks healthy.
+    let diverged = upstream == quilt::lineage::UpstreamState::Diverged;
+    if diverged && !(pull_enabled && push_enabled && !lineage.base_hash.is_empty()) {
         return Err(WatchError::Conflict(PausedReason::Diverged));
     }
 
@@ -580,7 +579,8 @@ pub(crate) async fn refresh_then_maybe_sync(
             upstream,
             quilt::lineage::UpstreamState::UpToDate
                 | quilt::lineage::UpstreamState::Ahead
-                | quilt::lineage::UpstreamState::Local,
+                | quilt::lineage::UpstreamState::Local
+                | quilt::lineage::UpstreamState::Diverged,
         )
         && (has_changes || has_pending_commit);
     if publish_eligible {
@@ -628,6 +628,15 @@ pub(crate) async fn refresh_then_maybe_sync(
         } else {
             status
         };
+        // A copy whose merge landed but whose move did not moves before its
+        // edits are committed, so they reach `latest` as an ordinary change.
+        if diverged
+            && !has_pending_commit
+            && let Some(moved) =
+                merge::landed(model, &locked, &installed, aggregator, scope.clone()).await?
+        {
+            return Ok(Some(moved));
+        }
         // `publish_locked_with_settings` is the manual one-click Publish
         // command's path too, so a change to publish settings (new
         // placeholder, new field) applies identically regardless of who
@@ -646,6 +655,18 @@ pub(crate) async fn refresh_then_maybe_sync(
             )
             .await
         };
+        // A Diverged copy's own revision does not become `latest`; it is merged
+        // onto it instead.
+        if diverged
+            && published
+                .as_ref()
+                .is_ok_and(|(outcome, _)| outcome.push().is_none_or(|push| !push.certified_latest))
+        {
+            last_change.on_published(namespace).await;
+            return merge::onto_latest(model, &locked, &installed, aggregator, scope)
+                .await
+                .map(Some);
+        }
         return match published {
             // No new hash and no pending commit: nothing is left to publish,
             // and nothing to say. The observed state stays.
@@ -690,6 +711,11 @@ pub(crate) async fn refresh_then_maybe_sync(
                     .map(|()| Some(RefreshOutcome::observed(upstream, has_changes, fingerprint)))
             }
         };
+    }
+    if diverged {
+        return merge::onto_latest(model, &locked, &installed, aggregator, scope)
+            .await
+            .map(Some);
     }
 
     Ok(Some(RefreshOutcome::observed(
@@ -1097,13 +1123,11 @@ pub(crate) async fn pause(
     // directly. The string `"error"` is **reserved** for "we
     // couldn't talk to the remote" — the UI renders a Login
     // affordance on that one. Surface autosync refusals as
-    // `"paused"` so the row banner is neutral, and let the UI
-    // pull the message out of the `autosync-paused` event the
-    // reporter emits.
+    // `"paused"`; the page reads why from the paused map.
     let (status, has_changes) = match reason {
         PausedReason::PendingChanges => ("behind", true),
         PausedReason::PendingCommit => ("ahead", false),
-        PausedReason::Diverged => ("diverged", false),
+        PausedReason::Diverged | PausedReason::MergeRefused(_) => ("diverged", false),
         PausedReason::PullConflict(ref files) => {
             warn!("autosync: paused namespace={namespace} pull conflict={files:?}");
             ("paused", true)
@@ -1129,15 +1153,15 @@ pub(crate) async fn pause(
             // paused re-emits the same reason every tick, so the
             // same `(status, has_changes)` yields the same
             // fingerprint and the consumer skips the repeat. The
-            // paused *detail* (which files) rides the separate
-            // `autosync-paused` event, not this one.
+            // separate `autosync-paused` event tells the page to
+            // refetch, and the refetch reads the paused detail.
             fingerprint: format!("{status};{has_changes}"),
         },
     );
     let aggregator_message = match &reason {
         PausedReason::PendingChanges => "pending changes".to_string(),
         PausedReason::PendingCommit => "pending commits".to_string(),
-        PausedReason::Diverged => "diverged".to_string(),
+        PausedReason::Diverged | PausedReason::MergeRefused(_) => "diverged".to_string(),
         PausedReason::PullConflict(_) => "pull conflict".to_string(),
         PausedReason::RoleDenied { role } => role_denied_summary(role),
         PausedReason::Other(msg) => msg.clone(),
@@ -1145,6 +1169,8 @@ pub(crate) async fn pause(
     inner.aggregator.note_paused(namespace, &aggregator_message);
     inner.aggregator.note_status(namespace, has_changes);
 }
+
+mod merge;
 
 #[cfg(test)]
 mod tests;

@@ -166,21 +166,17 @@ fn parse_s3_package_uri(location: &str) -> Result<quilt_uri::S3PackageUri, Error
 #[derive(Debug, PartialEq, Clone, Serialize)]
 #[serde(tag = "t", content = "c")]
 pub enum Paths {
-    /// `/`, which renders whichever main page the reader has switched on.
+    /// `/`, the main page.
     #[serde(rename = "home")]
     Home,
     #[serde(rename = "commit")]
     Commit(quilt_uri::Namespace, EntriesFilter),
     #[serde(rename = "installed_package")]
     InstalledPackage(quilt_uri::Namespace, EntriesFilter),
-    #[serde(rename = "installed_packages_list")]
-    InstalledPackagesList,
     #[serde(rename = "login")]
     Login(quilt_uri::Host, String),
     #[serde(rename = "login_error")]
     LoginError(quilt_uri::Host, String, String),
-    #[serde(rename = "merge")]
-    Merge(quilt_uri::Namespace),
     #[serde(rename = "remote_package")]
     RemotePackage(quilt_uri::S3PackageUri),
     #[serde(rename = "settings")]
@@ -214,9 +210,6 @@ impl fmt::Display for Paths {
                     )
                 }
             }
-            Paths::InstalledPackagesList => {
-                write!(f, "/installed-packages-list")
-            }
             Paths::Login(host, back) => {
                 let back_encoded = urlencoding::encode(back);
                 write!(f, "/login?host={host}&back={back_encoded}")
@@ -228,9 +221,6 @@ impl fmt::Display for Paths {
                     f,
                     "/error?host={host}&title={title_encoded}&error={error_encoded}"
                 )
-            }
-            Paths::Merge(namespace) => {
-                write!(f, "/merge?namespace={namespace}")
             }
             Paths::RemotePackage(uri) => {
                 let uri_str = uri.to_string();
@@ -305,11 +295,6 @@ pub fn from_url(path: Paths, mut url: Url) -> url::Url {
             url.set_query(Some(&format_namespace_filter_query(namespace, filter)));
             url
         }
-        Paths::InstalledPackagesList => {
-            url.set_path("/installed-packages-list");
-            url.set_query(None);
-            url
-        }
         Paths::Login(host, ref back) => {
             let back_encoded = urlencoding::encode(back);
             url.set_path("/login");
@@ -323,13 +308,6 @@ pub fn from_url(path: Paths, mut url: Url) -> url::Url {
             url.set_query(Some(&format!(
                 "host={host}&title={title_encoded}&error={error_encoded}"
             )));
-            url
-        }
-        Paths::Merge(namespace) => {
-            let namespace = namespace.to_string();
-            let namespace = urlencoding::encode(&namespace);
-            url.set_path("/merge");
-            url.set_query(Some(&format!("namespace={namespace}")));
             url
         }
         Paths::RemotePackage(uri) => {
@@ -371,7 +349,6 @@ impl str::FromStr for Paths {
                 let filter = parse_filter(location)?;
                 Ok(Paths::InstalledPackage(namespace.try_into()?, filter))
             }
-            "installed-packages-list" => Ok(Paths::InstalledPackagesList),
             "login" => {
                 let (host, loc) = parse_login(location)?;
                 Ok(Paths::Login(host, loc))
@@ -380,10 +357,6 @@ impl str::FromStr for Paths {
                 let (host, title, error) = parse_login_error(location)?;
                 let title = title.unwrap_or_else(|| "Login failed".into());
                 Ok(Paths::LoginError(host, title, error))
-            }
-            "merge" => {
-                let namespace = parse_namespace(location)?;
-                Ok(Paths::Merge(namespace.try_into()?))
             }
             "remote-package" => {
                 let uri = parse_s3_package_uri(location)?;
@@ -516,23 +489,6 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_installed_packages_list() -> Result<()> {
-        let page_url = from_url(
-            Paths::InstalledPackagesList,
-            Url::parse("http://test:1234/")?,
-        );
-        let page_url_str = page_url.as_str();
-        assert_eq!(page_url_str, "http://test:1234/installed-packages-list");
-
-        let route: Paths = page_url_str.parse()?;
-
-        assert_eq!(route, Paths::InstalledPackagesList);
-        assert_eq!(format!("{route}"), "/installed-packages-list");
-
-        Ok(())
-    }
-
     /// A namespace holding query characters comes back whole from the page
     /// address a login lands on.
     #[test]
@@ -541,7 +497,6 @@ mod tests {
         for path in [
             Paths::InstalledPackage(namespace.clone(), EntriesFilter::for_installed_package()),
             Paths::Commit(namespace.clone(), EntriesFilter::default()),
-            Paths::Merge(namespace.clone()),
         ] {
             let page_url = from_url(path.clone(), Url::parse("http://test:1234/")?);
             assert_eq!(page_url.as_str().parse::<Paths>()?, path);
@@ -552,7 +507,7 @@ mod tests {
     #[test]
     fn test_login() -> Result<()> {
         let host = fixtures::host();
-        let back = Paths::InstalledPackagesList.to_string();
+        let back = Paths::Settings.to_string();
         let page_url = from_url(
             Paths::Login(host.clone(), back.clone()),
             Url::parse("http://test:1234/")?,
@@ -560,7 +515,7 @@ mod tests {
         let page_url_str = page_url.as_str();
         assert_eq!(
             page_url_str,
-            "http://test:1234/login?host=quilt.test&back=%2Finstalled-packages-list"
+            "http://test:1234/login?host=quilt.test&back=%2Fsettings"
         );
 
         let route: Paths = page_url_str.parse()?;
@@ -568,7 +523,7 @@ mod tests {
         assert_eq!(route, Paths::Login(host, back));
         assert_eq!(
             format!("{route}"),
-            "/login?host=quilt.test&back=%2Finstalled-packages-list"
+            "/login?host=quilt.test&back=%2Fsettings"
         );
 
         Ok(())
@@ -608,23 +563,6 @@ mod tests {
             route,
             Paths::LoginError(host, "Login failed".to_string(), error.to_string())
         );
-        Ok(())
-    }
-
-    #[test]
-    fn test_merge() -> Result<()> {
-        let page_url = from_url(
-            Paths::Merge(("foo", "bar").into()),
-            Url::parse("http://test:1234/")?,
-        );
-        let page_url_str = page_url.as_str();
-        assert_eq!(page_url_str, "http://test:1234/merge?namespace=foo%2Fbar");
-
-        let route: Paths = page_url_str.parse()?;
-
-        assert_eq!(route, Paths::Merge(("foo", "bar").into()));
-        assert_eq!(format!("{route}"), "/merge?namespace=foo/bar");
-
         Ok(())
     }
 
@@ -693,14 +631,8 @@ mod tests {
             Paths::InstalledPackage(("private", "package").into(), EntriesFilter::default());
         assert_eq!(installed_package_path.pathname(), "installed_package");
 
-        let list_path = Paths::InstalledPackagesList;
-        assert_eq!(list_path.pathname(), "installed_packages_list");
-
         let home_path = Paths::Home;
         assert_eq!(home_path.pathname(), "home");
-
-        let merge_path = Paths::Merge(("secret", "repo").into());
-        assert_eq!(merge_path.pathname(), "merge");
 
         let settings_path = Paths::Settings;
         assert_eq!(settings_path.pathname(), "settings");
@@ -739,19 +671,6 @@ mod tests {
             }
             _ => panic!("Expected adjacently tagged object for Commit"),
         }
-
-        let list_path = Paths::InstalledPackagesList;
-        let serialized = serde_json::to_value(&list_path)?;
-        match serialized {
-            Value::Object(map) => {
-                assert_eq!(
-                    map.get("t"),
-                    Some(&Value::String("installed_packages_list".to_string()))
-                );
-            }
-            _ => panic!("Expected adjacently tagged object for InstalledPackagesList"),
-        }
-        assert_eq!(list_path.pathname(), "installed_packages_list");
 
         Ok(())
     }

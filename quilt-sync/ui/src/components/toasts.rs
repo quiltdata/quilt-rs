@@ -2,9 +2,8 @@
 //!
 //! Mounted once in `App`, **outside** the router, so it survives navigation —
 //! a report about a background pull must not vanish because the user changed
-//! page. It is deliberately separate from [`Layout`](super::layout::Layout)'s
-//! single notification slot, which stays exactly as it was: that slot belongs
-//! to the screen that raised it, this stack to the backend.
+//! page. It is deliberately separate from a page's own notification slot: that
+//! slot belongs to the screen that raised it, this stack to the backend.
 //!
 //! The backend is the source of truth. Two reads keep it so: [`get_toasts`]
 //! on mount, which catches everything posted while no window was open, and the
@@ -24,6 +23,23 @@ use crate::commands::Toast;
 use crate::commands::ToastGroup;
 use crate::commands::ToastKind;
 use crate::engine;
+
+stylance::import_crate_style!(style, "src/components/toasts.module.css");
+
+/// A card's classes: the card, and its kind for the border's colour. Info
+/// keeps the card's own.
+fn kind_class(kind: ToastKind) -> String {
+    let tone = match kind {
+        ToastKind::Info => None,
+        ToastKind::Success => Some(style::success),
+        ToastKind::Warning => Some(style::warning),
+        ToastKind::Error => Some(style::error),
+    };
+    match tone {
+        Some(tone) => format!("{} {tone}", style::toast),
+        None => style::toast.to_string(),
+    }
+}
 
 /// The visible toasts, keyed by id so a hydration read and a live event cannot
 /// double-render the same toast — the backend retains before it emits, so that
@@ -208,14 +224,14 @@ fn ToastLayer(store: Store) -> impl IntoView {
         // Two blocks: the scrolling list, which grows, and the dismiss-all
         // control pinned under it so it does not move as toasts arrive.
         <Show when=any>
-            <div class="qui-toasts">
-                <div class="list">
+            <div class=style::layer>
+                <div class=style::list>
                     <For each=ordered key=|toast| toast.id let:toast>
                         <ToastCard toast=toast store=store />
                     </For>
                 </div>
                 <Show when=many>
-                    <button class="dismiss-all" type="button" on:click=dismiss_all>
+                    <button class=style::dismiss_all type="button" on:click=dismiss_all>
                         "Dismiss all"
                     </button>
                 </Show>
@@ -235,13 +251,13 @@ fn group_view(group: ToastGroup) -> impl IntoView {
         .collect_view();
     let more = (group.more > 0).then(|| {
         let label = format!("and {} more", group.more);
-        view! { <li class="more">{label}</li> }
+        view! { <li class=style::more>{label}</li> }
     });
 
     view! {
-        <div class="group">
-            <span class="heading">{group.heading}</span>
-            <ul class="items">
+        <div class=style::group>
+            <span class=style::heading>{group.heading}</span>
+            <ul class=style::items>
                 {items}
                 {more}
             </ul>
@@ -274,12 +290,7 @@ fn ToastCard(toast: Toast, store: Store) -> impl IntoView {
         }
     });
 
-    let kind_class = match toast.kind {
-        ToastKind::Info => "qui-toast info",
-        ToastKind::Success => "qui-toast success",
-        ToastKind::Warning => "qui-toast warning",
-        ToastKind::Error => "qui-toast error",
-    };
+    let kind_class = kind_class(toast.kind);
     let title = toast.title.clone();
     let body = toast.body.clone();
     // Fixed once posted, so plain markup: a keyed `For` would need an id the
@@ -294,13 +305,13 @@ fn ToastCard(toast: Toast, store: Store) -> impl IntoView {
 
     view! {
         <div class=kind_class role="status">
-            <div class="content">
-                {title.map(|t| view! { <span class="title">{t}</span> })}
-                <span class="body">{body}</span>
+            <div class=style::content>
+                {title.map(|t| view! { <span class=style::title>{t}</span> })}
+                <span class=style::body>{body}</span>
                 {groups}
             </div>
             <button
-                class="close"
+                class=style::close
                 type="button"
                 aria-label="Dismiss"
                 on:click=move |_| {
@@ -323,6 +334,10 @@ mod tests {
 
     use wasm_bindgen_test::*;
 
+    fn sel(class: &str) -> String {
+        format!(".{class}")
+    }
+
     fn store_of(map: Toasts) -> Store {
         let store = Store::new();
         store.toasts.set(map);
@@ -342,18 +357,21 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn kind_reaches_the_class_so_the_border_can_differ() {
-        for (kind, expected) in [
-            (ToastKind::Info, "qui-toast info"),
-            (ToastKind::Success, "qui-toast success"),
-            (ToastKind::Warning, "qui-toast warning"),
-            (ToastKind::Error, "qui-toast error"),
+        let mut seen = BTreeSet::new();
+        for kind in [
+            ToastKind::Info,
+            ToastKind::Success,
+            ToastKind::Warning,
+            ToastKind::Error,
         ] {
             let t = toast(kind, None, "body");
             let store = store_of(BTreeMap::new());
             let el = mount(move || view! { <ToastCard toast=t store=store /> });
-            let card = el.query_selector(".qui-toast").unwrap().unwrap();
-            assert_eq!(card.get_attribute("class").unwrap(), expected);
+            let card = el.query_selector(&sel(style::toast)).unwrap().unwrap();
+            assert_eq!(card.get_attribute("class").unwrap(), kind_class(kind));
+            seen.insert(kind_class(kind));
         }
+        assert_eq!(seen.len(), 4, "each kind draws its own border");
     }
 
     #[wasm_bindgen_test]
@@ -361,7 +379,7 @@ mod tests {
         let store = store_of(BTreeMap::new());
         let with = toast(ToastKind::Info, Some("acme/rna-seq"), "2 new files");
         let el = mount(move || view! { <ToastCard toast=with store=store /> });
-        assert!(el.query_selector(".title").unwrap().is_some());
+        assert!(el.query_selector(&sel(style::title)).unwrap().is_some());
         let text = el.text_content().unwrap();
         assert!(text.contains("acme/rna-seq"), "title missing: {text}");
         assert!(text.contains("2 new files"), "body missing: {text}");
@@ -369,7 +387,7 @@ mod tests {
         let store = store_of(BTreeMap::new());
         let without = toast(ToastKind::Info, None, "body only");
         let el = mount(move || view! { <ToastCard toast=without store=store /> });
-        assert!(el.query_selector(".title").unwrap().is_none());
+        assert!(el.query_selector(&sel(style::title)).unwrap().is_none());
         assert!(el.text_content().unwrap().contains("body only"));
     }
 
@@ -493,7 +511,7 @@ mod tests {
         // invisible band blocking the rows beneath it.
         let store = store_of(BTreeMap::new());
         let el = mount(move || view! { <ToastLayer store=store /> });
-        assert!(el.query_selector(".qui-toasts").unwrap().is_none());
+        assert!(el.query_selector(&sel(style::layer)).unwrap().is_none());
     }
 
     #[wasm_bindgen_test]
@@ -501,8 +519,12 @@ mod tests {
         let one = BTreeMap::from([(1, toast(ToastKind::Info, None, "one"))]);
         let store = store_of(one);
         let el = mount(move || view! { <ToastLayer store=store /> });
-        assert!(el.query_selector(".qui-toasts").unwrap().is_some());
-        assert!(el.query_selector("button.dismiss-all").unwrap().is_none());
+        assert!(el.query_selector(&sel(style::layer)).unwrap().is_some());
+        assert!(
+            el.query_selector(&sel(style::dismiss_all))
+                .unwrap()
+                .is_none()
+        );
 
         let two = BTreeMap::from([
             (1, toast(ToastKind::Info, None, "one")),
@@ -510,7 +532,11 @@ mod tests {
         ]);
         let store = store_of(two);
         let el = mount(move || view! { <ToastLayer store=store /> });
-        assert!(el.query_selector("button.dismiss-all").unwrap().is_some());
+        assert!(
+            el.query_selector(&sel(style::dismiss_all))
+                .unwrap()
+                .is_some()
+        );
     }
 
     /// The paths arrive as data precisely so they can be a list: indentation in
@@ -528,15 +554,20 @@ mod tests {
             ..toast(ToastKind::Success, Some("acme/rna-seq"), "Updated.")
         };
         let el = mount(move || view! { <ToastCard toast=t store=store /> });
-        let heading = el.query_selector(".group .heading").unwrap().unwrap();
+        let heading = el
+            .query_selector(&format!(".{} .{}", style::group, style::heading))
+            .unwrap()
+            .unwrap();
         assert_eq!(heading.text_content().unwrap(), "2 files new");
-        let items = el.query_selector_all(".group .items li").unwrap();
+        let items = el
+            .query_selector_all(&format!(".{} .{} li", style::group, style::items))
+            .unwrap();
         assert_eq!(items.length(), 2);
         assert_eq!(
             items.item(0).unwrap().text_content().unwrap(),
             "qc/summary.csv"
         );
-        assert!(el.query_selector(".more").unwrap().is_none());
+        assert!(el.query_selector(&sel(style::more)).unwrap().is_none());
     }
 
     #[wasm_bindgen_test]
@@ -551,7 +582,10 @@ mod tests {
             ..toast(ToastKind::Info, None, "Updated.")
         };
         let el = mount(move || view! { <ToastCard toast=t store=store /> });
-        let more = el.query_selector(".items .more").unwrap().unwrap();
+        let more = el
+            .query_selector(&format!(".{} .{}", style::items, style::more))
+            .unwrap()
+            .unwrap();
         assert_eq!(more.text_content().unwrap(), "and 4 more");
     }
 
@@ -560,7 +594,7 @@ mod tests {
         let store = store_of(BTreeMap::new());
         let t = toast(ToastKind::Info, None, "nothing to list");
         let el = mount(move || view! { <ToastCard toast=t store=store /> });
-        assert!(el.query_selector(".group").unwrap().is_none());
+        assert!(el.query_selector(&sel(style::group)).unwrap().is_none());
         assert!(el.query_selector("ul").unwrap().is_none());
     }
 
@@ -569,7 +603,10 @@ mod tests {
         let store = store_of(BTreeMap::new());
         let t = toast(ToastKind::Error, None, "went wrong");
         let el = mount(move || view! { <ToastCard toast=t store=store /> });
-        let close = el.query_selector("button.close").unwrap().unwrap();
+        let close = el
+            .query_selector(&format!("button.{}", style::close))
+            .unwrap()
+            .unwrap();
         assert_eq!(close.get_attribute("aria-label").unwrap(), "Dismiss");
     }
 }

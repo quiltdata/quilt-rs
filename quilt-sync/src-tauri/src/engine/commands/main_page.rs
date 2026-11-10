@@ -1,5 +1,4 @@
-//! v2's main-page payloads. Nothing here is shared with `package_list.rs`, which
-//! is v1's, frozen, and deleted once v2 ships.
+//! The main page's payloads.
 
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -77,10 +76,17 @@ pub enum PackageStateDto {
     SignInExpired {
         host: Option<String>,
     },
+    /// The read did not reach the bucket's `latest`, so the remote facts are
+    /// the last known ones. `host` is the catalog; `None` for a bucket with no
+    /// catalog.
+    Unreachable {
+        host: Option<String>,
+    },
     /// Autosync stopped for this package for a reason no other state covers.
     /// The pause reasons that have a state resolve into it instead:
-    /// `PendingChanges`, `PendingCommit` and `Diverged` into the state the working
-    /// tree reports, and `PullConflict` and `RoleDenied` into their own states.
+    /// `PendingChanges`, `PendingCommit`, `Diverged` and `MergeRefused` into the
+    /// state the working tree reports, and `PullConflict` and `RoleDenied` into
+    /// their own states.
     /// Only `PausedReason::Other` resolves here (see `unexplained_pause`).
     ///
     /// Kept separate from `Unknown`, which makes a different and stronger claim:
@@ -93,15 +99,13 @@ pub enum PackageStateDto {
 
 /// Why the watcher stopped syncing one package, as sent to the UI.
 ///
-/// v2's own type. v1's `reporter::PausedEvent` is frozen: its `reason` is a plain
-/// string, and its single `message` means something different for each reason
-/// (the raw refusal for `other`, comma-joined file names for `pullConflict`, the
-/// role name for `roleDenied`). A comma-joined list cannot be split back apart
-/// when a file name contains a comma. Here each meaning has its own field.
+/// Each reason's detail has its own field: the conflicting files stay a list,
+/// because a comma-joined string cannot be split back apart when a file name
+/// contains a comma.
 ///
-/// Kinds are `snake_case`, matching [`PackageStateDto`] rather than v1's
-/// camelCase reason strings. The queue reads a pause and a state side by side,
-/// so those two vocabularies are the pair that must agree.
+/// Kinds are `snake_case`, matching [`PackageStateDto`]. The queue reads a pause
+/// and a state side by side, so those two vocabularies are the pair that must
+/// agree.
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum PausedDto {
@@ -132,7 +136,7 @@ impl From<&PausedReason> for PausedDto {
         match reason {
             PausedReason::PendingChanges => Self::PendingChanges,
             PausedReason::PendingCommit => Self::PendingCommit,
-            PausedReason::Diverged => Self::Diverged,
+            PausedReason::Diverged | PausedReason::MergeRefused(_) => Self::Diverged,
             PausedReason::PullConflict(files) => Self::PullConflict {
                 files: files.clone(),
             },
@@ -287,13 +291,14 @@ impl From<PackageState> for PackageStateDto {
 /// `Other` is deliberately absent: it has no state in the vocabulary, and
 /// folding it would destroy the case the queue exists to surface — a package
 /// `latest` by hash and paused by a workflow rejection. It travels as a pause on
-/// the watcher payload instead. The other three reasons are absent because the
-/// tree's own state already says what they say.
+/// the watcher payload instead. The other reasons are absent because the tree's
+/// own state already says what they say.
 /// Whether this pause has no state of its own to resolve into.
 ///
 /// Only `Other`. Every other reason either resolves into the state the working
-/// tree already reports (`PendingChanges`, `PendingCommit`, `Diverged`) or has a
-/// state of its own (`PullConflict`, `RoleDenied`). `Other` is the catch-all —
+/// tree already reports (`PendingChanges`, `PendingCommit`, `Diverged`,
+/// `MergeRefused`) or has a state of its own (`PullConflict`, `RoleDenied`).
+/// `Other` is the catch-all —
 /// a workflow rejection, a hash mismatch — and it is non-transient, so a package
 /// left in it stays stopped until something outside this app changes.
 pub(super) fn unexplained_pause(paused: Option<&PausedReason>) -> bool {
@@ -369,9 +374,6 @@ fn session_host(err: &Error) -> Option<String> {
 /// covers the readable-bucket query and the role query behind a denial
 /// together.
 ///
-/// A copy of `BUCKET_LIST_BUDGET` in `package_list.rs`, not shared with it,
-/// because v1 is frozen and will be deleted as a whole. Keep the two in sync.
-///
 /// Apart from these queries the roster is local data and renders without the
 /// network. The bucket query adds two round trips per host (`config.json`, then
 /// a GraphQL POST), serialised under the host's credential lock behind a retry
@@ -387,9 +389,8 @@ const BUCKET_LIST_BUDGET: Duration = Duration::from_secs(2);
 
 /// Whether the active role can reach a row's bucket, and what to say about it.
 ///
-/// COPIED from `package_list.rs:81-87`. v2 carries the ROLE NAME rather than
-/// v1's rendered `reason` string: §2 keeps prose off the wire, and
-/// `kit::render` already words `RoleDenied` for both sites.
+/// Carries the role name, not a sentence: prose stays off the wire, and
+/// `kit::render` words `RoleDenied`.
 struct AccessMark {
     role: Option<String>,
     role_switch_host: Option<String>,
@@ -550,20 +551,18 @@ async fn load_rows(
     Ok(rows)
 }
 
-async fn get_main_page_packages_from_model(
+pub(super) async fn get_main_page_packages_from_model(
     m: &impl model::QuiltModel,
     roles: &RoleCache,
     tracing: &crate::engine::telemetry::Telemetry,
     paused_reasons: &HashMap<quilt_uri::Namespace, PausedReason>,
 ) -> Result<MainPagePackages, Error> {
-    // Clear the role cache on every load, as v1's
-    // `get_installed_packages_list_data_from_model` does (a copy, not shared).
-    // A role switch is server-side and global, so it can happen in the web
-    // catalog without the app knowing. If the cached name lived for the whole
-    // session, a row could name a role that in fact has access, and
-    // `observe_role` would never run again, so the S3 clients would keep signing
-    // as the old role until Settings is opened or the ~1h credential TTL
-    // expires. All hosts are cleared because the roster's hosts are known only
+    // Clear the role cache on every load. A role switch is server-side and
+    // global, so it can happen in the web catalog without the app knowing. If
+    // the cached name lived for the whole session, a row could name a role that
+    // in fact has access, and `observe_role` would never run again, so the S3
+    // clients would keep signing as the old role until Settings is opened or the
+    // ~1h credential TTL expires. All hosts are cleared because the roster's hosts are known only
     // after `load_rows` below, and a cache entry is only a name.
     roles.invalidate(None).await;
 
@@ -619,8 +618,6 @@ async fn load_main_page_package(
         .as_ref()
         .map(quilt_uri::S3PackageUri::from);
     // Crash reports are attributed to the deployment of the most recent action.
-    // v1 does this in its own light phase (`package_list.rs:334`); without it here,
-    // the attribution dies with v1.
     if let Some(host) = typed_uri.as_ref().and_then(|uri| uri.catalog.as_ref()) {
         tracing.add_host(host);
     }
@@ -676,10 +673,8 @@ pub async fn get_main_page_packages(s: &Services) -> Result<MainPagePackages, St
     let roles = &*s.roles;
     let tracing = &*s.telemetry;
     let watcher = &s.watcher;
-    // From the same one read the watcher payload uses. The old route went
-    // through `PausedEvent` and `filter_map`ped away every pause with no
-    // message — `PendingChanges`, `PendingCommit` and `Diverged` — so three of
-    // the six reasons never reached this map at all.
+    // From the same one read the watcher payload uses, so every pause reason
+    // reaches this map.
     // Keyed by the type the watcher already hands over: this map used to flatten
     // each key to a string, and every lookup below then had one too.
     let paused_reasons: HashMap<quilt_uri::Namespace, PausedReason> =
@@ -902,6 +897,18 @@ pub(super) async fn refresh_main_page_package_from_model(
         .get_installed_package_status_with_downloads(&installed_package, None)
         .await
     {
+        // A status that did not read the bucket's `latest` is local data
+        // alone, so it is answered like a failure to reach the bucket below.
+        Ok((status, _)) if !status.latest_refreshed => {
+            tracing::warn!(
+                "Could not read the latest revision for {}",
+                installed_package.namespace,
+            );
+            Err(Error::General(format!(
+                "Could not reach the bucket for {}",
+                installed_package.namespace
+            )))
+        }
         Ok((status, counts)) => Ok(MainPagePackageRefresh {
             // The pause checks go here rather than at the top of the function,
             // because the access-denied arm below has higher precedence and must
@@ -1250,9 +1257,8 @@ mod tests {
 
     #[test]
     fn a_conflict_crosses_the_wire_as_a_list_not_a_joined_string() {
-        // v1's `reporter` sends `files.join(", ")`. Counting files for
-        // "conflicts in N files" from that string means splitting on ", ", which
-        // gives the wrong count for this file name.
+        // Counting files for "conflicts in N files" from a joined string means
+        // splitting on ", ", which gives the wrong count for this file name.
         let reason =
             PausedReason::PullConflict(vec!["plate, run 3.csv".to_string(), "b.csv".to_string()]);
         let json = serde_json::to_string(&PausedDto::from(&reason)).unwrap();
@@ -1268,9 +1274,7 @@ mod tests {
 
     #[test]
     fn the_three_meanings_of_one_field_become_three_named_fields() {
-        // `PausedEvent.message` is one `Option<String>` carrying a raw error for
-        // `other`, comma-joined filenames for `pullConflict`, and a role name for
-        // `roleDenied`. Each gets its own field and its own name here.
+        // A raw error, a file list and a role name each get their own field.
         assert_eq!(
             serde_json::to_string(&PausedDto::from(&PausedReason::Other(
                 "workflow rejected metadata".to_string()
@@ -1311,8 +1315,8 @@ mod tests {
 
     #[test]
     fn the_reasons_that_carry_nothing_carry_nothing() {
-        // Three of the six are fully described by their kind. A `message: null` on
-        // these is the overloaded field surviving in a new shape.
+        // These are fully described by their kind. A `message: null` on them is
+        // the overloaded field surviving in a new shape.
         for (reason, expected) in [
             (
                 PausedReason::PendingChanges,
@@ -1320,6 +1324,12 @@ mod tests {
             ),
             (PausedReason::PendingCommit, r#"{"kind":"pending_commit"}"#),
             (PausedReason::Diverged, r#"{"kind":"diverged"}"#),
+            (
+                PausedReason::MergeRefused(crate::engine::autopull::MergeBlock::Paths(vec![
+                    "a.csv".to_string(),
+                ])),
+                r#"{"kind":"diverged"}"#,
+            ),
         ] {
             assert_eq!(
                 serde_json::to_string(&PausedDto::from(&reason)).unwrap(),
@@ -2399,13 +2409,10 @@ mod tests {
         );
     }
 
-    /// COPIED judgement 4's own regression guard: `roles.invalidate(None)` runs
-    /// at the top of every load. Without it, a `RoleCache` shared across two
-    /// loads would serve the first load's cached role forever, and
-    /// `refresh_roles` would be called once rather than once per load.
-    ///
-    /// v1's analogue is `package_list.rs:1126-1132`; this is v2's own version,
-    /// against v2's own `roster` helper.
+    /// `roles.invalidate(None)` runs at the top of every load. Without it, a
+    /// `RoleCache` shared across two loads would serve the first load's cached
+    /// role forever, and `refresh_roles` would be called once rather than once
+    /// per load.
     #[tokio::test]
     async fn a_second_load_re_fetches_the_role_rather_than_serving_the_cache() {
         let mut model = crate::engine::model::mocks::create();
@@ -2516,7 +2523,10 @@ mod tests {
                 quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
             );
         }
-        quilt::lineage::InstalledPackageStatus::new(upstream, changes)
+        quilt::lineage::InstalledPackageStatus {
+            latest_refreshed: true,
+            ..quilt::lineage::InstalledPackageStatus::new(upstream, changes)
+        }
     }
 
     async fn refresh(m: &impl model::QuiltModel, roles: &RoleCache) -> MainPagePackageRefresh {
@@ -2594,10 +2604,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_denial_outranks_a_pull_conflict_pause() {
-        // The named invariant `a_denial_outranks_a_pause_even_a_pull_conflict`, from
-        // v1's `installed_packages_list.rs`. Denial is rank 1 and the conflict is
-        // rank 2, so the fold must sit AFTER the denial arm has had its chance — an
-        // early return at the top of the heavy phase would silently invert this.
+        // Denial is rank 1 and the conflict is rank 2, so the fold must sit
+        // AFTER the denial arm has had its chance — an early return at the top of the heavy phase would silently invert this.
         let m = mock_one_package(Err(access_denied_error()), Some(two_roles()));
 
         let refreshed = refresh_with_pause(
@@ -2693,6 +2701,33 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&refreshed).unwrap(),
             r#"{"state":{"kind":"latest"},"roleSwitchHost":null,"downloads":{"scope":"individualFiles","folders":0,"total":340,"outstanding":328,"backlog":0,"deletedHere":1,"size":{"total":3400000,"downloaded":1900000,"backlog":0}},"changedFiles":0}"#,
+        );
+    }
+
+    /// A status that did not read the bucket's `latest` is no more evidence
+    /// than a failed one, so the row stays as the light phase guessed it.
+    #[tokio::test]
+    async fn an_unread_latest_leaves_the_row_unchecked() {
+        let m = mock_one_package(
+            Ok(quilt::lineage::InstalledPackageStatus {
+                latest_refreshed: false,
+                ..status_with(UpstreamState::UpToDate, 1)
+            }),
+            None,
+        );
+        let ns: quilt_uri::Namespace = "team/one".try_into().unwrap();
+
+        let refreshed = refresh_main_page_package_from_model(
+            &m,
+            &RoleCache::default(),
+            &crate::engine::telemetry::Telemetry::default(),
+            &ns,
+            None,
+        )
+        .await;
+        assert!(
+            refreshed.is_err(),
+            "an unread latest must not settle the row"
         );
     }
 

@@ -229,7 +229,7 @@ fn state_payload(state: &PackageState) -> commands::PackageHeaderData {
 /// I choose to do*, which does not vary with state, so it lives in `[⋯]`.
 ///
 /// Three arrangements were rejected by looking at them. `[⋯]` alone buried a
-/// button v1 shows as a peer of publishing. A literal `or` between two buttons
+/// button that is a peer of publishing. A literal `or` between two buttons
 /// read correctly against `Publish` and produced `Create new revision or Get
 /// latest` against everything else, claiming a relationship that is not there.
 /// Keeping it as a standalone button left it the one thing on the row that was

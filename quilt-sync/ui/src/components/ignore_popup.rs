@@ -1,11 +1,50 @@
+//! The two `.quiltignore` popups a file row's `[⋯]` opens: *Ignore* and
+//! *Stop ignoring*. Each is a kit popup form, so a refusal shows inside it,
+//! and each re-reads the page once its write lands.
+
 use leptos::prelude::*;
 use quilt_uri::S3PackageUri;
 
 use crate::commands;
-use crate::components::Notification;
-use crate::components::buttons;
 use crate::util::{format_size, thousands};
-use quilt_ui_kit::{Choice, ChoiceGroup};
+use quilt_ui_kit::{Choice, ChoiceGroup, FormControl, FormDialog, Submit, TextInput};
+
+stylance::import_crate_style!(style, "src/components/ignore_popup.module.css");
+
+/// Runs `on_close` when the dialog closes, by any of its ways out. The caller
+/// mounts the popup while it is open and drops it on close.
+fn close_with(open: RwSignal<bool>, on_close: impl Fn() + 'static) {
+    Effect::new(move |was_open: Option<bool>| {
+        let now = open.get();
+        if was_open == Some(true) && !now {
+            on_close();
+        }
+        now
+    });
+}
+
+/// The page's one-command lock, when the caller gave one, is held by another
+/// command.
+fn held(lock: Option<RwSignal<bool>>) -> bool {
+    lock.is_some_and(|l| l.get())
+}
+
+/// Hold the page's lock while `write` runs, so `.quiltignore` never changes
+/// under a command writing the same tree.
+async fn holding<T>(
+    lock: Option<RwSignal<bool>>,
+    write: impl std::future::Future<Output = T>,
+) -> T {
+    if let Some(lock) = lock {
+        lock.set(true);
+    }
+    let answer = write.await;
+    // `try_`: the lock is a page's, and the page can be gone by now.
+    if let Some(lock) = lock {
+        lock.try_set(false);
+    }
+    answer
+}
 
 // ── Ignore popup ──
 
@@ -19,8 +58,9 @@ pub struct IgnorePopupData {
     pub uri: Option<S3PackageUri>,
 }
 
+/// What the typed pattern does to the popup's file.
 #[derive(Clone)]
-enum IgnoreHint {
+pub enum IgnoreHint {
     WillBeIgnored(String),
     OnlyExact(String),
     NoMatch(String),
@@ -28,40 +68,35 @@ enum IgnoreHint {
 
 #[component]
 #[allow(clippy::needless_pass_by_value)]
-#[allow(
-    clippy::too_many_lines,
-    reason = "declarative Leptos view; length is markup, not logic complexity"
-)]
 pub fn IgnorePopup(
     data: IgnorePopupData,
-    notification: RwSignal<Option<Notification>>,
     refetch: Trigger,
-    on_close: impl Fn() + Clone + 'static,
+    on_close: impl Fn() + 'static,
     /// A page's one-command lock. Given one, the popup does not add a pattern
     /// while another command holds it, and holds it while its own write runs,
     /// so `.quiltignore` never changes under a command writing the same tree.
-    /// v1 and the commit page pass none.
     #[prop(optional)]
     lock: Option<RwSignal<bool>>,
 ) -> impl IntoView {
+    let open = RwSignal::new(true);
+    close_with(open, on_close);
     let pattern = RwSignal::new(data.suggested_pattern.clone());
-    let held = move || lock.is_some_and(|l| l.get());
     let hint = RwSignal::new(Option::<IgnoreHint>::None);
-    let submitting = RwSignal::new(false);
 
-    let path = data.path.clone();
-    let suggested = data.suggested_pattern.clone();
-    let namespace = data.namespace.clone();
+    let IgnorePopupData {
+        namespace,
+        path,
+        suggested_pattern: suggested,
+        uri,
+    } = data;
 
-    let path_for_hint = path.clone();
-    let suggested_for_hint = suggested.clone();
-    let update_hint = move || {
-        let current = pattern.get_untracked();
-        let path = path_for_hint.clone();
-        let suggested = suggested_for_hint.clone();
+    // What the pattern does to this file, asked again as it is typed.
+    Effect::new(move |_| {
+        let current = pattern.get();
+        let (path, suggested) = (path.clone(), suggested.clone());
         leptos::task::spawn_local(async move {
             if current.trim().is_empty() {
-                hint.set(None);
+                hint.try_set(None);
                 return;
             }
             let matches = commands::test_quiltignore_pattern(current.clone(), path.clone())
@@ -78,114 +113,58 @@ pub fn IgnorePopup(
             } else {
                 IgnoreHint::NoMatch(path)
             };
-            hint.set(Some(value));
+            hint.try_set(Some(value));
         });
-    };
+    });
 
-    update_hint();
-
-    let update_hint_clone = update_hint.clone();
-    let on_input = move |ev: leptos::ev::Event| {
-        pattern.set(event_target_value(&ev));
-        update_hint_clone();
-    };
-
-    let ns_for_submit = namespace.clone();
-    let uri_for_submit = data.uri.clone();
-    let on_close_for_submit = on_close.clone();
-    let on_submit = move || {
-        let p = pattern.get_untracked();
-        if p.trim().is_empty()
-            || submitting.get_untracked()
-            || lock.is_some_and(|l| l.get_untracked())
-        {
-            return;
+    let submit = Submit::new("Add to .quiltignore", move || {
+        let (ns, uri, p) = (namespace.clone(), uri.clone(), pattern.get_untracked());
+        async move {
+            holding(lock, commands::add_to_quiltignore(ns, p, uri))
+                .await
+                .map_err(|e| format!("Could not ignore this file: {e}"))?;
+            refetch.notify();
+            Ok(())
         }
-        submitting.set(true);
-        if let Some(lock) = lock {
-            lock.set(true);
-        }
-        let ns = ns_for_submit.clone();
-        let uri = uri_for_submit.clone();
-        let on_close = on_close_for_submit.clone();
-        leptos::task::spawn_local(async move {
-            let answer = commands::add_to_quiltignore(ns, p, uri).await;
-            // `try_`: the lock is a page's, and the page can be gone by now.
-            if let Some(lock) = lock {
-                lock.try_set(false);
-            }
-            match answer {
-                Ok(msg) => {
-                    notification.set(Some(Notification::Success(msg)));
-                    on_close();
-                    refetch.notify();
-                }
-                Err(e) => {
-                    notification.set(Some(Notification::Error(e)));
-                    submitting.set(false);
-                }
-            }
-        });
-    };
-
-    let on_submit_click = {
-        let on_submit = on_submit.clone();
-        move |_| on_submit()
-    };
-
-    let on_close_cancel = on_close.clone();
-    let on_cancel = move |_: leptos::ev::MouseEvent| on_close_cancel();
-
-    let on_submit_key = on_submit.clone();
-    let on_close_key = on_close.clone();
-    let on_keydown = move |ev: leptos::ev::KeyboardEvent| {
-        if ev.key() == "Enter" {
-            on_submit_key();
-        } else if ev.key() == "Escape" {
-            on_close_key();
-        }
-    };
+    });
+    let blocked = Signal::derive(move || pattern.with(|p| p.trim().is_empty()) || held(lock));
 
     view! {
-        <div class="popup-overlay" on:click={
-            let on_close = on_close.clone();
-            move |_| on_close()
-        }>
-            <div class="popup-content" on:click=|ev| ev.stop_propagation()>
-                <div class="ignore-popup">
-                    <label>"Pattern to ignore:"</label>
-                    <input
-                        class="ignore-input"
-                        type="text"
-                        prop:value=move || pattern.get()
-                        on:input=on_input
-                        on:keydown=on_keydown
-                    />
-                    <div class="ignore-hint">
-                        {move || hint.get().map(|h| match h {
-                            IgnoreHint::WillBeIgnored(path) => view! {
-                                <code class="inactive">{path}</code>" will be ignored"
-                            }.into_any(),
-                            IgnoreHint::OnlyExact(path) => view! {
-                                "Only "{path}" will be ignored"
-                            }.into_any(),
-                            IgnoreHint::NoMatch(path) => view! {
-                                "Doesn't match "<code class="inactive">{path}</code>
-                            }.into_any(),
-                        })}
-                    </div>
-                    <div class="ignore-actions">
-                        <buttons::FormPrimary
-                            on_click=on_submit_click
-                            disabled=Signal::derive(move || submitting.get() || held())
-                        >
-                            "Add to .quiltignore"
-                        </buttons::FormPrimary>
-                        <buttons::FormSecondary on_click=on_cancel />
-                    </div>
-                </div>
-            </div>
-        </div>
+        <IgnoreDialog open=open pattern=pattern hint=hint.into() submit=submit blocked=blocked />
+    }
+}
+
+/// The ignore popup, apart from the commands it calls.
+#[component]
+pub fn IgnoreDialog(
+    open: RwSignal<bool>,
+    pattern: RwSignal<String>,
+    hint: Signal<Option<IgnoreHint>>,
+    submit: Submit,
+    #[prop(into)] blocked: Signal<bool>,
+) -> impl IntoView {
+    view! {
+        <FormDialog open=open title="Ignore" submit=submit blocked=blocked>
+            <FormControl
+                label="Pattern to ignore"
+                control=move |id| {
+                    view! { <TextInput id=id value=pattern autofocus=true /> }.into_any()
+                }
+            />
+            <p class=style::hint>
+                {move || hint.get().map(|h| match h {
+                    IgnoreHint::WillBeIgnored(path) => view! {
+                        <code>{path}</code>" will be ignored"
+                    }.into_any(),
+                    IgnoreHint::OnlyExact(path) => view! {
+                        "Only "{path}" will be ignored"
+                    }.into_any(),
+                    IgnoreHint::NoMatch(path) => view! {
+                        "Doesn't match "<code>{path}</code>
+                    }.into_any(),
+                })}
+            </p>
+        </FormDialog>
     }
 }
 
@@ -216,13 +195,14 @@ impl UnignorePopupData {
 
 /// What the popup knows of each scope's effect.
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum Preview {
+pub enum Preview {
     Counting,
     Ready(commands::StopIgnoringPreview),
     Failed(String),
 }
 
-const THIS_PACKAGE: &str = "thisPackage";
+/// The scope chosen when the popup opens.
+pub const THIS_PACKAGE: &str = "thisPackage";
 const ALL_PACKAGES: &str = "allPackages";
 
 fn scope_of(value: &str) -> commands::StopIgnoringScope {
@@ -269,18 +249,18 @@ fn adds_sentence(scope: commands::StopIgnoringScope, files: u64, bytes: u64) -> 
 #[allow(clippy::needless_pass_by_value)]
 pub fn UnignorePopup(
     data: UnignorePopupData,
-    notification: RwSignal<Option<Notification>>,
     refetch: Trigger,
-    on_close: impl Fn() + Clone + 'static,
+    on_close: impl Fn() + 'static,
     /// A page's one-command lock, as [`IgnorePopup`] takes it: given one, the
     /// popup does not write while another command holds it, and holds it while
-    /// its own write runs. v1 and the commit page pass none.
+    /// its own write runs.
     #[prop(optional)]
     lock: Option<RwSignal<bool>>,
 ) -> impl IntoView {
+    let open = RwSignal::new(true);
+    close_with(open, on_close);
     let preview = RwSignal::new(Preview::Counting);
     let scope = RwSignal::new(THIS_PACKAGE.to_string());
-    let submitting = RwSignal::new(false);
 
     {
         let (ns, path, folder) = (data.namespace.clone(), data.path.clone(), data.folder);
@@ -293,102 +273,59 @@ pub fn UnignorePopup(
         });
     }
 
-    let on_submit = {
+    let submit = {
         let data = data.clone();
-        let on_close = on_close.clone();
-        UnsyncCallback::new(move |()| {
-            if submitting.get_untracked()
-                || lock.is_some_and(|l| l.get_untracked())
-                || !matches!(preview.get_untracked(), Preview::Ready(_))
-            {
-                return;
-            }
-            submitting.set(true);
-            if let Some(lock) = lock {
-                lock.set(true);
-            }
+        Submit::new("Stop ignoring", move || {
             let data = data.clone();
             let chosen = scope_of(&scope.get_untracked());
-            let on_close = on_close.clone();
-            leptos::task::spawn_local(async move {
-                let answer = commands::stop_ignoring(
+            async move {
+                let write = commands::stop_ignoring(
                     data.namespace,
                     data.path,
                     data.folder,
                     chosen,
                     data.uri,
-                )
-                .await;
-                // `try_`: the lock is a page's, and the page can be gone by now.
-                if let Some(lock) = lock {
-                    lock.try_set(false);
-                }
-                match answer {
-                    Ok(msg) => {
-                        notification.set(Some(Notification::Success(msg)));
-                        on_close();
-                        refetch.notify();
-                    }
-                    Err(e) => {
-                        notification.set(Some(Notification::Error(e)));
-                        submitting.set(false);
-                    }
-                }
-            });
+                );
+                holding(lock, write)
+                    .await
+                    .map_err(|e| format!("Could not stop ignoring this file: {e}"))?;
+                refetch.notify();
+                Ok(())
+            }
         })
     };
 
-    let on_cancel = {
-        let on_close = on_close.clone();
-        UnsyncCallback::new(move |()| on_close())
-    };
-    let escape = window_event_listener(leptos::ev::keydown, move |ev| {
-        if ev.key() == "Escape" {
-            on_cancel.run(());
-        }
-    });
-    on_cleanup(move || escape.remove());
-
     view! {
-        <div class="popup-overlay" on:click=move |_| on_cancel.run(())>
-            <div class="popup-content" on:click=|ev| ev.stop_propagation()>
-                <StopIgnoringForm
-                    data=data
-                    preview=preview.into()
-                    scope=scope
-                    submitting=submitting
-                    lock=lock
-                    on_submit=on_submit
-                    on_cancel=on_cancel
-                />
-            </div>
-        </div>
+        <StopIgnoringDialog
+            open=open
+            data=data
+            preview=preview.into()
+            scope=scope
+            lock=lock
+            submit=submit
+        />
     }
 }
 
-/// The popup's body, apart from the commands it calls.
+/// The *Stop ignoring* popup, apart from the commands it calls.
 #[component]
 #[allow(clippy::needless_pass_by_value)]
-fn StopIgnoringForm(
+pub fn StopIgnoringDialog(
+    open: RwSignal<bool>,
     data: UnignorePopupData,
     preview: Signal<Preview>,
     scope: RwSignal<String>,
-    submitting: RwSignal<bool>,
     lock: Option<RwSignal<bool>>,
-    on_submit: UnsyncCallback<()>,
-    on_cancel: UnsyncCallback<()>,
+    submit: Submit,
 ) -> impl IntoView {
-    let shown = data.shown();
+    let title = format!("Stop ignoring {}", data.shown());
     let pattern = data.pattern.clone();
-    let disabled = Signal::derive(move || {
-        submitting.get()
-            || lock.is_some_and(|l| l.get())
-            || !matches!(preview.get(), Preview::Ready(_))
-    });
+    // Nothing to write until the count is in.
+    let blocked = Signal::derive(move || held(lock) || !matches!(preview.get(), Preview::Ready(_)));
 
     let body = move || match preview.get() {
-        Preview::Counting => view! { <p class="unignore-status">"Counting files…"</p> }.into_any(),
-        Preview::Failed(e) => view! { <p class="unignore-error">{e}</p> }.into_any(),
+        Preview::Counting => view! { <p class=style::line>"Counting files…"</p> }.into_any(),
+        Preview::Failed(e) => view! { <p class=style::error>{e}</p> }.into_any(),
         Preview::Ready(p) => {
             let mut options = vec![Choice::new(THIS_PACKAGE, "This package")];
             if p.all_packages.is_some() {
@@ -421,7 +358,7 @@ fn StopIgnoringForm(
                             view! { {(i > 0).then_some(" ")}<code>{line}</code> }
                         })
                         .collect_view();
-                    view! { <p class="unignore-lines">"Adds "{codes}{destination}</p> }
+                    view! { <p class=style::line>"Adds "{codes}{destination}</p> }
                 })
             };
             view! {
@@ -438,17 +375,10 @@ fn StopIgnoringForm(
     };
 
     view! {
-        <div class="unignore-popup">
-            <h2 class="section-title">"Stop ignoring "<code>{shown}</code></h2>
-            <span>"Ignored by: "<span class="pattern-display">{pattern}</span></span>
+        <FormDialog open=open title=title submit=submit blocked=blocked>
+            <p class=style::line>"Ignored by: "<code>{pattern}</code></p>
             {body}
-            <div class="ignore-actions">
-                <buttons::FormPrimary on_click=move |_| on_submit.run(()) disabled=disabled>
-                    "Stop ignoring"
-                </buttons::FormPrimary>
-                <buttons::FormSecondary on_click=move |_| on_cancel.run(()) />
-            </div>
-        </div>
+        </FormDialog>
     }
 }
 
@@ -470,7 +400,6 @@ mod tests {
             Some(lock) => view! {
                 <IgnorePopup
                     data=data.clone()
-                    notification=RwSignal::new(None)
                     refetch=Trigger::new()
                     on_close=|| ()
                     lock=lock
@@ -480,7 +409,6 @@ mod tests {
             None => view! {
                 <IgnorePopup
                     data=data.clone()
-                    notification=RwSignal::new(None)
                     refetch=Trigger::new()
                     on_close=|| ()
                 />
@@ -490,10 +418,7 @@ mod tests {
     }
 
     fn submit(el: &web_sys::Element) -> web_sys::HtmlButtonElement {
-        el.query_selector(".ignore-actions button")
-            .unwrap()
-            .expect("the submit")
-            .unchecked_into()
+        button_saying(el, "Add to .quiltignore")
     }
 
     /// Given the page's lock, the popup cannot add a pattern while another
@@ -536,14 +461,13 @@ mod tests {
     fn form(preview: Preview, lock: Option<RwSignal<bool>>) -> web_sys::Element {
         mount(move || {
             view! {
-                <StopIgnoringForm
+                <StopIgnoringDialog
+                    open=RwSignal::new(true)
                     data=unignore_data()
                     preview=Signal::stored(preview)
                     scope=RwSignal::new(THIS_PACKAGE.to_string())
-                    submitting=RwSignal::new(false)
                     lock=lock
-                    on_submit=UnsyncCallback::new(|()| ())
-                    on_cancel=UnsyncCallback::new(|()| ())
+                    submit=Submit::new("Stop ignoring", || async { Ok(()) })
                 />
             }
         })
@@ -669,13 +593,13 @@ mod tests {
         );
     }
 
-    /// The pattern starts as the one the caller suggested: the v2 pane's path.
+    /// The pattern starts as the one the caller suggested: the pane's path.
     #[wasm_bindgen_test]
     async fn the_pattern_starts_as_suggested_and_no_lock_leaves_the_submit_live() {
         let el = popup(None);
         leptos::task::tick().await;
         let input: web_sys::HtmlInputElement = el
-            .query_selector(".ignore-input")
+            .query_selector("input[type=text]")
             .unwrap()
             .expect("the pattern field")
             .unchecked_into();

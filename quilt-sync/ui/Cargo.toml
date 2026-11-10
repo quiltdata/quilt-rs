@@ -39,14 +39,14 @@ quilt-ui-kit = { path = "../../quilt-ui-kit" }
 send_wrapper = "0.6.0"
 stylance = "0.8.4"
 
-# CSS Modules, for the pages; the kit bundles its own (see its `Cargo.toml`).
+# CSS Modules, for the pages and components; the kit bundles its own (see its `Cargo.toml`).
 # `stylance-cli` scans `folders` recursively, hashes each class, and concatenates
 # into `output_file` — so a page declares its own stylesheet from Rust and no
 # list of stylesheets exists. Output is generated and gitignored; Trunk's
 # pre_build hook rebuilds it.
 [package.metadata.stylance]
 output_file = "./assets/css/kit/modules.css"
-folders = ["./src/pages/"]
+folders = ["./src/pages/", "./src/components/"]
 extensions = [".module.css"]
 
 [dev-dependencies]

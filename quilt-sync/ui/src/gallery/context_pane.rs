@@ -38,6 +38,7 @@ use quilt_uri::Namespace;
 use crate::Cell;
 use crate::Scene;
 use crate::commands::CurrentRevisionData;
+use crate::commands::LatestLoss;
 use crate::commands::PackageSize;
 use crate::commands::ResolveData;
 use crate::commands::RevisionHistoryData;
@@ -296,7 +297,7 @@ const UNREAD: Held = Held {
 
 /// What the choice means, in the present tense.
 ///
-/// Two clauses from v1's own band, kept apart on purpose: the count reports the
+/// Two clauses, kept apart on purpose: the count reports the
 /// present, and the standing line promises something about files that do not
 /// exist yet. Only whole-package scope may make that promise — under
 /// individual-file scope the next revision can add a file and falsify it. Kept
@@ -575,8 +576,13 @@ fn compared() -> ResolveData {
     ResolveData::Compared {
         published_message: Some("Add intake folder-upload note".to_string()),
         differing: MARKED.iter().map(|&key| key.to_string()).collect(),
+        loss: LatestLoss {
+            entries: 2,
+            metadata: true,
+        },
         unpublished: 2,
         uncommitted: 1,
+        blocked: None,
     }
 }
 

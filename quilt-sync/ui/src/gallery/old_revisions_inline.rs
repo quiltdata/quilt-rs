@@ -39,7 +39,7 @@
 //! outlives the page — a sweep the reader navigated away from still reports —
 //! and it is how autopull already reports a finished pull (`pull_toast.rs`). The
 //! gallery cannot mount `ToastStack`, which reads the backend on mount, so the
-//! card here is a copy of its markup and its v2 styles.
+//! card here is a copy of its markup and its styles.
 //!
 //! # Sizes are what removing frees
 //!
@@ -55,7 +55,7 @@
 //! detail after the time (`3 days ago · frees 1.2 MB`), and the trash its
 //! trailing action. The sync and the removal each set their own
 //! `ActivityKind`'s slot of the line, so the end of one never wipes the other.
-//! The app's popover (`pages/installed_package_v2/old_revisions.rs`) draws the
+//! The app's popover (`pages/installed_package/old_revisions.rs`) draws the
 //! same surface over the backend's answer.
 
 use leptos::context::Provider;

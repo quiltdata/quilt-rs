@@ -247,14 +247,14 @@ commit in place, so re-running publish resumes as a push-only call.
 
 ### Certify Latest (Promote)
 
-The user-invoked composition of push + certify, run from the merge page:
-it forces certification even when push declined to (the remote `latest`
-has moved since the user's base). It is intentionally last-writer-wins on
-the tag — if another client moves `latest` between the inner push and the
-outer tag write, that move is silently overwritten. This is the semantic
-the merge page asks for, but it makes a non-certifying push and the
-merge-page action asymmetric: push respects a concurrent `latest`;
-promote does not.
+The user-invoked composition of push + certify, run from the package
+page's resolve mode: it forces certification even when push declined to
+(the remote `latest` has moved since the user's base). It is
+intentionally last-writer-wins on the tag — if another client moves
+`latest` between the inner push and the outer tag write, that move is
+silently overwritten. This is the semantic *Promote my revision* asks
+for, but it makes a non-certifying push and promote asymmetric: push
+respects a concurrent `latest`; promote does not.
 
 ### Pull
 
@@ -294,15 +294,22 @@ tick. Autosync's autopull tick is a state-driven dispatcher over the same
 operations the manual UI buttons invoke: refresh, classify, then route to
 pull (`Behind` with a non-conflicting `PullOutcome` — local work is preserved)
 or publish (changes or a pending commit, quiet tree). A `Behind` tree with a
-`Blocked` outcome pauses with `PausedReason::PullConflict`; `Diverged` pauses
-the namespace. Resolution of either is user-action only.
+`Blocked` outcome pauses with `PausedReason::PullConflict`. With pulling and
+publishing both on, a `Diverged` copy that shares a published base with
+`latest` is committed and pushed as before a publish, merged onto `latest` with
+`flow::merge_onto`, and published as `latest`'s child. The copy then moves to
+the merged revision with `LockedPackage::move_to`, as a pull moves a `Behind`
+copy. One whose pushed revision `latest` already holds moves the same way,
+before any new edit is committed, and publishes nothing. Any other `Diverged`
+copy pauses, and so does one whose merge refuses or
+whose `latest` keeps moving. Resolution of a pause is user-action only.
 
 ### Uninstall
 
 Removes tracking, installed manifests, and the working directory, and
 leaves `objects/` and the `packages/` cache (shared content, no reference
 counting). With `--prune` (`LocalDomain::uninstall_package_pruning`, and
-QuiltSync's v2 Remove by default) it then deletes the package's objects no
+QuiltSync's Remove by default) it then deletes the package's objects no
 other installed manifest uses; the rest stays for `gc`.
 
 ## Resolving Diverged

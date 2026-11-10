@@ -220,74 +220,15 @@ pub struct PublishedEvent {
     pub message: String,
 }
 
-/// Payload emitted to the UI when autosync pauses a namespace. Carries
-/// both a stable `reason` discriminant (so the UI can branch by category)
-/// and an optional free-form `message` populated for
-/// [`PausedReason::Other`] — workflow validation failures, hash mismatches,
-/// JSON parse errors, etc.
+/// Payload of the `autosync-paused` event: which package paused.
 ///
-/// This is distinct from the `package-status-changed` event because the
-/// status string alone cannot disambiguate "remote unreachable" (which
-/// surfaces as `status = "error"` and a Login affordance in the UI) from
-/// "remote refused this push" (which is `status = "paused"` and renders a
-/// neutral banner showing `message`).
+/// The page uses it only as a nudge to refetch; why the package paused is read
+/// from the watcher's map through `PausedDto`. A pause does not move the status
+/// fingerprint, so `package-status-changed` cannot carry this news.
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PausedEvent {
     pub namespace: quilt_uri::Namespace,
-    /// Stable category: `"pendingChanges"`, `"pendingCommit"`,
-    /// `"diverged"`, `"pullConflict"`, `"roleDenied"`, or `"other"`. Kept as
-    /// a string so the wire format is independent of the Rust enum's variant
-    /// layout.
-    pub reason: String,
-    /// Free-form description: the raw refusal reason for `reason = "other"`,
-    /// the comma-joined conflicting file names for `reason =
-    /// "pullConflict"`, or the active role's name for `reason =
-    /// "roleDenied"` (absent when the name could not be resolved).
-    pub message: Option<String>,
-}
-
-impl PausedEvent {
-    /// `message` carries only the raw refusal reason. The "resolve, then
-    /// push manually to resume" guidance is presentation and lives in the
-    /// UI (it once was appended here, which mixed data with guidance and
-    /// made the banner unreadable).
-    pub fn from_reason(namespace: &Namespace, reason: &PausedReason) -> Self {
-        let (reason_str, message) = match reason {
-            PausedReason::PendingChanges => ("pendingChanges", None),
-            PausedReason::PendingCommit => ("pendingCommit", None),
-            PausedReason::Diverged => ("diverged", None),
-            PausedReason::PullConflict(files) => ("pullConflict", Some(files.join(", "))),
-            // The message is the role *name*, not a sentence: the wording
-            // ("switch role to resume") is presentation and lives in the UI,
-            // the same split `pullConflict` uses for its file list. An
-            // unresolved name sends no message, so the UI falls back to the
-            // role-less phrasing.
-            PausedReason::RoleDenied { role } => {
-                ("roleDenied", (!role.is_empty()).then(|| role.clone()))
-            }
-            PausedReason::Other(msg) => ("other", Some(msg.clone())),
-        };
-        Self {
-            namespace: namespace.clone(),
-            reason: reason_str.to_string(),
-            message,
-        }
-    }
-}
-
-/// Point-in-time view of the autosync watcher's per-namespace state.
-///
-/// Returned by the `get_autosync_snapshot` command so the UI can
-/// re-hydrate per-page banners on navigation — listening for the
-/// `autosync-paused` event only catches pauses that fire while the page
-/// is mounted, but the watcher's `paused` map persists across page
-/// loads. Each entry in `paused` has the same wire shape as the
-/// `autosync-paused` event payload.
-#[derive(Serialize, Clone, Debug, PartialEq, Eq, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct WatcherSnapshot {
-    pub paused: Vec<PausedEvent>,
 }
 
 /// Payload emitted when the filesystem watcher hits an OS-level error
@@ -545,7 +486,9 @@ impl StatusReporter for SinkEventReporter {
     fn report_paused(&self, namespace: &Namespace, host: Option<&Host>, reason: PausedReason) {
         let host = log_host(host);
         info!("autosync: paused namespace={namespace} host={host} reason={reason:?}");
-        let payload = PausedEvent::from_reason(namespace, &reason);
+        let payload = PausedEvent {
+            namespace: namespace.clone(),
+        };
         self.events.emit(PAUSED_EVENT, &payload);
     }
 
@@ -976,81 +919,14 @@ mod tests {
     }
 
     #[test]
-    fn paused_event_from_reason_known_variants_have_no_message() {
-        let ns = quilt_uri::Namespace::from(("acme", "demo"));
+    fn paused_event_carries_only_the_namespace() {
+        let ev = PausedEvent {
+            namespace: quilt_uri::Namespace::from(("acme", "demo")),
+        };
         assert_eq!(
-            PausedEvent::from_reason(&ns, &PausedReason::PendingChanges),
-            PausedEvent {
-                namespace: quilt_uri::Namespace::try_from("acme/demo")
-                    .expect("a valid fixture namespace"),
-                reason: "pendingChanges".to_string(),
-                message: None,
-            }
+            serde_json::to_string(&ev).unwrap(),
+            r#"{"namespace":"acme/demo"}"#
         );
-        assert_eq!(
-            PausedEvent::from_reason(&ns, &PausedReason::PendingCommit).reason,
-            "pendingCommit"
-        );
-        assert_eq!(
-            PausedEvent::from_reason(&ns, &PausedReason::Diverged).reason,
-            "diverged"
-        );
-    }
-
-    /// The banner needs the role name to say which role to switch away from,
-    /// so it rides in `message` — the same data-not-copy split `pullConflict`
-    /// uses for its file list.
-    #[test]
-    fn paused_event_role_denied_carries_the_role_name() {
-        let ns = quilt_uri::Namespace::from(("acme", "demo"));
-        let ev = PausedEvent::from_reason(
-            &ns,
-            &PausedReason::RoleDenied {
-                role: "ReadOnly".to_string(),
-            },
-        );
-        assert_eq!(ev.reason, "roleDenied");
-        assert_eq!(ev.message.as_deref(), Some("ReadOnly"));
-    }
-
-    /// An unresolved role name sends no message at all, so the UI picks its
-    /// role-less phrasing instead of rendering an empty name.
-    #[test]
-    fn paused_event_role_denied_without_a_name_sends_no_message() {
-        let ns = quilt_uri::Namespace::from(("acme", "demo"));
-        let ev = PausedEvent::from_reason(
-            &ns,
-            &PausedReason::RoleDenied {
-                role: String::new(),
-            },
-        );
-        assert_eq!(ev.reason, "roleDenied");
-        assert!(ev.message.is_none(), "got: {:?}", ev.message);
-    }
-
-    #[test]
-    fn paused_event_from_reason_other_carries_raw_reason_only() {
-        let ns = quilt_uri::Namespace::from(("acme", "demo"));
-        let ev = PausedEvent::from_reason(
-            &ns,
-            &PausedReason::Other("workflow rejected metadata".to_string()),
-        );
-        assert_eq!(ev.reason, "other");
-
-        // `message` is exactly the raw refusal reason — no appended
-        // guidance. The "resolve, then push manually" line is presentation
-        // and is added by each UI surface, not baked into the data.
-        assert_eq!(
-            ev.message.as_deref(),
-            Some("workflow rejected metadata"),
-            "Other should carry the raw reason with no appended hint"
-        );
-
-        // Serializes as camelCase with the raw reason as the message.
-        let json = serde_json::to_string(&ev).unwrap();
-        assert!(json.contains(r#""reason":"other""#), "got: {json}");
-        assert!(json.contains("workflow rejected metadata"), "got: {json}");
-        assert!(json.contains(r#""namespace":"acme/demo""#), "got: {json}");
     }
 }
 

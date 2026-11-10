@@ -1,6 +1,6 @@
 ---
 name: QuiltSync UI Kit
-description: The desktop sync app's v2 design system — flat, bordered, two-tier tokens, and a status vocabulary that whispers when nothing is wrong.
+description: The desktop sync app's design system — flat, bordered, two-tier tokens, and a status vocabulary that whispers when nothing is wrong.
 colors:
   brand-navy: "#2d306d"
   ink: "#1e1f24"

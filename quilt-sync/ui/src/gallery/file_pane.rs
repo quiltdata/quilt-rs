@@ -32,16 +32,6 @@
 //! about a row and a half of the list you are ticking from. The first two cells
 //! are those two numbers, in that order.
 //!
-//! # What this scene draws ahead of its data
-//!
-//! One cell shows data the backend cannot produce yet, so that its wording is
-//! the target the backend has to meet:
-//!
-//! - **The marked rows.** Nothing computes which files differ between two
-//!   diverged revisions. `MergeData` carries only a namespace and a URI, and the
-//!   working-tree changes compare local edits with the installed manifest, not
-//!   the local revision with the published one.
-//!
 //! # What the render settled, none of it reasoned first
 //!
 //! - **The footer's arithmetic is exact.** 313px of list at rest, 264 with the
@@ -498,8 +488,8 @@ impl Confirm {
 /// `.quiltignore`, then `Stop keeping` under its danger rule.
 ///
 /// `Stop ignoring` is not in §3's list at all, although the `Ignored` facet is
-/// the view that reaches it and v1 has the popup. A menu that can ignore and
-/// cannot un-ignore is a one-way door.
+/// the view that reaches it. A menu that can ignore and cannot un-ignore is a
+/// one-way door.
 fn menu(mark: Mark, subject: String, confirm: Confirm) -> Vec<MenuAction> {
     let mut items = Vec::new();
     if mark.local() {

@@ -31,18 +31,27 @@ pub enum UpdateState {
 pub fn UpdateBand(
     #[prop(into)] state: Signal<UpdateState>,
     #[prop(into)] on_install: Callback<()>,
+    /// The install button's words, *Download & Install* unless given: an app
+    /// that cannot install itself offers *Download* instead.
+    #[prop(optional, into)]
+    install_label: MaybeProp<String>,
     /// Hides the band for a while. Not offered while installing, which cannot be
     /// stopped from here.
     #[prop(into)]
     on_snooze: Callback<()>,
 ) -> impl IntoView {
+    let install_label = move || {
+        install_label
+            .get()
+            .unwrap_or_else(|| "Download & Install".to_string())
+    };
     move || match state.get() {
         UpdateState::Available { version } => view! {
             <Banner
                 variant=BannerVariant::Warning
                 on_dismiss=move |_| on_snooze.run(())
                 action=view! {
-                    <Button on_click=move |_| on_install.run(())>"Download & Install"</Button>
+                    <Button on_click=move |_| on_install.run(())>{install_label}</Button>
                 }
                     .into_any()
             >
@@ -113,6 +122,21 @@ mod tests {
             .unchecked_into::<web_sys::HtmlElement>()
             .click();
         assert_eq!(snoozes.get_untracked(), 1);
+    }
+
+    #[wasm_bindgen_test]
+    fn the_install_button_can_say_download() {
+        let el = mount(|| {
+            view! {
+                <UpdateBand
+                    state=UpdateState::Available { version: "0.42.0".into() }
+                    on_install=|()| ()
+                    on_snooze=|()| ()
+                    install_label="Download"
+                />
+            }
+        });
+        button_saying(&el, "Download");
     }
 
     #[wasm_bindgen_test]

@@ -1,74 +1,60 @@
-mod commit;
 // Not routed yet: the gallery draws these regions, and the port routes them.
-pub mod commit_v2;
+pub mod commit;
 pub mod copy_mark;
-mod error;
 // Public for the gallery, which draws the slate over fixtures.
-pub mod error_v2;
+pub mod error;
 mod installed_package;
-mod installed_package_v2;
-mod installed_packages_list;
 mod json_editor;
-mod login;
-pub mod login_v2;
+pub mod login;
 mod main_page;
-mod merge;
-mod not_found;
 mod path_field;
 mod remote_package;
-mod remote_package_v2;
 pub mod row_menu;
-mod settings;
 // Not routed yet: the gallery draws these cards, and the port routes them.
-pub mod settings_v2;
-mod setup;
-pub mod setup_v2;
+mod page;
+pub mod settings;
+pub mod setup;
 mod status_watch;
-mod v2_page;
+mod workflow;
 
 pub use commit::Commit;
-pub use commit_v2::{CommitV2, CommitV2Skeleton};
-pub use error::Error;
-pub use error_v2::{ErrorV2, ErrorV2Skeleton, NotFoundV2};
+pub use error::{Error, NotFound};
 pub use installed_package::InstalledPackage;
-pub use installed_package_v2::InstalledPackageV2;
 // The page's first paint, for `main.rs` to draw while it decides the page and for
 // the gallery to draw beside the other page scenes: one definition, so the three
 // cannot disagree about where the header lands.
-pub use installed_package_v2::PackagePageSkeleton;
+pub use installed_package::PackagePageSkeleton;
 // The page's layout classes and bands, so the gallery's whole-page scenes lay
 // their fixture regions out by the page's own rules rather than a copy of them.
-pub use installed_package_v2::context_pane::context_pane_class;
-pub use installed_package_v2::file_pane::{
+pub use installed_package::context_pane::context_pane_class;
+pub use installed_package::file_pane::{
     FileToolbarBand, file_footer_class, file_list_class, file_pane_class,
 };
-pub use installed_package_v2::{PackageHeaderBand, package_page_class, package_shell_class};
+pub use installed_package::{PackageHeaderBand, package_page_class, package_shell_class};
 // The gallery draws this exact live slice rather than maintaining another
 // approximation of the page component.
-pub use installed_package_v2::context_pane::{CurrentRevisionPane, RevisionHistoryFetch};
+pub use installed_package::context_pane::{CurrentRevisionPane, RevisionHistoryFetch};
 // And the live file pane, over the scene's fixture, beside the scene's drawing.
-pub use installed_package_v2::file_pane::{
+pub use installed_package::file_pane::{
     Facet, FileList, FilePane, Grouping, Kept, Listing, downloaded_words,
 };
 // The header's summary of what a newer revision brings, which the gallery's
 // scene draws over fixtures.
-pub use installed_package_v2::incoming::{
+pub use installed_package::incoming::{
     Catalog, IncomingSummary, LISTED, OPEN_LABEL, conflicting, header_state, state_with_summary,
 };
 // The gallery's header scene draws the page's own overflow menu, inert.
-pub use installed_package_v2::{MenuCommand, MenuItem, menu_items, remote_target};
+pub use installed_package::{MenuCommand, MenuItem, menu_items, remote_target};
 // The gallery's live context pane takes the page's wiring; it builds an idle one.
-pub use installed_package_v2::Wiring;
+pub use installed_package::Wiring;
 // What the file pane will read: the page's one differing set and its scope.
-pub use installed_package_v2::keeping::{BacklogDownload, KeepingCommands, ScopeStore};
-pub use installed_package_v2::{FileMarks, differing_marks};
+pub use installed_package::keeping::{BacklogDownload, KeepingCommands, ScopeStore};
+pub use installed_package::{FileMarks, differing_marks};
 // The gallery's resolve cell and scene draw the live pane.
-pub use installed_package_v2::resolve::{
+pub use installed_package::resolve::{
     ResolveCommands, ResolvePane, RevisionChoice, differs_sentence,
 };
-pub use installed_packages_list::InstalledPackagesList;
 pub use login::Login;
-pub use login_v2::{LoginV2, LoginV2Skeleton};
 pub use main_page::MainPage;
 // The same, for the main page.
 pub use main_page::MainPageSkeleton;
@@ -81,14 +67,9 @@ pub use main_page::queue::action_href;
 pub use main_page::{QueueBand, StateStrip, ToolbarBand, list_region_class, rows_class};
 // Each package's autosync state, drawn only by the gallery so far.
 pub use main_page::package_autosync;
-pub use merge::Merge;
-pub use not_found::NotFound;
 pub use remote_package::RemotePackage;
-pub use remote_package_v2::{RemotePackageV2, RemotePackageV2Skeleton};
 pub use settings::Settings;
-pub use settings_v2::{SettingsV2, SettingsV2Skeleton};
 pub use setup::Setup;
-pub use setup_v2::{SetupV2, SetupV2Skeleton};
 
 #[cfg(test)]
 mod tests {

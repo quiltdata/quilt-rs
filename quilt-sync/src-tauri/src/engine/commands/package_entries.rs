@@ -1,8 +1,7 @@
 //! A package's file entries, built from one status computation.
 //!
-//! Shared by v1's `get_installed_package_data` and v2's `get_package_page_data`,
-//! so neither surface opens the other's module: each passes the status it
-//! already computed, and the entries are classified by that one answer.
+//! Callers pass the status they already computed, and the entries are
+//! classified by that one answer.
 
 use std::collections::BTreeMap;
 use std::collections::HashMap;
@@ -59,7 +58,7 @@ impl From<&quilt::quiltignore::IgnoredBy> for IgnoredByData {
     }
 }
 
-/// The v2 file pane's facet counts, over the whole package rather than the
+/// The file pane's facet counts, over the whole package rather than the
 /// capped entries. The facets are disjoint apart from `all`, which holds every
 /// entry except the ignored ones.
 #[derive(Serialize, Debug, Default, PartialEq, Eq)]
@@ -74,7 +73,7 @@ pub struct EntryCounts {
     pub ignored: usize,
     /// Also inside `ignored`: the folders among them.
     pub ignored_folders: usize,
-    /// Also inside `changed`; on its own because the v2 pane's all-downloaded
+    /// Also inside `changed`; on its own because the pane's all-downloaded
     /// caption must know about a deleted file past the list cap.
     pub deleted: usize,
 }
@@ -124,14 +123,12 @@ pub struct EntryList {
 /// Classify every file the package has by `status`: its changes, the tracked
 /// paths it leaves pristine, the listed paths this copy lacks, and the files
 /// and folders `.quiltignore` matched. `records` are the manifest's rows, for
-/// their sizes. v1 lists no ignored folders (`with_ignored_folders` false), so
-/// they never take its rows' place under the cap.
+/// their sizes.
 pub fn entry_list(
     namespace: &quilt_uri::Namespace,
     status: &quilt::lineage::InstalledPackageStatus,
     installed_paths: &quilt::lineage::LineagePaths,
     records: &BTreeMap<PathBuf, quilt::manifest::ManifestRow>,
-    with_ignored_folders: bool,
 ) -> EntryList {
     let modified_entries = &status.changes;
     let junky_map: HashMap<_, _> = status
@@ -198,12 +195,7 @@ pub fn entry_list(
             namespace: namespace.clone(),
         });
     }
-    let ignored_dirs: &[_] = if with_ignored_folders {
-        &status.ignored_dirs
-    } else {
-        &[]
-    };
-    for (path, ignored_by) in ignored_dirs {
+    for (path, ignored_by) in &status.ignored_dirs {
         entries.push(InstalledPackageEntryData {
             filename: path.display().to_string(),
             size: 0,
@@ -311,7 +303,7 @@ mod tests {
             .collect();
         let namespace = quilt_uri::Namespace::try_from("org/pkg").unwrap();
 
-        let listed = entry_list(&namespace, &status, &installed, &records, true).counts;
+        let listed = entry_list(&namespace, &status, &installed, &records).counts;
         assert_eq!(entry_counts(&status, &installed, &records), listed);
         assert_eq!(
             listed,
@@ -326,45 +318,6 @@ mod tests {
         );
     }
 
-    /// v1 lists no ignored folders, so a package with a cap's worth of them
-    /// still shows its files there, and v2 lists them all.
-    #[test]
-    fn ignored_folders_take_no_place_in_v1_s_list() {
-        let mut status = quilt::lineage::InstalledPackageStatus::default();
-        for i in 0..ENTRIES_CAP {
-            status.ignored_dirs.push((
-                PathBuf::from(format!("a{i:04}")),
-                quilt::quiltignore::IgnoredBy {
-                    pattern: "a*/".to_string(),
-                    source: quilt::quiltignore::RuleSource::Package { line: 1 },
-                },
-            ));
-        }
-        let installed: quilt::lineage::LineagePaths =
-            [(PathBuf::from("z.csv"), quilt::lineage::PathState::default())]
-                .into_iter()
-                .collect();
-        let records: BTreeMap<_, _> = [(
-            PathBuf::from("z.csv"),
-            quilt::manifest::ManifestRow::default(),
-        )]
-        .into_iter()
-        .collect();
-        let namespace = quilt_uri::Namespace::try_from("org/pkg").unwrap();
-
-        let v1 = entry_list(&namespace, &status, &installed, &records, false);
-        let names: Vec<&str> = v1.entries.iter().map(|e| e.filename.as_str()).collect();
-        assert_eq!(names, ["z.csv"]);
-        assert_eq!((v1.total, v1.truncated), (1, false));
-        assert_eq!(v1.counts.ignored_folders, 0);
-
-        let v2 = entry_list(&namespace, &status, &installed, &records, true);
-        assert_eq!((v2.total, v2.truncated), (ENTRIES_CAP + 1, true));
-        assert_eq!(v2.counts.ignored_folders, ENTRIES_CAP);
-    }
-
-    /// Each ignored entry carries its rule's source, as the UI reads it; the
-    /// user-wide file's path stays behind, since the row names it in words.
     #[test]
     fn ignored_entries_carry_the_rule_s_source() {
         use quilt::quiltignore::{IgnoredBy, RuleSource};
@@ -402,7 +355,6 @@ mod tests {
             &status,
             &quilt::lineage::LineagePaths::default(),
             &BTreeMap::new(),
-            true,
         );
         let sources: Vec<_> = list
             .entries

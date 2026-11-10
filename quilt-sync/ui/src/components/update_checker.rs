@@ -1,7 +1,11 @@
+use std::future::Future;
+use std::time::Duration;
+
 use leptos::prelude::*;
+use quilt_ui_kit::{UpdateBand, UpdateState};
 
 use crate::commands;
-use crate::components::buttons;
+use crate::commands::UpdateInfo;
 use crate::engine;
 
 // Intentionally short: we want to aggressively encourage updates.
@@ -9,22 +13,29 @@ use crate::engine;
 const DISMISS_DURATION_MS: f64 = 5.0 * 60.0 * 1000.0;
 const STORAGE_KEY: &str = "updateDismissedAt";
 
+/// How often a running app asks again. The engine reads the feed less often
+/// than this and answers from its last read in between.
+const RECHECK: Duration = Duration::from_hours(1);
+
 fn local_storage() -> Option<web_sys::Storage> {
     web_sys::window()?.local_storage().ok()?
 }
 
-fn is_dismissed() -> bool {
-    let Some(storage) = local_storage() else {
-        return false;
-    };
-    let Some(value) = storage.get_item(STORAGE_KEY).ok().flatten() else {
-        return false;
-    };
-    let Ok(dismissed_at) = value.parse::<f64>() else {
-        return false;
-    };
-    let now = js_sys::Date::now();
-    now - dismissed_at < DISMISS_DURATION_MS
+fn dismissed_at() -> Option<f64> {
+    local_storage()?
+        .get_item(STORAGE_KEY)
+        .ok()
+        .flatten()?
+        .parse()
+        .ok()
+}
+
+/// How much of a dismiss is left, in milliseconds; `None` once it is over.
+fn dismiss_left(at: Option<f64>, now: f64, dismiss_ms: f64) -> Option<f64> {
+    let left = at? + dismiss_ms - now;
+    // A stored time from a changed clock can end the dismiss late, never past
+    // one whole dismiss from now.
+    (left.is_finite() && left > 0.0).then(|| left.min(dismiss_ms))
 }
 
 fn set_dismissed() {
@@ -34,139 +45,379 @@ fn set_dismissed() {
     }
 }
 
+/// What the check found, and where a release is downloaded from.
 #[derive(Clone)]
-enum UpdateState {
-    /// No update available or still checking.
-    Hidden,
-    /// An update is available; display version and action buttons, or for
-    /// an engine with no desktop, where to download it.
-    Available(String, String),
-    /// Download and install in progress.
-    Installing,
-    /// Download or install failed; show error and allow retry.
-    Failed { version: String, error: String },
+struct Found {
+    state: UpdateState,
+    url: String,
 }
 
-/// App-level component that checks for updates on mount and shows a
-/// notification bar when one is available.
-///
-/// Renders its own notification UI, independent of per-page notifications.
-#[component]
-pub fn UpdateChecker() -> impl IntoView {
-    let state = RwSignal::new(UpdateState::Hidden);
+/// The app's one update check, shared by every page's band row.
+#[derive(Clone, Copy)]
+pub struct UpdateCheck {
+    found: RwSignal<Option<Found>>,
+    /// While a dismiss lasts. Checks go on underneath, so the band comes back
+    /// with the latest answer.
+    hidden: RwSignal<bool>,
+    /// What brings the band back; a new dismiss replaces it.
+    unhide: StoredValue<Option<TimeoutHandle>>,
+    dismiss_ms: f64,
+}
 
-    // Check for updates on mount (unless recently dismissed).
-    Effect::new(move || {
-        if is_dismissed() {
+impl UpdateCheck {
+    /// Hide the band for `ms`. The deadline lives here; storage only tells
+    /// windows opened later, and a write that fails still dismisses.
+    fn hide_for(self, ms: f64) {
+        if let Some(handle) = self.unhide.get_value() {
+            handle.clear();
+        }
+        self.hidden.set(true);
+        let handle = set_timeout_with_handle(
+            move || {
+                let _ = self.hidden.try_set(false);
+            },
+            Duration::from_secs_f64(ms / 1000.0),
+        );
+        self.unhide.set_value(handle.ok());
+    }
+
+    fn dismiss(self) {
+        set_dismissed();
+        self.hide_for(self.dismiss_ms);
+    }
+}
+
+/// Checks for an update at start and every [`RECHECK`] while the app runs,
+/// and hands the answer to every page. Called once, above the router, so a
+/// page change never starts a second timer.
+///
+/// "No update" and a failed check (network error, etc.) show nothing, to
+/// avoid distracting the user on every launch.
+pub fn provide_update_check() {
+    check_every(RECHECK, DISMISS_DURATION_MS, commands::check_for_update);
+}
+
+fn check_every<C, F>(every: Duration, dismiss_ms: f64, check: C)
+where
+    C: Fn() -> F + 'static,
+    F: Future<Output = Result<Option<UpdateInfo>, String>> + 'static,
+{
+    let found = RwSignal::new(None);
+    let update_check = UpdateCheck {
+        found,
+        hidden: RwSignal::new(false),
+        unhide: StoredValue::new(None),
+        dismiss_ms,
+    };
+    provide_context(update_check);
+    // A dismiss in another window, or before a restart, still counts.
+    if let Some(left) = dismiss_left(dismissed_at(), js_sys::Date::now(), dismiss_ms) {
+        update_check.hide_for(left);
+    }
+    // An install running or failed is on the band; a check must not replace
+    // it. Gone with the app, an answer has nowhere to go.
+    let busy = move || {
+        found
+            .try_with_untracked(|found| {
+                matches!(
+                    found,
+                    Some(Found {
+                        state: UpdateState::Installing | UpdateState::Failed { .. },
+                        ..
+                    })
+                )
+            })
+            .unwrap_or(true)
+    };
+    let tick = move || {
+        if busy() {
             return;
         }
+        let answer = check();
         leptos::task::spawn_local(async move {
-            // Show the banner only when an update is available; "no update" or a
-            // check failure (network error, etc.) is silently ignored to avoid
-            // distracting the user on every launch.
-            if let Ok(Some(info)) = commands::check_for_update().await {
-                state.set(UpdateState::Available(info.version, info.url));
+            // A failed check keeps what was known; "no update" clears a
+            // release the feed has since withdrawn.
+            if let Ok(answer) = answer.await
+                && !busy()
+            {
+                let _ = found.try_set(answer.map(|info| Found {
+                    state: UpdateState::Available {
+                        version: info.version,
+                    },
+                    url: info.url,
+                }));
             }
         });
-    });
+    };
+    tick();
+    if let Ok(handle) = set_interval_with_handle(tick, every) {
+        on_cleanup(move || handle.clear());
+    }
+}
 
-    let dismiss = move |_| {
-        set_dismissed();
-        state.set(UpdateState::Hidden);
+/// The update band, in a page's band row; nothing while there is no update.
+#[component]
+pub fn UpdateNotice() -> impl IntoView {
+    let check = use_context::<UpdateCheck>()?;
+    let found = check.found;
+
+    let snooze = move |()| {
+        check.dismiss();
     };
 
-    let install = move |_| {
-        let (UpdateState::Available(version, _) | UpdateState::Failed { version, .. }) =
-            state.get()
+    // Install, where the engine can; headless can't install itself, so the
+    // user downloads it and restarts QuiltSync.
+    let install = move |()| {
+        let Some(Found { state, url }) = found.get_untracked() else {
+            return;
+        };
+        if engine::headless().get_untracked() {
+            if let Some(window) = web_sys::window() {
+                drop(window.open_with_url_and_target_and_features(&url, "_blank", "noopener"));
+            }
+            return;
+        }
+        let (UpdateState::Available { version } | UpdateState::Failed { version, .. }) = state
         else {
             return;
         };
-        state.set(UpdateState::Installing);
+        found.set(Some(Found {
+            state: UpdateState::Installing,
+            url: url.clone(),
+        }));
         leptos::task::spawn_local(async move {
-            if let Err(e) = commands::download_and_install_update().await {
-                leptos::logging::error!("Update failed: {e}");
-                state.set(UpdateState::Failed { version, error: e });
+            if let Err(error) = commands::download_and_install_update().await {
+                leptos::logging::error!("Update failed: {error}");
+                found.set(Some(Found {
+                    state: UpdateState::Failed { version, error },
+                    url,
+                }));
             }
             // On success the app restarts, so we never reach here.
         });
     };
 
-    move || match state.get() {
-        UpdateState::Hidden => None,
-        UpdateState::Available(version, url) => Some(
+    let install_label =
+        Signal::derive(move || engine::headless().get().then(|| "Download".to_string()));
+
+    Some(move || {
+        let hidden = check.hidden.get();
+        found.get().filter(|_| !hidden).map(|Found { state, .. }| {
             view! {
-                <div class="qui-notify">
-                    <div class="root">
-                        <div class="update-bar">
-                            <span>"Update available: " {version}</span>
-                            <div class="update-bar-actions">
-                                <UpdateAction url=url on_install=install />
-                                <buttons::FormSecondary on_click=dismiss>
-                                    "Dismiss"
-                                </buttons::FormSecondary>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+                <UpdateBand
+                    state=state
+                    on_install=install
+                    on_snooze=snooze
+                    install_label=install_label
+                />
             }
-            .into_any(),
-        ),
-        UpdateState::Installing => Some(
-            view! {
-                <div class="qui-notify">
-                    <div class="root">
-                        <div class="update-bar">
-                            <span>"Downloading and installing update\u{2026}"</span>
-                        </div>
-                    </div>
-                </div>
-            }
-            .into_any(),
-        ),
-        UpdateState::Failed { version, error } => Some(
-            view! {
-                <div class="qui-notify error">
-                    <div class="root">
-                        <div class="update-bar">
-                            <span>"Update " {version} " failed: " {error}</span>
-                            <div class="update-bar-actions">
-                                <buttons::FormPrimary on_click=install>
-                                    "Retry"
-                                </buttons::FormPrimary>
-                                <buttons::FormSecondary on_click=dismiss>
-                                    "Dismiss"
-                                </buttons::FormSecondary>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            }
-            .into_any(),
-        ),
-    }
+        })
+    })
 }
 
-/// Install, where the engine can; headless can't install itself, so the
-/// user downloads it and restarts QuiltSync.
-#[component]
-fn UpdateAction(
-    url: String,
-    on_install: impl Fn(leptos::ev::MouseEvent) + Clone + Send + Sync + 'static,
-) -> impl IntoView {
-    move || {
-        if engine::headless().get() {
-            view! {
-                <a href=url.clone() target="_blank" rel="noopener">
-                    "Download"
-                </a>
-            }
-            .into_any()
-        } else {
-            let on_install = on_install.clone();
-            view! {
-                <buttons::FormPrimary on_click=on_install>"Download & Install"</buttons::FormPrimary>
-            }
-            .into_any()
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+    use std::rc::Rc;
+    use std::time::Duration;
+
+    use quilt_ui_kit::test_support::{mount, sleep_ms, unmount_earlier};
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    use super::*;
+    use crate::commands::UpdateInfo;
+
+    const MINUTE_MS: f64 = 60.0 * 1000.0;
+
+    type Answer = std::future::Ready<Result<Option<UpdateInfo>, String>>;
+
+    fn release() -> UpdateInfo {
+        UpdateInfo {
+            version: "9.9.9".to_owned(),
+            url: "https://example.test/QuiltSync.dmg".to_owned(),
         }
+    }
+
+    /// A feed that offers nothing until `from` checks have been made, and
+    /// counts every check.
+    fn feed(from: u32) -> (Rc<Cell<u32>>, impl Fn() -> Answer + 'static) {
+        let asked = Rc::new(Cell::new(0));
+        let counter = asked.clone();
+        let check = move || {
+            counter.set(counter.get() + 1);
+            std::future::ready(Ok((counter.get() > from).then(release)))
+        };
+        (asked, check)
+    }
+
+    fn says_update(el: &web_sys::Element) -> bool {
+        el.text_content().unwrap_or_default().contains("9.9.9")
+    }
+
+    fn forget_dismiss() {
+        if let Some(storage) = local_storage() {
+            let _ = storage.remove_item(STORAGE_KEY);
+        }
+    }
+
+    fn dismiss(el: &web_sys::Element) {
+        use wasm_bindgen::JsCast;
+        el.query_selector("button[aria-label='Dismiss']")
+            .unwrap()
+            .expect("no dismiss on the band")
+            .unchecked_into::<web_sys::HtmlElement>()
+            .click();
+    }
+
+    #[test]
+    fn a_dismiss_lasts_five_minutes() {
+        let now = 100.0 * MINUTE_MS;
+        let five = DISMISS_DURATION_MS;
+        assert_eq!(dismiss_left(None, now, five), None);
+        assert_eq!(
+            dismiss_left(Some(now - 4.0 * MINUTE_MS), now, five),
+            Some(MINUTE_MS)
+        );
+        assert_eq!(dismiss_left(Some(now - 6.0 * MINUTE_MS), now, five), None);
+        assert_eq!(dismiss_left(Some(f64::NAN), now, five), None);
+        assert_eq!(
+            dismiss_left(Some(now + 60.0 * MINUTE_MS), now, five),
+            Some(five),
+            "a time ahead of the clock hides for one dismiss at most"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_app_asks_again_after_the_interval() {
+        forget_dismiss();
+        let (asked, check) = feed(1);
+        let el = mount(move || {
+            check_every(Duration::from_millis(50), DISMISS_DURATION_MS, check);
+            view! { <UpdateNotice /> }
+        });
+        assert_eq!(asked.get(), 1, "the first check runs at start");
+        assert!(!says_update(&el), "no update at start");
+
+        sleep_ms(120).await;
+        assert!(asked.get() >= 2, "no check after the interval");
+        assert!(says_update(&el), "the later check's release is not shown");
+        unmount_earlier();
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_withdrawn_release_leaves_the_band() {
+        forget_dismiss();
+        let asked = Rc::new(Cell::new(0));
+        let counter = asked.clone();
+        // Offered once, then withdrawn, then the feed can't be read.
+        let check = move || {
+            counter.set(counter.get() + 1);
+            std::future::ready(match counter.get() {
+                1 => Ok(Some(release())),
+                2 => Ok(None),
+                _ => Err("offline".to_owned()),
+            })
+        };
+        let el = mount(move || {
+            check_every(Duration::from_millis(50), DISMISS_DURATION_MS, check);
+            view! { <UpdateNotice /> }
+        });
+        sleep_ms(0).await;
+        assert!(says_update(&el));
+
+        sleep_ms(80).await;
+        assert!(!says_update(&el), "a withdrawn release still shows");
+        unmount_earlier();
+    }
+
+    /// The band comes back when the dismiss ends, not at the next check.
+    #[wasm_bindgen_test]
+    async fn a_dismissed_band_comes_back_after_its_time() {
+        forget_dismiss();
+        let (asked, check) = feed(0);
+        let el = mount(move || {
+            check_every(Duration::from_hours(1), 100.0, check);
+            view! { <UpdateNotice /> }
+        });
+        sleep_ms(0).await;
+        assert!(says_update(&el));
+
+        dismiss(&el);
+        sleep_ms(0).await;
+        assert!(!says_update(&el), "the dismiss did not hide the band");
+
+        sleep_ms(250).await;
+        assert!(says_update(&el), "the band did not come back");
+        assert_eq!(asked.get(), 1, "it came back on a check, not on its time");
+        forget_dismiss();
+        unmount_earlier();
+    }
+
+    /// A check that answers during a dismiss, one in flight when the user
+    /// dismissed included, leaves the band hidden.
+    #[wasm_bindgen_test]
+    async fn a_check_during_a_dismiss_keeps_the_band_hidden() {
+        forget_dismiss();
+        let (asked, check) = feed(0);
+        let el = mount(move || {
+            check_every(Duration::from_millis(30), DISMISS_DURATION_MS, check);
+            view! { <UpdateNotice /> }
+        });
+        sleep_ms(0).await;
+        dismiss(&el);
+        let before = asked.get();
+
+        sleep_ms(100).await;
+        assert!(asked.get() > before, "checks stopped during the dismiss");
+        assert!(!says_update(&el), "a check undid the dismiss");
+        forget_dismiss();
+        unmount_earlier();
+    }
+
+    /// A dismiss in another window, or before a restart, still counts.
+    #[wasm_bindgen_test]
+    async fn an_app_opened_within_a_dismiss_waits_out_the_rest() {
+        let at = js_sys::Date::now() - 100.0;
+        local_storage()
+            .unwrap()
+            .set_item(STORAGE_KEY, &at.to_string())
+            .unwrap();
+        let (_, check) = feed(0);
+        let el = mount(move || {
+            check_every(Duration::from_hours(1), 250.0, check);
+            view! { <UpdateNotice /> }
+        });
+        sleep_ms(0).await;
+        assert!(!says_update(&el), "the band showed within the dismiss");
+
+        sleep_ms(300).await;
+        assert!(says_update(&el), "the band did not come back");
+        forget_dismiss();
+        unmount_earlier();
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_page_change_starts_no_check_of_its_own() {
+        forget_dismiss();
+        let (asked, check) = feed(0);
+        let page = RwSignal::new(true);
+        let el = mount(move || {
+            check_every(Duration::from_hours(1), DISMISS_DURATION_MS, check);
+            view! {
+                <Show when=move || page.get()>
+                    <UpdateNotice />
+                </Show>
+            }
+        });
+        for _ in 0..5 {
+            page.set(false);
+            leptos::task::tick().await;
+            assert!(!says_update(&el), "the band did not leave with its page");
+            page.set(true);
+            leptos::task::tick().await;
+            assert!(says_update(&el), "the band did not come back with its page");
+        }
+        assert_eq!(asked.get(), 1, "a page's band made its own check");
+        unmount_earlier();
     }
 }

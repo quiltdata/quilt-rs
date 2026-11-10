@@ -140,13 +140,6 @@ pub fn mock_remote_package_local_only(model: &mut MockQuiltModel) -> &MockQuiltM
     model
 }
 
-pub fn mock_installed_packages_list(model: &mut MockQuiltModel) -> &MockQuiltModel {
-    model
-        .expect_get_installed_packages_list()
-        .returning(|| Ok(Vec::new()));
-    model
-}
-
 #[tokio::test]
 async fn live_install_package_only_with_timestamp_tag() -> Result {
     crate::engine::env::init();

@@ -1,4 +1,4 @@
-//! `QuiltSync`'s UI kit: hand-written components for the v2 pages, the theme
+//! `QuiltSync`'s UI kit: hand-written components for the pages, the theme
 //! switch, and the story harness the galleries are built on.
 //!
 //! **Components here are presentation only:** props in, view out, callbacks for

@@ -6,13 +6,8 @@
 //! asks for: *"following the OS means setting `data-theme` from Rust, not
 //! duplicating 60 lines into a `prefers-color-scheme` block"*.
 //!
-//! # v1 is unaffected, and that is checked rather than hoped
-//!
-//! `data-theme` lands on the root, so it is in scope for v1's pages too. They do
-//! not move: every one of the 345 custom-property reads across v1's stylesheets
-//! is a `--q-ui-*` token of its own, none of which this switches, and `body`
-//! sets a colour but never a background. v2's ground comes from `PageLayout`,
-//! which paints `--q-bgColor-page` itself.
+//! `body` sets a colour but never a background: a page's ground comes from
+//! `PageLayout`, which paints `--q-bgColor-page` itself.
 
 use leptos::prelude::document;
 use wasm_bindgen::JsCast;
@@ -58,81 +53,11 @@ pub fn follow_os() {
     on_change.forget();
 }
 
-/// The class marking that the reader has opted into v2's design system.
-///
-/// Not "the v2 page is showing": the toast layer is mounted outside the router
-/// (`main.rs`), so it is a sibling of every page and cannot be scoped by one.
-/// Only an ancestor of both can carry this, and the root is the ancestor of
-/// everything.
-pub const V2_CLASS: &str = "qui-v2";
-
-/// Record which design generation the reader is in, for the chrome that sits
-/// outside every page and therefore cannot ask.
-///
-/// The reader's design setting and nothing else — `main.rs`'s
-/// `design_preview` is the one question the design is switched by, and `/` and
-/// `/installed-package` ask it on every visit, so this is set before any other
-/// route can be reached. The exception is a launch by deep link, whose relay
-/// page wears the marker `index.html` restored until the package page it hands
-/// over to asks again.
-///
-/// v1's stylesheets read only their own `--q-ui-*` tokens, which no theme
-/// switches, so v1 stays light whatever the OS says. Anything shared between
-/// the two — the toast layer is the only such thing today — must follow the
-/// theme for a v2 reader and stay put for a v1 one, and this is what lets a
-/// stylesheet tell them apart.
-pub fn set_v2(on: bool) {
-    if let Some(root) = document().document_element() {
-        let list = root.class_list();
-        let result = if on {
-            list.add_1(V2_CLASS)
-        } else {
-            list.remove_1(V2_CLASS)
-        };
-        drop(result);
-    }
-    remember_v2(on);
-}
-
-/// Whether the root carries [`V2_CLASS`].
-///
-/// Never stale when a route reads it: `index.html` restores it before first
-/// paint, and saving the design in Settings navigates to `/`, which sets it.
-pub fn is_v2() -> bool {
-    document()
-        .document_element()
-        .is_some_and(|root| root.class_list().contains(V2_CLASS))
-}
-
-/// Where the generation is kept for the *next* launch, read by `index.html`'s
-/// inline script before the first paint.
-///
-/// Named for the switch it copies when that was *New design preview*. The name
-/// is kept so a reader's stored answer carries over: `1` is v2 and `0` the classic
-/// design, and `index.html` predicts v2 for anything but `0`.
-const DESIGN_KEY: &str = "quiltsync.design-preview";
-
-/// Record the generation for the next launch.
-///
-/// Last session's answer, never this one's: `/` resolves the real generation
-/// every time and [`set_v2`] corrects the marker either way. All this decides is
-/// which palette the empty launch window wears, and being one launch behind costs
-/// a reader who has just switched exactly one boot in the old palette.
-///
-/// Every failure is ignored. A webview with no storage, a quota, a private mode
-/// — each costs at most the next launch's palette.
-fn remember_v2(on: bool) {
-    let Some(Ok(Some(storage))) = web_sys::window().map(|w| w.local_storage()) else {
-        return;
-    };
-    drop(storage.set_item(DESIGN_KEY, if on { "1" } else { "0" }));
-}
-
 /// The attribute `index.html` sets while the document has no page on it.
 ///
 /// See `base.css`: it is what scopes the dark launch canvas to the empty
-/// frame. A v2 reader opens v1's pages too, and those draw on a light canvas —
-/// so the marker has to be gone before anything is drawn at all.
+/// frame. A page paints its own ground and carries its own scheme, so the
+/// marker has to be gone before anything is drawn at all.
 pub fn stop_booting() {
     if let Some(root) = document().document_element() {
         drop(root.remove_attribute("data-booting"));
@@ -144,61 +69,8 @@ mod tests {
     use super::*;
     use wasm_bindgen_test::*;
 
-    /// The attribute has to land on the ROOT element specifically — see `set`'s
-    /// own doc for why anywhere else is inert. Reading it back off
-    /// `document_element` is what makes that part of the assertion: a version
-    /// that wrote to `body` would leave this `None`.
-    #[wasm_bindgen_test]
-    fn the_v2_marker_goes_on_and_comes_off_the_root() {
-        // Same element as the theme, and for a related reason: what reads this
-        // is the toast layer, which is a sibling of every page rather than a
-        // descendant of one. Toggling BOTH ways matters — a reader who turns
-        // the flag off must stop getting v2's palette on shared chrome.
-        let root = document().document_element().expect("a root element");
-
-        set_v2(true);
-        assert!(root.class_list().contains(V2_CLASS));
-
-        set_v2(false);
-        assert!(
-            !root.class_list().contains(V2_CLASS),
-            "turning the flag off must take the marker with it"
-        );
-    }
-
-    /// The remembered key's NAME is a contract with a file Rust never compiles:
-    /// `index.html`'s pre-paint script hard-codes it, and a rename on one side
-    /// alone costs every reader the launch palette for good rather than for the
-    /// one launch [`remember_v2`] budgets. `the_v2_marker_goes_on_and_comes_off_the_root`
-    /// covers the class; nothing covered the half no Rust caller can see.
-    #[wasm_bindgen_test]
-    fn the_remembered_key_says_which_design_the_next_launch_opens_in() {
-        assert_eq!(
-            DESIGN_KEY, "quiltsync.design-preview",
-            "the name `index.html`'s inline script reads before the first paint"
-        );
-        let storage = web_sys::window()
-            .and_then(|window| window.local_storage().ok().flatten())
-            .expect("a browser with storage");
-
-        set_v2(true);
-        assert_eq!(
-            storage.get_item(DESIGN_KEY).unwrap().as_deref(),
-            Some("1"),
-            "a reader in the new design launches into its palette"
-        );
-
-        set_v2(false);
-        assert_eq!(
-            storage.get_item(DESIGN_KEY).unwrap().as_deref(),
-            Some("0"),
-            "and one who chose the classic design must not — the script opens dark unless `0`"
-        );
-    }
-
     /// The launch marker must come off, and off the ROOT — the stylesheet hangs a
-    /// dark canvas on it, and a canvas that stayed dark would sit under the black
-    /// ink of every v1 page this reader opens.
+    /// dark canvas on it, which only the empty launch frame may have.
     #[wasm_bindgen_test]
     fn the_launch_marker_comes_off_before_anything_is_drawn() {
         let root = document().document_element().expect("a root element");
@@ -230,12 +102,11 @@ mod tests {
     /// Native chrome paints from `color-scheme`, and a dark one may never reach the
     /// document root.
     ///
-    /// The root's scheme decides the canvas. [`V2_CLASS`] marks a reader who opted
-    /// in, not a page that is showing, and that reader still opens v1's pages — where
-    /// a dark canvas sits under ink no theme switches. So every dark declaration has
-    /// to name a surface the v2 palette actually paints — or `[data-booting]`, which
-    /// is the frame before any page exists and is cleared by [`stop_booting`] in
-    /// `main` before the mount.
+    /// The root's scheme decides the canvas, and the document stays light: a page
+    /// paints its own ground and carries its own scheme. So every dark declaration
+    /// has to name the page's surface — or `[data-booting]`, which is the frame
+    /// before any page exists and is cleared by [`stop_booting`] in `main` before
+    /// the mount.
     #[test]
     fn a_dark_scheme_never_reaches_the_document_root() {
         // Both global sheets the app links, because the rule this pins
@@ -279,10 +150,8 @@ mod tests {
                 // would need a real parser.
                 for branch in selector.split(',').map(str::trim) {
                     assert!(
-                        branch.contains("[data-v2-page]")
-                            || branch.contains("[data-home-frame]")
-                            || branch.contains("[data-booting]"),
-                        "{file}: `{branch}` would darken the canvas a v1 page draws on"
+                        branch.contains("[data-page]") || branch.contains("[data-booting]"),
+                        "{file}: `{branch}` would darken the document's canvas"
                     );
                 }
             } else {
@@ -299,36 +168,19 @@ mod tests {
         );
     }
 
-    /// The reset in `base.css` reaches v1's pages, whose ink no theme switches,
-    /// and `follow_os` cannot see the flag — so a themed ground on `body` would
-    /// go dark under v1's black text, for a v2 reader on Settings as much as for
-    /// a v1 one at home. The one ground it may paint is the frame `/` and
-    /// `/installed-package` show before they know their page, and only behind
-    /// `V2_CLASS`. Pinned on the
-    /// stylesheet, where the bare rule was added once already.
+    /// A page paints its own ground, so the reset in `base.css` paints none on
+    /// `body`. Pinned on the stylesheet, where a bare rule was added once already.
     #[test]
-    fn the_shared_reset_paints_a_ground_only_for_a_v2_reader_s_home_frame() {
+    fn the_shared_reset_paints_no_ground() {
         const BASE: &str = include_str!("../css/base.css");
-        let rule = |selector: &str| {
-            BASE.split(selector)
-                .nth(1)
-                .and_then(|rest| rest.split('}').next())
-                .unwrap_or_else(|| panic!("a `{selector}` rule"))
-                .to_owned()
-        };
-        let bare = rule("\nbody {");
+        let bare = BASE
+            .split("\nbody {")
+            .nth(1)
+            .and_then(|rest| rest.split('}').next())
+            .expect("a `body` rule");
         assert!(
             !bare.contains("background"),
             "the bare body rule must not paint a ground: {bare}"
-        );
-        assert!(
-            !BASE.contains(&format!(":root.{V2_CLASS} body")),
-            "no rule may put a ground on body for a v2 reader either"
-        );
-        let frame = rule(&format!("\n:root.{V2_CLASS} [data-home-frame] {{"));
-        assert!(
-            frame.contains("background: var(--q-bgColor-page)"),
-            "the v2 reader's home frame must have its ground: {frame}"
         );
     }
 }

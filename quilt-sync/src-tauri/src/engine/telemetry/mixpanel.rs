@@ -877,6 +877,9 @@ mod tests {
 
         for reason in [
             PausedReason::PullConflict(vec!["secret-project/notes.txt".to_owned()]),
+            PausedReason::MergeRefused(crate::engine::autopull::MergeBlock::Paths(vec![
+                "secret-project/notes.txt".to_owned(),
+            ])),
             PausedReason::RoleDenied {
                 role: "an-internal-role-name".to_owned(),
             },

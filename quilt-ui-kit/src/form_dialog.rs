@@ -4,15 +4,14 @@
 //!
 //! `Dialog` is the shell — the element, the top layer, the focus trap, Escape, the title.
 //! It takes a footer and draws it, and that is all it knows. Every caller that put a form
-//! inside one then hand-wrote the same three things, and v1's four overlays got all three
-//! wrong:
+//! inside one would hand-write the same three things, and each is easy to get wrong:
 //!
-//! 1. **Enter does nothing.** v1's popups are `div`s with click handlers. A user who types
-//!    a bucket name and presses Return is ignored, which no other form on the machine does.
+//! 1. **Enter does nothing.** A popup of `div`s with click handlers ignores a user who
+//!    types a bucket name and presses Return, which no other form on the machine does.
 //! 2. **A second click re-fires the command.** Nothing disables the primary while the first
 //!    one is in flight.
-//! 3. **The rejection lands behind the dialog.** `set_remote` failing puts its message in
-//!    the *page's* notification slot — underneath the modal that caused it. The user sees a
+//! 3. **The rejection lands behind the dialog.** A failure put in the *page's*
+//!    notification slot sits underneath the modal that caused it. The user sees a
 //!    form that did nothing.
 //!
 //! So this owns the submission: it awaits the caller's action, holds the in-flight state,

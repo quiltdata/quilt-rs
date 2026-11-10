@@ -19,11 +19,24 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.52.1-dev]
+## [v0.53.0-dev]
+
+### Added
+
+- **Breaking:** `flow::ResolveComparison` says what making this revision `latest` takes from the published one: `lost`, the published rows it lacks or holds at another content hash or entry `meta`, and `user_meta_differs` (<https://github.com/quiltdata/quilt-rs/pull/1321>)
+- `flow::push_onto` and `LocalDomain::push_onto` publish a manifest whose rows are already on the remote as the revision after a given parent, and move `latest` to it only while `latest` still names that parent (<https://github.com/quiltdata/quilt-rs/pull/1320>)
+- `flow::merge_onto` applies a copy's change onto `latest` path by path, and refuses with a `MergeRefusal` where both sides changed a path or the package metadata differently; `flow::merge_rows_onto` merges the rows alone (<https://github.com/quiltdata/quilt-rs/pull/1322>)
+- `LockedPackage::move_to` moves a copy onto a revision that already holds its own pushed revision as a pull would, writing only the paths the two differ at and keeping other local changes (<https://github.com/quiltdata/quilt-rs/pull/1323>)
+
+### Fixed
+
+- `InstalledPackage::status` and `recompute_local_status` work when the catalog can't be reached: they hash new files with the algorithm the manifest uses and report the tip as not read (<https://github.com/quiltdata/quilt-rs/pull/1338>)
+- `reset_to_latest` on a copy already at `latest`'s revision records that revision as its base, so the copy reads up to date rather than Diverged (<https://github.com/quiltdata/quilt-rs/pull/1320>)
+- **Breaking:** a pull no longer deletes a file the remote removed that was edited while the pull downloaded. An edit before the first file is replaced refuses the pull with `PullConflict`; one after keeps the file, untracked, listed in the new `PullReport::kept_not_removed` (<https://github.com/quiltdata/quilt-rs/pull/1328>)
 
 ### quilt-uri
 
-- Updated [from v0.4.3 to v0.4.4-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-uri/v0.4.3...main) (see [quilt-uri/CHANGELOG.md](../quilt-uri/CHANGELOG.md))
+- Updated [from v0.4.3 to v0.5.0-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-uri/v0.4.3...main) (see [quilt-uri/CHANGELOG.md](../quilt-uri/CHANGELOG.md))
 
 ## [v0.52.0] - 2026-11-05
 

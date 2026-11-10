@@ -314,9 +314,12 @@ fn precedence(state: &PackageState) -> u8 {
         // The attributable half of that same error rank, named rather than
         // inferred. A session state reaches the queue as a member of a cause and
         // never as a row of its own; these arms only keep the match total.
+        // `Unreachable` only reaches the package page; it shares the rank of a
+        // state that could not be read.
         PackageState::Unknown
         | PackageState::NoSession { .. }
-        | PackageState::SignInExpired { .. } => 2,
+        | PackageState::SignInExpired { .. }
+        | PackageState::Unreachable { .. } => 2,
         PackageState::Diverged => 3,
         PackageState::Behind => 4,
         PackageState::PendingChanges { .. } | PackageState::PendingCommit => 5,
@@ -452,12 +455,7 @@ fn attention_line_text(count: usize) -> String {
 /// that drifts points the gallery's rows at pages the app does not use.
 pub fn action_href(action: PackageAction, namespace: &Namespace) -> String {
     match action {
-        // The package page's own resolve mode, not `/merge`: this queue is drawn
-        // only by the main page, which is v2's, and `/installed-package` renders
-        // v2 exactly when the main page does. The one exception is `/main`
-        // opened with the preview off, which lands this on v1's package page;
-        // that page ignores `resolve=1` and offers `[Merge]` in its status
-        // banner, so the reader is one click from where v1 would have sent them.
+        // The package page's own resolve mode.
         PackageAction::Resolve => crate::routes::resolve_href(namespace),
         // Shared with the list row's own link — `super::package_page_href`.
         //
@@ -468,13 +466,15 @@ pub fn action_href(action: PackageAction, namespace: &Namespace) -> String {
         // honest answer is the package's own page, whose header offers the
         // host-scoped control.
         //
-        // `SwitchRole` is unreachable from `action`; mapped so this match
-        // cannot go stale.
+        // `SwitchRole` is unreachable from `action`, and `TryAgain` belongs to
+        // a state only the package page shows; mapped so this match cannot go
+        // stale.
         PackageAction::Publish
         | PackageAction::GetLatest
         | PackageAction::ChooseS3Bucket
         | PackageAction::SignIn
-        | PackageAction::SwitchRole => super::package_page_href(namespace),
+        | PackageAction::SwitchRole
+        | PackageAction::TryAgain => super::package_page_href(namespace),
     }
 }
 
@@ -521,8 +521,7 @@ fn cause_trailing(
 /// its own (global constraint): the caller resolves both lists and hands them
 /// in.
 #[component]
-// Owned, not borrowed, matching `components/buttons/merge.rs`'s own `Merge`:
-// a prop only borrowed inside the body still has to be owned by the caller,
+// Owned, not borrowed: a prop only borrowed inside the body still has to be owned by the caller,
 // since a component's arguments outlive the call that builds them.
 #[allow(clippy::needless_pass_by_value)]
 pub fn QueueRegion(
@@ -1550,11 +1549,13 @@ mod tests {
 
     #[test]
     fn action_href_names_the_right_page_and_carries_the_namespace() {
-        use PackageAction::{ChooseS3Bucket, GetLatest, Publish, Resolve, SignIn, SwitchRole};
+        use PackageAction::{
+            ChooseS3Bucket, GetLatest, Publish, Resolve, SignIn, SwitchRole, TryAgain,
+        };
         // Every verb, guarded by an exhaustive match: a verb added to the
         // vocabulary stops this test's build, as `action_href`'s own match does.
         let _ = |a: PackageAction| match a {
-            Publish | Resolve | GetLatest | ChooseS3Bucket | SignIn | SwitchRole => (),
+            Publish | Resolve | GetLatest | ChooseS3Bucket | SignIn | SwitchRole | TryAgain => (),
         };
         let org_pkg = ns("org/pkg");
         // Asserted as the whole string, since a substring match cannot tell a
@@ -1572,8 +1573,8 @@ mod tests {
         // Never produced by `action`, and mapped anyway so the vocabulary can
         // gain a verb without this match going stale.
         assert_eq!(href(SwitchRole), package_page);
-        // Resolve opens the package page's resolve mode — the page the main
-        // page's own generation renders there — rather than `/merge`.
+        assert_eq!(href(TryAgain), package_page);
+        // Resolve opens the package page's resolve mode.
         assert_eq!(
             href(Resolve),
             "/installed-package?namespace=org%2Fpkg&filter=unmodified&resolve=1"

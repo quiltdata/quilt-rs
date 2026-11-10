@@ -1,4 +1,4 @@
-//! `get_merge_data` / `get_commit_data` — commit-workflow queries for the Leptos UI.
+//! `get_commit_data` — commit-workflow queries for the Leptos UI.
 
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -30,55 +30,6 @@ use crate::engine::services::Services;
 use super::package_entries::ENTRIES_CAP;
 use super::package_entries::EntryCounts;
 use super::package_entries::InstalledPackageEntryData;
-use super::package_list::denied_mark;
-
-// ── Merge data for Leptos UI ──
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MergeData {
-    pub namespace: quilt_uri::Namespace,
-    pub uri: Option<quilt_uri::S3PackageUri>,
-}
-
-async fn get_merge_data_from_model(
-    m: &impl model::QuiltModel,
-    tracing: &crate::engine::telemetry::Telemetry,
-    namespace: &quilt_uri::Namespace,
-) -> Result<MergeData, Error> {
-    let installed_package = m.get_installed_package(namespace).await?.ok_or_else(|| {
-        Error::from(quilt::InstallPackageError::NotInstalled(
-            namespace.to_owned(),
-        ))
-    })?;
-
-    let lineage = m.get_installed_package_lineage(&installed_package).await?;
-
-    let uri = lineage
-        .remote_uri
-        .as_ref()
-        .map(quilt_uri::S3PackageUri::from);
-    if let Some(host) = uri.as_ref().and_then(|u| u.catalog.as_ref()) {
-        tracing.add_host(host);
-    }
-
-    Ok(MergeData {
-        namespace: namespace.clone(),
-        uri,
-    })
-}
-
-pub async fn get_merge_data(s: &Services, namespace: String) -> Result<MergeData, String> {
-    let m = &*s.model;
-    let tracing = &*s.telemetry;
-    let namespace: quilt_uri::Namespace = namespace
-        .try_into()
-        .map_err(|e: quilt_uri::UriError| e.to_string())?;
-
-    get_merge_data_from_model(m, tracing, &namespace)
-        .await
-        .map_err(|e| e.to_frontend_string())
-}
 
 // ── Commit data for Leptos UI ──
 
@@ -135,11 +86,16 @@ pub struct CommitData {
     /// bucket on ambient AWS credentials, fixed in `~/.aws` or by `aws sso login` — so it
     /// cannot carry the blocked state on its own.
     pub no_session_host: Option<String>,
+    /// `Some` when the read did not reach the bucket's `latest`, so
+    /// committing, which needs the bucket and its catalog, would fail.
+    /// Disables the commit affordances like `no_session`; the remedy is to
+    /// wait.
+    pub unreachable: Option<Unreachable>,
     pub entries: Vec<InstalledPackageEntryData>,
     pub ignored_count: usize,
     pub unmodified_count: usize,
     /// The package's entries by kind, over the whole package rather than the
-    /// capped `entries`, as the v2 package page counts them. `counts.changed`
+    /// capped `entries`, as the package page counts them. `counts.changed`
     /// is what `Publish N files` says.
     pub counts: EntryCounts,
     /// The bytes the revision brings in: the new and changed files' sizes,
@@ -252,6 +208,13 @@ fn config_object_url(host: Option<&Host>, bucket: Option<&str>) -> Option<String
     )
 }
 
+/// What a commit page could not reach.
+#[derive(Serialize, Debug, PartialEq, Eq)]
+pub struct Unreachable {
+    /// The catalog; `None` for a bucket with no catalog.
+    pub host: Option<String>,
+}
+
 /// Map a fetched workflows config to the UI's state. Shared by the commit
 /// dialog and the pre-set-remote bucket preview so both present the same shape:
 /// `Ok(Some)` → `Available`, `Ok(None)` → `NotConfigured`; an `Err` splits by
@@ -327,6 +290,29 @@ fn workflows_config_to_commit_workflows(
     }
 }
 
+/// Why the active role cannot reach a bucket on `host`, naming the role when
+/// the registry says which. A failed role query is not fatal: the denial
+/// stands either way, it just cannot name the role.
+async fn denied_reason(
+    m: &impl model::QuiltModel,
+    roles: &RoleCache,
+    host: Option<&Host>,
+) -> String {
+    let info = match host {
+        Some(host) => roles.get(m, host).await.ok(),
+        None => None,
+    };
+    info.map_or_else(
+        || "The active role has no access to this bucket".to_string(),
+        |roles| {
+            format!(
+                "Current role {} has no access to this bucket",
+                roles.current
+            )
+        },
+    )
+}
+
 #[allow(clippy::too_many_lines, reason = "cohesive commit-data assembly")]
 async fn get_commit_data_from_model(
     m: &impl model::QuiltModel,
@@ -382,7 +368,7 @@ async fn get_commit_data_from_model(
                 "No read access to the remote of {}; opening the commit page on cached lineage",
                 installed_package.namespace,
             );
-            no_access_reason = denied_mark(m, roles, origin_host).await.reason;
+            no_access_reason = Some(denied_reason(m, roles, origin_host).await);
             m.recompute_local_status(&installed_package, None).await?
         }
         // Everything this page shows is local and was not refused.
@@ -398,6 +384,10 @@ async fn get_commit_data_from_model(
             m.recompute_local_status(&installed_package, None).await?
         }
         Err(err) => return Err(err),
+    };
+    let unreachable = match super::package_page::unreachable_state(&lineage, &status) {
+        Some(super::main_page::PackageStateDto::Unreachable { host }) => Some(Unreachable { host }),
+        _ => None,
     };
 
     let newer = super::package_page::newer_revision(&status);
@@ -562,6 +552,7 @@ async fn get_commit_data_from_model(
         no_access_reason,
         no_session,
         no_session_host,
+        unreachable,
         entries: entries_list,
         ignored_count,
         unmodified_count,
@@ -918,38 +909,6 @@ mod tests {
     use crate::engine::commands::test_support::*;
     use crate::engine::model::mocks;
 
-    #[tokio::test]
-    async fn test_get_merge_data() -> Result<(), String> {
-        let mut model = mocks::create();
-        mocks::mock_installed_package(&mut model);
-        let tracing = crate::engine::telemetry::Telemetry::default();
-        let namespace = ("foo", "bar").into();
-
-        let data = get_merge_data_from_model(&model, &tracing, &namespace)
-            .await
-            .map_err(|e| e.to_string())?;
-
-        assert_eq!(data.namespace.to_string(), "foo/bar");
-        let uri = data.uri.as_ref().expect("URI present");
-        assert_eq!(uri.bucket, "quilt-example");
-        assert_eq!(
-            catalog_host(data.uri.as_ref()).as_deref(),
-            Some("quilt.test")
-        );
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_get_merge_data_not_installed() {
-        let mut model = mocks::create();
-        model.expect_get_installed_package().returning(|_| Ok(None));
-        let tracing = crate::engine::telemetry::Telemetry::default();
-        let namespace = ("missing", "package").into();
-
-        let result = get_merge_data_from_model(&model, &tracing, &namespace).await;
-        assert!(result.is_err());
-    }
-
     // ── Commit data tests ──
 
     #[tokio::test]
@@ -1167,6 +1126,43 @@ mod tests {
             .await
             .map_err(|e| e.to_string())?;
             assert_eq!(data.newer.as_deref(), expected, "refreshed: {refreshed}");
+        }
+        Ok(())
+    }
+
+    /// A read that did not reach the bucket names the host it couldn't
+    /// reach, so the page can disable publishing and say why.
+    #[tokio::test]
+    async fn commit_data_names_a_host_it_could_not_reach() -> Result<(), String> {
+        for (refreshed, expected) in [(false, true), (true, false)] {
+            let mut model = denial_contrast_model(fixtures::host());
+            model
+                .expect_get_installed_package_status()
+                .returning(move |_, _| {
+                    Ok(quilt::lineage::InstalledPackageStatus {
+                        latest_refreshed: refreshed,
+                        ..quilt::lineage::InstalledPackageStatus::new(
+                            quilt::lineage::UpstreamState::UpToDate,
+                            one_local_change(),
+                        )
+                    })
+                });
+            let data = get_commit_data_from_model(
+                &model,
+                &RoleCache::default(),
+                &crate::engine::telemetry::Telemetry::default(),
+                &PublishSettings::default(),
+                &("foo", "bar").into(),
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+            assert_eq!(
+                data.unreachable,
+                expected.then(|| Unreachable {
+                    host: Some(fixtures::host().to_string())
+                }),
+                "refreshed: {refreshed}"
+            );
         }
         Ok(())
     }

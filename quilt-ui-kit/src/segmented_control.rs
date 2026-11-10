@@ -18,7 +18,7 @@
 //! segment, and that view replaced a hidden checkbox precisely because nobody
 //! found it. Behind a `Select` it would be hidden again.
 //!
-//! The page is `installed_package_v2/file_pane.rs`.
+//! The page is `installed_package/file_pane.rs`.
 //!
 //! So: reach for a `Select` when the options are a choice the user already knows
 //! they have, and stay here when the options *are* the disclosure. The cost is

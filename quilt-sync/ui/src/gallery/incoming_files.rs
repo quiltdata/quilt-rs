@@ -8,7 +8,7 @@
 //! to its newer version in the catalog.
 //!
 //! The summary is the page's own `IncomingSummary`
-//! (`pages/installed_package_v2/incoming.rs`, whose docs hold the design),
+//! (`pages/installed_package/incoming.rs`, whose docs hold the design),
 //! over fixture checks. The header and the panes are the whole-page scene's
 //! regions, over fixture props; the header takes the state the check resolves
 //! to. Callbacks are dropped.

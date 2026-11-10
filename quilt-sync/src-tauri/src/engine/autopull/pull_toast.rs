@@ -62,6 +62,7 @@ pub(crate) fn report_toast(namespace: &Namespace, report: &PullReport) -> Option
         group("new, not downloaded", &report.added_not_fetched),
         group("updated", &report.updated),
         group("removed", &report.removed),
+        group("kept, removed on the remote", &report.kept_not_removed),
     ]
     .into_iter()
     .flatten()
@@ -69,8 +70,9 @@ pub(crate) fn report_toast(namespace: &Namespace, report: &PullReport) -> Option
 
     // `Success` only when the revision left nothing behind. Anything the scope
     // listed and did not fetch is still outstanding, and reporting that as a
-    // success would be the completeness claim the sync scope forbids.
-    let kind = if report.added_not_fetched.is_empty() {
+    // success would be the completeness claim the sync scope forbids. A file
+    // kept against the revision's removal is left behind too.
+    let kind = if report.added_not_fetched.is_empty() && report.kept_not_removed.is_empty() {
         ToastKind::Success
     } else {
         ToastKind::Info
@@ -106,6 +108,7 @@ mod tests {
             added_not_fetched: Vec::new(),
             updated: Vec::new(),
             removed: Vec::new(),
+            kept_not_removed: Vec::new(),
             message: None,
         }
     }
@@ -195,6 +198,30 @@ mod tests {
             report_toast(&namespace(), &some_left).unwrap().kind,
             ToastKind::Info
         );
+    }
+
+    /// A file the user edited while the pull removed it stays, untracked; the
+    /// toast names it and does not call the pull a success.
+    #[test]
+    fn a_kept_file_is_named_and_is_not_a_success() {
+        let r = PullReport {
+            kept_not_removed: paths(&["notes.md"]),
+            ..report()
+        };
+        let toast = report_toast(&namespace(), &r).unwrap();
+        let groups: Vec<(&str, &[String])> = toast
+            .groups
+            .iter()
+            .map(|g| (g.heading.as_str(), g.items.as_slice()))
+            .collect();
+        assert_eq!(
+            groups,
+            [(
+                "1 file kept, removed on the remote",
+                &["notes.md".to_string()][..]
+            )]
+        );
+        assert_eq!(toast.kind, ToastKind::Info);
     }
 
     #[test]
