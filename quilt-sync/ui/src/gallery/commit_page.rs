@@ -31,8 +31,7 @@
 //!
 //! # Left for later
 //!
-//! - The editor's context menu cuts some of its own labels short (`Edit valu`),
-//!   at its own 16px.
+//! - The editor's context menu cuts some of its own labels short (`Edit valu`).
 //! - The `Metadata` label names the editor's hidden fallback textarea.
 //! - The loading skeleton's header is 4px shorter than the real one.
 

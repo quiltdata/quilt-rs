@@ -45,6 +45,7 @@ mod gallery {
     pub mod ignore_popups;
     pub mod incoming_files;
     pub mod installed_package;
+    pub mod metadata_editor;
     pub mod notifications;
     pub mod old_revisions_inline;
     pub mod package_autosync;
@@ -202,6 +203,11 @@ const ENTRIES: &[Entry] = &[
         SCENES / "Old revisions",
         "Remove old revisions",
         old_revisions_inline::OldRevisionsInlineScene
+    ),
+    entry!(
+        SCENES / "Commit page",
+        "Metadata editor",
+        metadata_editor::MetadataEditorScene
     ),
     entry!(SCENES / "Dialogs", "The three dialogs", kit forms::DialogScene),
     entry!(
