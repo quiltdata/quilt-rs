@@ -576,7 +576,7 @@ mod tests {
         .expect("switch");
 
         assert!(
-            watcher.snapshot().await.paused.is_empty(),
+            watcher.paused_snapshot().await.is_empty(),
             "the switch the banner asks for must let autosync try again"
         );
     }
@@ -612,7 +612,7 @@ mod tests {
 
         assert!(result.is_err(), "a rejected switch must surface the error");
         assert_eq!(
-            watcher.snapshot().await.paused.len(),
+            watcher.paused_snapshot().await.len(),
             1,
             "nothing changed, so the denial still stands"
         );
