@@ -397,11 +397,11 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn a_page_change_starts_no_check_of_its_own() {
+    async fn a_page_change_starts_no_check_of_its_own() {
         forget_dismiss();
         let (asked, check) = feed(0);
         let page = RwSignal::new(true);
-        mount(move || {
+        let el = mount(move || {
             check_every(Duration::from_hours(1), DISMISS_DURATION_MS, check);
             view! {
                 <Show when=move || page.get()>
@@ -411,7 +411,11 @@ mod tests {
         });
         for _ in 0..5 {
             page.set(false);
+            leptos::task::tick().await;
+            assert!(!says_update(&el), "the band did not leave with its page");
             page.set(true);
+            leptos::task::tick().await;
+            assert!(says_update(&el), "the band did not come back with its page");
         }
         assert_eq!(asked.get(), 1, "a page's band made its own check");
         unmount_earlier();
