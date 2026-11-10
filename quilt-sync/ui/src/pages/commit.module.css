@@ -153,7 +153,8 @@
   outline-offset: -2px;
 }
 
-.invalid {
+/* On the editor itself, which sets its own border below. */
+.invalid .editor {
   --jse-main-border: 1px solid var(--q-borderColor-danger-muted);
 }
 
@@ -273,8 +274,8 @@
   --jse-edit-outline: var(--q-focus-outlineWidth) solid
     var(--q-focus-outlineColor);
 
-  --jse-selection-background-color: var(--q-overlay-selected);
-  --jse-selection-background-inactive-color: var(--q-overlay-hover);
+  --jse-selection-background-color: var(--q-bgColor-accent-muted);
+  --jse-selection-background-inactive-color: var(--q-overlay-selected);
   --jse-hover-background-color: var(--q-overlay-hover);
   --jse-active-line-background-color: var(--q-overlay-hover);
   --jse-search-match-background-color: var(--q-bgColor-attention-muted);
@@ -339,9 +340,10 @@
   --jse-color-picker-background: var(--q-bgColor-muted);
 }
 
-/* The editor reads this once, for its text mode's caret and selection. */
-:global(:root[data-theme="dark"]) .editor {
-  --jse-theme: dark;
+/* Text mode's focused selection, which the editor otherwise takes from a
+ * theme it reads once, at mount. */
+.editor :global(.cm-focused) :global(.cm-selectionBackground) {
+  background: var(--jse-selection-background-color) !important;
 }
 
 /* The menu: the mode switch on the right, as the kit's segmented control. */
