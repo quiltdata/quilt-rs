@@ -842,7 +842,9 @@ pub async fn set_remote(
             tracing.track(MixpanelEvent::RemoteSet(RemotePackageEvent::for_host(
                 origin_host,
             )));
-            watcher.clear_paused(&ns).await;
+            // What the old bucket or catalog refused is not the new one's.
+            watcher.forget_catalog(&ns).await;
+            watcher.prune_action_needed(m).await;
             let message = format!("Successfully set remote for {namespace}");
             ::tracing::debug!("{message}");
             Ok(SetRemoteResponse {
