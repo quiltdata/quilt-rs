@@ -119,7 +119,7 @@ async fn make_inner_for_run_once(reporter: Arc<RecordingReporter>) -> WatcherInn
         walks: crate::engine::autopull::watched::WatchedWalks::default(),
         tasks: crate::engine::tasks::Tasks::default(),
         last_change: quiet_clock().await,
-        needs_you: Arc::default(),
+        action_needed: Arc::default(),
     }
 }
 
@@ -139,7 +139,7 @@ async fn make_inner_with_flags(
                 ..PushSettings::default()
             },
             close_to_tray: false,
-            notify_needs_you: true,
+            notify_action_needed: true,
         })),
         publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
         paused: RwLock::new(BTreeMap::new()),
@@ -152,7 +152,7 @@ async fn make_inner_with_flags(
         walks: crate::engine::autopull::watched::WatchedWalks::default(),
         tasks: crate::engine::tasks::Tasks::default(),
         last_change: quiet_clock().await,
-        needs_you: Arc::default(),
+        action_needed: Arc::default(),
     }
 }
 
@@ -1039,7 +1039,7 @@ async fn publish_quiet_window_reads_idle_timeout_not_pull_cadence() -> Result<()
             idle_timeout_secs: 60,
         },
         close_to_tray: false,
-        notify_needs_you: true,
+        notify_action_needed: true,
     };
     let reporter = Arc::new(RecordingReporter::default());
     let inner = WatcherInner {
@@ -1055,7 +1055,7 @@ async fn publish_quiet_window_reads_idle_timeout_not_pull_cadence() -> Result<()
         walks: crate::engine::autopull::watched::WatchedWalks::default(),
         tasks: crate::engine::tasks::Tasks::default(),
         last_change: LastChange::changed_for_test(&ns, Duration::from_secs(30)).await,
-        needs_you: Arc::default(),
+        action_needed: Arc::default(),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -1328,7 +1328,7 @@ async fn run_once_publishes_aggregator_status_on_pause() -> Result<(), Error> {
         walks: crate::engine::autopull::watched::WatchedWalks::default(),
         tasks: crate::engine::tasks::Tasks::default(),
         last_change: quiet_clock().await,
-        needs_you: Arc::default(),
+        action_needed: Arc::default(),
     };
     run_once(&model, &RoleCache::default(), &inner).await?;
     let after = rx.borrow().clone();
@@ -1395,7 +1395,7 @@ async fn run_once_publishes_pending_changes_count() -> Result<(), Error> {
         walks: crate::engine::autopull::watched::WatchedWalks::default(),
         tasks: crate::engine::tasks::Tasks::default(),
         last_change: quiet_clock().await,
-        needs_you: Arc::default(),
+        action_needed: Arc::default(),
     };
     run_once(&model, &RoleCache::default(), &inner).await?;
     assert_eq!(rx.borrow().pending_changes, 1);

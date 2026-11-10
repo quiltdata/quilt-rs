@@ -288,7 +288,7 @@ pub struct AutosyncSettingsData {
     pub idle_timeout_secs: u64,
     pub close_to_tray: bool,
     #[serde(default = "notify_by_default")]
-    pub notify_needs_you: bool,
+    pub notify_action_needed: bool,
 }
 
 const fn notify_by_default() -> bool {
@@ -303,7 +303,7 @@ impl Default for AutosyncSettingsData {
             pull_interval_secs: 60,
             idle_timeout_secs: 300,
             close_to_tray: false,
-            notify_needs_you: true,
+            notify_action_needed: true,
         }
     }
 }
@@ -1518,7 +1518,7 @@ pub struct AutosyncPatch {
     pub pull_interval_secs: Option<u64>,
     pub idle_timeout_secs: Option<u64>,
     pub close_to_tray: Option<bool>,
-    pub notify_needs_you: Option<bool>,
+    pub notify_action_needed: Option<bool>,
 }
 
 /// Change the autosync settings `patch` names and leave the rest as stored.
@@ -3145,11 +3145,11 @@ pub async fn get_autopull_activity() -> Result<Option<AutopullActivity>, String>
     engine::invoke("get_autopull_activity", &Args {}).await
 }
 
-// ── What needs the reader ──
+// ── What needs action ──
 
-/// Event carrying the whole needs-you set each time it changes. Kept in
+/// Event carrying the whole action-needed set each time it changes. Kept in
 /// lockstep with the backend.
-pub const NEEDS_YOU_EVENT: &str = "needs-you";
+pub const ACTION_NEEDED_EVENT: &str = "action-needed";
 
 /// Event sent on every clear of a pause. Kept in lockstep with the backend.
 pub const AUTOSYNC_PAUSE_CLEARED_EVENT: &str = "autosync-pause-cleared";
@@ -3161,16 +3161,16 @@ pub struct PauseClearedEvent {
     pub namespace: Namespace,
 }
 
-/// Who a needs-you entry is about. Mirrors the backend's `Subject`.
+/// Who a action-needed entry is about. Mirrors the backend's `Subject`.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "camelCase")]
-pub enum NeedsYouSubject {
+pub enum ActionNeededSubject {
     Package { namespace: Namespace },
     Host { host: Host },
     App,
 }
 
-/// Why it needs the reader. Mirrors the backend's `Cause`; a cause added
+/// Why it needs action. Mirrors the backend's `Cause`; a cause added
 /// there degrades to `Unrecognised`.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(
@@ -3178,7 +3178,7 @@ pub enum NeedsYouSubject {
     rename_all = "camelCase",
     rename_all_fields = "camelCase"
 )]
-pub enum NeedsYouCause {
+pub enum ActionNeededCause {
     Paused {
         reason: PausedReasonData,
     },
@@ -3199,31 +3199,31 @@ pub enum NeedsYouCause {
     Unrecognised,
 }
 
-/// One thing that needs the reader. Mirrors the backend's `needs_you::Entry`.
+/// One thing that needs action. Mirrors the backend's `action_needed::Entry`.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct NeedsYouEntry {
-    pub subject: NeedsYouSubject,
-    pub cause: NeedsYouCause,
+pub struct ActionNeededEntry {
+    pub subject: ActionNeededSubject,
+    pub cause: ActionNeededCause,
     /// When the cause started, RFC 3339.
     pub since: String,
 }
 
-/// What needs the reader now: the mount-time read before following
-/// [`NEEDS_YOU_EVENT`].
-pub async fn get_needs_you() -> Result<Vec<NeedsYouEntry>, String> {
+/// What needs action now: the mount-time read before following
+/// [`ACTION_NEEDED_EVENT`].
+pub async fn get_action_needed() -> Result<Vec<ActionNeededEntry>, String> {
     #[derive(Serialize)]
     struct Args {}
-    engine::invoke("get_needs_you", &Args {}).await
+    engine::invoke("get_action_needed", &Args {}).await
 }
 
 #[cfg(test)]
-mod needs_you_tests {
+mod action_needed_tests {
     use super::*;
 
     #[test]
     fn an_entry_reads_from_the_backend_wire_form() {
-        let entry: NeedsYouEntry = serde_json::from_str(
+        let entry: ActionNeededEntry = serde_json::from_str(
             r#"{"subject":{"kind":"package","namespace":"a/b"},
                 "cause":{"kind":"paused","reason":{"kind":"pull_conflict","files":["x"]}},
                 "since":"1970-01-01T00:00:00Z"}"#,
@@ -3231,17 +3231,17 @@ mod needs_you_tests {
         .unwrap();
         assert_eq!(
             entry.cause,
-            NeedsYouCause::Paused {
+            ActionNeededCause::Paused {
                 reason: PausedReasonData::PullConflict {
                     files: vec!["x".into()]
                 }
             }
         );
-        let host: NeedsYouSubject =
+        let host: ActionNeededSubject =
             serde_json::from_str(r#"{"kind":"host","host":"quilt.test"}"#).unwrap();
-        assert!(matches!(host, NeedsYouSubject::Host { .. }));
-        let later: NeedsYouCause = serde_json::from_str(r#"{"kind":"somethingNew"}"#).unwrap();
-        assert_eq!(later, NeedsYouCause::Unrecognised);
+        assert!(matches!(host, ActionNeededSubject::Host { .. }));
+        let later: ActionNeededCause = serde_json::from_str(r#"{"kind":"somethingNew"}"#).unwrap();
+        assert_eq!(later, ActionNeededCause::Unrecognised);
     }
 }
 

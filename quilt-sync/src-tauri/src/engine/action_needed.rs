@@ -1,4 +1,4 @@
-//! What needs the reader: the few states that keep syncing stopped until they
+//! What needs action: the few states that keep syncing stopped until they
 //! act.
 //!
 //! One set, so the tray, the OS notices and the window cannot disagree. It is
@@ -24,9 +24,9 @@ use crate::engine::events::EventSink;
 use crate::engine::routes;
 
 /// Event the window follows the set by. Kept in lockstep with the UI.
-pub const NEEDS_YOU_EVENT: &str = "needs-you";
+pub const ACTION_NEEDED_EVENT: &str = "action-needed";
 
-/// How long a package's publish keeps failing before it needs the reader. A
+/// How long a package's publish keeps failing before it needs action. A
 /// starting value: by then autosync has retried it about once a minute.
 pub const PUBLISH_FAILING_AFTER: Duration = Duration::from_hours(1);
 
@@ -53,7 +53,7 @@ impl Subject {
     }
 }
 
-/// Why it needs the reader.
+/// Why it needs action.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(
     tag = "kind",
@@ -127,33 +127,40 @@ impl Entry {
         self.subject == *subject && self.cause.kind() == kind
     }
 
-    /// The OS notice: titled with what it is about, saying the cause.
+    /// The OS notice: titled with what it is about, saying the cause in the
+    /// same words as the main page's queue (`quilt-ui-kit`'s
+    /// `package_state::words`). The backend posts it with the window hidden,
+    /// so it can't call the kit: a change to one wording changes both.
     #[must_use]
     pub fn notice(&self) -> (String, String) {
+        const STOPPED: &str = "Syncing has stopped.";
         let title = match &self.subject {
             Subject::Package { namespace } => namespace.to_string(),
             Subject::Host { host } => host.to_string(),
             Subject::App => "QuiltSync".to_string(),
         };
-        let body = match &self.cause {
-            Cause::Paused { reason } => format!("Syncing stopped: {}.", pause_words(reason)),
-            Cause::NoAccess { role: Some(role) } => {
-                format!("Syncing stopped: no access as {role}.")
+        let body = match (&self.subject, &self.cause) {
+            (_, Cause::Paused { reason }) => pause_words(reason, STOPPED),
+            (_, Cause::NoAccess { role: Some(role) }) => {
+                format!("Cannot be read as {role}. {STOPPED}")
             }
-            Cause::NoAccess { role: None } => "Syncing stopped: no access.".to_string(),
-            Cause::SignIn { expired: true } => {
-                "Sign-in expired. Packages on this catalog are not syncing.".to_string()
+            (_, Cause::NoAccess { role: None }) => format!("Cannot be read. {STOPPED}"),
+            (_, Cause::SignIn { expired: true }) => {
+                "Sign-in expired. Packages on this catalog have stopped syncing.".to_string()
             }
-            Cause::SignIn { expired: false } => {
-                "Signed out. Packages on this catalog are not syncing.".to_string()
+            (Subject::Host { host }, Cause::SignIn { expired: false }) => {
+                format!("Signed out of {host}. Packages on this catalog have stopped syncing.")
             }
-            Cause::Credentials => "AWS credentials on this computer aren't usable. \
+            (_, Cause::SignIn { expired: false }) => {
+                "Signed out. Packages on this catalog have stopped syncing.".to_string()
+            }
+            (_, Cause::Credentials) => "AWS credentials on this computer aren't usable. \
                  Update ~/.aws or run aws sso login."
                 .to_string(),
-            Cause::PublishFailing { .. } => {
+            (_, Cause::PublishFailing { .. }) => {
                 "Publishing has kept failing for an hour. It is still retrying.".to_string()
             }
-            Cause::Watcher { .. } => {
+            (_, Cause::Watcher { .. }) => {
                 "Watching package folders for changes stopped working.".to_string()
             }
         };
@@ -175,22 +182,28 @@ impl Entry {
     }
 }
 
-/// A pause's reason, as a clause after *Syncing stopped:*.
-fn pause_words(reason: &PausedDto) -> String {
+/// A pause, as the queue words the package's state, then `stopped`.
+fn pause_words(reason: &PausedDto, stopped: &str) -> String {
     match reason {
-        PausedDto::PendingChanges => "this copy has changes that are not published".to_string(),
-        PausedDto::PendingCommit => "a commit is waiting to be published".to_string(),
-        PausedDto::Diverged => "this copy and the bucket both have new revisions".to_string(),
-        PausedDto::PullConflict { files } if files.len() == 1 => "conflicts in 1 file".to_string(),
-        PausedDto::PullConflict { files } => format!("conflicts in {} files", files.len()),
-        PausedDto::RoleDenied { role: Some(role) } => format!("no access as {role}"),
-        PausedDto::RoleDenied { role: None } => "no access".to_string(),
-        PausedDto::Other { message } => message.trim_end_matches('.').to_string(),
+        PausedDto::PendingCommit => format!("Has a revision it has not published. {stopped}"),
+        PausedDto::Diverged => format!("Changed in both places. {stopped}"),
+        PausedDto::PullConflict { files } if files.len() == 1 => {
+            format!("Has a conflict in 1 file. {stopped}")
+        }
+        PausedDto::PullConflict { files } => {
+            format!("Has conflicts in {} files. {stopped}", files.len())
+        }
+        PausedDto::RoleDenied { role: Some(role) } => {
+            format!("Cannot be read as {role}. {stopped}")
+        }
+        PausedDto::RoleDenied { role: None } => format!("Cannot be read. {stopped}"),
+        PausedDto::PendingChanges => "Has stopped syncing.".to_string(),
+        PausedDto::Other { message } => format!("Has stopped syncing. {message}"),
     }
 }
 
-/// The set. Every surface that says something needs the reader reads it.
-pub struct NeedsYou {
+/// The set. Every surface that says something needs action reads it.
+pub struct ActionNeeded {
     tx: watch::Sender<Vec<Entry>>,
     /// When each package's current run of failing publishes began. Kept apart
     /// from the retry backoff, which a pass that only waits for the quiet
@@ -198,7 +211,7 @@ pub struct NeedsYou {
     publish_failing_since: Mutex<BTreeMap<Namespace, Instant>>,
 }
 
-impl Default for NeedsYou {
+impl Default for ActionNeeded {
     fn default() -> Self {
         Self {
             tx: watch::Sender::new(Vec::new()),
@@ -207,7 +220,7 @@ impl Default for NeedsYou {
     }
 }
 
-impl NeedsYou {
+impl ActionNeeded {
     /// The set now, oldest entry first.
     #[must_use]
     pub fn get(&self) -> Vec<Entry> {
@@ -219,7 +232,7 @@ impl NeedsYou {
         self.tx.subscribe()
     }
 
-    /// `subject` needs the reader for `cause`. An entry already standing for
+    /// `subject` needs action for `cause`. An entry already standing for
     /// that kind of cause takes the new details and keeps its time.
     pub fn enter(&self, subject: Subject, cause: Cause) {
         self.tx.send_if_modified(|set| {
@@ -311,15 +324,15 @@ impl NeedsYou {
 }
 
 /// Send the set to the window: once now, then on every change. A window that
-/// mounts later reads it with `get_needs_you` first.
+/// mounts later reads it with `get_action_needed` first.
 pub fn spawn_forwarder(
     events: EventSink,
     mut rx: watch::Receiver<Vec<Entry>>,
 ) -> tokio::task::JoinHandle<()> {
     crate::engine::events::spawn(async move {
-        events.emit(NEEDS_YOU_EVENT, rx.borrow_and_update().clone());
+        events.emit(ACTION_NEEDED_EVENT, rx.borrow_and_update().clone());
         while rx.changed().await.is_ok() {
-            events.emit(NEEDS_YOU_EVENT, rx.borrow_and_update().clone());
+            events.emit(ACTION_NEEDED_EVENT, rx.borrow_and_update().clone());
         }
     })
 }
@@ -338,7 +351,7 @@ mod tests {
 
     #[test]
     fn one_entry_per_subject_and_kind_keeping_its_time() {
-        let set = NeedsYou::default();
+        let set = ActionNeeded::default();
         let mut rx = set.subscribe();
         set.enter(
             Subject::package(&ns("a/b")),
@@ -374,7 +387,7 @@ mod tests {
 
     #[test]
     fn a_denial_pause_and_a_denied_read_are_one_entry() {
-        let set = NeedsYou::default();
+        let set = ActionNeeded::default();
         set.enter(Subject::package(&ns("a/b")), Cause::NoAccess { role: None });
         set.enter(
             Subject::package(&ns("a/b")),
@@ -395,7 +408,7 @@ mod tests {
 
     #[test]
     fn leaving_takes_only_that_kind_for_that_subject() {
-        let set = NeedsYou::default();
+        let set = ActionNeeded::default();
         let pkg = Subject::package(&ns("a/b"));
         set.enter(pkg.clone(), Cause::of_pause(&PausedReason::Diverged));
         set.enter(
@@ -417,7 +430,7 @@ mod tests {
 
     #[test]
     fn forgetting_a_kind_drops_it_for_every_subject() {
-        let set = NeedsYou::default();
+        let set = ActionNeeded::default();
         let failing = || Cause::PublishFailing {
             error: "offline".into(),
         };
@@ -447,7 +460,7 @@ mod tests {
             .notice(),
             (
                 "user/plate-07".to_string(),
-                "Syncing stopped: conflicts in 2 files.".to_string()
+                "Has conflicts in 2 files. Syncing has stopped.".to_string()
             )
         );
         assert_eq!(
@@ -460,7 +473,7 @@ mod tests {
             .notice(),
             (
                 "open.quiltdata.com".to_string(),
-                "Sign-in expired. Packages on this catalog are not syncing.".to_string()
+                "Sign-in expired. Packages on this catalog have stopped syncing.".to_string()
             )
         );
         assert_eq!(

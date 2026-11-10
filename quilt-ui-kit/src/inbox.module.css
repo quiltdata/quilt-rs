@@ -2,7 +2,7 @@
  * The inbox: the bell on the appbar, and the panel it opens.
  *
  * The bell is drawn on the brand ground, so its marks are stated against it:
- * the needs-you count as an amber pill, the unread dot in the bar's muted ink.
+ * the action-needed count as an amber pill, the unread dot in the bar's muted ink.
  */
 
 .bell {

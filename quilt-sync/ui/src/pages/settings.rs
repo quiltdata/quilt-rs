@@ -1248,7 +1248,7 @@ pub fn AppCard(
                 trailing=saved_note(saved, Saved::Tray)
             />
             <ToggleRow
-                label="Notify me when something needs me"
+                label="Notify me when syncing stops until I act"
                 sublabel=NOTIFY_SUBLABEL
                 checked=notify
                 disabled=saving(pending, Saved::Notify)

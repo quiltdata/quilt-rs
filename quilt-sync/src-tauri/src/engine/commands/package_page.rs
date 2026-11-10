@@ -7,6 +7,7 @@ use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::engine::action_needed::ActionNeeded;
 use crate::engine::autopull::MergeBlock;
 use crate::engine::autopull::PausedReason;
 use crate::engine::autopull::Watcher;
@@ -18,7 +19,6 @@ use crate::engine::commands::main_page::{
 use crate::engine::commands::package_entries::{EntryList, entry_list};
 use crate::engine::error::Error;
 use crate::engine::model;
-use crate::engine::needs_you::NeedsYou;
 use crate::engine::notify::Notify;
 use crate::engine::quilt;
 use crate::engine::quilt::lineage::UpstreamState;
@@ -656,9 +656,15 @@ pub async fn get_package_page_data(
     // says a package stopped syncing.
     let paused = watcher.paused_reason(&namespace).await;
 
-    get_package_page_data_from_model(m, roles, &namespace, paused.as_ref(), watcher.needs_you())
-        .await
-        .map_err(|e| e.to_frontend_string())
+    get_package_page_data_from_model(
+        m,
+        roles,
+        &namespace,
+        paused.as_ref(),
+        watcher.action_needed(),
+    )
+    .await
+    .map_err(|e| e.to_frontend_string())
 }
 
 async fn get_package_page_data_from_model(
@@ -666,7 +672,7 @@ async fn get_package_page_data_from_model(
     roles: &RoleCache,
     namespace: &quilt_uri::Namespace,
     paused: Option<&PausedReason>,
-    needs_you: &NeedsYou,
+    action_needed: &ActionNeeded,
 ) -> Result<PackagePageData, Error> {
     let installed = m.get_installed_package(namespace).await?.ok_or_else(|| {
         Error::from(quilt::InstallPackageError::NotInstalled(
@@ -746,8 +752,8 @@ async fn get_package_page_data_from_model(
     };
 
     match &status_read {
-        Ok(status) => read_worked(needs_you, namespace, origin, paused, status),
-        Err(_) => read_blocked(m, needs_you, namespace, origin, &state).await,
+        Ok(status) => read_worked(action_needed, namespace, origin, paused, status),
+        Err(_) => read_blocked(m, action_needed, namespace, origin, &state).await,
     }
     // A blocked read counts from tracking alone.
     let status = status_read.as_ref().ok();
@@ -1256,7 +1262,7 @@ mod tests {
             &RoleCache::default(),
             &ns,
             paused,
-            &crate::engine::needs_you::NeedsYou::default(),
+            &crate::engine::action_needed::ActionNeeded::default(),
         )
         .await
     }
@@ -1411,7 +1417,7 @@ mod tests {
             roles,
             &ns,
             paused,
-            &crate::engine::needs_you::NeedsYou::default(),
+            &crate::engine::action_needed::ActionNeeded::default(),
         )
         .await
         .expect("a blocked read is a state, not an error")
@@ -3087,7 +3093,7 @@ mod tests {
             &roles,
             &ns,
             None,
-            &crate::engine::needs_you::NeedsYou::default(),
+            &crate::engine::action_needed::ActionNeeded::default(),
         )
         .await
         .expect("a denial is a state, not an error")
@@ -3133,7 +3139,7 @@ mod tests {
             &roles,
             &ns,
             None,
-            &crate::engine::needs_you::NeedsYou::default(),
+            &crate::engine::action_needed::ActionNeeded::default(),
         )
         .await
         .expect("a denial is a state")
@@ -3168,7 +3174,7 @@ mod tests {
             &roles,
             &ns,
             None,
-            &crate::engine::needs_you::NeedsYou::default(),
+            &crate::engine::action_needed::ActionNeeded::default(),
         )
         .await
         .expect("a failed remedy read is never a page error")
@@ -3196,7 +3202,7 @@ mod tests {
             &roles,
             &ns,
             None,
-            &crate::engine::needs_you::NeedsYou::default(),
+            &crate::engine::action_needed::ActionNeeded::default(),
         )
         .await
         .expect("a settled read");

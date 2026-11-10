@@ -403,7 +403,7 @@ fn seed_all(fields: Fields, written: Written, d: &SettingsData) {
     seed(fields.publish, written.publish, autosync.push_enabled);
     seed(fields.watch, written.watch, d.fswatcher.enabled);
     seed(fields.tray, written.tray, autosync.close_to_tray);
-    seed(fields.notify, written.notify, autosync.notify_needs_you);
+    seed(fields.notify, written.notify, autosync.notify_action_needed);
     seed(
         fields.agent_tasks,
         written.agent_tasks,
@@ -778,7 +778,7 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
         }),
         (fields.notify, written.notify, Saved::Notify, |on| {
             Write::Autosync(AutosyncPatch {
-                notify_needs_you: Some(on),
+                notify_action_needed: Some(on),
                 ..AutosyncPatch::default()
             })
         }),
@@ -1529,7 +1529,7 @@ mod tests {
                 pull_interval_secs: 45,
                 idle_timeout_secs: 300,
                 close_to_tray: false,
-                notify_needs_you: true,
+                notify_action_needed: true,
             },
             fswatcher: FsWatcherSettingsData { enabled: true },
             experimental: ExperimentalSettingsData::default(),
@@ -1720,7 +1720,7 @@ mod tests {
     const PULL: &str = "Get new revisions";
     const WATCH: &str = "Watch folders for changes";
     const TRAY: &str = "Keep running in the tray";
-    const NOTIFY: &str = "Notify me when something needs me";
+    const NOTIFY: &str = "Notify me when syncing stops until I act";
 
     fn minutes(el: &web_sys::Element, n: u32) -> web_sys::HtmlInputElement {
         el.query_selector_all("input[type=number]")
@@ -2062,7 +2062,7 @@ mod tests {
         assert_eq!(
             writes(),
             vec![Write::Autosync(AutosyncPatch {
-                notify_needs_you: Some(false),
+                notify_action_needed: Some(false),
                 ..AutosyncPatch::default()
             })]
         );

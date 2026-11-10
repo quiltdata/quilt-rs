@@ -427,7 +427,7 @@
    * so they are stated once, as white, like the ground they are for. */
   --q-overlay-onBrand-hover: rgb(255 255 255 / 0.14);
   --q-overlay-onBrand-active: rgb(255 255 255 / 0.22);
-  /* The inbox bell's needs-you count: amber-9, the same in both themes, with the
+  /* The inbox bell's action-needed count: amber-9, the same in both themes, with the
    * brand literal as its ink, 7.6:1. The pill measures 7.6:1 against the ground
    * too. The bell's unread dot is the muted ink above, 7.0:1. */
   --q-bgColor-attention-onBrand-emphasis: var(--amber-9);

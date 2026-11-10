@@ -36,10 +36,10 @@ pub struct AutosyncSettings {
     /// the disk shape backwards-compatible.
     #[serde(default)]
     pub close_to_tray: bool,
-    /// Post an OS notification when something needs the reader. On unless
+    /// Post an OS notification when something needs action. On unless
     /// turned off; a file from before the setting reads as on.
     #[serde(default = "notify_by_default")]
-    pub notify_needs_you: bool,
+    pub notify_action_needed: bool,
 }
 
 const fn notify_by_default() -> bool {
@@ -52,7 +52,7 @@ impl Default for AutosyncSettings {
             pull: PullSettings::default(),
             push: PushSettings::default(),
             close_to_tray: false,
-            notify_needs_you: true,
+            notify_action_needed: true,
         }
     }
 }
@@ -182,7 +182,7 @@ mod tests {
                 idle_timeout_secs: 45,
             },
             close_to_tray: false,
-            notify_needs_you: false,
+            notify_action_needed: false,
         }
     }
 
@@ -194,7 +194,11 @@ mod tests {
             r#"{"pull_enabled":true,"focused_secs":300,"push_enabled":false,"idle_timeout_secs":300}"#,
         )
         .await?;
-        assert!(AutosyncSettings::load(dir.path()).await?.notify_needs_you);
+        assert!(
+            AutosyncSettings::load(dir.path())
+                .await?
+                .notify_action_needed
+        );
         Ok(())
     }
 

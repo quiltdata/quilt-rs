@@ -685,7 +685,7 @@ pub async fn package_uninstall(
         toasts.post(toast).await;
     }
     if result.is_ok() {
-        s.watcher.prune_needs_you(m).await;
+        s.watcher.prune_action_needed(m).await;
         s.events.emit(PACKAGES_CHANGED_EVENT, ());
     }
     Notify::new(msg_init)
@@ -867,7 +867,7 @@ pub async fn change_catalog(
         Ok(ns) => {
             // What the old catalog refused is not the new one's.
             watcher.forget_catalog(&ns).await;
-            watcher.prune_needs_you(&*s.model).await;
+            watcher.prune_action_needed(&*s.model).await;
             let message = format!("Changed the catalog of {namespace}");
             ::tracing::debug!("{message}");
             Ok(message)

@@ -8,6 +8,10 @@ use quilt_uri::Host;
 use quilt_uri::Namespace;
 
 use crate::engine::Error;
+use crate::engine::action_needed::Cause;
+use crate::engine::action_needed::Kind;
+use crate::engine::action_needed::PUBLISH_FAILING_AFTER;
+use crate::engine::action_needed::Subject;
 use crate::engine::autopull::PausedReason;
 use crate::engine::autopull::WatcherInner;
 use crate::engine::autopull::activity::ActivityOp;
@@ -24,10 +28,6 @@ use crate::engine::autopull::watched::WatchedWalks;
 use crate::engine::commands::RoleCache;
 use crate::engine::model;
 use crate::engine::model::QuiltModel;
-use crate::engine::needs_you::Cause;
-use crate::engine::needs_you::Kind;
-use crate::engine::needs_you::PUBLISH_FAILING_AFTER;
-use crate::engine::needs_you::Subject;
 use crate::engine::publish_settings::PublishSettings;
 use crate::engine::quilt;
 use crate::engine::quilt::flow::PullOutcome;
@@ -866,7 +866,7 @@ pub(crate) async fn run_once(
         .await
         .retain(|ns| current.contains(ns));
     inner.aggregator.retain_namespaces(&current);
-    prune_needs_you(model, inner, &packages).await;
+    prune_action_needed(model, inner, &packages).await;
 
     // Snapshot publish settings once per tick so we don't reacquire the
     // RwLock per package. Same lifetime for `wait`, which is
@@ -1016,8 +1016,8 @@ pub(crate) async fn sync_package(
     // whatever the pass then decided. A refusal below enters again.
     let package = Subject::package(&namespace);
     if reached {
-        inner.needs_you.session_works(origin);
-        inner.needs_you.leave(&package, Kind::NoAccess);
+        inner.action_needed.session_works(origin);
+        inner.action_needed.leave(&package, Kind::NoAccess);
     }
     match result {
         Ok(outcome) => {
@@ -1026,11 +1026,11 @@ pub(crate) async fn sync_package(
             // A pull or publish reached the bucket too. With nothing left to
             // publish, no publish is failing either way.
             if outcome.pulled.is_some() || outcome.published.is_some() {
-                inner.needs_you.session_works(origin);
-                inner.needs_you.leave(&package, Kind::NoAccess);
+                inner.action_needed.session_works(origin);
+                inner.action_needed.leave(&package, Kind::NoAccess);
             }
             if outcome.published.is_some() || inner.last_change.get(&namespace).await.is_none() {
-                inner.needs_you.publish_settled(&namespace);
+                inner.action_needed.publish_settled(&namespace);
             }
             if let Some(message) = outcome.published.as_deref() {
                 inner.reporter.report_published(&namespace, origin, message);
@@ -1085,7 +1085,7 @@ pub(crate) async fn sync_package(
                 block
             };
             inner.reporter.report_login_required(host.as_ref(), block);
-            inner.needs_you.session_failed(host.as_ref(), expired);
+            inner.action_needed.session_failed(host.as_ref(), expired);
             inner.aggregator.note_login_required(&namespace, host);
         }
         Err(WatchError::Conflict(reason)) => {
@@ -1128,7 +1128,7 @@ pub(crate) async fn sync_package(
 /// Drop the entries no installed package stands behind any more: an
 /// uninstalled package, and a session or the computer's credentials that no
 /// package syncs on. Sessions stay when a package's catalog can't be read.
-pub(crate) async fn prune_needs_you(
+pub(crate) async fn prune_action_needed(
     model: &impl QuiltModel,
     inner: &WatcherInner,
     packages: &[quilt::InstalledPackage],
@@ -1146,7 +1146,7 @@ pub(crate) async fn prune_needs_you(
         }
     }
     inner
-        .needs_you
+        .action_needed
         .retain(|entry| match (&entry.subject, entry.cause.kind()) {
             (Subject::Package { namespace }, _) => {
                 packages.iter().any(|pkg| pkg.namespace == *namespace)
@@ -1173,9 +1173,9 @@ async fn note_publish_failing(
     let package = Subject::package(namespace);
     let to_publish = settings.push.enabled && inner.last_change.get(namespace).await.is_some();
     if !to_publish {
-        inner.needs_you.publish_settled(namespace);
-    } else if inner.needs_you.publish_failed(namespace, now) >= PUBLISH_FAILING_AFTER {
-        inner.needs_you.enter(
+        inner.action_needed.publish_settled(namespace);
+    } else if inner.action_needed.publish_failed(namespace, now) >= PUBLISH_FAILING_AFTER {
+        inner.action_needed.enter(
             package,
             Cause::PublishFailing {
                 error: err.to_string(),
@@ -1224,10 +1224,10 @@ pub(crate) async fn pause(
         && Cause::of_pause(&replaced).kind() != cause.kind()
     {
         inner
-            .needs_you
+            .action_needed
             .leave(&package, Cause::of_pause(&replaced).kind());
     }
-    inner.needs_you.enter(package, cause);
+    inner.action_needed.enter(package, cause);
     inner
         .reporter
         .report_paused(namespace, origin, reason.clone());

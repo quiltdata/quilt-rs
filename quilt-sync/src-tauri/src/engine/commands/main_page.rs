@@ -16,16 +16,16 @@ use quilt_uri::Host;
 
 use super::package_page::KeepingScope;
 use super::package_page::PackageSize;
+use crate::engine::action_needed::ActionNeeded;
+use crate::engine::action_needed::Cause;
+use crate::engine::action_needed::Kind;
+use crate::engine::action_needed::Subject;
 use crate::engine::autopull::PackageAutosync;
 use crate::engine::autopull::PausedReason;
 use crate::engine::autopull::WatcherFacts;
 use crate::engine::commands::RoleCache;
 use crate::engine::error::Error;
 use crate::engine::model;
-use crate::engine::needs_you::Cause;
-use crate::engine::needs_you::Kind;
-use crate::engine::needs_you::NeedsYou;
-use crate::engine::needs_you::Subject;
 use crate::engine::quilt;
 use crate::engine::quilt::lineage::PackageState;
 use crate::engine::services::Services;
@@ -360,7 +360,7 @@ pub(super) fn session_state(err: &Error) -> Option<PackageStateDto> {
 /// credentials are good and the bucket answered; a read from the last-known
 /// tip proves neither. A denial pause stands until it is cleared.
 pub(super) fn read_worked(
-    needs_you: &NeedsYou,
+    action_needed: &ActionNeeded,
     namespace: &quilt_uri::Namespace,
     origin: Option<&Host>,
     paused: Option<&PausedReason>,
@@ -369,9 +369,9 @@ pub(super) fn read_worked(
     if !status.latest_refreshed {
         return;
     }
-    needs_you.session_works(origin);
+    action_needed.session_works(origin);
     if !matches!(paused, Some(PausedReason::RoleDenied { .. })) {
-        needs_you.leave(&Subject::package(namespace), Kind::NoAccess);
+        action_needed.leave(&Subject::package(namespace), Kind::NoAccess);
     }
 }
 
@@ -381,7 +381,7 @@ pub(super) fn read_worked(
 /// the old catalog's.
 pub(super) async fn read_blocked(
     m: &impl model::QuiltModel,
-    needs_you: &NeedsYou,
+    action_needed: &ActionNeeded,
     namespace: &quilt_uri::Namespace,
     origin: Option<&Host>,
     state: &PackageStateDto,
@@ -400,12 +400,12 @@ pub(super) async fn read_blocked(
         return;
     }
     match state {
-        PackageStateDto::RoleDenied { role } => needs_you.enter(
+        PackageStateDto::RoleDenied { role } => action_needed.enter(
             Subject::package(namespace),
             Cause::NoAccess { role: role.clone() },
         ),
-        PackageStateDto::SignInExpired { .. } => needs_you.session_failed(origin, true),
-        PackageStateDto::NoSession { .. } => needs_you.session_failed(origin, false),
+        PackageStateDto::SignInExpired { .. } => action_needed.session_failed(origin, true),
+        PackageStateDto::NoSession { .. } => action_needed.session_failed(origin, false),
         _ => {}
     }
 }
@@ -915,7 +915,7 @@ pub(super) async fn refresh_main_page_package_from_model(
     tracing: &crate::engine::telemetry::Telemetry,
     namespace: &quilt_uri::Namespace,
     paused: Option<&PausedReason>,
-    needs_you: &NeedsYou,
+    action_needed: &ActionNeeded,
 ) -> Result<MainPagePackageRefresh, Error> {
     let installed_package = m.get_installed_package(namespace).await?.ok_or_else(|| {
         Error::from(quilt::InstallPackageError::NotInstalled(
@@ -956,7 +956,7 @@ pub(super) async fn refresh_main_page_package_from_model(
         .await
     {
         Ok((status, counts)) => {
-            read_worked(needs_you, namespace, host.as_ref(), paused, &status);
+            read_worked(action_needed, namespace, host.as_ref(), paused, &status);
             Ok(MainPagePackageRefresh {
                 // The pause checks go here rather than at the top of the function,
                 // because the access-denied arm below has higher precedence and must
@@ -982,7 +982,7 @@ pub(super) async fn refresh_main_page_package_from_model(
             // which is the invariant
             // `denied_row_hides_publish_that_a_readable_row_with_the_same_changes_offers`.
             let mark = denied_mark(m, roles, host.as_ref()).await;
-            read_blocked(m, needs_you, namespace, host.as_ref(), &mark.state()).await;
+            read_blocked(m, action_needed, namespace, host.as_ref(), &mark.state()).await;
             Ok(MainPagePackageRefresh {
                 state: mark.state(),
                 role_switch_host: mark.role_switch_host,
@@ -997,7 +997,7 @@ pub(super) async fn refresh_main_page_package_from_model(
             // A pause still outranks it, as in the light phase: signing in
             // would not resolve a conflict, and the row must keep naming it.
             if let Some(state) = session_state(&err) {
-                read_blocked(m, needs_you, namespace, host.as_ref(), &state).await;
+                read_blocked(m, action_needed, namespace, host.as_ref(), &state).await;
                 return Ok(MainPagePackageRefresh {
                     state: pause_or(paused, || state),
                     role_switch_host: None,
@@ -1046,7 +1046,7 @@ pub async fn refresh_main_page_package(
         tracing,
         &namespace,
         paused.as_ref(),
-        watcher.needs_you(),
+        watcher.action_needed(),
     )
     .await
     .map_err(|e| e.to_frontend_string())
@@ -2605,7 +2605,7 @@ mod tests {
             &crate::engine::telemetry::Telemetry::default(),
             &ns,
             paused,
-            &crate::engine::needs_you::NeedsYou::default(),
+            &crate::engine::action_needed::ActionNeeded::default(),
         )
         .await
         .expect("refresh")
@@ -2780,7 +2780,7 @@ mod tests {
             &crate::engine::telemetry::Telemetry::default(),
             &ns,
             None,
-            &crate::engine::needs_you::NeedsYou::default(),
+            &crate::engine::action_needed::ActionNeeded::default(),
         )
         .await
         .expect_err("a generic status failure must surface as an error, not a manufactured state");
@@ -2817,7 +2817,7 @@ mod tests {
             &crate::engine::telemetry::Telemetry::default(),
             &ns,
             None,
-            &crate::engine::needs_you::NeedsYou::default(),
+            &crate::engine::action_needed::ActionNeeded::default(),
         )
         .await
         .expect("a missing session is a state this page can word, not a failed check");
@@ -2835,7 +2835,7 @@ mod tests {
     /// catalog is the old catalog's: it enters nothing.
     #[tokio::test]
     async fn a_read_from_the_old_catalog_enters_nothing() {
-        use crate::engine::needs_you::NeedsYou;
+        use crate::engine::action_needed::ActionNeeded;
         let ns: quilt_uri::Namespace = "team/one".try_into().unwrap();
         let mut m = crate::engine::model::mocks::create();
         m.expect_get_installed_package()
@@ -2849,28 +2849,28 @@ mod tests {
         let current = make_manifest_uri("team/one").origin;
         let old: Host = "old.test".parse().unwrap();
         let denied = PackageStateDto::RoleDenied { role: None };
-        let needs_you = NeedsYou::default();
+        let action_needed = ActionNeeded::default();
 
-        read_blocked(&m, &needs_you, &ns, Some(&old), &denied).await;
+        read_blocked(&m, &action_needed, &ns, Some(&old), &denied).await;
         assert!(
-            needs_you.get().is_empty(),
+            action_needed.get().is_empty(),
             "the catalog changed under the read"
         );
 
-        read_blocked(&m, &needs_you, &ns, current.as_ref(), &denied).await;
-        assert_eq!(needs_you.get().len(), 1);
+        read_blocked(&m, &action_needed, &ns, current.as_ref(), &denied).await;
+        assert_eq!(action_needed.get().len(), 1);
     }
 
-    /// A read that finds the session gone enters its host in the needs-you
+    /// A read that finds the session gone enters its host in the action-needed
     /// set, and a read that reaches the bucket leaves it, autosync on or off.
     #[tokio::test]
     async fn a_read_enters_a_lost_session_and_a_working_read_leaves_it() {
-        use crate::engine::needs_you::{Cause, NeedsYou, Subject};
+        use crate::engine::action_needed::{ActionNeeded, Cause, Subject};
         let ns: quilt_uri::Namespace = "team/one".try_into().unwrap();
-        let needs_you = NeedsYou::default();
+        let action_needed = ActionNeeded::default();
         let read = |status| {
             let m = mock_one_package(status, None);
-            let (ns, needs_you) = (ns.clone(), &needs_you);
+            let (ns, action_needed) = (ns.clone(), &action_needed);
             async move {
                 refresh_main_page_package_from_model(
                     &m,
@@ -2878,7 +2878,7 @@ mod tests {
                     &crate::engine::telemetry::Telemetry::default(),
                     &ns,
                     None,
-                    needs_you,
+                    action_needed,
                 )
                 .await
                 .unwrap();
@@ -2889,7 +2889,7 @@ mod tests {
             quilt::LoginError::NoSession(Some(fixtures::host())),
         ))))
         .await;
-        let entered: Vec<_> = needs_you
+        let entered: Vec<_> = action_needed
             .get()
             .into_iter()
             .map(|e| (e.subject, e.cause))
@@ -2906,7 +2906,7 @@ mod tests {
 
         read(Ok(status_with(UpstreamState::UpToDate, 0))).await;
         assert_eq!(
-            needs_you.get().len(),
+            action_needed.get().len(),
             1,
             "a read that did not reach the bucket proves nothing"
         );
@@ -2914,7 +2914,7 @@ mod tests {
         let mut reached = status_with(UpstreamState::UpToDate, 0);
         reached.latest_refreshed = true;
         read(Ok(reached)).await;
-        assert!(needs_you.get().is_empty(), "the session works");
+        assert!(action_needed.get().is_empty(), "the session works");
     }
 
     #[tokio::test]
@@ -2936,7 +2936,7 @@ mod tests {
             &crate::engine::telemetry::Telemetry::default(),
             &ns,
             None,
-            &crate::engine::needs_you::NeedsYou::default(),
+            &crate::engine::action_needed::ActionNeeded::default(),
         )
         .await
         .expect("a rejected credential is a state this page can word, not a failed check");
@@ -3115,7 +3115,7 @@ mod tests {
             &crate::engine::telemetry::Telemetry::default(),
             &ns,
             None,
-            &crate::engine::needs_you::NeedsYou::default(),
+            &crate::engine::action_needed::ActionNeeded::default(),
         )
         .await
         .expect_err("an uninstalled package has no state to report");

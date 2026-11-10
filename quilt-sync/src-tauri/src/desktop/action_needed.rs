@@ -1,4 +1,4 @@
-//! What needs the reader, on the desktop: an OS notification for each entry
+//! What needs action, on the desktop: an OS notification for each entry
 //! that enters while the window is not in front.
 //!
 //! Only on entering: an entry that entered while the window was in front
@@ -13,8 +13,8 @@ use tauri_plugin_notification::NotificationExt;
 
 use super::MAIN;
 use super::show_window;
+use crate::engine::action_needed::Entry;
 use crate::engine::navigation;
-use crate::engine::needs_you::Entry;
 use crate::engine::routes;
 use crate::engine::services::Services;
 use crate::engine::telemetry::prelude::*;
@@ -38,12 +38,12 @@ pub fn spawn(app: &AppHandle, services: &Arc<Services>) -> async_runtime::JoinHa
 
     let app = app.clone();
     let services = Arc::clone(services);
-    let mut rx = services.watcher.needs_you().subscribe();
+    let mut rx = services.watcher.action_needed().subscribe();
     async_runtime::spawn(async move {
         let mut known = rx.borrow_and_update().clone();
         while rx.changed().await.is_ok() {
             let now = rx.borrow_and_update().clone();
-            let notify = services.autosync_settings.read().await.notify_needs_you;
+            let notify = services.autosync_settings.read().await.notify_action_needed;
             if notify && !in_front(&app) {
                 for entry in entered(&known, &now) {
                     post(&app, entry);
@@ -113,8 +113,8 @@ mod tests {
     use chrono::Utc;
 
     use super::*;
-    use crate::engine::needs_you::Cause;
-    use crate::engine::needs_you::Subject;
+    use crate::engine::action_needed::Cause;
+    use crate::engine::action_needed::Subject;
 
     fn entry(subject: Subject, cause: Cause) -> Entry {
         Entry {

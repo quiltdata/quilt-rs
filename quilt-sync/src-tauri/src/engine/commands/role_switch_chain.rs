@@ -354,7 +354,7 @@ async fn refresh(
         &Telemetry::default(),
         &Namespace::from(namespace),
         None,
-        &crate::engine::needs_you::NeedsYou::default(),
+        &crate::engine::action_needed::ActionNeeded::default(),
     )
     .await
     .expect("refresh")

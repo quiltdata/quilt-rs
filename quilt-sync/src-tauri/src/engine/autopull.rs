@@ -11,14 +11,14 @@ use quilt_uri::Namespace;
 use tokio::sync::RwLock;
 use tokio::sync::watch;
 
+use crate::engine::action_needed::ActionNeeded;
+use crate::engine::action_needed::Cause;
+use crate::engine::action_needed::Kind;
+use crate::engine::action_needed::Subject;
 use crate::engine::autopull::status::SyncTrayAggregator;
 use crate::engine::commands::RoleCache;
 use crate::engine::model::Model;
 use crate::engine::model::QuiltModel;
-use crate::engine::needs_you::Cause;
-use crate::engine::needs_you::Kind;
-use crate::engine::needs_you::NeedsYou;
-use crate::engine::needs_you::Subject;
 use crate::engine::publish_settings::SharedPublishSettings;
 use crate::engine::telemetry::prelude::*;
 
@@ -147,7 +147,7 @@ pub(crate) struct WatcherInner {
     pub refusals: tokio::sync::Mutex<()>,
     pub reporter: Arc<dyn StatusReporter>,
     pub aggregator: Arc<SyncTrayAggregator>,
-    pub needs_you: Arc<NeedsYou>,
+    pub action_needed: Arc<ActionNeeded>,
     pub clocks: Clocks,
     pub last_change: last_change::LastChange,
     /// The folder watcher's walks, which the tick reuses for the packages it
@@ -174,7 +174,7 @@ impl WatcherInner {
             Cause::NoAccess { .. } => Kind::NoAccess,
             _ => Kind::Paused,
         };
-        self.needs_you.leave(&package, kind);
+        self.action_needed.leave(&package, kind);
         self.reporter.report_pause_cleared(namespace);
     }
 }
@@ -251,17 +251,17 @@ impl Watcher {
         self.inner.aggregator.subscribe_activity()
     }
 
-    /// What needs the reader.
+    /// What needs action.
     #[must_use]
-    pub fn needs_you(&self) -> &Arc<NeedsYou> {
-        &self.inner.needs_you
+    pub fn action_needed(&self) -> &Arc<ActionNeeded> {
+        &self.inner.action_needed
     }
 
-    /// Drop what needs the reader that no installed package stands behind,
+    /// Drop what needs action that no installed package stands behind,
     /// for a removal while autosync's passes are off.
-    pub async fn prune_needs_you(&self, model: &impl QuiltModel) {
+    pub async fn prune_action_needed(&self, model: &impl QuiltModel) {
         match model.get_installed_packages_list().await {
-            Ok(packages) => tick::prune_needs_you(model, &self.inner, &packages).await,
+            Ok(packages) => tick::prune_action_needed(model, &self.inner, &packages).await,
             Err(err) => warn!("could not list packages to prune what needs you: {err}"),
         }
     }
@@ -280,7 +280,7 @@ impl Watcher {
         publish_settings: SharedPublishSettings,
         reporter: Arc<dyn StatusReporter>,
         last_change: last_change::LastChange,
-        needs_you: Arc<NeedsYou>,
+        action_needed: Arc<ActionNeeded>,
     ) -> (Self, watch::Receiver<SyncTrayStatus>) {
         let (tx, rx) = watch::channel(SyncTrayStatus::default());
         let aggregator = Arc::new(SyncTrayAggregator::new(tx));
@@ -303,7 +303,7 @@ impl Watcher {
             refusals: tokio::sync::Mutex::default(),
             reporter,
             aggregator,
-            needs_you,
+            action_needed,
             clocks: Clocks::default(),
             walks: crate::engine::autopull::watched::WatchedWalks::default(),
             last_change,
@@ -391,7 +391,7 @@ impl Watcher {
         self.clear_paused(namespace).await;
         // A page's read may have found the refusal with no pause to clear.
         self.inner
-            .needs_you
+            .action_needed
             .leave(&Subject::package(namespace), Kind::NoAccess);
     }
 
@@ -487,7 +487,7 @@ impl Watcher {
         }
         // The old role's refusals, paused or found by a page's read, are not
         // the new role's; a read still refused enters again.
-        self.inner.needs_you.forget(Kind::NoAccess);
+        self.inner.action_needed.forget(Kind::NoAccess);
         self.inner.reschedule_publish();
     }
 
@@ -547,16 +547,16 @@ impl Watcher {
         published: bool,
     ) {
         let package = Subject::package(namespace);
-        let needs_you = &self.inner.needs_you;
+        let action_needed = &self.inner.action_needed;
         if let Ok(Some(installed)) = model.get_installed_package(namespace).await
             && let Ok(lineage) = model.get_installed_package_lineage(&installed).await
             && let Some(remote) = lineage.remote_uri
         {
-            needs_you.session_works(remote.origin.as_ref());
+            action_needed.session_works(remote.origin.as_ref());
         }
-        needs_you.leave(&package, Kind::NoAccess);
+        action_needed.leave(&package, Kind::NoAccess);
         if published {
-            needs_you.publish_settled(namespace);
+            action_needed.publish_settled(namespace);
         }
     }
 
@@ -634,7 +634,7 @@ impl Watcher {
                 refusals: tokio::sync::Mutex::default(),
                 reporter,
                 aggregator,
-                needs_you: Arc::default(),
+                action_needed: Arc::default(),
                 clocks: Clocks::default(),
                 walks: crate::engine::autopull::watched::WatchedWalks::default(),
                 last_change: last_change::LastChange::new(
@@ -841,7 +841,7 @@ pub(crate) fn inner_for_tests(settings: AutosyncSettings) -> WatcherInner {
         refusals: tokio::sync::Mutex::default(),
         reporter: Arc::new(reporter::LogReporter),
         aggregator: Arc::new(status::SyncTrayAggregator::new(tx)),
-        needs_you: Arc::default(),
+        action_needed: Arc::default(),
         clocks: Clocks::default(),
         walks: crate::engine::autopull::watched::WatchedWalks::default(),
         last_change: last_change::LastChange::new(
@@ -1074,7 +1074,7 @@ mod tests {
     }
 
     /// Every route that clears a pause announces it, once per package it
-    /// unpauses, and the package leaves the needs-you set.
+    /// unpauses, and the package leaves the action-needed set.
     #[tokio::test]
     async fn every_pause_clear_is_announced_and_leaves_the_set() {
         let reporter = Arc::new(reporter::test_support::RecordingReporter::default());
@@ -1088,7 +1088,7 @@ mod tests {
         };
         watcher.pause(&b, None, denied).await;
         watcher.pause(&c, None, PausedReason::PendingCommit).await;
-        assert_eq!(watcher.needs_you().get().len(), 3);
+        assert_eq!(watcher.action_needed().get().len(), 3);
 
         watcher.clear_paused(&a).await;
         watcher.clear_paused(&a).await;
@@ -1096,14 +1096,17 @@ mod tests {
         watcher.clear_all_paused().await;
 
         assert_eq!(*reporter.pause_cleared.lock().unwrap(), vec![a, b, c]);
-        assert!(watcher.needs_you().get().is_empty(), "every pause cleared");
+        assert!(
+            watcher.action_needed().get().is_empty(),
+            "every pause cleared"
+        );
     }
 
     /// A hand-run publish reached the bucket: the package's catalog, its
     /// access and its failing publish leave the set.
     #[tokio::test]
     async fn a_hand_run_publish_clears_what_it_proves() {
-        use crate::engine::needs_you::Cause;
+        use crate::engine::action_needed::Cause;
         let watcher = Watcher::new_for_test(Arc::new(LogReporter));
         let ns: Namespace = ("acme", "a").into();
         let host = quilt_uri::fixtures::host();
@@ -1126,7 +1129,7 @@ mod tests {
         model
             .expect_get_installed_package_lineage()
             .returning(move |_| Ok(lineage.clone()));
-        let set = watcher.needs_you();
+        let set = watcher.action_needed();
         set.session_failed(Some(&host), true);
         set.enter(Subject::package(&ns), Cause::NoAccess { role: None });
         set.enter(
@@ -1151,7 +1154,7 @@ mod tests {
         watcher.pause(&ns, None, denied).await;
         watcher.pause(&ns, None, PausedReason::Diverged).await;
         let kinds: Vec<Kind> = watcher
-            .needs_you()
+            .action_needed()
             .get()
             .iter()
             .map(|e| e.cause.kind())
@@ -1163,16 +1166,16 @@ mod tests {
     /// page's read found stays until the bucket answers.
     #[tokio::test]
     async fn a_clear_keeps_a_refusal_a_read_found() {
-        use crate::engine::needs_you::Cause;
+        use crate::engine::action_needed::Cause;
         let watcher = Watcher::new_for_test(Arc::new(LogReporter));
         let ns: Namespace = ("acme", "a").into();
         watcher.pause(&ns, None, PausedReason::Diverged).await;
         watcher
-            .needs_you()
+            .action_needed()
             .enter(Subject::package(&ns), Cause::NoAccess { role: None });
         watcher.clear_paused(&ns).await;
         let kinds: Vec<Kind> = watcher
-            .needs_you()
+            .action_needed()
             .get()
             .iter()
             .map(|e| e.cause.kind())
@@ -1184,15 +1187,15 @@ mod tests {
     /// catalog's and goes with it.
     #[tokio::test]
     async fn a_new_catalog_drops_the_old_refusal() {
-        use crate::engine::needs_you::Cause;
+        use crate::engine::action_needed::Cause;
         let watcher = Watcher::new_for_test(Arc::new(LogReporter));
         let ns: Namespace = ("acme", "a").into();
         watcher
-            .needs_you()
+            .action_needed()
             .enter(Subject::package(&ns), Cause::NoAccess { role: None });
         watcher.forget_catalog(&ns).await;
         assert!(
-            watcher.needs_you().get().is_empty(),
+            watcher.action_needed().get().is_empty(),
             "the new catalog has not refused"
         );
     }

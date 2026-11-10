@@ -202,7 +202,7 @@ fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
                             .ok()
                     })
                     .unwrap_or(redirect_path);
-                s.watcher.needs_you().session_works(Some(&host));
+                s.watcher.action_needed().session_works(Some(&host));
                 s.telemetry.track(MixpanelEvent::UserLoggedIn(LoginEvent {
                     host,
                     flow: LoginFlow::OAuth,

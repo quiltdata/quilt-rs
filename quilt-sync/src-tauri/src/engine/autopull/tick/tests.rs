@@ -70,7 +70,7 @@ fn make_inner(settings: AutosyncSettings) -> WatcherInner {
         last_change: LastChange::new(
             crate::engine::quilt::state_store::PackageStateStore::in_memory(),
         ),
-        needs_you: Arc::default(),
+        action_needed: Arc::default(),
     }
 }
 
@@ -85,7 +85,7 @@ fn enabled() -> AutosyncSettings {
             ..PushSettings::default()
         },
         close_to_tray: false,
-        notify_needs_you: true,
+        notify_action_needed: true,
     }
 }
 
@@ -490,7 +490,7 @@ async fn run_once_behind_and_clean_pulls_and_emits_up_to_date() -> Result<(), Er
         last_change: crate::engine::autopull::last_change::LastChange::new(
             crate::engine::quilt::state_store::PackageStateStore::in_memory(),
         ),
-        needs_you: Arc::default(),
+        action_needed: Arc::default(),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -597,7 +597,7 @@ async fn a_stored_whole_package_scope_reaches_the_background_pull() -> Result<()
         last_change: crate::engine::autopull::last_change::LastChange::new(
             crate::engine::quilt::state_store::PackageStateStore::in_memory(),
         ),
-        needs_you: Arc::default(),
+        action_needed: Arc::default(),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -686,7 +686,7 @@ async fn a_pull_reports_what_it_brought() -> Result<(), Error> {
         last_change: crate::engine::autopull::last_change::LastChange::new(
             crate::engine::quilt::state_store::PackageStateStore::in_memory(),
         ),
-        needs_you: Arc::default(),
+        action_needed: Arc::default(),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -799,7 +799,7 @@ async fn behind_with_kept_changes_pulls() -> Result<(), Error> {
         last_change: crate::engine::autopull::last_change::LastChange::new(
             crate::engine::quilt::state_store::PackageStateStore::in_memory(),
         ),
-        needs_you: Arc::default(),
+        action_needed: Arc::default(),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -916,7 +916,7 @@ async fn behind_trivially_resolved_reports_clean() -> Result<(), Error> {
         last_change: crate::engine::autopull::last_change::LastChange::new(
             crate::engine::quilt::state_store::PackageStateStore::in_memory(),
         ),
-        needs_you: Arc::default(),
+        action_needed: Arc::default(),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -1019,7 +1019,7 @@ async fn behind_clean_update_ignores_stale_pre_pull_changes() -> Result<(), Erro
         last_change: crate::engine::autopull::last_change::LastChange::new(
             crate::engine::quilt::state_store::PackageStateStore::in_memory(),
         ),
-        needs_you: Arc::default(),
+        action_needed: Arc::default(),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -1178,7 +1178,7 @@ async fn behind_blocked_pauses() -> Result<(), Error> {
         last_change: crate::engine::autopull::last_change::LastChange::new(
             crate::engine::quilt::state_store::PackageStateStore::in_memory(),
         ),
-        needs_you: Arc::default(),
+        action_needed: Arc::default(),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -1255,7 +1255,7 @@ async fn run_once_login_required_bumps_backoff() -> Result<(), Error> {
         last_change: crate::engine::autopull::last_change::LastChange::new(
             crate::engine::quilt::state_store::PackageStateStore::in_memory(),
         ),
-        needs_you: Arc::default(),
+        action_needed: Arc::default(),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -1278,10 +1278,10 @@ async fn run_once_login_required_bumps_backoff() -> Result<(), Error> {
     assert_eq!(logins.len(), 1);
     assert_eq!(logins[0].as_ref(), Some(&host));
 
-    // The host, not the package, needs the reader, signed out rather than
+    // The host, not the package, needs action, signed out rather than
     // expired.
     let entered: Vec<_> = inner
-        .needs_you
+        .action_needed
         .get()
         .into_iter()
         .map(|e| (e.subject, e.cause))
@@ -1289,18 +1289,18 @@ async fn run_once_login_required_bumps_backoff() -> Result<(), Error> {
     assert_eq!(
         entered,
         vec![(
-            crate::engine::needs_you::Subject::Host { host },
-            crate::engine::needs_you::Cause::SignIn { expired: false }
+            crate::engine::action_needed::Subject::Host { host },
+            crate::engine::action_needed::Cause::SignIn { expired: false }
         )]
     );
     Ok(())
 }
 
-/// A publish that has kept failing for an hour needs the reader; with
+/// A publish that has kept failing for an hour needs action; with
 /// publishing off it does not.
 #[tokio::test]
-async fn a_publish_failing_for_an_hour_needs_you() {
-    use crate::engine::needs_you::{Kind, PUBLISH_FAILING_AFTER};
+async fn a_publish_failing_for_an_hour_action_needed() {
+    use crate::engine::action_needed::{Kind, PUBLISH_FAILING_AFTER};
     let ns: Namespace = ("acme", "demo").into();
     let inner = WatcherInner {
         last_change: crate::engine::autopull::last_change::LastChange::changed_for_test(
@@ -1313,7 +1313,7 @@ async fn a_publish_failing_for_an_hour_needs_you() {
     let err = Error::General("offline".to_string());
     let kinds = || -> Vec<Kind> {
         inner
-            .needs_you
+            .action_needed
             .get()
             .iter()
             .map(|e| e.cause.kind())
@@ -1476,7 +1476,7 @@ async fn conflict_emit_carries_stable_fingerprint() -> Result<(), Error> {
         last_change: crate::engine::autopull::last_change::LastChange::new(
             crate::engine::quilt::state_store::PackageStateStore::in_memory(),
         ),
-        needs_you: Arc::default(),
+        action_needed: Arc::default(),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -2838,9 +2838,9 @@ async fn a_transient_failure_from_the_old_catalog_leaves_no_backoff() -> Result<
 /// once every package has a catalog.
 #[tokio::test]
 async fn a_pass_drops_what_no_package_stands_behind() {
-    use crate::engine::needs_you::Cause;
-    use crate::engine::needs_you::Kind;
-    use crate::engine::needs_you::Subject;
+    use crate::engine::action_needed::Cause;
+    use crate::engine::action_needed::Kind;
+    use crate::engine::action_needed::Subject;
 
     let installed: Namespace = ("acme", "demo").into();
     let gone: Namespace = ("acme", "gone").into();
@@ -2863,7 +2863,7 @@ async fn a_pass_drops_what_no_package_stands_behind() {
         .create_installed_package(installed.clone())];
 
     let inner = make_inner(enabled());
-    let set = &inner.needs_you;
+    let set = &inner.action_needed;
     set.enter(Subject::package(&installed), Cause::NoAccess { role: None });
     set.enter(Subject::package(&gone), Cause::NoAccess { role: None });
     set.session_failed(Some(&host), true);
@@ -2876,7 +2876,7 @@ async fn a_pass_drops_what_no_package_stands_behind() {
         },
     );
 
-    prune_needs_you(&model, &inner, &packages).await;
+    prune_action_needed(&model, &inner, &packages).await;
 
     let left: Vec<(Subject, Kind)> = set
         .get()
@@ -2897,10 +2897,10 @@ async fn a_pass_drops_what_no_package_stands_behind() {
 /// answer, proves nothing about the session or the bucket: their entries
 /// stand. One that reaches the bucket leaves them.
 #[tokio::test]
-async fn only_a_pass_that_reaches_the_bucket_clears_what_needs_you() {
-    use crate::engine::needs_you::Cause;
-    use crate::engine::needs_you::Kind;
-    use crate::engine::needs_you::Subject;
+async fn only_a_pass_that_reaches_the_bucket_clears_what_action_needed() {
+    use crate::engine::action_needed::Cause;
+    use crate::engine::action_needed::Kind;
+    use crate::engine::action_needed::Subject;
 
     let ns: Namespace = ("acme", "demo").into();
     let host = fixtures::host();
@@ -2946,15 +2946,15 @@ async fn only_a_pass_that_reaches_the_bucket_clears_what_needs_you() {
         tasks: None,
     };
     let inner = make_inner(enabled());
-    inner.needs_you.session_failed(Some(&host), true);
+    inner.action_needed.session_failed(Some(&host), true);
     inner
-        .needs_you
+        .action_needed
         .enter(Subject::package(&ns), Cause::NoAccess { role: None });
     let pkg =
         quilt::LocalDomain::new(std::path::PathBuf::new()).create_installed_package(ns.clone());
     let roles = RoleCache::default();
 
-    inner.needs_you.enter(
+    inner.action_needed.enter(
         Subject::package(&ns),
         Cause::PublishFailing {
             error: "offline".into(),
@@ -2964,7 +2964,7 @@ async fn only_a_pass_that_reaches_the_bucket_clears_what_needs_you() {
     let offline = pass(false);
     sync_package(&offline, &roles, &inner, &pkg, &run, Instant::now()).await;
     let kinds: Vec<Kind> = inner
-        .needs_you
+        .action_needed
         .get()
         .iter()
         .map(|e| e.cause.kind())
@@ -2977,5 +2977,5 @@ async fn only_a_pass_that_reaches_the_bucket_clears_what_needs_you() {
 
     let online = pass(true);
     sync_package(&online, &roles, &inner, &pkg, &run, Instant::now()).await;
-    assert!(inner.needs_you.get().is_empty(), "the bucket answered");
+    assert!(inner.action_needed.get().is_empty(), "the bucket answered");
 }

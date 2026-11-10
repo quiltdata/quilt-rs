@@ -6,13 +6,13 @@ use serde::Serialize;
 use quilt_uri::Host;
 use quilt_uri::Namespace;
 
+use crate::engine::action_needed::ActionNeeded;
+use crate::engine::action_needed::Cause;
+use crate::engine::action_needed::Kind;
+use crate::engine::action_needed::Subject;
 use crate::engine::autopull::PausedReason;
 use crate::engine::autopull::pull_toast::ReportToast;
 use crate::engine::events::EventSink;
-use crate::engine::needs_you::Cause;
-use crate::engine::needs_you::Kind;
-use crate::engine::needs_you::NeedsYou;
-use crate::engine::needs_you::Subject;
 use crate::engine::quilt;
 use crate::engine::telemetry::Telemetry;
 use crate::engine::telemetry::event::{
@@ -514,7 +514,7 @@ pub struct SinkEventReporter {
     events: EventSink,
     toasts: Arc<ToastCenter>,
     /// Takes the file watcher's failure, the one cause only this seam hears.
-    needs_you: Arc<NeedsYou>,
+    action_needed: Arc<ActionNeeded>,
     logged: SeenFingerprints,
 }
 
@@ -546,11 +546,15 @@ impl SeenFingerprints {
 }
 
 impl SinkEventReporter {
-    pub fn new(events: EventSink, toasts: Arc<ToastCenter>, needs_you: Arc<NeedsYou>) -> Self {
+    pub fn new(
+        events: EventSink,
+        toasts: Arc<ToastCenter>,
+        action_needed: Arc<ActionNeeded>,
+    ) -> Self {
         Self {
             events,
             toasts,
-            needs_you,
+            action_needed,
             logged: SeenFingerprints::default(),
         }
     }
@@ -601,7 +605,7 @@ impl StatusReporter for SinkEventReporter {
             "fswatcher: kind={} namespace={:?} message={}",
             event.kind, event.namespace, event.message
         );
-        self.needs_you.enter(
+        self.action_needed.enter(
             Subject::App,
             Cause::Watcher {
                 message: event.message.clone(),
@@ -611,7 +615,7 @@ impl StatusReporter for SinkEventReporter {
     }
 
     fn report_subscriber_recovered(&self) {
-        self.needs_you.leave(&Subject::App, Kind::Watcher);
+        self.action_needed.leave(&Subject::App, Kind::Watcher);
     }
 
     fn report_pause_cleared(&self, namespace: &Namespace) {
@@ -1119,26 +1123,29 @@ mod tests {
 }
 
 #[cfg(test)]
-mod needs_you_tests {
+mod action_needed_tests {
     use super::*;
 
     /// The file watcher's failure enters the set, and its next reconcile
     /// that subscribes again leaves it.
     #[test]
-    fn the_file_watcher_needs_you_until_it_subscribes_again() {
-        let needs_you = Arc::new(NeedsYou::default());
+    fn the_file_watcher_action_needed_until_it_subscribes_again() {
+        let action_needed = Arc::new(ActionNeeded::default());
         let toasts = Arc::new(ToastCenter::new(Box::new(
             crate::engine::toast::SinkToastEmitter::new(EventSink::new()),
         )));
-        let reporter = SinkEventReporter::new(EventSink::new(), toasts, Arc::clone(&needs_you));
+        let reporter = SinkEventReporter::new(EventSink::new(), toasts, Arc::clone(&action_needed));
         reporter.report_subscriber_error(SubscriberErrorEvent {
             kind: "inotify_limit".to_string(),
             message: "no space".to_string(),
             namespace: None,
         });
-        assert_eq!(needs_you.get()[0].cause.kind(), Kind::Watcher);
+        assert_eq!(action_needed.get()[0].cause.kind(), Kind::Watcher);
         reporter.report_subscriber_recovered();
-        assert!(needs_you.get().is_empty(), "the watcher subscribed again");
+        assert!(
+            action_needed.get().is_empty(),
+            "the watcher subscribed again"
+        );
     }
 }
 

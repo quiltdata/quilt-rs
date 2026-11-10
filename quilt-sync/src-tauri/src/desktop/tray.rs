@@ -21,9 +21,9 @@ use crate::engine::telemetry::prelude::*;
 
 use super::MAIN;
 use super::show_window;
+use crate::engine::action_needed::Entry;
 use crate::engine::autopull::SyncTrayStatus;
 use crate::engine::autopull::TrayMode;
-use crate::engine::needs_you::Entry;
 use crate::engine::quit::QuitAction;
 use crate::engine::services::Services;
 
@@ -56,7 +56,7 @@ impl TrayController {
     pub fn install(
         app: &AppHandle,
         status_rx: watch::Receiver<SyncTrayStatus>,
-        needs_you_rx: watch::Receiver<Vec<Entry>>,
+        action_needed_rx: watch::Receiver<Vec<Entry>>,
         link: String,
     ) -> Result<Self, TrayError> {
         let open_item = MenuItem::with_id(app, MENU_ID_OPEN, "Open Quilt", true, None::<&str>)?;
@@ -100,7 +100,7 @@ impl TrayController {
             })
             .build(app)?;
 
-        let listener = spawn_status_listener(tray.clone(), icons, status_rx, needs_you_rx);
+        let listener = spawn_status_listener(tray.clone(), icons, status_rx, action_needed_rx);
         let _ = open_item;
         let _ = browser_item;
         let _ = quit_item;
@@ -124,7 +124,7 @@ fn load_tray_icon(app: &AppHandle) -> Result<Image<'static>, TrayError> {
     Ok(image)
 }
 
-/// The tray's two images: the logo, and the logo with the needs-you dot.
+/// The tray's two images: the logo, and the logo with the action-needed dot.
 struct Icons {
     plain: Image<'static>,
     dotted: Image<'static>,
@@ -134,12 +134,12 @@ fn spawn_status_listener(
     tray: TrayIcon,
     icons: Icons,
     mut status_rx: watch::Receiver<SyncTrayStatus>,
-    mut needs_you_rx: watch::Receiver<Vec<Entry>>,
+    mut action_needed_rx: watch::Receiver<Vec<Entry>>,
 ) -> async_runtime::JoinHandle<()> {
     async_runtime::spawn(async move {
         let mut dotted = false;
         loop {
-            let need_you = needs_you_rx.borrow_and_update().len();
+            let need_you = action_needed_rx.borrow_and_update().len();
             if dotted != (need_you > 0) {
                 dotted = need_you > 0;
                 let icon = if dotted { &icons.dotted } else { &icons.plain };
@@ -149,7 +149,7 @@ fn spawn_status_listener(
             let _ = tray.set_tooltip(Some(&tooltip));
             tokio::select! {
                 changed = status_rx.changed() => if changed.is_err() { break },
-                changed = needs_you_rx.changed() => if changed.is_err() { break },
+                changed = action_needed_rx.changed() => if changed.is_err() { break },
             }
         }
     })
@@ -173,7 +173,7 @@ fn with_dot(icon: &Image<'_>) -> Image<'static> {
     Image::new_owned(rgba, width, height)
 }
 
-/// The tooltip: how many things need the reader, then the sync status.
+/// The tooltip: how many things need action, then the sync status.
 fn tooltip(need_you: usize, status: &SyncTrayStatus) -> String {
     // The tray image is a single Quilt logo; the per-mode signal lives
     // in the tooltip so the icon stays recognisable across themes.
@@ -186,9 +186,9 @@ fn tooltip(need_you: usize, status: &SyncTrayStatus) -> String {
     let mut tooltip = String::new();
     match need_you {
         0 => {}
-        1 => tooltip.push_str("1 needs you\n"),
+        1 => tooltip.push_str("1 needs action\n"),
         n => {
-            let _ = writeln!(tooltip, "{n} need you");
+            let _ = writeln!(tooltip, "{n} need action");
         }
     }
     tooltip.push_str(label);
@@ -297,10 +297,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_tooltip_leads_with_what_needs_you() {
+    fn the_tooltip_leads_with_what_action_needed() {
         let status = SyncTrayStatus::default();
         assert_eq!(tooltip(0, &status), "Quilt — idle");
-        assert_eq!(tooltip(2, &status), "2 need you\nQuilt — idle");
+        assert_eq!(tooltip(2, &status), "2 need action\nQuilt — idle");
     }
 
     #[test]

@@ -11,6 +11,8 @@ use tokio::sync::RwLock;
 use tokio::sync::watch;
 
 use crate::engine::Result;
+use crate::engine::action_needed;
+use crate::engine::action_needed::ActionNeeded;
 use crate::engine::app::App;
 use crate::engine::autopull;
 use crate::engine::autopull::StatusReporter;
@@ -27,8 +29,6 @@ use crate::engine::fswatcher;
 use crate::engine::fswatcher::SharedFsWatcherSettings;
 use crate::engine::model::Model;
 use crate::engine::navigation::Navigations;
-use crate::engine::needs_you;
-use crate::engine::needs_you::NeedsYou;
 use crate::engine::oauth::OAuthState;
 use crate::engine::publish_settings;
 use crate::engine::publish_settings::SharedPublishSettings;
@@ -133,8 +133,8 @@ impl Services {
             events.clone(),
         ))));
 
-        let needs_you = Arc::new(NeedsYou::default());
-        let reporter = reporter(&events, &toasts, &needs_you, &telemetry);
+        let action_needed = Arc::new(ActionNeeded::default());
+        let reporter = reporter(&events, &toasts, &action_needed, &telemetry);
         let (watcher, tray_status) = Watcher::spawn(
             data_dir.clone(),
             Arc::clone(&model),
@@ -143,10 +143,10 @@ impl Services {
             publish_settings.clone(),
             reporter.clone(),
             last_change,
-            Arc::clone(&needs_you),
+            Arc::clone(&action_needed),
         );
         autopull::activity::spawn_forwarder(events.clone(), watcher.subscribe_activity());
-        needs_you::spawn_forwarder(events.clone(), needs_you.subscribe());
+        action_needed::spawn_forwarder(events.clone(), action_needed.subscribe());
         fswatcher::spawn(
             Arc::clone(&model),
             watcher.shared_arc(),
@@ -185,14 +185,14 @@ impl Services {
 fn reporter(
     events: &EventSink,
     toasts: &Arc<ToastCenter>,
-    needs_you: &Arc<NeedsYou>,
+    action_needed: &Arc<ActionNeeded>,
     telemetry: &Arc<Telemetry>,
 ) -> Arc<dyn StatusReporter> {
     Arc::new(TelemetryReporter::wrapping(
         Arc::new(SinkEventReporter::new(
             events.clone(),
             Arc::clone(toasts),
-            Arc::clone(needs_you),
+            Arc::clone(action_needed),
         )),
         Arc::clone(telemetry),
     ))

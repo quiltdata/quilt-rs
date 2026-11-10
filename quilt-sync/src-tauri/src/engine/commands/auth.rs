@@ -424,10 +424,10 @@ pub async fn login(s: &Services, host: String, code: String) -> Result<String, S
     Notify::new(msg_init).map(result, msg_ok, msg_err)
 }
 
-/// A sign-in to `host` worked, so its session no longer needs the reader.
+/// A sign-in to `host` worked, so its session no longer needs action.
 pub fn signed_in(s: &Services, host: &str) {
     if let Ok(host) = Host::from_str(host) {
-        s.watcher.needs_you().session_works(Some(&host));
+        s.watcher.action_needed().session_works(Some(&host));
     }
 }
 
