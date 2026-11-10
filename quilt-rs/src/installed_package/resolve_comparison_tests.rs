@@ -25,6 +25,8 @@ const REMOTE_WITHOUT_CATALOG: &str = r#"{
     "hash": "base-rev"
 }"#;
 
+/// The published `latest`: a pointer holds a full top hash.
+const PUB_REV: &str = "2222222222222222222222222222222222222222222222222222222222222222";
 const EMPTY_HASH: &str = "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=";
 const OTHER_HASH: &str = "ypeBEsobvcr6wjGzmiPcTaeG7/gUfE5yuYB3ha/uSLs=";
 
@@ -99,8 +101,8 @@ async fn diverged_over<R: Remote>(
     Ok((package, [home_dir, paths_dir]))
 }
 
-/// A remote whose `latest` has moved to `pub-rev` past the lineage's
-/// `base-rev`, and whose registry lists `base-rev`, `pub-rev` and `local-1`.
+/// A remote whose `latest` has moved to `PUB_REV` past the lineage's
+/// `base-rev`, and whose registry lists `base-rev`, `PUB_REV` and `local-1`.
 async fn published_remote() -> Res<MockRemote> {
     let remote = MockRemote::default();
     let namespace: Namespace = ("test", "resolve").into();
@@ -108,13 +110,13 @@ async fn published_remote() -> Res<MockRemote> {
         .put_object(
             None,
             &format!("s3://bucket/{}", tag_key(&namespace, "latest")).parse()?,
-            b"pub-rev".to_vec(),
+            PUB_REV.as_bytes().to_vec(),
         )
         .await?;
     remote
         .put_object(
             None,
-            &"s3://bucket/.quilt/packages/pub-rev".parse()?,
+            &format!("s3://bucket/.quilt/packages/{PUB_REV}").parse()?,
             manifest("Sent", &[("same.txt", EMPTY_HASH), ("a.txt", OTHER_HASH)]).into_bytes(),
         )
         .await?;
@@ -128,7 +130,7 @@ async fn published_remote() -> Res<MockRemote> {
         .await?;
     for (timestamp, hash) in [
         ("1758500000", "base-rev"),
-        ("1758500001", "pub-rev"),
+        ("1758500001", PUB_REV),
         ("1758500002", "local-1"),
     ] {
         remote

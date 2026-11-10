@@ -902,7 +902,7 @@ mod tests {
         let storage = MockStorage::default();
         let remote = MockRemote::default();
         let bucket = "bkt";
-        let base = "base";
+        let base = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
         let lineage = PackageLineage {
             remote_uri: Some(ManifestUri {
                 bucket: bucket.to_string(),

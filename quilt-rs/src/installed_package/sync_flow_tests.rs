@@ -19,6 +19,11 @@ use crate::lineage::SyncScope;
 use crate::object_hash::ObjectHash;
 use crate::paths::DomainPaths;
 
+const TIP: &str = "abcdef0000000000000000000000000000000000000000000000000000000000";
+const MOVED_TIP: &str = "fedcba0000000000000000000000000000000000000000000000000000000000";
+const NEW_HASH: &str = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+const BASE_HASH: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
 #[test(tokio::test)]
 async fn test_spamming_commit_writes() -> Res {
     let (home, _temp_dir1) = Home::from_temp_dir()?;
@@ -27,7 +32,7 @@ async fn test_spamming_commit_writes() -> Res {
     let storage = LocalStorage::new();
     let remote = MockRemote::default();
     let namespace: Namespace = ("test", "history").into();
-    let test_hash = "deadbeef".to_string();
+    let test_hash = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef".to_string();
 
     paths
         .scaffold_for_installing(&storage, &home, &namespace)
@@ -127,7 +132,7 @@ async fn test_certify_latest_pushes_pending_commit_then_tags() -> Res {
     // wiring real objects.
     let local_hash = crate::fixtures::top_hash::EMPTY_NULL_TOP_HASH;
     let install_hash = "I_HASH";
-    let other_hash = "N_HASH";
+    let other_hash = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
 
     paths
         .scaffold_for_installing(&storage, &home, &namespace)
@@ -361,8 +366,8 @@ async fn package_without_commit(
             "test/nothing_to_push": {
                 "commit": null,
                 "remote": remote,
-                "base_hash": "BASE_HASH",
-                "latest_hash": "BASE_HASH",
+                "base_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "latest_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
                 "paths": {}
             }
         },
@@ -394,7 +399,7 @@ async fn test_push_without_commit_has_nothing_to_push() -> Res {
     let (package, _temp_dirs) = package_without_commit(serde_json::json!({
         "bucket": "bkt",
         "namespace": "test/nothing_to_push",
-        "hash": "BASE_HASH",
+        "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     }))
     .await?;
     let lineage_before = package.lineage().await?;
@@ -433,7 +438,7 @@ async fn test_manifest_recovery_from_corruption() -> Res {
     let storage = LocalStorage::new();
     let remote = MockRemote::default();
     let namespace: Namespace = ("test", "recovery").into();
-    let test_hash = "deadbeef".to_string();
+    let test_hash = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef".to_string();
 
     paths
         .scaffold_for_installing(&storage, &home, &namespace)
@@ -725,7 +730,7 @@ async fn test_status_propagates_access_denied_from_the_latest_hash_read() -> Res
 
     // An installed package with a remote and a manifest already on disk, so
     // the only remote read `status` needs is the latest-hash pointer.
-    let installed_hash = "abcdef";
+    let installed_hash = TIP;
     let lineage_json = format!(
         r#"{{
         "packages": {{
@@ -913,7 +918,7 @@ async fn test_pull_refreshes_latest_hash_when_remote_moved() -> Res {
     let namespace: Namespace = ("test", "pull_refresh").into();
     let bucket = "bkt";
     let install_hash = "INSTALL_HASH";
-    let new_hash = "NEW_HASH";
+    let new_hash = NEW_HASH;
 
     paths
         .scaffold_for_installing(&storage, &home, &namespace)
@@ -1000,7 +1005,7 @@ async fn test_pull_up_to_date_returns_up_to_date_and_writes_latest_hash() -> Res
     let remote = MockRemote::default();
     let namespace: Namespace = ("test", "pull_up_to_date").into();
     let bucket = "bkt";
-    let base_hash = "BASE_HASH";
+    let base_hash = BASE_HASH;
     let stale_hash = "STALE_HASH";
 
     paths
@@ -1081,7 +1086,7 @@ async fn behind_package(
     let namespace: Namespace = ("test", "pull_outcome").into();
     let bucket = "bkt";
     let install_hash = "INSTALL_HASH";
-    let new_hash = "NEW_HASH";
+    let new_hash = NEW_HASH;
 
     paths
         .scaffold_for_installing(&storage, &home, &namespace)
@@ -1198,7 +1203,7 @@ async fn test_pull_outcome_behind_returns_non_up_to_date() -> Res {
     assert_eq!(preview.added, [] as [PathBuf; 0]);
     assert_eq!(preview.changed, [] as [PathBuf; 0]);
     assert_eq!(preview.removed, vec![PathBuf::from("a.txt")]);
-    assert_eq!(preview.latest_hash.as_deref(), Some("NEW_HASH"));
+    assert_eq!(preview.latest_hash.as_deref(), Some(NEW_HASH));
 
     Ok(())
 }
@@ -1234,7 +1239,7 @@ async fn test_pull_outcome_metadata_only_names_the_hash_and_no_paths() -> Res {
             added: vec![],
             changed: vec![],
             removed: vec![],
-            latest_hash: Some("NEW_HASH".to_string()),
+            latest_hash: Some(NEW_HASH.to_string()),
         }
     );
 
@@ -1580,7 +1585,7 @@ async fn test_status_reports_whether_the_latest_tip_was_read() -> Res {
         let storage = LocalStorage::new();
         let remote = MockRemote::default();
         let namespace: Namespace = ("test", "refreshed").into();
-        let hash = "abcdef";
+        let hash = TIP;
 
         paths
             .scaffold_for_installing(&storage, &home, &namespace)
@@ -1636,17 +1641,17 @@ async fn test_status_reports_whether_the_latest_tip_was_read() -> Res {
     let remote_json = r#"{
         "bucket": "bkt",
         "namespace": "test/refreshed",
-        "hash": "abcdef",
+        "hash": "abcdef0000000000000000000000000000000000000000000000000000000000",
         "catalog": "quilt.test"
     }"#;
 
-    let reached = status_with(Some("abcdef"), "null", remote_json, "abcdef").await?;
+    let reached = status_with(Some(TIP), "null", remote_json, TIP).await?;
     assert!(reached.latest_refreshed, "the tip was read this call");
     assert_eq!(reached.upstream_state, UpstreamState::UpToDate);
 
     // No `latest` tag to read: the refresh fails, is swallowed, and the
     // verdict comes from the last-known tip.
-    let unreachable = status_with(None, "null", remote_json, "abcdef").await?;
+    let unreachable = status_with(None, "null", remote_json, TIP).await?;
     assert!(!unreachable.latest_refreshed, "the tip was not read");
     assert_eq!(unreachable.upstream_state, UpstreamState::UpToDate);
 
@@ -1654,7 +1659,7 @@ async fn test_status_reports_whether_the_latest_tip_was_read() -> Res {
     // package was never published, which is a fresh answer, not an outage.
     let committed_json = r#"{
         "timestamp": "2024-01-01T00:00:00Z",
-        "hash": "abcdef",
+        "hash": "abcdef0000000000000000000000000000000000000000000000000000000000",
         "prev_hashes": []
     }"#;
     let unpublished_json = r#"{
@@ -1667,7 +1672,7 @@ async fn test_status_reports_whether_the_latest_tip_was_read() -> Res {
     assert!(unpublished.latest_refreshed, "the missing tag was read");
     assert_eq!(unpublished.upstream_state, UpstreamState::Local);
 
-    let local = status_with(None, "null", "null", "abcdef").await?;
+    let local = status_with(None, "null", "null", TIP).await?;
     assert!(!local.latest_refreshed, "no remote, nothing to read");
 
     Ok(())
@@ -1683,7 +1688,7 @@ async fn state_with(
     let storage = LocalStorage::new();
     let remote = MockRemote::default();
     let namespace: Namespace = ("test", "state").into();
-    let hash = "abcdef";
+    let hash = TIP;
     let tag_uri = "s3://bkt/.quilt/named_packages/test/state/latest";
 
     paths
@@ -1739,11 +1744,11 @@ async fn test_state_short_circuits_and_resolves_the_status() -> Res {
     use crate::lineage::PackageStateReport;
 
     let (latest, reads) = state_with(
-        Some("abcdef"),
+        Some(TIP),
         r#"{
             "bucket": "bkt",
             "namespace": "test/state",
-            "hash": "abcdef",
+            "hash": "abcdef0000000000000000000000000000000000000000000000000000000000",
             "origin": "quilt.test"
         }"#,
     )
@@ -1762,11 +1767,11 @@ async fn test_state_short_circuits_and_resolves_the_status() -> Res {
     // No catalog host: read on the machine's own AWS credentials, like any
     // other remote.
     let (catalog_less, reads) = state_with(
-        Some("abcdef"),
+        Some(TIP),
         r#"{
             "bucket": "bkt",
             "namespace": "test/state",
-            "hash": "abcdef"
+            "hash": "abcdef0000000000000000000000000000000000000000000000000000000000"
         }"#,
     )
     .await?;
@@ -1815,11 +1820,11 @@ async fn test_status_from_walk_keeps_the_changes_under_a_fresh_tip() -> Res {
                         "remote": {{
                             "bucket": "bkt",
                             "namespace": "test/kept",
-                            "hash": "abcdef",
+                            "hash": "abcdef0000000000000000000000000000000000000000000000000000000000",
                             "catalog": "quilt.test"
                         }},
-                        "base_hash": "abcdef",
-                        "latest_hash": "abcdef",
+                        "base_hash": "abcdef0000000000000000000000000000000000000000000000000000000000",
+                        "latest_hash": "abcdef0000000000000000000000000000000000000000000000000000000000",
                         "paths": {{}}
                     }}
                 }},
@@ -1839,11 +1844,13 @@ async fn test_status_from_walk_keeps_the_changes_under_a_fresh_tip() -> Res {
     write_lineage("null").await?;
     storage
         .write_byte_stream(
-            paths.installed_manifest(&namespace, "abcdef"),
+            paths.installed_manifest(&namespace, TIP),
             ByteStream::from_static(br#"{"version": "v0"}"#),
         )
         .await?;
-    remote.put_object(None, &latest, b"abcdef".to_vec()).await?;
+    remote
+        .put_object(None, &latest, TIP.as_bytes().to_vec())
+        .await?;
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(DomainLineageIo::new(paths.lineage()), namespace.clone()),
         paths: paths.clone(),
@@ -1862,14 +1869,14 @@ async fn test_status_from_walk_keeps_the_changes_under_a_fresh_tip() -> Res {
 
     package
         .remote
-        .put_object(None, &latest, b"fedcba".to_vec())
+        .put_object(None, &latest, MOVED_TIP.as_bytes().to_vec())
         .await?;
     let kept = package
         .status_from_walk(&walked_lineage, walked.clone())
         .await?
         .expect("the lineage is the walked one");
     assert_eq!(kept.upstream_state, UpstreamState::Behind);
-    assert_eq!(kept.latest_hash, "fedcba");
+    assert_eq!(kept.latest_hash, MOVED_TIP);
     assert!(kept.latest_refreshed);
     assert_eq!(kept.changes, walked.changes);
 

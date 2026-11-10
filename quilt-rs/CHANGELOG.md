@@ -30,6 +30,7 @@
 
 ### Fixed
 
+- A top hash read from a tag pointer (`latest` or a timestamp) must be 64 lowercase hex characters, as in a parsed `@` revision; anything else is a `UriError::Package` error instead of being used as the revision's hash
 - `InstalledPackage::status` and `recompute_local_status` work when the catalog can't be reached: they hash new files with the algorithm the manifest uses and report the tip as not read (<https://github.com/quiltdata/quilt-rs/pull/1338>)
 - `reset_to_latest` on a copy already at `latest`'s revision records that revision as its base, so the copy reads up to date rather than Diverged (<https://github.com/quiltdata/quilt-rs/pull/1320>)
 - **Breaking:** a pull no longer deletes a file the remote removed that was edited while the pull downloaded. An edit before the first file is replaced refuses the pull with `PullConflict`; one after keeps the file, untracked, listed in the new `PullReport::kept_not_removed` (<https://github.com/quiltdata/quilt-rs/pull/1328>)
