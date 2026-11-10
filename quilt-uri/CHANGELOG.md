@@ -20,7 +20,7 @@
 
 ### Added
 
-- `is_top_hash` tells whether a string is a top hash: 64 lowercase hex characters, the rule the `@` revision parse applies
+- `is_top_hash` tells whether a string is a top hash: 64 lowercase hex characters, the rule the `@` revision parse applies (<https://github.com/quiltdata/quilt-rs/pull/1340>)
 
 ### Changed
 
