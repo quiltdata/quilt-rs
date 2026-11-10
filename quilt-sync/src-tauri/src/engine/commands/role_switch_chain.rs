@@ -75,6 +75,7 @@ use super::main_page::get_main_page_packages_from_model;
 use super::main_page::refresh_main_page_package_from_model;
 use super::test_support::make_installed_package;
 use crate::engine::Error;
+use crate::engine::autopull::PausedReason;
 use crate::engine::autopull::Watcher;
 use crate::engine::autopull::reporter::LogReporter;
 use crate::engine::autopull::tick::run_once;
@@ -497,18 +498,18 @@ async fn a_switch_releases_the_pause_a_denial_created_and_the_next_tick_proceeds
         .await
         .expect("first tick");
 
-    let paused = watcher.snapshot().await.paused;
+    let paused = watcher.paused_snapshot().await;
     assert_eq!(
         paused.len(),
         1,
         "only the denied namespace pauses, got {paused:?}"
     );
-    assert_eq!(paused[0].namespace.to_string(), "team/locked");
-    assert_eq!(paused[0].reason, "roleDenied");
     assert_eq!(
-        paused[0].message.as_deref(),
-        Some(READ_ONLY),
-        "the banner names the role the tick was refused under"
+        paused.get(&Namespace::from(("team", "locked"))),
+        Some(&PausedReason::RoleDenied {
+            role: READ_ONLY.to_string()
+        }),
+        "the pause names the role the tick was refused under"
     );
 
     switch_to(&model, &roles, &watcher, READ_WRITE)
@@ -516,7 +517,7 @@ async fn a_switch_releases_the_pause_a_denial_created_and_the_next_tick_proceeds
         .expect("switch");
 
     assert!(
-        watcher.snapshot().await.paused.is_empty(),
+        watcher.paused_snapshot().await.is_empty(),
         "a role denial is the one pause no manual action can clear, so the switch must"
     );
 
@@ -525,7 +526,7 @@ async fn a_switch_releases_the_pause_a_denial_created_and_the_next_tick_proceeds
         .expect("second tick");
 
     assert!(
-        watcher.snapshot().await.paused.is_empty(),
+        watcher.paused_snapshot().await.is_empty(),
         "the new role reads the bucket, so the tick that follows the switch must not re-pause"
     );
 }

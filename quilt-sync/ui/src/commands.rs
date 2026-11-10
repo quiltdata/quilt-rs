@@ -1350,17 +1350,13 @@ pub struct PublishedEvent {
 
 pub const AUTOSYNC_PUBLISHED_EVENT: &str = "autosync-published";
 
-/// Payload of the `autosync-paused` engine event — emitted when the
-/// background watcher pauses a namespace. The `reason` field is a stable
-/// string discriminant; `message` is populated only for `reason = "other"`
-/// (workflow rejection, hash mismatch, JSON parse failure, etc.) and is
-/// what the per-package banner renders so the user knows what to fix.
+/// Payload of the `autosync-paused` engine event: the background watcher
+/// paused this package. The page refetches on it; why it paused comes with
+/// the refetch.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PausedEvent {
     pub namespace: Namespace,
-    pub reason: String,
-    pub message: Option<String>,
 }
 
 pub const AUTOSYNC_PAUSED_EVENT: &str = "autosync-paused";

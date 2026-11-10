@@ -1237,9 +1237,7 @@ pub(crate) async fn pause(
     // directly. The string `"error"` is **reserved** for "we
     // couldn't talk to the remote" — the UI renders a Login
     // affordance on that one. Surface autosync refusals as
-    // `"paused"` so the row banner is neutral, and let the UI
-    // pull the message out of the `autosync-paused` event the
-    // reporter emits.
+    // `"paused"`; the page reads why from the paused map.
     let (status, has_changes) = match reason {
         PausedReason::PendingChanges => ("behind", true),
         PausedReason::PendingCommit => ("ahead", false),
@@ -1269,8 +1267,8 @@ pub(crate) async fn pause(
             // paused re-emits the same reason every tick, so the
             // same `(status, has_changes)` yields the same
             // fingerprint and the consumer skips the repeat. The
-            // paused *detail* (which files) rides the separate
-            // `autosync-paused` event, not this one.
+            // separate `autosync-paused` event tells the page to
+            // refetch, and the refetch reads the paused detail.
             fingerprint: format!("{status};{has_changes}"),
         },
     );

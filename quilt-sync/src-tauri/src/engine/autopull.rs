@@ -71,11 +71,8 @@ pub enum PausedReason {
     },
     /// Catch-all for non-transient errors we haven't enumerated:
     /// workflow validation failures, hash mismatches, remote
-    /// configuration drift. The string travels to the UI in the
-    /// `autosync-paused` event payload (see
-    /// [`crate::engine::autopull::reporter::PausedEvent`]) and is rendered in
-    /// the per-package status banner so the user knows what to fix
-    /// before clearing the pause.
+    /// configuration drift. The string reaches the package page through
+    /// `PausedDto` so the user knows what to fix before clearing the pause.
     Other(String),
 }
 
@@ -491,18 +488,10 @@ impl Watcher {
         self.inner.reschedule_publish();
     }
 
-    /// Point-in-time view of the paused set, for tests.
+    /// Point-in-time copy of the paused map, for tests.
     #[cfg(test)]
-    pub async fn snapshot(&self) -> reporter::WatcherSnapshot {
-        let paused = self
-            .inner
-            .paused
-            .read()
-            .await
-            .iter()
-            .map(|(ns, reason)| reporter::PausedEvent::from_reason(ns, reason))
-            .collect();
-        reporter::WatcherSnapshot { paused }
+    pub async fn paused_snapshot(&self) -> BTreeMap<Namespace, PausedReason> {
+        self.inner.paused.read().await.clone()
     }
 
     /// A package committed by hand, leaving `commit` pending: its push waits a
@@ -1003,10 +992,7 @@ mod tests {
         let ns_a: Namespace = ("acme", "demo").into();
         let ns_b: Namespace = ("acme", "other").into();
 
-        assert_eq!(
-            watcher.snapshot().await.paused,
-            [] as [reporter::PausedEvent; 0]
-        );
+        assert!(watcher.paused_snapshot().await.is_empty());
 
         watcher
             .pause_for_test(ns_a.clone(), PausedReason::PendingChanges)
@@ -1018,30 +1004,12 @@ mod tests {
             )
             .await;
 
-        let snapshot = watcher.snapshot().await;
-        assert_eq!(snapshot.paused.len(), 2);
-
-        let entry_a = snapshot
-            .paused
-            .iter()
-            .find(|p| p.namespace.to_string() == ns_a.to_string())
-            .expect("acme/demo missing from snapshot");
-        assert_eq!(entry_a.reason, "pendingChanges");
-        assert!(entry_a.message.is_none());
-
-        let entry_b = snapshot
-            .paused
-            .iter()
-            .find(|p| p.namespace.to_string() == ns_b.to_string())
-            .expect("acme/other missing from snapshot");
-        assert_eq!(entry_b.reason, "other");
-        let msg_b = entry_b
-            .message
-            .as_deref()
-            .expect("Other should carry a message");
-        assert!(
-            msg_b.starts_with("workflow rejected"),
-            "raw error should lead the message, got: {msg_b}"
+        let snapshot = watcher.paused_snapshot().await;
+        assert_eq!(snapshot.len(), 2);
+        assert_eq!(snapshot.get(&ns_a), Some(&PausedReason::PendingChanges));
+        assert_eq!(
+            snapshot.get(&ns_b),
+            Some(&PausedReason::Other("workflow rejected".to_string()))
         );
     }
 
@@ -1068,9 +1036,12 @@ mod tests {
 
         watcher.clear_role_denied_pauses().await;
 
-        let paused = watcher.snapshot().await.paused;
-        assert_eq!(paused.len(), 1, "only the denial should clear: {paused:?}");
-        assert_eq!(paused[0].namespace.to_string(), diverged.to_string());
+        let paused = watcher.paused_snapshot().await;
+        assert_eq!(
+            paused.keys().collect::<Vec<_>>(),
+            [&diverged],
+            "only the denial should clear: {paused:?}"
+        );
     }
 
     /// Every route that clears a pause announces it, once per package it
