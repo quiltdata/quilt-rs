@@ -24,7 +24,7 @@
 ### Added
 
 - `quilt` says on stderr when a newer release is out, e.g. `quilt 0.41.0 is available (you have 0.40.2). Run "quilt upgrade"`. The line is yellow and comes below the command's output. It asks crates.io at most every six hours, never holds back the output or fails a command, and is skipped when stderr is not a terminal, when `CI` is set, or with `QUILT_NO_UPDATE_CHECK=1`
-- `quilt upgrade` installs the latest release with `cargo binstall`, or `cargo install --locked` when cargo-binstall is not installed. Without cargo it points at the releases page; on Windows it prints the command to run
+- `quilt upgrade` installs the latest prebuilt release with `cargo binstall`. When no prebuilt binary can be installed, it asks before building from source with `cargo install --locked`, and without a terminal it builds nothing. Without cargo it points at the releases page; on Windows it prints the command to run
 
 ## [v0.40.2] - 2026-11-05
 

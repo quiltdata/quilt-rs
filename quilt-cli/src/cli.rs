@@ -624,9 +624,10 @@ enum Commands {
     },
     /// Install the latest quilt-cli with cargo
     ///
-    /// Runs `cargo binstall quilt-cli` when cargo-binstall is installed, else
-    /// `cargo install --locked quilt-cli`, which builds from source. On
-    /// Windows it prints the command to run instead.
+    /// Runs `cargo binstall quilt-cli` when cargo-binstall is installed. When
+    /// no prebuilt binary can be installed, it asks before building from
+    /// source with `cargo install --locked quilt-cli`, and without a terminal
+    /// it does not build. On Windows it prints the command to run instead.
     Upgrade,
 }
 
@@ -957,6 +958,9 @@ Then run:
     #[error("\"{0}\" failed; its output is above")]
     UpgradeFailed(upgrade::Installer),
 
+    #[error("No prebuilt quilt-cli was installed. Run \"{0}\" to build it from source")]
+    NotBuilt(upgrade::Installer),
+
     #[error("quilt cannot replace itself on Windows while it runs. Run \"{0}\" instead")]
     UpgradeUnsupported(upgrade::Installer),
 
@@ -1020,7 +1024,7 @@ impl Error {
             Error::WorkflowEmpty => "workflow_empty",
             Error::WorkflowRequiresBucket => "workflow_requires_bucket",
             Error::CargoMissing => "cargo_missing",
-            Error::UpgradeFailed(_) => "upgrade_failed",
+            Error::UpgradeFailed(_) | Error::NotBuilt(_) => "upgrade_failed",
             Error::UpgradeUnsupported(_) => "upgrade_unsupported",
             Error::LogEnv(_) => "invalid_log_filter",
             Error::Json(_) => "invalid_json",
@@ -1112,6 +1116,10 @@ mod tests {
             (Error::CargoMissing, "cargo_missing"),
             (
                 Error::UpgradeFailed(upgrade::Installer::Install),
+                "upgrade_failed",
+            ),
+            (
+                Error::NotBuilt(upgrade::Installer::Install),
                 "upgrade_failed",
             ),
             (

@@ -1,5 +1,7 @@
 //! `quilt upgrade`: installs the latest quilt-cli with cargo.
 
+use std::io::BufRead;
+use std::io::IsTerminal;
 use std::process::Command;
 use std::process::Stdio;
 
@@ -15,11 +17,18 @@ pub enum Installer {
 }
 
 impl Installer {
-    /// cargo's arguments. binstall's prompt is skipped: typing `quilt upgrade`
-    /// was the confirmation.
+    /// cargo's arguments. binstall's prompt is skipped, since typing
+    /// `quilt upgrade` was the confirmation, and so is its build from source,
+    /// which is asked for separately.
     fn args(self) -> &'static [&'static str] {
         match self {
-            Installer::Binstall => &["binstall", "--no-confirm", "quilt-cli"],
+            Installer::Binstall => &[
+                "binstall",
+                "--no-confirm",
+                "--disable-strategies",
+                "compile",
+                "quilt-cli",
+            ],
             Installer::Install => &["install", "--locked", "quilt-cli"],
         }
     }
@@ -79,22 +88,31 @@ fn upgrade() -> Result<Output, Error> {
         .stderr(Stdio::null())
         .status()
         .map(|status| status.success());
-    let installer = choose(probe)?;
+    let has_binstall = has_binstall(probe)?;
     if cfg!(windows) {
+        let installer = if has_binstall {
+            Installer::Binstall
+        } else {
+            Installer::Install
+        };
         return Err(Error::UpgradeUnsupported(installer));
     }
-    if installer == Installer::Install {
-        eprintln!(
-            "cargo-binstall is not installed, so cargo builds quilt-cli from source; this takes a few minutes"
-        );
-    }
-    let status = Command::new("cargo")
-        .args(installer.args())
-        .stdout(std::io::stderr())
-        .status()?;
-    if !status.success() {
-        return Err(Error::UpgradeFailed(installer));
-    }
+    let installer = if has_binstall && run(Installer::Binstall)? {
+        Installer::Binstall
+    } else {
+        let why = if has_binstall {
+            "No prebuilt quilt-cli could be installed."
+        } else {
+            "cargo-binstall is not installed, so no prebuilt quilt-cli can be installed."
+        };
+        if !confirm_build(why)? {
+            return Err(Error::NotBuilt(Installer::Install));
+        }
+        if !run(Installer::Install)? {
+            return Err(Error::UpgradeFailed(Installer::Install));
+        }
+        Installer::Install
+    };
     let path_version = Command::new("quilt")
         .arg("--version")
         .stderr(Stdio::null())
@@ -108,12 +126,38 @@ fn upgrade() -> Result<Output, Error> {
     })
 }
 
-/// binstall when `cargo binstall -V` worked; cargo install when cargo is
-/// there without it.
-fn choose(probe: std::io::Result<bool>) -> Result<Installer, Error> {
+/// Runs cargo with its output on stderr, so stdout keeps only the result.
+fn run(installer: Installer) -> Result<bool, Error> {
+    let status = Command::new("cargo")
+        .args(installer.args())
+        .stdout(std::io::stderr())
+        .status()?;
+    Ok(status.success())
+}
+
+/// Asks before building from source; without a terminal there is no one to
+/// ask, and the answer is no.
+fn confirm_build(why: &str) -> Result<bool, Error> {
+    if !std::io::stdin().is_terminal() {
+        return Ok(false);
+    }
+    eprint!(
+        "{why} Build it from source with \"{}\"? This takes a few minutes. [y/N] ",
+        Installer::Install
+    );
+    let mut answer = String::new();
+    std::io::stdin().lock().read_line(&mut answer)?;
+    Ok(is_yes(&answer))
+}
+
+fn is_yes(answer: &str) -> bool {
+    matches!(answer.trim().to_lowercase().as_str(), "y" | "yes")
+}
+
+/// Whether `cargo binstall -V` worked; no cargo at all is its own error.
+fn has_binstall(probe: std::io::Result<bool>) -> Result<bool, Error> {
     match probe {
-        Ok(true) => Ok(Installer::Binstall),
-        Ok(false) => Ok(Installer::Install),
+        Ok(has) => Ok(has),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Err(Error::CargoMissing),
         Err(err) => Err(err.into()),
     }
@@ -134,24 +178,33 @@ mod tests {
     use super::*;
 
     #[test]
-    fn binstall_is_used_when_cargo_has_it() {
-        assert_eq!(choose(Ok(true)).unwrap(), Installer::Binstall);
-        assert_eq!(choose(Ok(false)).unwrap(), Installer::Install);
+    fn no_cargo_is_its_own_error() {
+        assert!(has_binstall(Ok(true)).unwrap());
+        assert!(!has_binstall(Ok(false)).unwrap());
+        let missing = std::io::Error::from(std::io::ErrorKind::NotFound);
+        assert!(matches!(
+            has_binstall(Err(missing)),
+            Err(Error::CargoMissing)
+        ));
+        let denied = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+        assert!(matches!(has_binstall(Err(denied)), Err(Error::Io(_))));
     }
 
     #[test]
-    fn no_cargo_is_its_own_error() {
-        let missing = std::io::Error::from(std::io::ErrorKind::NotFound);
-        assert!(matches!(choose(Err(missing)), Err(Error::CargoMissing)));
-        let denied = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
-        assert!(matches!(choose(Err(denied)), Err(Error::Io(_))));
+    fn only_yes_builds() {
+        for yes in ["y\n", "Y", " yes \n", "YES"] {
+            assert!(is_yes(yes), "{yes:?}");
+        }
+        for no in ["", "\n", "n", "no", "yep", "sure"] {
+            assert!(!is_yes(no), "{no:?}");
+        }
     }
 
     #[test]
     fn the_commands_install_quilt_cli() {
         assert_eq!(
             Installer::Binstall.to_string(),
-            "cargo binstall --no-confirm quilt-cli"
+            "cargo binstall --no-confirm --disable-strategies compile quilt-cli"
         );
         assert_eq!(
             Installer::Install.to_string(),
@@ -173,7 +226,7 @@ mod tests {
         };
         assert_eq!(
             output.to_string(),
-            "Installed the latest quilt-cli with \"cargo binstall --no-confirm quilt-cli\"\n\
+            "Installed the latest quilt-cli with \"cargo binstall --no-confirm --disable-strategies compile quilt-cli\"\n\
              The quilt on your PATH reports 0.41.0"
         );
         assert_eq!(

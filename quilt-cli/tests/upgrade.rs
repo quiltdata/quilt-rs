@@ -60,11 +60,24 @@ fn stdout_json(output: &Output) -> serde_json::Value {
     serde_json::from_slice(&output.stdout).expect("stdout is only the JSON result")
 }
 
+const BINSTALL: &str = "binstall --no-confirm --disable-strategies compile quilt-cli";
+
+fn error_kind(output: &Output) -> (String, String) {
+    assert!(!output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let error: serde_json::Value = serde_json::from_str(stderr.lines().last().unwrap()).unwrap();
+    (
+        error["error"]["kind"].as_str().unwrap().to_owned(),
+        error["error"]["message"].as_str().unwrap().to_owned(),
+    )
+}
+
 #[test]
 fn binstall_is_used_when_cargo_has_it() {
     let (output, calls) = upgrade(&[("HAS_BINSTALL", "1")]);
     assert!(output.status.success(), "{output:?}");
-    assert_eq!(calls, ["binstall -V", "binstall --no-confirm quilt-cli"]);
+    assert_eq!(calls, ["binstall -V", BINSTALL]);
     assert_eq!(
         stdout_json(&output),
         serde_json::json!({"installer": "cargo-binstall", "path_version": "9.9.9"})
@@ -72,21 +85,23 @@ fn binstall_is_used_when_cargo_has_it() {
     assert!(String::from_utf8_lossy(&output.stderr).contains("cargo binstall is installing"));
 }
 
+/// The tests' stdin is not a terminal, so there is no one to ask and nothing
+/// is built.
 #[test]
-fn cargo_install_builds_it_without_binstall() {
+fn without_binstall_nothing_is_built_unasked() {
     let (output, calls) = upgrade(&[]);
-    assert!(output.status.success(), "{output:?}");
-    assert_eq!(calls, ["binstall -V", "install --locked quilt-cli"]);
-    assert_eq!(stdout_json(&output)["installer"], "cargo-install");
+    assert_eq!(calls, ["binstall -V"]);
+    let (kind, message) = error_kind(&output);
+    assert_eq!(kind, "upgrade_failed");
+    assert!(
+        message.contains("cargo install --locked quilt-cli"),
+        "{message}"
+    );
 }
 
 #[test]
-fn a_failed_binstall_starts_no_build() {
+fn a_failed_binstall_starts_no_build_unasked() {
     let (output, calls) = upgrade(&[("HAS_BINSTALL", "1"), ("FAIL", "1")]);
-    assert!(!output.status.success());
-    assert_eq!(calls, ["binstall -V", "binstall --no-confirm quilt-cli"]);
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "");
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let error: serde_json::Value = serde_json::from_str(stderr.lines().last().unwrap()).unwrap();
-    assert_eq!(error["error"]["kind"], "upgrade_failed");
+    assert_eq!(calls, ["binstall -V", BINSTALL]);
+    assert_eq!(error_kind(&output).0, "upgrade_failed");
 }

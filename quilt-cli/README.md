@@ -236,11 +236,13 @@ cache folder; a check that fails or takes over two seconds is skipped without
 a word. `NO_COLOR` drops the colour. Nothing is printed when stderr is not a
 terminal or `CI` is set, and `QUILT_NO_UPDATE_CHECK=1` turns it off.
 
-`quilt upgrade` installs the latest release with
-`cargo binstall --no-confirm quilt-cli`, or with
-`cargo install --locked quilt-cli` (a build from source that takes a few
-minutes) when cargo-binstall is not installed. Without cargo it points at the
-releases page, and on Windows it prints the command to run instead. Afterwards
+`quilt upgrade` installs the latest prebuilt release with cargo-binstall.
+When no prebuilt binary can be installed, because cargo-binstall is missing or
+failed, it asks before building from source with
+`cargo install --locked quilt-cli`, which takes a few minutes. Without a
+terminal to ask in, it builds nothing and names that command. Without cargo it
+points at the releases page, and on Windows it prints the command to run
+instead. Afterwards
 it prints the version of the `quilt` on your PATH, so you can see whether that
 copy is the one cargo upgraded.
 
