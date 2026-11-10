@@ -269,6 +269,11 @@ impl TryFrom<&str> for S3PackageUri {
                     "package spec may contain only one \"@\"".to_string(),
                 ));
             }
+            if !is_top_hash(top_hash) {
+                return Err(UriError::Package(format!(
+                    "hash must be 64 lowercase hex characters, got {top_hash:?}"
+                )));
+            }
             (namespace.into(), RevisionPointer::Hash(top_hash.into()))
         } else {
             (pkg_spec, RevisionPointer::Tag(Tag::Latest))
@@ -302,6 +307,11 @@ impl TryFrom<&str> for S3PackageUri {
     }
 }
 
+/// A top hash is the hex SHA-256 of a manifest, as `TopHasher` writes it.
+fn is_top_hash(hash: &str) -> bool {
+    hash.len() == 64 && hash.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
 /// The characters that would otherwise be read as fragment structure.
 ///
 /// `&`, `=` and `#` delimit; `+` decodes as a space and `%` opens an escape.
@@ -320,10 +330,13 @@ const COPY_VALUE: &percent_encoding::AsciiSet = &FRAGMENT_VALUE.add(b' ');
 
 impl S3PackageUri {
     fn format_hash(hash: &str) -> String {
-        if hash.len() <= 12 {
+        let chars: Vec<char> = hash.chars().collect();
+        if chars.len() <= 12 {
             hash.to_string()
         } else {
-            format!("{}...{}", &hash[..6], &hash[hash.len() - 6..])
+            let head: String = chars[..6].iter().collect();
+            let tail: String = chars[chars.len() - 6..].iter().collect();
+            format!("{head}...{tail}")
         }
     }
 
@@ -515,14 +528,15 @@ mod tests {
 
     #[test]
     fn test_implicit_str_parsing() -> Res {
-        let uri: S3PackageUri = "quilt+s3://bucket#package=foo/bar@deadbeef".parse()?;
+        let uri: S3PackageUri =
+            format!("quilt+s3://bucket#package=foo/bar@{}", fixtures::TOP_HASH).parse()?;
         assert_eq!(
             uri,
             S3PackageUri {
                 bucket: "bucket".to_string(),
                 catalog: None,
                 namespace: ("foo", "bar").into(),
-                revision: RevisionPointer::Hash("deadbeef".to_string()),
+                revision: RevisionPointer::Hash(fixtures::TOP_HASH.to_string()),
                 path: None,
             }
         );
@@ -531,7 +545,7 @@ mod tests {
 
     #[test]
     fn test_implicit_string_parsing() -> Res {
-        let uri: S3PackageUri = "quilt+s3://bucket#package=foo/bar@deadbeef"
+        let uri: S3PackageUri = format!("quilt+s3://bucket#package=foo/bar@{}", fixtures::TOP_HASH)
             .to_string()
             .parse()?;
         assert_eq!(
@@ -540,7 +554,7 @@ mod tests {
                 bucket: "bucket".to_string(),
                 catalog: None,
                 namespace: ("foo", "bar").into(),
-                revision: RevisionPointer::Hash("deadbeef".to_string()),
+                revision: RevisionPointer::Hash(fixtures::TOP_HASH.to_string()),
                 path: None,
             }
         );
@@ -595,15 +609,18 @@ mod tests {
 
     #[test]
     fn test_path() -> Res {
-        let uri: S3PackageUri =
-            "quilt+s3://bucket#package=foo/bar@deadbeef&path=read/me.md".parse()?;
+        let uri: S3PackageUri = format!(
+            "quilt+s3://bucket#package=foo/bar@{}&path=read/me.md",
+            fixtures::TOP_HASH
+        )
+        .parse()?;
         assert_eq!(
             uri,
             S3PackageUri {
                 bucket: "bucket".to_string(),
                 catalog: None,
                 namespace: ("foo", "bar").into(),
-                revision: RevisionPointer::Hash("deadbeef".to_string()),
+                revision: RevisionPointer::Hash(fixtures::TOP_HASH.to_string()),
                 path: Some(PathBuf::from("read/me.md")),
             }
         );
@@ -784,11 +801,17 @@ mod tests {
             "https://quilt.test/b/bucket/packages/foo/bar/tree/latest/read/me.md"
         );
 
-        let uri_versioned: S3PackageUri =
-            "quilt+s3://bucket#package=foo/bar@AaBbCcDdEeFfGgHhJjKk&path=read/me.md".parse()?;
+        let uri_versioned: S3PackageUri = format!(
+            "quilt+s3://bucket#package=foo/bar@{}&path=read/me.md",
+            fixtures::TOP_HASH
+        )
+        .parse()?;
         assert_eq!(
             uri_versioned.display_for_host(&host)?.as_str(),
-            "https://quilt.test/b/bucket/packages/foo/bar/tree/AaBbCcDdEeFfGgHhJjKk/read/me.md"
+            format!(
+                "https://quilt.test/b/bucket/packages/foo/bar/tree/{}/read/me.md",
+                fixtures::TOP_HASH
+            )
         );
         Ok(())
     }
@@ -908,6 +931,53 @@ mod tests {
             result.unwrap_err().to_string(),
             "Invalid package URI: package spec may contain only one \"@\""
         );
+    }
+
+    /// A top hash is a SHA-256 digest in lowercase hex, so an address carries
+    /// it whole.
+    #[test]
+    fn a_full_hex_hash_parses() -> Res {
+        let hash = "0123456789abcdef".repeat(4);
+        let uri: S3PackageUri = format!("quilt+s3://bucket#package=foo/bar@{hash}").parse()?;
+        assert_eq!(uri.revision, RevisionPointer::Hash(hash));
+        Ok(())
+    }
+
+    /// Anything other than the full lowercase digest is not a top hash.
+    #[test]
+    fn a_hash_that_is_not_a_full_hex_digest_is_refused() {
+        let digest = "0123456789abcdef".repeat(4);
+        let cases = [
+            "zzzz".to_string(),
+            "deadbeef".to_string(),
+            digest.to_uppercase(),
+            digest[..63].to_string(),
+            format!("{digest}0"),
+            format!("{}/{}", &digest[..32], &digest[33..]),
+            format!("{}.{}", &digest[..32], &digest[33..]),
+            format!("{}é", &digest[..62]),
+        ];
+        for hash in cases {
+            let result = S3PackageUri::try_from(
+                format!("quilt+s3://bucket#package=foo/bar@{hash}").as_str(),
+            );
+            assert!(
+                matches!(result, Err(UriError::Package(_))),
+                "{hash:?} should be refused, got {result:?}"
+            );
+        }
+    }
+
+    /// Display shortens by characters, so a hash built by hand that holds
+    /// multibyte characters or is short still renders.
+    #[test]
+    fn format_hash_counts_characters() {
+        assert_eq!(
+            S3PackageUri::format_hash("aééééééééééééé"),
+            "aééééé...éééééé"
+        );
+        assert_eq!(S3PackageUri::format_hash("ab"), "ab");
+        assert_eq!(S3PackageUri::format_hash("éa"), "éa");
     }
 
     #[test]

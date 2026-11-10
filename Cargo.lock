@@ -5928,7 +5928,7 @@ dependencies = [
 
 [[package]]
 name = "quilt-uri"
-version = "0.4.3"
+version = "0.5.0-dev"
 dependencies = [
  "percent-encoding",
  "serde",

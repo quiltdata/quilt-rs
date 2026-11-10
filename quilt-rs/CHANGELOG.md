@@ -34,6 +34,10 @@
 - `reset_to_latest` on a copy already at `latest`'s revision records that revision as its base, so the copy reads up to date rather than Diverged (<https://github.com/quiltdata/quilt-rs/pull/1320>)
 - **Breaking:** a pull no longer deletes a file the remote removed that was edited while the pull downloaded. An edit before the first file is replaced refuses the pull with `PullConflict`; one after keeps the file, untracked, listed in the new `PullReport::kept_not_removed` (<https://github.com/quiltdata/quilt-rs/pull/1328>)
 
+### quilt-uri
+
+- Updated [from v0.4.3 to v0.5.0-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-uri/v0.4.3...main) (see [quilt-uri/CHANGELOG.md](../quilt-uri/CHANGELOG.md)) (<https://github.com/quiltdata/quilt-rs/pull/1339>)
+
 ## [v0.52.0] - 2026-11-05
 
 ### Added
