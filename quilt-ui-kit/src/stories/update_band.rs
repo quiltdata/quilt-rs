@@ -44,6 +44,16 @@ pub fn UpdateBandStories() -> impl IntoView {
                     <UpdateBand state=available() on_install=|()| () on_snooze=|()| () />
                 </div>
             </Cell>
+            <Cell full=true label="available, where the app cannot install itself">
+                <div class="g-stack">
+                    <UpdateBand
+                        state=available()
+                        on_install=|()| ()
+                        on_snooze=|()| ()
+                        install_label="Download"
+                    />
+                </div>
+            </Cell>
             <Cell full=true label="installing">
                 <div class="g-stack">
                     <UpdateBand state=UpdateState::Installing on_install=|()| () on_snooze=|()| () />

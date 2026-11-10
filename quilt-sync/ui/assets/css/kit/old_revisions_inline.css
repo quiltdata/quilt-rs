@@ -139,8 +139,8 @@
   min-height: 44px;
 }
 
-/* A copy of `.qui-toast.success` (views/toasts.css), in the theme's tokens:
- * the gallery does not load that stylesheet. */
+/* A copy of a success toast's card (`components/toasts.module.css`), whose
+ * hashed classes this stylesheet cannot name. */
 .g-ori-toast {
   display: flex;
   gap: var(--q-space-4);

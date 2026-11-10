@@ -1,3 +1,4 @@
+/* biome-ignore-all lint/complexity/noImportantStyles: the metadata editor's rules below must outrank its own. */
 /* Tighter than `PageLayout`'s gap: these read as one form. It fills the page,
  * so the file list can take what is left and scroll inside it. `min-height: 0`
  * lets it be shorter than its content; when the list's floor does not fit,
@@ -207,4 +208,141 @@
   display: flex;
   flex-direction: column;
   gap: var(--q-space-2);
+}
+
+/* The metadata editor's own look, kept light in both themes: the editor draws
+ * its document in its light palette, so its menu and buttons match it.
+ * Global inside the editor because the classes are the editor's, and
+ * `!important` because the editor's own scoped rules outrank these. */
+.editor {
+  --jse-font-size-main-menu: 1rem;
+  --jse-font-size-mono: 1rem;
+  --jse-font-size: 1.2rem;
+  --jse-menu-color: rgb(0 0 0 / 60%);
+  --jse-text-color: rgb(0 0 0 / 87%);
+  --jse-theme-color-highlight: rgb(0 0 0 / 4%);
+  --jse-theme-color: #fff;
+  --jse-padding: 16px;
+  --jse-modal-editor-theme-color: #fff;
+  --jse-modal-editor-theme-color-highlight: rgb(0 0 0 / 4%);
+}
+
+.editor :global(.jse-menu) {
+  justify-content: flex-end;
+  border: 1px solid rgb(0 0 0 / 23%);
+  border-radius: 4px 4px 0 0;
+  padding: 8px;
+}
+
+.editor :global(.jse-menu) :global(.jse-space) {
+  display: none;
+}
+
+.editor :global(.jse-menu) :global(.jse-group-button) {
+  margin: 2px 0 !important;
+  align-items: center !important;
+  background-color: #fff !important;
+  border: 1px solid rgb(0 0 0 / 23%) !important;
+  cursor: pointer !important;
+  display: inline-flex !important;
+  font-family: var(--q-font-sans) !important;
+  line-height: 1.75 !important;
+  min-width: 64px !important;
+  padding: 2px 8px !important;
+  text-decoration: none !important;
+  text-transform: uppercase !important;
+  font-size: 0.875rem !important;
+  color: rgb(0 0 0 / 87%) !important;
+  height: auto !important;
+}
+
+.editor :global(.jse-menu) :global(.jse-group-button):nth-child(1) {
+  border-radius: 4px 0 0 4px !important;
+}
+
+.editor :global(.jse-menu) :global(.jse-group-button):nth-child(3) {
+  border-radius: 0 4px 4px 0 !important;
+}
+
+.editor :global(.jse-menu) :global(.jse-group-button):global(.jse-selected) {
+  box-shadow:
+    inset 0 3px 1px -2px rgb(0 0 0 / 20%),
+    inset 0 2px 2px 0 rgb(0 0 0 / 14%),
+    inset 0 1px 5px 0 rgb(0 0 0 / 12%) !important;
+  color: rgb(0 0 0 / 60%) !important;
+}
+
+.editor
+  :global(.jse-menu)
+  :global(.jse-group-button)
+  + :global(.jse-separator) {
+  width: 0 !important;
+  margin: auto !important;
+}
+
+.editor :global(.jse-welcome) :global(.jse-contents) {
+  display: grid !important;
+  gap: 8px !important;
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.editor :global(.jse-welcome) {
+  border: 1px solid rgb(0 0 0 / 23%);
+  border-width: 0 1px 1px;
+  border-radius: 0 0 4px 4px;
+}
+
+.editor :global(.jse-actions) button,
+.editor :global(.jse-welcome) button {
+  align-self: center;
+  background-color: #fff !important;
+  border-radius: 4px !important;
+  border: 1px solid rgb(0 0 0 / 23%) !important;
+  box-shadow:
+    0 3px 1px -2px rgb(0 0 0 / 20%),
+    0 2px 2px 0 rgb(0 0 0 / 14%),
+    0 1px 5px 0 rgb(0 0 0 / 12%);
+  color: rgb(0 0 0 / 87%) !important;
+  font-family: var(--q-font-sans);
+  font-size: 0.875rem !important;
+  line-height: 1.75 !important;
+  min-width: 64px !important;
+  padding: 2px 8px !important;
+  text-decoration: none;
+  text-transform: uppercase;
+}
+
+.editor :global(.jse-actions) button {
+  font-size: 1.2rem !important;
+  min-width: 144px !important;
+  padding: 4px 16px !important;
+}
+
+.editor :global(.jse-actions) :global(.jse-primary) {
+  color: #fff !important;
+  background: var(--q-bgColor-brand) !important;
+}
+
+.editor :global(.jse-actions) :global(.jse-primary):hover {
+  color: #fff !important;
+  background: var(--q-bgColor-brand) !important;
+}
+
+.editor :global(.jse-welcome-title) {
+  color: rgb(0 0 0 / 87%);
+  font-family: var(--q-font-sans);
+  font-size: 1rem;
+  grid-column: 1 / 4;
+}
+
+.editor :global(.jse-welcome-info) {
+  color: rgb(0 0 0 / 60%);
+  font-family: var(--q-font-sans);
+  font-size: 1rem;
+  grid-column: 1 / 4;
+  margin-bottom: 8px;
+}
+
+.editor :global(.jse-welcome-weight) {
+  font-weight: 500;
 }

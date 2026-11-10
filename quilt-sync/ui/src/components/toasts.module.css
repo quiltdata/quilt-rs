@@ -1,0 +1,169 @@
+/* The toast stack: top-centre, starting at the appbar so the first card
+   overlaps it, clear of the row action buttons on the right.
+
+   Two blocks in a column: the list, which grows and scrolls, and the
+   dismiss-all control pinned beneath it so it stays put as toasts arrive. */
+.layer {
+  position: fixed;
+  top: var(--q-appbar-height);
+  left: 50%;
+  /* Over the page's sticky appbar and bands. Dialogs sit in the top layer,
+     above any z-index. */
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  /* Without air between them the control sits flush against the last card,
+     which the scroll box has usually clipped mid-content, and the pair reads
+     as one broken element. */
+  gap: var(--q-space-3);
+  align-items: center;
+  width: min(44rem, 100vw);
+  /* Leaves the window's foot clear: a stack reaching the bottom edge reads as
+     a takeover rather than a layer. */
+  max-height: calc(100vh - var(--q-appbar-height) - 72px);
+  /* The layer draws nothing, so it takes nothing: an invisible box that
+     swallows clicks is an overlay in all but appearance. Capture belongs to
+     the list and the control below. */
+  pointer-events: none;
+  transform: translateX(-50%);
+}
+
+/* The growing, scrolling half. Padded on every side because `overflow-y`
+   clips at the padding box: without it the cards' shadows are shaved off. */
+.list {
+  /* A scroll box that does not take the wheel does not scroll. Sized by the
+     cards, so it covers no more of the app than they do. */
+  pointer-events: auto;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--q-space-3);
+  align-self: stretch;
+  min-height: 0;
+  padding: var(--q-space-4);
+  overflow-y: auto;
+}
+
+.toast {
+  display: flex;
+  gap: var(--q-space-4);
+  align-items: flex-start;
+  padding: var(--q-space-4);
+  font-family: var(--q-font-sans);
+  font-size: var(--q-text-body);
+  line-height: var(--q-line-body);
+  color: var(--q-fgColor-default);
+  pointer-events: auto;
+  background: var(--q-bgColor-default);
+  border-left: 4px solid var(--q-bgColor-accent-emphasis);
+  border-radius: var(--q-radius);
+  /* Heavier than a dialog's: this layer sits over a dense list and has to
+     separate from it without a backdrop to do the work. */
+  box-shadow:
+    rgb(0 0 0 / 32%) 0 10px 28px -6px,
+    rgb(0 0 0 / 24%) 0 4px 10px -2px,
+    0 0 0 1px var(--q-borderColor-default);
+}
+
+.success {
+  border-left-color: var(--q-fgColor-success);
+}
+
+.warning {
+  border-left-color: var(--q-fgColor-attention);
+}
+
+.error {
+  border-left-color: var(--q-fgColor-danger);
+}
+
+.content {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--q-space-1);
+  min-width: 0;
+}
+
+.title {
+  font-weight: 600;
+}
+
+.body {
+  overflow-wrap: anywhere;
+}
+
+/* A group's heading and its paths. Structure, not indentation: a wrapped path
+   must stay inside its item rather than resume at the left margin. */
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-1);
+  margin-top: var(--q-space-2);
+}
+
+.heading {
+  color: var(--q-fgColor-muted);
+}
+
+.items {
+  /* Room for the marker, since the browser draws it outside the content box. */
+  margin: 0;
+  padding-left: var(--q-space-5);
+  list-style: disc outside;
+}
+
+.items li {
+  /* Paths have no spaces to break at, so long ones break mid-segment. */
+  overflow-wrap: anywhere;
+}
+
+/* The remainder. No marker: it counts the items above rather than joining
+   them. */
+.items .more {
+  margin-left: calc(var(--q-space-5) * -1);
+  color: var(--q-fgColor-muted);
+  list-style: none;
+}
+
+/* A real target, not a glyph: the smallest comfortable hit area. */
+.close {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--q-space-8);
+  height: var(--q-space-8);
+  font-size: var(--q-text-title);
+  line-height: 1;
+  color: var(--q-fgColor-muted);
+  cursor: pointer;
+  border-radius: var(--q-radius);
+}
+
+.close:hover {
+  color: var(--q-fgColor-default);
+  background: var(--q-overlay-hover);
+}
+
+/* The second block. Shown only from the second toast onward: closing them one
+   at a time is the tedium this removes. */
+.dismiss_all {
+  flex: none;
+  padding: var(--q-space-2) var(--q-space-4);
+  font-family: var(--q-font-sans);
+  font-size: var(--q-text-body);
+  color: var(--q-fgColor-default);
+  pointer-events: auto;
+  cursor: pointer;
+  background: var(--q-bgColor-default);
+  border: 1px solid var(--q-borderColor-default);
+  border-radius: var(--q-radius);
+  /* Floats over the list like the cards do, so it carries their shadow: a
+     flat control here reads as part of the page beneath it. */
+  box-shadow: rgb(0 0 0 / 24%) 0 4px 12px -2px;
+}
+
+.dismiss_all:hover {
+  background: var(--q-overlay-hover);
+}

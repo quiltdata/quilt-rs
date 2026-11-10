@@ -38,9 +38,10 @@ fn App() -> impl IntoView {
     // Before the singletons, so the appbar's activity line and its producer
     // below both find it. Without it the line draws nothing.
     provide_context(kit::Activities::new());
+    // Above the router, so every page's band row finds it.
+    components::provide_update_check();
     view! {
         <components::ConnectionBanner />
-        <components::UpdateChecker />
         <components::ToastStack />
         <components::AutopullActivityFeed />
         <components::QuitPrompt />

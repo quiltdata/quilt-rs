@@ -2,12 +2,8 @@
  * Page frame: the themed surface, and the column under the appbar.
  */
 
-/* The frame owns the window height and is the page's scroller.
- *
- * It has to own the height rather than let the document scroll: `body` carries
- * `overflow: hidden` from the app's global layout (`quilt-sync/ui/assets/css/layout.css`),
- * which `index.html` loads after this bundle, so a page taller than the window is
- * clipped with no scrollbar anywhere.
+/* The frame owns the window height and is the page's scroller, so the
+ * document itself never scrolls.
  *
  * Most pages fill it, and a long list scrolls in its own box below the parts
  * that stay. Then `overflow-y: auto` is the fallback below the window floor,
@@ -20,14 +16,10 @@
   flex-direction: column;
   overflow-y: auto;
   background: var(--q-bgColor-page);
-  /* The page sets its own background, so it also sets its own text colour.
-   * Without this the page inherits `body`'s colour, which is `layout.css`'s
-   * `--q-ui-palette-text-primary`: a fixed `rgb(0 0 0 / 87%)` that no theme
-   * changes. Text without its own colour would then be black on the dark
-   * background. Descendants that set a colour still override it. */
+  /* The page sets its own background, so it also sets its own text colour and
+   * type, rather than relying on what `body` carries. Descendants that set a
+   * colour still override it. */
   color: var(--q-fgColor-default);
-  /* Its own type for the same reason: `layout.css` sets `body`'s face to
-   * Roboto after this bundle loads, and the page must not inherit it. */
   font-family: var(--q-font-sans);
   font-size: var(--q-text-body);
   line-height: var(--q-line-body);

@@ -37,6 +37,7 @@ use std::pin::Pin;
 
 use leptos::prelude::*;
 
+use crate::components::UpdateNotice;
 use crate::components::appbar::{appbar_actions, transit_appbar_actions};
 use crate::error_handler::{current_path, follow_redirect};
 use quilt_ui_kit::readable;
@@ -234,6 +235,7 @@ where
             // down. Nothing before the first answer: a skeleton here would
             // reserve a band for news that usually is not there.
             banner=view! {
+                <UpdateNotice />
                 {outcome_band(outcome, showing)}
                 // A failed read says nothing about a command that ran before
                 // it, which is why the outcome band is outside this.
