@@ -385,10 +385,12 @@ fn primary_action(
         Some(PackageAction::Resolve) => goto.set(Some(resolve_to.clone())),
         Some(PackageAction::SignIn) => goto.set(sign_in_to.clone()),
         Some(PackageAction::SwitchRole) => role_open.set(true),
+        Some(PackageAction::TryAgain) => reload.notify(),
         // `Publish` returned above; the header never offers `ChooseS3Bucket`.
         Some(PackageAction::Publish | PackageAction::ChooseS3Bucket) | None => (),
     };
 
+    let retrying = retrying(action);
     action.map_or_else(
         || ().into_any(),
         |action| {
@@ -397,6 +399,7 @@ fn primary_action(
                     <Button
                         variant=ButtonVariant::Primary
                         disabled=Signal::derive(move || busy.get())
+                        loading=retrying
                         on_click=on_primary
                     >
                         {action.label()}
@@ -406,6 +409,19 @@ fn primary_action(
             .into_any()
         },
     )
+}
+
+/// Whether the page's read is out: the signal *Refresh* spins on.
+#[derive(Clone, Copy)]
+pub(crate) struct Reading(pub RwSignal<bool>);
+
+/// Whether *Try again* spins: it is a read, so it spins on the read *Refresh*
+/// spins on. A header mounted without the page has no read to spin on.
+fn retrying(action: Option<PackageAction>) -> Signal<bool> {
+    let reading = use_context::<Reading>();
+    Signal::derive(move || {
+        action == Some(PackageAction::TryAgain) && reading.is_some_and(|Reading(r)| r.get())
+    })
 }
 
 /// The confirmations behind the menu's two Danger items.

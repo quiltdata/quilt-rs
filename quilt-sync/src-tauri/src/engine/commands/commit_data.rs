@@ -86,6 +86,11 @@ pub struct CommitData {
     /// bucket on ambient AWS credentials, fixed in `~/.aws` or by `aws sso login` — so it
     /// cannot carry the blocked state on its own.
     pub no_session_host: Option<String>,
+    /// `Some` when the read did not reach the bucket's `latest`, so
+    /// committing, which needs the bucket and its catalog, would fail.
+    /// Disables the commit affordances like `no_session`; the remedy is to
+    /// wait.
+    pub unreachable: Option<Unreachable>,
     pub entries: Vec<InstalledPackageEntryData>,
     pub ignored_count: usize,
     pub unmodified_count: usize,
@@ -201,6 +206,13 @@ fn config_object_url(host: Option<&Host>, bucket: Option<&str>) -> Option<String
         },
         host,
     )
+}
+
+/// What a commit page could not reach.
+#[derive(Serialize, Debug, PartialEq, Eq)]
+pub struct Unreachable {
+    /// The catalog; `None` for a bucket with no catalog.
+    pub host: Option<String>,
 }
 
 /// Map a fetched workflows config to the UI's state. Shared by the commit
@@ -373,6 +385,10 @@ async fn get_commit_data_from_model(
         }
         Err(err) => return Err(err),
     };
+    let unreachable = match super::package_page::unreachable_state(&lineage, &status) {
+        Some(super::main_page::PackageStateDto::Unreachable { host }) => Some(Unreachable { host }),
+        _ => None,
+    };
 
     let newer = super::package_page::newer_revision(&status);
     let pkg_status_str = match status.upstream_state {
@@ -536,6 +552,7 @@ async fn get_commit_data_from_model(
         no_access_reason,
         no_session,
         no_session_host,
+        unreachable,
         entries: entries_list,
         ignored_count,
         unmodified_count,
@@ -1109,6 +1126,43 @@ mod tests {
             .await
             .map_err(|e| e.to_string())?;
             assert_eq!(data.newer.as_deref(), expected, "refreshed: {refreshed}");
+        }
+        Ok(())
+    }
+
+    /// A read that did not reach the bucket names the host it couldn't
+    /// reach, so the page can disable publishing and say why.
+    #[tokio::test]
+    async fn commit_data_names_a_host_it_could_not_reach() -> Result<(), String> {
+        for (refreshed, expected) in [(false, true), (true, false)] {
+            let mut model = denial_contrast_model(fixtures::host());
+            model
+                .expect_get_installed_package_status()
+                .returning(move |_, _| {
+                    Ok(quilt::lineage::InstalledPackageStatus {
+                        latest_refreshed: refreshed,
+                        ..quilt::lineage::InstalledPackageStatus::new(
+                            quilt::lineage::UpstreamState::UpToDate,
+                            one_local_change(),
+                        )
+                    })
+                });
+            let data = get_commit_data_from_model(
+                &model,
+                &RoleCache::default(),
+                &crate::engine::telemetry::Telemetry::default(),
+                &PublishSettings::default(),
+                &("foo", "bar").into(),
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+            assert_eq!(
+                data.unreachable,
+                expected.then(|| Unreachable {
+                    host: Some(fixtures::host().to_string())
+                }),
+                "refreshed: {refreshed}"
+            );
         }
         Ok(())
     }

@@ -89,6 +89,13 @@ pub struct EntryData {
     pub namespace: Namespace,
 }
 
+/// What the commit page could not reach.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct Unreachable {
+    /// The catalog; `None` for a bucket with no catalog.
+    pub host: Option<String>,
+}
+
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommitData {
@@ -129,6 +136,10 @@ pub struct CommitData {
     /// The deployment to sign in to, when there is one; `None` for ambient
     /// AWS credentials, fixed in `~/.aws` or by `aws sso login`.
     pub no_session_host: Option<String>,
+    /// `Some` when the read didn't reach the bucket, so committing would
+    /// fail. Disables the commit affordances like `no_session`; the remedy is
+    /// to wait.
+    pub unreachable: Option<Unreachable>,
     pub entries: Vec<EntryData>,
     pub ignored_count: usize,
     pub unmodified_count: usize,

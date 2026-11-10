@@ -314,9 +314,12 @@ fn precedence(state: &PackageState) -> u8 {
         // The attributable half of that same error rank, named rather than
         // inferred. A session state reaches the queue as a member of a cause and
         // never as a row of its own; these arms only keep the match total.
+        // `Unreachable` only reaches the package page; it shares the rank of a
+        // state that could not be read.
         PackageState::Unknown
         | PackageState::NoSession { .. }
-        | PackageState::SignInExpired { .. } => 2,
+        | PackageState::SignInExpired { .. }
+        | PackageState::Unreachable { .. } => 2,
         PackageState::Diverged => 3,
         PackageState::Behind => 4,
         PackageState::PendingChanges { .. } | PackageState::PendingCommit => 5,
@@ -463,13 +466,15 @@ pub fn action_href(action: PackageAction, namespace: &Namespace) -> String {
         // honest answer is the package's own page, whose header offers the
         // host-scoped control.
         //
-        // `SwitchRole` is unreachable from `action`; mapped so this match
-        // cannot go stale.
+        // `SwitchRole` is unreachable from `action`, and `TryAgain` belongs to
+        // a state only the package page shows; mapped so this match cannot go
+        // stale.
         PackageAction::Publish
         | PackageAction::GetLatest
         | PackageAction::ChooseS3Bucket
         | PackageAction::SignIn
-        | PackageAction::SwitchRole => super::package_page_href(namespace),
+        | PackageAction::SwitchRole
+        | PackageAction::TryAgain => super::package_page_href(namespace),
     }
 }
 
@@ -1544,11 +1549,13 @@ mod tests {
 
     #[test]
     fn action_href_names_the_right_page_and_carries_the_namespace() {
-        use PackageAction::{ChooseS3Bucket, GetLatest, Publish, Resolve, SignIn, SwitchRole};
+        use PackageAction::{
+            ChooseS3Bucket, GetLatest, Publish, Resolve, SignIn, SwitchRole, TryAgain,
+        };
         // Every verb, guarded by an exhaustive match: a verb added to the
         // vocabulary stops this test's build, as `action_href`'s own match does.
         let _ = |a: PackageAction| match a {
-            Publish | Resolve | GetLatest | ChooseS3Bucket | SignIn | SwitchRole => (),
+            Publish | Resolve | GetLatest | ChooseS3Bucket | SignIn | SwitchRole | TryAgain => (),
         };
         let org_pkg = ns("org/pkg");
         // Asserted as the whole string, since a substring match cannot tell a
@@ -1566,6 +1573,7 @@ mod tests {
         // Never produced by `action`, and mapped anyway so the vocabulary can
         // gain a verb without this match going stale.
         assert_eq!(href(SwitchRole), package_page);
+        assert_eq!(href(TryAgain), package_page);
         // Resolve opens the package page's resolve mode.
         assert_eq!(
             href(Resolve),

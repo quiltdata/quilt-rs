@@ -32,6 +32,16 @@ impl HostChecksums {
             HostChecksums::Sha256Chunked => MULTIHASH_SHA256_CHUNKED,
         }
     }
+
+    /// The writable algorithm a multihash code names, if it names one.
+    #[must_use]
+    pub fn from_algorithm(code: u64) -> Option<Self> {
+        match code {
+            MULTIHASH_CRC64_NVME => Some(HostChecksums::Crc64),
+            MULTIHASH_SHA256_CHUNKED => Some(HostChecksums::Sha256Chunked),
+            _ => None,
+        }
+    }
 }
 
 /// Configuration returned by a host

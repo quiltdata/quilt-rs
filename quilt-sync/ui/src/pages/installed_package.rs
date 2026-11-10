@@ -50,6 +50,7 @@ pub(crate) mod resolve;
 mod revision_history;
 mod revision_pane;
 mod role_dialog;
+mod unreachable_band;
 
 pub(crate) use bucket_form::BucketDialog;
 use context_pane::{CurrentRevisionPane, CurrentRevisionPaneSkeleton};
@@ -1338,9 +1339,11 @@ fn PackageScreen(
             shown.0.set_value(None);
         }
     });
-    // For the header's *Copied* and Keeping's folders dialog. Not on `Wiring`,
+    // For the header's *Copied*, its *Try again* spinner and Keeping's folders
+    // dialog. Not on `Wiring`,
     // which every part of the page takes by value.
     provide_context(header::CopiedMark::new());
+    provide_context(header::Reading(page.in_flight));
     let folders = keeping::FoldersDialog::new();
     provide_context(folders);
     // Another package never opens on this one's draft, whatever it draws.
@@ -1472,6 +1475,7 @@ fn PackageScreen(
             bands=move |d: commands::PackagePageData| {
                 view! {
                     {pause_banner(d.sync_paused.clone(), dismissed)}
+                    {unreachable_band::unreachable_band(&d.header.state)}
                     {local_only_band::local_only_band(local_only, &d.header.state)}
                     {mismatch_band::mismatch_band(
                         mismatch,
