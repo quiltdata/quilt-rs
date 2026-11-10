@@ -296,6 +296,21 @@ async fn package_publish_command(
     Ok((namespace, outcome))
 }
 
+/// A publish by hand succeeded. One that pushed reached the bucket; one with
+/// nothing to publish proves nothing about access, but no publish is failing.
+async fn note_publish_worked(
+    m: &impl model::QuiltModel,
+    watcher: &Watcher,
+    namespace: &quilt_uri::Namespace,
+    pushed: bool,
+) {
+    if pushed {
+        watcher.transfer_worked(m, namespace, true).await;
+    } else {
+        watcher.action_needed().publish_settled(namespace);
+    }
+}
+
 pub async fn package_publish(
     s: &Services,
     namespace: String,
@@ -307,10 +322,10 @@ pub async fn package_publish(
     let watcher = &s.watcher;
     let result = package_publish_command(m, settings, &namespace).await;
     match &result {
-        Ok((ns, _)) => {
+        Ok((ns, outcome)) => {
             watcher.clear_paused(ns).await;
             watcher.note_published(ns).await;
-            watcher.transfer_worked(m, ns, true).await;
+            note_publish_worked(m, watcher, ns, outcome.push().is_some()).await;
         }
         Err(_) => note_publish_failed(m, watcher, &namespace).await,
     }
@@ -394,10 +409,10 @@ pub async fn package_commit_and_push(
     let result =
         package_commit_and_push_command(m, &namespace, &message, &metadata, workflow).await;
     match &result {
-        Ok((ns, _)) => {
+        Ok((ns, outcome)) => {
             watcher.clear_paused(ns).await;
             watcher.note_published(ns).await;
-            watcher.transfer_worked(m, ns, true).await;
+            note_publish_worked(m, watcher, ns, outcome.push().is_some()).await;
         }
         Err(_) => note_publish_failed(m, watcher, &namespace).await,
     }
