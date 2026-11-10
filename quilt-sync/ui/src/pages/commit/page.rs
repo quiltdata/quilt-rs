@@ -92,11 +92,12 @@ pub(crate) const fn primary(has_bucket: bool, changed: usize) -> Primary {
 }
 
 /// The one problem the banner reports, worst first: a role that cannot write,
-/// no session, then system files.
+/// no session, a bucket that can't be reached, then system files.
 pub(crate) fn problem(
     no_access_reason: Option<&str>,
     no_session: bool,
     no_session_host: Option<&str>,
+    unreached: Option<&commands::Unreachable>,
     junk: Option<&JunkSummary>,
 ) -> Option<Problem> {
     if let Some(reason) = no_access_reason.filter(|r| !r.is_empty()) {
@@ -109,6 +110,11 @@ pub(crate) fn problem(
             host: no_session_host
                 .filter(|h| !h.is_empty())
                 .map(str::to_string),
+        });
+    }
+    if let Some(unreached) = unreached {
+        return Some(Problem::Unreachable {
+            host: unreached.host.clone(),
         });
     }
     junk.map(|junk| {
@@ -130,6 +136,7 @@ pub(crate) fn blocked_reason(
     no_access_reason: Option<&str>,
     no_session: bool,
     no_session_host: Option<&str>,
+    unreached: Option<&commands::Unreachable>,
     check: Option<&str>,
 ) -> Option<String> {
     if let Some(reason) = no_access_reason.filter(|r| !r.is_empty()) {
@@ -141,6 +148,10 @@ pub(crate) fn blocked_reason(
             None => "No usable AWS credentials. Update ~/.aws or run aws sso login to publish."
                 .to_string(),
         });
+    }
+    if let Some(unreached) = unreached {
+        let host = unreached.host.as_deref().unwrap_or("the S3 bucket");
+        return Some(format!("Publishing waits until {host} can be reached."));
     }
     check.map(str::to_string)
 }
@@ -847,6 +858,7 @@ fn column(
 
     let (no_access, no_session) = (d.no_access_reason.clone(), d.no_session);
     let host = d.no_session_host.clone();
+    let unreachable = d.unreachable.clone();
     let unchosen = fixed.clone();
     let blocked = Signal::derive(move || {
         // The checks that need no workflow come with the ones that do: a
@@ -859,6 +871,7 @@ fn column(
             no_access.as_deref(),
             no_session,
             host.as_deref(),
+            unreachable.as_ref(),
             check.as_deref(),
         )
     });
@@ -1021,6 +1034,7 @@ fn problem_banner(
         d.no_access_reason.as_deref(),
         d.no_session,
         d.no_session_host.as_deref(),
+        d.unreachable.as_ref(),
         d.junk.as_ref(),
     )
     .map(|problem| {
@@ -1216,6 +1230,7 @@ mod tests {
             no_access_reason: None,
             no_session: false,
             no_session_host: None,
+            unreachable: None,
             entries: rows,
             ignored_count: 2,
             unmodified_count: 1,
@@ -1385,6 +1400,37 @@ mod tests {
                 ..commit_data()
             })
         })
+    }
+
+    fn unreached(_: String) -> Pin<Box<dyn Future<Output = Result<CommitData, String>>>> {
+        Box::pin(async {
+            Ok(CommitData {
+                unreachable: Some(commands::Unreachable {
+                    host: Some("quilt.test".to_string()),
+                }),
+                ..commit_data()
+            })
+        })
+    }
+
+    /// A bucket the read couldn't reach: the page opens, says so, and
+    /// publishing waits instead of failing on the click.
+    #[wasm_bindgen_test]
+    async fn an_unreachable_host_disables_publishing_and_says_why() {
+        let el = page_reading("/commit?namespace=org%2Fpkg", unreached).await;
+        assert!(
+            el.text_content().unwrap_or_default().contains(
+                "Can't reach quilt.test. Publishing and saving wait until it can be reached."
+            ),
+            "markup was {}",
+            el.inner_html()
+        );
+        let face: web_sys::HtmlButtonElement = el
+            .query_selector("[data-primary-action] button")
+            .unwrap()
+            .unwrap()
+            .unchecked_into();
+        assert!(face.disabled(), "markup was {}", el.inner_html());
     }
 
     /// Login comes back to this commit page, not to the main page.
@@ -2530,6 +2576,12 @@ mod tests {
 
     /// The banner reads the uncapped summary, not the capped rows: a system
     /// file past the cap still warns.
+    fn reached_not(host: &str) -> commands::Unreachable {
+        commands::Unreachable {
+            host: Some(host.to_string()),
+        }
+    }
+
     #[test]
     fn the_banner_reports_the_worst_problem() {
         let junk = JunkSummary {
@@ -2540,25 +2592,56 @@ mod tests {
             first_pattern: ".DS_Store".to_string(),
         };
         assert_eq!(
-            problem(None, false, None, Some(&junk)),
+            problem(None, false, None, None, Some(&junk)),
             Some(Problem::Junk {
                 count: 2,
                 names: vec![".DS_Store".to_string()],
             })
         );
         assert_eq!(
-            problem(None, true, Some("quilt.test"), Some(&junk)),
+            problem(None, true, Some("quilt.test"), None, Some(&junk)),
             Some(Problem::SignedOut {
                 host: Some("quilt.test".to_string())
             })
         );
         assert_eq!(
-            problem(Some("Your role cannot write here"), true, None, Some(&junk)),
+            problem(
+                Some("Your role cannot write here"),
+                true,
+                None,
+                None,
+                Some(&junk)
+            ),
             Some(Problem::NoAccess {
                 reason: "Your role cannot write here".to_string()
             })
         );
-        assert_eq!(problem(None, false, None, None), None);
+        assert_eq!(
+            problem(
+                None,
+                false,
+                None,
+                Some(&reached_not("quilt.test")),
+                Some(&junk)
+            ),
+            Some(Problem::Unreachable {
+                host: Some("quilt.test".to_string())
+            })
+        );
+        assert_eq!(
+            problem(
+                None,
+                true,
+                Some("quilt.test"),
+                Some(&commands::Unreachable { host: None }),
+                None
+            ),
+            Some(Problem::SignedOut {
+                host: Some("quilt.test".to_string())
+            }),
+            "a dead session keeps its own remedy"
+        );
+        assert_eq!(problem(None, false, None, None, None), None);
 
         // Many names: a few, then how many more, with the count exact.
         let many = JunkSummary {
@@ -2573,7 +2656,7 @@ mod tests {
             first_pattern: "*.pyc".to_string(),
         };
         assert_eq!(
-            problem(None, false, None, Some(&many))
+            problem(None, false, None, None, Some(&many))
                 .map(|p| p.words())
                 .as_deref(),
             Some("40 system files would be published (a.pyc, b.pyc, c.pyc, and 37 more)")
@@ -2583,18 +2666,29 @@ mod tests {
     #[test]
     fn a_blocked_primary_says_why_and_a_failed_check_blocks_it() {
         assert_eq!(
-            blocked_reason(Some("Role analyst has no access"), false, None, None).as_deref(),
+            blocked_reason(Some("Role analyst has no access"), false, None, None, None).as_deref(),
             Some("Role analyst has no access. Switch role to publish.")
         );
         assert_eq!(
-            blocked_reason(None, true, Some("quilt.test"), None).as_deref(),
+            blocked_reason(None, true, Some("quilt.test"), None, None).as_deref(),
             Some("Sign in to quilt.test to publish.")
         );
         assert_eq!(
-            blocked_reason(None, false, None, Some("Missing operator")).as_deref(),
+            blocked_reason(None, false, None, None, Some("Missing operator")).as_deref(),
             Some("Missing operator")
         );
-        assert_eq!(blocked_reason(None, false, None, None), None);
+        assert_eq!(
+            blocked_reason(
+                None,
+                false,
+                None,
+                Some(&reached_not("quilt.test")),
+                Some("Missing operator")
+            )
+            .as_deref(),
+            Some("Publishing waits until quilt.test can be reached.")
+        );
+        assert_eq!(blocked_reason(None, false, None, None, None), None);
     }
 
     /// `commit`'s banned words, over every string this page adds.
@@ -2606,9 +2700,18 @@ mod tests {
             "Could not open the folder.".to_string(),
             "Could not load this package.".to_string(),
             missing_workflow_note("wrong-workflow"),
-            blocked_reason(Some("No access"), false, None, None).unwrap(),
-            blocked_reason(None, true, Some("quilt.test"), None).unwrap(),
-            blocked_reason(None, true, None, None).unwrap(),
+            blocked_reason(Some("No access"), false, None, None, None).unwrap(),
+            blocked_reason(None, true, Some("quilt.test"), None, None).unwrap(),
+            blocked_reason(None, true, None, None, None).unwrap(),
+            blocked_reason(
+                None,
+                false,
+                None,
+                Some(&commands::Unreachable { host: None }),
+                None,
+            )
+            .unwrap(),
+            Problem::Unreachable { host: None }.words(),
         ];
         for kind in [
             WorkflowViewKind::NotConfigured,

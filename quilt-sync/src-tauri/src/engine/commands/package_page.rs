@@ -414,7 +414,7 @@ fn blocked_state(err: &Error) -> Option<PackageStateDto> {
 /// The state of a status that did not read the bucket's `latest`. It
 /// outranks every state the status resolves to, because each of their actions
 /// needs the host.
-fn unreachable_state(
+pub(super) fn unreachable_state(
     lineage: &quilt::lineage::PackageLineage,
     status: &quilt::lineage::InstalledPackageStatus,
 ) -> Option<PackageStateDto> {

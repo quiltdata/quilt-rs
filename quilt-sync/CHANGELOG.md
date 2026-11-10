@@ -35,7 +35,7 @@
 
 ### Fixed
 
-- The package page opens when the catalog can't be reached, and says the information may be out of date (<https://github.com/quiltdata/quilt-rs/pull/1338>)
+- The package page opens when the catalog can't be reached, and says the information may be out of date; the commit page says so too and waits to publish (<https://github.com/quiltdata/quilt-rs/pull/1338>)
 - A package task whose outcome loses `latest` to a revision published during the run lands its own changes on top of that revision instead of leaving the package Diverged, unless both changed the same file (<https://github.com/quiltdata/quilt-rs/pull/1320>)
 - A pull no longer deletes a file the new revision removed that you saved while it downloaded: the pull stops, or, once files are being replaced, the file stays as a new local file and the pull's notice names it (<https://github.com/quiltdata/quilt-rs/pull/1328>)
 
