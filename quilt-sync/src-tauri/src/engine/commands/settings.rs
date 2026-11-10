@@ -626,6 +626,13 @@ pub async fn update_fswatcher_settings(s: &Services, enabled: bool) -> Result<()
 
     new.save(&data_dir).await.map_err(|e| e.to_string())?;
     *fswatcher_settings.write().await = new;
+    if !enabled {
+        // Turned off, it is not failing, also when it never started.
+        s.watcher.action_needed().leave(
+            &crate::engine::action_needed::Subject::App,
+            crate::engine::action_needed::Kind::Watcher,
+        );
+    }
     Ok(())
 }
 

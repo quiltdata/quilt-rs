@@ -279,6 +279,14 @@ impl ActionNeeded {
         self.leave(&Subject::package(namespace), Kind::PublishFailing);
     }
 
+    /// Keep the failing publish runs of the packages `keep` holds to.
+    pub fn keep_publish_runs(&self, keep: impl Fn(&Namespace) -> bool) {
+        self.publish_failing_since
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .retain(|namespace, _| keep(namespace));
+    }
+
     /// Publishing was turned off: no publish is failing.
     pub fn publishing_off(&self) {
         self.publish_failing_since
@@ -426,6 +434,17 @@ mod tests {
 
         let left: Vec<Kind> = set.get().iter().map(|e| e.cause.kind()).collect();
         assert_eq!(left, vec![Kind::PublishFailing, Kind::SignIn]);
+    }
+
+    /// A package pruned and installed again starts a new failing run.
+    #[test]
+    fn a_pruned_package_starts_a_new_failing_run() {
+        let set = ActionNeeded::default();
+        let start = Instant::now();
+        set.publish_failed(&ns("a/b"), start);
+        set.keep_publish_runs(|_| false);
+        let later = start + PUBLISH_FAILING_AFTER;
+        assert_eq!(set.publish_failed(&ns("a/b"), later), Duration::ZERO);
     }
 
     #[test]

@@ -1155,10 +1155,13 @@ pub(crate) async fn prune_action_needed(
             (Subject::App, Kind::Credentials) => !read_all || origins.contains(&None),
             (Subject::App, _) => true,
         });
+    inner
+        .action_needed
+        .keep_publish_runs(|namespace| packages.iter().any(|pkg| pkg.namespace == *namespace));
 }
 
-/// A publish that has kept failing for [`PUBLISH_FAILING_AFTER`] needs the
-/// reader; one with nothing left to publish, or publishing off, does not.
+/// A publish that has kept failing for [`PUBLISH_FAILING_AFTER`] needs
+/// action; one with nothing left to publish, or publishing off, does not.
 ///
 /// Reads the setting now, not the pass's snapshot, and holds it through the
 /// update: turning publishing off mid-pass then either comes first and is

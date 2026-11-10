@@ -469,22 +469,20 @@ impl Watcher {
     /// invalidated cache.
     pub async fn clear_role_denied_pauses(&self) {
         let mut paused = self.inner.paused.write().await;
-        let cleared: Vec<Namespace> = paused
+        let denied: Vec<Namespace> = paused
             .iter()
             .filter(|(_, reason)| matches!(reason, PausedReason::RoleDenied { .. }))
             .map(|(namespace, _)| namespace.clone())
             .collect();
-        for namespace in &cleared {
-            paused.remove(namespace);
-        }
+        let cleared: Vec<(Namespace, PausedReason)> = denied
+            .into_iter()
+            .filter_map(|namespace| paused.remove_entry(&namespace))
+            .collect();
         drop(paused);
-        for namespace in &cleared {
+        for (namespace, reason) in &cleared {
             self.inner.aggregator.note_cleared(namespace);
-            self.inner.reporter.report_pause_cleared(namespace);
+            self.inner.unpaused(namespace, reason);
         }
-        // The old role's refusals, paused or found by a page's read, are not
-        // the new role's; a read still refused enters again.
-        self.inner.action_needed.forget(Kind::NoAccess);
         self.inner.reschedule_publish();
     }
 
@@ -1111,6 +1109,31 @@ mod tests {
         );
         watcher.transfer_worked(&model, &ns, true).await;
         assert!(set.get().is_empty(), "the publish reached the bucket");
+    }
+
+    /// A role switch takes the denial pauses' entries, not a refusal a page's
+    /// read found on another package, which its next read settles.
+    #[tokio::test]
+    async fn a_role_switch_takes_only_the_denial_pauses() {
+        use crate::engine::action_needed::Cause;
+        let watcher = Watcher::new_for_test(Arc::new(LogReporter));
+        let paused: Namespace = ("acme", "a").into();
+        let read: Namespace = ("acme", "b").into();
+        let denied = PausedReason::RoleDenied {
+            role: "ReadOnly".to_string(),
+        };
+        watcher.pause(&paused, None, denied).await;
+        watcher
+            .action_needed()
+            .enter(Subject::package(&read), Cause::NoAccess { role: None });
+        watcher.clear_role_denied_pauses().await;
+        let left: Vec<Subject> = watcher
+            .action_needed()
+            .get()
+            .into_iter()
+            .map(|e| e.subject)
+            .collect();
+        assert_eq!(left, [Subject::package(&read)]);
     }
 
     /// A conflict replacing a denial pause takes its place: the package
