@@ -135,10 +135,12 @@ where
         }
         let answer = check();
         leptos::task::spawn_local(async move {
-            if let Ok(Some(info)) = answer.await
+            // A failed check keeps what was known; "no update" clears a
+            // release the feed has since withdrawn.
+            if let Ok(answer) = answer.await
                 && !busy()
             {
-                let _ = found.try_set(Some(Found {
+                let _ = found.try_set(answer.map(|info| Found {
                     state: UpdateState::Available {
                         version: info.version,
                     },
@@ -299,6 +301,32 @@ mod tests {
         sleep_ms(120).await;
         assert!(asked.get() >= 2, "no check after the interval");
         assert!(says_update(&el), "the later check's release is not shown");
+        unmount_earlier();
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_withdrawn_release_leaves_the_band() {
+        forget_dismiss();
+        let asked = Rc::new(Cell::new(0));
+        let counter = asked.clone();
+        // Offered once, then withdrawn, then the feed can't be read.
+        let check = move || {
+            counter.set(counter.get() + 1);
+            std::future::ready(match counter.get() {
+                1 => Ok(Some(release())),
+                2 => Ok(None),
+                _ => Err("offline".to_owned()),
+            })
+        };
+        let el = mount(move || {
+            check_every(Duration::from_millis(50), DISMISS_DURATION_MS, check);
+            view! { <UpdateNotice /> }
+        });
+        sleep_ms(0).await;
+        assert!(says_update(&el));
+
+        sleep_ms(80).await;
+        assert!(!says_update(&el), "a withdrawn release still shows");
         unmount_earlier();
     }
 
