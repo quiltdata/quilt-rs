@@ -210,28 +210,141 @@
   gap: var(--q-space-2);
 }
 
-/* The metadata editor's own look, kept light in both themes: the editor draws
- * its document in its light palette, so its menu and buttons match it.
- * Global inside the editor because the classes are the editor's, and
- * `!important` because the editor's own scoped rules outrank these. */
+/* The metadata editor, `vanilla-jsoneditor`, drawn from the kit's tokens. Its
+ * palette is its `--jse-*` variables; the tokens behind them already follow
+ * the theme, so one set serves both. Keys and values in the default text
+ * colour and punctuation muted, as the kit's JSON display draws them.
+ *
+ * The rules after this block reach into the editor's own classes, so they are
+ * global inside it, and `!important` because its scoped rules outrank them. */
 .editor {
-  --jse-font-size-main-menu: 1rem;
-  --jse-font-size-mono: 1rem;
-  --jse-font-size: 1.2rem;
-  --jse-menu-color: rgb(0 0 0 / 60%);
-  --jse-text-color: rgb(0 0 0 / 87%);
-  --jse-theme-color-highlight: rgb(0 0 0 / 4%);
-  --jse-theme-color: #fff;
-  --jse-padding: 16px;
-  --jse-modal-editor-theme-color: #fff;
-  --jse-modal-editor-theme-color-highlight: rgb(0 0 0 / 4%);
+  --jse-font-family: var(--q-font-sans);
+  --jse-font-family-mono: var(--q-font-mono);
+  --jse-font-size: var(--q-text-body);
+  --jse-font-size-main-menu: var(--q-text-body);
+  --jse-font-size-mono: var(--q-text-body);
+  --jse-padding: var(--q-space-2);
+  --jse-menu-button-size: var(--q-control-height);
+
+  --jse-theme-color: var(--q-bgColor-muted);
+  --jse-theme-color-highlight: var(--q-overlay-hover);
+  --jse-background-color: var(--q-bgColor-default);
+  --jse-text-color: var(--q-fgColor-default);
+  --jse-text-readonly: var(--q-fgColor-muted);
+  --jse-text-color-inverse: var(--q-bgColor-default);
+  --jse-error-color: var(--q-fgColor-danger);
+  --jse-warning-color: var(--q-fgColor-attention);
+  --jse-info-color: var(--q-fgColor-accent);
+
+  --jse-main-border: 1px solid var(--q-borderColor-default);
+  --jse-menu-color: var(--q-fgColor-default);
+  --jse-modal-background: var(--q-bgColor-default);
+  --jse-modal-code-background: var(--q-bgColor-inset);
+  --jse-modal-editor-theme-color: var(--q-bgColor-muted);
+  --jse-modal-editor-theme-color-highlight: var(--q-overlay-hover);
+
+  --jse-tooltip-background: var(--q-bgColor-default);
+  --jse-tooltip-action-button-color: var(--q-fgColor-onEmphasis);
+  --jse-tooltip-action-button-background: var(--q-bgColor-accent-emphasis);
+
+  --jse-panel-background: var(--q-bgColor-muted);
+  --jse-panel-color-readonly: var(--q-fgColor-disabled);
+  --jse-panel-border: var(--jse-main-border);
+  --jse-panel-button-background-highlight: var(--q-overlay-hover);
+
+  --jse-context-menu-background: var(--q-bgColor-default);
+  --jse-context-menu-background-highlight: var(--q-overlay-hover);
+  --jse-context-menu-color: var(--q-fgColor-default);
+  --jse-context-menu-color-disabled: var(--q-fgColor-disabled);
+  --jse-context-menu-separator-color: var(--q-borderColor-muted);
+  --jse-context-menu-pointer-background: var(--q-bgColor-inset);
+  --jse-context-menu-pointer-background-highlight: var(--q-overlay-active);
+  --jse-context-menu-pointer-hover-background: var(--q-overlay-hover);
+  --jse-context-menu-tip-background: var(--q-bgColor-muted);
+
+  --jse-key-color: var(--q-fgColor-default);
+  --jse-value-color: var(--q-fgColor-default);
+  --jse-value-color-number: var(--q-fgColor-default);
+  --jse-value-color-boolean: var(--q-fgColor-default);
+  --jse-value-color-null: var(--q-fgColor-default);
+  --jse-value-color-string: var(--q-fgColor-default);
+  --jse-value-color-url: var(--q-fgColor-accent);
+  --jse-delimiter-color: var(--q-fgColor-muted);
+  --jse-edit-outline: var(--q-focus-outlineWidth) solid var(--q-focus-outlineColor);
+
+  --jse-selection-background-color: var(--q-overlay-selected);
+  --jse-selection-background-inactive-color: var(--q-overlay-hover);
+  --jse-hover-background-color: var(--q-overlay-hover);
+  --jse-active-line-background-color: var(--q-overlay-hover);
+  --jse-search-match-background-color: var(--q-bgColor-attention-muted);
+  --jse-search-match-color: var(--q-bgColor-attention-muted);
+  --jse-search-match-outline: none;
+  --jse-search-match-active-color: var(--q-bgColor-attention-muted);
+  --jse-search-match-active-outline: 1px solid var(--q-borderColor-attention-muted);
+
+  --jse-collapsed-items-background-color: var(--q-bgColor-muted);
+  --jse-collapsed-items-selected-background-color: var(--q-overlay-selected);
+  --jse-collapsed-items-link-color: var(--q-fgColor-muted);
+  --jse-collapsed-items-link-color-highlight: var(--q-fgColor-accent);
+
+  --jse-tag-background: var(--q-bgColor-inset);
+  --jse-tag-color: var(--q-fgColor-muted);
+
+  --jse-table-header-background: var(--q-bgColor-muted);
+  --jse-table-header-background-highlight: var(--q-overlay-hover);
+  --jse-table-row-odd-background: var(--q-overlay-hover);
+
+  --jse-controls-box-shadow: var(--q-shadow-overlay);
+  --jse-input-background: var(--q-bgColor-default);
+  --jse-input-border: 1px solid var(--q-borderColor-field);
+  --jse-input-border-focus: 1px solid var(--q-focus-outlineColor);
+  --jse-input-radius: var(--q-radius);
+  --jse-button-background: var(--q-bgColor-default);
+  --jse-button-background-highlight: var(--q-overlay-hover);
+  --jse-button-color: var(--q-fgColor-default);
+  --jse-button-primary-background: var(--q-bgColor-accent-emphasis);
+  --jse-button-primary-background-highlight: var(--q-bgColor-accent-emphasis-hover);
+  --jse-button-primary-background-disabled: var(--q-overlay-hover);
+  --jse-button-primary-color: var(--q-fgColor-onEmphasis);
+  --jse-button-secondary-background: var(--q-bgColor-default);
+  --jse-button-secondary-background-highlight: var(--q-overlay-hover);
+  --jse-button-secondary-background-disabled: var(--q-overlay-hover);
+  --jse-button-secondary-color: var(--q-fgColor-default);
+  --jse-a-color: var(--q-fgColor-accent);
+  --jse-a-color-highlight: var(--q-fgColor-accent);
+
+  --jse-message-error-background: var(--q-bgColor-danger-muted);
+  --jse-message-error-color: var(--q-fgColor-danger-onMuted);
+  --jse-message-warning-background: var(--q-bgColor-attention-muted);
+  --jse-message-warning-color: var(--q-fgColor-attention-onMuted);
+  --jse-message-success-background: var(--q-bgColor-success-muted);
+  --jse-message-success-color: var(--q-fgColor-success-onMuted);
+  --jse-message-info-background: var(--q-bgColor-neutral-muted);
+  --jse-message-info-color: var(--q-fgColor-neutral-onMuted);
+  --jse-message-action-background: var(--q-overlay-hover);
+  --jse-message-action-background-highlight: var(--q-overlay-active);
+
+  --jse-item-is-active-bg: var(--q-overlay-selected);
+  --jse-svelte-select-background: var(--q-bgColor-default);
+  --jse-svelte-select-border: var(--jse-input-border);
+  --jse-svelte-select-border-radius: var(--q-radius);
+  --list-background: var(--q-bgColor-default);
+  --item-hover-bg: var(--q-overlay-hover);
+  --input-color: var(--q-fgColor-default);
+
+  --jse-color-picker-background: var(--q-bgColor-muted);
 }
 
+/* The editor reads this once, for its text mode's caret and selection. */
+:global(:root[data-theme="dark"]) .editor {
+  --jse-theme: dark;
+}
+
+/* The menu: the mode switch on the right, as the kit's segmented control. */
 .editor :global(.jse-menu) {
   justify-content: flex-end;
-  border: 1px solid rgb(0 0 0 / 23%);
-  border-radius: 4px 4px 0 0;
-  padding: 8px;
+  border: var(--jse-main-border);
+  border-radius: var(--q-radius) var(--q-radius) 0 0;
 }
 
 .editor :global(.jse-menu) :global(.jse-space) {
@@ -239,110 +352,75 @@
 }
 
 .editor :global(.jse-menu) :global(.jse-group-button) {
-  margin: 2px 0 !important;
-  align-items: center !important;
-  background-color: #fff !important;
-  border: 1px solid rgb(0 0 0 / 23%) !important;
-  cursor: pointer !important;
-  display: inline-flex !important;
-  font-family: var(--q-font-sans) !important;
-  line-height: 1.75 !important;
-  min-width: 64px !important;
-  padding: 2px 8px !important;
-  text-decoration: none !important;
-  text-transform: uppercase !important;
-  font-size: 0.875rem !important;
-  color: rgb(0 0 0 / 87%) !important;
-  height: auto !important;
+  border-color: var(--q-borderColor-field) !important;
+  background: var(--q-bgColor-default) !important;
+  color: var(--q-fgColor-muted) !important;
+  padding: 0 11px !important;
+  text-transform: capitalize;
 }
 
-.editor :global(.jse-menu) :global(.jse-group-button):nth-child(1) {
-  border-radius: 4px 0 0 4px !important;
+.editor :global(.jse-menu) :global(.jse-group-button):hover {
+  color: var(--q-fgColor-default) !important;
 }
 
-.editor :global(.jse-menu) :global(.jse-group-button):nth-child(3) {
-  border-radius: 0 4px 4px 0 !important;
+.editor :global(.jse-menu) :global(.jse-group-button):global(.jse-first) {
+  border-radius: var(--q-radius) 0 0 var(--q-radius);
+}
+
+.editor :global(.jse-menu) :global(.jse-group-button):global(.jse-last) {
+  border-radius: 0 var(--q-radius) var(--q-radius) 0;
 }
 
 .editor :global(.jse-menu) :global(.jse-group-button):global(.jse-selected) {
-  box-shadow:
-    inset 0 3px 1px -2px rgb(0 0 0 / 20%),
-    inset 0 2px 2px 0 rgb(0 0 0 / 14%),
-    inset 0 1px 5px 0 rgb(0 0 0 / 12%) !important;
-  color: rgb(0 0 0 / 60%) !important;
+  background: var(--q-bgColor-inset) !important;
+  color: var(--q-fgColor-default) !important;
+  font-weight: 600;
 }
 
-.editor
-  :global(.jse-menu)
-  :global(.jse-group-button)
-  + :global(.jse-separator) {
-  width: 0 !important;
-  margin: auto !important;
+/* The context menu, as the kit's anchored surfaces: bordered, so it has an
+ * edge in dark where the shadow does not show. */
+.editor :global(.jse-contextmenu) {
+  border: 1px solid var(--q-borderColor-default);
+  border-radius: var(--q-radius);
+}
+
+/* The empty document's buttons, as the kit's. */
+.editor :global(.jse-welcome) {
+  border: var(--jse-main-border);
+  border-top: 0;
+  border-radius: 0 0 var(--q-radius) var(--q-radius);
 }
 
 .editor :global(.jse-welcome) :global(.jse-contents) {
   display: grid !important;
-  gap: 8px !important;
+  gap: var(--q-space-2) !important;
   grid-template-columns: repeat(2, 1fr);
 }
 
-.editor :global(.jse-welcome) {
-  border: 1px solid rgb(0 0 0 / 23%);
-  border-width: 0 1px 1px;
-  border-radius: 0 0 4px 4px;
-}
-
-.editor :global(.jse-actions) button,
 .editor :global(.jse-welcome) button {
   align-self: center;
-  background-color: #fff !important;
-  border-radius: 4px !important;
-  border: 1px solid rgb(0 0 0 / 23%) !important;
-  box-shadow:
-    0 3px 1px -2px rgb(0 0 0 / 20%),
-    0 2px 2px 0 rgb(0 0 0 / 14%),
-    0 1px 5px 0 rgb(0 0 0 / 12%);
-  color: rgb(0 0 0 / 87%) !important;
-  font-family: var(--q-font-sans);
-  font-size: 0.875rem !important;
-  line-height: 1.75 !important;
-  min-width: 64px !important;
-  padding: 2px 8px !important;
-  text-decoration: none;
-  text-transform: uppercase;
+  min-height: var(--q-control-height);
+  padding: 0 12px !important;
+  border: 1px solid var(--q-borderColor-default) !important;
+  border-radius: var(--q-radius) !important;
+  background: var(--q-bgColor-default) !important;
+  color: var(--q-fgColor-default) !important;
 }
 
-.editor :global(.jse-actions) button {
-  font-size: 1.2rem !important;
-  min-width: 144px !important;
-  padding: 4px 16px !important;
+.editor :global(.jse-welcome) button:hover {
+  background: var(--q-overlay-hover) !important;
 }
 
-.editor :global(.jse-actions) :global(.jse-primary) {
-  color: #fff !important;
-  background: var(--q-bgColor-brand) !important;
-}
-
-.editor :global(.jse-actions) :global(.jse-primary):hover {
-  color: #fff !important;
-  background: var(--q-bgColor-brand) !important;
-}
-
-.editor :global(.jse-welcome-title) {
-  color: rgb(0 0 0 / 87%);
-  font-family: var(--q-font-sans);
-  font-size: 1rem;
+.editor :global(.jse-welcome-title),
+.editor :global(.jse-welcome-info) {
   grid-column: 1 / 4;
 }
 
 .editor :global(.jse-welcome-info) {
-  color: rgb(0 0 0 / 60%);
-  font-family: var(--q-font-sans);
-  font-size: 1rem;
-  grid-column: 1 / 4;
-  margin-bottom: 8px;
+  color: var(--q-fgColor-muted);
+  margin-bottom: var(--q-space-2);
 }
 
 .editor :global(.jse-welcome-weight) {
-  font-weight: 500;
+  font-weight: 600;
 }
