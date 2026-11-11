@@ -32,7 +32,7 @@ pub(super) async fn onto_latest<M: QuiltModel>(
     installed: &quilt::InstalledPackage,
     aggregator: &SyncTrayAggregator,
     scope: SyncScope,
-    published: &mut Option<Published>,
+    published: &mut Vec<Published>,
 ) -> Result<RefreshOutcome, WatchError> {
     let namespace = &installed.namespace;
     let held = Held {
@@ -80,18 +80,20 @@ pub(super) async fn onto_latest<M: QuiltModel>(
             model.push_onto(&theirs_uri, merged).await
         }
         .map_err(sync_err)?;
+        // Kept as soon as it is uploaded, `latest` or not: the move after can
+        // fail, and a later attempt can run out.
+        let entry = Draft::published(
+            namespace,
+            Some(&theirs_uri.hash),
+            &pushed.manifest_uri.hash,
+            &changes,
+        );
+        published.push(Published {
+            message,
+            entry: entry.latest_or_not(pushed.certified_latest),
+        });
         if pushed.certified_latest {
             info!("autosync: merged namespace={namespace} onto latest");
-            // Kept before the move, which can fail with the publish landed.
-            *published = Some(Published {
-                message,
-                entry: Draft::published(
-                    namespace,
-                    Some(&theirs_uri.hash),
-                    &pushed.manifest_uri.hash,
-                    &changes,
-                ),
-            });
             return move_to(&held, &pushed.manifest_uri).await;
         }
     }

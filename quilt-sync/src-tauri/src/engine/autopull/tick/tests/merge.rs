@@ -567,7 +567,7 @@ async fn a_latest_that_keeps_moving_pauses_the_copy_after_three_attempts() {
         )
     });
 
-    let (inner, _) = tick(&model).await;
+    let (inner, reporter) = tick(&model).await;
 
     let remote = seen(&remote);
     assert_eq!(
@@ -578,6 +578,16 @@ async fn a_latest_that_keeps_moving_pauses_the_copy_after_three_attempts() {
     assert_eq!(
         inner.paused.read().await.get(&ns()),
         Some(&PausedReason::MergeRefused(MergeBlock::LatestMoved))
+    );
+    // Each upload is a revision in the bucket, and the record says so.
+    let recorded = reporter.recorded.lock().unwrap();
+    assert_eq!(recorded.len(), 3, "one entry per upload");
+    assert!(
+        recorded
+            .iter()
+            .all(|d| d.kind == crate::engine::record::Kind::Published
+                && d.outcome.as_deref()
+                    == Some("The bucket has newer changes, so this revision is not the latest."))
     );
 }
 

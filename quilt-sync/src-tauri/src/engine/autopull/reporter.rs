@@ -574,10 +574,7 @@ impl StatusReporter for SinkEventReporter {
         // Numbered here, so a publish and the pull after it keep their
         // order whichever write lands first.
         let entry = self.record.number(draft);
-        let record = Arc::clone(&self.record);
-        crate::engine::events::spawn(async move {
-            record.insert(entry).await;
-        });
+        self.record.insert_later(entry);
     }
 
     fn report_published(&self, namespace: &Namespace, host: Option<&Host>, message: &str) {

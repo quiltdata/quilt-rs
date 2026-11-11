@@ -26,6 +26,7 @@ use quilt_uri::Namespace;
 use serde::Deserialize;
 use serde::Serialize;
 use std::sync::atomic::AtomicU64;
+use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 
 use tokio::io::AsyncWriteExt;
@@ -239,6 +240,21 @@ impl Draft {
         }
     }
 
+    /// A publish, saying so when its revision did not become `latest`
+    /// because another writer moved it first.
+    #[must_use]
+    pub fn latest_or_not(self, certified: bool) -> Self {
+        if certified {
+            return self;
+        }
+        Self {
+            outcome: Some(
+                "The bucket has newer changes, so this revision is not the latest.".to_string(),
+            ),
+            ..self
+        }
+    }
+
     /// The file groups in a line: `2 files new, 1 file updated`.
     #[cfg(test)]
     #[must_use]
@@ -377,7 +393,17 @@ pub struct Record {
     /// Handed out by [`Self::number`], so ids follow the order of events
     /// even when their writes do not.
     next_id: AtomicU64,
+    /// Writes [`Self::insert_later`] has started and not finished.
+    pending: AtomicUsize,
     events: EventSink,
+}
+
+/// Where ids start: past every kept one, and never below the time in
+/// milliseconds, so a record emptied by age does not hand out ids a window
+/// still holds.
+fn first_id(last: Option<u64>) -> u64 {
+    let now = u64::try_from(Utc::now().timestamp_millis()).unwrap_or(0);
+    last.map_or(now, |id| (id + 1).max(now))
 }
 
 impl Record {
@@ -405,22 +431,25 @@ impl Record {
             }
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => true,
             Err(err) => {
-                warn!("record: could not read {}: {err}", path.display());
+                // Kept in memory this run: writing on would number entries
+                // over the ones the file holds.
+                warn!(
+                    "record: could not read {}, keeping this run's record in memory: {err}",
+                    path.display()
+                );
                 false
             }
         };
         state.trim(Utc::now());
-        let next_id = state.entries.back().map_or(1, |e| e.id + 1);
+        let next_id = first_id(state.entries.back().map(|e| e.id));
         let record = Self {
-            path: Some(path),
+            path: read.then_some(path),
             state: Mutex::new(state),
             next_id: AtomicU64::new(next_id),
+            pending: AtomicUsize::new(0),
             events,
         };
-        // A file that could not be read is left as it is, not replaced.
-        if read {
-            record.rewrite(&mut *record.state.lock().await).await;
-        }
+        record.rewrite(&mut *record.state.lock().await).await;
         record
     }
 
@@ -434,6 +463,7 @@ impl Record {
                 lines: 0,
             }),
             next_id: AtomicU64::new(1),
+            pending: AtomicUsize::new(0),
             events,
         }
     }
@@ -474,6 +504,24 @@ impl Record {
             outcome,
             at: Utc::now(),
             read: false,
+        }
+    }
+
+    /// [`insert`](Self::insert) in the background, for a caller that cannot
+    /// wait; [`settle`](Self::settle) waits for it.
+    pub fn insert_later(self: &std::sync::Arc<Self>, entry: Entry) {
+        self.pending.fetch_add(1, Ordering::SeqCst);
+        let record = std::sync::Arc::clone(self);
+        crate::engine::events::spawn(async move {
+            record.insert(entry).await;
+            record.pending.fetch_sub(1, Ordering::SeqCst);
+        });
+    }
+
+    /// Wait for the background writes, so a stop keeps what just happened.
+    pub async fn settle(&self) {
+        while self.pending.load(Ordering::SeqCst) > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         }
     }
 
@@ -730,6 +778,39 @@ mod tests {
         assert_eq!(entries[0].outcome.as_deref(), Some("Freed 1 kB."));
         // Ids go on from where they were.
         assert!(again.add(Draft::uninstalled(&ns(), None)).await > entries[1].id);
+    }
+
+    /// A record emptied by age still hands out ids past the ones before.
+    #[tokio::test]
+    async fn an_emptied_record_does_not_reuse_ids() {
+        let dir = tempfile::tempdir().unwrap();
+        let record = Record::open(dir.path(), EventSink::new()).await;
+        let mut old = record.number(Draft::uninstalled(&ns(), None));
+        old.at = Utc::now() - KEEP_FOR - chrono::TimeDelta::hours(1);
+        let old_id = old.id;
+        record.insert(old).await;
+        drop(record);
+
+        let again = Record::open(dir.path(), EventSink::new()).await;
+        assert_eq!(again.entries().await, []);
+        assert!(again.add(Draft::uninstalled(&ns(), None)).await > old_id);
+    }
+
+    /// A file that cannot be read is left whole, and nothing is written over
+    /// it this run.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_unreadable_file_is_left_alone() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(FILE_NAME);
+        std::fs::write(&path, "kept\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let record = Record::open(dir.path(), EventSink::new()).await;
+        record.add(Draft::uninstalled(&ns(), None)).await;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "kept\n");
+        assert_eq!(record.entries().await.len(), 1, "kept in memory");
     }
 
     /// An append cut short inside a character costs that line, not the rest.

@@ -500,7 +500,7 @@ async fn a_quiet_tree_that_publishes_records_no_arm_time() -> Result<(), Error> 
     .expect("the package was not busy");
 
     assert!(
-        seen.published.is_some(),
+        !seen.published.is_empty(),
         "the fixture must actually reach the publish path, or the None below is vacuous"
     );
     assert!(outcome.publish_arm_at.is_none());

@@ -295,9 +295,10 @@ async fn package_publish_command(
         model::HeadTask::Replace,
     ))
     .await?;
-    let entry = outcome
-        .push()
-        .map(|push| Draft::published(&namespace, Some(&base), &push.manifest_uri.hash, &changes));
+    let entry = outcome.push().map(|push| {
+        Draft::published(&namespace, Some(&base), &push.manifest_uri.hash, &changes)
+            .latest_or_not(push.certified_latest)
+    });
     Ok((namespace, outcome, entry))
 }
 
@@ -428,12 +429,15 @@ pub async fn package_commit_and_push(
             // The commit page does not say which files the revision holds.
             if let Some(push) = outcome.push() {
                 s.record
-                    .add(Draft::published(
-                        ns,
-                        None,
-                        &push.manifest_uri.hash,
-                        &quilt::lineage::ChangeSet::new(),
-                    ))
+                    .add(
+                        Draft::published(
+                            ns,
+                            None,
+                            &push.manifest_uri.hash,
+                            &quilt::lineage::ChangeSet::new(),
+                        )
+                        .latest_or_not(push.certified_latest),
+                    )
                     .await;
             }
         }

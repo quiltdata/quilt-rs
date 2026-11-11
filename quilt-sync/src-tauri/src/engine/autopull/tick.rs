@@ -68,9 +68,9 @@ pub(crate) struct Published {
 pub(crate) struct Seen {
     /// The status read reached the bucket, not only the last-known tip.
     pub reached: bool,
-    /// A publish landed. A merge's move after it can still fail, and the
-    /// publish is reported all the same.
-    pub published: Option<Published>,
+    /// Each revision a pass uploaded, in order, `latest` or not. A merge's
+    /// move after it can still fail, and they are reported all the same.
+    pub published: Vec<Published>,
 }
 
 impl RefreshOutcome {
@@ -698,6 +698,21 @@ pub(crate) async fn refresh_then_maybe_sync(
                 .as_ref()
                 .is_ok_and(|(outcome, _)| outcome.push().is_none_or(|push| !push.certified_latest))
         {
+            // Its revision was uploaded, even though it is not `latest`.
+            if let Ok((outcome, message)) = &published
+                && let Some(push) = outcome.push()
+            {
+                seen.published.push(Published {
+                    message: message.clone(),
+                    entry: Draft::published(
+                        namespace,
+                        Some(&lineage.base_hash),
+                        &push.manifest_uri.hash,
+                        &changes,
+                    )
+                    .latest_or_not(false),
+                });
+            }
             last_change.on_published(namespace).await;
             return merge::onto_latest(
                 model,
@@ -733,14 +748,15 @@ pub(crate) async fn refresh_then_maybe_sync(
                 } else {
                     ""
                 };
-                seen.published = Some(Published {
+                let entry = Draft::published(
+                    namespace,
+                    Some(&lineage.base_hash),
+                    &push.manifest_uri.hash,
+                    &changes,
+                );
+                seen.published.push(Published {
                     message,
-                    entry: Draft::published(
-                        namespace,
-                        Some(&lineage.base_hash),
-                        &push.manifest_uri.hash,
-                        &changes,
-                    ),
+                    entry: entry.latest_or_not(push.certified_latest),
                 });
                 Ok(Some(RefreshOutcome {
                     upstream: quilt::lineage::UpstreamState::UpToDate,
@@ -1024,8 +1040,8 @@ pub(crate) async fn sync_package(
     )
     .await;
     // A publish that landed is reported whatever followed it.
-    let published = seen.published.is_some();
-    if let Some(publish) = seen.published.take() {
+    let published = !seen.published.is_empty();
+    for publish in std::mem::take(&mut seen.published) {
         inner
             .reporter
             .report_published(&namespace, origin, &publish.message);
