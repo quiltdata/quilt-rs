@@ -98,6 +98,10 @@ fn short(hash: &str) -> String {
     hash.chars().take(7).collect()
 }
 
+/// How long a publish has failed when it enters the set, so its run began
+/// that long before. The backend's `action_needed::PUBLISH_FAILING_AFTER`.
+const PUBLISH_FAILING_AFTER_MS: f64 = 3_600_000.0;
+
 /// What needs action, as the panel leads with it: a count for what the main
 /// page's queue shows, and a line with its remedy for each cause it does not.
 pub fn action_needed_for(set: &[ActionNeededEntry], now: f64) -> kit::ActionNeeded {
@@ -117,7 +121,7 @@ pub fn action_needed_for(set: &[ActionNeededEntry], now: f64) -> kit::ActionNeed
             ) => {
                 action_needed.elsewhere.push(kit::Cause::publish_failing(
                     &namespace.to_string(),
-                    js_sys::Date::parse(&entry.since),
+                    js_sys::Date::parse(&entry.since) - PUBLISH_FAILING_AFTER_MS,
                     now,
                     routes::package_page_href(namespace),
                 ));
@@ -219,9 +223,16 @@ pub fn provide_inbox() {
             *s
         })
     };
+    // Kept as it came, so a failing publish's duration is worked out again
+    // each time the panel opens.
+    let current = RwSignal::new(Vec::<ActionNeededEntry>::new());
+    Effect::new(move |_| {
+        feed.open.track();
+        let now = js_sys::Date::now();
+        current.with(|set| feed.action_needed.set(action_needed_for(set, now)));
+    });
     let follow = move |set: &[ActionNeededEntry]| {
-        feed.action_needed
-            .try_set(action_needed_for(set, js_sys::Date::now()));
+        current.try_set(set.to_vec());
     };
     let action_needed = engine::listen_then::<Vec<ActionNeededEntry>>(
         commands::ACTION_NEEDED_EVENT,
@@ -370,6 +381,7 @@ mod tests {
             ),
         ];
         let action_needed = action_needed_for(&set, 2.0 * 3_600_000.0);
+        // Its run began an hour before it entered the set, at the epoch.
         assert_eq!(action_needed.in_queue, 2);
         assert_eq!(action_needed.count(), 4);
         let hrefs: Vec<&str> = action_needed
@@ -386,7 +398,7 @@ mod tests {
         );
         assert_eq!(
             action_needed.elsewhere[0].text,
-            "acme/demo has failed to publish for 2 hours"
+            "acme/demo has failed to publish for 3 hours"
         );
     }
 }
