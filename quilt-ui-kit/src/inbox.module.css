@@ -132,3 +132,9 @@
   padding: var(--q-space-2) var(--q-space-3);
   color: var(--q-fgColor-muted);
 }
+
+/* Hears the panel's link clicks without being a box, so the panel stays the
+ * overlay's flex child and scrolls. */
+.follow {
+  display: contents;
+}

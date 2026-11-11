@@ -271,7 +271,7 @@ pub fn Inbox(
         >
             // Following a link closes it, so it neither stays over the page it
             // opened nor goes on reading.
-            <div on:click=move |ev| {
+            <div class=style::follow on:click=move |ev| {
                 let followed = ev
                     .target()
                     .and_then(|t| wasm_bindgen::JsCast::dyn_into::<web_sys::Element>(t).ok())
@@ -615,6 +615,57 @@ mod tests {
         assert_eq!(age(), "1 min ago", "the age was redrawn");
         let after = el.query_selector("ol a").unwrap().expect("the entry");
         assert!(link.is_same_node(Some(&after)), "inside the same link");
+    }
+
+    /// More entries than fit: the panel stays the surface's bounded column
+    /// and scrolls, so the oldest can still be reached.
+    #[wasm_bindgen_test]
+    async fn an_overflowing_panel_scrolls() {
+        use crate::anchored_overlay::style as overlay;
+        use crate::test_support::load_module_style;
+        load_module_style(
+            include_str!("anchored_overlay.module.css"),
+            &[
+                ("root", overlay::root),
+                ("surface", overlay::surface),
+                ("tight", overlay::tight),
+                ("contained", overlay::contained),
+            ],
+        );
+        load_module_style(
+            include_str!("inbox.module.css"),
+            &[("panel", style::panel), ("follow", style::follow)],
+        );
+        let open = RwSignal::new(false);
+        let many: Vec<InboxEntry> = (1..=60).map(|id| entry(id, 10.0, false)).collect();
+        let el = mount(move || {
+            view! {
+                <Inbox
+                    entries=many
+                    action_needed=ActionNeeded::default()
+                    open=open
+                />
+            }
+        });
+        open.set(true);
+        sleep_ms(50).await;
+        let panel = el
+            .query_selector(&format!(".{}", style::panel))
+            .unwrap()
+            .expect("the panel");
+        let surface = el
+            .query_selector("[aria-label='Inbox'][popover]")
+            .unwrap()
+            .expect("the surface");
+        assert!(
+            panel.scroll_height() > panel.client_height(),
+            "the panel holds the overflow"
+        );
+        assert!(
+            panel.get_bounding_client_rect().bottom()
+                <= surface.get_bounding_client_rect().bottom() + 1.0,
+            "and stays inside the surface"
+        );
     }
 
     /// Following a link closes the panel.
