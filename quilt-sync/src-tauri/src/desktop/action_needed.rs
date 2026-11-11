@@ -40,15 +40,13 @@ pub fn spawn(app: &AppHandle, services: &Arc<Services>) -> async_runtime::JoinHa
     });
 
     let app = app.clone();
-    let services = Arc::clone(services);
     let mut rx = services.watcher.action_needed().subscribe();
     async_runtime::spawn(async move {
         // What entered before this task started counts as entering now.
         let mut known = Vec::new();
         loop {
             let now = rx.borrow_and_update().clone();
-            let notify = services.autosync_settings.read().await.notify_action_needed;
-            if notify && !in_front(&app) {
+            if !in_front(&app) {
                 for entry in entered(&known, &now) {
                     post(&app, entry);
                 }

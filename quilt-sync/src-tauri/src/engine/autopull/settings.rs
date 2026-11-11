@@ -36,14 +36,6 @@ pub struct AutosyncSettings {
     /// the disk shape backwards-compatible.
     #[serde(default)]
     pub close_to_tray: bool,
-    /// Post an OS notification when something needs action. On unless
-    /// turned off; a file from before the setting reads as on.
-    #[serde(default = "notify_by_default")]
-    pub notify_action_needed: bool,
-}
-
-const fn notify_by_default() -> bool {
-    true
 }
 
 impl Default for AutosyncSettings {
@@ -52,7 +44,6 @@ impl Default for AutosyncSettings {
             pull: PullSettings::default(),
             push: PushSettings::default(),
             close_to_tray: false,
-            notify_action_needed: true,
         }
     }
 }
@@ -182,23 +173,22 @@ mod tests {
                 idle_timeout_secs: 45,
             },
             close_to_tray: false,
-            notify_action_needed: false,
         }
     }
 
+    /// Some development builds wrote a switch for system notifications.
+    /// A file that has it still loads.
     #[tokio::test]
-    async fn a_file_from_before_the_notify_setting_notifies() -> Result<(), Error> {
+    async fn a_file_with_the_old_notify_switch_loads() -> Result<(), Error> {
         let dir = TempDir::new().unwrap();
         tokio::fs::write(
             dir.path().join(FILE_NAME),
-            r#"{"pull_enabled":true,"focused_secs":300,"push_enabled":false,"idle_timeout_secs":300}"#,
+            r#"{"pull_enabled":true,"focused_secs":300,"push_enabled":false,"idle_timeout_secs":300,"notify_action_needed":false}"#,
         )
         .await?;
-        assert!(
-            AutosyncSettings::load(dir.path())
-                .await?
-                .notify_action_needed
-        );
+        let loaded = AutosyncSettings::load(dir.path()).await?;
+        assert!(loaded.pull.enabled);
+        assert_eq!(loaded.pull.focused_secs, 300);
         Ok(())
     }
 

@@ -85,7 +85,6 @@ fn enabled() -> AutosyncSettings {
             ..PushSettings::default()
         },
         close_to_tray: false,
-        notify_action_needed: true,
     }
 }
 
