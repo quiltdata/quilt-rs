@@ -318,12 +318,85 @@ pub fn missing_settings_workflow<'a>(
     }
 }
 
+// ── The select ──
+
+/// What the primary says while a required workflow is still unchosen.
+pub(crate) const CHOOSE_A_WORKFLOW: &str =
+    "This bucket requires a workflow. Choose one to publish.";
+
+/// The select's options and where it starts, from the [`WorkflowView`]. The
+/// commit page and the bucket form both draw their select from this.
+///
+/// The select cannot grey an option, so a disabled one (`None` on a bucket
+/// that requires a workflow) is left out — unless the view starts on it, which
+/// it does on a required bucket that names no default: then it stays, at the
+/// head, so the reader still has to choose, and `needs_choice` says so. That
+/// holds with one workflow as with several: the form never chooses for them.
+///
+/// Labels are made unique, since two workflows may share a name: the label
+/// is how the select names an option, and the draft keeps the intent.
+pub(crate) fn workflow_choices(view: &WorkflowView) -> (Vec<WorkflowOption>, WorkflowIntent, bool) {
+    let enabled: Vec<WorkflowOption> = view
+        .options
+        .iter()
+        .filter(|o| !o.disabled)
+        .cloned()
+        .collect();
+    let start = view.options.get(view.initial);
+    let (mut options, initial, needs_choice) = match start {
+        Some(start) if start.disabled && !enabled.is_empty() => {
+            let mut options = vec![start.clone()];
+            options.extend(enabled);
+            (options, start.intent.clone(), true)
+        }
+        Some(start) => (enabled, start.intent.clone(), false),
+        None => (enabled, WorkflowIntent::BucketDefault, false),
+    };
+    unique_labels(&mut options);
+    (options, initial, needs_choice)
+}
+
+/// The labels the select offers. The unchosen start, at the head, goes once
+/// the reader has chosen, so it cannot be picked back.
+pub(crate) fn offered(options: &[WorkflowOption], needs_choice: bool, chosen: bool) -> Vec<String> {
+    options
+        .iter()
+        .skip(usize::from(needs_choice && chosen))
+        .map(|o| o.label.clone())
+        .collect()
+}
+
+/// Give every option its own label, so the select's label names exactly one
+/// intent. A name two workflows share gets the workflow's id; anything that
+/// still collides — a workflow whose own name reads like that, say — gets a
+/// counter. The first holder of a label keeps it as it is.
+fn unique_labels(options: &mut [WorkflowOption]) {
+    let shared: Vec<bool> = options
+        .iter()
+        .map(|o| options.iter().filter(|p| p.label == o.label).count() > 1)
+        .collect();
+    let mut used = std::collections::HashSet::new();
+    for (option, shared) in options.iter_mut().zip(shared) {
+        let mut label = match &option.intent {
+            WorkflowIntent::Named(id) if shared => format!("{} ({id})", option.label),
+            _ => option.label.clone(),
+        };
+        let base = label.clone();
+        let mut n = 2;
+        while !used.insert(label.clone()) {
+            label = format!("{base} ({n})");
+            n += 1;
+        }
+        option.label = label;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        PreviousWorkflow, WorkflowOption, WorkflowViewKind, build_workflow_view,
-        missing_settings_workflow, preselected_index, shows_settings_workflow_hint,
-        workflow_options,
+        PreviousWorkflow, WorkflowOption, WorkflowView, WorkflowViewKind, build_workflow_view,
+        missing_settings_workflow, offered, preselected_index, shows_settings_workflow_hint,
+        workflow_choices, workflow_options,
     };
     use crate::commands::{CommitWorkflows, WorkflowData, WorkflowInfo, WorkflowIntent};
 
@@ -820,5 +893,140 @@ mod tests {
                 WorkflowIntent::BucketDefault
             );
         }
+    }
+
+    // ── The select ──
+
+    fn option(label: &str, intent: WorkflowIntent, disabled: bool) -> WorkflowOption {
+        WorkflowOption {
+            label: label.to_string(),
+            intent,
+            disabled,
+        }
+    }
+
+    fn named(id: &str) -> WorkflowIntent {
+        WorkflowIntent::Named(id.to_string())
+    }
+
+    fn available(options: Vec<WorkflowOption>, initial: usize) -> WorkflowView {
+        WorkflowView {
+            kind: WorkflowViewKind::Available {
+                is_workflow_required: true,
+            },
+            options,
+            initial,
+        }
+    }
+
+    /// A required bucket with one workflow and no default starts unchosen,
+    /// as with several: the form does not choose the one for the reader.
+    #[test]
+    fn the_only_workflow_of_a_required_bucket_must_be_chosen() {
+        let (options, initial, needs_choice) = workflow_choices(&available(
+            vec![
+                option("None", WorkflowIntent::NoWorkflow, true),
+                option("Plate reads", named("plates"), false),
+            ],
+            0,
+        ));
+        assert_eq!(initial, WorkflowIntent::NoWorkflow);
+        assert!(needs_choice);
+        let labels: Vec<_> = options.iter().map(|o| o.label.as_str()).collect();
+        assert_eq!(labels, ["None", "Plate reads"]);
+    }
+
+    /// The unchosen start is offered until the reader chooses, then it goes.
+    #[test]
+    fn the_unchosen_start_leaves_once_chosen() {
+        let (options, _, needs_choice) = workflow_choices(&available(
+            vec![
+                option("None", WorkflowIntent::NoWorkflow, true),
+                option("Plate reads", named("plates"), false),
+            ],
+            0,
+        ));
+        assert_eq!(
+            offered(&options, needs_choice, false),
+            ["None", "Plate reads"]
+        );
+        assert_eq!(offered(&options, needs_choice, true), ["Plate reads"]);
+        // With nothing to choose first, `None` is an ordinary option.
+        let (options, _, needs_choice) = workflow_choices(&available(
+            vec![
+                option("None", WorkflowIntent::NoWorkflow, false),
+                option("Plate reads", named("plates"), false),
+            ],
+            1,
+        ));
+        assert_eq!(
+            offered(&options, needs_choice, true),
+            ["None", "Plate reads"]
+        );
+    }
+
+    /// With several to choose from, the greyed start stays and blocks.
+    #[test]
+    fn several_workflows_of_a_required_bucket_must_be_chosen() {
+        let (options, initial, needs_choice) = workflow_choices(&available(
+            vec![
+                option("None", WorkflowIntent::NoWorkflow, true),
+                option("Plate reads", named("plates"), false),
+                option("Exports", named("exports"), false),
+            ],
+            0,
+        ));
+        assert_eq!(initial, WorkflowIntent::NoWorkflow);
+        assert!(needs_choice);
+        let labels: Vec<_> = options.iter().map(|o| o.label.as_str()).collect();
+        assert_eq!(labels, ["None", "Plate reads", "Exports"]);
+    }
+
+    /// Two workflows with one name stay two choices, each its own id.
+    #[test]
+    fn workflows_sharing_a_name_stay_apart() {
+        let (options, initial, _) = workflow_choices(&available(
+            vec![
+                option("None", WorkflowIntent::NoWorkflow, false),
+                option("Plates", named("plates-a"), false),
+                option("Plates", named("plates-b"), false),
+            ],
+            2,
+        ));
+        assert_eq!(initial, named("plates-b"));
+        let labels: Vec<_> = options.iter().map(|o| o.label.as_str()).collect();
+        assert_eq!(labels, ["None", "Plates (plates-a)", "Plates (plates-b)"]);
+    }
+
+    /// A workflow whose own name reads like a told-apart one cannot take
+    /// another's label: every label names one intent.
+    #[test]
+    fn no_two_options_share_a_label() {
+        let (options, _, _) = workflow_choices(&available(
+            vec![
+                option("None", WorkflowIntent::NoWorkflow, false),
+                option("Plates (plates-a)", named("odd"), false),
+                option("Plates", named("plates-a"), false),
+                option("Plates", named("plates-a-2"), false),
+                option("None", named("none"), false),
+            ],
+            0,
+        ));
+        let labels: Vec<_> = options.iter().map(|o| o.label.clone()).collect();
+        let mut distinct = labels.clone();
+        distinct.sort();
+        distinct.dedup();
+        assert_eq!(distinct.len(), labels.len(), "{labels:?}");
+        let form_intents: Vec<_> = options.iter().map(|o| o.intent.clone()).collect();
+        assert_eq!(
+            form_intents,
+            [
+                WorkflowIntent::NoWorkflow,
+                named("odd"),
+                named("plates-a"),
+                named("plates-a-2"),
+                named("none")
+            ]
+        );
     }
 }

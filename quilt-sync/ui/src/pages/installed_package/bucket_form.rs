@@ -28,7 +28,10 @@ use leptos::reactive::signal::ArcRwSignal;
 
 use crate::commands;
 use crate::commands::{CommitWorkflows, WorkflowIntent};
-use crate::pages::workflow::{WorkflowView, WorkflowViewKind, build_workflow_view};
+use crate::pages::workflow::{
+    CHOOSE_A_WORKFLOW, WorkflowOption, WorkflowView, WorkflowViewKind, build_workflow_view,
+    offered, workflow_choices,
+};
 use crate::util;
 use quilt_ui_kit::{BannerVariant, FormControl, FormDialog, Naming, Select, Submit, TextInput};
 
@@ -54,35 +57,20 @@ fn host_error(host: &str) -> Option<&'static str> {
     (!host.is_empty() && !util::is_valid_hostname(host)).then_some(HOST_INVALID)
 }
 
-/// The options a reader can pick, as the kit's `Select` draws them. It has no
-/// disabled option, so an option the view marks disabled is left out.
-fn choosable(view: &WorkflowView) -> Vec<String> {
-    match view.kind {
-        WorkflowViewKind::Available { .. } => view
-            .options
-            .iter()
-            .filter(|option| !option.disabled)
-            .map(|option| option.label.clone())
-            .collect(),
-        // One disabled entry, which is the whole answer: there is no choice.
-        _ => view
-            .options
-            .iter()
-            .map(|option| option.label.clone())
-            .collect(),
-    }
-}
-
-/// The label that starts selected: the view's own preselection, or the first
-/// choosable option when the preselection is one the reader may not pick.
-fn initial_label(view: &WorkflowView) -> String {
-    let labels = choosable(view);
-    view.options
-        .get(view.initial)
+/// The select's options, the label it starts on, and whether that start is
+/// unchosen, as the commit page draws them. Only a config offers a choice:
+/// any other answer is its one entry, shown and not chosen.
+fn choices(view: &WorkflowView) -> (Vec<WorkflowOption>, String, bool) {
+    let (options, initial, needs_choice) = match view.kind {
+        WorkflowViewKind::Available { .. } => workflow_choices(view),
+        _ => (view.options.clone(), WorkflowIntent::BucketDefault, false),
+    };
+    let label = options
+        .iter()
+        .find(|option| option.intent == initial)
         .map(|option| option.label.clone())
-        .filter(|label| labels.contains(label))
-        .or_else(|| labels.first().cloned())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    (options, label, needs_choice)
 }
 
 /// The bucket's workflow read, as the dialog runs it. A parameter so a test
@@ -358,6 +346,18 @@ pub(crate) fn BucketDialog(
         })
     });
 
+    let choice = Memo::new(move |_| wf_view.get().map(|view| choices(&view)));
+
+    // A required bucket that names no default starts on `None`, which blocks
+    // Save until the reader chooses.
+    let unchosen = Memo::new(move |_| {
+        choice.with(|choice| {
+            choice.as_ref().is_some_and(|(_, start, needs_choice)| {
+                *needs_choice && draft.workflow.with(|label| label == start)
+            })
+        })
+    });
+
     // Every not-yet-current window, because `wf_view` is self-keyed.
     let workflow_loading =
         Memo::new(move |_| valid_target.get().is_some() && wf_view.get().is_none());
@@ -366,15 +366,16 @@ pub(crate) fn BucketDialog(
     // preselection. A view for the target the reader already chose on is the
     // rebuilt dialog's second read of it, and keeps their choice.
     Effect::new(move |_| {
-        let Some(view) = wf_view.get() else {
+        let Some((options, start, _)) = choice.get() else {
             return;
         };
-        // `wf_view` is `Some` only for the typed target, so this is its target.
+        // `choice` is `Some` only for the typed target, so this is its target.
         let target = valid_target.get_untracked();
+        let label = draft.workflow.get_untracked();
         let kept = draft.workflow_for.get_untracked() == target
-            && choosable(&view).contains(&draft.workflow.get_untracked());
+            && options.iter().any(|option| option.label == label);
         if !kept {
-            draft.workflow.set(initial_label(&view));
+            draft.workflow.set(start);
             draft.workflow_for.set(target);
         }
     });
@@ -423,11 +424,11 @@ pub(crate) fn BucketDialog(
             // The selected option's own intent, passed straight through, and
             // `BucketDefault` when the config is not loaded — never
             // `Named("")`.
-            let workflow = wf_view
+            let workflow = choice
                 .get_untracked()
-                .and_then(|view| {
+                .and_then(|(options, _, _)| {
                     let label = draft.workflow.get_untracked();
-                    view.options
+                    options
                         .into_iter()
                         .find(|option| option.label == label)
                         .map(|option| option.intent)
@@ -460,14 +461,14 @@ pub(crate) fn BucketDialog(
         }
     });
 
-    // The config's own complaint, under the field it is about. Only a malformed
-    // config has one: the other states are answers, not problems.
+    // The config's own complaint, under the field it is about: a malformed
+    // config, or a required workflow not chosen yet.
     let workflow_error = Signal::derive(move || match wf_view.get().map(|view| view.kind) {
         Some(WorkflowViewKind::Invalid { reason }) => Some(format!(
             "This bucket's workflow configuration is invalid ({reason}). Publishing to this \
              bucket will fail until it is fixed."
         )),
-        _ => None,
+        _ => unchosen.get().then(|| CHOOSE_A_WORKFLOW.to_string()),
     });
 
     // Built once, in whichever shape the package is in: the kit's `FormDialog`
@@ -538,23 +539,30 @@ pub(crate) fn BucketDialog(
                         {move || {
                             // Only a real view's label is the draft's: the
                             // loading notice is shown, never chosen.
-                            let (options, choosing, selected) = match wf_view.get() {
-                                Some(view) => {
+                            let (options, choosing, selected) = match (wf_view.get(), choice.get()) {
+                                (Some(view), Some((options, _, needs_choice))) => {
                                     let choosing = matches!(
                                         view.kind,
                                         WorkflowViewKind::Available { .. }
                                     );
-                                    (choosable(&view), choosing, draft.workflow)
+                                    let options = Signal::derive(move || {
+                                        offered(&options, needs_choice, !unchosen.get())
+                                    });
+                                    (options, choosing, draft.workflow)
                                 }
-                                None if workflow_loading.get() => {
+                                _ if workflow_loading.get() => {
                                     (
-                                        vec![LOADING.to_string()],
+                                        Signal::stored(vec![LOADING.to_string()]),
                                         false,
                                         RwSignal::new(LOADING.to_string()),
                                     )
                                 }
                                 // No bucket to read yet, so nothing to choose.
-                                None => (Vec::new(), false, RwSignal::new(String::new())),
+                                _ => (
+                                    Signal::stored(Vec::new()),
+                                    false,
+                                    RwSignal::new(String::new()),
+                                ),
                             };
                             view! {
                                 <Select
@@ -574,7 +582,7 @@ pub(crate) fn BucketDialog(
     };
 
     view! {
-        <FormDialog open=open title=TITLE submit=submit running=busy>
+        <FormDialog open=open title=TITLE submit=submit running=busy blocked=unchosen>
             {fields()}
         </FormDialog>
     }
@@ -946,6 +954,24 @@ mod tests {
         }
     }
 
+    /// A bucket that requires a workflow, declares one, and names no default.
+    fn required(_host: String, _bucket: String) -> Answer {
+        Box::pin(async {
+            Ok(CommitWorkflows::Available {
+                workflows: vec![commands::WorkflowInfo {
+                    id: "alpha".to_string(),
+                    name: Some("Alpha".to_string()),
+                    description: None,
+                    metadata_schema_url: None,
+                    entries_schema_url: None,
+                }],
+                default_workflow: None,
+                is_workflow_required: true,
+                config_url: None,
+            })
+        })
+    }
+
     fn published() -> commands::PackageHeaderData {
         let uri: quilt_uri::S3PackageUri =
             "quilt+s3://team-bucket#package=team/dataset&catalog=one.quilt.test"
@@ -1036,6 +1062,40 @@ mod tests {
         select
             .dispatch_event(&web_sys::Event::new("change").unwrap())
             .unwrap();
+    }
+
+    /// The options the workflow select holds, in order.
+    fn options_of(el: &web_sys::Element, label: &str) -> Vec<String> {
+        let options = field(el, label).query_selector_all("option").unwrap();
+        (0..options.length())
+            .map(|i| options.item(i).unwrap().text_content().unwrap_or_default())
+            .collect()
+    }
+
+    /// A required bucket with no default starts on `None`, even with one
+    /// workflow: Save waits until the reader chooses, and then `None` goes.
+    #[wasm_bindgen_test]
+    async fn a_required_workflow_is_chosen_by_the_reader() {
+        let w = Wiring::new();
+        let header = RwSignal::new(published());
+        let el = mount_rebuilt_reading(w, header, required);
+        w.dialogs.bucket.set(true);
+        leptos::task::tick().await;
+        sleep_ms(SETTLED_MS).await;
+        let save = || kit::test_support::button_saying(&el, "Save");
+
+        assert_eq!(value_of(&el, "Workflow"), "None");
+        assert_eq!(options_of(&el, "Workflow"), ["None", "Alpha"]);
+        element_saying(&el, CHOOSE_A_WORKFLOW);
+        assert!(save().disabled(), "Save waits for a workflow");
+
+        choose(&el, "Workflow", "Alpha");
+        leptos::task::tick().await;
+
+        assert_eq!(value_of(&el, "Workflow"), "Alpha");
+        assert_eq!(options_of(&el, "Workflow"), ["Alpha"]);
+        assert!(!el.inner_html().contains(CHOOSE_A_WORKFLOW));
+        assert!(!save().disabled());
     }
 
     /// What the reader typed is theirs until they close the dialog. The watcher
