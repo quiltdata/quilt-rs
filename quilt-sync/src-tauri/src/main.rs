@@ -90,7 +90,7 @@ fn main() -> ExitCode {
                 return;
             }
             if let Some(uri_str) = argv.get(1) {
-                info!("Single-instance deep link: {:?}", uri_str);
+                info!("Single-instance deep link: {}", uri::for_log_str(uri_str));
                 if let Err(err) = uri::handle_deep_link_url(app, uri_str) {
                     error!("{}", err);
                 }
