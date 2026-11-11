@@ -97,7 +97,7 @@ serial_test = "4"
 # Paused time keeps the retry tests from sleeping for real.
 tokio = { workspace = true, features = ["test-util"] }
 tokio-test.workspace = true
-tokio-tungstenite = "0.29"
+tokio-tungstenite = "0.30"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-single-instance = { version = "2.5.5", features = ["deep-link"] }
