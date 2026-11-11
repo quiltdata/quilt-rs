@@ -7,7 +7,6 @@
 //! mounts. An entry enters when its cause starts and leaves when it clears.
 
 use std::collections::BTreeMap;
-use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::Duration;
 use std::time::Instant;
@@ -30,11 +29,6 @@ pub const ACTION_NEEDED_EVENT: &str = "action-needed";
 /// How long a package's publish keeps failing before it needs action. A
 /// starting value: by then autosync has retried it about once a minute.
 pub const PUBLISH_FAILING_AFTER: Duration = Duration::from_hours(1);
-
-/// How long a catalog's reads keep failing to reach its buckets before it
-/// needs action. A starting value: past a dropped connection or a laptop
-/// waking.
-pub const UNREACHABLE_AFTER: Duration = Duration::from_mins(15);
 
 /// Who an entry is about.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -81,9 +75,6 @@ pub enum Cause {
     PublishFailing { error: String },
     /// The file watcher's subscriber failed.
     Watcher { message: String },
-    /// The catalog's reads have kept failing to reach its buckets while
-    /// other reads got through.
-    Unreachable,
 }
 
 /// The kind of a [`Cause`], without its details: an entry is one subject and
@@ -96,7 +87,6 @@ pub enum Kind {
     Credentials,
     PublishFailing,
     Watcher,
-    Unreachable,
 }
 
 impl Cause {
@@ -119,7 +109,6 @@ impl Cause {
             Self::Credentials => Kind::Credentials,
             Self::PublishFailing { .. } => Kind::PublishFailing,
             Self::Watcher { .. } => Kind::Watcher,
-            Self::Unreachable => Kind::Unreachable,
         }
     }
 }
@@ -173,9 +162,6 @@ impl Entry {
             }
             (_, Cause::Watcher { .. }) => {
                 "Watching package folders for changes stopped working.".to_string()
-            }
-            (_, Cause::Unreachable) => {
-                "Can't reach this catalog. Its packages are not syncing.".to_string()
             }
         };
         (title, body)
@@ -239,23 +225,6 @@ pub struct ActionNeeded {
     /// from the retry backoff, which a pass that only waits for the quiet
     /// window resets.
     publish_failing_since: Mutex<BTreeMap<Namespace, Instant>>,
-    reach: Mutex<Reach>,
-}
-
-/// What the reads learned about the network.
-#[derive(Default)]
-struct Reach {
-    /// Each catalog's current run of reads that did not reach.
-    unreachable: HashMap<Host, Run>,
-    /// When a read last reached its bucket, through any catalog or none.
-    last_reached: Option<Instant>,
-}
-
-/// A run of a catalog's reads that did not reach.
-#[derive(Clone, Copy)]
-struct Run {
-    since: Instant,
-    last_missed: Instant,
 }
 
 impl Default for ActionNeeded {
@@ -263,7 +232,6 @@ impl Default for ActionNeeded {
         Self {
             tx: watch::Sender::new(Vec::new()),
             publish_failing_since: Mutex::default(),
-            reach: Mutex::default(),
         }
     }
 }
@@ -358,55 +326,8 @@ impl ActionNeeded {
         });
     }
 
-    /// A read through `origin`'s catalog, or none, reached its bucket at
-    /// `now`: the catalog is reachable, and the computer is online.
-    ///
-    /// Holds the reach lock through the set's change, as
-    /// [`Self::unreachable`] does, so a miss read earlier cannot enter the
-    /// catalog again after this.
-    pub fn reached(&self, origin: Option<&Host>, now: Instant) {
-        let mut reach = self.reach();
-        reach.last_reached = Some(now);
-        if let Some(host) = origin {
-            reach.unreachable.remove(host);
-            self.leave(&Subject::Host { host: host.clone() }, Kind::Unreachable);
-        }
-    }
-
-    /// A read through `host`'s catalog did not reach its bucket at `now`. It
-    /// needs action once its reads have failed for [`UNREACHABLE_AFTER`] and
-    /// some other read got through since its previous miss: with nothing
-    /// reached in between, the computer may have no network at all.
-    pub fn unreachable(&self, host: &Host, now: Instant) {
-        let mut reach = self.reach();
-        let last_reached = reach.last_reached;
-        let run = reach.unreachable.entry(host.clone()).or_insert(Run {
-            since: now,
-            last_missed: now,
-        });
-        let online = last_reached.is_some_and(|last| last >= run.last_missed);
-        let lasted = now.saturating_duration_since(run.since) >= UNREACHABLE_AFTER;
-        run.last_missed = run.last_missed.max(now);
-        if online && lasted {
-            self.enter(Subject::Host { host: host.clone() }, Cause::Unreachable);
-        }
-    }
-
-    /// Keep the unreachable runs of the catalogs `keep` holds to.
-    pub fn keep_unreachable_runs(&self, keep: impl Fn(&Host) -> bool) {
-        self.reach().unreachable.retain(|host, _| keep(host));
-    }
-
-    fn reach(&self) -> std::sync::MutexGuard<'_, Reach> {
-        self.reach
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-
-    /// The session or credentials a package is read on worked: the read
-    /// reached its bucket.
+    /// The session or credentials a package is read on worked.
     pub fn session_works(&self, origin: Option<&Host>) {
-        self.reached(origin, Instant::now());
         match origin {
             Some(host) => self.leave(&Subject::Host { host: host.clone() }, Kind::SignIn),
             None => self.leave(&Subject::App, Kind::Credentials),
@@ -625,92 +546,6 @@ mod tests {
             entry(Subject::App, Cause::Credentials).menu_line(),
             "AWS credentials on this computer aren't usable"
         );
-    }
-
-    #[test]
-    fn an_unreachable_catalog_reads_as_its_host() {
-        let entry = Entry {
-            subject: Subject::Host {
-                host: host("nightly.quilttest.com"),
-            },
-            cause: Cause::Unreachable,
-            since: Utc::now(),
-        };
-        assert_eq!(
-            entry.notice(),
-            (
-                "nightly.quilttest.com".to_string(),
-                "Can't reach this catalog. Its packages are not syncing.".to_string()
-            )
-        );
-        assert_eq!(
-            entry.menu_line(),
-            "nightly.quilttest.com — Can't reach this catalog"
-        );
-        assert_eq!(routes::page(entry.page()), "/");
-    }
-
-    /// A catalog's reads that do not reach count from the first; another
-    /// read getting through since says the computer is online.
-    #[test]
-    fn an_unreachable_catalog_enters_after_a_while_online() {
-        let set = ActionNeeded::default();
-        let nightly = host("nightly.quilttest.com");
-        let start = Instant::now();
-        set.unreachable(&nightly, start);
-        set.unreachable(&nightly, start + UNREACHABLE_AFTER);
-        assert!(set.get().is_empty(), "nothing reached: maybe offline");
-
-        set.reached(Some(&host("open.quiltdata.com")), start + UNREACHABLE_AFTER);
-        set.unreachable(&nightly, start + UNREACHABLE_AFTER);
-        assert_eq!(
-            set.get()
-                .iter()
-                .map(|e| (e.subject.clone(), e.cause.kind()))
-                .collect::<Vec<_>>(),
-            vec![(
-                Subject::Host {
-                    host: nightly.clone()
-                },
-                Kind::Unreachable
-            )]
-        );
-
-        set.reached(Some(&nightly), start + UNREACHABLE_AFTER);
-        assert!(set.get().is_empty(), "the catalog answered");
-
-        // Another catalog answered once, then the network went: the misses
-        // after that one prove nothing.
-        let later = start + 2 * UNREACHABLE_AFTER;
-        set.unreachable(&nightly, later);
-        set.reached(None, later);
-        set.unreachable(&nightly, later + Duration::from_secs(60));
-        set.unreachable(&nightly, later + UNREACHABLE_AFTER);
-        assert!(set.get().is_empty(), "nothing reached since the last miss");
-    }
-
-    #[test]
-    fn a_new_run_starts_from_nothing() {
-        let set = ActionNeeded::default();
-        let nightly = host("nightly.quilttest.com");
-        let start = Instant::now();
-        set.unreachable(&nightly, start);
-        set.reached(Some(&nightly), start + UNREACHABLE_AFTER);
-        set.unreachable(&nightly, start + 2 * UNREACHABLE_AFTER);
-        assert!(set.get().is_empty(), "a new run starts from nothing");
-    }
-
-    /// A catalog no package uses any more starts a new run when one does.
-    #[test]
-    fn a_pruned_catalog_starts_a_new_unreachable_run() {
-        let set = ActionNeeded::default();
-        let nightly = host("nightly.quilttest.com");
-        let start = Instant::now();
-        set.unreachable(&nightly, start);
-        set.keep_unreachable_runs(|_| false);
-        set.reached(None, start + UNREACHABLE_AFTER);
-        set.unreachable(&nightly, start + UNREACHABLE_AFTER);
-        assert!(set.get().is_empty(), "a run that was pruned starts again");
     }
 
     #[test]

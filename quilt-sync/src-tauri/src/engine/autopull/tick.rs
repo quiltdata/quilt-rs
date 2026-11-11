@@ -375,7 +375,7 @@ pub(crate) async fn refresh_then_maybe_sync(
     push_enabled: bool,
     scope: SyncScope,
     aggregator: &SyncTrayAggregator,
-    reached: &mut Option<bool>,
+    reached: &mut bool,
 ) -> Result<Option<RefreshOutcome>, WatchError> {
     let installed = model
         .get_installed_package(namespace)
@@ -435,7 +435,7 @@ pub(crate) async fn refresh_then_maybe_sync(
         Some(status) => status,
         None => walk_locked(model, &locked, walks, namespace, lineage).await?,
     };
-    *reached = Some(status.latest_refreshed);
+    *reached = status.latest_refreshed;
     let upstream = status.upstream_state;
     let has_changes = !status.changes.is_empty();
     // Observed-tree fingerprint, taken before the publish path consumes `status`.
@@ -971,9 +971,8 @@ pub(crate) async fn sync_package(
         return Pass::LeftToTasks;
     }
 
-    // Whether the status read reached the bucket, not only the last-known
-    // tip. `None` when there was no status read.
-    let mut reached = None;
+    // Whether the status read reached the bucket, not only the last-known tip.
+    let mut reached = false;
     let result = refresh_then_maybe_sync(
         model,
         &namespace,
@@ -1016,13 +1015,9 @@ pub(crate) async fn sync_package(
     // The bucket answered the status read: its session and its access work,
     // whatever the pass then decided. A refusal below enters again.
     let package = Subject::package(&namespace);
-    if reached == Some(true) {
+    if reached {
         inner.action_needed.session_works(origin);
         inner.action_needed.leave(&package, Kind::NoAccess);
-    } else if reached == Some(false)
-        && let Some(host) = origin
-    {
-        inner.action_needed.unreachable(host, now);
     }
     match result {
         Ok(outcome) => {
@@ -1091,10 +1086,6 @@ pub(crate) async fn sync_package(
             };
             inner.reporter.report_login_required(host.as_ref(), block);
             inner.action_needed.session_failed(host.as_ref(), expired);
-            // A rejected session is the catalog's answer: it was reached.
-            if expired {
-                inner.action_needed.reached(host.as_ref(), now);
-            }
             inner.aggregator.note_login_required(&namespace, host);
         }
         Err(WatchError::Conflict(reason)) => {
@@ -1107,10 +1098,6 @@ pub(crate) async fn sync_package(
             if catalog_changed(model, pkg, origin).await {
                 inner.reporter.report_autosync_changed();
                 return Pass::Done;
-            }
-            // A refusal is the bucket's answer: the catalog was reached.
-            if matches!(reason, PausedReason::RoleDenied { .. }) {
-                inner.action_needed.reached(origin, now);
             }
             pause(inner, &namespace, origin, reason).await;
         }
@@ -1171,11 +1158,6 @@ pub(crate) async fn prune_action_needed(
     inner
         .action_needed
         .keep_publish_runs(|namespace| packages.iter().any(|pkg| pkg.namespace == *namespace));
-    if read_all {
-        inner
-            .action_needed
-            .keep_unreachable_runs(|host| origins.contains(&Some(host.clone())));
-    }
 }
 
 /// A publish that has kept failing for [`PUBLISH_FAILING_AFTER`] needs

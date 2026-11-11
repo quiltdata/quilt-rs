@@ -3195,7 +3195,6 @@ pub enum ActionNeededCause {
     Watcher {
         message: String,
     },
-    Unreachable,
     #[serde(other)]
     Unrecognised,
 }

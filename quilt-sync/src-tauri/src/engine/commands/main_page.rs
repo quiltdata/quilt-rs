@@ -378,22 +378,6 @@ pub(super) fn read_worked(
     }
 }
 
-/// A package's status read worked but did not reach its bucket: through a
-/// catalog, that catalog may be unreachable.
-pub(super) fn read_missed(
-    action_needed: &ActionNeeded,
-    lineage: &quilt::lineage::PackageLineage,
-    status: &quilt::lineage::InstalledPackageStatus,
-) {
-    if !status.latest_refreshed
-        && let Some(remote) = lineage.remote_uri.as_ref()
-        && !remote.bucket.is_empty()
-        && let Some(host) = remote.origin.as_ref()
-    {
-        action_needed.unreachable(host, std::time::Instant::now());
-    }
-}
-
 /// A package's status read was refused: `state` is how it was classified, a
 /// lost session or a denial. A read that finishes after the package was
 /// uninstalled or moved to another catalog changes nothing: its refusal is
@@ -417,13 +401,6 @@ pub(super) async fn read_blocked(
     };
     if !current {
         return;
-    }
-    // A refusal or a rejected session is an answer: the catalog was reached.
-    if matches!(
-        state,
-        PackageStateDto::RoleDenied { .. } | PackageStateDto::SignInExpired { .. }
-    ) {
-        action_needed.reached(origin, std::time::Instant::now());
     }
     match state {
         PackageStateDto::RoleDenied { role } => action_needed.enter(
@@ -982,7 +959,6 @@ pub(super) async fn refresh_main_page_package_from_model(
         // A status that did not read the bucket's `latest` is local data
         // alone, so it is answered like a failure to reach the bucket below.
         Ok((status, _)) if !status.latest_refreshed => {
-            read_missed(action_needed, &lineage, &status);
             tracing::warn!(
                 "Could not read the latest revision for {}",
                 installed_package.namespace,

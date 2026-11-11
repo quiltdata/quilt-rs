@@ -438,7 +438,7 @@ async fn a_deferred_publish_records_when_it_will_arm() -> Result<(), Error> {
         true,
         SyncScope::default(),
         &test_aggregator(),
-        &mut None,
+        &mut false,
     )
     .await
     .expect("a deferral is an Ok outcome")
@@ -490,7 +490,7 @@ async fn a_quiet_tree_that_publishes_records_no_arm_time() -> Result<(), Error> 
         true,
         SyncScope::default(),
         &test_aggregator(),
-        &mut None,
+        &mut false,
     )
     .await
     .expect("a quiet tree publishes")
