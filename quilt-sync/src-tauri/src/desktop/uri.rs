@@ -1,7 +1,6 @@
 use std::str::FromStr;
 use std::sync::Arc;
 
-use rust_i18n::t;
 use tauri::AppHandle;
 use tauri::Manager;
 use tauri_plugin_deep_link::DeepLinkExt;
@@ -215,11 +214,7 @@ fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
                 navigate(
                     &s,
                     landing.page.as_deref(),
-                    routes::Paths::LoginError(
-                        host,
-                        t!("login_error.title").into(),
-                        err.to_string(),
-                    ),
+                    routes::Paths::LoginError(host, "Login failed".into(), err.to_string()),
                 );
             }
         }
