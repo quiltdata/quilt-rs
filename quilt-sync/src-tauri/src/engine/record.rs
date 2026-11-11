@@ -790,6 +790,8 @@ mod tests {
         let old_id = old.id;
         record.insert(old).await;
         drop(record);
+        // A restart takes longer than the millisecond the ids count in.
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
 
         let again = Record::open(dir.path(), EventSink::new()).await;
         assert_eq!(again.entries().await, []);
