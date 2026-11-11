@@ -36,8 +36,8 @@ use super::super::installed_package::{
     BucketDialog, BucketDraft, CopiedMark, MenuCommand, RemoveDialog, Uninstall, ask_to_remove,
     location, remote_target, run_reading,
 };
-use super::super::page::{Outcome, Page, PageHandle, critical};
 use super::super::json_editor::focus_json_editor_within;
+use super::super::page::{Outcome, Page, PageHandle, critical};
 use super::super::row_menu::RowCommand;
 use crate::routes;
 
@@ -1040,12 +1040,7 @@ fn column(
 
 /// The metadata field: the preview or the editor, with the check's caption
 /// and the settings line while the draft is still the Settings value.
-fn metadata_field(
-    d: &CommitData,
-    fixed: &Form,
-    draft: Draft,
-    shown: Memo<FieldErrors>,
-) -> AnyView {
+fn metadata_field(d: &CommitData, fixed: &Form, draft: Draft, shown: Memo<FieldErrors>) -> AnyView {
     // The read's own note, not the check's, so it does not wait for a press.
     let user_meta_error = d.user_meta_error.clone();
     let metadata_error = Signal::derive(move || {
@@ -2659,7 +2654,11 @@ mod tests {
     #[wasm_bindgen_test]
     async fn an_unchosen_workflow_says_so_on_the_press() {
         let el = checked_page(required, takes_anything).await;
-        assert!(!says(&el, CHOOSE_A_WORKFLOW), "markup was {}", el.inner_html());
+        assert!(
+            !says(&el, CHOOSE_A_WORKFLOW),
+            "markup was {}",
+            el.inner_html()
+        );
         assert!(!face(&el).disabled());
 
         face(&el).click();
@@ -2871,7 +2870,9 @@ mod tests {
         };
         let form = Form::of(&d);
         assert_eq!(
-            form.field_errors(&[], "", &form.initial).workflow.as_deref(),
+            form.field_errors(&[], "", &form.initial)
+                .workflow
+                .as_deref(),
             Some(CHOOSE_A_WORKFLOW)
         );
         assert_eq!(form.field_errors(&[], "", &named("plates")).workflow, None);
