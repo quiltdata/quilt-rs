@@ -156,9 +156,11 @@ fn newest_unread(feed: InboxFeed, wanted: impl Fn(&kit::InboxEntry) -> bool) -> 
 
 /// Read every entry up to the id `due` names, and `namespace`'s only when it
 /// names one, once it has named that id for [`DWELL_MS`]. A newer entry starts
-/// the dwell again, and `None` stops it.
+/// the dwell again, and `None` stops it. A read that fails, as across a
+/// reconnect, starts it again too.
 fn read_on_dwell(due: Memo<Option<(u64, Option<Namespace>)>>) {
     let pending: StoredValue<Option<TimeoutHandle>> = StoredValue::new(None);
+    let failed = RwSignal::new(0_u64);
     let stop = move || {
         if let Some(handle) = pending.try_update_value(Option::take).flatten() {
             handle.clear();
@@ -166,6 +168,7 @@ fn read_on_dwell(due: Memo<Option<(u64, Option<Namespace>)>>) {
     };
     Effect::new(move |_| {
         stop();
+        failed.track();
         let Some((up_to, namespace)) = due.get() else {
             return;
         };
@@ -173,6 +176,7 @@ fn read_on_dwell(due: Memo<Option<(u64, Option<Namespace>)>>) {
             spawn_local(async move {
                 if let Err(err) = commands::mark_read(up_to, namespace).await {
                     leptos::logging::warn!("inbox: could not mark entries read: {err}");
+                    failed.try_update(|n| *n += 1);
                 }
             });
         };
