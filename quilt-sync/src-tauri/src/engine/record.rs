@@ -353,25 +353,37 @@ impl Record {
             next_id: 1,
             lines: 0,
         };
-        match tokio::fs::read_to_string(&path).await {
-            Ok(text) => {
-                for line in text.lines().filter(|l| !l.trim().is_empty()) {
-                    match serde_json::from_str(line) {
+        // Line by line, so a line cut short, even inside a character, costs
+        // that line alone.
+        let read = match tokio::fs::read(&path).await {
+            Ok(bytes) => {
+                for line in bytes.split(|b| *b == b'\n') {
+                    if line.trim_ascii().is_empty() {
+                        continue;
+                    }
+                    match serde_json::from_slice(line) {
                         Ok(line) => state.apply(line),
                         Err(err) => warn!("record: skipped a line that does not parse: {err}"),
                     }
                 }
+                true
             }
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-            Err(err) => warn!("record: could not read {}: {err}", path.display()),
-        }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => true,
+            Err(err) => {
+                warn!("record: could not read {}: {err}", path.display());
+                false
+            }
+        };
         state.trim(Utc::now());
         let record = Self {
             path: Some(path),
             state: Mutex::new(state),
             events,
         };
-        record.rewrite(&mut *record.state.lock().await).await;
+        // A file that could not be read is left as it is, not replaced.
+        if read {
+            record.rewrite(&mut *record.state.lock().await).await;
+        }
         record
     }
 
@@ -655,6 +667,22 @@ mod tests {
         assert_eq!(entries[0].outcome.as_deref(), Some("Freed 1 kB."));
         // Ids go on from where they were.
         assert!(again.add(Draft::uninstalled(&ns(), None)).await > entries[1].id);
+    }
+
+    /// An append cut short inside a character costs that line, not the rest.
+    #[tokio::test]
+    async fn a_line_cut_inside_a_character_is_skipped() {
+        let dir = tempfile::tempdir().unwrap();
+        let record = Record::open(dir.path(), EventSink::new()).await;
+        record.add(Draft::uninstalled(&ns(), None)).await;
+        drop(record);
+        let path = dir.path().join(FILE_NAME);
+        let mut bytes = std::fs::read(&path).unwrap();
+        bytes.extend_from_slice(b"{\"add\":{\"outcome\":\"caf\xc3");
+        std::fs::write(&path, bytes).unwrap();
+
+        let again = Record::open(dir.path(), EventSink::new()).await;
+        assert_eq!(again.entries().await.len(), 1);
     }
 
     #[tokio::test]

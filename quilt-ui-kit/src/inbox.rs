@@ -407,8 +407,10 @@ pub fn InboxPanel(
                 fallback=|| view! { <p class=style::empty>"Nothing new"</p> }
             >
                 <ol class=style::entries>
-                    // Keyed by id alone, so a row read while focused keeps its link.
-                    <For each=ordered key=|entry| entry.id let:entry>
+                    // Keyed by id and link, not the read flag, so a row read
+                    // while focused keeps its link, and one whose package went
+                    // takes its new one.
+                    <For each=ordered key=|entry| (entry.id, entry.href.clone()) let:entry>
                         {
                             let id = entry.id;
                             let highlighted = Signal::derive(move || {
@@ -505,6 +507,18 @@ mod tests {
                     .get_attribute("href")
             })
             .collect()
+    }
+
+    /// A package uninstalled elsewhere changes an entry's link, not its id.
+    #[wasm_bindgen_test]
+    async fn an_entry_takes_its_new_link() {
+        let entries = RwSignal::new(vec![entry(1, 10.0, true)]);
+        let el = mount(move || {
+            view! { <InboxPanel entries=entries action_needed=ActionNeeded::default() /> }
+        });
+        entries.update(|all| all[0].href = "/".to_string());
+        sleep_ms(0).await;
+        assert_eq!(hrefs(&el, "ol a"), ["/"]);
     }
 
     #[wasm_bindgen_test]
