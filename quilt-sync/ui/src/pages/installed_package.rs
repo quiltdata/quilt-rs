@@ -2532,8 +2532,8 @@ mod tests {
         );
     }
 
-    const PLAIN: &str = "/installed-package?namespace=team%2Fdataset&filter=unmodified";
-    const RESOLVE: &str = "/installed-package?namespace=team%2Fdataset&filter=unmodified&resolve=1";
+    const PLAIN: &str = "/installed-package?namespace=team%2Fdataset";
+    const RESOLVE: &str = "/installed-package?namespace=team%2Fdataset&resolve=1";
 
     fn compared() -> commands::ResolveData {
         commands::ResolveData::Compared {
@@ -2716,6 +2716,20 @@ mod tests {
         assert_eq!(asked.first().map(String::as_str), Some("team/q%20report"));
     }
 
+    /// Older links carry `filter=unmodified`; they still open the package.
+    #[wasm_bindgen_test]
+    async fn an_old_link_with_a_filter_opens_the_package() {
+        ASKED_FOR.with(|a| a.borrow_mut().clear());
+        screen_at(
+            "/installed-package?namespace=team%2Fdataset&filter=unmodified",
+            recorded_read,
+        )
+        .await;
+        let asked = ASKED_FOR.with(|a| a.borrow().clone());
+        quilt_ui_kit::test_support::unmount_earlier();
+        assert_eq!(asked.first().map(String::as_str), Some("team/dataset"));
+    }
+
     /// The page at `address`, reading through `read`, inside a router.
     async fn screen_at(address: &str, read: PageRead) -> web_sys::Element {
         screen_resolving(address, read, ResolveCommands::app()).await
@@ -2884,13 +2898,12 @@ mod tests {
         let before = history_length();
         let el = screen_at(RESOLVE, settled_read).await;
 
-        assert_eq!(search(), "?namespace=team%2Fdataset&filter=unmodified");
+        assert_eq!(search(), "?namespace=team%2Fdataset");
         assert_eq!(history_length(), before, "replaced, not pushed");
         element_saying(&el, "History (1)");
     }
 
-    const REVISION: &str =
-        "/installed-package?namespace=team%2Fdataset&filter=unmodified&revision=0123456789abcdef";
+    const REVISION: &str = "/installed-package?namespace=team%2Fdataset&revision=0123456789abcdef";
 
     #[wasm_bindgen_test]
     async fn the_revision_summary_links_to_the_revision_mode() {
@@ -2926,12 +2939,12 @@ mod tests {
     async fn another_revision_normalises_in_place() {
         let before = history_length();
         let el = screen_at(
-            "/installed-package?namespace=team%2Fdataset&filter=unmodified&revision=older",
+            "/installed-package?namespace=team%2Fdataset&revision=older",
             settled_read,
         )
         .await;
 
-        assert_eq!(search(), "?namespace=team%2Fdataset&filter=unmodified");
+        assert_eq!(search(), "?namespace=team%2Fdataset");
         assert_eq!(history_length(), before, "replaced, not pushed");
         element_saying(&el, "History (1)");
     }
@@ -3186,10 +3199,7 @@ mod tests {
         let el = screen_at(RESOLVE, refused_read).await;
 
         element_saying(&el, "Could not compare the revisions.");
-        assert_eq!(
-            search(),
-            "?namespace=team%2Fdataset&filter=unmodified&resolve=1"
-        );
+        assert_eq!(search(), "?namespace=team%2Fdataset&resolve=1");
     }
 
     #[wasm_bindgen_test]
@@ -3204,7 +3214,7 @@ mod tests {
             .click();
         sleep_ms(50).await;
 
-        assert_eq!(search(), "?namespace=team%2Fdataset&filter=unmodified");
+        assert_eq!(search(), "?namespace=team%2Fdataset");
         assert_eq!(
             history_length(),
             before,

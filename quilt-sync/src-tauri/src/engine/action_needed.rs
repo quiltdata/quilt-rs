@@ -205,7 +205,7 @@ impl Entry {
         match (&self.subject, &self.cause) {
             (_, Cause::Watcher { .. }) => routes::Paths::Settings,
             (Subject::Package { namespace }, _) => {
-                routes::Paths::InstalledPackage(namespace.clone(), routes::EntriesFilter::default())
+                routes::Paths::InstalledPackage(namespace.clone())
             }
             _ => routes::Paths::Home,
         }

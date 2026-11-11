@@ -100,10 +100,12 @@ async fn follow(navigate: &impl Fn(&str, NavigateOptions)) {
     // after one and before the other. A reply to the done that's lost brings
     // it again, and the page skips it.
     if remember(&sent.id) {
-        // The router ignores a move to where the page already is, so opening
-        // the same link again reloads, which runs it again.
+        // The router ignores a move to where the page already is, so a link
+        // opened again reloads, which runs it again. The tray's page stays.
         if Some(&sent.page) == here().as_ref() {
-            if let Some(window) = web_sys::window() {
+            if sent.again
+                && let Some(window) = web_sys::window()
+            {
                 let _ = window.location().reload();
             }
         } else {
@@ -221,7 +223,7 @@ mod tests {
         engine.hello();
         sleep_ms(0).await;
 
-        let sent = serde_json::json!({"id": "n1", "page": "/settings"});
+        let sent = serde_json::json!({"id": "n1", "page": "/settings", "again": true});
         let requests = engine.requests();
         assert_eq!(requests.len(), 1, "one ask, at the hello");
         assert_eq!(requests[0]["cmd"], "pending_navigation");

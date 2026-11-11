@@ -43,7 +43,7 @@ mod tests {
     };
     use wasm_bindgen_test::*;
 
-    const PLAIN: &str = "/installed-package?namespace=team%2Fdataset&filter=unmodified";
+    const PLAIN: &str = "/installed-package?namespace=team%2Fdataset";
     const LINE: &str = "Showing what this computer last knew about this package. \
                         Publish and Get latest wait until quilt.test can be reached.";
 

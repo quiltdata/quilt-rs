@@ -23,8 +23,8 @@
 
 ### Added
 
-- When syncing stops until you act, such as a conflict or an expired sign-in, QuiltSync posts a system notification while its window is not in front. Clicking it opens the page that fixes it, and Settings can turn it off (<https://github.com/quiltdata/quilt-rs/pull/1330>)
-- The tray icon shows a red dot while some action is needed, and its menu lists what needs it, each line opening the page that fixes it (<https://github.com/quiltdata/quilt-rs/pull/1330>)
+- When syncing stops until you act, such as a conflict or an expired sign-in, QuiltSync posts a system notification while its window is not in front. Clicking it opens the page that fixes it, and Settings can turn it off (<https://github.com/quiltdata/quilt-rs/pull/1330>, <https://github.com/quiltdata/quilt-rs/pull/1351>)
+- The tray icon shows a red dot while some action is needed, and its menu lists what needs it, each line opening the page that fixes it (<https://github.com/quiltdata/quilt-rs/pull/1330>, <https://github.com/quiltdata/quilt-rs/pull/1351>)
 - A catalog that can't be reached for 15 minutes, while other catalogs or buckets can, counts as needing action: the tray lists it and a notification says its packages are not syncing (<https://github.com/quiltdata/quilt-rs/pull/1349>)
 
 ### Changed
@@ -51,6 +51,7 @@
 ### Security
 
 - QuiltSync bundles SQLite 3.54.1, which fixes [RUSTSEC-2026-0459](https://rustsec.org/advisories/RUSTSEC-2026-0459) (<https://github.com/quiltdata/quilt-rs/pull/1326>)
+- QuiltSync no longer carries a Mixpanel API secret in the app; analytics authenticate with the Mixpanel project token only, which is all the `/track` ingest endpoint needs (<https://github.com/quiltdata/quilt-rs/pull/1350>)
 
 ### quilt-rs
 
