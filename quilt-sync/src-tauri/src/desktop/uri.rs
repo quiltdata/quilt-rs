@@ -23,7 +23,7 @@ use crate::engine::telemetry::prelude::*;
 fn navigate(services: &Services, to: Option<&str>, path: routes::Paths) {
     let to = to.unwrap_or(navigation::WINDOW);
     debug!("Sending page {} to {}", to, path);
-    services.navigations.send(&services.events, to, path);
+    services.navigations.send_again(&services.events, to, path);
 }
 
 /// The page of a Quilt package URI.
@@ -403,10 +403,9 @@ mod tests {
             .unwrap();
         navigate(&services, Some("a-tab"), routes::Paths::Settings);
         navigate(&services, None, routes::Paths::Home);
-        assert_eq!(
-            services.navigations.pending("a-tab").unwrap().page,
-            "/settings"
-        );
+        let tab = services.navigations.pending("a-tab").unwrap();
+        assert_eq!(tab.page, "/settings");
+        assert!(tab.again, "a link opened twice runs twice");
         assert_eq!(
             services
                 .navigations

@@ -1930,6 +1930,8 @@ pub struct Navigation {
     pub id: String,
     /// The address, without the host.
     pub page: String,
+    /// Already on that page, load it again rather than stay.
+    pub again: bool,
 }
 
 /// Where the engine sent this page, if anywhere, until it says it went.
