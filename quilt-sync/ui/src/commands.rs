@@ -3160,6 +3160,10 @@ pub async fn get_autopull_activity() -> Result<Option<AutopullActivity>, String>
 /// lockstep with the backend.
 pub const ACTION_NEEDED_EVENT: &str = "action-needed";
 
+/// Event autosync sends when a package's catalog session is gone. Kept in
+/// lockstep with the backend.
+pub const AUTOSYNC_LOGIN_REQUIRED_EVENT: &str = "autosync-login-required";
+
 /// Event sent on every clear of a pause. Kept in lockstep with the backend.
 pub const AUTOSYNC_PAUSE_CLEARED_EVENT: &str = "autosync-pause-cleared";
 

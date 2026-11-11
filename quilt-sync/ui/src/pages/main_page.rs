@@ -1548,7 +1548,7 @@ pub fn MainPage() -> impl IntoView {
             <PackageStatusListener reload=reload />
             <ReloadOn event=commands::PACKAGES_CHANGED_EVENT reload=reload />
             <ReloadOn event=commands::ACCOUNTS_CHANGED_EVENT reload=reload />
-            <ReloadOn event=commands::ACTION_NEEDED_EVENT reload=reload />
+            <ReloadOn event=commands::AUTOSYNC_LOGIN_REQUIRED_EVENT reload=reload />
             <MainPageRegions
                 packages=packages
                 accounts=accounts
@@ -1616,8 +1616,8 @@ fn PackageStatusListener(reload: Trigger) -> impl IntoView {
 
 /// Ask the backend again on `event`: a package created, installed or
 /// uninstalled, an account signed in, out or switched, here or in another
-/// window or tab, or what needs action changed, as when autosync finds a
-/// session gone.
+/// window or tab, or a session autosync found gone. Not on every change to
+/// what needs action: this page's own reads change it, and would read again.
 #[component]
 fn ReloadOn(event: &'static str, reload: Trigger) -> impl IntoView {
     let listener = crate::engine::listen::<serde::de::IgnoredAny>(event, move |_| reload.notify());

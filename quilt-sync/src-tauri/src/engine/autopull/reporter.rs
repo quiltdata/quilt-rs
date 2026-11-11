@@ -541,7 +541,6 @@ impl StatusReporter for SinkEventReporter {
         } else {
             warn!("autosync: login required ({block:?})");
         }
-        // TODO(autosync/03-merge-conflicts.md): no UI listener yet.
         let payload = LoginRequiredEvent {
             host: host.map(ToString::to_string),
         };
