@@ -1093,7 +1093,10 @@ fn focus_field(field: Field) {
         };
         let target = match field {
             Field::Message => "[data-commit-message] input",
-            Field::Workflow => "[data-commit-workflow] select",
+            // The select, or the error itself when there is nothing to choose.
+            Field::Workflow => {
+                "[data-commit-workflow] select, [data-commit-workflow] [data-field-error]"
+            }
             Field::Metadata => {
                 if let Ok(Some(within)) = document.query_selector("[data-commit-metadata]") {
                     focus_json_editor_within(&within);
@@ -2647,6 +2650,61 @@ mod tests {
             config_url: None,
         };
         Box::pin(async move { Ok(d) })
+    }
+
+    const NAME_REFUSED: &str = "The package name must start with plates/.";
+
+    fn refuses_the_name(
+        _: String,
+        _: String,
+        _: bool,
+        _: String,
+        _: String,
+    ) -> Pin<Box<dyn Future<Output = Vec<CommitViolation>>>> {
+        Box::pin(async {
+            vec![CommitViolation {
+                field: ViolationField::Name,
+                message: NAME_REFUSED.to_string(),
+            }]
+        })
+    }
+
+    /// A bucket that requires its one workflow: nothing to choose.
+    fn required_one(ns: String) -> Pin<Box<dyn Future<Output = Result<CommitData, String>>>> {
+        Box::pin(async move {
+            let mut d = governed(ns).await?;
+            if let CommitWorkflows::Available {
+                is_workflow_required,
+                ..
+            } = &mut d.workflows
+            {
+                *is_workflow_required = true;
+            }
+            Ok(d)
+        })
+    }
+
+    /// With one workflow there is no select, so the press focuses the
+    /// error under the workflow's words.
+    #[wasm_bindgen_test]
+    async fn a_workflow_error_without_a_select_takes_the_focus() {
+        let el = checked_page(required_one, refuses_the_name).await;
+        assert!(
+            el.query_selector("[data-commit-workflow] select")
+                .unwrap()
+                .is_none()
+        );
+        assert!(!says(&el, NAME_REFUSED));
+
+        face(&el).click();
+        sleep_ms(80).await;
+        assert_eq!(sent(), []);
+        let error = el
+            .query_selector("[data-commit-workflow] [data-field-error]")
+            .unwrap()
+            .expect("the error under the workflow");
+        assert!(says(&el, NAME_REFUSED));
+        assert_eq!(focused(), Some(error));
     }
 
     /// An unchosen required workflow waits for the press too, and then the

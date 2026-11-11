@@ -364,10 +364,18 @@ pub fn WorkflowField(
     let note = note.map(|note| view! { <p class=style::field_hint>{note}</p> });
     let Some(choice) = workflow else {
         let words = no_workflow.unwrap_or_else(|| "None".to_string());
+        // With no select to take the focus, the error does, so a press that
+        // stops here lands the reader on the reason.
         return view! {
             <div class=style::field>
                 <div class=style::field_name>"Workflow"</div>
                 <div class=style::field_value>{words}</div>
+                <Show when=move || error.get().is_some()>
+                    <p class=style::field_error tabindex="-1" data-field-error>
+                        {StateTone::Danger.glyph()}
+                        <span>{move || error.get().unwrap_or_default()}</span>
+                    </p>
+                </Show>
                 {note}
                 {hint}
             </div>
