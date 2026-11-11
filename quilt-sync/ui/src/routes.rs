@@ -18,16 +18,15 @@ use quilt_uri::S3PackageUri;
 /// The installed-package screen for one package.
 ///
 /// `namespace` goes in the query string because `installed_package` reads it
-/// with [`use_query`], and a bare path leaves it empty. `filter=unmodified`
-/// is part of the address rather than a default the page applies: it is what
-/// every link to this screen has always carried.
+/// with [`use_query`], and a bare path leaves it empty. Older links also
+/// carry `filter=unmodified`; the page ignores it.
 ///
 /// The `[Get latest]` and `[Choose S3 bucket]` queue actions land here too,
 /// because neither has a page of its own: this page offers both.
 pub fn package_page_href(namespace: &Namespace) -> String {
     let namespace = namespace.to_string();
     let namespace = urlencoding::encode(&namespace);
-    format!("/installed-package?namespace={namespace}&filter=unmodified")
+    format!("/installed-package?namespace={namespace}")
 }
 
 /// The package screen with the resolve mode asked for. The plain address
@@ -303,7 +302,7 @@ mod tests {
         let href = sign_in_href("quilt.test", &back);
         assert_eq!(
             href,
-            "/login?host=quilt.test&back=%2Finstalled-package%3Fnamespace%3Dorg%252Fpkg%26filter%3Dunmodified"
+            "/login?host=quilt.test&back=%2Finstalled-package%3Fnamespace%3Dorg%252Fpkg"
         );
     }
 
@@ -322,7 +321,7 @@ mod tests {
     fn a_plain_namespace_keeps_its_slash_readable() {
         assert_eq!(
             package_page_href(&ns("org/pkg")),
-            "/installed-package?namespace=org%2Fpkg&filter=unmodified"
+            "/installed-package?namespace=org%2Fpkg"
         );
         assert_eq!(commit_href(&ns("org/pkg")), "/commit?namespace=org%2Fpkg");
         assert_eq!(
@@ -337,11 +336,11 @@ mod tests {
     fn the_resolve_mode_is_the_plain_address_plus_one_parameter() {
         assert_eq!(
             resolve_href(&ns("org/pkg")),
-            "/installed-package?namespace=org%2Fpkg&filter=unmodified&resolve=1"
+            "/installed-package?namespace=org%2Fpkg&resolve=1"
         );
         assert_eq!(
             resolve_href(&ns("team/a&b")),
-            "/installed-package?namespace=team%2Fa%26b&filter=unmodified&resolve=1"
+            "/installed-package?namespace=team%2Fa%26b&resolve=1"
         );
     }
 
@@ -376,16 +375,6 @@ mod tests {
         );
     }
 
-    /// `filter` has to survive whatever the namespace contains — a raw `&` in
-    /// the namespace used to be indistinguishable from the separator before it.
-    #[test]
-    fn the_filter_stays_its_own_parameter() {
-        assert_eq!(
-            package_page_href(&ns("team/a&filter=all")),
-            "/installed-package?namespace=team%2Fa%26filter%3Dall&filter=unmodified"
-        );
-    }
-
     fn mismatch(catalog: Option<&str>) -> DeepLinkOutcome {
         DeepLinkOutcome::Mismatch(RevisionMismatch {
             hash: "c41d8f02".to_string(),
@@ -404,12 +393,12 @@ mod tests {
                 package_page_href(&ns("org/pkg")),
                 Some(&mismatch(Some("https://quilt.test")))
             ),
-            "/installed-package?namespace=org%2Fpkg&filter=unmodified\
+            "/installed-package?namespace=org%2Fpkg\
              &mismatch=c41d8f02&mrbucket=quilt-lab&mrcatalog=https%3A%2F%2Fquilt.test"
         );
         assert_eq!(
             keeping_outcome(resolve_href(&ns("org/pkg")), Some(&mismatch(None))),
-            "/installed-package?namespace=org%2Fpkg&filter=unmodified&resolve=1\
+            "/installed-package?namespace=org%2Fpkg&resolve=1\
              &mismatch=c41d8f02&mrbucket=quilt-lab"
         );
         assert_eq!(
@@ -427,14 +416,14 @@ mod tests {
                 package_page_href(&ns("org/pkg")),
                 Some(&DeepLinkOutcome::LocalOnly)
             ),
-            "/installed-package?namespace=org%2Fpkg&filter=unmodified&localOnly=1"
+            "/installed-package?namespace=org%2Fpkg&localOnly=1"
         );
         assert_eq!(
             keeping_outcome(
                 resolve_href(&ns("org/pkg")),
                 Some(&DeepLinkOutcome::LocalOnly)
             ),
-            "/installed-package?namespace=org%2Fpkg&filter=unmodified&resolve=1&localOnly=1"
+            "/installed-package?namespace=org%2Fpkg&resolve=1&localOnly=1"
         );
     }
 

@@ -68,7 +68,7 @@ mod tests {
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
-    const PLAIN: &str = "/installed-package?namespace=team%2Fdataset&filter=unmodified";
+    const PLAIN: &str = "/installed-package?namespace=team%2Fdataset";
     const LINE: &str = "Your copy of this package isn't linked to an S3 bucket, \
                         so the link's version can't be checked. You're seeing the version you have.";
 
@@ -249,10 +249,7 @@ mod tests {
 
         button_saying(&el, "Resolve").click();
         sleep_ms(50).await;
-        assert_eq!(
-            search(),
-            "?namespace=team%2Fdataset&filter=unmodified&resolve=1&localOnly=1"
-        );
+        assert_eq!(search(), "?namespace=team%2Fdataset&resolve=1&localOnly=1");
 
         let back = el
             .query_selector(&format!("a[href='{plain}']"))
@@ -260,10 +257,7 @@ mod tests {
             .unwrap_or_else(|| panic!("the back link keeps it; markup was {}", el.inner_html()));
         back.unchecked_into::<web_sys::HtmlElement>().click();
         sleep_ms(50).await;
-        assert_eq!(
-            search(),
-            "?namespace=team%2Fdataset&filter=unmodified&localOnly=1"
-        );
+        assert_eq!(search(), "?namespace=team%2Fdataset&localOnly=1");
     }
 
     /// A `resolve=1` the package cannot honour is replaced, and the
@@ -272,10 +266,7 @@ mod tests {
     async fn a_normalised_address_keeps_local_only() {
         let el = screen(&format!("{PLAIN}&resolve=1&localOnly=1"), no_remote).await;
 
-        assert_eq!(
-            search(),
-            "?namespace=team%2Fdataset&filter=unmodified&localOnly=1"
-        );
+        assert_eq!(search(), "?namespace=team%2Fdataset&localOnly=1");
         element_saying(&el, LINE);
     }
 }

@@ -195,7 +195,7 @@ mod tests {
 
     const INSTALLED: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     const REQUESTED: &str = "c41d8f02aa55bb66cc77dd88ee99ff00c41d8f02aa55bb66cc77dd88ee99ff00";
-    const PLAIN: &str = "/installed-package?namespace=team%2Fdataset&filter=unmodified";
+    const PLAIN: &str = "/installed-package?namespace=team%2Fdataset";
 
     fn mismatch_query() -> String {
         format!("&mismatch={REQUESTED}&mrbucket=quilt-lab&mrcatalog=https%3A%2F%2Fquilt.test")
@@ -481,10 +481,7 @@ mod tests {
         sleep_ms(50).await;
         assert_eq!(
             search(),
-            format!(
-                "?namespace=team%2Fdataset&filter=unmodified&resolve=1{}",
-                mismatch_query()
-            )
+            format!("?namespace=team%2Fdataset&resolve=1{}", mismatch_query())
         );
         element_saying(&el, "Requested version:");
 
@@ -496,10 +493,7 @@ mod tests {
         sleep_ms(50).await;
         assert_eq!(
             search(),
-            format!(
-                "?namespace=team%2Fdataset&filter=unmodified{}",
-                mismatch_query()
-            )
+            format!("?namespace=team%2Fdataset{}", mismatch_query())
         );
         element_saying(&el, "Requested version:");
     }
@@ -517,10 +511,7 @@ mod tests {
 
         assert_eq!(
             search(),
-            format!(
-                "?namespace=team%2Fdataset&filter=unmodified{}",
-                mismatch_query()
-            )
+            format!("?namespace=team%2Fdataset{}", mismatch_query())
         );
     }
 

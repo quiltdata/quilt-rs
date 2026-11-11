@@ -169,7 +169,7 @@ mod tests {
             routes::page(entry(Subject::package(&ns), Cause::NoAccess { role: None }).page());
         assert_eq!(
             page.parse::<routes::Paths>().unwrap(),
-            routes::Paths::InstalledPackage(ns, routes::EntriesFilter::default())
+            routes::Paths::InstalledPackage(ns)
         );
     }
 }
