@@ -49,9 +49,6 @@ pub fn get_var(key: &str) -> Option<String> {
         "MIXPANEL_PROJECT_TOKEN" => {
             option_env!("MIXPANEL_PROJECT_TOKEN").map(std::string::ToString::to_string)
         }
-        "MIXPANEL_API_SECRET" => {
-            option_env!("MIXPANEL_API_SECRET").map(std::string::ToString::to_string)
-        }
         // Add more build-time env vars here as needed:
         // "DATABASE_URL" => option_env!("DATABASE_URL").map(|s| s.to_string()),
         // "API_KEY" => option_env!("API_KEY").map(|s| s.to_string()),
@@ -67,11 +64,6 @@ pub fn sentry_dsn() -> Option<String> {
 /// Get the `MIXPANEL_PROJECT_TOKEN` environment variable as a string.
 pub fn mixpanel_project_token() -> Option<String> {
     get_var("MIXPANEL_PROJECT_TOKEN")
-}
-
-/// Get the `MIXPANEL_API_SECRET` environment variable as a string.
-pub fn mixpanel_api_secret() -> Option<String> {
-    get_var("MIXPANEL_API_SECRET")
 }
 
 #[cfg(test)]
