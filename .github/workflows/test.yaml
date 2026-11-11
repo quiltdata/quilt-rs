@@ -146,7 +146,7 @@ jobs:
       # Pinned, so a new Biome release cannot fail an unrelated PR; Renovate
       # bumps it. Keep `biome.jsonc`'s `$schema` on the same version.
       # renovate: datasource=npm depName=@biomejs/biome
-      BIOME_VERSION: 2.6.4
+      BIOME_VERSION: 2.6.6
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
