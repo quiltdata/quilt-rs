@@ -124,8 +124,8 @@ impl Server {
         Self { addr, requests }
     }
 
-    fn client(&self, secret: Option<&str>) -> MixpanelClient {
-        MixpanelClient::with_base_url(TOKEN, secret, &format!("http://{}", self.addr))
+    fn client(&self) -> MixpanelClient {
+        MixpanelClient::with_base_url(TOKEN, &format!("http://{}", self.addr))
     }
 
     fn requests(&self) -> std::sync::MutexGuard<'_, Vec<Request>> {
@@ -251,7 +251,7 @@ async fn a_batch_is_one_form_post_to_track() {
     let server = Server::start(vec![accepted()]).await;
 
     server
-        .client(None)
+        .client()
         .send(vec![event("one")])
         .await
         .expect("delivered");
@@ -267,7 +267,7 @@ async fn a_batch_is_one_form_post_to_track() {
     );
     assert!(
         !request.headers.contains_key("authorization"),
-        "no secret, no auth: {:?}",
+        "a /track request carries no auth header: {:?}",
         request.headers
     );
 }
@@ -286,7 +286,7 @@ async fn each_event_gains_the_token_and_the_library_properties() {
     properties.insert("$insert_id".to_owned(), json!("an-id"));
 
     server
-        .client(None)
+        .client()
         .send(vec![WireEvent {
             event: "package_pulled".to_owned(),
             properties,
@@ -311,33 +311,10 @@ async fn each_event_gains_the_token_and_the_library_properties() {
 }
 
 #[tokio::test]
-async fn a_secret_is_sent_as_basic_auth_with_an_empty_password() {
-    let server = Server::start(vec![accepted()]).await;
-
-    server
-        .client(Some("s3cret"))
-        .send(vec![event("one")])
-        .await
-        .expect("delivered");
-
-    assert_eq!(
-        server.requests()[0]
-            .headers
-            .get("authorization")
-            .map(String::as_str),
-        Some(format!("Basic {}", STANDARD.encode("s3cret:")).as_str())
-    );
-}
-
-#[tokio::test]
 async fn events_go_in_chunks_of_fifty_in_order() {
     let server = Server::start(vec![accepted()]).await;
 
-    server
-        .client(None)
-        .send(events(120))
-        .await
-        .expect("delivered");
+    server.client().send(events(120)).await.expect("delivered");
 
     let requests = server.requests();
     let sizes: Vec<usize> = requests.iter().map(|r| r.events().len()).collect();
@@ -352,7 +329,7 @@ async fn an_empty_batch_sends_nothing() {
     let server = Server::start(vec![accepted()]).await;
 
     server
-        .client(None)
+        .client()
         .send(Vec::new())
         .await
         .expect("nothing to fail");
@@ -365,7 +342,7 @@ async fn a_failed_chunk_stops_the_batch() {
     let server = Server::start(vec![accepted(), reply(400, "bad"), accepted()]).await;
 
     let err = server
-        .client(None)
+        .client()
         .send(events(120))
         .await
         .expect_err("the second chunk was refused");
@@ -383,7 +360,7 @@ async fn a_2xx_answer_is_a_delivery_only_with_status_one() {
     ] {
         let server = Server::start(vec![reply(status, body)]).await;
         server
-            .client(None)
+            .client()
             .send(vec![event("one")])
             .await
             .unwrap_or_else(|err| panic!("{status} {body} is a delivery: {err}"));
@@ -400,7 +377,7 @@ async fn a_2xx_answer_is_a_delivery_only_with_status_one() {
     ] {
         let server = Server::start(vec![reply(200, body)]).await;
         let err = server
-            .client(None)
+            .client()
             .send(vec![event("one")])
             .await
             .expect_err(body);
@@ -418,7 +395,7 @@ async fn the_api_error_message_is_kept() {
     .await;
 
     let err = server
-        .client(None)
+        .client()
         .send(vec![event("one")])
         .await
         .expect_err("refused");
@@ -435,7 +412,7 @@ async fn a_4xx_is_a_refusal() {
     for status in [400, 401, 403, 404, 413] {
         let server = Server::start(vec![reply(status, "no such token")]).await;
         let err = server
-            .client(None)
+            .client()
             .send(vec![event("one")])
             .await
             .expect_err("refused");
@@ -453,7 +430,7 @@ async fn a_3xx_without_a_location_is_unreachable() {
     let server = Server::start(vec![reply(304, "")]).await;
 
     let err = server
-        .client(None)
+        .client()
         .send(vec![event("one")])
         .await
         .expect_err("not a delivery");
@@ -465,7 +442,7 @@ async fn a_3xx_without_a_location_is_unreachable() {
 /// A request that cannot be built is our bug: refused, not retried.
 #[tokio::test]
 async fn a_request_that_cannot_be_built_is_a_refusal() {
-    let client = MixpanelClient::with_base_url(TOKEN, None, "not a url");
+    let client = MixpanelClient::with_base_url(TOKEN, "not a url");
 
     let err = client
         .send(vec![event("one")])
@@ -480,7 +457,7 @@ async fn a_5xx_is_retried_with_backoff() {
     let server = Server::start(vec![reply(500, ""), reply(503, ""), accepted()]).await;
 
     server
-        .client(None)
+        .client()
         .send(vec![event("one")])
         .await
         .expect("delivered on the third try");
@@ -498,7 +475,7 @@ async fn a_5xx_gives_up_after_three_retries() {
     let server = Server::start(vec![reply(500, "")]).await;
 
     let err = server
-        .client(None)
+        .client()
         .send(vec![event("one")])
         .await
         .expect_err("gave up");
@@ -513,7 +490,7 @@ async fn a_429_waits_for_retry_after() {
     let server = Server::start(vec![rate_limited(Some(5)), accepted()]).await;
 
     server
-        .client(None)
+        .client()
         .send(vec![event("one")])
         .await
         .expect("delivered after the wait");
@@ -539,7 +516,7 @@ async fn a_retry_after_longer_than_the_send_has_left_is_unreachable_at_once() {
         let started = Instant::now();
 
         let err = server
-            .client(None)
+            .client()
             .send(vec![event("one")])
             .await
             .expect_err("not worth the wait");
@@ -554,7 +531,7 @@ async fn a_retry_after_longer_than_the_send_has_left_is_unreachable_at_once() {
 #[tokio::test(start_paused = true)]
 async fn a_retry_after_that_ended_a_send_holds_the_next_sends() {
     let server = Server::start(vec![rate_limited(Some(30)), accepted()]).await;
-    let client = server.client(None);
+    let client = server.client();
 
     let err = client.send(vec![event("one")]).await.expect_err("too long");
     assert!(matches!(err, SendError::Unreachable(_)), "{err:?}");
@@ -579,7 +556,7 @@ async fn a_retry_after_on_the_last_retry_holds_the_next_sends() {
     let mut replies: Vec<Reply> = (0..3).map(|_| reply(500, "")).collect();
     replies.extend([rate_limited(Some(2)), accepted()]);
     let server = Server::start(replies).await;
-    let client = server.client(None);
+    let client = server.client();
 
     let err = client
         .send(vec![event("one")])
@@ -604,7 +581,7 @@ async fn a_429_without_retry_after_backs_off() {
     let server = Server::start(vec![rate_limited(None)]).await;
 
     let err = server
-        .client(None)
+        .client()
         .send(vec![event("one")])
         .await
         .expect_err("gave up");
@@ -621,7 +598,7 @@ async fn a_refused_connection_is_retried_then_unreachable() {
         .expect("bind")
         .local_addr()
         .expect("an address");
-    let client = MixpanelClient::with_base_url(TOKEN, None, &format!("http://{addr}"));
+    let client = MixpanelClient::with_base_url(TOKEN, &format!("http://{addr}"));
     tick();
 
     let started = Instant::now();
@@ -643,7 +620,7 @@ async fn a_dropped_answer_is_retried() {
     let server = Server::start(vec![Reply::Close, accepted()]).await;
 
     server
-        .client(None)
+        .client()
         .send(vec![event("one")])
         .await
         .expect("delivered on the second try");
@@ -657,7 +634,7 @@ async fn a_cut_off_body_is_retried() {
     let server = Server::start(vec![Reply::CutOff, accepted()]).await;
 
     server
-        .client(None)
+        .client()
         .send(vec![event("one")])
         .await
         .expect("delivered on the second try");
@@ -671,7 +648,7 @@ async fn a_silent_request_times_out_and_is_retried() {
     let server = Server::start(vec![Reply::Silence, accepted()]).await;
 
     server
-        .client(None)
+        .client()
         .send(vec![event("one")])
         .await
         .expect("delivered on the second try");

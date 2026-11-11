@@ -177,7 +177,7 @@ Secrets / variables consumed:
 
 - macOS notarization: `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`,
   `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_TEAM_ID`.
-- Telemetry: `MIXPANEL_API_SECRET`, `MIXPANEL_PROJECT_TOKEN`, `SENTRY_DSN`.
+- Telemetry: `MIXPANEL_PROJECT_TOKEN`, `SENTRY_DSN`.
 - Updater signing: `TAURI_SIGNING_PRIVATE_KEY` (+ password). Public key
   is embedded in `tauri.conf.json`.
 - Azure (Windows signing): `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`,
