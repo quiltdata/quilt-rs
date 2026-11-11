@@ -125,7 +125,7 @@ mod tests {
     #[test(tokio::test)]
     async fn test_installing() -> Res {
         let (lineage, _temp_dir) = DomainLineage::from_temp_dir()?;
-        let test_hash = "deadbeef".to_string();
+        let test_hash = "deadbeef".repeat(8);
 
         let manifest_uri = ManifestUri {
             bucket: "a".to_string(),

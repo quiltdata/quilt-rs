@@ -21,6 +21,7 @@ pub use package::Namespace;
 pub use package::RevisionPointer;
 pub use package::S3PackageHandle;
 pub use package::S3PackageUri;
+pub use package::is_top_hash;
 pub use s3::S3Uri;
 pub use tag::Seconds;
 pub use tag::Tag;

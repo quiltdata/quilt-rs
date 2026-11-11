@@ -92,12 +92,14 @@ mod tests {
 
     use test_log::test;
 
+    const LATEST_HASH: &str = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+
     #[test(tokio::test)]
     async fn test_if_already_latest() -> Res {
         let source_manifest_uri = ManifestUri {
             bucket: "b".to_string(),
             namespace: ("f", "a").into(),
-            hash: "foo".to_string(),
+            hash: LATEST_HASH.to_string(),
             origin: None,
         };
         let source_lineage = PackageLineage {
@@ -111,7 +113,7 @@ mod tests {
             .put_object(
                 None,
                 &S3Uri::try_from("s3://b/.quilt/named_packages/f/a/latest")?,
-                b"foo".to_vec(),
+                LATEST_HASH.as_bytes().to_vec(),
             )
             .await?;
 
@@ -128,8 +130,8 @@ mod tests {
         assert_eq!(
             resolved_lineage,
             PackageLineage {
-                base_hash: "foo".to_string(),
-                latest_hash: "foo".to_string(),
+                base_hash: LATEST_HASH.to_string(),
+                latest_hash: LATEST_HASH.to_string(),
                 ..source_lineage
             },
             "nothing to fetch, and the copy is up to date"
@@ -157,7 +159,7 @@ mod tests {
             ..PackageLineage::default()
         };
 
-        let test_hash: &str = "deadbeef";
+        let test_hash: &str = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
         let dummy_manifest = r#"{"version": "v0"}"#;
         let remote = MockRemote::default();
         remote
@@ -207,7 +209,7 @@ mod tests {
         let storage = MockStorage::default();
         paths.scaffold_for_caching(&storage, "b").await?;
 
-        let test_hash: &str = "deadbeef";
+        let test_hash: &str = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
         let dummy_manifest = r#"{"version": "v0"}"#;
         let remote = MockRemote::default();
         remote
