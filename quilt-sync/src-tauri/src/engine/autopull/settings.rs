@@ -24,7 +24,7 @@ const FILE_NAME: &str = "autosync_settings.json";
 /// On disk the JSON is flat — `#[serde(flatten)]` projects the nested
 /// Rust struct onto the same keys 0.18.0 wrote, so no migration is
 /// required.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
 pub struct AutosyncSettings {
     #[serde(flatten)]
     pub pull: PullSettings,
@@ -36,16 +36,6 @@ pub struct AutosyncSettings {
     /// the disk shape backwards-compatible.
     #[serde(default)]
     pub close_to_tray: bool,
-}
-
-impl Default for AutosyncSettings {
-    fn default() -> Self {
-        Self {
-            pull: PullSettings::default(),
-            push: PushSettings::default(),
-            close_to_tray: false,
-        }
-    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
