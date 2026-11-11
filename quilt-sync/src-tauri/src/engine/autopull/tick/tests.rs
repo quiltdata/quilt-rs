@@ -2966,18 +2966,15 @@ fn status_model(lineage: &quilt::lineage::PackageLineage, refreshed: bool) -> Mo
         .returning(move |_| Ok(lineage.clone()));
     model.expect_get_installed_package().returning(|ns| {
         Ok(Some(
-            quilt::LocalDomain::new(std::path::PathBuf::new())
-                .create_installed_package(ns.clone()),
+            quilt::LocalDomain::new(std::path::PathBuf::new()).create_installed_package(ns.clone()),
         ))
     });
     model
         .expect_try_lock_package()
         .returning(|p| Ok(Some(p.namespace.clone())));
     model.expect_locked_package_status().returning(move |_, _| {
-        let mut status = quilt::lineage::InstalledPackageStatus::new(
-            UpstreamState::UpToDate,
-            BTreeMap::new(),
-        );
+        let mut status =
+            quilt::lineage::InstalledPackageStatus::new(UpstreamState::UpToDate, BTreeMap::new());
         status.latest_refreshed = refreshed;
         Ok(status)
     });
@@ -3041,7 +3038,15 @@ async fn a_catalog_unreachable_for_a_while_needs_action_unless_offline() {
     let not_yet = start + UNREACHABLE_AFTER - Duration::from_secs(1);
     sync_package(&missed, &roles, &inner, &pkg, &run, not_yet).await;
     assert!(kinds(&inner).is_empty(), "not unreachable for long enough");
-    sync_package(&missed, &roles, &inner, &pkg, &run, start + UNREACHABLE_AFTER).await;
+    sync_package(
+        &missed,
+        &roles,
+        &inner,
+        &pkg,
+        &run,
+        start + UNREACHABLE_AFTER,
+    )
+    .await;
     assert_eq!(kinds(&inner), [Kind::Unreachable]);
 
     let reached = status_model(&lineage, true);

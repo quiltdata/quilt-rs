@@ -653,7 +653,12 @@ mod tests {
                 .iter()
                 .map(|e| (e.subject.clone(), e.cause.kind()))
                 .collect::<Vec<_>>(),
-            vec![(Subject::Host { host: nightly.clone() }, Kind::Unreachable)]
+            vec![(
+                Subject::Host {
+                    host: nightly.clone()
+                },
+                Kind::Unreachable
+            )]
         );
 
         set.reached(Some(&nightly), start + UNREACHABLE_AFTER);
