@@ -25,12 +25,12 @@
 
 - When syncing stops until you act, such as a conflict or an expired sign-in, QuiltSync posts a system notification while its window is not in front. Clicking it opens the page that fixes it, and Settings can turn it off (<https://github.com/quiltdata/quilt-rs/pull/1330>)
 - The tray icon shows a red dot while some action is needed, and its menu lists what needs it, each line opening the page that fixes it (<https://github.com/quiltdata/quilt-rs/pull/1330>)
-- A bell on the top bar opens an inbox of what happened: each pull and publish with its files, packages uninstalled or created, and old revisions removed, kept for 90 days. A grey dot marks unread entries and a count says how many things need action. Entries are read once the inbox, or the package's page, stays open for two seconds (<https://github.com/quiltdata/quilt-rs/pull/PR>)
+- A bell on the top bar opens an inbox of what happened: each pull and publish with its files, packages uninstalled or created, and old revisions removed, kept for 90 days. A grey dot marks unread entries and a count says how many things need action. Entries are read once the inbox, or the package's page, stays open for two seconds (<https://github.com/quiltdata/quilt-rs/pull/1343>)
 
 ### Changed
 
-- The inbox replaces the stack of notification cards that stayed on screen until dismissed (<https://github.com/quiltdata/quilt-rs/pull/PR>)
-- *Get latest* and *Publish* on the package page say on the page that they worked, and *Get latest* names the files that arrived (<https://github.com/quiltdata/quilt-rs/pull/PR>)
+- The inbox replaces the stack of notification cards that stayed on screen until dismissed (<https://github.com/quiltdata/quilt-rs/pull/1343>)
+- *Get latest* and *Publish* on the package page say on the page that they worked, and *Get latest* names the files that arrived (<https://github.com/quiltdata/quilt-rs/pull/1343>)
 - QuiltSync tells you about a new release while it runs, not only when it opens, and a dismissed update bar comes back after five minutes (<https://github.com/quiltdata/quilt-rs/pull/1336>)
 - QuiltSync has one design: the classic design and the *New design* switch in Settings are gone (<https://github.com/quiltdata/quilt-rs/pull/1319>)
 - Popups, the quit prompt and the update bar follow the dark theme (<https://github.com/quiltdata/quilt-rs/pull/1331>)
