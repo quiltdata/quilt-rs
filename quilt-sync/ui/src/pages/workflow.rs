@@ -16,7 +16,6 @@ use crate::commands::{CommitWorkflows, WorkflowData, WorkflowInfo, WorkflowInten
 pub struct WorkflowOption {
     pub label: String,
     pub intent: WorkflowIntent,
-    pub disabled: bool,
 }
 
 /// Display label for a single declared workflow: its name, or its id when the
@@ -58,9 +57,10 @@ impl PreviousWorkflow {
 
 /// Build the dropdown's option list for the [`CommitWorkflows::Available`]
 /// state, matching the web catalog's order:
-/// - index 0: `None` → [`WorkflowIntent::NoWorkflow`], disabled when a workflow
-///   is required. Its label gains `" (default)"` when the config names no
-///   default and no workflow is required — then `None` is itself the bucket
+/// - index 0: `None` → [`WorkflowIntent::NoWorkflow`], always listed. On a
+///   bucket that requires a workflow, selecting it blocks the save (see
+///   [`needs_workflow`]). Its label gains `" (default)"` when the config names
+///   no default and no workflow is required — then `None` is itself the bucket
 ///   default (the resolver treats `BucketDefault` and `NoWorkflow` alike);
 /// - one entry per declared workflow (label = name or id, with `" (default)"`
 ///   appended to the bucket default) → [`WorkflowIntent::Named`].
@@ -71,6 +71,9 @@ impl PreviousWorkflow {
 /// There is deliberately no `Bucket default` item — the catalog offers only
 /// `None` plus the concrete workflows. An Available-but-empty workflow list
 /// therefore yields just `[None]`, which is fine.
+///
+/// Labels are unique, since two workflows may share a name: the label is how
+/// the select names an option, and the form keeps the intent behind it.
 pub fn workflow_options(
     workflows: &[WorkflowInfo],
     default_workflow: Option<&str>,
@@ -79,8 +82,7 @@ pub fn workflow_options(
     // When the config names no default and doesn't require a workflow, `None`
     // IS the bucket default (the resolver treats `BucketDefault` and
     // `NoWorkflow` identically then), so it bears the `(default)` marker.
-    // A required-but-defaultless bucket leaves `None` disabled with the
-    // required error, so it must not be labeled default.
+    // On a required bucket `None` is never the default.
     let none_is_default = default_workflow.is_none() && !is_workflow_required;
     let none_label = if none_is_default {
         "None (default)".to_string()
@@ -90,7 +92,6 @@ pub fn workflow_options(
     let mut options = vec![WorkflowOption {
         label: none_label,
         intent: WorkflowIntent::NoWorkflow,
-        disabled: is_workflow_required,
     }];
 
     options.extend(workflows.iter().map(|w| {
@@ -103,10 +104,9 @@ pub fn workflow_options(
         WorkflowOption {
             label,
             intent: WorkflowIntent::Named(w.id.clone()),
-            disabled: false,
         }
     }));
-
+    unique_labels(&mut options);
     options
 }
 
@@ -133,7 +133,8 @@ pub fn workflow_options(
 ///    `None` head, which is itself labeled `None (default)` and so is the
 ///    effective default.
 /// 3. Required bucket with no usable default (genuinely no default): the
-///    previous revision's workflow if present, else index 0 (`None`, disabled).
+///    previous revision's workflow if present, else index 0 (`None`, which
+///    blocks the save until the reader picks a workflow).
 ///
 /// A first push (the bucket form) has no previous revision, so it passes
 /// `previous_workflow_id = None` and the bucket default is preselected.
@@ -172,7 +173,7 @@ pub enum WorkflowViewKind {
     /// The bucket has a config: render the dropdown. Carries whether the bucket
     /// requires a workflow (drives the "required" hint).
     Available { is_workflow_required: bool },
-    /// The bucket is ungoverned: a single disabled `None`, no choice to make.
+    /// The bucket is ungoverned: a single `None`, no choice to make.
     NotConfigured,
     /// The config couldn't be loaded (transient/network): an inline soft notice,
     /// no dropdown. Commit re-resolves the bucket default.
@@ -239,7 +240,7 @@ pub fn build_workflow_view(
                     |pos| pos + 1,
                 ),
         },
-        // Ungoverned bucket: a single disabled `None`. Submit sends
+        // Ungoverned bucket: a single `None`. Submit sends
         // `BucketDefault`, which on a config-less bucket resolves to
         // no-workflow — the honest "let the bucket decide".
         CommitWorkflows::NotConfigured => WorkflowView {
@@ -247,7 +248,6 @@ pub fn build_workflow_view(
             options: vec![WorkflowOption {
                 label: "None".to_string(),
                 intent: WorkflowIntent::BucketDefault,
-                disabled: true,
             }],
             initial: 0,
         },
@@ -259,7 +259,6 @@ pub fn build_workflow_view(
             options: vec![WorkflowOption {
                 label: "Bucket default".to_string(),
                 intent: WorkflowIntent::BucketDefault,
-                disabled: true,
             }],
             initial: 0,
         },
@@ -273,7 +272,6 @@ pub fn build_workflow_view(
             options: vec![WorkflowOption {
                 label: "Bucket default".to_string(),
                 intent: WorkflowIntent::BucketDefault,
-                disabled: true,
             }],
             initial: 0,
         },
@@ -320,50 +318,21 @@ pub fn missing_settings_workflow<'a>(
 
 // ── The select ──
 
-/// What the primary says while a required workflow is still unchosen.
+/// What the form says while a required workflow is unchosen.
 pub(crate) const CHOOSE_A_WORKFLOW: &str =
     "This bucket requires a workflow. Choose one to publish.";
 
-/// The select's options and where it starts, from the [`WorkflowView`]. The
-/// commit page and the bucket form both draw their select from this.
-///
-/// The select cannot grey an option, so a disabled one (`None` on a bucket
-/// that requires a workflow) is left out — unless the view starts on it, which
-/// it does on a required bucket that names no default: then it stays, at the
-/// head, so the reader still has to choose, and `needs_choice` says so. That
-/// holds with one workflow as with several: the form never chooses for them.
-///
-/// Labels are made unique, since two workflows may share a name: the label
-/// is how the select names an option, and the draft keeps the intent.
-pub(crate) fn workflow_choices(view: &WorkflowView) -> (Vec<WorkflowOption>, WorkflowIntent, bool) {
-    let enabled: Vec<WorkflowOption> = view
-        .options
-        .iter()
-        .filter(|o| !o.disabled)
-        .cloned()
-        .collect();
-    let start = view.options.get(view.initial);
-    let (mut options, initial, needs_choice) = match start {
-        Some(start) if start.disabled && !enabled.is_empty() => {
-            let mut options = vec![start.clone()];
-            options.extend(enabled);
-            (options, start.intent.clone(), true)
-        }
-        Some(start) => (enabled, start.intent.clone(), false),
-        None => (enabled, WorkflowIntent::BucketDefault, false),
-    };
-    unique_labels(&mut options);
-    (options, initial, needs_choice)
-}
-
-/// The labels the select offers. The unchosen start, at the head, goes once
-/// the reader has chosen, so it cannot be picked back.
-pub(crate) fn offered(options: &[WorkflowOption], needs_choice: bool, chosen: bool) -> Vec<String> {
-    options
-        .iter()
-        .skip(usize::from(needs_choice && chosen))
-        .map(|o| o.label.clone())
-        .collect()
+/// Whether the selected `intent` leaves a required workflow unchosen: `None`
+/// on a bucket that requires a workflow. The form says [`CHOOSE_A_WORKFLOW`]
+/// and refuses to save until the reader picks one.
+pub(crate) fn needs_workflow(kind: &WorkflowViewKind, intent: &WorkflowIntent) -> bool {
+    *intent == WorkflowIntent::NoWorkflow
+        && matches!(
+            kind,
+            WorkflowViewKind::Available {
+                is_workflow_required: true
+            }
+        )
 }
 
 /// Give every option its own label, so the select's label names exactly one
@@ -394,9 +363,9 @@ fn unique_labels(options: &mut [WorkflowOption]) {
 #[cfg(test)]
 mod tests {
     use super::{
-        PreviousWorkflow, WorkflowOption, WorkflowView, WorkflowViewKind, build_workflow_view,
-        missing_settings_workflow, offered, preselected_index, shows_settings_workflow_hint,
-        workflow_choices, workflow_options,
+        PreviousWorkflow, WorkflowOption, WorkflowViewKind, build_workflow_view,
+        missing_settings_workflow, needs_workflow, preselected_index, shows_settings_workflow_hint,
+        workflow_options,
     };
     use crate::commands::{CommitWorkflows, WorkflowData, WorkflowInfo, WorkflowIntent};
 
@@ -422,19 +391,16 @@ mod tests {
                 WorkflowOption {
                     label: "None".to_string(),
                     intent: WorkflowIntent::NoWorkflow,
-                    disabled: false,
                 },
                 WorkflowOption {
                     // The bucket default gets the " (default)" suffix.
                     label: "Alpha WF (default)".to_string(),
                     intent: WorkflowIntent::Named("alpha".to_string()),
-                    disabled: false,
                 },
                 WorkflowOption {
                     // No name → fall back to the id as the label; not the default.
                     label: "beta".to_string(),
                     intent: WorkflowIntent::Named("beta".to_string()),
-                    disabled: false,
                 },
             ]
         );
@@ -498,13 +464,12 @@ mod tests {
 
     #[test]
     fn options_no_default_marker_when_no_default_but_required() {
-        // Required with no named default → `None` is disabled with the required
-        // error, so it must NOT be labeled default; there genuinely is none.
+        // Required with no named default → `None` must NOT be labeled default;
+        // there genuinely is none.
         let wfs = vec![wf("alpha", Some("Alpha WF")), wf("beta", None)];
         let opts = workflow_options(&wfs, None, true);
         assert_eq!(default_marker_count(&opts), 0);
         assert_eq!(opts[0].label, "None");
-        assert!(opts[0].disabled);
     }
 
     #[test]
@@ -517,13 +482,15 @@ mod tests {
         assert_eq!(opts[0].label, "None");
     }
 
+    /// `None` is listed whatever the bucket requires, a named default too.
     #[test]
-    fn options_none_disabled_iff_required() {
+    fn options_always_list_none() {
         let wfs = vec![wf("alpha", None)];
-        let required = workflow_options(&wfs, None, true);
-        assert_eq!(required[0].intent, WorkflowIntent::NoWorkflow);
-        assert!(required[0].disabled);
-        assert!(!workflow_options(&wfs, None, false)[0].disabled);
+        for (default, required) in [(None, true), (Some("alpha"), true), (None, false)] {
+            let opts = workflow_options(&wfs, default, required);
+            assert_eq!(opts[0].intent, WorkflowIntent::NoWorkflow);
+            assert_eq!(opts.len(), 2);
+        }
     }
 
     #[test]
@@ -536,7 +503,6 @@ mod tests {
             vec![WorkflowOption {
                 label: "None (default)".to_string(),
                 intent: WorkflowIntent::NoWorkflow,
-                disabled: false,
             }]
         );
     }
@@ -569,7 +535,7 @@ mod tests {
     }
 
     #[test]
-    fn view_not_configured_is_single_disabled_none_submitting_bucket_default() {
+    fn view_not_configured_is_single_none_submitting_bucket_default() {
         let view = build_workflow_view(&CommitWorkflows::NotConfigured, None, None);
         assert_eq!(view.kind, WorkflowViewKind::NotConfigured);
         assert_eq!(view.initial, 0);
@@ -578,7 +544,6 @@ mod tests {
             vec![WorkflowOption {
                 label: "None".to_string(),
                 intent: WorkflowIntent::BucketDefault,
-                disabled: true,
             }]
         );
     }
@@ -657,7 +622,7 @@ mod tests {
             preselected_index(&wfs, Some("beta"), Some("ghost"), true),
             2
         );
-        // Required, no default, no previous → the `None` head (disabled).
+        // Required, no default, no previous → the `None` head.
         assert_eq!(preselected_index(&wfs, None, None, true), 0);
         // Required, no default, previous absent from the list → `None` head.
         assert_eq!(preselected_index(&wfs, Some("ghost"), None, true), 0);
@@ -676,8 +641,8 @@ mod tests {
         // No named default and not required → the `None (default)` head.
         assert_eq!(preselected_index(&wfs, None, None, false), 0);
 
-        // Required with no default and no previous → the disabled `None` head;
-        // the user must actively pick a workflow.
+        // Required with no default and no previous → the `None` head; the
+        // user must actively pick a workflow.
         assert_eq!(preselected_index(&wfs, None, None, true), 0);
     }
 
@@ -897,129 +862,89 @@ mod tests {
 
     // ── The select ──
 
-    fn option(label: &str, intent: WorkflowIntent, disabled: bool) -> WorkflowOption {
-        WorkflowOption {
-            label: label.to_string(),
-            intent,
-            disabled,
-        }
-    }
-
     fn named(id: &str) -> WorkflowIntent {
         WorkflowIntent::Named(id.to_string())
     }
 
-    fn available(options: Vec<WorkflowOption>, initial: usize) -> WorkflowView {
-        WorkflowView {
-            kind: WorkflowViewKind::Available {
-                is_workflow_required: true,
-            },
-            options,
-            initial,
-        }
+    /// `None` blocks on a bucket that requires a workflow, whether it is the
+    /// start or picked again later; a workflow does not. Elsewhere `None` is
+    /// an ordinary choice.
+    #[test]
+    fn none_needs_a_workflow_only_where_one_is_required() {
+        let required = WorkflowViewKind::Available {
+            is_workflow_required: true,
+        };
+        assert!(needs_workflow(&required, &WorkflowIntent::NoWorkflow));
+        assert!(!needs_workflow(&required, &named("plates")));
+        let optional = WorkflowViewKind::Available {
+            is_workflow_required: false,
+        };
+        assert!(!needs_workflow(&optional, &WorkflowIntent::NoWorkflow));
+        assert!(!needs_workflow(
+            &WorkflowViewKind::NotConfigured,
+            &WorkflowIntent::BucketDefault
+        ));
     }
 
-    /// A required bucket with one workflow and no default starts unchosen,
+    /// A required bucket with one workflow and no default starts on `None`,
     /// as with several: the form does not choose the one for the reader.
     #[test]
-    fn the_only_workflow_of_a_required_bucket_must_be_chosen() {
-        let (options, initial, needs_choice) = workflow_choices(&available(
-            vec![
-                option("None", WorkflowIntent::NoWorkflow, true),
-                option("Plate reads", named("plates"), false),
-            ],
-            0,
-        ));
-        assert_eq!(initial, WorkflowIntent::NoWorkflow);
-        assert!(needs_choice);
-        let labels: Vec<_> = options.iter().map(|o| o.label.as_str()).collect();
+    fn the_only_workflow_of_a_required_bucket_is_not_chosen_for_the_reader() {
+        let workflows = CommitWorkflows::Available {
+            workflows: vec![wf("plates", Some("Plate reads"))],
+            default_workflow: None,
+            is_workflow_required: true,
+            config_url: None,
+        };
+        let view = build_workflow_view(&workflows, None, None);
+        let labels: Vec<_> = view.options.iter().map(|o| o.label.as_str()).collect();
         assert_eq!(labels, ["None", "Plate reads"]);
-    }
-
-    /// The unchosen start is offered until the reader chooses, then it goes.
-    #[test]
-    fn the_unchosen_start_leaves_once_chosen() {
-        let (options, _, needs_choice) = workflow_choices(&available(
-            vec![
-                option("None", WorkflowIntent::NoWorkflow, true),
-                option("Plate reads", named("plates"), false),
-            ],
-            0,
+        assert!(needs_workflow(
+            &view.kind,
+            &view.options[view.initial].intent
         ));
-        assert_eq!(
-            offered(&options, needs_choice, false),
-            ["None", "Plate reads"]
-        );
-        assert_eq!(offered(&options, needs_choice, true), ["Plate reads"]);
-        // With nothing to choose first, `None` is an ordinary option.
-        let (options, _, needs_choice) = workflow_choices(&available(
-            vec![
-                option("None", WorkflowIntent::NoWorkflow, false),
-                option("Plate reads", named("plates"), false),
-            ],
-            1,
-        ));
-        assert_eq!(
-            offered(&options, needs_choice, true),
-            ["None", "Plate reads"]
-        );
-    }
-
-    /// With several to choose from, the greyed start stays and blocks.
-    #[test]
-    fn several_workflows_of_a_required_bucket_must_be_chosen() {
-        let (options, initial, needs_choice) = workflow_choices(&available(
-            vec![
-                option("None", WorkflowIntent::NoWorkflow, true),
-                option("Plate reads", named("plates"), false),
-                option("Exports", named("exports"), false),
-            ],
-            0,
-        ));
-        assert_eq!(initial, WorkflowIntent::NoWorkflow);
-        assert!(needs_choice);
-        let labels: Vec<_> = options.iter().map(|o| o.label.as_str()).collect();
-        assert_eq!(labels, ["None", "Plate reads", "Exports"]);
     }
 
     /// Two workflows with one name stay two choices, each its own id.
     #[test]
     fn workflows_sharing_a_name_stay_apart() {
-        let (options, initial, _) = workflow_choices(&available(
-            vec![
-                option("None", WorkflowIntent::NoWorkflow, false),
-                option("Plates", named("plates-a"), false),
-                option("Plates", named("plates-b"), false),
+        let opts = workflow_options(
+            &[
+                wf("plates-a", Some("Plates")),
+                wf("plates-b", Some("Plates")),
             ],
-            2,
-        ));
-        assert_eq!(initial, named("plates-b"));
-        let labels: Vec<_> = options.iter().map(|o| o.label.as_str()).collect();
-        assert_eq!(labels, ["None", "Plates (plates-a)", "Plates (plates-b)"]);
+            None,
+            false,
+        );
+        let labels: Vec<_> = opts.iter().map(|o| o.label.as_str()).collect();
+        assert_eq!(
+            labels,
+            ["None (default)", "Plates (plates-a)", "Plates (plates-b)"]
+        );
     }
 
     /// A workflow whose own name reads like a told-apart one cannot take
     /// another's label: every label names one intent.
     #[test]
     fn no_two_options_share_a_label() {
-        let (options, _, _) = workflow_choices(&available(
-            vec![
-                option("None", WorkflowIntent::NoWorkflow, false),
-                option("Plates (plates-a)", named("odd"), false),
-                option("Plates", named("plates-a"), false),
-                option("Plates", named("plates-a-2"), false),
-                option("None", named("none"), false),
+        let opts = workflow_options(
+            &[
+                wf("odd", Some("Plates (plates-a)")),
+                wf("plates-a", Some("Plates")),
+                wf("plates-a-2", Some("Plates")),
+                wf("none", Some("None")),
             ],
-            0,
-        ));
-        let labels: Vec<_> = options.iter().map(|o| o.label.clone()).collect();
+            None,
+            true,
+        );
+        let labels: Vec<_> = opts.iter().map(|o| o.label.clone()).collect();
         let mut distinct = labels.clone();
         distinct.sort();
         distinct.dedup();
         assert_eq!(distinct.len(), labels.len(), "{labels:?}");
-        let form_intents: Vec<_> = options.iter().map(|o| o.intent.clone()).collect();
+        let intents: Vec<_> = opts.iter().map(|o| o.intent.clone()).collect();
         assert_eq!(
-            form_intents,
+            intents,
             [
                 WorkflowIntent::NoWorkflow,
                 named("odd"),

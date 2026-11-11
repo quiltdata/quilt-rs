@@ -198,12 +198,12 @@ fn page(f: Fixture) -> AnyView {
         running: Signal::stored(false),
     };
     let workflow = workflows.then(|| WorkflowChoice {
-        options: Signal::stored(vec![
+        options: vec![
             "Bucket's default (Plate reads)".to_string(),
             "Plate reads".to_string(),
             "Instrument export".to_string(),
             "No workflow".to_string(),
-        ]),
+        ],
         selected: RwSignal::new("Bucket's default (Plate reads)".to_string()),
     });
     let problem = problem.map(|problem| {

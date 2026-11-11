@@ -21,10 +21,7 @@ pub fn Select(
     naming: Naming,
     /// Rendered in order. A single-option select is a dead control; callers
     /// check first (`role_switch_host` is `Some` only for multi-role hosts).
-    /// The list may change while the select is open on the page: options are
-    /// added and removed in place, so the selection and focus stay.
-    #[prop(into)]
-    options: Signal<Vec<String>>,
+    options: Vec<String>,
     selected: RwSignal<String>,
     #[prop(optional, into)] disabled: MaybeProp<bool>,
     /// The id of a line that describes it, for a select named by
@@ -81,14 +78,13 @@ pub fn Select(
                 prop:value=move || selected.get()
                 on:change=move |ev| selected.set(event_target_value(&ev))
             >
-                <For
-                    each=move || options.get()
-                    key=Clone::clone
-                    children=|option| {
+                {options
+                    .into_iter()
+                    .map(|option| {
                         let text = option.clone();
                         view! { <option value=option>{text}</option> }
-                    }
-                />
+                    })
+                    .collect_view()}
             </select>
         </div>
     }

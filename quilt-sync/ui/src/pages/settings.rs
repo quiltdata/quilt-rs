@@ -1514,7 +1514,7 @@ pub fn TroubleshootingCard(
                         <Select
                             naming=Naming::Hidden("Log level".to_string())
                             described_by=note_id
-                            options={LOG_LEVELS.iter().map(ToString::to_string).collect::<Vec<_>>()}
+                            options=LOG_LEVELS.iter().map(ToString::to_string).collect()
                             selected=log_level
                             disabled=Signal::derive(move || {
                                 overridden || saving(pending, Saved::LogLevel).get()

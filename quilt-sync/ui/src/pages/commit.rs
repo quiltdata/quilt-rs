@@ -333,7 +333,7 @@ pub fn MessageField(
 
 #[derive(Clone)]
 pub struct WorkflowChoice {
-    pub options: Signal<Vec<String>>,
+    pub options: Vec<String>,
     pub selected: RwSignal<String>,
 }
 
@@ -383,7 +383,7 @@ pub fn WorkflowField(
                     view! {
                         <Select
                             naming=Naming::FormControl(id)
-                            options=choice.options
+                            options=choice.options.clone()
                             selected=choice.selected
                         />
                     }

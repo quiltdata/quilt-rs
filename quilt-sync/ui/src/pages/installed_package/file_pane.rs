@@ -1133,7 +1133,7 @@ fn toolbar(grouping: RwSignal<String>, left: AnyView, facets: Option<AnyView>) -
             <div class=style::views>
                 <Select
                     naming=Naming::Prefix("Group".to_string())
-                    options={Grouping::ALL.iter().map(|g| g.label().to_string()).collect::<Vec<_>>()}
+                    options=Grouping::ALL.iter().map(|g| g.label().to_string()).collect()
                     selected=grouping
                 />
                 {facets}
