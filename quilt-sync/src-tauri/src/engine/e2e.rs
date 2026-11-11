@@ -449,7 +449,9 @@ fn a_window_sent_to_the_page_it_is_on_stays_without_a_reload() {
     test(|base| async move {
         let quiltsync = QuiltSync::start(&base, true).await;
         let driver = browser().await;
-        driver.goto(format!("{}&window", quiltsync.url("/"))).await?;
+        driver
+            .goto(format!("{}&window", quiltsync.url("/")))
+            .await?;
         driver.query(text("No packages yet")).first().await?;
         mark(&driver).await?;
 
