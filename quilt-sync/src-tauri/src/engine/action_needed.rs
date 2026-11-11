@@ -677,7 +677,7 @@ mod tests {
         set.keep_unreachable_runs(|_| false);
         set.reached(None, start + UNREACHABLE_AFTER);
         set.unreachable(&nightly, start + UNREACHABLE_AFTER);
-        assert!(set.get().is_empty());
+        assert!(set.get().is_empty(), "a run that was pruned starts again");
     }
 
     #[test]

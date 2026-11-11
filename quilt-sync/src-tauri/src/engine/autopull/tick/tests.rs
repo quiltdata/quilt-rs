@@ -3035,7 +3035,7 @@ async fn a_catalog_unreachable_for_a_while_needs_action_unless_offline() {
     inner
         .action_needed
         .reached(None, start + Duration::from_secs(60));
-    let not_yet = start + UNREACHABLE_AFTER - Duration::from_secs(1);
+    let not_yet = start + UNREACHABLE_AFTER.saturating_sub(Duration::from_secs(1));
     sync_package(&missed, &roles, &inner, &pkg, &run, not_yet).await;
     assert!(kinds(&inner).is_empty(), "not unreachable for long enough");
     sync_package(
