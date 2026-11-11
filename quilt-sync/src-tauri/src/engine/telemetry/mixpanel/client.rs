@@ -68,7 +68,6 @@ enum Failure {
 pub struct MixpanelClient {
     http: reqwest::Client,
     token: String,
-    authorization: Option<String>,
     url: String,
     /// Until when the API asked us to wait, after a wait the client did not
     /// take. In memory only: a restart forgets it.
@@ -76,26 +75,26 @@ pub struct MixpanelClient {
 }
 
 impl MixpanelClient {
-    pub fn new(token: &str, secret: Option<&str>) -> Self {
-        Self::sending_to(token, secret, API)
+    pub fn new(token: &str) -> Self {
+        Self::sending_to(token, API)
     }
 
     /// A client that sends to `base_url` (`http://host:port`) instead of
     /// the real API.
     #[cfg(test)]
-    pub fn with_base_url(token: &str, secret: Option<&str>, base_url: &str) -> Self {
-        Self::sending_to(token, secret, base_url)
+    pub fn with_base_url(token: &str, base_url: &str) -> Self {
+        Self::sending_to(token, base_url)
     }
 
-    fn sending_to(token: &str, secret: Option<&str>, base_url: &str) -> Self {
+    fn sending_to(token: &str, base_url: &str) -> Self {
         Self {
             http: reqwest::Client::builder()
                 .timeout(REQUEST_TIMEOUT)
                 .build()
                 .expect("an HTTP client"),
             token: token.to_owned(),
-            authorization: secret
-                .map(|secret| format!("Basic {}", STANDARD.encode(format!("{secret}:")))),
+            // `/track` authenticates by the project token carried in each event's
+            // properties, so the request needs no credential of its own.
             // `verbose=1` makes the API say whether it accepted the events;
             // without it a refusal is an HTTP 200 too.
             url: format!("{}/track?ip=0&verbose=1", base_url.trim_end_matches('/')),
@@ -170,14 +169,11 @@ impl MixpanelClient {
     }
 
     async fn post_once(&self, body: String) -> Result<(), Failure> {
-        let mut request = self
+        let request = self
             .http
             .post(&self.url)
             .header("Content-Type", "application/x-www-form-urlencoded")
             .body(body);
-        if let Some(authorization) = &self.authorization {
-            request = request.header("Authorization", authorization);
-        }
 
         let response = request.send().await.map_err(|err| http_failure(&err))?;
 
