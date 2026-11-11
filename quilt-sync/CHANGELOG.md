@@ -49,7 +49,7 @@
 ### Security
 
 - QuiltSync bundles SQLite 3.54.1, which fixes [RUSTSEC-2026-0459](https://rustsec.org/advisories/RUSTSEC-2026-0459) (<https://github.com/quiltdata/quilt-rs/pull/1326>)
-- QuiltSync no longer carries a Mixpanel API secret in the app; analytics authenticate with the Mixpanel project token only, which is all the `/track` ingest endpoint needs (PR_LINK_PLACEHOLDER)
+- QuiltSync no longer carries a Mixpanel API secret in the app; analytics authenticate with the Mixpanel project token only, which is all the `/track` ingest endpoint needs (<https://github.com/quiltdata/quilt-rs/pull/1350>)
 
 ### quilt-rs
 
