@@ -26,8 +26,8 @@ use crate::commands::{self, CommitData, CommitViolation, EntryData, JunkSummary,
 use crate::commands::{CommitWorkflows, WorkflowIntent};
 use crate::components::{IgnorePopup, IgnorePopupData};
 use crate::pages::workflow::{
-    PreviousWorkflow, WorkflowOption, WorkflowView, WorkflowViewKind, build_workflow_view,
-    missing_settings_workflow, shows_settings_workflow_hint,
+    CHOOSE_A_WORKFLOW, PreviousWorkflow, WorkflowOption, WorkflowView, WorkflowViewKind,
+    build_workflow_view, missing_settings_workflow, needs_workflow, shows_settings_workflow_hint,
 };
 use quilt_ui_kit::LoadFailure;
 
@@ -202,65 +202,6 @@ fn caption(violations: &[CommitViolation], field: ViolationField) -> Option<Stri
     (!messages.is_empty()).then(|| messages.join(" "))
 }
 
-/// The select's options and where it starts, from the [`WorkflowView`].
-///
-/// The select cannot grey an option, so a disabled one (`None` on a bucket
-/// that requires a workflow) is left out — unless the view starts on it, which
-/// it does on a required bucket that names no default: then it stays, at the
-/// head, so the reader still has to choose, and `needs_choice` says so. With
-/// one workflow left there is nothing to choose, and it starts on that one.
-///
-/// Labels are made unique, since two workflows may share a name: the label
-/// is how the select names an option, and the draft keeps the intent.
-pub(crate) fn workflow_choices(view: &WorkflowView) -> (Vec<WorkflowOption>, WorkflowIntent, bool) {
-    let enabled: Vec<WorkflowOption> = view
-        .options
-        .iter()
-        .filter(|o| !o.disabled)
-        .cloned()
-        .collect();
-    let start = view.options.get(view.initial);
-    let (mut options, initial, needs_choice) = match start {
-        Some(start) if start.disabled && enabled.len() == 1 => {
-            (enabled.clone(), enabled[0].intent.clone(), false)
-        }
-        Some(start) if start.disabled && !enabled.is_empty() => {
-            let mut options = vec![start.clone()];
-            options.extend(enabled);
-            (options, start.intent.clone(), true)
-        }
-        Some(start) => (enabled, start.intent.clone(), false),
-        None => (enabled, WorkflowIntent::BucketDefault, false),
-    };
-    unique_labels(&mut options);
-    (options, initial, needs_choice)
-}
-
-/// Give every option its own label, so the select's label names exactly one
-/// intent. A name two workflows share gets the workflow's id; anything that
-/// still collides — a workflow whose own name reads like that, say — gets a
-/// counter. The first holder of a label keeps it as it is.
-fn unique_labels(options: &mut [WorkflowOption]) {
-    let shared: Vec<bool> = options
-        .iter()
-        .map(|o| options.iter().filter(|p| p.label == o.label).count() > 1)
-        .collect();
-    let mut used = std::collections::HashSet::new();
-    for (option, shared) in options.iter_mut().zip(shared) {
-        let mut label = match &option.intent {
-            WorkflowIntent::Named(id) if shared => format!("{} ({id})", option.label),
-            _ => option.label.clone(),
-        };
-        let base = label.clone();
-        let mut n = 2;
-        while !used.insert(label.clone()) {
-            label = format!("{base} ({n})");
-            n += 1;
-        }
-        option.label = label;
-    }
-}
-
 /// Said under the metadata, and on the primary, when the metadata is not
 /// JSON: the save's parser refuses it whatever the workflow.
 pub(crate) const METADATA_NOT_JSON: &str =
@@ -275,10 +216,6 @@ pub(crate) fn metadata_problem(text: &str) -> Option<String> {
         .then(|| METADATA_NOT_JSON.to_string())
 }
 
-/// What the primary says while a required workflow is still unchosen.
-pub(crate) const CHOOSE_A_WORKFLOW: &str =
-    "This bucket requires a workflow. Choose one to publish.";
-
 /// The form's fixed facts, from one answer: what the page validates and
 /// submits against. Compared, so a re-read that changed nothing here does not
 /// re-run validation.
@@ -290,11 +227,10 @@ struct Form {
     previous_meta: String,
     settings_meta: Option<String>,
     settings_workflow: Option<String>,
-    /// The select's options, from [`workflow_choices`].
+    /// The select's options.
     options: Vec<WorkflowOption>,
     initial: WorkflowIntent,
-    /// Starting on `initial` means nothing is chosen yet; it blocks.
-    needs_choice: bool,
+    kind: WorkflowViewKind,
     /// The bucket's workflows file is malformed, in the field's words.
     invalid: Option<String>,
     choosable: bool,
@@ -311,7 +247,10 @@ impl Form {
             previous.preselect_id(),
             d.settings_workflow.as_deref(),
         );
-        let (options, initial, needs_choice) = workflow_choices(&view);
+        let initial = view
+            .options
+            .get(view.initial)
+            .map_or(WorkflowIntent::BucketDefault, |o| o.intent.clone());
         // Only where there is a bucket to refuse it: a package with no bucket
         // saves locally, where no workflow is checked, and has no Publish.
         let missing = has_bucket
@@ -329,9 +268,9 @@ impl Form {
             words: workflow_words(&view.kind, has_bucket),
             invalid: matches!(d.workflows, CommitWorkflows::Invalid { .. })
                 .then(|| workflow_words(&view.kind, has_bucket)),
-            options,
+            options: view.options,
             initial,
-            needs_choice,
+            kind: view.kind,
             choosable,
             missing_settings_workflow: missing,
         }
@@ -351,9 +290,9 @@ impl Form {
             .map(|o| o.intent.clone())
     }
 
-    /// Whether `intent` is the unchosen start a required bucket refuses.
+    /// Whether `intent` is `None` on a bucket that requires a workflow.
     fn unchosen(&self, intent: &WorkflowIntent) -> bool {
-        self.needs_choice && *intent == self.initial
+        needs_workflow(&self.kind, intent)
     }
 
     /// Why the workflow keeps the revision from being saved, if it does: a
@@ -1274,6 +1213,75 @@ mod tests {
         });
         sleep_ms(80).await;
         el
+    }
+
+    /// A bucket that requires a workflow and names `plates` its default.
+    fn required_with_default(
+        _: String,
+    ) -> Pin<Box<dyn Future<Output = Result<CommitData, String>>>> {
+        let info = |id: &str| commands::WorkflowInfo {
+            id: id.to_string(),
+            name: Some(id.to_string()),
+            description: None,
+            metadata_schema_url: None,
+            entries_schema_url: None,
+        };
+        let mut d = commit_data();
+        d.workflows = CommitWorkflows::Available {
+            workflows: vec![info("plates"), info("exports")],
+            default_workflow: Some("plates".to_string()),
+            is_workflow_required: true,
+            config_url: None,
+        };
+        Box::pin(async move { Ok(d) })
+    }
+
+    /// `None` stays in the list on a bucket that requires a workflow, and
+    /// picking it says a workflow is required and turns Publish off, until a
+    /// workflow is picked again.
+    #[wasm_bindgen_test]
+    async fn none_on_a_required_bucket_blocks_until_a_workflow_is_picked() {
+        let el = page_reading("/commit?namespace=org%2Fpkg", required_with_default).await;
+        // The closed bucket dialog holds a disabled select of its own.
+        let select: web_sys::HtmlSelectElement = el
+            .query_selector("select:not([disabled])")
+            .unwrap()
+            .expect("the workflow select")
+            .unchecked_into();
+        let pick = |label: &str| {
+            select.set_value(label);
+            select
+                .dispatch_event(&web_sys::Event::new("change").unwrap())
+                .unwrap();
+        };
+        let says = |el: &web_sys::Element| {
+            el.text_content()
+                .unwrap_or_default()
+                .contains(CHOOSE_A_WORKFLOW)
+        };
+        let face = |el: &web_sys::Element| -> web_sys::HtmlButtonElement {
+            el.query_selector("[data-primary-action] button")
+                .unwrap()
+                .unwrap()
+                .unchecked_into()
+        };
+        assert_eq!(select.value(), "plates (default)");
+        let listed = select.query_selector_all("option").unwrap().length();
+        assert_eq!(listed, 3, "None is listed");
+        assert!(!says(&el));
+
+        pick("None");
+        sleep_ms(30).await;
+        assert!(says(&el), "markup was {}", el.inner_html());
+        assert!(face(&el).disabled(), "Publish is off");
+
+        pick("exports");
+        sleep_ms(30).await;
+        assert!(!says(&el));
+
+        pick("None");
+        sleep_ms(30).await;
+        assert!(says(&el));
     }
 
     fn message_input(el: &web_sys::Element) -> web_sys::HtmlInputElement {
@@ -2345,108 +2353,8 @@ mod tests {
         );
     }
 
-    fn option(label: &str, intent: WorkflowIntent, disabled: bool) -> WorkflowOption {
-        WorkflowOption {
-            label: label.to_string(),
-            intent,
-            disabled,
-        }
-    }
-
     fn named(id: &str) -> WorkflowIntent {
         WorkflowIntent::Named(id.to_string())
-    }
-
-    fn available(options: Vec<WorkflowOption>, initial: usize) -> WorkflowView {
-        WorkflowView {
-            kind: WorkflowViewKind::Available {
-                is_workflow_required: true,
-            },
-            options,
-            initial,
-        }
-    }
-
-    /// A required bucket with one workflow and no default: the view starts on
-    /// the greyed `None`; here the one workflow is the start, so it can run.
-    #[test]
-    fn the_only_workflow_of_a_required_bucket_is_the_start() {
-        let (options, initial, needs_choice) = workflow_choices(&available(
-            vec![
-                option("None", WorkflowIntent::NoWorkflow, true),
-                option("Plate reads", named("plates"), false),
-            ],
-            0,
-        ));
-        assert_eq!(initial, named("plates"));
-        assert!(!needs_choice);
-        assert_eq!(options.len(), 1);
-    }
-
-    /// With several to choose from, the greyed start stays and blocks.
-    #[test]
-    fn several_workflows_of_a_required_bucket_must_be_chosen() {
-        let (options, initial, needs_choice) = workflow_choices(&available(
-            vec![
-                option("None", WorkflowIntent::NoWorkflow, true),
-                option("Plate reads", named("plates"), false),
-                option("Exports", named("exports"), false),
-            ],
-            0,
-        ));
-        assert_eq!(initial, WorkflowIntent::NoWorkflow);
-        assert!(needs_choice);
-        let labels: Vec<_> = options.iter().map(|o| o.label.as_str()).collect();
-        assert_eq!(labels, ["None", "Plate reads", "Exports"]);
-        assert_eq!(super::super::tests::banned_in(CHOOSE_A_WORKFLOW), None);
-    }
-
-    /// Two workflows with one name stay two choices, each its own id.
-    #[test]
-    fn workflows_sharing_a_name_stay_apart() {
-        let (options, initial, _) = workflow_choices(&available(
-            vec![
-                option("None", WorkflowIntent::NoWorkflow, false),
-                option("Plates", named("plates-a"), false),
-                option("Plates", named("plates-b"), false),
-            ],
-            2,
-        ));
-        assert_eq!(initial, named("plates-b"));
-        let labels: Vec<_> = options.iter().map(|o| o.label.as_str()).collect();
-        assert_eq!(labels, ["None", "Plates (plates-a)", "Plates (plates-b)"]);
-    }
-
-    /// A workflow whose own name reads like a told-apart one cannot take
-    /// another's label: every label names one intent.
-    #[test]
-    fn no_two_options_share_a_label() {
-        let (options, _, _) = workflow_choices(&available(
-            vec![
-                option("None", WorkflowIntent::NoWorkflow, false),
-                option("Plates (plates-a)", named("odd"), false),
-                option("Plates", named("plates-a"), false),
-                option("Plates", named("plates-a-2"), false),
-                option("None", named("none"), false),
-            ],
-            0,
-        ));
-        let labels: Vec<_> = options.iter().map(|o| o.label.clone()).collect();
-        let mut distinct = labels.clone();
-        distinct.sort();
-        distinct.dedup();
-        assert_eq!(distinct.len(), labels.len(), "{labels:?}");
-        let form_intents: Vec<_> = options.iter().map(|o| o.intent.clone()).collect();
-        assert_eq!(
-            form_intents,
-            [
-                WorkflowIntent::NoWorkflow,
-                named("odd"),
-                named("plates-a"),
-                named("plates-a-2"),
-                named("none")
-            ]
-        );
     }
 
     /// Through the page's own form: every option's label leads back to its
@@ -2509,6 +2417,23 @@ mod tests {
             Some(CHOOSE_A_WORKFLOW)
         );
         assert_eq!(form.workflow_problem(&named("plates")), None);
+        assert_eq!(super::super::tests::banned_in(CHOOSE_A_WORKFLOW), None);
+
+        // With a default it starts there, and `None` picked later blocks too.
+        d.workflows = CommitWorkflows::Available {
+            workflows: vec![info("plates"), info("exports")],
+            default_workflow: Some("plates".to_string()),
+            is_workflow_required: true,
+            config_url: None,
+        };
+        let form = Form::of(&d);
+        assert_eq!(form.workflow_problem(&form.initial), None);
+        assert_eq!(form.options[0].intent, WorkflowIntent::NoWorkflow);
+        assert_eq!(
+            form.workflow_problem(&WorkflowIntent::NoWorkflow)
+                .as_deref(),
+            Some(CHOOSE_A_WORKFLOW)
+        );
     }
 
     /// Blank keeps the current metadata; any JSON is accepted, as the
