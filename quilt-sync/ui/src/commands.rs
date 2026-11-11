@@ -291,19 +291,12 @@ pub struct PublishSettingsData {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-#[allow(clippy::struct_excessive_bools, reason = "one field per toggle")]
 pub struct AutosyncSettingsData {
     pub pull_enabled: bool,
     pub push_enabled: bool,
     pub pull_interval_secs: u64,
     pub idle_timeout_secs: u64,
     pub close_to_tray: bool,
-    #[serde(default = "notify_by_default")]
-    pub notify_action_needed: bool,
-}
-
-const fn notify_by_default() -> bool {
-    true
 }
 
 impl Default for AutosyncSettingsData {
@@ -314,7 +307,6 @@ impl Default for AutosyncSettingsData {
             pull_interval_secs: 60,
             idle_timeout_secs: 300,
             close_to_tray: false,
-            notify_action_needed: true,
         }
     }
 }
@@ -1275,6 +1267,12 @@ pub async fn get_main_page_accounts() -> Result<MainPageAccountsData, String> {
     engine::invoke_unit("get_main_page_accounts").await
 }
 
+/// As [`get_main_page_accounts`], with the cached roles forgotten first, so
+/// each host's role is asked again: the Settings page's load.
+pub async fn get_settings_accounts() -> Result<MainPageAccountsData, String> {
+    engine::invoke_unit("get_settings_accounts").await
+}
+
 /// A link type that Windows opens with another program, or with none.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -1524,7 +1522,6 @@ pub struct AutosyncPatch {
     pub pull_interval_secs: Option<u64>,
     pub idle_timeout_secs: Option<u64>,
     pub close_to_tray: Option<bool>,
-    pub notify_action_needed: Option<bool>,
 }
 
 /// Change the autosync settings `patch` names and leave the rest as stored.
