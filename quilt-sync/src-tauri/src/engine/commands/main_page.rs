@@ -418,6 +418,13 @@ pub(super) async fn read_blocked(
     if !current {
         return;
     }
+    // A refusal or a rejected session is an answer: the catalog was reached.
+    if matches!(
+        state,
+        PackageStateDto::RoleDenied { .. } | PackageStateDto::SignInExpired { .. }
+    ) {
+        action_needed.reached(origin, std::time::Instant::now());
+    }
     match state {
         PackageStateDto::RoleDenied { role } => action_needed.enter(
             Subject::package(namespace),

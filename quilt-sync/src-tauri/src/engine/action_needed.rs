@@ -245,10 +245,17 @@ pub struct ActionNeeded {
 /// What the reads learned about the network.
 #[derive(Default)]
 struct Reach {
-    /// When each catalog's current run of reads that did not reach began.
-    unreachable_since: HashMap<Host, Instant>,
+    /// Each catalog's current run of reads that did not reach.
+    unreachable: HashMap<Host, Run>,
     /// When a read last reached its bucket, through any catalog or none.
     last_reached: Option<Instant>,
+}
+
+/// A run of a catalog's reads that did not reach.
+#[derive(Clone, Copy)]
+struct Run {
+    since: Instant,
+    last_missed: Instant,
 }
 
 impl Default for ActionNeeded {
@@ -353,33 +360,41 @@ impl ActionNeeded {
 
     /// A read through `origin`'s catalog, or none, reached its bucket at
     /// `now`: the catalog is reachable, and the computer is online.
+    ///
+    /// Holds the reach lock through the set's change, as
+    /// [`Self::unreachable`] does, so a miss read earlier cannot enter the
+    /// catalog again after this.
     pub fn reached(&self, origin: Option<&Host>, now: Instant) {
         let mut reach = self.reach();
         reach.last_reached = Some(now);
         if let Some(host) = origin {
-            reach.unreachable_since.remove(host);
-            drop(reach);
+            reach.unreachable.remove(host);
             self.leave(&Subject::Host { host: host.clone() }, Kind::Unreachable);
         }
     }
 
     /// A read through `host`'s catalog did not reach its bucket at `now`. It
     /// needs action once its reads have failed for [`UNREACHABLE_AFTER`] and
-    /// some other read got through since they began: with nothing reached,
-    /// the computer may have no network at all.
+    /// some other read got through since its previous miss: with nothing
+    /// reached in between, the computer may have no network at all.
     pub fn unreachable(&self, host: &Host, now: Instant) {
         let mut reach = self.reach();
-        let since = *reach.unreachable_since.entry(host.clone()).or_insert(now);
-        let online = reach.last_reached.is_some_and(|last| last >= since);
-        drop(reach);
-        if online && now.saturating_duration_since(since) >= UNREACHABLE_AFTER {
+        let last_reached = reach.last_reached;
+        let run = reach.unreachable.entry(host.clone()).or_insert(Run {
+            since: now,
+            last_missed: now,
+        });
+        let online = last_reached.is_some_and(|last| last >= run.last_missed);
+        let lasted = now.saturating_duration_since(run.since) >= UNREACHABLE_AFTER;
+        run.last_missed = run.last_missed.max(now);
+        if online && lasted {
             self.enter(Subject::Host { host: host.clone() }, Cause::Unreachable);
         }
     }
 
     /// Keep the unreachable runs of the catalogs `keep` holds to.
     pub fn keep_unreachable_runs(&self, keep: impl Fn(&Host) -> bool) {
-        self.reach().unreachable_since.retain(|host, _| keep(host));
+        self.reach().unreachable.retain(|host, _| keep(host));
     }
 
     fn reach(&self) -> std::sync::MutexGuard<'_, Reach> {
@@ -663,6 +678,24 @@ mod tests {
 
         set.reached(Some(&nightly), start + UNREACHABLE_AFTER);
         assert!(set.get().is_empty(), "the catalog answered");
+
+        // Another catalog answered once, then the network went: the misses
+        // after that one prove nothing.
+        let later = start + 2 * UNREACHABLE_AFTER;
+        set.unreachable(&nightly, later);
+        set.reached(None, later);
+        set.unreachable(&nightly, later + Duration::from_secs(60));
+        set.unreachable(&nightly, later + UNREACHABLE_AFTER);
+        assert!(set.get().is_empty(), "nothing reached since the last miss");
+    }
+
+    #[test]
+    fn a_new_run_starts_from_nothing() {
+        let set = ActionNeeded::default();
+        let nightly = host("nightly.quilttest.com");
+        let start = Instant::now();
+        set.unreachable(&nightly, start);
+        set.reached(Some(&nightly), start + UNREACHABLE_AFTER);
         set.unreachable(&nightly, start + 2 * UNREACHABLE_AFTER);
         assert!(set.get().is_empty(), "a new run starts from nothing");
     }

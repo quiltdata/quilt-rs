@@ -3029,15 +3029,14 @@ async fn a_catalog_unreachable_for_a_while_needs_action_unless_offline() {
     sync_package(&missed, &roles, &offline, &pkg, &run, much_later).await;
     assert!(kinds(&offline).is_empty(), "nothing got through: offline");
 
-    // Online: a package with no catalog reached its bucket meanwhile.
+    // Online: a package with no catalog reached its bucket between passes.
     let inner = make_inner(enabled());
     sync_package(&missed, &roles, &inner, &pkg, &run, start).await;
-    inner
-        .action_needed
-        .reached(None, start + Duration::from_secs(60));
+    inner.action_needed.reached(None, start);
     let not_yet = start + UNREACHABLE_AFTER.saturating_sub(Duration::from_secs(1));
     sync_package(&missed, &roles, &inner, &pkg, &run, not_yet).await;
     assert!(kinds(&inner).is_empty(), "not unreachable for long enough");
+    inner.action_needed.reached(None, not_yet);
     sync_package(
         &missed,
         &roles,

@@ -1091,6 +1091,10 @@ pub(crate) async fn sync_package(
             };
             inner.reporter.report_login_required(host.as_ref(), block);
             inner.action_needed.session_failed(host.as_ref(), expired);
+            // A rejected session is the catalog's answer: it was reached.
+            if expired {
+                inner.action_needed.reached(host.as_ref(), now);
+            }
             inner.aggregator.note_login_required(&namespace, host);
         }
         Err(WatchError::Conflict(reason)) => {
@@ -1103,6 +1107,10 @@ pub(crate) async fn sync_package(
             if catalog_changed(model, pkg, origin).await {
                 inner.reporter.report_autosync_changed();
                 return Pass::Done;
+            }
+            // A refusal is the bucket's answer: the catalog was reached.
+            if matches!(reason, PausedReason::RoleDenied { .. }) {
+                inner.action_needed.reached(origin, now);
             }
             pause(inner, &namespace, origin, reason).await;
         }
