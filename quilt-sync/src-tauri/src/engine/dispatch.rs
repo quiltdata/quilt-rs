@@ -161,6 +161,7 @@ commands! {
         validate_commit_candidate(namespace: String, workflow_id: String, message: String, user_meta: String, name: String) -> Vec<CommitViolation>;
         get_main_page_packages() -> MainPagePackages;
         get_main_page_accounts() -> MainPageAccounts;
+        get_settings_accounts() -> MainPageAccounts;
         refresh_main_page_account(host: String) -> AccountHost;
         refresh_main_page_package(namespace: String) -> MainPagePackageRefresh;
         get_main_page_watcher() -> MainPageWatcher;
