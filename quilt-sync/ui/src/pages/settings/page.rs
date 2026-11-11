@@ -100,8 +100,10 @@ pub(crate) struct SettingsIo {
     pub write: fn(Write) -> Answer<()>,
     pub measure: fn() -> Answer<commands::StorageSize>,
     pub free: fn() -> Answer<FreedSpace>,
-    /// The accounts' light read: every host, roles not yet asked.
-    pub accounts: fn() -> Answer<Vec<AccountHostData>>,
+    /// The accounts' light read: every host, roles not yet asked. `true` on
+    /// the page's first read, which forgets the cached roles so each host is
+    /// asked again.
+    pub accounts: fn(bool) -> Answer<Vec<AccountHostData>>,
     /// One host's role, asked.
     pub settle_account: fn(String) -> Answer<AccountHostData>,
     /// Erase one host's credentials: `erase_auth`, which also drops the
@@ -144,8 +146,15 @@ fn free() -> Answer<FreedSpace> {
     Box::pin(commands::run_gc())
 }
 
-fn read_accounts() -> Answer<Vec<AccountHostData>> {
-    Box::pin(async { commands::get_main_page_accounts().await.map(|d| d.hosts) })
+fn read_accounts(fresh: bool) -> Answer<Vec<AccountHostData>> {
+    Box::pin(async move {
+        let read = if fresh {
+            commands::get_settings_accounts().await
+        } else {
+            commands::get_main_page_accounts().await
+        };
+        read.map(|d| d.hosts)
+    })
 }
 
 fn settle_account(host: String) -> Answer<AccountHostData> {
@@ -934,8 +943,12 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
         account_reads.update_value(|n| *n += 1);
         let this = account_reads.get_value();
         let current = move || account_reads.try_get_value() == Some(this);
+        // Opening the page asks every role again, as the main page's load
+        // does: a switch made in the web catalog is not in the cache. A
+        // re-read follows a change the cache already took.
+        let fresh = this == 1;
         leptos::task::spawn_local(async move {
-            let Ok(hosts) = (io.accounts)().await else {
+            let Ok(hosts) = (io.accounts)(fresh).await else {
                 if current() {
                     accounts.try_set(Accounts::Failed);
                 }
@@ -1470,6 +1483,8 @@ mod tests {
         static WRITE_DELAY: Cell<i32> = const { Cell::new(0) };
         static WRITE_FAILS: Cell<bool> = const { Cell::new(false) };
         static ACCOUNT_READS: Cell<usize> = const { Cell::new(0) };
+        /// Each accounts read's `fresh`, in order.
+        static FRESH_READS: RefCell<Vec<bool>> = const { RefCell::new(Vec::new()) };
         static FREE_DELAY: Cell<i32> = const { Cell::new(0) };
         static FREE_FAILS: Cell<bool> = const { Cell::new(false) };
         static MEASURES: Cell<usize> = const { Cell::new(0) };
@@ -1588,8 +1603,9 @@ mod tests {
         })
     }
 
-    fn stub_accounts() -> Answer<Vec<AccountHostData>> {
+    fn stub_accounts(fresh: bool) -> Answer<Vec<AccountHostData>> {
         ACCOUNT_READS.with(|r| r.set(r.get() + 1));
+        FRESH_READS.with(|r| r.borrow_mut().push(fresh));
         Box::pin(async {
             Ok(vec![AccountHostData {
                 host: "quilt.test".to_string(),
@@ -1634,6 +1650,7 @@ mod tests {
         WRITE_DELAY.with(|d| d.set(0));
         WRITE_FAILS.with(|f| f.set(false));
         ACCOUNT_READS.with(|r| r.set(0));
+        FRESH_READS.with(|r| r.borrow_mut().clear());
         FREE_DELAY.with(|d| d.set(0));
         FREE_FAILS.with(|f| f.set(false));
         MEASURES.with(|m| m.set(0));
@@ -2197,6 +2214,25 @@ mod tests {
         engine.event(commands::ACCOUNTS_CHANGED_EVENT, &serde_json::Value::Null);
         sleep_ms(50).await;
         assert_eq!(ACCOUNT_READS.with(Cell::get), before + 1);
+    }
+
+    /// Opening the page asks the roles afresh; a re-read keeps the cache,
+    /// which the change that caused it already moved.
+    #[wasm_bindgen_test]
+    async fn only_the_first_accounts_read_forgets_the_cached_roles() {
+        use crate::engine::fake::{FakeEngine, ask};
+
+        let engine = FakeEngine::install();
+        let _asked = ask("get_toasts");
+        sleep_ms(0).await;
+        engine.hello();
+        let _el = page(vec![settings()]).await;
+        engine.event(commands::ACCOUNTS_CHANGED_EVENT, &serde_json::Value::Null);
+        sleep_ms(50).await;
+        assert_eq!(FRESH_READS.with(|r| r.borrow().clone()), vec![true, false]);
+
+        let _el = page(vec![settings()]).await;
+        assert_eq!(FRESH_READS.with(|r| r.borrow().clone()), vec![true]);
     }
 
     /// The backend trims what Publishing saves; the re-read's value replaces

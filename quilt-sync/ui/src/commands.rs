@@ -1267,6 +1267,12 @@ pub async fn get_main_page_accounts() -> Result<MainPageAccountsData, String> {
     engine::invoke_unit("get_main_page_accounts").await
 }
 
+/// As [`get_main_page_accounts`], with the cached roles forgotten first, so
+/// each host's role is asked again: the Settings page's load.
+pub async fn get_settings_accounts() -> Result<MainPageAccountsData, String> {
+    engine::invoke_unit("get_settings_accounts").await
+}
+
 /// A link type that Windows opens with another program, or with none.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
