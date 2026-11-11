@@ -232,6 +232,6 @@ mod tests {
                 break;
             }
         }
-        assert_eq!(commands::get_record(&s).await.unwrap()[0].id, id);
+        assert_eq!(commands::get_record(&s).await.unwrap()[0].entry.id, id);
     }
 }

@@ -39,6 +39,7 @@ pub fn entry_for(entry: RecordEntry) -> Option<kit::InboxEntry> {
         outcome,
         at,
         read,
+        installed,
     } = entry;
     let kind = match kind {
         RecordKind::Got => kit::EntryKind::Got,
@@ -67,8 +68,8 @@ pub fn entry_for(entry: RecordEntry) -> Option<kit::InboxEntry> {
             })
         })
         .collect();
-    // An uninstalled package's page cannot load it.
-    let href = if kind == kit::EntryKind::Uninstalled {
+    // The page of a package no longer installed cannot load it.
+    let href = if !installed || kind == kit::EntryKind::Uninstalled {
         "/".to_string()
     } else {
         routes::package_page_href(&namespace)
@@ -205,24 +206,44 @@ pub fn provide_inbox() {
     };
     let record =
         engine::listen_then::<serde::de::IgnoredAny>(commands::RECORD_EVENT, move |_| load(), load);
+    // An entry's link depends on whether its package is installed.
+    let packages =
+        engine::listen::<serde::de::IgnoredAny>(commands::PACKAGES_CHANGED_EVENT, move |_| load());
 
-    let follow = move |set: Vec<ActionNeededEntry>| {
+    // The same for the set: an event is the newest word, and a read is
+    // adopted only while nothing has arrived since it was asked for.
+    let set_stamp = StoredValue::new(0_u64);
+    let bump = move || {
+        set_stamp.try_update_value(|s| {
+            *s += 1;
+            *s
+        })
+    };
+    let follow = move |set: &[ActionNeededEntry]| {
         feed.action_needed
-            .try_set(action_needed_for(&set, js_sys::Date::now()));
+            .try_set(action_needed_for(set, js_sys::Date::now()));
     };
     let action_needed = engine::listen_then::<Vec<ActionNeededEntry>>(
         commands::ACTION_NEEDED_EVENT,
-        follow,
+        move |set| {
+            bump();
+            follow(&set);
+        },
         move || {
+            let mine = bump();
             spawn_local(async move {
-                if let Ok(set) = commands::get_action_needed().await {
-                    follow(set);
+                if let Ok(set) = commands::get_action_needed().await
+                    && mine.is_some()
+                    && set_stamp.try_get_value() == mine
+                {
+                    follow(&set);
                 }
             });
         },
     );
     on_cleanup(move || {
         drop(record);
+        drop(packages);
         drop(action_needed);
     });
 
@@ -274,6 +295,7 @@ mod tests {
             outcome: None,
             at: "1970-01-01T00:00:01Z".into(),
             read: false,
+            installed: true,
         }
     }
 
@@ -298,6 +320,16 @@ mod tests {
     #[wasm_bindgen_test]
     fn an_uninstall_opens_the_main_page() {
         let entry = entry_for(record_entry(RecordKind::Uninstalled)).unwrap();
+        assert_eq!(entry.href, "/");
+    }
+
+    #[wasm_bindgen_test]
+    fn an_entry_of_a_package_no_longer_installed_opens_the_main_page() {
+        let entry = entry_for(RecordEntry {
+            installed: false,
+            ..record_entry(RecordKind::Got)
+        })
+        .unwrap();
         assert_eq!(entry.href, "/");
     }
 

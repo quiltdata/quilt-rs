@@ -17,14 +17,13 @@ use crate::engine::commands::{
     AccountHost, AutosyncPatch, CommitData, CommitViolation, CommitWorkflows, FreedSpace,
     KeepingScope, LoginData, LoginErrorData, MainPageAccounts, MainPagePackageRefresh,
     MainPagePackages, MainPageRecentFiles, MainPageWatcher, NotDownloaded, PackagePageData,
-    PathCheck, RemotePackageResult, RevisionHistoryData, RolesData, SetRemoteResponse,
+    PathCheck, RecordRow, RemotePackageResult, RevisionHistoryData, RolesData, SetRemoteResponse,
     SettingsData, SetupData, StopIgnoringPreview, StopIgnoringScope, StorageSize,
 };
 use crate::engine::desktop::{Desktop, ForeignHandler, NOT_AVAILABLE};
 use crate::engine::log_settings::LogLevel;
 use crate::engine::navigation::Navigation;
 use crate::engine::quilt::flow::PullPreview;
-use crate::engine::record::Entry as RecordEntry;
 use crate::engine::services::Services;
 use crate::engine::tasks::settings::TaskSettings;
 use crate::engine::updates::UpdateInfo;
@@ -214,7 +213,7 @@ commands! {
         package_file_path(namespace: String, path: String) -> String;
         open_in_web_browser(url: String) -> String;
         setup(directory: String) -> String;
-        get_record() -> Vec<RecordEntry>;
+        get_record() -> Vec<RecordRow>;
         mark_read(up_to: u64, namespace: Option<quilt_uri::Namespace>) -> ();
         pending_navigation(page: String) -> Option<Navigation>;
         navigation_done(page: String, id: String) -> ();

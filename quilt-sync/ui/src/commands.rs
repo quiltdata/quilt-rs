@@ -3130,9 +3130,17 @@ pub struct RecordEntry {
     /// RFC 3339.
     pub at: String,
     pub read: bool,
+    /// Whether the package is installed now, so its page can open it.
+    #[serde(default = "installed")]
+    pub installed: bool,
 }
 
-/// Every entry kept, oldest first.
+fn installed() -> bool {
+    true
+}
+
+/// Every entry kept, oldest first. Read again on `packages-changed` too, for
+/// [`RecordEntry::installed`].
 pub async fn get_record() -> Result<Vec<RecordEntry>, String> {
     #[derive(Serialize)]
     struct Args {}
@@ -3168,10 +3176,12 @@ mod record_tests {
             "outcome": null,
             "at": "1970-01-01T00:00:00Z",
             "read": false,
+            "installed": false,
         }))
         .unwrap();
         assert_eq!(entry.kind, RecordKind::RemovedRevisions { count: 2 });
         assert_eq!(entry.files[0].change, RecordFileChange::NewNotDownloaded);
+        assert!(!entry.installed);
         let later: RecordKind = serde_json::from_str(r#"{"kind":"somethingNew"}"#).unwrap();
         assert_eq!(later, RecordKind::Unrecognised);
     }
