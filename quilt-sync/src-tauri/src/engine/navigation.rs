@@ -31,6 +31,9 @@ pub struct Navigation {
     pub id: String,
     /// The address, without the host.
     pub page: String,
+    /// On that page already, load it again, so a page that runs its
+    /// operation as it opens runs it again. Otherwise the page stays as it is.
+    pub again: bool,
 }
 
 /// Where each page is to go next, by page id.
@@ -40,11 +43,23 @@ pub struct Navigations {
 }
 
 impl Navigations {
-    /// Send page `to` to `path`, replacing anywhere it was to go before.
+    /// Send page `to` to `path`, replacing anywhere it was to go before. A
+    /// page already there stays as it is.
     pub fn send(&self, events: &EventSink, to: &str, path: routes::Paths) {
+        self.push(events, to, path, false);
+    }
+
+    /// As [`send`](Self::send), but a page already there loads again, as a
+    /// link opened twice runs twice.
+    pub fn send_again(&self, events: &EventSink, to: &str, path: routes::Paths) {
+        self.push(events, to, path, true);
+    }
+
+    fn push(&self, events: &EventSink, to: &str, path: routes::Paths, again: bool) {
         let navigation = Navigation {
             id: uuid::Uuid::new_v4().simple().to_string(),
             page: routes::page(path),
+            again,
         };
         if let Ok(mut pending) = self.pending.lock() {
             pending.insert(to.to_owned(), navigation);
@@ -85,6 +100,7 @@ mod tests {
         assert_eq!(navigations.pending("a-tab"), None);
         let sent = navigations.pending(WINDOW).unwrap();
         assert_eq!(sent.page, "/settings");
+        assert!(!sent.again, "a page already there stays");
         assert_eq!(
             navigations.pending(WINDOW),
             Some(sent.clone()),

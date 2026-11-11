@@ -652,7 +652,7 @@ mod tests {
         );
     }
 
-    const BACK: &str = "/installed-package?namespace=team%2Fdataset&filter=unmodified";
+    const BACK: &str = "/installed-package?namespace=team%2Fdataset";
 
     fn ns() -> Namespace {
         Namespace::from(("team", "dataset"))

@@ -1238,7 +1238,7 @@ mod tests {
 
         assert_eq!(
             window.location().search().unwrap(),
-            "?namespace=team%2Fdataset&filter=unmodified&resolve=1",
+            "?namespace=team%2Fdataset&resolve=1",
         );
         assert_eq!(
             window.history().unwrap().length().unwrap(),
@@ -1349,7 +1349,7 @@ mod tests {
         let query = crate::routes::Query::parse(&location.search().unwrap());
         assert_eq!(
             query.get("back").as_deref(),
-            Some("/installed-package?namespace=team%2Fdataset&filter=unmodified"),
+            Some("/installed-package?namespace=team%2Fdataset"),
         );
     }
 

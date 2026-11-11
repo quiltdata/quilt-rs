@@ -1560,7 +1560,7 @@ mod tests {
         let org_pkg = ns("org/pkg");
         // Asserted as the whole string, since a substring match cannot tell a
         // missing namespace from a present one.
-        let package_page = "/installed-package?namespace=org%2Fpkg&filter=unmodified";
+        let package_page = "/installed-package?namespace=org%2Fpkg";
         let href = |a| action_href(a, &org_pkg);
         // The package page's `Publish` publishes in one click and offers the
         // commit page behind its caret, so the row lands there.
@@ -1577,7 +1577,7 @@ mod tests {
         // Resolve opens the package page's resolve mode.
         assert_eq!(
             href(Resolve),
-            "/installed-package?namespace=org%2Fpkg&filter=unmodified&resolve=1"
+            "/installed-package?namespace=org%2Fpkg&resolve=1"
         );
         // The fifth label ruling 5 names: a cause's `[Sign in]`, which
         // `cause_trailing` builds from `sign_in_href` directly rather than

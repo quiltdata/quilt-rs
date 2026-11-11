@@ -1,7 +1,6 @@
 use std::str::FromStr;
 use std::sync::Arc;
 
-use rust_i18n::t;
 use tauri::AppHandle;
 use tauri::Manager;
 use tauri_plugin_deep_link::DeepLinkExt;
@@ -23,7 +22,7 @@ use crate::engine::telemetry::prelude::*;
 fn navigate(services: &Services, to: Option<&str>, path: routes::Paths) {
     let to = to.unwrap_or(navigation::WINDOW);
     debug!("Sending page {} to {}", to, path);
-    services.navigations.send(&services.events, to, path);
+    services.navigations.send_again(&services.events, to, path);
 }
 
 /// The page of a Quilt package URI.
@@ -215,11 +214,7 @@ fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
                 navigate(
                     &s,
                     landing.page.as_deref(),
-                    routes::Paths::LoginError(
-                        host,
-                        t!("login_error.title").into(),
-                        err.to_string(),
-                    ),
+                    routes::Paths::LoginError(host, "Login failed".into(), err.to_string()),
                 );
             }
         }
@@ -403,10 +398,9 @@ mod tests {
             .unwrap();
         navigate(&services, Some("a-tab"), routes::Paths::Settings);
         navigate(&services, None, routes::Paths::Home);
-        assert_eq!(
-            services.navigations.pending("a-tab").unwrap().page,
-            "/settings"
-        );
+        let tab = services.navigations.pending("a-tab").unwrap();
+        assert_eq!(tab.page, "/settings");
+        assert!(tab.again, "a link opened twice runs twice");
         assert_eq!(
             services
                 .navigations
@@ -508,27 +502,19 @@ mod tests {
     #[test]
     fn a_login_from_a_package_or_commit_page_lands_there() {
         assert_eq!(
-            landing_after_login(Some(
-                "/installed-package?namespace=org%2Fpkg&filter=unmodified"
-            )),
-            routes::Paths::InstalledPackage(
-                ("org", "pkg").into(),
-                routes::EntriesFilter::for_installed_package()
-            )
+            landing_after_login(Some("/installed-package?namespace=org%2Fpkg")),
+            routes::Paths::InstalledPackage(("org", "pkg").into())
         );
         // A deep link's warning rides along in `back`; the page still parses.
         assert_eq!(
             landing_after_login(Some(
-                "/installed-package?namespace=org%2Fpkg&filter=unmodified&mismatch=abc&mrbucket=b"
+                "/installed-package?namespace=org%2Fpkg&mismatch=abc&mrbucket=b"
             )),
-            routes::Paths::InstalledPackage(
-                ("org", "pkg").into(),
-                routes::EntriesFilter::for_installed_package()
-            )
+            routes::Paths::InstalledPackage(("org", "pkg").into())
         );
         assert_eq!(
             landing_after_login(Some("/commit?namespace=org%2Fpkg")),
-            routes::Paths::Commit(("org", "pkg").into(), routes::EntriesFilter::default())
+            routes::Paths::Commit(("org", "pkg").into())
         );
     }
 

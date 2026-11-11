@@ -23,8 +23,8 @@
 
 ### Added
 
-- When syncing stops until you act, such as a conflict or an expired sign-in, QuiltSync posts a system notification while its window is not in front. Clicking it opens the page that fixes it, and Settings can turn it off (<https://github.com/quiltdata/quilt-rs/pull/1330>)
-- The tray icon shows a red dot while some action is needed, and its menu lists what needs it, each line opening the page that fixes it (<https://github.com/quiltdata/quilt-rs/pull/1330>)
+- When syncing stops until you act, such as a conflict or an expired sign-in, QuiltSync posts a system notification while its window is not in front. Clicking it opens the page that fixes it, and Settings can turn it off (<https://github.com/quiltdata/quilt-rs/pull/1330>, <https://github.com/quiltdata/quilt-rs/pull/1351>)
+- The tray icon shows a red dot while some action is needed, and its menu lists what needs it, each line opening the page that fixes it (<https://github.com/quiltdata/quilt-rs/pull/1330>, <https://github.com/quiltdata/quilt-rs/pull/1351>)
 - A bell on the top bar opens an inbox of what happened: each pull and publish with its files, packages uninstalled or created, and old revisions removed, kept for 90 days. A grey dot marks unread entries and a count says how many things need action. Entries are read once the inbox, or the package's page, stays open for two seconds (<https://github.com/quiltdata/quilt-rs/pull/1343>)
 
 ### Changed
@@ -53,6 +53,7 @@
 ### Security
 
 - QuiltSync bundles SQLite 3.54.1, which fixes [RUSTSEC-2026-0459](https://rustsec.org/advisories/RUSTSEC-2026-0459) (<https://github.com/quiltdata/quilt-rs/pull/1326>)
+- QuiltSync no longer carries a Mixpanel API secret in the app; analytics authenticate with the Mixpanel project token only, which is all the `/track` ingest endpoint needs (<https://github.com/quiltdata/quilt-rs/pull/1350>)
 
 ### quilt-rs
 

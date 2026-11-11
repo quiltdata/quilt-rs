@@ -27,8 +27,6 @@ use engine::services::Services;
 use engine::start;
 use engine::start::Started;
 
-rust_i18n::i18n!("locales");
-
 /// Print to the terminal that started us. A Windows release build is a GUI
 /// program with no console, so without this headless's link goes nowhere.
 #[cfg(windows)]
