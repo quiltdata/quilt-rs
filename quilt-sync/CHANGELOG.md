@@ -42,7 +42,7 @@
 
 ### Fixed
 
-- Settings shows a role switched in the web catalog the next time you open it
+- Settings shows a role switched in the web catalog the next time you open it (<https://github.com/quiltdata/quilt-rs/pull/1354>)
 - The package page drops its paused band as soon as the pause clears, also when autosync is turned back on (<https://github.com/quiltdata/quilt-rs/pull/1330>)
 - The package page opens when the catalog can't be reached, and says the information may be out of date; the commit page says so too and waits to publish (<https://github.com/quiltdata/quilt-rs/pull/1338>)
 - A package task whose outcome loses `latest` to a revision published during the run lands its own changes on top of that revision instead of leaving the package Diverged, unless both changed the same file (<https://github.com/quiltdata/quilt-rs/pull/1320>)
