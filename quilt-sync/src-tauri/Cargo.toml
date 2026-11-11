@@ -36,7 +36,6 @@ reqwest.workspace = true
 rfd = { version = "0.17.2", default-features = false, features = ["gtk3"] }
 # Debug builds read `ui/dist` from disk on every request; release builds embed it.
 rust-embed = { version = "8", features = ["mime-guess"] }
-rust-i18n = "4.2.4"
 semver = "1.0.28"
 # Without the default `transport`, which brings native-tls (OpenSSL on Linux).
 # Sentry sends through reqwest with rustls instead.
