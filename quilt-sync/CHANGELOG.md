@@ -28,6 +28,7 @@
 
 ### Changed
 
+- The commit page shows what is wrong with your message, workflow or metadata when you press *Publish* or *Save*, not before (<https://github.com/quiltdata/quilt-rs/pull/1346>)
 - On a bucket that requires a workflow and names no default, QuiltSync no longer picks one for you; *None* stays in the list and says a workflow is required (<https://github.com/quiltdata/quilt-rs/pull/1344>)
 - QuiltSync tells you about a new release while it runs, not only when it opens, and a dismissed update bar comes back after five minutes (<https://github.com/quiltdata/quilt-rs/pull/1336>)
 - QuiltSync has one design: the classic design and the *New design* switch in Settings are gone (<https://github.com/quiltdata/quilt-rs/pull/1319>)
