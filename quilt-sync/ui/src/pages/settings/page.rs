@@ -297,7 +297,6 @@ struct Fields {
     publish_minutes: RwSignal<String>,
     watch: RwSignal<bool>,
     tray: RwSignal<bool>,
-    notify: RwSignal<bool>,
     agent_tasks: RwSignal<bool>,
     /// One of `LOG_LEVELS`.
     log_level: RwSignal<String>,
@@ -322,7 +321,6 @@ impl Fields {
             publish_minutes: RwSignal::new(String::new()),
             watch: RwSignal::new(false),
             tray: RwSignal::new(false),
-            notify: RwSignal::new(false),
             agent_tasks: RwSignal::new(false),
             log_level: RwSignal::new(String::new()),
             rules_off: RwSignal::new(BTreeSet::new()),
@@ -354,7 +352,6 @@ struct Written {
     publish_secs: StoredValue<u64>,
     watch: StoredValue<bool>,
     tray: StoredValue<bool>,
-    notify: StoredValue<bool>,
     agent_tasks: StoredValue<bool>,
     log_level: StoredValue<String>,
     rules_off: StoredValue<BTreeSet<String>>,
@@ -377,7 +374,6 @@ impl Written {
             publish_secs: StoredValue::new(0),
             watch: StoredValue::new(false),
             tray: StoredValue::new(false),
-            notify: StoredValue::new(false),
             agent_tasks: StoredValue::new(false),
             log_level: StoredValue::new(String::new()),
             rules_off: StoredValue::new(BTreeSet::new()),
@@ -412,7 +408,6 @@ fn seed_all(fields: Fields, written: Written, d: &SettingsData) {
     seed(fields.publish, written.publish, autosync.push_enabled);
     seed(fields.watch, written.watch, d.fswatcher.enabled);
     seed(fields.tray, written.tray, autosync.close_to_tray);
-    seed(fields.notify, written.notify, autosync.notify_action_needed);
     seed(
         fields.agent_tasks,
         written.agent_tasks,
@@ -765,7 +760,7 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
 
     // ── Saving as each control changes ──
     let save = move |row: Saved, write: Write| saves.push(Some(row), write, None, io, page);
-    let toggles: [Toggle; 6] = [
+    let toggles: [Toggle; 5] = [
         (fields.pull, written.pull, Saved::Pull, |on| {
             Write::Autosync(AutosyncPatch {
                 pull_enabled: Some(on),
@@ -782,12 +777,6 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
         (fields.tray, written.tray, Saved::Tray, |on| {
             Write::Autosync(AutosyncPatch {
                 close_to_tray: Some(on),
-                ..AutosyncPatch::default()
-            })
-        }),
-        (fields.notify, written.notify, Saved::Notify, |on| {
-            Write::Autosync(AutosyncPatch {
-                notify_action_needed: Some(on),
                 ..AutosyncPatch::default()
             })
         }),
@@ -1331,7 +1320,7 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
                 }
                     .into_any()
                 accounts=view! { <div class=style::slot data-accounts>{accounts_card}</div> }.into_any()
-                app=view! { <AppCard tray=fields.tray notify=fields.notify saved=just_saved pending=pending /> }.into_any()
+                app=view! { <AppCard tray=fields.tray saved=just_saved pending=pending /> }.into_any()
                 storage=view! { <div class=style::slot data-storage>{storage_card}</div> }.into_any()
                 experimental=view! {
                     <ExperimentalCard
@@ -1544,7 +1533,6 @@ mod tests {
                 pull_interval_secs: 45,
                 idle_timeout_secs: 300,
                 close_to_tray: false,
-                notify_action_needed: true,
             },
             fswatcher: FsWatcherSettingsData { enabled: true },
             experimental: ExperimentalSettingsData::default(),
@@ -1737,7 +1725,6 @@ mod tests {
     const PULL: &str = "Get new revisions";
     const WATCH: &str = "Watch folders for changes";
     const TRAY: &str = "Keep running in the tray";
-    const NOTIFY: &str = "Notify me when syncing stops until I act";
 
     fn minutes(el: &web_sys::Element, n: u32) -> web_sys::HtmlInputElement {
         el.query_selector_all("input[type=number]")
@@ -2066,23 +2053,6 @@ mod tests {
             ]
         );
         assert_eq!(reads(), 2, "one re-read, after the queue ran");
-    }
-
-    /// The notify toggle shows what is stored, on by default, and turning it
-    /// off writes that one setting.
-    #[wasm_bindgen_test]
-    async fn the_notify_toggle_saves_only_itself() {
-        let el = page(vec![settings()]).await;
-        assert!(toggle(&el, NOTIFY).checked(), "on as stored");
-        toggle(&el, NOTIFY).click();
-        sleep_ms(50).await;
-        assert_eq!(
-            writes(),
-            vec![Write::Autosync(AutosyncPatch {
-                notify_action_needed: Some(false),
-                ..AutosyncPatch::default()
-            })]
-        );
     }
 
     /// A toggle is held while its own save is out, so a second click cannot

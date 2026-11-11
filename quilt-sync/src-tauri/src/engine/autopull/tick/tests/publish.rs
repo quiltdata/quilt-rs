@@ -139,7 +139,6 @@ async fn make_inner_with_flags(
                 ..PushSettings::default()
             },
             close_to_tray: false,
-            notify_action_needed: true,
         })),
         publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
         paused: RwLock::new(BTreeMap::new()),
@@ -1039,7 +1038,6 @@ async fn publish_quiet_window_reads_idle_timeout_not_pull_cadence() -> Result<()
             idle_timeout_secs: 60,
         },
         close_to_tray: false,
-        notify_action_needed: true,
     };
     let reporter = Arc::new(RecordingReporter::default());
     let inner = WatcherInner {
