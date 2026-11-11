@@ -10,10 +10,10 @@
 //!
 //! # What leads it
 //!
-//! While anything needs action, the panel leads with live lines drawn
-//! from [`ActionNeeded`]: one counting what the main page's queue holds, and one
-//! for each cause the queue does not show, with its remedy. They are state,
-//! not entries, so they leave when the cause clears.
+//! While anything needs action, the panel leads with a line for each cause
+//! in [`ActionNeeded`], worded as the tray menu words it and linking to the
+//! page that fixes it. They are state, not entries, so they leave when the
+//! cause clears.
 //!
 //! # The bell's badge
 //!
@@ -143,72 +143,23 @@ pub struct InboxEntry {
     pub href: String,
 }
 
-/// A action-needed cause the main page's queue does not show, with where it is
-/// fixed.
+/// One thing that needs action: what it is, and the page that fixes it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Cause {
     pub text: String,
     pub href: String,
 }
 
-impl Cause {
-    /// The filesystem watcher has failed; Settings is where it is seen to.
-    #[must_use]
-    pub fn watcher_stopped(settings_href: impl Into<String>) -> Self {
-        Self {
-            text: "File watching stopped".to_string(),
-            href: settings_href.into(),
-        }
-    }
-
-    /// A publish that has kept failing since `since`.
-    #[must_use]
-    pub fn publish_failing(
-        package: &str,
-        since: EpochMillis,
-        now: EpochMillis,
-        href: impl Into<String>,
-    ) -> Self {
-        Self {
-            text: format!(
-                "{package} has failed to publish {}",
-                for_how_long(now - since)
-            ),
-            href: href.into(),
-        }
-    }
-}
-
-/// `for an hour`, `for 2 hours`, `for 3 days`. Never under an hour: that is
-/// when a failing publish starts to need action.
-fn for_how_long(ms: f64) -> String {
-    #[expect(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        reason = "a whole, non-negative number of hours"
-    )]
-    let hours = (ms / 3_600_000.0).floor().max(1.0) as u64;
-    match hours {
-        1 => "for an hour".to_string(),
-        2..48 => format!("for {hours} hours"),
-        _ => format!("for {} days", hours / 24),
-    }
-}
-
 /// Everything that needs action now.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ActionNeeded {
-    /// How many the main page's queue holds.
-    pub in_queue: usize,
-    /// The main page, where the queue is.
-    pub queue_href: String,
-    pub elsewhere: Vec<Cause>,
+    pub causes: Vec<Cause>,
 }
 
 impl ActionNeeded {
     #[must_use]
     pub fn count(&self) -> usize {
-        self.in_queue + self.elsewhere.len()
+        self.causes.len()
     }
 }
 
@@ -266,14 +217,6 @@ impl InboxFeed {
 impl Default for InboxFeed {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-/// The lead line about the queue.
-fn queue_line(count: usize) -> String {
-    match count {
-        1 => "1 thing needs your attention".to_string(),
-        n => format!("{n} things need your attention"),
     }
 }
 
@@ -371,20 +314,11 @@ pub fn InboxPanel(
     };
 
     let lead = move || {
-        let ActionNeeded {
-            in_queue,
-            queue_href,
-            elsewhere,
-        } = action_needed.get();
-        let queue = (in_queue > 0).then(|| (queue_line(in_queue), queue_href));
-        let lines: Vec<(String, String)> = queue
-            .into_iter()
-            .chain(elsewhere.into_iter().map(|c| (c.text, c.href)))
-            .collect();
-        (!lines.is_empty()).then(|| {
-            let items = lines
+        let causes = action_needed.get().causes;
+        (!causes.is_empty()).then(|| {
+            let items = causes
                 .into_iter()
-                .map(|(text, href)| {
+                .map(|Cause { text, href }| {
                     view! {
                         <li>
                             <a class=style::needs href=href>
@@ -470,11 +404,16 @@ mod tests {
         }
     }
 
-    fn queue(n: usize) -> ActionNeeded {
+    fn cause(text: &str, href: &str) -> Cause {
+        Cause {
+            text: text.to_string(),
+            href: href.to_string(),
+        }
+    }
+
+    fn causes(n: usize) -> ActionNeeded {
         ActionNeeded {
-            in_queue: n,
-            queue_href: "/".to_string(),
-            elsewhere: Vec::new(),
+            causes: (0..n).map(|i| cause(&format!("cause {i}"), "/")).collect(),
         }
     }
 
@@ -485,17 +424,6 @@ mod tests {
         assert_eq!(Badge::of(1, false).name(), "Inbox, 1 needs action");
         assert_eq!(Badge::of(2, true), Badge::ActionNeeded(2));
         assert_eq!(Badge::of(2, true).name(), "Inbox, 2 need action");
-    }
-
-    #[test]
-    fn a_failing_publish_says_for_how_long() {
-        let now = 100.0 * 3_600_000.0;
-        let line = |hours: f64| {
-            Cause::publish_failing("user/plate-07", now - hours * 3_600_000.0, now, "/").text
-        };
-        assert_eq!(line(1.2), "user/plate-07 has failed to publish for an hour");
-        assert_eq!(line(2.5), "user/plate-07 has failed to publish for 2 hours");
-        assert_eq!(line(72.0), "user/plate-07 has failed to publish for 3 days");
     }
 
     fn hrefs(el: &web_sys::Element, selector: &str) -> Vec<String> {
@@ -549,44 +477,35 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn with_no_entries_it_says_nothing_new() {
-        let el = mount(|| view! { <InboxPanel entries=Vec::new() action_needed=queue(2) /> });
+        let el = mount(|| view! { <InboxPanel entries=Vec::new() action_needed=causes(2) /> });
         let text = el.text_content().unwrap_or_default();
         assert!(text.contains("Nothing new"), "{text}");
-        assert!(text.contains("2 things need your attention"), "{text}");
+        assert!(text.contains("cause 1"), "{text}");
     }
 
-    /// The whole line is the link, not only a word in it.
+    /// Each cause is one line, and the whole line is the link to the page
+    /// that fixes it.
     #[wasm_bindgen_test]
-    fn the_queue_line_is_one_link_to_the_main_page() {
-        let el = mount(|| view! { <InboxPanel entries=Vec::new() action_needed=queue(1) /> });
-        let link = el
-            .query_selector("ul[aria-label='Action needed'] a")
-            .unwrap()
-            .expect("the line");
-        assert_eq!(link.get_attribute("href").as_deref(), Some("/"));
-        assert_eq!(
-            link.text_content().as_deref(),
-            Some("1 thing needs your attention")
-        );
-    }
-
-    #[wasm_bindgen_test]
-    fn the_causes_the_queue_does_not_show_lead_with_their_remedy() {
+    fn each_cause_leads_as_one_link_to_its_remedy() {
         let el = mount(|| {
             view! {
                 <InboxPanel
                     entries=Vec::new()
                     action_needed=ActionNeeded {
-                        in_queue: 1,
-                        queue_href: "/".to_string(),
-                        elsewhere: vec![Cause::watcher_stopped("/settings")],
+                        causes: vec![
+                            cause("user/plate-07 \u{2014} Has conflicts in 2 files", "/p"),
+                            cause("Watching package folders for changes stopped working", "/settings"),
+                        ],
                     }
                 />
             }
         });
+        let selector = "ul[aria-label='Action needed'] a";
+        assert_eq!(hrefs(&el, selector), ["/p", "/settings"]);
+        let link = el.query_selector(selector).unwrap().expect("a line");
         assert_eq!(
-            hrefs(&el, "ul[aria-label='Action needed'] a"),
-            ["/", "/settings"]
+            link.text_content().as_deref(),
+            Some("user/plate-07 \u{2014} Has conflicts in 2 files")
         );
     }
 
@@ -692,7 +611,7 @@ mod tests {
             view! {
                 <Inbox
                     entries=vec![entry(1, 10.0, true)]
-                    action_needed=queue(3)
+                    action_needed=causes(3)
                     open=RwSignal::new(false)
                 />
             }

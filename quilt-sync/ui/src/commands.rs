@@ -3277,6 +3277,10 @@ pub struct ActionNeededEntry {
     pub cause: ActionNeededCause,
     /// When the cause started, RFC 3339.
     pub since: String,
+    /// The tray menu's line for it.
+    pub line: String,
+    /// The page that fixes it.
+    pub page: String,
 }
 
 /// What needs action now: the mount-time read before following
@@ -3296,7 +3300,8 @@ mod action_needed_tests {
         let entry: ActionNeededEntry = serde_json::from_str(
             r#"{"subject":{"kind":"package","namespace":"a/b"},
                 "cause":{"kind":"paused","reason":{"kind":"pull_conflict","files":["x"]}},
-                "since":"1970-01-01T00:00:00Z"}"#,
+                "since":"1970-01-01T00:00:00Z",
+                "line":"a/b — Has a conflict in 1 file","page":"/"}"#,
         )
         .unwrap();
         assert_eq!(

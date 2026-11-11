@@ -14,9 +14,7 @@ use quilt_ui_kit::InboxFeed;
 use quilt_uri::Namespace;
 
 use crate::commands;
-use crate::commands::ActionNeededCause;
 use crate::commands::ActionNeededEntry;
-use crate::commands::ActionNeededSubject;
 use crate::commands::RecordEntry;
 use crate::commands::RecordFileChange;
 use crate::commands::RecordKind;
@@ -98,39 +96,18 @@ fn short(hash: &str) -> String {
     hash.chars().take(7).collect()
 }
 
-/// How long a publish has failed when it enters the set, so its run began
-/// that long before. The backend's `action_needed::PUBLISH_FAILING_AFTER`.
-const PUBLISH_FAILING_AFTER_MS: f64 = 3_600_000.0;
-
-/// What needs action, as the panel leads with it: a count for what the main
-/// page's queue shows, and a line with its remedy for each cause it does not.
-pub fn action_needed_for(set: &[ActionNeededEntry], now: f64) -> kit::ActionNeeded {
-    let mut action_needed = kit::ActionNeeded {
-        in_queue: 0,
-        queue_href: "/".to_string(),
-        elsewhere: Vec::new(),
-    };
-    for entry in set {
-        match (&entry.cause, &entry.subject) {
-            (ActionNeededCause::Watcher { .. }, _) => action_needed
-                .elsewhere
-                .push(kit::Cause::watcher_stopped("/settings")),
-            (
-                ActionNeededCause::PublishFailing { .. },
-                ActionNeededSubject::Package { namespace },
-            ) => {
-                action_needed.elsewhere.push(kit::Cause::publish_failing(
-                    &namespace.to_string(),
-                    js_sys::Date::parse(&entry.since) - PUBLISH_FAILING_AFTER_MS,
-                    now,
-                    routes::package_page_href(namespace),
-                ));
-            }
-            (ActionNeededCause::Unrecognised | ActionNeededCause::PublishFailing { .. }, _) => {}
-            _ => action_needed.in_queue += 1,
-        }
+/// What needs action, as the panel leads with it: a line per entry, worded
+/// and linked as the tray menu's.
+pub fn action_needed_for(set: &[ActionNeededEntry]) -> kit::ActionNeeded {
+    kit::ActionNeeded {
+        causes: set
+            .iter()
+            .map(|entry| kit::Cause {
+                text: entry.line.clone(),
+                href: entry.page.clone(),
+            })
+            .collect(),
     }
-    action_needed
 }
 
 /// Whether the window can be seen: not hidden behind another tab, nor
@@ -227,16 +204,8 @@ pub fn provide_inbox() {
             *s
         })
     };
-    // Kept as it came, so a failing publish's duration is worked out again
-    // each time the panel opens.
-    let current = RwSignal::new(Vec::<ActionNeededEntry>::new());
-    Effect::new(move |_| {
-        feed.open.track();
-        let now = js_sys::Date::now();
-        current.with(|set| feed.action_needed.set(action_needed_for(set, now)));
-    });
     let follow = move |set: &[ActionNeededEntry]| {
-        current.try_set(set.to_vec());
+        feed.action_needed.try_set(action_needed_for(set));
     };
     let action_needed = engine::listen_then::<Vec<ActionNeededEntry>>(
         commands::ACTION_NEEDED_EVENT,
@@ -353,56 +322,22 @@ mod tests {
         assert!(entry_for(record_entry(RecordKind::Unrecognised)).is_none());
     }
 
-    fn needs(subject: ActionNeededSubject, cause: ActionNeededCause) -> ActionNeededEntry {
-        ActionNeededEntry {
-            subject,
-            cause,
-            since: "1970-01-01T00:00:00Z".into(),
-        }
-    }
-
-    /// The queue's causes are counted; the two it does not show get a line
-    /// each, with the page that fixes them.
+    /// Each entry leads as the tray menu words it, linking to its fix.
     #[wasm_bindgen_test]
-    fn the_queue_is_counted_and_the_rest_named() {
-        let package = || ActionNeededSubject::Package {
-            namespace: ("acme", "demo").into(),
-        };
-        let set = [
-            needs(package(), ActionNeededCause::SignIn { expired: true }),
-            needs(ActionNeededSubject::App, ActionNeededCause::Credentials),
-            needs(
-                package(),
-                ActionNeededCause::PublishFailing {
-                    error: "boom".into(),
-                },
-            ),
-            needs(
-                ActionNeededSubject::App,
-                ActionNeededCause::Watcher {
-                    message: "no".into(),
-                },
-            ),
-        ];
-        let action_needed = action_needed_for(&set, 2.0 * 3_600_000.0);
-        // Its run began an hour before it entered the set, at the epoch.
-        assert_eq!(action_needed.in_queue, 2);
-        assert_eq!(action_needed.count(), 4);
-        let hrefs: Vec<&str> = action_needed
-            .elsewhere
-            .iter()
-            .map(|c| c.href.as_str())
-            .collect();
+    fn each_entry_is_a_line_as_the_tray_words_it() {
+        let set = [ActionNeededEntry {
+            subject: commands::ActionNeededSubject::App,
+            cause: commands::ActionNeededCause::Credentials,
+            since: "1970-01-01T00:00:00Z".into(),
+            line: "AWS credentials on this computer aren't usable".into(),
+            page: "/".into(),
+        }];
         assert_eq!(
-            hrefs,
-            [
-                routes::package_page_href(&("acme", "demo").into()).as_str(),
-                "/settings"
-            ]
-        );
-        assert_eq!(
-            action_needed.elsewhere[0].text,
-            "acme/demo has failed to publish for 3 hours"
+            action_needed_for(&set).causes,
+            [kit::Cause {
+                text: "AWS credentials on this computer aren't usable".into(),
+                href: "/".into(),
+            }]
         );
     }
 }

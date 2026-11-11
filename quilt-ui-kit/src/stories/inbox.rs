@@ -158,29 +158,34 @@ fn three_pulls() -> Vec<InboxEntry> {
         .collect()
 }
 
-pub fn action_needed_in_queue(count: usize) -> ActionNeeded {
-    ActionNeeded {
-        in_queue: count,
-        queue_href: "#/".to_string(),
-        elsewhere: Vec::new(),
-    }
-}
+/// Lines as the tray menu words them, each linking to the page that fixes it.
+const CAUSES: [(&str, &str); 5] = [
+    ("user/plate-07 \u{2014} Has conflicts in 2 files", "#"),
+    ("open.quiltdata.com \u{2014} Sign-in expired", "#/"),
+    (
+        "a-team-with-a-long-name/an-analysis-package-whose-name-goes-on \u{2014} \
+         Publishing has kept failing for an hour",
+        "#",
+    ),
+    ("AWS credentials on this computer aren't usable", "#/"),
+    (
+        "Watching package folders for changes stopped working",
+        "#/settings",
+    ),
+];
 
-fn action_needed_everywhere() -> ActionNeeded {
-    let now = js_sys::Date::now();
+/// The first `count` of the example causes, repeated past five.
+pub fn action_needed(count: usize) -> ActionNeeded {
     ActionNeeded {
-        in_queue: 2,
-        queue_href: "#/".to_string(),
-        elsewhere: vec![
-            Cause::watcher_stopped("#/settings"),
-            Cause::publish_failing("user/plate-07", now - 2.5 * HOUR, now, "#"),
-            Cause::publish_failing(
-                "a-team-with-a-long-name/an-analysis-package-whose-name-goes-on",
-                now - 30.0 * HOUR,
-                now,
-                "#",
-            ),
-        ],
+        causes: CAUSES
+            .iter()
+            .cycle()
+            .take(count)
+            .map(|(text, href)| Cause {
+                text: (*text).to_string(),
+                href: (*href).to_string(),
+            })
+            .collect(),
     }
 }
 
@@ -234,7 +239,7 @@ fn Bells() -> impl IntoView {
         <Story
             title="Inbox · the bell"
             note="Leads the appbar's controls. Two marks or none: a quiet grey dot while \
-                  any entry is unread, and an amber count of what needs you, which wins \
+                  any entry is unread, and an amber count of what needs action, which wins \
                   when both hold and drops only when a cause clears — opening the inbox \
                   does not clear it. The accessible name says the same in words: \
                   Inbox, Inbox, unread news, or Inbox, 2 need action. Each bell opens."
@@ -245,14 +250,14 @@ fn Bells() -> impl IntoView {
             <Cell full=true label="unread news — Inbox, unread news">
                 {bell(every_kind(), ActionNeeded::default())}
             </Cell>
-            <Cell full=true label="needs you — Inbox, 1 needs action">
-                {bell(Vec::new(), action_needed_in_queue(1))}
+            <Cell full=true label="action needed — Inbox, 1 needs action">
+                {bell(Vec::new(), action_needed(1))}
             </Cell>
             <Cell full=true label="both hold: the count wins — Inbox, 5 need action">
-                {bell(every_kind(), action_needed_everywhere())}
+                {bell(every_kind(), action_needed(5))}
             </Cell>
             <Cell full=true label="two digits — Inbox, 12 need action">
-                {bell(Vec::new(), action_needed_in_queue(12))}
+                {bell(Vec::new(), action_needed(12))}
             </Cell>
         </Story>
     }
@@ -273,13 +278,13 @@ fn Panels() -> impl IntoView {
         >
             <Cell label="nothing new">{panel(Vec::new(), ActionNeeded::default())}</Cell>
             <Cell label="nothing new, but 2 need action">
-                {panel(Vec::new(), action_needed_in_queue(2))}
+                {panel(Vec::new(), action_needed(2))}
             </Cell>
             <Cell wide=true label="every kind, the newest two unread">
                 {panel(every_kind(), ActionNeeded::default())}
             </Cell>
-            <Cell wide=true label="needs you: the queue's count, then the causes it does not show">
-                {panel(every_kind(), action_needed_everywhere())}
+            <Cell wide=true label="action needed: a line per cause, as the tray menu words it">
+                {panel(every_kind(), action_needed(5))}
             </Cell>
             <Cell label="three pulls are three entries">
                 {panel(three_pulls(), ActionNeeded::default())}
@@ -296,7 +301,7 @@ fn Panels() -> impl IntoView {
 #[component]
 fn Live() -> impl IntoView {
     let entries = RwSignal::new(every_kind());
-    let action_needed = RwSignal::new(action_needed_in_queue(0));
+    let action_needed = RwSignal::new(action_needed(0));
     let open = RwSignal::new(false);
     // The backend's dwell: read once the panel has stayed open for 2 s. One
     // timer per opening, dropped when the panel closes or the story goes.
@@ -336,7 +341,12 @@ fn Live() -> impl IntoView {
         });
     };
     let toggle_needs = move |_| {
-        action_needed.update(|n| n.in_queue = if n.in_queue == 0 { 2 } else { 0 });
+        let n = if action_needed.with(ActionNeeded::count) == 0 {
+            2
+        } else {
+            0
+        };
+        action_needed.set(self::action_needed(n));
     };
 
     view! {
