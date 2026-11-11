@@ -10,34 +10,15 @@ yanked = "deny"
 # Each ignore names the parent crate that pulls in the advisory and what
 # blocks the fix. Revisit when that parent crate is bumped.
 #
-# To prune stale ignores (e.g. after bumping Tauri / Leptos / the AWS SDK),
-# temporarily add `unused-ignored-advisory = "warn"` under [advisories] and run
-# `cargo deny check advisories`; delete any entry it flags with
-# `warning[advisory-not-detected]`. Kept out of the committed config so CI logs
-# stay free of warning noise.
+# `cargo deny check` warns `advisory-not-detected` for an ignore that no
+# longer matches, because the advisory was withdrawn or the crate left the
+# tree. Delete that entry.
 ignore = [
-    # --- Tauri Linux backend (GTK3 / webkit2gtk) ---
-    # Tauri 2.x has not migrated off GTK3. These advisories will clear when
-    # Tauri ships a GTK4 backend or we drop the Linux target.
-    { id = "RUSTSEC-2024-0411", reason = "gtk-rs GTK3 bindings via Tauri Linux backend" },
-    { id = "RUSTSEC-2024-0412", reason = "gtk-rs GTK3 bindings via Tauri Linux backend" },
-    { id = "RUSTSEC-2024-0413", reason = "gtk-rs GTK3 bindings via Tauri Linux backend" },
-    { id = "RUSTSEC-2024-0414", reason = "gtk-rs GTK3 bindings via Tauri Linux backend" },
-    { id = "RUSTSEC-2024-0415", reason = "gtk-rs GTK3 bindings via Tauri Linux backend" },
-    { id = "RUSTSEC-2024-0416", reason = "gtk-rs GTK3 bindings via Tauri Linux backend" },
-    { id = "RUSTSEC-2024-0417", reason = "gtk-rs GTK3 bindings via Tauri Linux backend" },
-    { id = "RUSTSEC-2024-0418", reason = "gtk-rs GTK3 bindings via Tauri Linux backend" },
-    { id = "RUSTSEC-2024-0419", reason = "gtk-rs GTK3 bindings via Tauri Linux backend" },
-    { id = "RUSTSEC-2024-0420", reason = "gtk-rs GTK3 bindings via Tauri Linux backend" },
+    # --- paste via webkit2gtk / Tauri (Linux backend) ---
     { id = "RUSTSEC-2024-0436", reason = "paste unmaintained, transitive via webkit2gtk / Tauri" },
 
     # --- proc-macro-error via Tauri ---
     { id = "RUSTSEC-2024-0370", reason = "proc-macro-error unmaintained, transitive via Tauri" },
-
-    # --- proc-macro-error2 via Leptos ---
-    # Leptos (leptos_macro, leptos_router_macro, reactive_stores_macro, rstml)
-    # still depends on it as of 0.8.16 / 0.9.0-alpha. Revisit on Leptos bumps.
-    { id = "RUSTSEC-2026-0173", reason = "proc-macro-error2 unmaintained, transitive via Leptos" },
 
     # --- dotenv ---
     { id = "RUSTSEC-2021-0141", reason = "dotenv unmaintained, a direct dependency of quilt-sync" },
