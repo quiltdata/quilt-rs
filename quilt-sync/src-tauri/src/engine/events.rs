@@ -94,11 +94,11 @@ mod tests {
     async fn a_subscriber_gets_name_and_json_payload() {
         let sink = EventSink::new();
         let mut rx = sink.subscribe();
-        sink.emit("toast", serde_json::json!({"id": 1}));
+        sink.emit("record-changed", serde_json::json!({"id": 1}));
         sink.emit("autosync-changed", ());
         assert_eq!(
             rx.recv().await.unwrap(),
-            ("toast".to_owned(), serde_json::json!({"id": 1}))
+            ("record-changed".to_owned(), serde_json::json!({"id": 1}))
         );
         assert_eq!(
             rx.recv().await.unwrap(),

@@ -25,7 +25,6 @@ use crate::engine::telemetry::prelude::*;
 pub mod activity;
 pub mod last_change;
 pub mod publish_timer;
-pub mod pull_toast;
 pub mod reporter;
 pub mod settings;
 pub mod status;

@@ -1,5 +1,6 @@
 //! The appbar: the home logo on the left, the [`ActivityLine`] centered, and a
-//! slot for controls on the right.
+//! slot for controls on the right, led by the inbox's bell when an
+//! [`InboxFeed`] is provided.
 //!
 //! It never carries `data-page`: that marker darkens the surface it is on,
 //! and belongs to the frame around the bar.
@@ -7,6 +8,8 @@
 use leptos::prelude::*;
 
 use crate::ActivityLine;
+use crate::Inbox;
+use crate::InboxFeed;
 
 stylance::import_crate_style!(pub style, "src/appbar.module.css");
 
@@ -17,6 +20,17 @@ pub fn Appbar(
     #[prop(optional)]
     replace: bool,
 ) -> impl IntoView {
+    let bell = use_context::<InboxFeed>().map(|feed| {
+        view! { <Inbox entries=feed.entries action_needed=feed.action_needed open=feed.open /> }
+    });
+    let actions = (bell.is_some() || actions.is_some()).then(|| {
+        view! {
+            <span class=style::actions>
+                {bell}
+                {actions}
+            </span>
+        }
+    });
     view! {
         <header class=style::appbar>
             <div class=style::bar>
@@ -28,7 +42,7 @@ pub fn Appbar(
                     <img src="assets/img/quilt.png" alt="QuiltSync home" />
                 </a>
                 <ActivityLine />
-                {actions.map(|actions| view! { <span class=style::actions>{actions}</span> })}
+                {actions}
             </div>
         </header>
     }
@@ -142,6 +156,24 @@ mod tests {
             .unwrap()
             .expect("the slot is drawn");
         assert_eq!(button.text_content().as_deref(), Some("Refresh"));
+    }
+
+    /// With a feed above it, the bar leads its controls with the bell, and
+    /// without one it draws none.
+    #[wasm_bindgen_test]
+    fn a_feed_puts_the_bell_first() {
+        let el = mount(|| {
+            provide_context(InboxFeed::new());
+            view! { <Appbar actions=Some(view! { <button>"Refresh"</button> }.into_any()) /> }
+        });
+        let first = el
+            .query_selector("header button")
+            .unwrap()
+            .expect("controls");
+        assert_eq!(first.get_attribute("aria-label").as_deref(), Some("Inbox"));
+
+        let el = mount(|| view! { <Appbar /> });
+        assert!(el.query_selector("header button").unwrap().is_none());
     }
 
     /// The gallery and every test mount the bar with no `Activities` above it.

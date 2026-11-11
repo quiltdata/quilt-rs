@@ -100,7 +100,7 @@ use quilt_ui_kit::render;
 
 use super::bucket_form::BucketDialog;
 use super::role_dialog::RoleDialog;
-use super::{Dialogs, Outcome, Reread, Wiring, holding, run};
+use super::{Dialogs, Outcome, Reread, Wiring, holding, run, run_said};
 
 stylance::import_crate_style!(style, "src/pages/installed_package/header.module.css");
 
@@ -287,6 +287,31 @@ fn remember_publish_choice(namespace: &str, choice: usize) {
 /// Both shapes live here because they are one slot: the publishing states get a
 /// split button whose caret holds `Review before publishing…`, and the rest get their
 /// verb plainly. `Latest` and a denial with no other role held get neither, and
+/// Publish, said on the band as pull is, but read again after a failure too:
+/// the commit can land and the push be refused, and the page must show the
+/// revision that now exists.
+fn publisher(
+    ns: String,
+    uri: Option<quilt_uri::S3PackageUri>,
+    busy: RwSignal<bool>,
+    outcome: RwSignal<Option<Outcome>>,
+    reload: Trigger,
+) -> Callback<()> {
+    Callback::new(move |()| {
+        let ns = ns.clone();
+        let uri = uri.clone();
+        run_said(
+            busy,
+            outcome,
+            ns.clone(),
+            "Published this package.",
+            "Could not publish this package.",
+            Reread::Always(reload),
+            async move { commands::package_publish(ns, uri).await },
+        );
+    })
+}
+
 /// the row keeps its height either way.
 fn primary_action(
     data: &commands::PackageHeaderData,
@@ -315,26 +340,7 @@ fn primary_action(
     // Keeps a deep link's mismatch, so entering the mode does not end its band.
     let resolve_to = super::carrying(crate::routes::resolve_href(&ns));
     let revision_to = crate::routes::commit_href(&ns);
-    // `Publish` is pull's shape — run here, reported by its toast — except that
-    // the page is read again after a failure as well: the commit can land and
-    // the push still be refused, and the page must show the revision that now
-    // exists.
-    let on_publish = {
-        let ns = ns.to_string();
-        let uri = uri.clone();
-        Callback::new(move |()| {
-            let ns = ns.clone();
-            let uri = uri.clone();
-            run(
-                busy,
-                outcome,
-                ns.clone(),
-                "Could not publish this package.",
-                Reread::Always(reload),
-                async move { commands::package_publish(ns, uri).await },
-            );
-        })
-    };
+    let on_publish = publisher(ns.to_string(), uri.clone(), busy, outcome, reload);
     // The deployment to sign in to, when the state names one. `None` for a bare
     // bucket on ambient credentials, which is why the kit offers no action there.
     let sign_in_to = match &data.state {
@@ -373,10 +379,11 @@ fn primary_action(
         Some(PackageAction::GetLatest) => {
             let ns = ns.to_string();
             let uri = uri.clone();
-            run(
+            run_said(
                 busy,
                 outcome,
                 ns.clone(),
+                "Got the latest revision.",
                 "Could not get the latest revision.",
                 Reread::OnSuccess(reload),
                 async move { commands::package_pull(ns, uri).await },
@@ -555,7 +562,7 @@ pub(crate) fn RemoveDialog(
                 let uri = uri.clone();
                 let prune = prune.get_untracked();
                 async move {
-                    // What the prune freed arrives as a toast, which outlives
+                    // What the prune freed goes to the inbox, which outlives
                     // the move home.
                     holding(busy, outcome, uninstall(ns, uri, prune)).await?;
                     // Home, not a refetch: the package this page is about is gone, so

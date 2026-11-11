@@ -354,7 +354,7 @@ fn Live() -> impl IntoView {
                     {bar(view! { <Inbox entries=entries action_needed=action_needed open=open /> }.into_any())}
                     <div class="g-inline">
                         <Button on_click=arrive>"A pull arrives"</Button>
-                        <Button on_click=toggle_needs>"Needs you: 0 or 2"</Button>
+                        <Button on_click=toggle_needs>"Action needed: 0 or 2"</Button>
                     </div>
                 </div>
             </Cell>

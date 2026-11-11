@@ -370,7 +370,7 @@ mod tests {
                     page.read(key, counted)
                 };
             });
-            let _listener = crate::engine::listen::<serde_json::Value>("toast", |_| ());
+            let _listener = crate::engine::listen::<serde_json::Value>("record-changed", |_| ());
             sleep_ms(0).await;
             engine.hello();
             engine.close();

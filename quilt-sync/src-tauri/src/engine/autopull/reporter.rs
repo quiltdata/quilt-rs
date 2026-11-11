@@ -11,15 +11,15 @@ use crate::engine::action_needed::Cause;
 use crate::engine::action_needed::Kind;
 use crate::engine::action_needed::Subject;
 use crate::engine::autopull::PausedReason;
-use crate::engine::autopull::pull_toast::ReportToast;
 use crate::engine::events::EventSink;
 use crate::engine::quilt;
+use crate::engine::record::Draft;
+use crate::engine::record::Record;
 use crate::engine::telemetry::Telemetry;
 use crate::engine::telemetry::event::{
     AutosyncAuthEvent, AutosyncEvent, AutosyncPausedEvent, MixpanelEvent, PausedKind,
 };
 use crate::engine::telemetry::prelude::*;
-use crate::engine::toast::ToastCenter;
 
 /// Whether a deployment's session has *just* become unusable, or was already.
 ///
@@ -217,8 +217,7 @@ pub(crate) fn settled_fingerprint(latest: &str, ignored: &str) -> String {
     out
 }
 
-/// Payload emitted to the UI after autosync publishes a package. The UI
-/// renders this as the same toast surface manual Commit & Push uses.
+/// Payload emitted after autosync publishes a package.
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PublishedEvent {
@@ -280,30 +279,28 @@ pub trait StatusReporter: Send + Sync + 'static {
         info!("autosync: published namespace={namespace} host={host} message={message}");
     }
 
-    /// Surface what a pull brought — the counterpart of
-    /// [`Self::report_published`] for the other direction, and the one the
-    /// watcher had no way to make: a pull's only outward sign was a status
-    /// string.
+    /// Keep what happened in the [record](crate::engine::record): a pull or a
+    /// publish, with its files.
     ///
     /// **Deliberately without a default.** [`TelemetryReporter`] decorates
     /// another reporter and forwards each call explicitly, so a defaulted
     /// method would be answered by the default there and never reach
-    /// [`SinkEventReporter`] — the toast would silently never appear.
+    /// [`SinkEventReporter`]: the entry would silently never be kept.
     /// Requiring an implementation makes that a compile error instead.
-    fn report_pulled(&self, namespace: &Namespace, toast: ReportToast);
+    fn report_recorded(&self, draft: Draft);
 
     /// A package's autosync state may have changed: a walk, a pass, a pause,
     /// a commit or a settings change. Without a default, for the same reason
-    /// as [`Self::report_pulled`].
+    /// as [`Self::report_recorded`].
     fn report_autosync_changed(&self);
 
     /// A pause on `namespace` was cleared, by whatever route. Without a
-    /// default, for the same reason as [`Self::report_pulled`].
+    /// default, for the same reason as [`Self::report_recorded`].
     fn report_pause_cleared(&self, namespace: &Namespace);
 
     /// The file watcher's reconciliation subscribed again after a
     /// [subscriber error](Self::report_subscriber_error). Without a default,
-    /// for the same reason as [`Self::report_pulled`].
+    /// for the same reason as [`Self::report_recorded`].
     fn report_subscriber_recovered(&self);
 }
 
@@ -322,10 +319,10 @@ impl StatusReporter for LogReporter {
 
     fn report_subscriber_recovered(&self) {}
 
-    fn report_pulled(&self, namespace: &Namespace, toast: ReportToast) {
+    fn report_recorded(&self, draft: Draft) {
         info!(
-            "autosync: pulled namespace={namespace} kind={:?} body={}",
-            toast.kind, toast.body
+            "autosync: recorded namespace={} kind={:?}",
+            draft.namespace, draft.kind
         );
     }
 
@@ -436,11 +433,10 @@ impl StatusReporter for TelemetryReporter {
         self.inner.report_published(namespace, host, message);
     }
 
-    /// Forwarded, not counted. What a pull brought is a report to the user, not
-    /// an analytics outcome — and the autopull tick already emits its own
-    /// events for what it did.
-    fn report_pulled(&self, namespace: &Namespace, toast: ReportToast) {
-        self.inner.report_pulled(namespace, toast);
+    /// Forwarded, not counted: the record is for the reader, and the tick
+    /// already counts what it did.
+    fn report_recorded(&self, draft: Draft) {
+        self.inner.report_recorded(draft);
     }
 
     fn report_autosync_changed(&self) {
@@ -458,7 +454,7 @@ impl StatusReporter for TelemetryReporter {
 
 pub struct SinkEventReporter {
     events: EventSink,
-    toasts: Arc<ToastCenter>,
+    record: Arc<Record>,
     /// Takes the file watcher's failure, the one cause only this seam hears.
     action_needed: Arc<ActionNeeded>,
     logged: SeenFingerprints,
@@ -492,14 +488,10 @@ impl SeenFingerprints {
 }
 
 impl SinkEventReporter {
-    pub fn new(
-        events: EventSink,
-        toasts: Arc<ToastCenter>,
-        action_needed: Arc<ActionNeeded>,
-    ) -> Self {
+    pub fn new(events: EventSink, record: Arc<Record>, action_needed: Arc<ActionNeeded>) -> Self {
         Self {
             events,
-            toasts,
+            record,
             action_needed,
             logged: SeenFingerprints::default(),
         }
@@ -576,26 +568,13 @@ impl StatusReporter for SinkEventReporter {
         );
     }
 
-    fn report_pulled(&self, namespace: &Namespace, toast: ReportToast) {
-        info!(
-            "autosync: pulled namespace={namespace} kind={:?}",
-            toast.kind
-        );
-        // Posting to the centre is async, while every
-        // other method here is a synchronous fire-and-forget emit. Spawning
-        // keeps that shape rather than making the whole trait async for one
-        // method.
-        let toasts = Arc::clone(&self.toasts);
+    fn report_recorded(&self, draft: Draft) {
+        // Adding is async, while every other method here is a synchronous
+        // fire-and-forget emit. Spawning keeps that shape rather than making
+        // the whole trait async for one method.
+        let record = Arc::clone(&self.record);
         crate::engine::events::spawn(async move {
-            toasts
-                .post(crate::engine::toast::ToastDraft {
-                    kind: toast.kind,
-                    title: Some(toast.title),
-                    body: toast.body,
-                    groups: toast.groups,
-                    timeout_ms: None,
-                })
-                .await;
+            record.add(draft).await;
         });
     }
 
@@ -1002,10 +981,8 @@ mod action_needed_tests {
     #[test]
     fn the_file_watcher_action_needed_until_it_subscribes_again() {
         let action_needed = Arc::new(ActionNeeded::default());
-        let toasts = Arc::new(ToastCenter::new(Box::new(
-            crate::engine::toast::SinkToastEmitter::new(EventSink::new()),
-        )));
-        let reporter = SinkEventReporter::new(EventSink::new(), toasts, Arc::clone(&action_needed));
+        let record = Arc::new(Record::in_memory(EventSink::new()));
+        let reporter = SinkEventReporter::new(EventSink::new(), record, Arc::clone(&action_needed));
         reporter.report_subscriber_error(SubscriberErrorEvent {
             kind: "inotify_limit".to_string(),
             message: "no space".to_string(),
@@ -1039,9 +1016,9 @@ pub(crate) mod test_support {
         /// Hosts seen on paused and published reports, so a test can assert the
         /// engine attributed a report to the package's own catalog, or to none.
         pub hosts: Mutex<Vec<Option<Host>>>,
-        /// What each pull was reported as bringing, so a test can assert the
-        /// wording rather than merely that something was posted.
-        pub pulled: Mutex<Vec<(Namespace, ReportToast)>>,
+        /// Each entry for the record, so a test can assert what was kept
+        /// rather than merely that something was.
+        pub recorded: Mutex<Vec<Draft>>,
         /// How many times the window was told a state may have changed.
         pub autosync_changed: std::sync::atomic::AtomicUsize,
         /// Each pause clear, in order.
@@ -1060,8 +1037,8 @@ pub(crate) mod test_support {
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
 
-        fn report_pulled(&self, namespace: &Namespace, toast: ReportToast) {
-            self.pulled.lock().unwrap().push((namespace.clone(), toast));
+        fn report_recorded(&self, draft: Draft) {
+            self.recorded.lock().unwrap().push(draft);
         }
 
         fn report_status(&self, namespace: &Namespace, event: PackageStatusEvent) {

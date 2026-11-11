@@ -24,9 +24,9 @@ use crate::engine::desktop::{Desktop, ForeignHandler, NOT_AVAILABLE};
 use crate::engine::log_settings::LogLevel;
 use crate::engine::navigation::Navigation;
 use crate::engine::quilt::flow::PullPreview;
+use crate::engine::record::Entry as RecordEntry;
 use crate::engine::services::Services;
 use crate::engine::tasks::settings::TaskSettings;
-use crate::engine::toast::Toast;
 use crate::engine::updates::UpdateInfo;
 
 /// Builds [`dispatch`] from the table below. Each group calls its functions in
@@ -214,10 +214,10 @@ commands! {
         package_file_path(namespace: String, path: String) -> String;
         open_in_web_browser(url: String) -> String;
         setup(directory: String) -> String;
-        get_toasts() -> Vec<Toast>;
+        get_record() -> Vec<RecordEntry>;
+        mark_read(up_to: u64, namespace: Option<quilt_uri::Namespace>) -> ();
         pending_navigation(page: String) -> Option<Navigation>;
         navigation_done(page: String, id: String) -> ();
-        dismiss_toast(id: u64) -> ();
         report_ui_panic(message: String) -> ();
         quit_prompt_shown(generation: u64) -> ();
         quit_cancel() -> ();

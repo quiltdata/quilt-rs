@@ -17,7 +17,6 @@ use crate::engine::autopull::WatcherInner;
 use crate::engine::autopull::activity::ActivityOp;
 use crate::engine::autopull::last_change::LastChange;
 use crate::engine::autopull::last_change::PendingCommit;
-use crate::engine::autopull::pull_toast;
 use crate::engine::autopull::reporter::LoginBlock;
 use crate::engine::autopull::reporter::PackageStatusEvent;
 use crate::engine::autopull::reporter::ignored_fingerprint;
@@ -32,16 +31,17 @@ use crate::engine::publish_settings::PublishSettings;
 use crate::engine::quilt;
 use crate::engine::quilt::flow::PullOutcome;
 use crate::engine::quilt::lineage::SyncScope;
+use crate::engine::record::Draft;
 use crate::engine::telemetry::prelude::*;
 
 #[derive(Debug)]
 pub(crate) struct RefreshOutcome {
     pub upstream: quilt::lineage::UpstreamState,
     pub has_changes: bool,
-    /// `Some(message)` only on the publish success path; `None` on
-    /// pull success, on quiet-window deferral, and on any no-action
-    /// tick. `run_once` reads this to call `report_published`.
-    pub published: Option<String>,
+    /// Only on the publish success path; `None` on pull success, on
+    /// quiet-window deferral, and on any no-action tick. `run_once` reads
+    /// this to call `report_published` and to record it.
+    pub published: Option<Published>,
     /// What a successful pull brought — `None` on every other path, exactly
     /// as `published` is `None` on every path but a publish. The pull side of
     /// the pair `published`'s own comment implied and the tick could not give:
@@ -58,6 +58,13 @@ pub(crate) struct RefreshOutcome {
     /// as "not waiting" and clears any recorded arm time — so one decision
     /// covers both directions.
     pub publish_arm_at: Option<SystemTime>,
+}
+
+/// A publish autosync made: its message, and its entry for the record.
+#[derive(Debug)]
+pub(crate) struct Published {
+    pub message: String,
+    pub entry: Draft,
 }
 
 impl RefreshOutcome {
@@ -664,6 +671,9 @@ pub(crate) async fn refresh_then_maybe_sync(
         // placeholder, new field) applies identically regardless of who
         // triggered the publish; only autosync keeps the head's task. It
         // publishes on the held lock and reuses `status`, walked under it.
+        // What the revision commits, for the record: empty when it pushes a
+        // commit made before.
+        let changes = status.changes.clone();
         let published = {
             // The activity line spans the transfer and nothing else: the check never shows.
             let _activity = aggregator.activity_guard(ActivityOp::Publish, namespace);
@@ -715,7 +725,15 @@ pub(crate) async fn refresh_then_maybe_sync(
                 Ok(Some(RefreshOutcome {
                     upstream: quilt::lineage::UpstreamState::UpToDate,
                     has_changes: false,
-                    published: Some(message),
+                    published: Some(Published {
+                        message,
+                        entry: Draft::published(
+                            namespace,
+                            Some(&lineage.base_hash),
+                            &push.manifest_uri.hash,
+                            &changes,
+                        ),
+                    }),
                     pulled: None,
                     fingerprint: settled_fingerprint(latest, &ignored),
                     publish_arm_at: None,
@@ -1032,17 +1050,18 @@ pub(crate) async fn sync_package(
             if outcome.published.is_some() || inner.last_change.get(&namespace).await.is_none() {
                 inner.action_needed.publish_settled(&namespace);
             }
-            if let Some(message) = outcome.published.as_deref() {
-                inner.reporter.report_published(&namespace, origin, message);
+            if let Some(published) = outcome.published {
+                inner
+                    .reporter
+                    .report_published(&namespace, origin, &published.message);
+                inner.reporter.report_recorded(published.entry);
             }
-            // What the pull brought, if it brought anything. `None` from
-            // `report_toast` is the metadata-only revision: hashes advanced
-            // and no file moved, and an entry that stands until dismissed
-            // must not say nothing.
-            if let Some(report) = outcome.pulled.as_ref()
-                && let Some(toast) = pull_toast::report_toast(&namespace, report)
-            {
-                inner.reporter.report_pulled(&namespace, toast);
+            if let Some(report) = outcome.pulled.as_ref() {
+                inner.reporter.report_recorded(Draft::got(
+                    &namespace,
+                    Some(&lineage.base_hash),
+                    report,
+                ));
             }
             inner.reporter.report_status(
                 &namespace,

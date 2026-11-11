@@ -28,6 +28,13 @@
 //! panel is open keeps its highlight until the panel closes: the panel
 //! remembers every entry it has seen unread since it opened.
 //!
+//! # On every page
+//!
+//! The [`Appbar`](crate::Appbar) draws the bell when an [`InboxFeed`] is
+//! provided above it, as the activity line follows
+//! [`Activities`](crate::Activities): the app fills the feed once, and every
+//! page's bar shows it, whatever controls the page puts beside it.
+//!
 //! Presentation only. The record, reading and the action-needed set are the
 //! caller's.
 
@@ -73,6 +80,8 @@ pub enum FileChange {
     NewNotDownloaded,
     Updated,
     Removed,
+    /// Removed by the remote, but edited here, so kept and no longer tracked.
+    Kept,
     /// Kept out of a created package by ignore rules.
     LeftOut,
 }
@@ -84,6 +93,7 @@ impl FileChange {
             Self::NewNotDownloaded => "new, not downloaded",
             Self::Updated => "updated",
             Self::Removed => "removed",
+            Self::Kept => "kept, removed on the remote",
             Self::LeftOut => "left out by ignore rules",
         }
     }
@@ -232,6 +242,33 @@ impl Badge {
     }
 }
 
+/// What the appbar's bell draws, provided once above every page. The caller
+/// fills `entries` and `action_needed`, and reads `open` to tell when the
+/// panel has stayed open long enough to read it.
+#[derive(Clone, Copy, Debug)]
+pub struct InboxFeed {
+    pub entries: RwSignal<Vec<InboxEntry>>,
+    pub action_needed: RwSignal<ActionNeeded>,
+    pub open: RwSignal<bool>,
+}
+
+impl InboxFeed {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            entries: RwSignal::new(Vec::new()),
+            action_needed: RwSignal::new(ActionNeeded::default()),
+            open: RwSignal::new(false),
+        }
+    }
+}
+
+impl Default for InboxFeed {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// The lead line about the queue.
 fn queue_line(count: usize) -> String {
     match count {
@@ -358,7 +395,7 @@ pub fn InboxPanel(
                     }
                 })
                 .collect_view();
-            view! { <ul class=style::lead aria-label="Needs you">{items}</ul> }
+            view! { <ul class=style::lead aria-label="Action needed">{items}</ul> }
         })
     };
 
@@ -509,7 +546,7 @@ mod tests {
     fn the_queue_line_is_one_link_to_the_main_page() {
         let el = mount(|| view! { <InboxPanel entries=Vec::new() action_needed=queue(1) /> });
         let link = el
-            .query_selector("ul[aria-label='Needs you'] a")
+            .query_selector("ul[aria-label='Action needed'] a")
             .unwrap()
             .expect("the line");
         assert_eq!(link.get_attribute("href").as_deref(), Some("/"));
@@ -534,7 +571,7 @@ mod tests {
             }
         });
         assert_eq!(
-            hrefs(&el, "ul[aria-label='Needs you'] a"),
+            hrefs(&el, "ul[aria-label='Action needed'] a"),
             ["/", "/settings"]
         );
     }

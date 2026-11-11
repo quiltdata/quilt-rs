@@ -68,7 +68,7 @@ pub mod packages {
     /// - **`keep.txt` is untouched by r2**, so it is the file to edit locally for
     ///   kept local work, or to create with differing content for a both-added
     ///   conflict.
-    /// - **Six adds in r2** exceeds the three-name cap the toast and the row use,
+    /// - **Six adds in r2** exceeds the three-name cap the inbox and the row use,
     ///   so the overflow wording has a fixture.
     /// - **One deeply-nested path**, so a surface with limited room has something
     ///   to wrap or truncate.

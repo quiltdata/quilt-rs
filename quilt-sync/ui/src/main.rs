@@ -40,9 +40,10 @@ fn App() -> impl IntoView {
     provide_context(kit::Activities::new());
     // Above the router, so every page's band row finds it.
     components::provide_update_check();
+    // Above the router, so every page's appbar draws the bell.
+    components::provide_inbox();
     view! {
         <components::ConnectionBanner />
-        <components::ToastStack />
         <components::AutopullActivityFeed />
         <components::QuitPrompt />
         <Router>

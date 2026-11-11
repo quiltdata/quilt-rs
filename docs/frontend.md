@@ -47,9 +47,9 @@ quilt-sync/ui/
     │   ├── appbar.rs           # Refresh and Settings, on every appbar
     │   ├── autopull_activity.rs # Background pulls, in the activity line
     │   ├── connection.rs       # Engine connection bar and page following
+    │   ├── inbox.rs            # The appbar's inbox, fed from the record
     │   ├── ignore_popup.rs     # Ignore and Stop-ignoring popups
     │   ├── quit_prompt.rs      # Quit confirmation
-    │   ├── toasts.rs           # Backend-posted notifications
     │   └── update_checker.rs   # The update check and each page's update band
     ├── pages.rs                # Module re-exports
     ├── pages/
@@ -396,23 +396,20 @@ Messages are rendered as text nodes (not `inner_html`), so they are
 auto-escaped by Leptos. The lead is the page's own sentence; the engine's text
 follows as the detail.
 
-### Toast stack
+### Inbox
 
-`components/toasts.rs` renders a second, separate surface: the notifications the
-*backend* posts. Mounted once in `App`, outside the router, so an entry survives
-navigation. The split from the outcome band is by direction — that band belongs
-to the page that raised it and dies with the page, while these come from the
-backend, including the autosync tick, which runs with no page mounted.
+The bell on every appbar opens the inbox: what happened while the reader was not
+looking. The backend keeps the record (`engine/record.rs`, `record.jsonl` in the
+data folder): one entry per pull, publish, uninstall, create or removal of old
+revisions, never merged, kept 90 days and at most 1,000 entries.
+`components/inbox.rs` (`provide_inbox`, called once in `App`) reads it with
+`get_record` and again on each `record-changed` event, and follows the
+`action-needed` set for the bell's count. The kit's appbar draws the bell from the
+`InboxFeed` it provides.
 
-The backend holds the list (`toast::ToastCenter`, bounded, in memory): the client
-hydrates from `get_toasts` on mount and then follows the `toast` event, so an
-entry posted while the window was shut is still there when it opens. Each entry
-carries a kind, a lead sentence, zero or more `ToastGroup`s (a heading, its
-items, and a count of the remainder) rendered as lists, and an optional
-self-dismiss delay. Dismissing calls `dismiss_toast` — the backend is
-authoritative, so a snapshot replaces the visible set rather than merging into
-it. The layer takes the pointer only over the list and its controls, never over
-its own box, and renders nothing at all when empty.
+An entry is read once the open panel, or its package's page, has stayed in a
+visible window for 2 s (`mark_read`). A result the page that started it is still
+showing, such as Get latest's files, is also said on that page's band.
 
 ## Auto-Update Checker
 
@@ -738,6 +735,6 @@ TypeScript to Leptos client-side WASM. Key changes:
 | Routing | Static `.html` files + `#fragment` params | leptos\_router + query strings |
 | State | None (full re-render on every action) | Reactive signals (`RwSignal`, `Memo`) |
 | Popups | HTML strings built in TypeScript | Leptos dialogs opened by a signal |
-| Notifications | Raw HTML via `inner_html` (XSS risk) | Text nodes in the outcome band and toasts (auto-escaped) |
+| Notifications | Raw HTML via `inner_html` (XSS risk) | Text nodes in the outcome band and the inbox (auto-escaped) |
 | Build | Parcel (npm) | Trunk (npm only to bundle the JSON editor) |
 | UI disable | Imperative `lock_ui()` DOM manipulation | Reactive `PageHandle::busy` lock |

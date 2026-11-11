@@ -366,9 +366,26 @@ async fn changes_to_different_files_land_on_latest_together_and_the_copy_resumes
         [(ns(), "mine".to_string())],
         "reported as a publish"
     );
-    let pulled = reporter.pulled.lock().unwrap();
+    let pulled = got(&reporter);
     assert_eq!(pulled.len(), 1, "and as a pull");
-    assert_eq!(pulled[0].1.groups[0].items, ["b.csv"]);
+    assert_eq!(pulled[0].files[0].paths, ["b.csv"]);
+    assert_eq!(
+        reporter.recorded.lock().unwrap()[0].kind,
+        crate::engine::record::Kind::Published,
+        "and recorded as a publish first"
+    );
+}
+
+/// The pulls the record was given.
+fn got(reporter: &RecordingReporter) -> Vec<crate::engine::record::Draft> {
+    reporter
+        .recorded
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|d| d.kind == crate::engine::record::Kind::Got)
+        .cloned()
+        .collect()
 }
 
 #[tokio::test]
@@ -711,10 +728,7 @@ async fn an_edit_during_the_merge_to_a_path_the_other_side_changed_keeps_the_cop
         "the next tick retries"
     );
     assert_eq!(reporter.published.lock().unwrap().len(), 1);
-    assert!(
-        reporter.pulled.lock().unwrap().is_empty(),
-        "nothing written"
-    );
+    assert!(got(&reporter).is_empty(), "nothing written");
 }
 
 /// Beside an edit to `b.csv`, a local file the walk does not list, such as an
@@ -765,8 +779,7 @@ async fn the_copy_moves_to_the_merged_revision_not_one_published_after_it() {
     let (_, reporter) = tick(&model).await;
 
     assert_eq!(seen(&remote).events, ["push onto h1", "move to r1"]);
-    let pulled = reporter.pulled.lock().unwrap();
-    assert_eq!(pulled[0].1.groups[0].items, ["b.csv"]);
+    assert_eq!(got(&reporter)[0].files[0].paths, ["b.csv"]);
 }
 
 /// The tick after an edit kept the copy at its own revision: `latest` already

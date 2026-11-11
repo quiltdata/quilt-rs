@@ -128,10 +128,7 @@ async fn holding<T>(
 /// Run a command, hold the page while it runs, and report only what the band
 /// is for.
 ///
-/// Success says nothing here. A command whose success IS worth a sentence —
-/// undo — sets its own outcome, because it is the exception rather than the
-/// rule, and a helper that reported every success would put `Get latest`'s
-/// line on the page behind the toast that already carried its report.
+/// Success says nothing here; [`run_said`] is the one that says it.
 ///
 /// Starting retracts whatever the band said last, in `holding`, so a failure
 /// does not outlive the retry that succeeds.
@@ -150,6 +147,41 @@ pub(super) fn run(
     after: Reread,
     task: impl std::future::Future<Output = Result<String, String>> + 'static,
 ) {
+    run_with(busy, outcome, namespace, None, on_failure, after, task);
+}
+
+/// [`run`], and a success says `on_success` on the band, with the backend's
+/// text as its detail. For the commands whose result the reader is waiting
+/// for on this page: Get latest's files and Publish.
+pub(super) fn run_said(
+    busy: RwSignal<bool>,
+    outcome: RwSignal<Option<Outcome>>,
+    namespace: String,
+    on_success: &'static str,
+    on_failure: &'static str,
+    after: Reread,
+    task: impl std::future::Future<Output = Result<String, String>> + 'static,
+) {
+    run_with(
+        busy,
+        outcome,
+        namespace,
+        Some(on_success),
+        on_failure,
+        after,
+        task,
+    );
+}
+
+fn run_with(
+    busy: RwSignal<bool>,
+    outcome: RwSignal<Option<Outcome>>,
+    namespace: String,
+    on_success: Option<&'static str>,
+    on_failure: &'static str,
+    after: Reread,
+    task: impl std::future::Future<Output = Result<String, String>> + 'static,
+) {
     // The controls are disabled while this is true, so this guard only
     // catches a press already in flight when the signal was written.
     if busy.get_untracked() {
@@ -161,13 +193,23 @@ pub(super) fn run(
             (Reread::OnSuccess(reload), true) | (Reread::Always(reload), _) => Some(reload),
             _ => None,
         };
-        if let Err(message) = answer {
-            outcome.set(Some(Outcome {
+        match answer {
+            Ok(message) => {
+                if let Some(lead) = on_success {
+                    outcome.set(Some(Outcome {
+                        namespace,
+                        variant: BannerVariant::Success,
+                        lead: lead.to_string(),
+                        detail: (!message.is_empty()).then_some(message),
+                    }));
+                }
+            }
+            Err(message) => outcome.set(Some(Outcome {
                 namespace,
                 variant: BannerVariant::Critical,
                 lead: on_failure.to_string(),
                 detail: Some(message),
-            }));
+            })),
         }
         if let Some(reload) = reload {
             reload.notify();
@@ -1314,6 +1356,8 @@ fn PackageScreen(
     // rebuilds. `link_outcome`, not `outcome`, which is the last command's.
     let link_outcome = Memo::new(move |_| routes::DeepLinkOutcome::from_query(&query.read()));
     provide_context(Carried(link_outcome));
+    // Staying on the page reads this package's inbox entries.
+    crate::components::inbox::read_package_on_dwell(ns.into());
     let mismatch = Memo::new(move |_| {
         link_outcome
             .get()

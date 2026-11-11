@@ -247,14 +247,14 @@ mod tests {
     #[wasm_bindgen_test]
     async fn a_request_waits_for_the_hello_and_gets_its_reply() {
         let engine = FakeEngine::install();
-        let asked = ask("get_toasts");
+        let asked = ask("get_record");
         sleep_ms(0).await;
         assert!(engine.requests().is_empty(), "nothing before the hello");
 
         engine.hello();
         let requests = engine.requests();
         assert_eq!(requests.len(), 1);
-        assert_eq!(requests[0]["cmd"], "get_toasts");
+        assert_eq!(requests[0]["cmd"], "get_record");
         engine.reply(&requests[0]["id"], &json!([1]));
         sleep_ms(0).await;
         assert_eq!(asked.borrow().clone(), Some(Ok(json!([1]))));
@@ -265,7 +265,7 @@ mod tests {
     #[wasm_bindgen_test]
     async fn a_close_before_the_hello_fails_what_waits_without_a_replay() {
         let engine = FakeEngine::install();
-        let asked = ask("get_toasts");
+        let asked = ask("get_record");
         sleep_ms(0).await;
         engine.close();
         sleep_ms(0).await;
@@ -287,7 +287,7 @@ mod tests {
     #[wasm_bindgen_test]
     async fn a_close_after_the_hello_fails_what_waits_without_a_replay() {
         let engine = FakeEngine::install();
-        let asked = ask("get_toasts");
+        let asked = ask("get_record");
         sleep_ms(0).await;
         engine.hello();
         assert_eq!(engine.requests().len(), 1);
@@ -321,7 +321,7 @@ mod tests {
             });
         });
         let connection = super::connection();
-        let _listener = super::listen::<serde_json::Value>("toast", |_| ());
+        let _listener = super::listen::<serde_json::Value>("record-changed", |_| ());
         sleep_ms(0).await;
         let first = reads.get();
 
@@ -349,12 +349,12 @@ mod tests {
         let heard = Rc::new(Cell::new(0));
         let got = Rc::clone(&heard);
         let _listener = super::listen_then::<u64>(
-            "toast",
+            "record-changed",
             move |n| got.set(n),
             move || counted.set(counted.get() + 1),
         );
         engine.hello();
-        engine.event("toast", &json!(7));
+        engine.event("record-changed", &json!(7));
         assert_eq!((lives.get(), heard.get()), (1, 7));
 
         engine.close();
@@ -368,7 +368,7 @@ mod tests {
     #[wasm_bindgen_test]
     async fn another_engine_version_reloads_the_page_once() {
         let engine = FakeEngine::install();
-        let _asked = ask("get_toasts");
+        let _asked = ask("get_record");
         sleep_ms(0).await;
         engine.hello_from("0.0.0-other");
         assert_eq!(engine.reloads(), vec!["0.0.0-other".to_owned()]);
@@ -385,7 +385,7 @@ mod tests {
     #[wasm_bindgen_test]
     async fn retries_back_off_to_five_seconds() {
         let engine = FakeEngine::install();
-        let _listener = super::listen::<serde_json::Value>("toast", |_| ());
+        let _listener = super::listen::<serde_json::Value>("record-changed", |_| ());
         for _ in 0..6 {
             engine.close();
             sleep_ms(0).await;
@@ -399,7 +399,7 @@ mod tests {
 
     #[wasm_bindgen_test]
     async fn a_command_without_an_engine_fails() {
-        let answer = super::invoke_unit::<()>("get_toasts").await;
+        let answer = super::invoke_unit::<()>("get_record").await;
         assert_eq!(answer, Err(super::link::NOT_LINKED.to_owned()));
     }
 }
