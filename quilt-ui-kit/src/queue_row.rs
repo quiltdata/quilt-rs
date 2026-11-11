@@ -191,7 +191,7 @@ mod tests {
                     state="has conflicts in 2 files"
                     remedy=Some(Remedy {
                         action: PackageAction::Publish,
-                        href: "/installed-package?namespace=org%2Fdataset-c&filter=unmodified".to_string(),
+                        href: "/installed-package?namespace=org%2Fdataset-c".to_string(),
                     })
                 />
             }
@@ -202,7 +202,7 @@ mod tests {
             .expect("the row is the link");
         assert_eq!(
             link.get_attribute("href").as_deref(),
-            Some("/installed-package?namespace=org%2Fdataset-c&filter=unmodified")
+            Some("/installed-package?namespace=org%2Fdataset-c")
         );
         assert!(
             link.text_content().unwrap().contains("Publish"),

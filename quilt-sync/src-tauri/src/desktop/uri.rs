@@ -503,27 +503,19 @@ mod tests {
     #[test]
     fn a_login_from_a_package_or_commit_page_lands_there() {
         assert_eq!(
-            landing_after_login(Some(
-                "/installed-package?namespace=org%2Fpkg&filter=unmodified"
-            )),
-            routes::Paths::InstalledPackage(
-                ("org", "pkg").into(),
-                routes::EntriesFilter::for_installed_package()
-            )
+            landing_after_login(Some("/installed-package?namespace=org%2Fpkg")),
+            routes::Paths::InstalledPackage(("org", "pkg").into())
         );
         // A deep link's warning rides along in `back`; the page still parses.
         assert_eq!(
             landing_after_login(Some(
-                "/installed-package?namespace=org%2Fpkg&filter=unmodified&mismatch=abc&mrbucket=b"
+                "/installed-package?namespace=org%2Fpkg&mismatch=abc&mrbucket=b"
             )),
-            routes::Paths::InstalledPackage(
-                ("org", "pkg").into(),
-                routes::EntriesFilter::for_installed_package()
-            )
+            routes::Paths::InstalledPackage(("org", "pkg").into())
         );
         assert_eq!(
             landing_after_login(Some("/commit?namespace=org%2Fpkg")),
-            routes::Paths::Commit(("org", "pkg").into(), routes::EntriesFilter::default())
+            routes::Paths::Commit(("org", "pkg").into())
         );
     }
 
