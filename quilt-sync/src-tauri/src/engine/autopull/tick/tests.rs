@@ -2527,7 +2527,11 @@ async fn our_own_interrupted_claim_is_published_by_the_sweep_not_autosync() -> R
     let mut settings = enabled();
     settings.push.idle_timeout_secs = 0;
     let inner = WatcherInner {
-        tasks: crate::engine::tasks::Tasks::new(dir.path().to_path_buf(), Arc::new(|_| {})),
+        tasks: crate::engine::tasks::Tasks::new(
+            dir.path().to_path_buf(),
+            Arc::new(|_| {}),
+            Arc::new(|_| {}),
+        ),
         ..make_inner(settings)
     };
 

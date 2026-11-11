@@ -181,6 +181,8 @@ fn main() -> ExitCode {
             if matches!(event, tauri::RunEvent::Exit)
                 && let Some(services) = app_handle.try_state::<Arc<Services>>()
             {
+                // What the last pull or publish recorded, written before exit.
+                tauri::async_runtime::block_on(services.record.settle());
                 services.app.logging.shutdown();
             }
         });

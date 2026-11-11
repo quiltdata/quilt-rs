@@ -131,7 +131,7 @@ pub fn run(args: Args) -> ExitCode {
             }
         }
         // What the last pull or publish recorded, written before the stop.
-        let _ = tokio::time::timeout(Duration::from_secs(2), engine.services.record.settle()).await;
+        engine.services.record.settle().await;
         engine.services.app.logging.shutdown();
         Ok(engine.into_lock())
     });

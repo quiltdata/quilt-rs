@@ -74,7 +74,7 @@ pub(super) async fn onto_latest<M: QuiltModel>(
             return move_to(&held, &theirs_uri).await;
         }
         let message = merged.header.message.clone().unwrap_or_default();
-        let changes = changes_between(&theirs, &merged);
+        let changes = crate::engine::record::changes_between(&theirs.rows, &merged.rows);
         let pushed = {
             let _activity = aggregator.activity_guard(ActivityOp::Publish, namespace);
             model.push_onto(&theirs_uri, merged).await
@@ -192,37 +192,6 @@ async fn read<M: QuiltModel>(
         .browse_remote_manifest(uri)
         .await
         .map_err(classify_transient_or_login)
-}
-
-/// What the merged revision changes from `theirs`, by logical key: the
-/// copy's change, as its publish entry lists it.
-fn changes_between(theirs: &Manifest, merged: &Manifest) -> quilt::lineage::ChangeSet {
-    use quilt::lineage::Change;
-    let before: std::collections::BTreeMap<_, _> = theirs
-        .rows
-        .iter()
-        .map(|row| (row.logical_key.clone(), row))
-        .collect();
-    let mut changes = quilt::lineage::ChangeSet::new();
-    for row in &merged.rows {
-        match before.get(&row.logical_key) {
-            None => {
-                changes.insert(row.logical_key.clone(), Change::Added(row.clone()));
-            }
-            Some(old) if old.hash != row.hash => {
-                changes.insert(row.logical_key.clone(), Change::Modified(row.clone()));
-            }
-            Some(_) => {}
-        }
-    }
-    let after: std::collections::BTreeSet<_> =
-        merged.rows.iter().map(|row| &row.logical_key).collect();
-    for row in &theirs.rows {
-        if !after.contains(&row.logical_key) {
-            changes.insert(row.logical_key.clone(), Change::Removed(row.clone()));
-        }
-    }
-    changes
 }
 
 /// Whether the merge left `theirs` as it was, so there is nothing to publish.

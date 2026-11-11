@@ -186,6 +186,8 @@ struct Fixture {
     published: Published,
     events: Arc<Mutex<Vec<String>>>,
     runs: Arc<Mutex<Vec<Run>>>,
+    /// What the runs gave the record.
+    recorded: Arc<Mutex<Vec<crate::engine::record::Draft>>>,
     tasks: Tasks,
     /// The package has a commit not yet pushed.
     pending_commit: bool,
@@ -219,15 +221,19 @@ impl Fixture {
         let dir = TempDir::new().expect("temp dir");
         let runs: Arc<Mutex<Vec<Run>>> = Arc::default();
         let recording = Arc::clone(&runs);
+        let recorded: Arc<Mutex<Vec<crate::engine::record::Draft>>> = Arc::default();
+        let keeping = Arc::clone(&recorded);
         let tasks = Tasks::new(
             dir.path().to_path_buf(),
             Arc::new(move |run| recording.lock().unwrap().push(run)),
+            Arc::new(move |draft| keeping.lock().unwrap().push(draft)),
         );
         Self {
             dir,
             published: Published::default(),
             events: Arc::default(),
             runs,
+            recorded,
             tasks,
             pending_commit: false,
             stacked_commits: false,
@@ -1237,6 +1243,7 @@ fn claimed_run(tasks: &Tasks) -> Run {
         claim,
         claim_hash: "h1".to_string(),
         data_dir: tasks.data_dir.clone().expect("tasks on"),
+        record: Arc::clone(&tasks.record),
         _hold: tasks.hold(&namespace()),
     }
 }
@@ -1383,6 +1390,13 @@ async fn the_last_revision_publishes_the_agents_work_under_the_same_claim() -> R
     };
 
     finish(&model, &claimed_run(&fixture.tasks), &done).await?;
+
+    // The run's work reaches the inbox as any publish does.
+    let recorded = fixture.recorded.lock().unwrap().clone();
+    assert_eq!(recorded.len(), 1);
+    assert_eq!(recorded[0].kind, crate::engine::record::Kind::Published);
+    assert_eq!(recorded[0].files_line(), "1 file new");
+    assert_eq!(recorded[0].outcome, None, "it became latest");
 
     let published = fixture.published.lock().unwrap();
     assert_eq!(published.len(), 1);
@@ -1919,6 +1933,15 @@ async fn a_rebase_that_keeps_losing_latest_gives_up_after_three_attempts() {
         *fixture.events.lock().unwrap(),
         ["publish", "push onto h4", "push onto w1", "push onto w2"],
         "no reset"
+    );
+    // The outcome and each rebase are uploads, none of them `latest`.
+    let recorded = fixture.recorded.lock().unwrap();
+    assert_eq!(recorded.len(), 4);
+    assert!(recorded.iter().all(|d| d.outcome.is_some()));
+    assert_eq!(
+        recorded[1].files[0].paths,
+        ["out.md"],
+        "the run's own change"
     );
 }
 

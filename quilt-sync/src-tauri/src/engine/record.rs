@@ -288,6 +288,36 @@ impl Draft {
     }
 }
 
+/// What `after` changes from `before`, by logical key: a revision's change,
+/// for one whose publish reports no walk of its own.
+#[must_use]
+pub fn changes_between(
+    before: &[quilt_rs::manifest::ManifestRow],
+    after: &[quilt_rs::manifest::ManifestRow],
+) -> ChangeSet {
+    let old: std::collections::BTreeMap<_, _> =
+        before.iter().map(|row| (&row.logical_key, row)).collect();
+    let mut changes = ChangeSet::new();
+    for row in after {
+        match old.get(&row.logical_key) {
+            None => {
+                changes.insert(row.logical_key.clone(), Change::Added(row.clone()));
+            }
+            Some(was) if was.hash != row.hash => {
+                changes.insert(row.logical_key.clone(), Change::Modified(row.clone()));
+            }
+            Some(_) => {}
+        }
+    }
+    let kept: std::collections::BTreeSet<_> = after.iter().map(|row| &row.logical_key).collect();
+    for row in before {
+        if !kept.contains(&row.logical_key) {
+            changes.insert(row.logical_key.clone(), Change::Removed(row.clone()));
+        }
+    }
+    changes
+}
+
 fn revision(from: Option<&str>, to: &str) -> Revision {
     Revision {
         from: from.filter(|f| !f.is_empty()).map(str::to_owned),
@@ -518,11 +548,15 @@ impl Record {
         });
     }
 
-    /// Wait for the background writes, so a stop keeps what just happened.
+    /// Wait for the background writes, so a stop keeps what just happened,
+    /// but not past a moment: a stop must not hang on a stuck disk.
     pub async fn settle(&self) {
-        while self.pending.load(Ordering::SeqCst) > 0 {
-            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-        }
+        let written = async {
+            while self.pending.load(Ordering::SeqCst) > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        };
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(2), written).await;
     }
 
     /// Keep an entry [numbered](Self::number) before.
