@@ -1,5 +1,5 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.6.4/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.6.6/schema.json",
   // The kit's and the app's hand-written CSS. The generated bundles and the
   // vendored `normalize.css` are left out.
   "files": {
