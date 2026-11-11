@@ -25,6 +25,9 @@ use quilt_rs::lineage::ChangeSet;
 use quilt_uri::Namespace;
 use serde::Deserialize;
 use serde::Serialize;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
+
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 
@@ -303,8 +306,8 @@ impl ReadMark {
 }
 
 struct State {
+    /// In id order.
     entries: VecDeque<Entry>,
-    next_id: u64,
     /// Lines in the file now; it is rewritten once these outgrow the entries.
     lines: usize,
 }
@@ -312,16 +315,19 @@ struct State {
 impl State {
     fn apply(&mut self, line: Line) {
         match line {
-            Line::Add(entry) => {
-                self.next_id = self.next_id.max(entry.id + 1);
-                self.entries.push_back(entry);
-            }
+            Line::Add(entry) => self.insert(entry),
             Line::Read(mark) => {
                 for entry in self.entries.iter_mut().filter(|e| mark.covers(e)) {
                     entry.read = true;
                 }
             }
         }
+    }
+
+    /// In id order: entries numbered in order may arrive out of it.
+    fn insert(&mut self, entry: Entry) {
+        let at = self.entries.partition_point(|e| e.id < entry.id);
+        self.entries.insert(at, entry);
     }
 
     /// Drop what is past the bounds, oldest first.
@@ -341,6 +347,9 @@ pub struct Record {
     /// `None` keeps the record in memory only.
     path: Option<PathBuf>,
     state: Mutex<State>,
+    /// Handed out by [`Self::number`], so ids follow the order of events
+    /// even when their writes do not.
+    next_id: AtomicU64,
     events: EventSink,
 }
 
@@ -350,7 +359,6 @@ impl Record {
         let path = data_dir.join(FILE_NAME);
         let mut state = State {
             entries: VecDeque::new(),
-            next_id: 1,
             lines: 0,
         };
         // Line by line, so a line cut short, even inside a character, costs
@@ -375,9 +383,11 @@ impl Record {
             }
         };
         state.trim(Utc::now());
+        let next_id = state.entries.back().map_or(1, |e| e.id + 1);
         let record = Self {
             path: Some(path),
             state: Mutex::new(state),
+            next_id: AtomicU64::new(next_id),
             events,
         };
         // A file that could not be read is left as it is, not replaced.
@@ -394,9 +404,9 @@ impl Record {
             path: None,
             state: Mutex::new(State {
                 entries: VecDeque::new(),
-                next_id: 1,
                 lines: 0,
             }),
+            next_id: AtomicU64::new(1),
             events,
         }
     }
@@ -408,6 +418,16 @@ impl Record {
 
     /// Add an entry, unread. Returns its id.
     pub async fn add(&self, draft: Draft) -> u64 {
+        let entry = self.number(draft);
+        let id = entry.id;
+        self.insert(entry).await;
+        id
+    }
+
+    /// Number and date an entry now, to [`insert`](Self::insert) later: a
+    /// caller that cannot wait for the write keeps the order of its events.
+    #[must_use]
+    pub fn number(&self, draft: Draft) -> Entry {
         let Draft {
             kind,
             namespace,
@@ -415,11 +435,8 @@ impl Record {
             files,
             outcome,
         } = draft;
-        let mut state = self.state.lock().await;
-        let id = state.next_id;
-        state.next_id += 1;
-        let entry = Entry {
-            id,
+        Entry {
+            id: self.next_id.fetch_add(1, Ordering::Relaxed),
             kind,
             namespace,
             revision,
@@ -427,17 +444,21 @@ impl Record {
             outcome,
             at: Utc::now(),
             read: false,
-        };
+        }
+    }
+
+    /// Keep an entry [numbered](Self::number) before.
+    pub async fn insert(&self, entry: Entry) {
         info!(
-            "record: added id={id} kind={:?} namespace={}",
-            entry.kind, entry.namespace
+            "record: added id={} kind={:?} namespace={}",
+            entry.id, entry.kind, entry.namespace
         );
-        state.entries.push_back(entry.clone());
-        state.trim(entry.at);
+        let mut state = self.state.lock().await;
+        state.insert(entry.clone());
+        state.trim(Utc::now());
         self.append(&mut state, &Line::Add(entry)).await;
         drop(state);
         self.events.emit(RECORD_EVENT, ());
-        id
     }
 
     /// Mark read every entry up to `up_to`, only `namespace`'s when one is
@@ -615,6 +636,18 @@ mod tests {
         assert_eq!(record.entries().await.len(), 2);
     }
 
+    /// Two events numbered in order keep it, whichever is written first.
+    #[tokio::test]
+    async fn entries_keep_the_order_they_were_numbered_in() {
+        let record = Record::in_memory(EventSink::new());
+        let published = record.number(Draft::uninstalled(&ns(), None));
+        let got = record.number(Draft::uninstalled(&other(), None));
+        record.insert(got).await;
+        record.insert(published).await;
+        let ids: Vec<u64> = record.entries().await.iter().map(|e| e.id).collect();
+        assert_eq!(ids, [1, 2]);
+    }
+
     #[tokio::test]
     async fn reading_stops_at_what_the_reader_saw() {
         let record = Record::in_memory(EventSink::new());
@@ -718,7 +751,6 @@ mod tests {
         let now = Utc::now();
         let mut state = State {
             entries: VecDeque::new(),
-            next_id: 1,
             lines: 0,
         };
         state.apply(Line::Add(entry_at(

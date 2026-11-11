@@ -569,12 +569,14 @@ impl StatusReporter for SinkEventReporter {
     }
 
     fn report_recorded(&self, draft: Draft) {
-        // Adding is async, while every other method here is a synchronous
-        // fire-and-forget emit. Spawning keeps that shape rather than making
-        // the whole trait async for one method.
+        // Keeping it is async, while every other method here is a
+        // synchronous fire-and-forget emit; spawning keeps that shape.
+        // Numbered here, so a publish and the pull after it keep their
+        // order whichever write lands first.
+        let entry = self.record.number(draft);
         let record = Arc::clone(&self.record);
         crate::engine::events::spawn(async move {
-            record.add(draft).await;
+            record.insert(entry).await;
         });
     }
 
