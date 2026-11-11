@@ -269,7 +269,19 @@ pub fn Inbox(
             tight=true
             contained=true
         >
-            <InboxPanel entries=entries action_needed=action_needed open=open />
+            // Following a link closes it, so it neither stays over the page it
+            // opened nor goes on reading.
+            <div on:click=move |ev| {
+                let followed = ev
+                    .target()
+                    .and_then(|t| wasm_bindgen::JsCast::dyn_into::<web_sys::Element>(t).ok())
+                    .is_some_and(|el| el.closest("a").ok().flatten().is_some());
+                if followed {
+                    open.set(false);
+                }
+            }>
+                <InboxPanel entries=entries action_needed=action_needed open=open />
+            </div>
         </AnchoredOverlay>
     }
 }
@@ -603,6 +615,27 @@ mod tests {
         assert_eq!(age(), "1 min ago", "the age was redrawn");
         let after = el.query_selector("ol a").unwrap().expect("the entry");
         assert!(link.is_same_node(Some(&after)), "inside the same link");
+    }
+
+    /// Following a link closes the panel.
+    #[wasm_bindgen_test]
+    fn following_a_link_closes_it() {
+        let open = RwSignal::new(true);
+        let el = mount(move || {
+            view! {
+                <Inbox
+                    entries=vec![entry(1, 10.0, true)]
+                    action_needed=ActionNeeded::default()
+                    open=open
+                />
+            }
+        });
+        let link: web_sys::HtmlElement = wasm_bindgen::JsCast::unchecked_into(
+            el.query_selector("ol a").unwrap().expect("an entry"),
+        );
+        link.set_attribute("href", "#").unwrap();
+        link.click();
+        assert!(!open.get_untracked());
     }
 
     #[wasm_bindgen_test]
