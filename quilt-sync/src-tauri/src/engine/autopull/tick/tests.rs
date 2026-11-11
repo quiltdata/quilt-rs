@@ -1091,7 +1091,7 @@ async fn dry_run_login_required_is_classified() -> Result<(), Error> {
         true,
         SyncScope::IndividualFiles,
         &test_aggregator(),
-        &mut false,
+        &mut Seen::default(),
     )
     .await;
 
@@ -1384,7 +1384,7 @@ async fn no_action_tick_carries_status_fingerprint() -> Result<(), Error> {
         false,
         SyncScope::IndividualFiles,
         &test_aggregator(),
-        &mut false,
+        &mut Seen::default(),
     )
     .await
     .expect("no-action tick should be Ok")

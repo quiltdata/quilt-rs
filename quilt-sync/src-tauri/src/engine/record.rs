@@ -83,6 +83,22 @@ pub struct FileGroup {
     pub paths: Vec<String>,
 }
 
+impl FileGroup {
+    /// `2 files new`.
+    fn heading(&self) -> String {
+        let files = if self.count == 1 { "file" } else { "files" };
+        let change = match self.change {
+            FileChange::New => "new",
+            FileChange::NewNotDownloaded => "new, not downloaded",
+            FileChange::Updated => "updated",
+            FileChange::Removed => "removed",
+            FileChange::Kept => "kept, removed on the remote",
+            FileChange::LeftOut => "left out by ignore rules",
+        };
+        format!("{} {files} {change}", self.count)
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Revision {
@@ -224,24 +240,35 @@ impl Draft {
     }
 
     /// The file groups in a line: `2 files new, 1 file updated`.
+    #[cfg(test)]
     #[must_use]
     pub fn files_line(&self) -> String {
         self.files
             .iter()
-            .map(|group| {
-                let files = if group.count == 1 { "file" } else { "files" };
-                let change = match group.change {
-                    FileChange::New => "new",
-                    FileChange::NewNotDownloaded => "new, not downloaded",
-                    FileChange::Updated => "updated",
-                    FileChange::Removed => "removed",
-                    FileChange::Kept => "kept, removed on the remote",
-                    FileChange::LeftOut => "left out by ignore rules",
-                };
-                format!("{} {files} {change}", group.count)
-            })
+            .map(FileGroup::heading)
             .collect::<Vec<_>>()
             .join(", ")
+    }
+
+    /// The file groups with the first `named` paths of each:
+    /// `2 files new: a.csv, b.csv; 1 file updated: c.csv`.
+    #[must_use]
+    pub fn files_named(&self, named: usize) -> String {
+        self.files
+            .iter()
+            .map(|group| {
+                let shown: Vec<&str> = group.paths.iter().take(named).map(String::as_str).collect();
+                let more = group.count.saturating_sub(shown.len());
+                let paths = shown.join(", ");
+                let more = if more > 0 {
+                    format!(" and {more} more")
+                } else {
+                    String::new()
+                };
+                format!("{}: {paths}{more}", group.heading())
+            })
+            .collect::<Vec<_>>()
+            .join("; ")
     }
 }
 
@@ -413,7 +440,10 @@ impl Record {
 
     /// Every entry kept, oldest first.
     pub async fn entries(&self) -> Vec<Entry> {
-        self.state.lock().await.entries.iter().cloned().collect()
+        let mut state = self.state.lock().await;
+        // A running app may add nothing for days; age still counts.
+        state.trim(Utc::now());
+        state.entries.iter().cloned().collect()
     }
 
     /// Add an entry, unread. Returns its id.
@@ -744,6 +774,16 @@ mod tests {
             at,
             read: false,
         }
+    }
+
+    /// A running app that adds nothing still lets old entries go.
+    #[tokio::test]
+    async fn reading_drops_what_has_aged_out() {
+        let record = Record::in_memory(EventSink::new());
+        let mut old = record.number(Draft::uninstalled(&ns(), None));
+        old.at = Utc::now() - KEEP_FOR - chrono::TimeDelta::hours(1);
+        record.insert(old).await;
+        assert_eq!(record.entries().await, []);
     }
 
     #[test]

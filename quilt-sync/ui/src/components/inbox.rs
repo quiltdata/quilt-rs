@@ -132,35 +132,48 @@ fn newest_unread(feed: InboxFeed, wanted: impl Fn(&kit::InboxEntry) -> bool) -> 
 }
 
 /// Read every entry up to the id `due` names, and `namespace`'s only when it
-/// names one, once it has named that id for [`DWELL_MS`]. A newer entry starts
-/// the dwell again, and `None` stops it. A read that fails, as across a
-/// reconnect, starts it again too.
+/// names one, once it has named an id for [`DWELL_MS`]. The dwell covers the
+/// entries there were when it began: a newer entry neither restarts it nor is
+/// read by it, and gets a dwell of its own after. `None` stops it, and so does
+/// a change of scope. A read that fails, as across a reconnect, starts again.
 fn read_on_dwell(due: Memo<Option<(u64, Option<Namespace>)>>) {
-    let pending: StoredValue<Option<TimeoutHandle>> = StoredValue::new(None);
-    let failed = RwSignal::new(0_u64);
+    // The running dwell's timer and the scope it reads.
+    type Running = (TimeoutHandle, Option<Namespace>);
+    let pending: StoredValue<Option<Running>> = StoredValue::new(None);
+    // Bumped when a dwell ends, so the next one starts for what is left.
+    let ended = RwSignal::new(0_u64);
     let stop = move || {
-        if let Some(handle) = pending.try_update_value(Option::take).flatten() {
+        if let Some((handle, _)) = pending.try_update_value(Option::take).flatten() {
             handle.clear();
         }
     };
     Effect::new(move |_| {
-        stop();
-        failed.track();
+        ended.track();
         let Some((up_to, namespace)) = due.get() else {
+            stop();
             return;
         };
+        let same_scope = pending
+            .try_with_value(|p| p.as_ref().is_some_and(|(_, scope)| *scope == namespace))
+            .unwrap_or(false);
+        if same_scope {
+            return;
+        }
+        stop();
+        let scope = namespace.clone();
         let read = move || {
+            pending.try_set_value(None);
             spawn_local(async move {
                 if let Err(err) = commands::mark_read(up_to, namespace).await {
                     leptos::logging::warn!("inbox: could not mark entries read: {err}");
-                    failed.try_update(|n| *n += 1);
                 }
+                ended.try_update(|n| *n += 1);
             });
         };
         if let Ok(handle) =
             set_timeout_with_handle(read, std::time::Duration::from_millis(DWELL_MS))
         {
-            pending.set_value(Some(handle));
+            pending.set_value(Some((handle, scope)));
         }
     });
     on_cleanup(stop);
@@ -338,6 +351,43 @@ mod tests {
                 text: "AWS credentials on this computer aren't usable".into(),
                 href: "/".into(),
             }]
+        );
+    }
+
+    /// An entry that arrives during the dwell does not restart it: what was
+    /// on the page when it began is read on time, and only that.
+    #[wasm_bindgen_test]
+    async fn an_arrival_does_not_restart_the_dwell() {
+        use crate::engine::fake::FakeEngine;
+        use quilt_ui_kit::test_support::{mount, sleep_ms};
+
+        let engine = FakeEngine::serving();
+        let feed = InboxFeed::new();
+        let unread = |id| kit::InboxEntry {
+            unread: true,
+            id,
+            ..entry_for(record_entry(RecordKind::Got)).unwrap()
+        };
+        feed.entries.set(vec![unread(1)]);
+        let _el = mount(move || {
+            provide_context(feed);
+            read_package_on_dwell(Signal::stored("acme/demo".to_string()));
+        });
+
+        sleep_ms(1_200).await;
+        feed.entries.update(|all| all.push(unread(2)));
+        sleep_ms(1_200).await;
+
+        let marks: Vec<_> = engine
+            .requests()
+            .into_iter()
+            .filter(|r| r["cmd"] == "mark_read")
+            .map(|r| r["args"]["upTo"].clone())
+            .collect();
+        assert_eq!(
+            marks,
+            [serde_json::json!(1)],
+            "read on time, up to what was there"
         );
     }
 }

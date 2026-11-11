@@ -591,10 +591,11 @@ async fn pull_and_report(
     notify.map(result.map(|_| ()), msg_ok, msg_err)
 }
 
-/// What arrived, under the page's own "Got the latest revision" line: nothing
-/// for a revision that moved no file.
+/// What arrived, under the page's own "Got the latest revision" line, naming
+/// the first few files of each group: nothing for a revision that moved no
+/// file.
 fn pull_success_message(entry: &Draft) -> String {
-    let files = entry.files_line();
+    let files = entry.files_named(3);
     if files.is_empty() {
         files
     } else {
@@ -2289,7 +2290,23 @@ mod tests {
             message: None,
         };
         let entry = Draft::got(&ns, None, &report);
-        assert_eq!(super::pull_success_message(&entry), "2 files new.");
+        assert_eq!(
+            super::pull_success_message(&entry),
+            "2 files new: a.csv, b.csv."
+        );
+        let many = Draft::got(
+            &ns,
+            None,
+            &quilt::flow::PullReport {
+                added: (0..5).map(|n| format!("f{n}").into()).collect(),
+                updated: vec!["u.csv".into()],
+                ..report.clone()
+            },
+        );
+        assert_eq!(
+            super::pull_success_message(&many),
+            "5 files new: f0, f1, f2 and 2 more; 1 file updated: u.csv."
+        );
         let metadata_only = Draft::got(
             &ns,
             None,

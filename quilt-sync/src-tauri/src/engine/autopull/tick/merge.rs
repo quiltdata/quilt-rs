@@ -32,6 +32,7 @@ pub(super) async fn onto_latest<M: QuiltModel>(
     installed: &quilt::InstalledPackage,
     aggregator: &SyncTrayAggregator,
     scope: SyncScope,
+    published: &mut Option<Published>,
 ) -> Result<RefreshOutcome, WatchError> {
     let namespace = &installed.namespace;
     let held = Held {
@@ -70,9 +71,10 @@ pub(super) async fn onto_latest<M: QuiltModel>(
         };
         if is_unchanged(&merged, &theirs) {
             info!("autosync: {namespace}: latest already holds this copy's change");
-            return move_to(&held, &theirs_uri, None).await;
+            return move_to(&held, &theirs_uri).await;
         }
         let message = merged.header.message.clone().unwrap_or_default();
+        let changes = changes_between(&theirs, &merged);
         let pushed = {
             let _activity = aggregator.activity_guard(ActivityOp::Publish, namespace);
             model.push_onto(&theirs_uri, merged).await
@@ -80,18 +82,17 @@ pub(super) async fn onto_latest<M: QuiltModel>(
         .map_err(sync_err)?;
         if pushed.certified_latest {
             info!("autosync: merged namespace={namespace} onto latest");
-            let entry = Draft::published(
-                namespace,
-                Some(&theirs_uri.hash),
-                &pushed.manifest_uri.hash,
-                &quilt::lineage::ChangeSet::new(),
-            );
-            return move_to(
-                &held,
-                &pushed.manifest_uri,
-                Some(Published { message, entry }),
-            )
-            .await;
+            // Kept before the move, which can fail with the publish landed.
+            *published = Some(Published {
+                message,
+                entry: Draft::published(
+                    namespace,
+                    Some(&theirs_uri.hash),
+                    &pushed.manifest_uri.hash,
+                    &changes,
+                ),
+            });
+            return move_to(&held, &pushed.manifest_uri).await;
         }
     }
     warn!("autosync: {namespace}: latest kept moving; left Diverged");
@@ -141,7 +142,7 @@ pub(super) async fn landed<M: QuiltModel>(
         scope,
     };
     let (pulled, status) = try_move(&held, &latest_uri).await?;
-    Ok(pulled.map(|pulled| outcome(None, Some(pulled), &status)))
+    Ok(pulled.map(|pulled| outcome(Some(pulled), &status)))
 }
 
 /// What a merge starts from: the copy's base and its pushed revision, and the
@@ -191,6 +192,37 @@ async fn read<M: QuiltModel>(
         .map_err(classify_transient_or_login)
 }
 
+/// What the merged revision changes from `theirs`, by logical key: the
+/// copy's change, as its publish entry lists it.
+fn changes_between(theirs: &Manifest, merged: &Manifest) -> quilt::lineage::ChangeSet {
+    use quilt::lineage::Change;
+    let before: std::collections::BTreeMap<_, _> = theirs
+        .rows
+        .iter()
+        .map(|row| (row.logical_key.clone(), row))
+        .collect();
+    let mut changes = quilt::lineage::ChangeSet::new();
+    for row in &merged.rows {
+        match before.get(&row.logical_key) {
+            None => {
+                changes.insert(row.logical_key.clone(), Change::Added(row.clone()));
+            }
+            Some(old) if old.hash != row.hash => {
+                changes.insert(row.logical_key.clone(), Change::Modified(row.clone()));
+            }
+            Some(_) => {}
+        }
+    }
+    let after: std::collections::BTreeSet<_> =
+        merged.rows.iter().map(|row| &row.logical_key).collect();
+    for row in &theirs.rows {
+        if !after.contains(&row.logical_key) {
+            changes.insert(row.logical_key.clone(), Change::Removed(row.clone()));
+        }
+    }
+    changes
+}
+
 /// Whether the merge left `theirs` as it was, so there is nothing to publish.
 /// The merge always carries the copy's message, so the message is no sign of
 /// new work.
@@ -214,10 +246,9 @@ struct Held<'a, M: QuiltModel> {
 async fn move_to<M: QuiltModel>(
     held: &Held<'_, M>,
     merged: &quilt_uri::ManifestUri,
-    published: Option<Published>,
 ) -> Result<RefreshOutcome, WatchError> {
     let (pulled, status) = try_move(held, merged).await?;
-    Ok(outcome(published, pulled, &status))
+    Ok(outcome(pulled, &status))
 }
 
 /// Move the copy to `target`, `latest`, as a pull moves a Behind copy, and walk
@@ -278,12 +309,10 @@ async fn try_move<M: QuiltModel>(
 /// The copy after its move, `None` where edits blocked it, as the walk after
 /// the move found it.
 fn outcome(
-    published: Option<Published>,
     pulled: Option<quilt::flow::Pulled>,
     status: &quilt::lineage::InstalledPackageStatus,
 ) -> RefreshOutcome {
     RefreshOutcome {
-        published,
         pulled: match pulled {
             Some(quilt::flow::Pulled::Applied(report)) => Some(report),
             Some(quilt::flow::Pulled::UpToDate) | None => None,

@@ -369,11 +369,14 @@ async fn changes_to_different_files_land_on_latest_together_and_the_copy_resumes
     let pulled = got(&reporter);
     assert_eq!(pulled.len(), 1, "and as a pull");
     assert_eq!(pulled[0].files[0].paths, ["b.csv"]);
+    let published = reporter.recorded.lock().unwrap()[0].clone();
     assert_eq!(
-        reporter.recorded.lock().unwrap()[0].kind,
+        published.kind,
         crate::engine::record::Kind::Published,
         "and recorded as a publish first"
     );
+    assert_eq!(published.files_line(), "1 file updated");
+    assert_eq!(published.files[0].paths, ["a.csv"], "the copy's own change");
 }
 
 /// The pulls the record was given.
@@ -610,6 +613,26 @@ async fn an_edit_during_the_merge_to_a_path_it_published_is_published_next_tick(
         "published as an ordinary change, not merged again"
     );
     assert!(inner.paused.read().await.is_empty());
+}
+
+/// A move that fails after the merge published still leaves the publish in
+/// the record: the retry finds the change on `latest` and publishes nothing.
+#[tokio::test]
+async fn a_merge_whose_move_fails_is_still_recorded_as_published() {
+    let (model, remote) = model_of(Copy::new(
+        vec![file("a.csv", "1")],
+        vec![file("a.csv", "mine")],
+        vec![file("a.csv", "1"), file("b.csv", "theirs")],
+    ));
+    remote.lock().unwrap().failing_moves = 1;
+
+    let (_, reporter) = tick(&model).await;
+
+    assert_eq!(seen(&remote).events, ["push onto h1", "move to r1"]);
+    let recorded = reporter.recorded.lock().unwrap();
+    assert_eq!(recorded.len(), 1);
+    assert_eq!(recorded[0].kind, crate::engine::record::Kind::Published);
+    assert_eq!(reporter.published.lock().unwrap().len(), 1);
 }
 
 /// The merge publishes and its move fails, so the copy keeps its old base, and
