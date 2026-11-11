@@ -14,7 +14,7 @@ use crate::engine::autopull::Watcher;
 use crate::engine::commands::RoleCache;
 use crate::engine::commands::main_page::PackageStateDto;
 use crate::engine::commands::main_page::{
-    conflict_files, read_blocked, read_worked, session_state, unexplained_pause,
+    conflict_files, read_blocked, read_missed, read_worked, session_state, unexplained_pause,
 };
 use crate::engine::commands::package_entries::{EntryList, entry_list};
 use crate::engine::error::Error;
@@ -786,7 +786,10 @@ async fn get_package_page_data_from_model(
     };
 
     match &status_read {
-        Ok(status) => read_worked(action_needed, namespace, origin, paused, status),
+        Ok(status) => {
+            read_missed(action_needed, &lineage, status);
+            read_worked(action_needed, namespace, origin, paused, status);
+        }
         Err(_) => read_blocked(m, action_needed, namespace, origin, &state).await,
     }
     // A blocked read counts from tracking alone.

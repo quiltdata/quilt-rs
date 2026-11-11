@@ -1092,7 +1092,7 @@ async fn dry_run_login_required_is_classified() -> Result<(), Error> {
         true,
         SyncScope::IndividualFiles,
         &test_aggregator(),
-        &mut false,
+        &mut None,
     )
     .await;
 
@@ -1385,7 +1385,7 @@ async fn no_action_tick_carries_status_fingerprint() -> Result<(), Error> {
         false,
         SyncScope::IndividualFiles,
         &test_aggregator(),
-        &mut false,
+        &mut None,
     )
     .await
     .expect("no-action tick should be Ok")
@@ -2913,31 +2913,7 @@ async fn only_a_pass_that_reaches_the_bucket_clears_what_action_needed() {
         },
         "h0".to_string(),
     );
-    let pass = |refreshed: bool| {
-        let lineage = lineage.clone();
-        let mut model = MockQuiltModel::new();
-        model
-            .expect_get_installed_package_lineage()
-            .returning(move |_| Ok(lineage.clone()));
-        model.expect_get_installed_package().returning(|ns| {
-            Ok(Some(
-                quilt::LocalDomain::new(std::path::PathBuf::new())
-                    .create_installed_package(ns.clone()),
-            ))
-        });
-        model
-            .expect_try_lock_package()
-            .returning(|p| Ok(Some(p.namespace.clone())));
-        model.expect_locked_package_status().returning(move |_, _| {
-            let mut status = quilt::lineage::InstalledPackageStatus::new(
-                UpstreamState::UpToDate,
-                BTreeMap::new(),
-            );
-            status.latest_refreshed = refreshed;
-            Ok(status)
-        });
-        model
-    };
+    let pass = |refreshed: bool| status_model(&lineage, refreshed);
     let run = PassSettings {
         publish: PublishSettings::default(),
         wait: Duration::from_secs(300),
@@ -2978,4 +2954,97 @@ async fn only_a_pass_that_reaches_the_bucket_clears_what_action_needed() {
     let online = pass(true);
     sync_package(&online, &roles, &inner, &pkg, &run, Instant::now()).await;
     assert!(inner.action_needed.get().is_empty(), "the bucket answered");
+}
+
+/// A model whose status read of a package on `lineage` reaches the bucket
+/// when `refreshed`, or else reads from the last-known tip.
+fn status_model(lineage: &quilt::lineage::PackageLineage, refreshed: bool) -> MockQuiltModel {
+    let lineage = lineage.clone();
+    let mut model = MockQuiltModel::new();
+    model
+        .expect_get_installed_package_lineage()
+        .returning(move |_| Ok(lineage.clone()));
+    model.expect_get_installed_package().returning(|ns| {
+        Ok(Some(
+            quilt::LocalDomain::new(std::path::PathBuf::new())
+                .create_installed_package(ns.clone()),
+        ))
+    });
+    model
+        .expect_try_lock_package()
+        .returning(|p| Ok(Some(p.namespace.clone())));
+    model.expect_locked_package_status().returning(move |_, _| {
+        let mut status = quilt::lineage::InstalledPackageStatus::new(
+            UpstreamState::UpToDate,
+            BTreeMap::new(),
+        );
+        status.latest_refreshed = refreshed;
+        Ok(status)
+    });
+    model
+}
+
+/// A catalog whose reads keep missing their buckets needs action after
+/// [`UNREACHABLE_AFTER`], but only while other reads get through: with
+/// nothing reached, the computer may be offline. The first pass that reaches
+/// the catalog leaves it.
+#[tokio::test]
+async fn a_catalog_unreachable_for_a_while_needs_action_unless_offline() {
+    use crate::engine::action_needed::Kind;
+    use crate::engine::action_needed::UNREACHABLE_AFTER;
+
+    let ns: Namespace = ("acme", "demo").into();
+    let host = fixtures::host();
+    let lineage = quilt::lineage::PackageLineage::from_remote(
+        quilt_uri::ManifestUri {
+            bucket: "bucket".to_string(),
+            namespace: ns.clone(),
+            hash: "h0".to_string(),
+            origin: Some(host.clone()),
+        },
+        "h0".to_string(),
+    );
+    let run = PassSettings {
+        publish: PublishSettings::default(),
+        wait: Duration::from_secs(300),
+        pull_enabled: true,
+        push_enabled: false,
+        tasks: None,
+    };
+    let pkg =
+        quilt::LocalDomain::new(std::path::PathBuf::new()).create_installed_package(ns.clone());
+    let roles = RoleCache::default();
+    let missed = status_model(&lineage, false);
+    let start = Instant::now();
+    let kinds = |inner: &WatcherInner| -> Vec<Kind> {
+        inner
+            .action_needed
+            .get()
+            .iter()
+            .map(|e| e.cause.kind())
+            .collect()
+    };
+
+    // Offline: nothing reached, however long it lasts.
+    let offline = make_inner(enabled());
+    sync_package(&missed, &roles, &offline, &pkg, &run, start).await;
+    let much_later = start + 8 * UNREACHABLE_AFTER;
+    sync_package(&missed, &roles, &offline, &pkg, &run, much_later).await;
+    assert!(kinds(&offline).is_empty(), "nothing got through: offline");
+
+    // Online: a package with no catalog reached its bucket meanwhile.
+    let inner = make_inner(enabled());
+    sync_package(&missed, &roles, &inner, &pkg, &run, start).await;
+    inner
+        .action_needed
+        .reached(None, start + Duration::from_secs(60));
+    let not_yet = start + UNREACHABLE_AFTER - Duration::from_secs(1);
+    sync_package(&missed, &roles, &inner, &pkg, &run, not_yet).await;
+    assert!(kinds(&inner).is_empty(), "not unreachable for long enough");
+    sync_package(&missed, &roles, &inner, &pkg, &run, start + UNREACHABLE_AFTER).await;
+    assert_eq!(kinds(&inner), [Kind::Unreachable]);
+
+    let reached = status_model(&lineage, true);
+    sync_package(&reached, &roles, &inner, &pkg, &run, Instant::now()).await;
+    assert!(kinds(&inner).is_empty(), "the catalog answered");
 }
