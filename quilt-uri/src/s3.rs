@@ -66,12 +66,15 @@ impl TryFrom<&str> for S3Uri {
                 "Expected s3:// scheme in {input}"
             )));
         }
-        if !parsed_url.username().is_empty()
-            || parsed_url.password().is_some()
-            || parsed_url.port().is_some()
-        {
+        let bucket = parsed_url.host_str().unwrap_or_default();
+        if !parsed_url.username().is_empty() || parsed_url.password().is_some() {
             return Err(UriError::S3(format!(
-                "A user, password or port is not allowed in {input}"
+                "A user or password is not allowed before the bucket {bucket:?}"
+            )));
+        }
+        if let Some(port) = parsed_url.port() {
+            return Err(UriError::S3(format!(
+                "A port is not allowed after the bucket {bucket:?}; got {port}"
             )));
         }
         if parsed_url.fragment().is_some() {
@@ -393,6 +396,18 @@ mod tests {
                 .display_for_host(&host)
                 .expect_err(&format!("{bucket:?} {key:?} should not render"));
             assert!(matches!(err, UriError::S3(_)), "{key:?}: got {err}");
+        }
+    }
+
+    /// The error for a user or password names the bucket, never the user or
+    /// password themselves.
+    #[test]
+    fn the_error_for_a_user_does_not_repeat_it() {
+        for input in ["s3://KEY:secret@bucket/k", "s3://user:secret@bucket:1/k"] {
+            let err = S3Uri::try_from(input).expect_err(input).to_string();
+            assert!(err.contains("bucket"), "{err}");
+            assert!(!err.contains("secret"), "{err}");
+            assert!(!err.contains("KEY") && !err.contains("user:"), "{err}");
         }
     }
 

@@ -301,12 +301,15 @@ impl TryFrom<&str> for S3PackageUri {
                 parsed_url.scheme()
             )));
         }
-        if !parsed_url.username().is_empty()
-            || parsed_url.password().is_some()
-            || parsed_url.port().is_some()
-        {
+        let bucket = parsed_url.host_str().unwrap_or_default();
+        if !parsed_url.username().is_empty() || parsed_url.password().is_some() {
             return Err(UriError::Package(format!(
-                "a user, password or port is not allowed before the bucket: {input}"
+                "a user or password is not allowed before the bucket {bucket:?}"
+            )));
+        }
+        if let Some(port) = parsed_url.port() {
+            return Err(UriError::Package(format!(
+                "a port is not allowed after the bucket {bucket:?}; got {port}"
             )));
         }
         if !parsed_url.path().is_empty() || parsed_url.query().is_some() {
@@ -701,6 +704,21 @@ mod tests {
                 matches!(err, UriError::Package(_)),
                 "{input}: expected a package error, got {err}"
             );
+        }
+    }
+
+    /// The error for a user or password names the bucket, never the user or
+    /// password themselves.
+    #[test]
+    fn the_error_for_a_user_does_not_repeat_it() {
+        for input in [
+            "quilt+s3://KEY:secret@bucket#package=a/b",
+            "quilt+s3://user:secret@bucket:1#package=a/b",
+        ] {
+            let err = S3PackageUri::try_from(input).expect_err(input).to_string();
+            assert!(err.contains("bucket"), "{err}");
+            assert!(!err.contains("secret"), "{err}");
+            assert!(!err.contains("KEY") && !err.contains("user:"), "{err}");
         }
     }
 
