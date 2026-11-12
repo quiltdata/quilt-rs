@@ -493,7 +493,7 @@ fn keeping_data(
     let changes = changes.unwrap_or(&no_changes);
     let counts = quilt::lineage::DownloadCounts::count(
         lineage,
-        sizes.iter().map(|(key, size)| (key, *size)),
+        sizes.iter().map(|(key, size)| (key.as_path(), *size)),
         changes,
         on_disk,
     );
@@ -1134,18 +1134,18 @@ mod tests {
     }
 
     /// The manifest's rows at `paths`, each 7 bytes.
-    fn records(paths: &[&str]) -> BTreeMap<PathBuf, quilt::manifest::ManifestRow> {
+    fn records(paths: &[&str]) -> Result<BTreeMap<PathBuf, quilt::manifest::ManifestRow>, Error> {
         paths
             .iter()
             .map(|path| {
-                (
+                Ok((
                     PathBuf::from(path),
                     quilt::manifest::ManifestRow {
-                        logical_key: PathBuf::from(path),
+                        logical_key: quilt::LogicalKey::new(path)?,
                         size: 7,
                         ..Default::default()
                     },
-                )
+                ))
             })
             .collect()
     }
@@ -1168,7 +1168,7 @@ mod tests {
         let mut model = crate::engine::model::mocks::create();
         let rows = model
             .expect_get_installed_package_records()
-            .returning(|_| Ok(records(&["a.csv", "b.csv", "c.csv"])));
+            .returning(|_| records(&["a.csv", "b.csv", "c.csv"]));
         if let Some(n) = reads {
             rows.times(n);
         }
@@ -1262,7 +1262,7 @@ mod tests {
             .returning(|_, _| Ok((sizes(&["a.csv"]), BTreeSet::new())));
         model
             .expect_get_installed_package_records()
-            .returning(|_| Ok(records(&["a.csv"])));
+            .returning(|_| records(&["a.csv"]));
         model
             .expect_recompute_local_status()
             .times(..=1)
@@ -1934,7 +1934,7 @@ mod tests {
         let row = super::super::main_page::MainPageDownloads::from(
             quilt::lineage::DownloadCounts::count(
                 &lineage,
-                listed.iter().map(|(key, size)| (key, *size)),
+                listed.iter().map(|(key, size)| (key.as_path(), *size)),
                 &changes,
                 &BTreeSet::new(),
             ),
@@ -2251,14 +2251,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_page_read_caps_the_file_list_and_says_so() {
+    async fn the_page_read_caps_the_file_list_and_says_so() -> Result<(), Error> {
         let paths: Vec<String> = (0..1001).map(|i| format!("f{i:04}")).collect();
         let many: Vec<&str> = paths.iter().map(String::as_str).collect();
         let m = mock_rows(
             make_manifest_uri(NS),
             Some(Ok(settled())),
             None,
-            Some(Ok(records(&many))),
+            Some(records(&many)),
         );
 
         let list = listed(read(&m).await.expect("a page").files);
@@ -2271,6 +2271,7 @@ mod tests {
         assert_eq!(list.total, 1001);
         assert!(list.truncated);
         assert_eq!(list.counts.not_downloaded, 1001);
+        Ok(())
     }
 
     /// A local change, as the local walk sees it.
@@ -2288,12 +2289,12 @@ mod tests {
     /// A denial refuses the remote, not the tree: the files are still listed,
     /// from one local walk. The remote status stopped before walking.
     #[tokio::test]
-    async fn a_denied_package_still_lists_its_local_files() {
+    async fn a_denied_package_still_lists_its_local_files() -> Result<(), Error> {
         let m = mock_rows(
             make_manifest_uri(NS),
             Some(Err(access_denied_error())),
             Some(Ok(changed_here("b.csv"))),
-            Some(Ok(records(&["a.csv", "b.csv"]))),
+            Some(records(&["a.csv", "b.csv"])),
         );
         let page = read(&m).await.expect("a blocked read is a state");
 
@@ -2306,16 +2307,17 @@ mod tests {
             rows_of(&list),
             vec![("a.csv", "remote"), ("b.csv", "modified")]
         );
+        Ok(())
     }
 
     #[tokio::test]
-    async fn a_package_with_no_session_still_lists_its_local_files() {
+    async fn a_package_with_no_session_still_lists_its_local_files() -> Result<(), Error> {
         let no_session = Error::from(quilt::Error::Login(quilt::LoginError::NoSession(None)));
         let m = mock_rows(
             make_manifest_uri(NS),
             Some(Err(no_session)),
             Some(Ok(changed_here("a.csv"))),
-            Some(Ok(records(&["a.csv"]))),
+            Some(records(&["a.csv"])),
         );
         let page = read(&m).await.expect("a blocked read is a state");
 
@@ -2326,17 +2328,18 @@ mod tests {
         );
         let list = listed(page.files);
         assert_eq!(rows_of(&list), vec![("a.csv", "modified")]);
+        Ok(())
     }
 
     /// A remote with no catalog host is read on the machine's own AWS
     /// credentials, so the header offers what the state offers.
     #[tokio::test]
-    async fn a_remote_with_no_catalog_host_reads_its_real_state() {
+    async fn a_remote_with_no_catalog_host_reads_its_real_state() -> Result<(), Error> {
         let m = mock_rows(
             make_manifest_uri_no_origin(NS),
             Some(Ok(changed_here("a.csv"))),
             None,
-            Some(Ok(records(&["a.csv"]))),
+            Some(records(&["a.csv"])),
         );
         let page = read(&m).await.expect("a page");
 
@@ -2346,24 +2349,26 @@ mod tests {
         );
         let list = listed(page.files);
         assert_eq!(rows_of(&list), vec![("a.csv", "modified")]);
+        Ok(())
     }
 
     /// Unusable credentials on this computer have no deployment to sign in
     /// to: the host-less session state, and the files still listed.
     #[tokio::test]
-    async fn a_remote_with_no_catalog_host_and_unusable_credentials() {
+    async fn a_remote_with_no_catalog_host_and_unusable_credentials() -> Result<(), Error> {
         let no_session = Error::from(quilt::Error::Login(quilt::LoginError::NoSession(None)));
         let m = mock_rows(
             make_manifest_uri_no_origin(NS),
             Some(Err(no_session)),
             Some(Ok(changed_here("a.csv"))),
-            Some(Ok(records(&["a.csv"]))),
+            Some(records(&["a.csv"])),
         );
         let page = read(&m).await.expect("a blocked read is a state");
 
         assert_eq!(page.header.state, PackageStateDto::NoSession { host: None });
         let list = listed(page.files);
         assert_eq!(rows_of(&list), vec![("a.csv", "modified")]);
+        Ok(())
     }
 
     /// A status from local data alone, the bucket's `latest` not read.
@@ -2379,12 +2384,12 @@ mod tests {
     /// A host that can't be reached is a state: the page draws from local
     /// data and names the host.
     #[tokio::test]
-    async fn an_unreachable_host_draws_the_page_and_names_the_host() {
+    async fn an_unreachable_host_draws_the_page_and_names_the_host() -> Result<(), Error> {
         let m = mock_rows(
             make_manifest_uri(NS),
             Some(Ok(offline(changed_here("a.csv")))),
             None,
-            Some(Ok(records(&["a.csv"]))),
+            Some(records(&["a.csv"])),
         );
         let page = read(&m).await.expect("an unreachable host is a state");
 
@@ -2396,16 +2401,17 @@ mod tests {
         );
         let list = listed(page.files);
         assert_eq!(rows_of(&list), vec![("a.csv", "modified")]);
+        Ok(())
     }
 
     /// Without a catalog the bucket itself is what can't be reached.
     #[tokio::test]
-    async fn an_unreachable_bucket_with_no_catalog_names_no_host() {
+    async fn an_unreachable_bucket_with_no_catalog_names_no_host() -> Result<(), Error> {
         let m = mock_rows(
             make_manifest_uri_no_origin(NS),
             Some(Ok(offline(changed_here("a.csv")))),
             None,
-            Some(Ok(records(&["a.csv"]))),
+            Some(records(&["a.csv"])),
         );
         let page = read(&m).await.expect("an unreachable bucket is a state");
 
@@ -2413,6 +2419,7 @@ mod tests {
             page.header.state,
             PackageStateDto::Unreachable { host: None }
         );
+        Ok(())
     }
 
     /// A conflict's Publish needs the host too, so the host comes first.

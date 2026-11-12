@@ -369,6 +369,9 @@ pub enum Error {
     Login(#[from] LoginError),
 
     #[error(transparent)]
+    LogicalKey(#[from] crate::LogicalKeyError),
+
+    #[error(transparent)]
     Manifest(#[from] ManifestError),
 
     #[error(transparent)]

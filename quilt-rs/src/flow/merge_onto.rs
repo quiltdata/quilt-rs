@@ -66,7 +66,7 @@ pub fn merge_rows_onto(
     let (base, ours) = (by_key(base), by_key(ours));
     let mut merged: BTreeMap<PathBuf, ManifestRow> = theirs
         .into_iter()
-        .map(|row| (row.logical_key.clone(), row))
+        .map(|row| (row.logical_key.to_path_buf(), row))
         .collect();
     let keys: BTreeSet<&Path> = base.keys().chain(ours.keys()).copied().collect();
     let mut collisions = Vec::new();
@@ -125,11 +125,13 @@ mod tests {
     use super::*;
 
     use multihash::Multihash;
+
+    use crate::Res;
     use serde_json::json;
 
-    fn row(key: &str, content: &[u8]) -> ManifestRow {
-        ManifestRow {
-            logical_key: PathBuf::from(key),
+    fn row(key: &str, content: &[u8]) -> Res<ManifestRow> {
+        Ok(ManifestRow {
+            logical_key: crate::LogicalKey::new(key)?,
             physical_key: format!("s3://b/{key}"),
             hash: Multihash::<256>::wrap(0x12, content)
                 .unwrap()
@@ -137,7 +139,7 @@ mod tests {
                 .unwrap(),
             size: content.len() as u64,
             meta: None,
-        }
+        })
     }
 
     fn with_entry_meta(row: ManifestRow, meta: serde_json::Value) -> ManifestRow {
@@ -165,13 +167,13 @@ mod tests {
     }
 
     #[test]
-    fn changes_to_different_paths_land_together() {
-        let base = rows(vec![row("a.csv", b"1"), row("gone.csv", b"x")]);
-        let ours = rows(vec![row("a.csv", b"mine"), row("new.csv", b"n")]);
+    fn changes_to_different_paths_land_together() -> Res {
+        let base = rows(vec![row("a.csv", b"1")?, row("gone.csv", b"x")?]);
+        let ours = rows(vec![row("a.csv", b"mine")?, row("new.csv", b"n")?]);
         let theirs = rows(vec![
-            row("a.csv", b"1"),
-            row("b.csv", b"theirs"),
-            row("gone.csv", b"x"),
+            row("a.csv", b"1")?,
+            row("b.csv", b"theirs")?,
+            row("gone.csv", b"x")?,
         ]);
 
         let merged = merge_onto(&base, &ours, theirs).expect("merged");
@@ -179,104 +181,113 @@ mod tests {
         assert_eq!(
             merged.rows,
             [
-                row("a.csv", b"mine"),
-                row("b.csv", b"theirs"),
-                row("new.csv", b"n"),
+                row("a.csv", b"mine")?,
+                row("b.csv", b"theirs")?,
+                row("new.csv", b"n")?,
             ]
         );
+        Ok(())
     }
 
     #[test]
-    fn a_path_both_sides_changed_differently_refuses() {
-        let base = rows(vec![row("a.csv", b"1"), row("b.csv", b"1")]);
-        let ours = rows(vec![row("a.csv", b"mine"), row("b.csv", b"1")]);
-        let theirs = rows(vec![row("a.csv", b"theirs"), row("b.csv", b"2")]);
+    fn a_path_both_sides_changed_differently_refuses() -> Res {
+        let base = rows(vec![row("a.csv", b"1")?, row("b.csv", b"1")?]);
+        let ours = rows(vec![row("a.csv", b"mine")?, row("b.csv", b"1")?]);
+        let theirs = rows(vec![row("a.csv", b"theirs")?, row("b.csv", b"2")?]);
 
         assert_eq!(merge_onto(&base, &ours, theirs), Err(paths(&["a.csv"])));
+        Ok(())
     }
 
     #[test]
-    fn a_path_both_sides_added_differently_refuses() {
-        let ours = rows(vec![row("a.csv", b"mine")]);
-        let theirs = rows(vec![row("a.csv", b"theirs")]);
+    fn a_path_both_sides_added_differently_refuses() -> Res {
+        let ours = rows(vec![row("a.csv", b"mine")?]);
+        let theirs = rows(vec![row("a.csv", b"theirs")?]);
 
         assert_eq!(
             merge_onto(&Manifest::default(), &ours, theirs),
             Err(paths(&["a.csv"]))
         );
+        Ok(())
     }
 
     #[test]
-    fn a_path_one_side_removed_and_the_other_changed_refuses() {
-        let base = rows(vec![row("a.csv", b"1")]);
-        let theirs = rows(vec![row("a.csv", b"theirs")]);
+    fn a_path_one_side_removed_and_the_other_changed_refuses() -> Res {
+        let base = rows(vec![row("a.csv", b"1")?]);
+        let theirs = rows(vec![row("a.csv", b"theirs")?]);
 
         assert_eq!(
             merge_onto(&base, &Manifest::default(), theirs),
             Err(paths(&["a.csv"]))
         );
+        Ok(())
     }
 
     #[test]
-    fn a_change_to_only_an_entrys_meta_collides_with_a_change_to_its_content() {
-        let base = rows(vec![row("a.csv", b"1")]);
-        let ours = rows(vec![row("a.csv", b"mine")]);
+    fn a_change_to_only_an_entrys_meta_collides_with_a_change_to_its_content() -> Res {
+        let base = rows(vec![row("a.csv", b"1")?]);
+        let ours = rows(vec![row("a.csv", b"mine")?]);
         let theirs = rows(vec![with_entry_meta(
-            row("a.csv", b"1"),
+            row("a.csv", b"1")?,
             json!({"reviewed": true}),
         )]);
 
         assert_eq!(merge_onto(&base, &ours, theirs), Err(paths(&["a.csv"])));
+        Ok(())
     }
 
     #[test]
-    fn an_entry_meta_written_as_empty_is_no_change() {
-        let base = rows(vec![row("a.csv", b"1")]);
-        let ours = rows(vec![row("a.csv", b"mine")]);
-        let theirs = rows(vec![with_entry_meta(row("a.csv", b"1"), json!({}))]);
+    fn an_entry_meta_written_as_empty_is_no_change() -> Res {
+        let base = rows(vec![row("a.csv", b"1")?]);
+        let ours = rows(vec![row("a.csv", b"mine")?]);
+        let theirs = rows(vec![with_entry_meta(row("a.csv", b"1")?, json!({}))]);
 
         let merged = merge_onto(&base, &ours, theirs).expect("merged");
 
-        assert_eq!(merged.rows, [row("a.csv", b"mine")]);
+        assert_eq!(merged.rows, [row("a.csv", b"mine")?]);
+        Ok(())
     }
 
     #[test]
-    fn an_identical_change_on_both_sides_merges() {
-        let base = rows(vec![row("a.csv", b"1")]);
-        let ours = rows(vec![row("a.csv", b"same"), row("new.csv", b"n")]);
-        let theirs = rows(vec![row("a.csv", b"same"), row("new.csv", b"n")]);
+    fn an_identical_change_on_both_sides_merges() -> Res {
+        let base = rows(vec![row("a.csv", b"1")?]);
+        let ours = rows(vec![row("a.csv", b"same")?, row("new.csv", b"n")?]);
+        let theirs = rows(vec![row("a.csv", b"same")?, row("new.csv", b"n")?]);
 
         let merged = merge_onto(&base, &ours, theirs).expect("merged");
 
-        assert_eq!(merged.rows, [row("a.csv", b"same"), row("new.csv", b"n")]);
+        assert_eq!(merged.rows, [row("a.csv", b"same")?, row("new.csv", b"n")?]);
+        Ok(())
     }
 
     #[test]
-    fn a_file_where_the_other_side_added_a_folder_refuses() {
-        let ours = rows(vec![row("results", b"mine")]);
-        let theirs = rows(vec![row("results/output.csv", b"theirs")]);
+    fn a_file_where_the_other_side_added_a_folder_refuses() -> Res {
+        let ours = rows(vec![row("results", b"mine")?]);
+        let theirs = rows(vec![row("results/output.csv", b"theirs")?]);
 
         assert_eq!(
             merge_onto(&Manifest::default(), &ours, theirs),
             Err(paths(&["results", "results/output.csv"]))
         );
+        Ok(())
     }
 
     #[test]
-    fn a_file_replaced_by_a_folder_merges() {
-        let base = rows(vec![row("results", b"old")]);
-        let ours = rows(vec![row("results/output.csv", b"mine")]);
-        let theirs = rows(vec![row("others.csv", b"theirs"), row("results", b"old")]);
+    fn a_file_replaced_by_a_folder_merges() -> Res {
+        let base = rows(vec![row("results", b"old")?]);
+        let ours = rows(vec![row("results/output.csv", b"mine")?]);
+        let theirs = rows(vec![row("others.csv", b"theirs")?, row("results", b"old")?]);
 
         let merged = merge_onto(&base, &ours, theirs).expect("merged");
 
         assert_eq!(
             merged.rows,
             [
-                row("others.csv", b"theirs"),
-                row("results/output.csv", b"mine")
+                row("others.csv", b"theirs")?,
+                row("results/output.csv", b"mine")?
             ]
         );
+        Ok(())
     }
 
     #[test]

@@ -27,12 +27,17 @@
 - **Breaking:** `flow::ResolveComparison` lists what making a revision `latest` takes from the published one: `lost` rows and `user_meta_differs` (<https://github.com/quiltdata/quilt-rs/pull/1321>)
 - `LineageHook`, set with `LocalDomain::with_lineage_hook`, is told of each package entry a write of `data.json` changes (<https://github.com/quiltdata/quilt-rs/pull/1356>)
 
+### Changed
+
+- **Breaking:** a manifest row's `logical_key` is a `LogicalKey`, which refuses a key that leaves the package folder: a `.` or `..` folder, an empty folder name, or a leading `/`, `\\` or drive. Reading a manifest that holds one fails, and `LogicalKey::join_to` is how a key becomes a local path. `ManifestRow` implements `Default` only with the `testing` feature (<https://github.com/quiltdata/quilt-rs/pull/1366>)
+
 ### Fixed
 
 - **Breaking:** A pull no longer deletes a file the remote removed if it was edited during the pull. It refuses with `PullConflict`, or keeps the file untracked and lists it in `PullReport::kept_not_removed` (<https://github.com/quiltdata/quilt-rs/pull/1328>)
 - `InstalledPackage::status` works when the catalog can't be reached (<https://github.com/quiltdata/quilt-rs/pull/1338>)
 - `reset_to_latest` on a copy already at `latest` leaves it up to date instead of Diverged (<https://github.com/quiltdata/quilt-rs/pull/1320>)
 - Package URIs read from lineage files and tag pointers get the same checks as parsed ones, and `set_remote` refuses a bucket name S3 does not allow (<https://github.com/quiltdata/quilt-rs/pull/1340>, <https://github.com/quiltdata/quilt-rs/pull/1359>, <https://github.com/quiltdata/quilt-rs/pull/1361>)
+- Install, status, commit, pull and undo only touch files inside the package folder, whatever keys a manifest holds; a local file whose path can't be a logical key is left out of status and new packages (<https://github.com/quiltdata/quilt-rs/pull/1366>)
 
 ### quilt-uri
 

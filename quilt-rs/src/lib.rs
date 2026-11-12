@@ -25,6 +25,7 @@ pub mod junk;
 pub mod lineage;
 mod local_domain;
 pub mod logging;
+pub mod logical_key;
 pub mod manifest;
 pub mod object_hash;
 mod package_lock;
@@ -62,6 +63,8 @@ pub use installed_package::Pushed;
 pub use installed_package::SetRemoteOutcome;
 pub use lineage::DEFAULT_HOME_DIR_NAME;
 pub use local_domain::LocalDomain;
+pub use logical_key::LogicalKey;
+pub use logical_key::LogicalKeyError;
 pub use package_lock::on_package_lock_wait;
 pub use workflow::WorkflowValidationError;
 

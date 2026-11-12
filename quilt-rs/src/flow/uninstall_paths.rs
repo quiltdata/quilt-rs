@@ -8,6 +8,7 @@ use tracing::info;
 
 use crate::Error;
 use crate::InstallPathError;
+use crate::LogicalKey;
 use crate::Res;
 use crate::io::storage::Storage;
 use crate::lineage::PackageLineage;
@@ -28,11 +29,11 @@ pub async fn uninstall_paths(
     for path in paths {
         debug!("⏳ Processing path: {}", path.display());
 
+        let object_home_path = LogicalKey::new(path)?.join_to(&package_home);
         debug!("⏳ Removing path from lineage");
         lineage.paths.remove(path).ok_or(not_found_error(path))?;
         debug!("✔️ Path removed from lineage");
 
-        let object_home_path = package_home.join(path);
         debug!("⏳ Removing file from {}", object_home_path.display());
         if let Err(err) = storage.remove_file(object_home_path).await {
             if err.kind() != ErrorKind::NotFound {

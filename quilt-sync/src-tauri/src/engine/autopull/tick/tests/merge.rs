@@ -9,16 +9,16 @@ use serde_json::json;
 use super::*;
 use crate::engine::autopull::MergeBlock;
 
-fn file(key: &str, content: &str) -> quilt::manifest::ManifestRow {
-    quilt::manifest::ManifestRow {
-        logical_key: PathBuf::from(key),
+fn file(key: &str, content: &str) -> Result<quilt::manifest::ManifestRow, Error> {
+    Ok(quilt::manifest::ManifestRow {
+        logical_key: quilt::LogicalKey::new(key)?,
         physical_key: format!("s3://bucket/acme/demo/{key}?versionId={content}"),
         hash: quilt::object_hash::Sha256Hash::try_from(hex(content).as_str())
             .expect("hex")
             .into(),
         size: content.len() as u64,
         meta: None,
-    }
+    })
 }
 
 fn revision(message: &str, rows: Vec<quilt::manifest::ManifestRow>) -> quilt::manifest::Manifest {
@@ -44,11 +44,11 @@ fn at(hash: &str) -> quilt_uri::ManifestUri {
     }
 }
 
-fn change(key: &str) -> quilt::lineage::ChangeSet {
-    BTreeMap::from([(
+fn change(key: &str) -> Result<quilt::lineage::ChangeSet, Error> {
+    Ok(BTreeMap::from([(
         PathBuf::from(key),
-        quilt::lineage::Change::Modified(file(key, "edited")),
-    )])
+        quilt::lineage::Change::Modified(file(key, "edited")?),
+    )]))
 }
 
 /// The revisions around a Diverged copy: the base it shares with `latest`,
@@ -274,8 +274,8 @@ fn moved(
             .iter()
             .find(|was| was.logical_key == row.logical_key)
         {
-            None => report.added_not_fetched.push(row.logical_key.clone()),
-            Some(was) if was.hash != row.hash => report.updated.push(row.logical_key.clone()),
+            None => report.added_not_fetched.push(row.logical_key.to_path_buf()),
+            Some(was) if was.hash != row.hash => report.updated.push(row.logical_key.to_path_buf()),
             Some(_) => {}
         }
     }
@@ -341,13 +341,14 @@ fn keys(manifest: &quilt::manifest::Manifest) -> Vec<String> {
 }
 
 #[tokio::test]
-async fn changes_to_different_files_land_on_latest_together_and_the_copy_resumes() {
+async fn changes_to_different_files_land_on_latest_together_and_the_copy_resumes()
+-> Result<(), Error> {
     let (model, remote) = model_of(Copy {
         tracked: vec!["a.csv"],
         ..Copy::new(
-            vec![file("a.csv", "1")],
-            vec![file("a.csv", "mine")],
-            vec![file("a.csv", "1"), file("b.csv", "theirs")],
+            vec![file("a.csv", "1")?],
+            vec![file("a.csv", "mine")?],
+            vec![file("a.csv", "1")?, file("b.csv", "theirs")?],
         )
     });
 
@@ -357,7 +358,7 @@ async fn changes_to_different_files_land_on_latest_together_and_the_copy_resumes
     assert_eq!(remote.latest, "r1");
     assert_eq!(
         remote.latest().rows,
-        [file("a.csv", "mine"), file("b.csv", "theirs")]
+        [file("a.csv", "mine")?, file("b.csv", "theirs")?]
     );
     assert_eq!(remote.events, ["push onto h1", "move to r1"]);
     assert!(inner.paused.read().await.is_empty(), "not paused");
@@ -377,6 +378,7 @@ async fn changes_to_different_files_land_on_latest_together_and_the_copy_resumes
     );
     assert_eq!(published.files_line(), "1 file updated");
     assert_eq!(published.files[0].paths, ["a.csv"], "the copy's own change");
+    Ok(())
 }
 
 /// The pulls the record was given.
@@ -392,11 +394,12 @@ fn got(reporter: &RecordingReporter) -> Vec<crate::engine::record::Draft> {
 }
 
 #[tokio::test]
-async fn the_merged_revision_carries_this_copys_message_under_latests_header() {
+async fn the_merged_revision_carries_this_copys_message_under_latests_header() -> Result<(), Error>
+{
     let mut copy = Copy::new(
-        vec![file("a.csv", "1")],
-        vec![file("a.csv", "mine")],
-        vec![file("a.csv", "1"), file("b.csv", "theirs")],
+        vec![file("a.csv", "1")?],
+        vec![file("a.csv", "mine")?],
+        vec![file("a.csv", "1")?, file("b.csv", "theirs")?],
     );
     copy.latest.header.workflow = Some(quilt::manifest::Workflow {
         config: "s3://bucket/.quilt/workflows/config.yml".parse().unwrap(),
@@ -410,21 +413,22 @@ async fn the_merged_revision_carries_this_copys_message_under_latests_header() {
     let remote = seen(&remote);
     assert_eq!(remote.latest().header.message.as_deref(), Some("mine"));
     assert_eq!(remote.latest().header.workflow, workflow);
+    Ok(())
 }
 
 /// Two local revisions: the first added `one.csv`, the newest `two.csv`.
 #[tokio::test]
-async fn unpublished_local_revisions_are_pushed_and_land_as_one_revision() {
+async fn unpublished_local_revisions_are_pushed_and_land_as_one_revision() -> Result<(), Error> {
     let (model, remote) = model_of(Copy {
         pending: true,
         ..Copy::new(
-            vec![file("a.csv", "1")],
+            vec![file("a.csv", "1")?],
             vec![
-                file("a.csv", "1"),
-                file("one.csv", "1"),
-                file("two.csv", "2"),
+                file("a.csv", "1")?,
+                file("one.csv", "1")?,
+                file("two.csv", "2")?,
             ],
-            vec![file("a.csv", "1"), file("b.csv", "theirs")],
+            vec![file("a.csv", "1")?, file("b.csv", "theirs")?],
         )
     });
 
@@ -440,17 +444,18 @@ async fn unpublished_local_revisions_are_pushed_and_land_as_one_revision() {
         keys(remote.latest()),
         ["a.csv", "b.csv", "one.csv", "two.csv"]
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn edits_are_committed_before_the_merge_once_their_wait_is_over() {
+async fn edits_are_committed_before_the_merge_once_their_wait_is_over() -> Result<(), Error> {
     let (model, remote) = model_of(Copy {
         pending: true,
-        walks: vec![change("a.csv")],
+        walks: vec![change("a.csv")?],
         ..Copy::new(
-            vec![file("a.csv", "1")],
-            vec![file("a.csv", "edited")],
-            vec![file("a.csv", "1"), file("b.csv", "theirs")],
+            vec![file("a.csv", "1")?],
+            vec![file("a.csv", "edited")?],
+            vec![file("a.csv", "1")?, file("b.csv", "theirs")?],
         )
     });
 
@@ -460,16 +465,17 @@ async fn edits_are_committed_before_the_merge_once_their_wait_is_over() {
         seen(&remote).events,
         ["publish", "push onto h1", "move to r1"]
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn edits_still_in_their_wait_are_neither_committed_nor_merged() {
+async fn edits_still_in_their_wait_are_neither_committed_nor_merged() -> Result<(), Error> {
     let (model, remote) = model_of(Copy {
-        walks: vec![change("a.csv")],
+        walks: vec![change("a.csv")?],
         ..Copy::new(
-            vec![file("a.csv", "1")],
-            vec![file("a.csv", "1")],
-            vec![file("a.csv", "1"), file("b.csv", "theirs")],
+            vec![file("a.csv", "1")?],
+            vec![file("a.csv", "1")?],
+            vec![file("a.csv", "1")?, file("b.csv", "theirs")?],
         )
     });
     let inner = WatcherInner {
@@ -483,14 +489,16 @@ async fn edits_still_in_their_wait_are_neither_committed_nor_merged() {
 
     assert_eq!(seen(&remote).events, NOTHING);
     assert!(inner.paused.read().await.is_empty(), "waiting, not paused");
+    Ok(())
 }
 
 #[tokio::test]
-async fn a_file_both_sides_changed_differently_pauses_naming_it_and_publishes_nothing() {
+async fn a_file_both_sides_changed_differently_pauses_naming_it_and_publishes_nothing()
+-> Result<(), Error> {
     let (model, remote) = model_of(Copy::new(
-        vec![file("a.csv", "1"), file("b.csv", "1")],
-        vec![file("a.csv", "mine"), file("b.csv", "1")],
-        vec![file("a.csv", "theirs"), file("b.csv", "2")],
+        vec![file("a.csv", "1")?, file("b.csv", "1")?],
+        vec![file("a.csv", "mine")?, file("b.csv", "1")?],
+        vec![file("a.csv", "theirs")?, file("b.csv", "2")?],
     ));
 
     let (inner, _) = tick(&model).await;
@@ -504,14 +512,15 @@ async fn a_file_both_sides_changed_differently_pauses_naming_it_and_publishes_no
             "a.csv".to_string()
         ])))
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn metadata_both_sides_changed_differently_pauses_naming_the_metadata() {
+async fn metadata_both_sides_changed_differently_pauses_naming_the_metadata() -> Result<(), Error> {
     let mut copy = Copy::new(
-        vec![file("a.csv", "1")],
-        vec![file("a.csv", "mine")],
-        vec![file("a.csv", "1")],
+        vec![file("a.csv", "1")?],
+        vec![file("a.csv", "mine")?],
+        vec![file("a.csv", "1")?],
     );
     copy.ours.header.user_meta = Some(json!({"owner": "me"}));
     copy.latest.header.user_meta = Some(json!({"owner": "them"}));
@@ -524,20 +533,22 @@ async fn metadata_both_sides_changed_differently_pauses_naming_the_metadata() {
         inner.paused.read().await.get(&ns()),
         Some(&PausedReason::MergeRefused(MergeBlock::Metadata))
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn a_writer_who_publishes_during_the_merge_keeps_latest_and_the_merge_is_redone_onto_it() {
+async fn a_writer_who_publishes_during_the_merge_keeps_latest_and_the_merge_is_redone_onto_it()
+-> Result<(), Error> {
     let theirs = revision(
         "another",
-        vec![file("a.csv", "1"), file("c.csv", "another")],
+        vec![file("a.csv", "1")?, file("c.csv", "another")?],
     );
     let (model, remote) = model_of(Copy {
         writers: vec![theirs],
         ..Copy::new(
-            vec![file("a.csv", "1")],
-            vec![file("a.csv", "mine")],
-            vec![file("a.csv", "1")],
+            vec![file("a.csv", "1")?],
+            vec![file("a.csv", "mine")?],
+            vec![file("a.csv", "1")?],
         )
     });
 
@@ -550,20 +561,23 @@ async fn a_writer_who_publishes_during_the_merge_keeps_latest_and_the_merge_is_r
     );
     assert_eq!(
         remote.latest().rows,
-        [file("a.csv", "mine"), file("c.csv", "another")]
+        [file("a.csv", "mine")?, file("c.csv", "another")?]
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn a_latest_that_keeps_moving_pauses_the_copy_after_three_attempts() {
-    let others =
-        ["x", "y", "z"].map(|name| revision(name, vec![file("a.csv", "1"), file(name, name)]));
+async fn a_latest_that_keeps_moving_pauses_the_copy_after_three_attempts() -> Result<(), Error> {
+    let others = ["x", "y", "z"]
+        .iter()
+        .map(|name| Ok(revision(name, vec![file("a.csv", "1")?, file(name, name)?])))
+        .collect::<Result<Vec<_>, Error>>()?;
     let (model, remote) = model_of(Copy {
-        writers: others.into(),
+        writers: others,
         ..Copy::new(
-            vec![file("a.csv", "1")],
-            vec![file("a.csv", "mine")],
-            vec![file("a.csv", "1")],
+            vec![file("a.csv", "1")?],
+            vec![file("a.csv", "mine")?],
+            vec![file("a.csv", "1")?],
         )
     });
 
@@ -589,19 +603,21 @@ async fn a_latest_that_keeps_moving_pauses_the_copy_after_three_attempts() {
                 && d.outcome.as_deref()
                     == Some("The bucket has newer changes, so this revision is not the latest."))
     );
+    Ok(())
 }
 
 /// `a.csv` is edited again while the merge publishes it. The move keeps the
 /// edit on top of the merged revision, so the next tick publishes it as any
 /// change rather than merging it against the copy's own.
 #[tokio::test]
-async fn an_edit_during_the_merge_to_a_path_it_published_is_published_next_tick() {
+async fn an_edit_during_the_merge_to_a_path_it_published_is_published_next_tick()
+-> Result<(), Error> {
     let (model, remote) = model_of(Copy {
-        walks: vec![BTreeMap::new(), change("a.csv"), change("a.csv")],
+        walks: vec![BTreeMap::new(), change("a.csv")?, change("a.csv")?],
         ..Copy::new(
-            vec![file("a.csv", "1")],
-            vec![file("a.csv", "mine")],
-            vec![file("a.csv", "1"), file("b.csv", "theirs")],
+            vec![file("a.csv", "1")?],
+            vec![file("a.csv", "mine")?],
+            vec![file("a.csv", "1")?, file("b.csv", "theirs")?],
         )
     });
     let mut settings = enabled();
@@ -623,16 +639,17 @@ async fn an_edit_during_the_merge_to_a_path_it_published_is_published_next_tick(
         "published as an ordinary change, not merged again"
     );
     assert!(inner.paused.read().await.is_empty());
+    Ok(())
 }
 
 /// A move that fails after the merge published still leaves the publish in
 /// the record: the retry finds the change on `latest` and publishes nothing.
 #[tokio::test]
-async fn a_merge_whose_move_fails_is_still_recorded_as_published() {
+async fn a_merge_whose_move_fails_is_still_recorded_as_published() -> Result<(), Error> {
     let (model, remote) = model_of(Copy::new(
-        vec![file("a.csv", "1")],
-        vec![file("a.csv", "mine")],
-        vec![file("a.csv", "1"), file("b.csv", "theirs")],
+        vec![file("a.csv", "1")?],
+        vec![file("a.csv", "mine")?],
+        vec![file("a.csv", "1")?, file("b.csv", "theirs")?],
     ));
     remote.lock().unwrap().failing_moves = 1;
 
@@ -643,6 +660,7 @@ async fn a_merge_whose_move_fails_is_still_recorded_as_published() {
     assert_eq!(recorded.len(), 1);
     assert_eq!(recorded[0].kind, crate::engine::record::Kind::Published);
     assert_eq!(reporter.published.lock().unwrap().len(), 1);
+    Ok(())
 }
 
 /// The merge publishes and its move fails, so the copy keeps its old base, and
@@ -650,18 +668,19 @@ async fn a_merge_whose_move_fails_is_still_recorded_as_published() {
 /// is retried before the edit is committed, and the edit is then published as
 /// any change, not merged against the copy's own publication.
 #[tokio::test]
-async fn a_move_that_failed_after_the_merge_is_retried_before_an_edit_is_committed() {
+async fn a_move_that_failed_after_the_merge_is_retried_before_an_edit_is_committed()
+-> Result<(), Error> {
     let (model, remote) = model_of(Copy {
         walks: vec![
             BTreeMap::new(),
-            change("a.csv"),
-            change("a.csv"),
-            change("a.csv"),
+            change("a.csv")?,
+            change("a.csv")?,
+            change("a.csv")?,
         ],
         ..Copy::new(
-            vec![file("a.csv", "1")],
-            vec![file("a.csv", "mine")],
-            vec![file("a.csv", "1"), file("b.csv", "theirs")],
+            vec![file("a.csv", "1")?],
+            vec![file("a.csv", "mine")?],
+            vec![file("a.csv", "1")?, file("b.csv", "theirs")?],
         )
     });
     remote.lock().unwrap().failing_moves = 1;
@@ -685,6 +704,7 @@ async fn a_move_that_failed_after_the_merge_is_retried_before_an_edit_is_committ
         "moved, then published as an ordinary change"
     );
     assert!(inner.paused.read().await.is_empty());
+    Ok(())
 }
 
 /// `latest` holds the copy's change, but the copy edited `b.csv`, which the
@@ -692,13 +712,17 @@ async fn a_move_that_failed_after_the_merge_is_retried_before_an_edit_is_committ
 /// merge refuses on it, naming `b.csv`, rather than the move being retried
 /// every tick.
 #[tokio::test]
-async fn an_edit_that_blocks_the_retried_move_is_committed_and_the_copy_pauses() {
+async fn an_edit_that_blocks_the_retried_move_is_committed_and_the_copy_pauses() -> Result<(), Error>
+{
     let (model, remote) = model_of(Copy {
-        walks: vec![change("b.csv"), change("b.csv")],
-        latest: revision("mine", vec![file("a.csv", "mine"), file("b.csv", "theirs")]),
+        walks: vec![change("b.csv")?, change("b.csv")?],
+        latest: revision(
+            "mine",
+            vec![file("a.csv", "mine")?, file("b.csv", "theirs")?],
+        ),
         ..Copy::new(
-            vec![file("a.csv", "1"), file("b.csv", "1")],
-            vec![file("a.csv", "mine"), file("b.csv", "1")],
+            vec![file("a.csv", "1")?, file("b.csv", "1")?],
+            vec![file("a.csv", "mine")?, file("b.csv", "1")?],
             vec![],
         )
     });
@@ -713,18 +737,20 @@ async fn an_edit_that_blocks_the_retried_move_is_committed_and_the_copy_pauses()
             "b.csv".to_string()
         ])))
     );
+    Ok(())
 }
 
 /// Edits on a copy whose pushed revision `latest` does not hold are committed
 /// and merged, without a move first.
 #[tokio::test]
-async fn edits_on_a_copy_whose_change_latest_lacks_are_committed_then_merged() {
+async fn edits_on_a_copy_whose_change_latest_lacks_are_committed_then_merged() -> Result<(), Error>
+{
     let (model, remote) = model_of(Copy {
-        walks: vec![change("a.csv")],
+        walks: vec![change("a.csv")?],
         ..Copy::new(
-            vec![file("a.csv", "1")],
-            vec![file("a.csv", "mine")],
-            vec![file("a.csv", "1"), file("b.csv", "theirs")],
+            vec![file("a.csv", "1")?],
+            vec![file("a.csv", "mine")?],
+            vec![file("a.csv", "1")?, file("b.csv", "theirs")?],
         )
     });
 
@@ -734,19 +760,21 @@ async fn edits_on_a_copy_whose_change_latest_lacks_are_committed_then_merged() {
         seen(&remote).events,
         ["publish", "push onto h1", "move to r1"]
     );
+    Ok(())
 }
 
 /// An edit to `b.csv`, which the other side changed, refuses the move as it
 /// refuses a pull. The merged revision stays published, and the copy stays
 /// Diverged at its own revision for the next tick.
 #[tokio::test]
-async fn an_edit_during_the_merge_to_a_path_the_other_side_changed_keeps_the_copy_diverged() {
+async fn an_edit_during_the_merge_to_a_path_the_other_side_changed_keeps_the_copy_diverged()
+-> Result<(), Error> {
     let (model, remote) = model_of(Copy {
-        walks: vec![BTreeMap::new(), change("b.csv")],
+        walks: vec![BTreeMap::new(), change("b.csv")?],
         ..Copy::new(
-            vec![file("a.csv", "1")],
-            vec![file("a.csv", "mine")],
-            vec![file("a.csv", "1"), file("b.csv", "theirs")],
+            vec![file("a.csv", "1")?],
+            vec![file("a.csv", "mine")?],
+            vec![file("a.csv", "1")?, file("b.csv", "theirs")?],
         )
     });
     remote.lock().unwrap().conflict_at = vec!["b.csv"];
@@ -762,22 +790,24 @@ async fn an_edit_during_the_merge_to_a_path_the_other_side_changed_keeps_the_cop
     );
     assert_eq!(reporter.published.lock().unwrap().len(), 1);
     assert!(got(&reporter).is_empty(), "nothing written");
+    Ok(())
 }
 
 /// Beside an edit to `b.csv`, a local file the walk does not list, such as an
 /// ignored one, where the other side added `c.csv`: no commit will change the
 /// next merge, so the copy pauses, still Diverged at its own revision.
 #[tokio::test]
-async fn a_move_refused_by_a_file_that_is_not_an_edit_pauses_the_copy_as_diverged() {
+async fn a_move_refused_by_a_file_that_is_not_an_edit_pauses_the_copy_as_diverged()
+-> Result<(), Error> {
     let (model, remote) = model_of(Copy {
-        walks: vec![BTreeMap::new(), change("b.csv")],
+        walks: vec![BTreeMap::new(), change("b.csv")?],
         ..Copy::new(
-            vec![file("a.csv", "1")],
-            vec![file("a.csv", "mine")],
+            vec![file("a.csv", "1")?],
+            vec![file("a.csv", "mine")?],
             vec![
-                file("a.csv", "1"),
-                file("b.csv", "theirs"),
-                file("c.csv", "theirs"),
+                file("a.csv", "1")?,
+                file("b.csv", "theirs")?,
+                file("c.csv", "theirs")?,
             ],
         )
     });
@@ -789,23 +819,24 @@ async fn a_move_refused_by_a_file_that_is_not_an_edit_pauses_the_copy_as_diverge
         inner.paused.read().await.get(&ns()),
         Some(&PausedReason::Diverged)
     );
+    Ok(())
 }
 
 /// The copy moves to the revision the merge published, and reports what that
 /// brought, though another writer has published since.
 #[tokio::test]
-async fn the_copy_moves_to_the_merged_revision_not_one_published_after_it() {
+async fn the_copy_moves_to_the_merged_revision_not_one_published_after_it() -> Result<(), Error> {
     let (model, remote) = model_of(Copy::new(
-        vec![file("a.csv", "1")],
-        vec![file("a.csv", "mine")],
-        vec![file("a.csv", "1"), file("b.csv", "theirs")],
+        vec![file("a.csv", "1")?],
+        vec![file("a.csv", "mine")?],
+        vec![file("a.csv", "1")?, file("b.csv", "theirs")?],
     ));
     remote.lock().unwrap().late_writer = Some(revision(
         "late",
         vec![
-            file("a.csv", "mine"),
-            file("b.csv", "theirs"),
-            file("c.csv", "late"),
+            file("a.csv", "mine")?,
+            file("b.csv", "theirs")?,
+            file("c.csv", "late")?,
         ],
     ));
 
@@ -813,20 +844,22 @@ async fn the_copy_moves_to_the_merged_revision_not_one_published_after_it() {
 
     assert_eq!(seen(&remote).events, ["push onto h1", "move to r1"]);
     assert_eq!(got(&reporter)[0].files[0].paths, ["b.csv"]);
+    Ok(())
 }
 
 /// The tick after an edit kept the copy at its own revision: `latest` already
 /// holds that revision's change, under the message of a later revision.
 #[tokio::test]
-async fn a_copy_whose_change_latest_already_holds_moves_to_it_without_publishing() {
+async fn a_copy_whose_change_latest_already_holds_moves_to_it_without_publishing()
+-> Result<(), Error> {
     let (model, remote) = model_of(Copy {
         latest: revision(
             "a later revision",
-            vec![file("a.csv", "mine"), file("b.csv", "theirs")],
+            vec![file("a.csv", "mine")?, file("b.csv", "theirs")?],
         ),
         ..Copy::new(
-            vec![file("a.csv", "1")],
-            vec![file("a.csv", "mine")],
+            vec![file("a.csv", "1")?],
+            vec![file("a.csv", "mine")?],
             vec![],
         )
     });
@@ -836,14 +869,15 @@ async fn a_copy_whose_change_latest_already_holds_moves_to_it_without_publishing
     assert_eq!(seen(&remote).events, ["move to h1"]);
     assert!(reporter.published.lock().unwrap().is_empty());
     assert!(inner.paused.read().await.is_empty());
+    Ok(())
 }
 
 #[tokio::test]
-async fn a_package_a_task_run_holds_is_not_merged() {
+async fn a_package_a_task_run_holds_is_not_merged() -> Result<(), Error> {
     let (model, remote) = model_of(Copy::new(
-        vec![file("a.csv", "1")],
-        vec![file("a.csv", "mine")],
-        vec![file("a.csv", "1"), file("b.csv", "theirs")],
+        vec![file("a.csv", "1")?],
+        vec![file("a.csv", "mine")?],
+        vec![file("a.csv", "1")?, file("b.csv", "theirs")?],
     ));
     let inner = WatcherInner {
         last_change: LastChange::changed_for_test(&ns(), Duration::from_hours(1)).await,
@@ -856,14 +890,15 @@ async fn a_package_a_task_run_holds_is_not_merged() {
         .expect("ticked");
 
     assert_eq!(seen(&remote).events, NOTHING);
+    Ok(())
 }
 
 #[tokio::test]
-async fn with_pulling_off_a_diverged_copy_pauses_as_before() {
+async fn with_pulling_off_a_diverged_copy_pauses_as_before() -> Result<(), Error> {
     let (model, remote) = model_of(Copy::new(
-        vec![file("a.csv", "1")],
-        vec![file("a.csv", "mine")],
-        vec![file("a.csv", "1"), file("b.csv", "theirs")],
+        vec![file("a.csv", "1")?],
+        vec![file("a.csv", "mine")?],
+        vec![file("a.csv", "1")?, file("b.csv", "theirs")?],
     ));
     let mut settings = enabled();
     settings.pull.enabled = false;
@@ -881,14 +916,15 @@ async fn with_pulling_off_a_diverged_copy_pauses_as_before() {
         inner.paused.read().await.get(&ns()),
         Some(&PausedReason::Diverged)
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn the_move_after_a_merge_counts_as_writing_the_folder() {
+async fn the_move_after_a_merge_counts_as_writing_the_folder() -> Result<(), Error> {
     let (model, remote) = model_of(Copy::new(
-        vec![file("a.csv", "1")],
-        vec![file("a.csv", "mine")],
-        vec![file("a.csv", "1"), file("b.csv", "theirs")],
+        vec![file("a.csv", "1")?],
+        vec![file("a.csv", "mine")?],
+        vec![file("a.csv", "1")?, file("b.csv", "theirs")?],
     ));
     let aggregator = test_aggregator();
     remote.lock().unwrap().aggregator = Some(Arc::clone(&aggregator));
@@ -902,4 +938,5 @@ async fn the_move_after_a_merge_counts_as_writing_the_folder() {
         .expect("ticked");
 
     assert_eq!(seen(&remote).applying_at_move, Some(true));
+    Ok(())
 }

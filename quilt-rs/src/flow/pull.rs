@@ -430,7 +430,13 @@ pub async fn pull_package(
         let Some(base_row) = manifest.get_record(path) else {
             continue;
         };
-        match refresh_hash(storage, &working_dir.join(path), base_row.clone()).await {
+        match refresh_hash(
+            storage,
+            &base_row.logical_key.join_to(&working_dir),
+            base_row.clone(),
+        )
+        .await
+        {
             // File still holds the base content — no drift.
             Ok(None) => {}
             // Content changed, or the file is gone (raced local delete) — drift.
@@ -507,9 +513,9 @@ mod tests {
     /// from `hash_seed` (mirrors the `row` helper in `pull_outcome.rs` tests).
     /// The digest is not a real hash of any file, so it never matches a
     /// working-tree file — exactly what the drift-detection test wants.
-    fn row(key: &str, hash_seed: &[u8]) -> ManifestRow {
-        ManifestRow {
-            logical_key: PathBuf::from(key),
+    fn row(key: &str, hash_seed: &[u8]) -> Res<ManifestRow> {
+        Ok(ManifestRow {
+            logical_key: crate::LogicalKey::new(key)?,
             physical_key: format!("s3://b/{key}"),
             hash: Multihash::<256>::wrap(0x12, hash_seed)
                 .unwrap()
@@ -517,7 +523,7 @@ mod tests {
                 .unwrap(),
             size: hash_seed.len() as u64,
             meta: None,
-        }
+        })
     }
 
     fn hash_of(seed: &[u8]) -> crate::object_hash::ObjectHash {
@@ -647,14 +653,14 @@ mod tests {
         .await?;
 
         let base = manifest_of(vec![
-            row("done.csv", b"base-done"),
-            row("todo-1.csv", b"base-1"),
-            row("todo-2.csv", b"base-2"),
+            row("done.csv", b"base-done")?,
+            row("todo-1.csv", b"base-1")?,
+            row("todo-2.csv", b"base-2")?,
         ]);
         let latest = manifest_of(vec![
             latest_row,
-            row("todo-1.csv", b"latest-1"),
-            row("todo-2.csv", b"latest-2"),
+            row("todo-1.csv", b"latest-1")?,
+            row("todo-2.csv", b"latest-2")?,
         ]);
 
         // The retry's status: only the written file looks changed.
@@ -1034,7 +1040,7 @@ mod tests {
     // walk. The verify pass must catch the drift and abort as `PullConflict`
     // before any file is uninstalled — never silently overwrite the raced edit.
     #[test(tokio::test)]
-    async fn racing_edit_on_touched_path_aborts_as_conflict() {
+    async fn racing_edit_on_touched_path_aborts_as_conflict() -> Res {
         let storage = MockStorage::default();
         let remote = MockRemote::default();
         let working_dir = PathBuf::from("/wd");
@@ -1050,8 +1056,8 @@ mod tests {
 
         // Base tracks `a` at the v1 hash; the remote changed it to v2, so `a`
         // is a remote-changed tracked path → it enters the touch-set.
-        let base = manifest_of(vec![row("a", b"v1")]);
-        let latest = manifest_of(vec![row("a", b"v2")]);
+        let base = manifest_of(vec![row("a", b"v1")?]);
+        let latest = manifest_of(vec![row("a", b"v2")?]);
 
         let lineage = PackageLineage {
             remote_uri: Some(ManifestUri {
@@ -1093,6 +1099,7 @@ mod tests {
             storage.read_bytes(&working_dir.join(&path)).await.unwrap(),
             edited
         );
+        Ok(())
     }
 
     // A touched path whose working-tree file is GONE (a local delete raced in
@@ -1100,7 +1107,7 @@ mod tests {
     // not-found `Err`, which the verify pass folds into the drifted set and
     // reports as a retryable `PullConflict` — never a propagated failure.
     #[test(tokio::test)]
-    async fn missing_touched_path_aborts_as_conflict() {
+    async fn missing_touched_path_aborts_as_conflict() -> Res {
         let storage = MockStorage::default();
         let remote = MockRemote::default();
         let working_dir = PathBuf::from("/wd");
@@ -1110,8 +1117,8 @@ mod tests {
         // fails with a not-found error.
 
         // Base tracks `a`; the remote changed it → `a` enters the touch-set.
-        let base = manifest_of(vec![row("a", b"v1")]);
-        let latest = manifest_of(vec![row("a", b"v2")]);
+        let base = manifest_of(vec![row("a", b"v1")?]);
+        let latest = manifest_of(vec![row("a", b"v2")?]);
 
         let lineage = PackageLineage {
             remote_uri: Some(ManifestUri {
@@ -1147,6 +1154,7 @@ mod tests {
             ),
             "expected PullConflict naming `a`, got: {error:?}"
         );
+        Ok(())
     }
 
     fn tracked_map<const N: usize>(names: [&str; N]) -> LineagePaths {
@@ -1271,7 +1279,7 @@ mod tests {
         // it lands in the touch-set as a removal and the apply has nothing to
         // download.
         let base = manifest_of(vec![ManifestRow {
-            logical_key: never.clone(),
+            logical_key: crate::LogicalKey::new(never.clone())?,
             ..ManifestRow::default()
         }]);
         let latest_manifest = manifest_of(vec![]);
@@ -1358,7 +1366,7 @@ mod tests {
             .await?
             .into();
         let base_row = ManifestRow {
-            logical_key: path.clone(),
+            logical_key: crate::LogicalKey::new(path.clone())?,
             hash: hash.try_into()?,
             size: content.len() as u64,
             ..ManifestRow::default()

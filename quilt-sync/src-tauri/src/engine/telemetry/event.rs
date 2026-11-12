@@ -338,6 +338,7 @@ impl From<&crate::engine::quilt::Error> for Failure {
             | E::Io(_)
             | E::Json(_)
             | E::Lineage(_)
+            | E::LogicalKey(_)
             | E::Manifest(_)
             | E::ObjectHash(_)
             | E::Reqwest(_)

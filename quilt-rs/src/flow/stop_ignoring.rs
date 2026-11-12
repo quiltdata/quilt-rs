@@ -30,8 +30,8 @@ fn tracked(manifest: &Manifest, lineage: &PackageLineage) -> Tracked {
         manifest
             .rows
             .iter()
-            .map(|row| &row.logical_key)
-            .chain(lineage.paths.keys()),
+            .map(|row| row.logical_key.as_path())
+            .chain(lineage.paths.keys().map(std::path::PathBuf::as_path)),
     )
 }
 

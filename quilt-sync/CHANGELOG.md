@@ -49,6 +49,7 @@
 - QuiltSync refuses a package link with an invalid bucket or package name, or with parts it used to ignore, such as a user or port (<https://github.com/quiltdata/quilt-rs/pull/1359>, <https://github.com/quiltdata/quilt-rs/pull/1361>, <https://github.com/quiltdata/quilt-rs/pull/1363>)
 - Package links and *Open in catalog* work for file paths with special characters such as `&` or `#` (<https://github.com/quiltdata/quilt-rs/pull/1363>)
 - Package rows on the main page keep their tooltips and actions after the list refreshes (<https://github.com/quiltdata/quilt-rs/pull/1364>)
+- Installing or pulling a package never writes outside its folder, whatever file paths its manifest names; *Open file*, *Reveal in folder*, *Copy path* and a catalog link that opens a file refuse a path outside the package folder (<https://github.com/quiltdata/quilt-rs/pull/1366>)
 
 ### Security
 

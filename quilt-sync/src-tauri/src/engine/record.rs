@@ -320,10 +320,10 @@ pub fn changes_between(
     for row in after {
         match old.get(&row.logical_key) {
             None => {
-                changes.insert(row.logical_key.clone(), Change::Added(row.clone()));
+                changes.insert(row.logical_key.to_path_buf(), Change::Added(row.clone()));
             }
             Some(was) if was.hash != row.hash => {
-                changes.insert(row.logical_key.clone(), Change::Modified(row.clone()));
+                changes.insert(row.logical_key.to_path_buf(), Change::Modified(row.clone()));
             }
             Some(_) => {}
         }
@@ -331,7 +331,7 @@ pub fn changes_between(
     let kept: std::collections::BTreeSet<_> = after.iter().map(|row| &row.logical_key).collect();
     for row in before {
         if !kept.contains(&row.logical_key) {
-            changes.insert(row.logical_key.clone(), Change::Removed(row.clone()));
+            changes.insert(row.logical_key.to_path_buf(), Change::Removed(row.clone()));
         }
     }
     changes

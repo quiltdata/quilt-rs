@@ -59,12 +59,12 @@ async fn collect_local_with_changes(
                 match row_res {
                     Ok(row) => {
                         // Skip removed rows
-                        if removed.contains(&row.logical_key) {
+                        if removed.contains(row.logical_key.as_path()) {
                             continue;
                         }
 
                         // Use modified version if available, otherwise use original
-                        if let Some(modified_row) = modified.get(&row.logical_key) {
+                        if let Some(modified_row) = modified.get(row.logical_key.as_path()) {
                             all_rows.push(Ok(modified_row.clone()));
                         } else {
                             all_rows.push(Ok(row));
@@ -94,9 +94,9 @@ async fn create_immutable_object_copy(
     paths: &DomainPaths,
     working_dir: &Path,
     lineage: &mut PackageLineage,
-    logical_key: &PathBuf,
     current: ManifestRow,
 ) -> Res<ManifestRow> {
+    let logical_key = &current.logical_key;
     debug!(
         "⏳ Creating immutable object copy for: {}",
         logical_key.display()
@@ -113,13 +113,11 @@ async fn create_immutable_object_copy(
         .to_string();
 
     let current_hash = current.hash.clone();
+    let work_dest = logical_key.join_to(working_dir);
     let row = ManifestRow {
-        logical_key: logical_key.clone(),
         physical_key: new_physical_key,
         ..current
     };
-
-    let work_dest = working_dir.join(logical_key);
 
     if storage.exists(&object_dest).await {
         debug!(
@@ -135,7 +133,7 @@ async fn create_immutable_object_copy(
         debug!("✔️ File copied successfully");
     }
     lineage.paths.insert(
-        logical_key.clone(),
+        row.logical_key.to_path_buf(),
         PathState {
             timestamp: storage.modified_timestamp(&work_dest).await?,
             hash: current_hash.into(),
@@ -263,8 +261,8 @@ pub async fn commit_package(
         );
         match state {
             Change::Removed(row) => {
-                lineage.paths.remove(&row.logical_key);
-                removed_keys.insert(row.logical_key);
+                lineage.paths.remove(row.logical_key.as_path());
+                removed_keys.insert(row.logical_key.to_path_buf());
             }
             Change::Added(current) => {
                 if manifest.contains_record(&current.logical_key) {
@@ -278,7 +276,6 @@ pub async fn commit_package(
                     paths,
                     &working_dir,
                     &mut lineage,
-                    &logical_key,
                     current,
                 )
                 .await?;
@@ -290,7 +287,6 @@ pub async fn commit_package(
                     paths,
                     &working_dir,
                     &mut lineage,
-                    &logical_key,
                     current,
                 )
                 .await?;
@@ -656,7 +652,9 @@ mod tests {
             changes: BTreeMap::from([(
                 PathBuf::from("one/two two/three three three/READ ME.md"),
                 Change::Removed(ManifestRow {
-                    logical_key: PathBuf::from("one/two two/three three three/READ ME.md"),
+                    logical_key: crate::LogicalKey::new(
+                        "one/two two/three three three/READ ME.md",
+                    )?,
                     ..ManifestRow::default()
                 }),
             )]),
@@ -723,7 +721,7 @@ mod tests {
         let manifest = fixtures::manifest_with_objects_all_sizes::manifest().await?;
         let base_record = manifest.get_record(&PathBuf::from("0mb.bin")).unwrap();
         let added_file = ManifestRow {
-            logical_key: PathBuf::from("foo"),
+            logical_key: crate::LogicalKey::new("foo")?,
             hash: base_record.hash.clone(),
             size: base_record.size,
             physical_key: base_record.physical_key.clone(),
@@ -800,7 +798,7 @@ mod tests {
             .get_record(&PathBuf::from("one/two two/three three three/READ ME.md"))
             .unwrap();
         let added_file = ManifestRow {
-            logical_key: PathBuf::from("one/two two/three three three/READ ME.md"),
+            logical_key: crate::LogicalKey::new("one/two two/three three three/READ ME.md")?,
             hash: base_record.hash.clone(),
             size: base_record.size,
             physical_key: base_record.physical_key.clone(),
@@ -880,7 +878,7 @@ mod tests {
             .get_record(&PathBuf::from("less-then-8mb.txt"))
             .unwrap();
         let modified_file = ManifestRow {
-            logical_key: PathBuf::from("one/two two/three three three/READ ME.md"),
+            logical_key: crate::LogicalKey::new("one/two two/three three three/READ ME.md")?,
             hash: base_record.hash.clone(),
             size: base_record.size,
             physical_key: base_record.physical_key.clone(),
