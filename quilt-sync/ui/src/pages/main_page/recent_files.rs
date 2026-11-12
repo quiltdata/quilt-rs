@@ -239,7 +239,10 @@ fn run_command(
             }
             Ran::Failed { lead, detail } => {
                 web_sys::console::error_1(&format!("{lead} {detail}").into());
-                if let Some(RowFailure(said)) = failure {
+                // A newer copy supersedes this one, as it does on the row.
+                if let Some(RowFailure(said)) =
+                    failure.filter(|_| !copying || state.is_current(stamp))
+                {
                     said.try_set(Some(format!("{lead} {}", readable(&detail))));
                 }
                 if copying {
