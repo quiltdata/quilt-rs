@@ -1490,15 +1490,43 @@ fn MainPageRegions(
 /// What a *Recent files* row's failed command said, for the page's band.
 /// [`MainPage`] provides it as context; the feed's rows set it.
 #[derive(Clone, Copy)]
-pub(super) struct RowFailure(pub(super) RwSignal<Option<String>>);
+pub(super) struct RowFailure {
+    said: RwSignal<Option<String>>,
+    /// The number of the latest row command. Only its failure is said: an
+    /// earlier one landing late would follow a newer command's success.
+    latest: StoredValue<u64>,
+}
+
+impl RowFailure {
+    pub(super) fn new() -> Self {
+        Self {
+            said: RwSignal::new(None),
+            latest: StoredValue::new(0),
+        }
+    }
+
+    /// A row command starts: the band clears, and it gets its number.
+    pub(super) fn start(self) -> u64 {
+        self.said.set(None);
+        self.latest.update_value(|n| *n += 1);
+        self.latest.get_value()
+    }
+
+    /// Say command `number`'s failure, while it is the latest.
+    pub(super) fn fail(self, number: u64, said: String) {
+        if self.latest.try_get_value() == Some(number) {
+            self.said.try_set(Some(said));
+        }
+    }
+}
 
 /// The band's report of a row command that failed. Dismissed by hand, or
 /// replaced by the next row command.
 fn row_failure_banner(failure: RowFailure) -> impl IntoView {
     move || {
-        failure.0.get().map(|said| {
+        failure.said.get().map(|said| {
             view! {
-                <Banner variant=BannerVariant::Critical on_dismiss=move |_| failure.0.set(None)>
+                <Banner variant=BannerVariant::Critical on_dismiss=move |_| failure.said.set(None)>
                     {said}
                 </Banner>
             }
@@ -1509,7 +1537,7 @@ fn row_failure_banner(failure: RowFailure) -> impl IntoView {
 #[component]
 pub fn MainPage() -> impl IntoView {
     let reload = Trigger::new();
-    let failure = RowFailure(RwSignal::new(None));
+    let failure = RowFailure::new();
     provide_context(failure);
     // Events were lost while the socket was down.
     crate::engine::reread_on_reconnect(reload);

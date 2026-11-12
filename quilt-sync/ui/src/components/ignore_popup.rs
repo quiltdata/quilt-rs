@@ -123,7 +123,8 @@ pub fn IgnorePopup(
         let (ns, uri, p) = (namespace.clone(), uri.clone(), pattern.get_untracked());
         let on_saved = on_saved.clone();
         async move {
-            let said = format!("Added {} to .quiltignore.", p.trim());
+            // The line the backend writes: the first, as typed.
+            let said = format!("Added {} to .quiltignore.", p.lines().next().unwrap_or(&p));
             holding(lock, commands::add_to_quiltignore(ns, p, uri))
                 .await
                 .map_err(|e| format!("Could not ignore this file: {e}"))?;

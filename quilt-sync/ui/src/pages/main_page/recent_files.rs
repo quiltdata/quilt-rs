@@ -216,11 +216,7 @@ fn run_command(
 ) {
     let copying = matches!(command, RowCommand::CopyUri(_));
     let stamp = if copying { state.bump() } else { 0 };
-    // This command is now the last one: an earlier failure left up would
-    // outlive a retry that succeeds.
-    if let Some(RowFailure(said)) = failure {
-        said.set(None);
-    }
+    let number = failure.map(RowFailure::start);
     spawn_local(async move {
         let ran = carry_out(
             &command,
@@ -239,11 +235,8 @@ fn run_command(
             }
             Ran::Failed { lead, detail } => {
                 web_sys::console::error_1(&format!("{lead} {detail}").into());
-                // A newer copy supersedes this one, as it does on the row.
-                if let Some(RowFailure(said)) =
-                    failure.filter(|_| !copying || state.is_current(stamp))
-                {
-                    said.try_set(Some(format!("{lead} {}", readable(&detail))));
+                if let (Some(failure), Some(number)) = (failure, number) {
+                    failure.fail(number, format!("{lead} {}", readable(&detail)));
                 }
                 if copying {
                     state.settle(stamp, None, "Could not copy the address".to_string());
@@ -1067,7 +1060,7 @@ mod tests {
     #[wasm_bindgen_test]
     async fn a_failed_row_command_is_said_on_the_band() {
         let el = mount(move || {
-            let failure = RowFailure(RwSignal::new(None));
+            let failure = RowFailure::new();
             provide_context(failure);
             view! {
                 <leptos_router::components::Router>
@@ -1095,6 +1088,21 @@ mod tests {
             band().starts_with("Could not show this file in its folder."),
             "the failure is on the band: {}",
             band()
+        );
+    }
+
+    /// A failure that lands after a newer row command started is not said.
+    #[wasm_bindgen_test]
+    fn only_the_latest_commands_failure_is_said() {
+        let failure = RowFailure::new();
+        let older = failure.start();
+        let newer = failure.start();
+        failure.fail(older, "Could not open this file.".to_string());
+        assert_eq!(failure.said.get_untracked(), None);
+        failure.fail(newer, "Could not show this file in its folder.".to_string());
+        assert_eq!(
+            failure.said.get_untracked().as_deref(),
+            Some("Could not show this file in its folder.")
         );
     }
 }
