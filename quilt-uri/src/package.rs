@@ -305,9 +305,15 @@ impl TryFrom<&str> for S3PackageUri {
         let fragment = parsed_url.fragment().ok_or(UriError::Package(format!(
             "S3 package URI must contain a fragment: {input}"
         )))?;
-        let mut params: HashMap<_, _> = form_urlencoded::parse(fragment.as_bytes())
-            .into_owned()
-            .collect();
+        let mut params = HashMap::new();
+        for (key, value) in form_urlencoded::parse(fragment.as_bytes()).into_owned() {
+            if params.contains_key(&key) {
+                return Err(UriError::Package(format!(
+                    "`{key}` is given more than once in the fragment"
+                )));
+            }
+            params.insert(key, value);
+        }
 
         let pkg_spec = params
             .remove("package")
@@ -659,6 +665,25 @@ mod tests {
             uri.unwrap_err().to_string(),
             r#"Invalid package URI: unexpected parameters in fragment: {"foo": "bar"}"#.to_string(),
         );
+    }
+
+    /// A key given twice is an error, whichever one a reader would pick.
+    #[test]
+    fn a_repeated_fragment_key_is_refused() {
+        for (fragment, key) in [
+            ("package=team/pkg&package=other/pkg", "package"),
+            ("package=team/pkg&path=a.csv&path=b.csv", "path"),
+            ("package=team/pkg&catalog=quilt.test&catalog=other.test", "catalog"),
+            ("package=team/pkg&path=a.csv&path=a.csv", "path"),
+        ] {
+            let input = format!("quilt+s3://bucket#{fragment}");
+            let err = S3PackageUri::try_from(input.as_str())
+                .expect_err(&format!("{fragment} should not parse"));
+            assert!(
+                matches!(&err, UriError::Package(msg) if msg.contains(&format!("`{key}`"))),
+                "{fragment}: expected a package error naming {key}, got {err}"
+            );
+        }
     }
 
     #[test]
