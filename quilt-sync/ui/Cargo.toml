@@ -52,6 +52,7 @@ extensions = [".module.css"]
 [dev-dependencies]
 wasm-bindgen-test = "0.3.79"
 quilt-ui-kit = { path = "../../quilt-ui-kit", features = ["test-support"] }
+quilt-uri = { path = "../../quilt-uri", features = ["test-support"] }
 web-sys = { version = "0.3.106", features = ["DomTokenList", "Element", "Event", "EventInit", "FocusOptions", "HtmlButtonElement", "HtmlInputElement", "HtmlSelectElement", "InputEvent", "KeyboardEvent", "KeyboardEventInit", "Node", "NodeList", "PointerEvent", "PointerEventInit"] }
 
 [lints]
