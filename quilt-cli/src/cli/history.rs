@@ -211,6 +211,7 @@ mod tests {
     use crate::cli::commit;
     use crate::cli::create;
     use crate::cli::fixtures::old_revisions;
+    use crate::cli::fixtures::old_revisions::label;
     use crate::cli::model::Commands;
     use crate::cli::model::create_model_in_temp_dir;
 
@@ -548,23 +549,23 @@ mod tests {
 
         let output = read(&package).await?;
 
-        let said: Vec<(&str, String, Option<u64>)> = output
+        let said: Vec<(String, String, Option<u64>)> = output
             .rows
             .iter()
-            .map(|row| (row.revision.hash.as_str(), row.kept_words(), row.frees))
+            .map(|row| (label(&row.revision.hash), row.kept_words(), row.frees))
             .collect();
         assert_eq!(
             said,
             [
-                ("local-rev", "unpublished".to_string(), None),
+                ("local-rev".to_string(), "unpublished".to_string(), None),
                 (
-                    "current-rev",
+                    "current-rev".to_string(),
                     "current \u{b7} latest \u{b7} base".to_string(),
                     None
                 ),
-                ("old-3", String::new(), Some(0)),
-                ("old-2", String::new(), Some(1_500)),
-                ("old-1", String::new(), Some(210_400)),
+                ("old-3".to_string(), String::new(), Some(0)),
+                ("old-2".to_string(), String::new(), Some(1_500)),
+                ("old-1".to_string(), String::new(), Some(210_400)),
             ]
         );
         let json = output.to_json();
@@ -587,22 +588,22 @@ mod tests {
         let output = read(&package).await?;
 
         assert!(output.judged);
-        let said: Vec<(&str, String)> = output
+        let said: Vec<(String, String)> = output
             .rows
             .iter()
-            .map(|row| (row.revision.hash.as_str(), row.kept_words()))
+            .map(|row| (label(&row.revision.hash), row.kept_words()))
             .collect();
         assert_eq!(
             said,
             [
-                ("local-rev", "unpublished".to_string()),
+                ("local-rev".to_string(), "unpublished".to_string()),
                 (
-                    "current-rev",
+                    "current-rev".to_string(),
                     "current \u{b7} latest \u{b7} base".to_string()
                 ),
-                ("old-3", String::new()),
-                ("old-2", String::new()),
-                ("old-1", String::new()),
+                ("old-3".to_string(), String::new()),
+                ("old-2".to_string(), String::new()),
+                ("old-1".to_string(), String::new()),
             ]
         );
         Ok(())

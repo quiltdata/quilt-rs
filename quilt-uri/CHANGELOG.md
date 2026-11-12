@@ -20,10 +20,12 @@
 
 ### Added
 
+- `check_bucket` tells whether a bucket name follows S3's legacy rule, the one parsing and deserializing apply, and says why not (<https://github.com/quiltdata/quilt-rs/pull/1361>)
 - `is_top_hash` tells whether a string is a top hash: 64 lowercase hex characters, the rule the `@` revision parse applies (<https://github.com/quiltdata/quilt-rs/pull/1340>)
 
 ### Changed
 
+- **Breaking:** Deserializing `S3PackageUri`, `ManifestUri` and `RevisionPointer` applies the parser's checks: a hash revision must be a top hash, and the bucket must be 1 to 255 letters, digits, `.`, `_` or `-`, and not `.` or `..`. A stored hash may still be empty, as a remote that is set but not pushed yet holds it. Parsing `S3PackageUri` and `S3Uri` applies the same bucket rule, and a bad bucket is the new `UriError::Bucket`. The JSON form is unchanged (<https://github.com/quiltdata/quilt-rs/pull/1361>)
 - **Breaking:** `Namespace` refuses a prefix or name that is `.` or `..` or holds `\`, `:` or a control character, so each half is a single folder name. `S3PackageUri` parsing, `Namespace::try_from` and deserializing all apply it. `From<(String, String)>` and `From<(&str, &str)>`, which checked nothing, are now only in tests and the `test-support` feature; use `TryFrom` (<https://github.com/quiltdata/quilt-rs/pull/1359>)
 - **Breaking:** `S3PackageUri` parses an `@` revision only when it is a top hash: 64 lowercase hex characters. Anything else is a parse error, where before it was read as a hash that no package has. `display()` shortens a hand-built hash by characters, so one that holds multibyte characters no longer panics (<https://github.com/quiltdata/quilt-rs/pull/1339>)
 

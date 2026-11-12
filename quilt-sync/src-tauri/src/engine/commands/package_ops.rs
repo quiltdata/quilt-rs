@@ -2474,7 +2474,7 @@ mod tests {
             catalog: Some(fixtures::host()),
             bucket: "reqbucket".to_string(),
             namespace: ("foo", "bar").into(),
-            revision: quilt_uri::RevisionPointer::Hash("aaaa1111".to_string()),
+            revision: quilt_uri::RevisionPointer::Hash(fixtures::TOP_HASH.to_string()),
             path: None,
         }
     }

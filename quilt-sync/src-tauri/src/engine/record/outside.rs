@@ -227,16 +227,21 @@ mod tests {
         Namespace::from(("foo", "bar"))
     }
 
+    /// A hex letter stands for the top hash made of 64 of it.
+    fn top_hash(letter: &str) -> String {
+        letter.repeat(64)
+    }
+
     fn on(remote: &str, commit: Option<&str>) -> PackageLineage {
         PackageLineage {
             remote_uri: Some(ManifestUri {
                 bucket: "bucket".to_string(),
                 namespace: ns(),
-                hash: remote.to_string(),
+                hash: top_hash(remote),
                 origin: None,
             }),
             commit: commit.map(|hash| CommitState {
-                hash: hash.to_string(),
+                hash: top_hash(hash),
                 ..CommitState::default()
             }),
             ..PackageLineage::default()
@@ -259,8 +264,8 @@ mod tests {
         assert_eq!(
             draft.revision,
             Some(Revision {
-                from: Some("a".to_string()),
-                to: "b".to_string()
+                from: Some(top_hash("a")),
+                to: top_hash("b")
             })
         );
         assert_eq!(draft.files, vec![]);

@@ -78,10 +78,13 @@ async fn a_stranded_temp_file_is_not_a_revision() -> Res {
     Ok(())
 }
 
+/// The revision the remote is at, as its hash.
+const PUBLISHED: &str = "9999999999999999999999999999999999999999999999999999999999999999";
+
 const REMOTE: &str = r#"{
     "bucket": "bucket",
     "namespace": "test/history",
-    "hash": "published-rev",
+    "hash": "9999999999999999999999999999999999999999999999999999999999999999",
     "origin": "quilt.test"
 }"#;
 
@@ -90,7 +93,7 @@ const REMOTE: &str = r#"{
 const REMOTE_WITHOUT_CATALOG: &str = r#"{
     "bucket": "bucket",
     "namespace": "test/history",
-    "hash": "published-rev"
+    "hash": "9999999999999999999999999999999999999999999999999999999999999999"
 }"#;
 
 /// An installed `test/history` whose lineage has `remote_json` as its remote,
@@ -113,8 +116,8 @@ async fn package_over<R: Remote>(
                 "test/history": {{
                     "commit": null,
                     "remote": {remote_json},
-                    "base_hash": "published-rev",
-                    "latest_hash": "published-rev",
+                    "base_hash": "{PUBLISHED}",
+                    "latest_hash": "{PUBLISHED}",
                     "paths": {{}}
                 }}}},
             "home": "/tmp/working_dir"
@@ -166,7 +169,7 @@ async fn only_the_revisions_the_registry_lists_are_published() -> Res {
         .put_object(
             None,
             &format!("s3://bucket/{}", tag_key(&namespace, "1758500000")).parse()?,
-            b"published-rev".to_vec(),
+            PUBLISHED.as_bytes().to_vec(),
         )
         .await?;
     remote
@@ -177,12 +180,7 @@ async fn only_the_revisions_the_registry_lists_are_published() -> Res {
         )
         .await?;
     let (package, _dirs) = package_over(remote, REMOTE).await?;
-    install_manifest(
-        &package,
-        "published-rev",
-        r#"{"version":"v0","message":"Sent"}"#,
-    )
-    .await?;
+    install_manifest(&package, PUBLISHED, r#"{"version":"v0","message":"Sent"}"#).await?;
     install_manifest(
         &package,
         "orphan-rev",
@@ -260,15 +258,15 @@ async fn a_catalog_less_package_reads_its_pointers_from_the_bucket() -> Res {
         &remote,
         &[
             ("1758400000", "first-rev"),
-            ("1758500000", "published-rev"),
-            ("latest", "published-rev"),
+            ("1758500000", PUBLISHED),
+            ("latest", PUBLISHED),
         ],
     )
     .await?;
     let (package, _dirs) = package_over(remote, REMOTE_WITHOUT_CATALOG).await?;
     for (hash, message) in [
         ("first-rev", "First"),
-        ("published-rev", "Sent"),
+        (PUBLISHED, "Sent"),
         ("local-rev", "Kept here"),
     ] {
         install_manifest(
@@ -305,7 +303,7 @@ async fn the_listing_asks_the_registry_only_with_a_catalog() -> Res {
     ] {
         let remote = ListingRemote::default();
         let (package, _dirs) = package_over(remote, remote_json).await?;
-        install_manifest(&package, "published-rev", r#"{"version":"v0"}"#).await?;
+        install_manifest(&package, PUBLISHED, r#"{"version":"v0"}"#).await?;
 
         let lineage = package.lineage().await?;
         package.revision_history(&lineage).await?;
@@ -378,7 +376,7 @@ impl Remote for ListingRemote {
 #[test(tokio::test)]
 async fn unusable_ambient_credentials_fail_a_catalog_less_history() -> Res {
     let (package, _dirs) = package_over(LoggedOutRemote, REMOTE_WITHOUT_CATALOG).await?;
-    install_manifest(&package, "published-rev", r#"{"version":"v0"}"#).await?;
+    install_manifest(&package, PUBLISHED, r#"{"version":"v0"}"#).await?;
 
     let lineage = package.lineage().await?;
     let err = package
@@ -394,12 +392,7 @@ async fn unusable_ambient_credentials_fail_a_catalog_less_history() -> Res {
 #[test(tokio::test)]
 async fn a_refused_listing_fails_the_history() -> Res {
     let (package, _dirs) = package_over(DeniedRemote, REMOTE).await?;
-    install_manifest(
-        &package,
-        "published-rev",
-        r#"{"version":"v0","message":"Sent"}"#,
-    )
-    .await?;
+    install_manifest(&package, PUBLISHED, r#"{"version":"v0","message":"Sent"}"#).await?;
 
     let lineage = package.lineage().await?;
     let err = package
@@ -411,7 +404,7 @@ async fn a_refused_listing_fails_the_history() -> Res {
     Ok(())
 }
 
-/// `published-rev` is current, base and latest; `old-rev` is published
+/// [`PUBLISHED`] is current, base and latest; `old-rev` is published
 /// and old; `local-rev` was never published.
 async fn package_with_old_revisions()
 -> Res<(InstalledPackage<LocalStorage, MockRemote>, [TempDir; 2])> {
@@ -425,11 +418,11 @@ async fn package_with_old_revisions_on(
     let remote = MockRemote::default();
     seed_pointers(
         &remote,
-        &[("1758500000", "published-rev"), ("1758400000", "old-rev")],
+        &[("1758500000", PUBLISHED), ("1758400000", "old-rev")],
     )
     .await?;
     let (package, dirs) = package_over(remote, remote_json).await?;
-    for hash in ["published-rev", "old-rev", "local-rev"] {
+    for hash in [PUBLISHED, "old-rev", "local-rev"] {
         install_manifest(&package, hash, r#"{"version":"v0"}"#).await?;
     }
     Ok((package, dirs))
@@ -457,7 +450,7 @@ async fn an_old_published_revision_is_removed() -> Res {
     let report = package.remove_revisions(&hashes(&["old-rev"])).await?;
 
     assert_eq!(report.revisions, 1);
-    assert_eq!(held(&package).await?, vec!["local-rev", "published-rev"]);
+    assert_eq!(held(&package).await?, vec![PUBLISHED, "local-rev"]);
     Ok(())
 }
 
@@ -468,7 +461,7 @@ async fn an_old_revision_of_a_catalog_less_package_is_removed() -> Res {
     let report = package.remove_revisions(&hashes(&["old-rev"])).await?;
 
     assert_eq!(report.revisions, 1);
-    assert_eq!(held(&package).await?, vec!["local-rev", "published-rev"]);
+    assert_eq!(held(&package).await?, vec![PUBLISHED, "local-rev"]);
     Ok(())
 }
 
@@ -479,10 +472,7 @@ async fn a_kept_or_absent_revision_refuses_the_whole_removal() -> Res {
     let (package, _dirs) = package_with_old_revisions().await?;
 
     for (refused, why) in [
-        (
-            "published-rev",
-            "it is kept (current \u{b7} latest \u{b7} base)",
-        ),
+        (PUBLISHED, "it is kept (current \u{b7} latest \u{b7} base)"),
         ("local-rev", "it is kept (unpublished)"),
         ("gone-rev", "this copy does not hold it"),
     ] {
@@ -498,7 +488,7 @@ async fn a_kept_or_absent_revision_refuses_the_whole_removal() -> Res {
     }
     assert_eq!(
         held(&package).await?,
-        vec!["local-rev", "old-rev", "published-rev"]
+        vec![PUBLISHED, "local-rev", "old-rev"]
     );
     Ok(())
 }
