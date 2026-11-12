@@ -68,8 +68,7 @@ fn labels(view: &WorkflowView) -> Vec<String> {
 fn initial_label(view: &WorkflowView) -> String {
     view.options
         .get(view.initial)
-        .map(|option| option.label.clone())
-        .unwrap_or_default()
+        .map_or_default(|option| option.label.clone())
 }
 
 /// The workflow the option labelled `label` submits.

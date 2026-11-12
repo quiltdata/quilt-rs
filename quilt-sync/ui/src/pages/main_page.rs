@@ -591,8 +591,7 @@ fn package_group(
             groups
                 .iter()
                 .find(|group| group.title == key)
-                .map(|group| group.rows.clone())
-                .unwrap_or_default()
+                .map_or_default(|group| group.rows.clone())
         })
     });
     // The heading is its own reactive node: `group_annotation` reads the store's

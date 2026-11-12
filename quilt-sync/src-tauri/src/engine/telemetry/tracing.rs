@@ -186,7 +186,7 @@ fn init_tracing(
     logs_dir: &LogsDir,
     settings: std::result::Result<LogSettings, crate::engine::Error>,
 ) -> Option<WorkerGuard> {
-    let saved = settings.as_ref().map(|s| s.level).unwrap_or_default();
+    let saved = settings.as_ref().map_or_default(|s| s.level);
 
     let appender = rolling::RollingFileAppender::builder()
         .rotation(rolling::Rotation::DAILY)

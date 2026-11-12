@@ -328,8 +328,7 @@ fn file_group(
             groups
                 .iter()
                 .find(|group| group.title == key)
-                .map(|group| group.files.clone())
-                .unwrap_or_default()
+                .map_or_default(|group| group.files.clone())
         })
     });
     let heading = title.map(|heading| {

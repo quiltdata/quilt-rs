@@ -368,9 +368,7 @@ pub async fn get_settings_data(s: &Services) -> Result<SettingsData, String> {
     let auth_hosts = quilt::paths::list_auth_hosts(&data_dir);
     // A broken file costs the dropdown its value, not the whole page; startup
     // already logged why.
-    let log_level = LogSettings::load(&data_dir)
-        .map(|s| s.level)
-        .unwrap_or_default();
+    let log_level = LogSettings::load(&data_dir).map_or_default(|s| s.level);
     let publish_data = PublishSettingsData::from(publish.read().await.clone());
     let autosync_data = AutosyncSettingsData::from(autosync_settings.read().await.clone());
     let fswatcher_data = FsWatcherSettingsData::from(fswatcher_settings.read().await.clone());
