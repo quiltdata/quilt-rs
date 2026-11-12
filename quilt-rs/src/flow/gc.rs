@@ -847,12 +847,15 @@ mod tests {
         Ok(())
     }
 
-    /// A lock file whose name is no valid namespace is skipped.
+    /// A lock file whose name is no valid namespace is skipped, even while
+    /// someone holds it.
     #[test(tokio::test)]
     async fn a_lock_with_an_invalid_name_is_skipped() -> Res {
         let (domain, paths, _dir) = domain().await?;
         create(&domain, "acme/kept", &[("a.txt", "a")]).await?;
-        std::fs::write(paths.locks_dir().join("acme/..lock"), "")?;
+        let invalid = Namespace::from(("acme", "."));
+        let _held = package_lock::lock(&LocalStorage::new(), &paths, &invalid).await?;
+        assert!(paths.locks_dir().join("acme/..lock").is_file());
 
         assert!(domain.gc().await?.is_empty());
         Ok(())
