@@ -25,16 +25,16 @@
 
 ### Changed
 
-- **Breaking:** `S3PackageUri` parsing is stricter: a fragment key given twice is a `UriError::Package` error that names it, and a user, password, port, query or path before the fragment, a lone `/` too, is an error instead of being dropped. `S3Uri` parsing refuses a user, password, port or fragment; a key holding `#` is written `%23`
-- **Breaking:** `S3PackageUri`'s `to_string()` writes the whole hash and escapes every fragment value, so it parses back the same; ordinary addresses print as before. `to_copy_string()` is gone; use `to_string()`
-- **Breaking:** `display_for_host` on `S3Uri` and `S3PackageUri` puts each part of the address in its own path segment, so a `?`, `#` or `%` in a key, namespace or logical path stays in it. A `.` or `..` part, which no catalog URL keeps, is an error
+- **Breaking:** `S3PackageUri` parsing is stricter: a fragment key given twice is a `UriError::Package` error that names it, and a user, password, port, query or path before the fragment, a lone `/` too, is an error instead of being dropped. `S3Uri` parsing refuses a user, password, port or fragment; a key holding `#` is written `%23` (<https://github.com/quiltdata/quilt-rs/pull/1363>)
+- **Breaking:** `S3PackageUri`'s `to_string()` writes the whole hash and escapes every fragment value, so it parses back the same; ordinary addresses print as before. `to_copy_string()` is gone; use `to_string()` (<https://github.com/quiltdata/quilt-rs/pull/1363>)
+- **Breaking:** `display_for_host` on `S3Uri` and `S3PackageUri` puts each part of the address in its own path segment, so a `?`, `#` or `%` in a key, namespace or logical path stays in it. A `.` or `..` part, which no catalog URL keeps, is an error (<https://github.com/quiltdata/quilt-rs/pull/1363>)
 - **Breaking:** Deserializing `S3PackageUri`, `ManifestUri` and `RevisionPointer` applies the parser's checks: a hash revision must be a top hash, and the bucket must be 1 to 255 letters, digits, `.`, `_` or `-`, and not `.` or `..`. A stored hash may still be empty, as a remote that is set but not pushed yet holds it. Parsing `S3PackageUri` and `S3Uri` applies the same bucket rule, and a bad bucket is the new `UriError::Bucket`. The JSON form is unchanged (<https://github.com/quiltdata/quilt-rs/pull/1361>)
 - **Breaking:** `Namespace` refuses a prefix or name that is `.` or `..` or holds `\`, `:` or a control character, so each half is a single folder name. `S3PackageUri` parsing, `Namespace::try_from` and deserializing all apply it. `From<(String, String)>` and `From<(&str, &str)>`, which checked nothing, are now only in tests and the `test-support` feature; use `TryFrom` (<https://github.com/quiltdata/quilt-rs/pull/1359>)
 - **Breaking:** `S3PackageUri` parses an `@` revision only when it is a top hash: 64 lowercase hex characters. Anything else is a parse error, where before it was read as a hash that no package has. `display()` shortens a hand-built hash by characters, so one that holds multibyte characters no longer panics (<https://github.com/quiltdata/quilt-rs/pull/1339>)
 
 ### Fixed
 
-- `S3Uri`'s `to_string()` writes a hand-built bucket the parser refuses escaped, instead of panicking
+- `S3Uri`'s `to_string()` writes a hand-built bucket the parser refuses escaped, instead of panicking (<https://github.com/quiltdata/quilt-rs/pull/1363>)
 
 ## [v0.4.3] - 2026-10-22
 
