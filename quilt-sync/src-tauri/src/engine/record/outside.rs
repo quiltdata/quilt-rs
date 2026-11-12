@@ -155,20 +155,23 @@ impl Outside {
             .read_locked(&LocalStorage::new(), |domain| {
                 let mut seen = self.seen.lock().expect("outside lock");
                 let before = seen.clone();
-                let drafts: Vec<Draft> = domain
+                // Numbered under the lock, so a write after it, ours or
+                // another tool's, comes later in the record.
+                let entries: Vec<_> = domain
                     .packages
                     .iter()
                     .filter_map(|(namespace, lineage)| saw(&mut seen, namespace, Some(lineage)))
+                    .map(|draft| self.record.number(draft))
                     .collect();
                 seen.retain(|namespace, _| domain.packages.contains_key(namespace));
                 self.save_if_changed(&before, &seen);
-                drafts
+                entries
             })
             .await;
         match found {
-            Ok(drafts) => {
-                for draft in drafts {
-                    self.record.add(draft).await;
+            Ok(entries) => {
+                for entry in entries {
+                    self.record.insert(entry).await;
                 }
             }
             Err(err) => debug!("outside: could not read the packages: {err}"),
