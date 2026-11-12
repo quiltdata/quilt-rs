@@ -19,32 +19,24 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.53.0-dev]
+## [v0.53.0] - 2026-11-12
 
 ### Added
 
-- **Breaking:** `flow::ResolveComparison` says what making this revision `latest` takes from the published one: `lost`, the published rows it lacks or holds at another content hash or entry `meta`, and `user_meta_differs` (<https://github.com/quiltdata/quilt-rs/pull/1321>)
-- `flow::push_onto` and `LocalDomain::push_onto` publish a manifest whose rows are already on the remote as the revision after a given parent, and move `latest` to it only while `latest` still names that parent (<https://github.com/quiltdata/quilt-rs/pull/1320>)
-- `flow::merge_onto` applies a copy's change onto `latest` path by path, and refuses with a `MergeRefusal` where both sides changed a path or the package metadata differently; `flow::merge_rows_onto` merges the rows alone (<https://github.com/quiltdata/quilt-rs/pull/1322>)
-- `LockedPackage::move_to` moves a copy onto a revision that already holds its own pushed revision as a pull would, writing only the paths the two differ at and keeping other local changes (<https://github.com/quiltdata/quilt-rs/pull/1323>)
-- `LineageHook`, set with `LocalDomain::with_lineage_hook`, is told of each package entry a write of `data.json` changes, as the write found it and left it; `DomainLineageIo::read_locked` reads the record under the lock those writes take (<https://github.com/quiltdata/quilt-rs/pull/1356>)
+- A copy's changes can land on top of a newer `latest`: `flow::merge_onto` merges them path by path and refuses with `MergeRefusal` where both sides changed the same path or the package metadata, `flow::push_onto` publishes the result after the given parent, and `LockedPackage::move_to` moves the copy onto it, writing only the paths that differ (<https://github.com/quiltdata/quilt-rs/pull/1320>, <https://github.com/quiltdata/quilt-rs/pull/1322>, <https://github.com/quiltdata/quilt-rs/pull/1323>)
+- **Breaking:** `flow::ResolveComparison` lists what making a revision `latest` takes from the published one: `lost` rows and `user_meta_differs` (<https://github.com/quiltdata/quilt-rs/pull/1321>)
+- `LineageHook`, set with `LocalDomain::with_lineage_hook`, is told of each package entry a write of `data.json` changes (<https://github.com/quiltdata/quilt-rs/pull/1356>)
 
 ### Fixed
 
-- A lineage file whose remote has a bucket name S3 does not allow, or a hash that is not a top hash, is refused with a parse error, and `set_remote` refuses such a bucket with a `UriError::Bucket` error before it asks S3 or saves anything (<https://github.com/quiltdata/quilt-rs/pull/1361>)
-- A package namespace whose prefix or name is `.` or `..` or holds `\`, `:` or a control character is refused with a `UriError::Namespace` error, whether it comes from a URI, a lineage file or a caller (<https://github.com/quiltdata/quilt-rs/pull/1359>)
-- A top hash read from a tag pointer (`latest` or a timestamp) must be 64 lowercase hex characters, as in a parsed `@` revision; anything else is a `UriError::Package` error instead of being used as the revision's hash (<https://github.com/quiltdata/quilt-rs/pull/1340>)
-- `InstalledPackage::status` and `recompute_local_status` work when the catalog can't be reached: they hash new files with the algorithm the manifest uses and report the tip as not read (<https://github.com/quiltdata/quilt-rs/pull/1338>)
-- `reset_to_latest` on a copy already at `latest`'s revision records that revision as its base, so the copy reads up to date rather than Diverged (<https://github.com/quiltdata/quilt-rs/pull/1320>)
-- **Breaking:** a pull no longer deletes a file the remote removed that was edited while the pull downloaded. An edit before the first file is replaced refuses the pull with `PullConflict`; one after keeps the file, untracked, listed in the new `PullReport::kept_not_removed` (<https://github.com/quiltdata/quilt-rs/pull/1328>)
+- **Breaking:** A pull no longer deletes a file the remote removed if it was edited during the pull. It refuses with `PullConflict`, or keeps the file untracked and lists it in `PullReport::kept_not_removed` (<https://github.com/quiltdata/quilt-rs/pull/1328>)
+- `InstalledPackage::status` works when the catalog can't be reached (<https://github.com/quiltdata/quilt-rs/pull/1338>)
+- `reset_to_latest` on a copy already at `latest` leaves it up to date instead of Diverged (<https://github.com/quiltdata/quilt-rs/pull/1320>)
+- Package URIs read from lineage files and tag pointers get the same checks as parsed ones, and `set_remote` refuses a bucket name S3 does not allow (<https://github.com/quiltdata/quilt-rs/pull/1340>, <https://github.com/quiltdata/quilt-rs/pull/1359>, <https://github.com/quiltdata/quilt-rs/pull/1361>)
 
 ### quilt-uri
 
-- Updated [from v0.4.3 to v0.5.0-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-uri/v0.4.3...main) (see [quilt-uri/CHANGELOG.md](../quilt-uri/CHANGELOG.md))
-  - <https://github.com/quiltdata/quilt-rs/pull/1339>
-  - <https://github.com/quiltdata/quilt-rs/pull/1340>
-  - <https://github.com/quiltdata/quilt-rs/pull/1359>
-  - <https://github.com/quiltdata/quilt-rs/pull/1361>
+- Updated [from v0.4.3 to v0.5.0](https://github.com/quiltdata/quilt-rs/compare/quilt-uri/v0.4.3...quilt-uri/v0.5.0) (see [quilt-uri/CHANGELOG.md](../quilt-uri/CHANGELOG.md))
 
 ## [v0.52.0] - 2026-11-05
 
