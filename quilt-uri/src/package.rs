@@ -87,16 +87,29 @@ impl fmt::Display for Namespace {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl From<(String, String)> for Namespace {
     fn from((prefix, name): (String, String)) -> Self {
         Namespace { prefix, name }
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl From<(&str, &str)> for Namespace {
     fn from((prefix, name): (&str, &str)) -> Self {
         (prefix.to_string(), name.to_string()).into()
     }
+}
+
+/// Each half is a folder name on disk, so it must stay a single folder on
+/// every platform: not `.` or `..`, and no separator, drive colon or control
+/// character.
+fn is_plain_half(half: &str) -> bool {
+    half != "."
+        && half != ".."
+        && !half
+            .chars()
+            .any(|c| matches!(c, '/' | '\\' | ':') || c.is_control())
 }
 
 impl TryFrom<&str> for Namespace {
@@ -114,6 +127,11 @@ impl TryFrom<&str> for Namespace {
         if name.contains('/') {
             return Err(UriError::Namespace(format!(
                 "namespace must contain exactly one `/`; got: {input}"
+            )));
+        }
+        if !is_plain_half(prefix) || !is_plain_half(name) {
+            return Err(UriError::Namespace(format!(
+                "namespace prefix and name must not be `.` or `..` or hold `\\`, `:` or control characters; got: {input:?}"
             )));
         }
         Ok(Namespace {
@@ -1042,6 +1060,55 @@ mod tests {
             err.to_string(),
             "Invalid namespace: namespace must contain exactly one `/`; got: foo/bar/baz"
         );
+    }
+
+    /// Each half becomes a folder name on disk, so the URI parser refuses any
+    /// half that would not stay one folder.
+    #[test]
+    fn a_uri_refuses_a_namespace_half_that_is_not_a_plain_folder_name() {
+        for package in [
+            "../evil",
+            "evil/..",
+            "./evil",
+            "%2e%2e/%2e%2e",
+            "a/..%5C..%5C..%5Cx",
+            "a%5Cb/c",
+            "a/b%00",
+            "a%0Ab/c",
+            "a/b%09c",
+            "a/b%7F",
+        ] {
+            let input = format!("quilt+s3://bucket#package={package}");
+            let err = S3PackageUri::try_from(input.as_str())
+                .expect_err(&format!("{package} should not parse"));
+            assert!(
+                matches!(err, UriError::Namespace(_)),
+                "{package}: expected a namespace error, got {err}"
+            );
+        }
+    }
+
+    /// Deserialize reaches the same check, so a stored namespace gets it too.
+    #[test]
+    fn a_deserialized_namespace_gets_the_same_check() {
+        for namespace in ["C:/evil", "a/C:", "../evil", "a/\\x", "a/b\u{0}", "a\nb/c"] {
+            let json = serde_json::to_string(namespace).unwrap();
+            assert!(
+                serde_json::from_str::<Namespace>(&json).is_err(),
+                "{namespace:?} should not deserialize"
+            );
+        }
+    }
+
+    /// Dots, dashes and underscores inside a half still parse.
+    #[test]
+    fn a_dotted_namespace_still_parses() -> Res {
+        let uri = S3PackageUri::try_from("quilt+s3://bucket#package=my.team_1/plate-07.v2")?;
+        assert_eq!(uri.namespace.prefix(), "my.team_1");
+        assert_eq!(uri.namespace.name(), "plate-07.v2");
+        let ns: Namespace = serde_json::from_str("\"..a/b..\"").unwrap();
+        assert_eq!(ns.to_string(), "..a/b..");
+        Ok(())
     }
 
     #[test]

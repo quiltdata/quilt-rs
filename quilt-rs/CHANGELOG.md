@@ -31,6 +31,7 @@
 
 ### Fixed
 
+- A package namespace whose prefix or name is `.` or `..` or holds `\`, `:` or a control character is refused with a `UriError::Namespace` error, whether it comes from a URI, a lineage file or a caller, so a package folder always lands inside its home (<https://github.com/quiltdata/quilt-rs/pull/NNNN>)
 - A top hash read from a tag pointer (`latest` or a timestamp) must be 64 lowercase hex characters, as in a parsed `@` revision; anything else is a `UriError::Package` error instead of being used as the revision's hash (<https://github.com/quiltdata/quilt-rs/pull/1340>)
 - `InstalledPackage::status` and `recompute_local_status` work when the catalog can't be reached: they hash new files with the algorithm the manifest uses and report the tip as not read (<https://github.com/quiltdata/quilt-rs/pull/1338>)
 - `reset_to_latest` on a copy already at `latest`'s revision records that revision as its base, so the copy reads up to date rather than Diverged (<https://github.com/quiltdata/quilt-rs/pull/1320>)
@@ -41,6 +42,7 @@
 - Updated [from v0.4.3 to v0.5.0-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-uri/v0.4.3...main) (see [quilt-uri/CHANGELOG.md](../quilt-uri/CHANGELOG.md))
   - <https://github.com/quiltdata/quilt-rs/pull/1339>
   - <https://github.com/quiltdata/quilt-rs/pull/1340>
+  - <https://github.com/quiltdata/quilt-rs/pull/NNNN>
 
 ## [v0.52.0] - 2026-11-05
 

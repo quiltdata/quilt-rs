@@ -426,8 +426,12 @@ pub(crate) async fn lock_every_package(
             let Some(lock_file) = entry.path.file_name() else {
                 continue;
             };
-            if let Some(name) = lock_file.to_string_lossy().strip_suffix(".lock") {
-                namespaces.insert((owner.as_ref(), name).into());
+            // A lock whose name is no valid namespace belongs to no package
+            // this library can open, so there is nothing to wait for.
+            if let Some(name) = lock_file.to_string_lossy().strip_suffix(".lock")
+                && let Ok(namespace) = Namespace::try_from(format!("{owner}/{name}"))
+            {
+                namespaces.insert(namespace);
             }
         }
     }
@@ -838,6 +842,18 @@ mod tests {
         std::fs::write(paths.installed_dir().join(".DS_Store"), "")?;
         std::fs::write(paths.installed_dir().join("acme/.DS_Store"), "")?;
         std::fs::write(paths.locks_dir().join(".DS_Store"), "")?;
+
+        assert!(domain.gc().await?.is_empty());
+        Ok(())
+    }
+
+    /// A lock file whose name is no valid namespace is skipped.
+    #[test(tokio::test)]
+    async fn a_lock_with_an_invalid_name_is_skipped() -> Res {
+        let (domain, paths, _dir) = domain().await?;
+        create(&domain, "acme/kept", &[("a.txt", "a")]).await?;
+        std::fs::write(paths.locks_dir().join("acme/..lock"), "")?;
+        std::fs::write(paths.locks_dir().join("acme/a\\b.lock"), "")?;
 
         assert!(domain.gc().await?.is_empty());
         Ok(())

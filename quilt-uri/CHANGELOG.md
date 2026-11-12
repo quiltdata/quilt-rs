@@ -24,6 +24,7 @@
 
 ### Changed
 
+- **Breaking:** `Namespace` refuses a prefix or name that is `.` or `..` or holds `\`, `:` or a control character, so each half is a single folder name. `S3PackageUri` parsing, `Namespace::try_from` and deserializing all apply it. `From<(String, String)>` and `From<(&str, &str)>`, which checked nothing, are now only in tests and the `test-support` feature; use `TryFrom` (<https://github.com/quiltdata/quilt-rs/pull/NNNN>)
 - **Breaking:** `S3PackageUri` parses an `@` revision only when it is a top hash: 64 lowercase hex characters. Anything else is a parse error, where before it was read as a hash that no package has. `display()` shortens a hand-built hash by characters, so one that holds multibyte characters no longer panics (<https://github.com/quiltdata/quilt-rs/pull/1339>)
 
 ## [v0.4.3] - 2026-10-22
