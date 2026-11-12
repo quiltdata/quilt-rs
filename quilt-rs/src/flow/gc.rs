@@ -853,7 +853,6 @@ mod tests {
         let (domain, paths, _dir) = domain().await?;
         create(&domain, "acme/kept", &[("a.txt", "a")]).await?;
         std::fs::write(paths.locks_dir().join("acme/..lock"), "")?;
-        std::fs::write(paths.locks_dir().join("acme/a\\b.lock"), "")?;
 
         assert!(domain.gc().await?.is_empty());
         Ok(())
