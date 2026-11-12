@@ -43,7 +43,7 @@ impl TryFrom<RawRevisionPointer> for RevisionPointer {
     fn try_from(raw: RawRevisionPointer) -> Result<Self, Self::Error> {
         match raw {
             RawRevisionPointer::Hash(hash) => {
-                check_top_hash(&hash)?;
+                check_stored_hash(&hash)?;
                 Ok(Self::Hash(hash))
             }
             RawRevisionPointer::Tag(tag) => Ok(Self::Tag(tag)),
@@ -377,7 +377,17 @@ pub fn is_top_hash(hash: &str) -> bool {
     hash.len() == 64 && hash.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
-pub(crate) fn check_top_hash(hash: &str) -> Result<(), UriError> {
+/// A stored hash is a top hash, or empty for a remote that is set but not
+/// pushed yet.
+pub(crate) fn check_stored_hash(hash: &str) -> Result<(), UriError> {
+    if hash.is_empty() {
+        Ok(())
+    } else {
+        check_top_hash(hash)
+    }
+}
+
+fn check_top_hash(hash: &str) -> Result<(), UriError> {
     if is_top_hash(hash) {
         Ok(())
     } else {
@@ -1429,7 +1439,6 @@ mod tests {
         for hash in [
             "../../../../tmp/x",
             "abc123",
-            "",
             "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF",
         ] {
             let json = format!(
@@ -1441,6 +1450,20 @@ mod tests {
                 "{hash:?} should not deserialize"
             );
         }
+    }
+
+    /// A remote set but not pushed yet has an empty hash, and its package URI
+    /// still reads.
+    #[test]
+    fn a_package_uri_not_pushed_yet_reads() {
+        let uri = S3PackageUri::from(ManifestUri {
+            origin: None,
+            bucket: "team-bucket".to_string(),
+            namespace: ("user", "plate-07").into(),
+            hash: String::new(),
+        });
+        let json = serde_json::to_string(&uri).unwrap();
+        assert_eq!(serde_json::from_str::<S3PackageUri>(&json).unwrap(), uri);
     }
 
     /// The parser refuses a bucket name S3 never allowed.

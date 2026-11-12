@@ -9,7 +9,7 @@ use crate::RevisionPointer;
 use crate::S3PackageUri;
 use crate::S3Uri;
 use crate::UriError;
-use crate::package::check_top_hash;
+use crate::package::check_stored_hash;
 use crate::paths;
 use crate::s3::check_bucket;
 
@@ -41,10 +41,7 @@ impl TryFrom<RawManifestUri> for ManifestUri {
 
     fn try_from(raw: RawManifestUri) -> Result<Self, Self::Error> {
         check_bucket(&raw.bucket)?;
-        // An empty hash is a remote that is set but not pushed yet.
-        if !raw.hash.is_empty() {
-            check_top_hash(&raw.hash)?;
-        }
+        check_stored_hash(&raw.hash)?;
         Ok(Self {
             origin: raw.origin,
             bucket: raw.bucket,
