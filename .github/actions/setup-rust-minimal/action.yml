@@ -18,11 +18,14 @@ inputs:
     required: false
     default: ""
 
+# The actions below stay pinned by commit: the lockfile covers them only for
+# this repository's workflows. `gh actions-lock` rewrites these pins to tags;
+# put them back before committing.
 runs:
   using: "composite"
   steps:
     - name: Setup Rust
-      uses: moonrepo/setup-rust@v1
+      uses: moonrepo/setup-rust@abb2d32350334249b178c401e5ec5836e0cd88d3 # v1.3.0
       with:
         # Its cache is one per OS, shared by every job. rust-cache below keeps one per job.
         cache: false

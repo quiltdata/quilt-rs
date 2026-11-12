@@ -56,22 +56,26 @@ jobs:
     permissions:
       pull-requests: read
     outputs:
+      actions: ${{ github.event_name != 'pull_request' || steps.filter.outputs.actions == 'true' }}
       md: ${{ github.event_name != 'pull_request' || steps.filter.outputs.md == 'true' }}
       css: ${{ github.event_name != 'pull_request' || steps.filter.outputs.css == 'true' }}
       crates: ${{ github.event_name != 'pull_request' || steps.filter.outputs.crates == 'true' }}
       sync: ${{ github.event_name != 'pull_request' || steps.filter.outputs.sync == 'true' }}
       ui: ${{ github.event_name != 'pull_request' || steps.filter.outputs.ui == 'true' }}
     steps:
-      # Pinned by commit: it is third-party code. A rename counts at both its
-      # old and new path. `some-with-excludes`: a file counts when it matches a
-      # pattern and none of the `!` ones.
+      # A rename counts at both its old and new path. `some-with-excludes`: a
+      # file counts when it matches a pattern and none of the `!` ones.
       - name: List the jobs to run
         id: filter
         if: github.event_name == 'pull_request'
-        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        uses: dorny/paths-filter@v4.0.3
         with:
           predicate-quantifier: some-with-excludes
           filters: |
+            # The workflows, the composite actions they call, and the lockfile.
+            actions:
+              - .github/workflows/**
+              - .github/actions/**
             md:
               - "**/*.md"
               - .rumdl.toml
@@ -120,13 +124,13 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
       # The project's own action downloads the release binary and checks its
-      # sha256. Pinned by commit: it is third-party code. It installs the
-      # latest rumdl, as a local `cargo install rumdl` does.
+      # sha256. It installs the latest rumdl, as a local `cargo install rumdl`
+      # does.
       - name: Install rumdl
-        uses: rvben/rumdl@dac508e6b2f52c1d869811d138ffc1ff2b9f6e71 # v0.3.3
+        uses: rvben/rumdl@v0.3.3
         with:
           install-only: true
 
@@ -149,11 +153,10 @@ jobs:
       BIOME_VERSION: 2.6.6
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
-      # The project's own action, pinned by commit as third-party code.
       - name: Install Biome
-        uses: biomejs/setup-biome@4c91541eaada48f67d7dbd7833600ce162b68f51 # v2.7.1
+        uses: biomejs/setup-biome@v2.7.1
         with:
           version: ${{ env.BIOME_VERSION }}
 
@@ -178,15 +181,15 @@ jobs:
       SCOPE: --workspace --all-targets --exclude quilt-sync --exclude quilt-sync-ui --exclude quilt-ui-kit
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
       - name: Setup Rust for development
-        uses: ./.github/actions/setup-rust-dev
+        uses: $/.github/actions/setup-rust-dev
         with:
           targets: wasm32-unknown-unknown
 
       - name: Install cargo-nextest and just
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@v2.90.3
         with:
           tool: nextest,just
 
@@ -239,15 +242,15 @@ jobs:
         shell: bash
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
       - name: Setup Rust for testing
-        uses: ./.github/actions/setup-rust-minimal
+        uses: $/.github/actions/setup-rust-minimal
         with:
           components: clippy
 
       - name: Install cargo-nextest and just
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@v2.90.3
         with:
           tool: nextest,just
 
@@ -302,13 +305,13 @@ jobs:
         shell: bash
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
       - name: Setup Rust for testing
-        uses: ./.github/actions/setup-rust-minimal
+        uses: $/.github/actions/setup-rust-minimal
 
       - name: Install cargo-nextest and just
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@v2.90.3
         with:
           tool: nextest,just
 
@@ -319,6 +322,32 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
+  actions-lock:
+    name: actions-lock
+    # Every action a workflow uses, and every action those call, is pinned to
+    # a commit in `.github/workflows/actions.lock`. This fails when the
+    # lockfile is out of date with the workflows or a pin no longer verifies
+    # upstream; run `gh actions-lock` and commit the result.
+    needs: changes
+    if: needs.changes.outputs.actions == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      # renovate: datasource=github-releases depName=github/gh-actions-lock
+      GH_ACTIONS_LOCK_VERSION: v0.4.1
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install gh-actions-lock
+        run: gh extension install github/gh-actions-lock --pin "$GH_ACTIONS_LOCK_VERSION"
+
+      - name: Verify the lockfile
+        run: gh actions-lock --verify
+
   cargo-deny:
     name: cargo-deny
     needs: changes
@@ -327,12 +356,12 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
       # A prebuilt binary, not EmbarkStudios/cargo-deny-action: that action builds
       # a Docker image from Docker Hub, and anonymous pulls hit its rate limit.
       - name: Install cargo-deny and just
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@v2.90.3
         with:
           tool: cargo-deny,just
 
@@ -354,16 +383,16 @@ jobs:
       CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
       - name: Install Ubuntu dependencies
-        uses: ./.github/actions/install-ubuntu-deps
+        uses: $/.github/actions/install-ubuntu-deps
 
       - name: Setup Rust for development
-        uses: ./.github/actions/setup-rust-dev
+        uses: $/.github/actions/setup-rust-dev
 
       - name: Install cargo-nextest and just
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@v2.90.3
         with:
           tool: nextest,just
 
@@ -407,16 +436,16 @@ jobs:
         shell: bash
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
       - name: Setup Rust for testing
-        uses: ./.github/actions/setup-rust-minimal
+        uses: $/.github/actions/setup-rust-minimal
         with:
           targets: ${{ matrix.platform == 'macos-15' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
           components: clippy
 
       - name: Install cargo-nextest and just
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@v2.90.3
         with:
           tool: nextest,just
 
@@ -438,15 +467,15 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
       - name: Setup Rust
-        uses: ./.github/actions/setup-rust-dev
+        uses: $/.github/actions/setup-rust-dev
         with:
           targets: wasm32-unknown-unknown
 
       - name: Install cargo-nextest and just
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@v2.90.3
         with:
           tool: nextest,just
 
@@ -482,15 +511,15 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
       - name: Setup Rust
-        uses: ./.github/actions/setup-rust-dev
+        uses: $/.github/actions/setup-rust-dev
         with:
           targets: wasm32-unknown-unknown
 
       - name: Install just
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@v2.90.3
         with:
           tool: just
 
@@ -501,7 +530,7 @@ jobs:
         run: cargo metadata --format-version 1 --locked | jq -r '"version=" + (.packages[] | select(.name == "wasm-bindgen") | .version)' >> "$GITHUB_OUTPUT"
 
       - name: Install wasm-bindgen-cli
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@v2.90.3
         with:
           tool: wasm-bindgen-cli@${{ steps.wasm-bindgen-version.outputs.version }}
 
@@ -517,23 +546,23 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
       - name: Setup Rust
-        uses: ./.github/actions/setup-rust-dev
+        uses: $/.github/actions/setup-rust-dev
         with:
           targets: wasm32-unknown-unknown
 
       # Trunk's pre_build hook bundles the JSON editor with npm.
       - name: Setup Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@v7.1.0
         with:
           node-version: '26'
           cache: 'npm'
           cache-dependency-path: 'quilt-sync/ui/package-lock.json'
 
       - name: Install trunk and just
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@v2.90.3
         with:
           tool: trunk,just
 
@@ -542,7 +571,7 @@ jobs:
       # CLI generates the hashed class names the library resolves, so a skew
       # between them breaks styling silently rather than loudly.
       - name: Install stylance
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@v2.90.3
         with:
           tool: stylance-cli@0.8.4
 
@@ -564,33 +593,33 @@ jobs:
       CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
       # The engine links WebKitGTK even when it runs headless.
       - name: Install Ubuntu dependencies
-        uses: ./.github/actions/install-ubuntu-deps
+        uses: $/.github/actions/install-ubuntu-deps
 
       - name: Setup Rust for development
-        uses: ./.github/actions/setup-rust-dev
+        uses: $/.github/actions/setup-rust-dev
         with:
           targets: wasm32-unknown-unknown
 
       # Trunk's pre_build hook needs npm.
       - name: Setup Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@v7.1.0
         with:
           node-version: '26'
           cache: 'npm'
           cache-dependency-path: quilt-sync/ui/package-lock.json
 
       - name: Install trunk, cargo-nextest and just
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@v2.90.3
         with:
           tool: trunk,nextest,just
 
       # Pinned for the reason given in `frontend build`.
       - name: Install stylance
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@v2.90.3
         with:
           tool: stylance-cli@0.8.4
 
@@ -606,6 +635,7 @@ jobs:
     # queue. A skipped job counts as passed.
     needs:
       - changes
+      - actions-lock
       - markdown
       - css
       - crates

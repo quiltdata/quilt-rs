@@ -6,6 +6,9 @@ inputs:
     description: "Packages to install"
     default: "libwebkit2gtk-4.1-dev libxdo-dev libssl-dev librsvg2-dev libayatana-appindicator3-dev mold"
 
+# The actions below stay pinned by commit: the lockfile covers them only for
+# this repository's workflows. `gh actions-lock` rewrites these pins to tags;
+# put them back before committing.
 runs:
   using: "composite"
   steps:
@@ -25,7 +28,7 @@ runs:
     # The runner's Ubuntu mirror is sometimes slow enough to stall the job, so package files come from the cache
     - name: Restore package files
       id: apt-restore
-      uses: actions/cache/restore@v6
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ~/apt-archives
         key: ${{ steps.apt-key.outputs.key }}
@@ -42,7 +45,7 @@ runs:
     # Pull requests restore main's cache and never write their own.
     - name: Save package files
       if: steps.apt-restore.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
-      uses: actions/cache/save@v6
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ~/apt-archives
         key: ${{ steps.apt-key.outputs.key }}

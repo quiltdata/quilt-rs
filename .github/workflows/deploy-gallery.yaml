@@ -32,15 +32,15 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
       - name: Setup Rust
-        uses: ./.github/actions/setup-rust-dev
+        uses: $/.github/actions/setup-rust-dev
         with:
           targets: wasm32-unknown-unknown
 
       - name: Setup Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@v7.1.0
         with:
           node-version: '26'
           cache: 'npm'
@@ -55,7 +55,7 @@ jobs:
       # Matches the `stylance` crate in both UI crates' Cargo.toml: a skew breaks
       # styling silently.
       - name: Install stylance
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@v2.90.3
         with:
           tool: stylance-cli@0.8.4
 
@@ -71,7 +71,7 @@ jobs:
         run: cp -R quilt-ui-kit/dist-pages quilt-sync/ui/dist-pages/kit
 
       - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v5
+        uses: actions/upload-pages-artifact@v5.0.0
         with:
           path: quilt-sync/ui/dist-pages
 
@@ -89,4 +89,4 @@ jobs:
     steps:
       - name: Deploy
         id: deployment
-        uses: actions/deploy-pages@v5
+        uses: actions/deploy-pages@v5.0.1
