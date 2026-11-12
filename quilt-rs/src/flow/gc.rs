@@ -744,7 +744,7 @@ mod tests {
         let (paths, _dir) = DomainPaths::from_temp_dir()?;
         let storage = LocalStorage::new();
         let row = ManifestRow {
-            logical_key: "a.txt".parse().unwrap(),
+            logical_key: "a.txt".parse()?,
             physical_key: url::Url::from_file_path(paths.objects_dir().join("old-name"))
                 .expect("absolute")
                 .to_string(),

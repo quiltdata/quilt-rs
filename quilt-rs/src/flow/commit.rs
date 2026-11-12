@@ -652,8 +652,9 @@ mod tests {
             changes: BTreeMap::from([(
                 PathBuf::from("one/two two/three three three/READ ME.md"),
                 Change::Removed(ManifestRow {
-                    logical_key: crate::LogicalKey::new("one/two two/three three three/READ ME.md")
-                        .unwrap(),
+                    logical_key: crate::LogicalKey::new(
+                        "one/two two/three three three/READ ME.md",
+                    )?,
                     ..ManifestRow::default()
                 }),
             )]),
@@ -720,7 +721,7 @@ mod tests {
         let manifest = fixtures::manifest_with_objects_all_sizes::manifest().await?;
         let base_record = manifest.get_record(&PathBuf::from("0mb.bin")).unwrap();
         let added_file = ManifestRow {
-            logical_key: crate::LogicalKey::new("foo").unwrap(),
+            logical_key: crate::LogicalKey::new("foo")?,
             hash: base_record.hash.clone(),
             size: base_record.size,
             physical_key: base_record.physical_key.clone(),
@@ -797,8 +798,7 @@ mod tests {
             .get_record(&PathBuf::from("one/two two/three three three/READ ME.md"))
             .unwrap();
         let added_file = ManifestRow {
-            logical_key: crate::LogicalKey::new("one/two two/three three three/READ ME.md")
-                .unwrap(),
+            logical_key: crate::LogicalKey::new("one/two two/three three three/READ ME.md")?,
             hash: base_record.hash.clone(),
             size: base_record.size,
             physical_key: base_record.physical_key.clone(),
@@ -878,8 +878,7 @@ mod tests {
             .get_record(&PathBuf::from("less-then-8mb.txt"))
             .unwrap();
         let modified_file = ManifestRow {
-            logical_key: crate::LogicalKey::new("one/two two/three three three/READ ME.md")
-                .unwrap(),
+            logical_key: crate::LogicalKey::new("one/two two/three three three/READ ME.md")?,
             hash: base_record.hash.clone(),
             size: base_record.size,
             physical_key: base_record.physical_key.clone(),

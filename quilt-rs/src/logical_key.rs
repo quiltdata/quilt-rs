@@ -213,6 +213,7 @@ impl<'de> Deserialize<'de> for LogicalKey {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Res;
 
     #[test]
     fn keys_inside_the_package_are_accepted() {
@@ -273,19 +274,21 @@ mod tests {
     }
 
     #[test]
-    fn a_key_joins_inside_its_folder() {
+    fn a_key_joins_inside_its_folder() -> Res {
         let folder = Path::new("home").join("pkg");
-        let key = LogicalKey::new("a/b.txt").unwrap();
+        let key = LogicalKey::new("a/b.txt")?;
         assert_eq!(key.join_to(&folder), folder.join("a").join("b.txt"));
+        Ok(())
     }
 
     #[test]
-    fn a_manifest_key_is_checked_when_read() {
-        let key: LogicalKey = serde_json::from_str("\"a/b.txt\"").unwrap();
+    fn a_manifest_key_is_checked_when_read() -> Res {
+        let key: LogicalKey = serde_json::from_str("\"a/b.txt\"")?;
         assert_eq!(key.as_path(), Path::new("a/b.txt"));
-        assert_eq!(serde_json::to_string(&key).unwrap(), "\"a/b.txt\"");
+        assert_eq!(serde_json::to_string(&key)?, "\"a/b.txt\"");
 
         let err = serde_json::from_str::<LogicalKey>("\"../b.txt\"").unwrap_err();
         assert!(err.to_string().contains("can't be a logical key"), "{err}");
+        Ok(())
     }
 }

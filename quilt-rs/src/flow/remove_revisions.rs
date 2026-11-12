@@ -288,14 +288,16 @@ mod tests {
     fn revision(paths: &DomainPaths, namespace: (&str, &str), hash: &str, objects: &[&str]) -> Res {
         let rows = objects
             .iter()
-            .map(|name| ManifestRow {
-                logical_key: name.parse().unwrap(),
-                physical_key: url::Url::from_file_path(paths.objects_dir().join(name))
-                    .expect("absolute")
-                    .to_string(),
-                ..ManifestRow::default()
+            .map(|name| {
+                Ok(ManifestRow {
+                    logical_key: name.parse()?,
+                    physical_key: url::Url::from_file_path(paths.objects_dir().join(name))
+                        .expect("absolute")
+                        .to_string(),
+                    ..ManifestRow::default()
+                })
             })
-            .collect();
+            .collect::<Res<_>>()?;
         let manifest = Manifest {
             rows,
             ..Manifest::default()

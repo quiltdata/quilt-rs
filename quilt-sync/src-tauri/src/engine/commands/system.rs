@@ -523,7 +523,7 @@ mod tests {
     /// *Copy path* asks where the file is, and gets the path opening the file
     /// would open: the package's home joined with its path inside it.
     #[tokio::test]
-    async fn a_package_file_s_path_is_where_opening_it_would_look() {
+    async fn a_package_file_s_path_is_where_opening_it_would_look() -> Result<(), Error> {
         let mut m = model::MockQuiltModel::new();
         m.expect_file_path()
             .withf(|ns, path| ns.to_string() == "team/plate" && path == &PathBuf::from("raw/a.csv"))
@@ -531,7 +531,7 @@ mod tests {
                 Ok(path.join_to(std::path::Path::new("/Users/me/QuiltSync/team/plate")))
             });
 
-        let key = quilt::LogicalKey::new("raw/a.csv").unwrap();
+        let key = quilt::LogicalKey::new("raw/a.csv")?;
         let found = package_file_path_command(&m, "team/plate", &key)
             .await
             .expect("a file that is there has a path");
@@ -540,12 +540,13 @@ mod tests {
             found,
             PathBuf::from("/Users/me/QuiltSync/team/plate/raw/a.csv")
         );
+        Ok(())
     }
 
     /// A file that is not there has no path to copy, and says why, as opening
     /// it would.
     #[tokio::test]
-    async fn a_missing_file_has_no_path_to_copy() {
+    async fn a_missing_file_has_no_path_to_copy() -> Result<(), Error> {
         let mut m = model::MockQuiltModel::new();
         m.expect_file_path().returning(|_, path| {
             Err(Error::FsOpen(
@@ -554,10 +555,11 @@ mod tests {
         });
 
         assert!(
-            package_file_path_command(&m, "team/plate", &"raw/gone.csv".parse().unwrap())
+            package_file_path_command(&m, "team/plate", &"raw/gone.csv".parse()?)
                 .await
                 .is_err()
         );
+        Ok(())
     }
 
     /// A mail link's subject and body stay out of the log; other URLs are

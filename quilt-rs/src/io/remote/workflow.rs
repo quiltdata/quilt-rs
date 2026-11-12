@@ -1189,7 +1189,7 @@ workflows:
 
     #[cfg(unix)]
     #[test]
-    fn test_entry_view_non_utf8_logical_key_is_lossy() {
+    fn test_entry_view_non_utf8_logical_key_is_lossy() -> Res {
         use std::ffi::OsStr;
         use std::os::unix::ffi::OsStrExt;
 
@@ -1198,7 +1198,7 @@ workflows:
         // A logical key with an invalid UTF-8 byte must project as the lossy
         // form (U+FFFD replacement character), not as a fabricated empty key.
         let row = ManifestRow {
-            logical_key: crate::LogicalKey::new(OsStr::from_bytes(b"bad-\xFF.txt")).unwrap(),
+            logical_key: crate::LogicalKey::new(OsStr::from_bytes(b"bad-\xFF.txt"))?,
             physical_key: "s3://bucket/bad".to_string(),
             hash: ObjectHash::default(),
             size: 1,
@@ -1206,5 +1206,6 @@ workflows:
         };
         let view = entry_view(&row);
         assert_eq!(view.logical_key, "bad-\u{FFFD}.txt");
+        Ok(())
     }
 }

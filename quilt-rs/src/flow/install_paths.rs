@@ -794,7 +794,7 @@ mod tests {
         let mut manifest = Manifest::default();
         manifest
             .insert_record(ManifestRow {
-                logical_key: crate::LogicalKey::new(single_object_path.clone()).unwrap(),
+                logical_key: crate::LogicalKey::new(single_object_path.clone())?,
                 hash: hash.try_into()?,
                 physical_key: remote_file_url,
                 ..ManifestRow::default()
@@ -844,25 +844,25 @@ mod tests {
             ..PackageLineage::default()
         };
         let row_1 = ManifestRow {
-            logical_key: crate::LogicalKey::new("a").unwrap(),
+            logical_key: crate::LogicalKey::new("a")?,
             physical_key: "file:///ignored".to_string(),
             hash: multihash::Multihash::wrap(0x12, b"one")?.try_into()?,
             ..ManifestRow::default()
         };
         let row_2 = ManifestRow {
-            logical_key: crate::LogicalKey::new("b/b").unwrap(),
+            logical_key: crate::LogicalKey::new("b/b")?,
             physical_key: "s3://bucket/foo/bar".to_string(),
             hash: sha256_of(b"two").try_into()?,
             ..ManifestRow::default()
         };
         let row_3 = ManifestRow {
-            logical_key: crate::LogicalKey::new("c/c/c").unwrap(),
+            logical_key: crate::LogicalKey::new("c/c/c")?,
             physical_key: "file:///ignored".to_string(),
             hash: multihash::Multihash::wrap(0x12, b"three")?.try_into()?,
             ..ManifestRow::default()
         };
         let row_4 = ManifestRow {
-            logical_key: crate::LogicalKey::new("d/d/d/d").unwrap(),
+            logical_key: crate::LogicalKey::new("d/d/d/d")?,
             physical_key: "s3://bucket/foo/baz".to_string(),
             hash: sha256_of(b"four").try_into()?,
             ..ManifestRow::default()
@@ -1014,7 +1014,7 @@ mod tests {
             let hash = sha256_of(&body);
 
             let row = ManifestRow {
-                logical_key: crate::LogicalKey::new(path.clone()).unwrap(),
+                logical_key: crate::LogicalKey::new(path.clone())?,
                 physical_key: place.clone(),
                 hash: hash.try_into()?,
                 ..ManifestRow::default()
@@ -1096,7 +1096,7 @@ mod tests {
         let mut manifest = Manifest::default();
         manifest
             .insert_record(ManifestRow {
-                logical_key: crate::LogicalKey::new(requested.clone()).unwrap(),
+                logical_key: crate::LogicalKey::new(requested.clone())?,
                 hash: hash.try_into()?,
                 physical_key: remote_file_url,
                 ..ManifestRow::default()
@@ -1223,7 +1223,7 @@ mod tests {
 
     fn row(key: &str) -> Res<ManifestRow> {
         Ok(ManifestRow {
-            logical_key: crate::LogicalKey::new(key).unwrap(),
+            logical_key: crate::LogicalKey::new(key)?,
             hash: multihash::Multihash::wrap(0x12, b"anything")?.try_into()?,
             ..ManifestRow::default()
         })

@@ -500,9 +500,9 @@ mod tests {
     use crate::quiltignore::IgnoredBy;
     use crate::quiltignore::RuleSource;
 
-    fn row(key: &str, hash_seed: &[u8]) -> ManifestRow {
-        ManifestRow {
-            logical_key: crate::LogicalKey::new(key).unwrap(),
+    fn row(key: &str, hash_seed: &[u8]) -> Res<ManifestRow> {
+        Ok(ManifestRow {
+            logical_key: crate::LogicalKey::new(key)?,
             physical_key: format!("s3://b/{key}"),
             hash: Multihash::<256>::wrap(0x12, hash_seed)
                 .unwrap()
@@ -510,7 +510,7 @@ mod tests {
                 .unwrap(),
             size: hash_seed.len() as u64,
             meta: None,
-        }
+        })
     }
 
     fn manifest_of(rows: Vec<ManifestRow>) -> Manifest {
@@ -524,17 +524,17 @@ mod tests {
     /// (added), held with different content (changed), or dropped (removed). A
     /// path both sides hold unchanged is not news and appears nowhere.
     #[test]
-    fn incoming_paths_sorts_each_path_into_one_kind() {
+    fn incoming_paths_sorts_each_path_into_one_kind() -> Res {
         let base = manifest_of(vec![
-            row("kept.csv", b"1"),
-            row("dropped.csv", b"2"),
-            row("edited.csv", b"before"),
+            row("kept.csv", b"1")?,
+            row("dropped.csv", b"2")?,
+            row("edited.csv", b"before")?,
         ]);
         let latest = manifest_of(vec![
-            row("kept.csv", b"1"),
-            row("edited.csv", b"after"),
-            row("added.csv", b"3"),
-            row("also-added.csv", b"4"),
+            row("kept.csv", b"1")?,
+            row("edited.csv", b"after")?,
+            row("added.csv", b"3")?,
+            row("also-added.csv", b"4")?,
         ]);
         assert_eq!(
             IncomingPaths::from_delta(&remote_delta(&base, &latest)),
@@ -544,35 +544,37 @@ mod tests {
                 removed: vec![PathBuf::from("dropped.csv")],
             }
         );
+        Ok(())
     }
 
     /// A path whose *content* changed is a change, not an addition — the
     /// addition test is on presence, so a differing hash must not leak in.
     #[test]
-    fn a_changed_path_is_not_an_addition() {
-        let base = manifest_of(vec![row("same-name.csv", b"before")]);
-        let latest = manifest_of(vec![row("same-name.csv", b"after")]);
+    fn a_changed_path_is_not_an_addition() -> Res {
+        let base = manifest_of(vec![row("same-name.csv", b"before")?]);
+        let latest = manifest_of(vec![row("same-name.csv", b"after")?]);
         let incoming = IncomingPaths::from_delta(&remote_delta(&base, &latest));
         assert_eq!(incoming.added, [] as [PathBuf; 0]);
         assert_eq!(incoming.changed, vec![PathBuf::from("same-name.csv")]);
         assert_eq!(incoming.removed, [] as [PathBuf; 0]);
+        Ok(())
     }
 
     /// Each list comes out sorted by path, whatever order the manifests hold
     /// their rows in.
     #[test]
-    fn incoming_paths_are_sorted_by_path() {
+    fn incoming_paths_are_sorted_by_path() -> Res {
         let base = manifest_of(vec![
-            row("z-gone", b"1"),
-            row("a-gone", b"2"),
-            row("y-edit", b"3"),
-            row("b-edit", b"4"),
+            row("z-gone", b"1")?,
+            row("a-gone", b"2")?,
+            row("y-edit", b"3")?,
+            row("b-edit", b"4")?,
         ]);
         let latest = manifest_of(vec![
-            row("y-edit", b"5"),
-            row("b-edit", b"6"),
-            row("x-new", b"7"),
-            row("c-new", b"8"),
+            row("y-edit", b"5")?,
+            row("b-edit", b"6")?,
+            row("x-new", b"7")?,
+            row("c-new", b"8")?,
         ]);
         let incoming = IncomingPaths::from_delta(&remote_delta(&base, &latest));
         assert_eq!(
@@ -587,18 +589,20 @@ mod tests {
             incoming.removed,
             vec![PathBuf::from("a-gone"), PathBuf::from("z-gone")]
         );
+        Ok(())
     }
 
     /// A metadata-only revision (same rows, new header) brings no paths.
     #[test]
-    fn a_metadata_only_revision_brings_no_paths() {
-        let base = manifest_of(vec![row("a", b"1")]);
-        let mut latest = manifest_of(vec![row("a", b"1")]);
+    fn a_metadata_only_revision_brings_no_paths() -> Res {
+        let base = manifest_of(vec![row("a", b"1")?]);
+        let mut latest = manifest_of(vec![row("a", b"1")?]);
         latest.header.message = Some("newer revision message".to_string());
         assert_eq!(
             IncomingPaths::from_delta(&remote_delta(&base, &latest)),
             IncomingPaths::default()
         );
+        Ok(())
     }
 
     fn behind(changes: ChangeSet) -> InstalledPackageStatus {
@@ -652,7 +656,7 @@ mod tests {
             "precondition: the two algorithms must disagree on the same bytes"
         );
 
-        let base = manifest_of(vec![row("a", b"the old content")]);
+        let base = manifest_of(vec![row("a", b"the old content")?]);
         let latest = manifest_of(vec![latest_row]);
         let status = behind(ChangeSet::from([(
             path.clone(),
@@ -695,11 +699,11 @@ mod tests {
         let path = PathBuf::from("a");
 
         // Locally removed: nothing on disk at all.
-        let base = manifest_of(vec![row("a", b"the old content")]);
-        let latest = manifest_of(vec![row("a", b"what the remote pushed")]);
+        let base = manifest_of(vec![row("a", b"the old content")?]);
+        let latest = manifest_of(vec![row("a", b"what the remote pushed")?]);
         let status = behind(ChangeSet::from([(
             path.clone(),
-            Change::Removed(row("a", b"the old content")),
+            Change::Removed(row("a", b"the old content")?),
         )]));
 
         let identical = identical_to_latest(
@@ -771,7 +775,7 @@ mod tests {
             },
         )
         .await?;
-        latest_row.logical_key = crate::LogicalKey::new(path.clone()).unwrap();
+        latest_row.logical_key = crate::LogicalKey::new(path.clone())?;
 
         let base = manifest_of(vec![]);
         let latest = manifest_of(vec![latest_row]);
@@ -845,9 +849,9 @@ mod tests {
             },
         )
         .await?;
-        latest_row.logical_key = crate::LogicalKey::new(path.clone()).unwrap();
+        latest_row.logical_key = crate::LogicalKey::new(path.clone())?;
 
-        let base = manifest_of(vec![row("a", b"the old content")]);
+        let base = manifest_of(vec![row("a", b"the old content")?]);
         let latest = manifest_of(vec![latest_row]);
         let status = behind(ChangeSet::from([(
             path.clone(),
@@ -877,8 +881,8 @@ mod tests {
 
     #[test(tokio::test)]
     async fn clean_tree_is_clean_update() -> Res {
-        let base = manifest_of(vec![row("a", b"1")]);
-        let latest = manifest_of(vec![row("a", b"2")]); // remote changed "a"
+        let base = manifest_of(vec![row("a", b"1")?]);
+        let latest = manifest_of(vec![row("a", b"2")?]); // remote changed "a"
         let out = classify_pull(
             &behind(ChangeSet::default()),
             &base,
@@ -891,12 +895,12 @@ mod tests {
 
     #[test(tokio::test)]
     async fn added_file_is_kept() -> Res {
-        let base = manifest_of(vec![row("a", b"1")]);
-        let latest = manifest_of(vec![row("a", b"2")]);
+        let base = manifest_of(vec![row("a", b"1")?]);
+        let latest = manifest_of(vec![row("a", b"2")?]);
         let mut changes = ChangeSet::new();
         changes.insert(
             PathBuf::from("new.txt"),
-            Change::Added(row("new.txt", b"x")),
+            Change::Added(row("new.txt", b"x")?),
         );
         let out = classify_pull(
             &behind(changes),
@@ -917,10 +921,10 @@ mod tests {
 
     #[test(tokio::test)]
     async fn same_path_different_content_blocks() -> Res {
-        let base = manifest_of(vec![row("a", b"1")]);
-        let latest = manifest_of(vec![row("a", b"remote")]); // remote modified "a"
+        let base = manifest_of(vec![row("a", b"1")?]);
+        let latest = manifest_of(vec![row("a", b"remote")?]); // remote modified "a"
         let mut changes = ChangeSet::new();
-        changes.insert(PathBuf::from("a"), Change::Modified(row("a", b"local"))); // local modified "a"
+        changes.insert(PathBuf::from("a"), Change::Modified(row("a", b"local")?)); // local modified "a"
         let out = classify_pull(
             &behind(changes),
             &base,
@@ -938,10 +942,10 @@ mod tests {
 
     #[test(tokio::test)]
     async fn identical_edit_is_not_a_conflict() -> Res {
-        let base = manifest_of(vec![row("a", b"1")]);
-        let latest = manifest_of(vec![row("a", b"same")]);
+        let base = manifest_of(vec![row("a", b"1")?]);
+        let latest = manifest_of(vec![row("a", b"same")?]);
         let mut changes = ChangeSet::new();
-        changes.insert(PathBuf::from("a"), Change::Modified(row("a", b"same"))); // same content
+        changes.insert(PathBuf::from("a"), Change::Modified(row("a", b"same")?)); // same content
         let out = classify_pull(
             &behind(changes),
             &base,
@@ -962,10 +966,10 @@ mod tests {
 
     #[test(tokio::test)]
     async fn local_remove_vs_remote_modify_blocks() -> Res {
-        let base = manifest_of(vec![row("a", b"1")]);
-        let latest = manifest_of(vec![row("a", b"2")]); // remote modified "a"
+        let base = manifest_of(vec![row("a", b"1")?]);
+        let latest = manifest_of(vec![row("a", b"2")?]); // remote modified "a"
         let mut changes = ChangeSet::new();
-        changes.insert(PathBuf::from("a"), Change::Removed(row("a", b"1"))); // local removed "a"
+        changes.insert(PathBuf::from("a"), Change::Removed(row("a", b"1")?)); // local removed "a"
         let out = classify_pull(
             &behind(changes),
             &base,
@@ -987,10 +991,10 @@ mod tests {
     // test pins that so an explicit-arms refactor can't silently drop the pair.
     #[test(tokio::test)]
     async fn local_modify_vs_remote_remove_blocks() -> Res {
-        let base = manifest_of(vec![row("a", b"1"), row("b", b"2")]);
-        let latest = manifest_of(vec![row("b", b"2")]); // remote removed "a"
+        let base = manifest_of(vec![row("a", b"1")?, row("b", b"2")?]);
+        let latest = manifest_of(vec![row("b", b"2")?]); // remote removed "a"
         let mut changes = ChangeSet::new();
-        changes.insert(PathBuf::from("a"), Change::Modified(row("a", b"local"))); // local modified "a"
+        changes.insert(PathBuf::from("a"), Change::Modified(row("a", b"local")?)); // local modified "a"
         let out = classify_pull(
             &behind(changes),
             &base,
@@ -1008,10 +1012,10 @@ mod tests {
 
     #[test(tokio::test)]
     async fn both_removed_is_not_a_conflict() -> Res {
-        let base = manifest_of(vec![row("a", b"1"), row("b", b"2")]);
-        let latest = manifest_of(vec![row("b", b"2")]); // remote removed "a"
+        let base = manifest_of(vec![row("a", b"1")?, row("b", b"2")?]);
+        let latest = manifest_of(vec![row("b", b"2")?]); // remote removed "a"
         let mut changes = ChangeSet::new();
-        changes.insert(PathBuf::from("a"), Change::Removed(row("a", b"1"))); // local removed "a"
+        changes.insert(PathBuf::from("a"), Change::Removed(row("a", b"1")?)); // local removed "a"
         let out = classify_pull(
             &behind(changes),
             &base,
@@ -1035,12 +1039,12 @@ mod tests {
         // different content. It has no `remote_delta` entry (delta is
         // base-only), so it must be caught via `latest.get_record` and treated
         // as a conflict, not silently kept.
-        let base = manifest_of(vec![row("a", b"1")]);
-        let latest = manifest_of(vec![row("a", b"1"), row("new.txt", b"remote")]);
+        let base = manifest_of(vec![row("a", b"1")?]);
+        let latest = manifest_of(vec![row("a", b"1")?, row("new.txt", b"remote")?]);
         let mut changes = ChangeSet::new();
         changes.insert(
             PathBuf::from("new.txt"),
-            Change::Added(row("new.txt", b"local")),
+            Change::Added(row("new.txt", b"local")?),
         );
         let out = classify_pull(
             &behind(changes),
@@ -1062,12 +1066,12 @@ mod tests {
         // "new.txt" added on both sides with identical content: like
         // `same_resulting_content`, it appears in neither the kept lists nor
         // the conflicts.
-        let base = manifest_of(vec![row("a", b"1")]);
-        let latest = manifest_of(vec![row("a", b"1"), row("new.txt", b"same")]);
+        let base = manifest_of(vec![row("a", b"1")?]);
+        let latest = manifest_of(vec![row("a", b"1")?, row("new.txt", b"same")?]);
         let mut changes = ChangeSet::new();
         changes.insert(
             PathBuf::from("new.txt"),
-            Change::Added(row("new.txt", b"same")),
+            Change::Added(row("new.txt", b"same")?),
         );
         let out = classify_pull(
             &behind(changes),
@@ -1100,9 +1104,9 @@ mod tests {
     /// An ignored local file is not in `changes`, but a fetch would still
     /// replace it. With no hash to compare, a remote add at its path blocks.
     #[test]
-    fn ignored_local_file_at_a_remote_add_blocks() {
-        let base = manifest_of(vec![row("a", b"1")]);
-        let latest = manifest_of(vec![row("a", b"1"), row(".env", b"remote")]);
+    fn ignored_local_file_at_a_remote_add_blocks() -> Res {
+        let base = manifest_of(vec![row("a", b"1")?]);
+        let latest = manifest_of(vec![row("a", b"1")?, row(".env", b"remote")?]);
         let mut status = behind(ChangeSet::default());
         status.ignored_files = vec![ignored_by_default(".env"), ignored_by_default(".DS_Store")];
         assert_eq!(
@@ -1111,6 +1115,7 @@ mod tests {
                 conflicts: vec![PathBuf::from(".env")]
             }
         );
+        Ok(())
     }
 
     /// An interrupted pull can leave the incoming file written but untracked;
@@ -1135,8 +1140,8 @@ mod tests {
         )
         .await?;
 
-        let base = manifest_of(vec![row("a", b"1")]);
-        let latest = manifest_of(vec![row("a", b"1"), latest_row]);
+        let base = manifest_of(vec![row("a", b"1")?]);
+        let latest = manifest_of(vec![row("a", b"1")?, latest_row]);
         let mut status = behind(ChangeSet::default());
         status.ignored_files = vec![ignored_by_default(".env")];
 
@@ -1181,10 +1186,10 @@ mod tests {
         )
         .await?;
 
-        let base = manifest_of(vec![row("a", b"1")]);
+        let base = manifest_of(vec![row("a", b"1")?]);
         let latest = manifest_of(vec![
-            row("a", b"1"),
-            row("node_modules/item.json", b"remote"),
+            row("a", b"1")?,
+            row("node_modules/item.json", b"remote")?,
             settled_row,
         ]);
         let status = behind(ChangeSet::default());
@@ -1219,8 +1224,8 @@ mod tests {
             )
             .await?;
 
-        let base = manifest_of(vec![row("a", b"1")]);
-        let latest = manifest_of(vec![row("a", b"1"), row(".env", b"remote")]);
+        let base = manifest_of(vec![row("a", b"1")?]);
+        let latest = manifest_of(vec![row("a", b"1")?, row(".env", b"remote")?]);
         let status = behind(ChangeSet::default());
 
         let identical = identical_to_latest(
@@ -1253,8 +1258,8 @@ mod tests {
             .write_byte_stream(working_dir.join(&path), ByteStream::from_static(b"base"))
             .await?;
 
-        let base = manifest_of(vec![row("a", b"1")]);
-        let latest = manifest_of(vec![row("a", b"2")]);
+        let base = manifest_of(vec![row("a", b"1")?]);
+        let latest = manifest_of(vec![row("a", b"2")?]);
         let status = behind(ChangeSet::default());
         let tracked = LineagePaths::from([(path, crate::lineage::PathState::default())]);
 
@@ -1286,7 +1291,7 @@ mod tests {
         .await?;
 
         let base = manifest_of(vec![base_row]);
-        let latest = manifest_of(vec![row("hidden.dat", b"remote")]);
+        let latest = manifest_of(vec![row("hidden.dat", b"remote")?]);
         let mut status = behind(ChangeSet::default());
         status.ignored_files = vec![ignored_by_default("hidden.dat")];
 
@@ -1329,12 +1334,12 @@ mod tests {
     /// Conflicts from ignored files and from changes come out together, in
     /// path order.
     #[test]
-    fn ignored_and_changed_conflicts_are_reported_together() {
-        let base = manifest_of(vec![row("a", b"1")]);
-        let latest = manifest_of(vec![row("a", b"remote"), row(".env", b"remote")]);
+    fn ignored_and_changed_conflicts_are_reported_together() -> Res {
+        let base = manifest_of(vec![row("a", b"1")?]);
+        let latest = manifest_of(vec![row("a", b"remote")?, row(".env", b"remote")?]);
         let mut status = behind(ChangeSet::from([(
             PathBuf::from("a"),
-            Change::Modified(row("a", b"local")),
+            Change::Modified(row("a", b"local")?),
         )]));
         status.ignored_files = vec![ignored_by_default(".env")];
         assert_eq!(
@@ -1343,30 +1348,32 @@ mod tests {
                 conflicts: vec![PathBuf::from(".env"), PathBuf::from("a")]
             }
         );
+        Ok(())
     }
 
     /// An ignored file the remote leaves alone is no business of a pull.
     #[test]
-    fn ignored_local_file_elsewhere_does_not_block() {
-        let base = manifest_of(vec![row("a", b"1")]);
-        let latest = manifest_of(vec![row("a", b"2")]);
+    fn ignored_local_file_elsewhere_does_not_block() -> Res {
+        let base = manifest_of(vec![row("a", b"1")?]);
+        let latest = manifest_of(vec![row("a", b"2")?]);
         let mut status = behind(ChangeSet::default());
         status.ignored_files = vec![ignored_by_default(".env")];
         assert_eq!(
             classify_pull(&status, &base, &latest, &Reconciled::unreconciled()),
             PullOutcome::CleanUpdate
         );
+        Ok(())
     }
 
     /// A tracked file hidden by the package's rules is already a `Removed`
     /// change, and the both-changed check decides it: a remote removal agrees.
     #[test]
-    fn ignored_tracked_file_is_left_to_its_change() {
-        let base = manifest_of(vec![row("a", b"1"), row("b", b"2")]);
-        let latest = manifest_of(vec![row("b", b"2")]);
+    fn ignored_tracked_file_is_left_to_its_change() -> Res {
+        let base = manifest_of(vec![row("a", b"1")?, row("b", b"2")?]);
+        let latest = manifest_of(vec![row("b", b"2")?]);
         let mut status = behind(ChangeSet::from([(
             PathBuf::from("a"),
-            Change::Removed(row("a", b"1")),
+            Change::Removed(row("a", b"1")?),
         )]));
         status.ignored_files = vec![(
             PathBuf::from("a"),
@@ -1384,6 +1391,7 @@ mod tests {
                 removed: vec![],
             }
         );
+        Ok(())
     }
 
     /// The delta reports all three kinds, additions included. It is
@@ -1392,16 +1400,16 @@ mod tests {
     /// [`classify_pull`] reads it to catch a both-added collision, which it
     /// would miss if additions were filtered out at the source.
     #[test]
-    fn the_delta_reports_additions_alongside_modifications_and_removals() {
+    fn the_delta_reports_additions_alongside_modifications_and_removals() -> Res {
         let base = manifest_of(vec![
-            row("kept", b"k"),
-            row("gone", b"g"),
-            row("edit", b"e1"),
+            row("kept", b"k")?,
+            row("gone", b"g")?,
+            row("edit", b"e1")?,
         ]);
         let latest = manifest_of(vec![
-            row("kept", b"k"),
-            row("edit", b"e2"),
-            row("new", b"n"),
+            row("kept", b"k")?,
+            row("edit", b"e2")?,
+            row("new", b"n")?,
         ]);
 
         let delta = remote_delta(&base, &latest);
@@ -1419,15 +1427,16 @@ mod tests {
             Some(RemoteChange::Modified(_))
         ));
         assert!(
-            matches!(delta.get(&PathBuf::from("new")), Some(RemoteChange::Added(h)) if *h == row("new", b"n").hash),
+            matches!(delta.get(&PathBuf::from("new")), Some(RemoteChange::Added(h)) if *h == row("new", b"n")?.hash),
             "a latest-only path is an Added carrying its content hash"
         );
+        Ok(())
     }
 
     #[test(tokio::test)]
     async fn no_remote_change_is_up_to_date() -> Res {
-        let base = manifest_of(vec![row("a", b"1")]);
-        let latest = manifest_of(vec![row("a", b"1")]); // identical
+        let base = manifest_of(vec![row("a", b"1")?]);
+        let latest = manifest_of(vec![row("a", b"1")?]); // identical
         let out = classify_pull(
             &behind(ChangeSet::default()),
             &base,
@@ -1443,8 +1452,8 @@ mod tests {
         // Same file rows, newer manifest header (message differs). This is a
         // real revision to pull — hashes must advance — so it is a
         // `CleanUpdate`, never `UpToDate`, even though the row delta is empty.
-        let base = manifest_of(vec![row("a", b"1")]);
-        let mut latest = manifest_of(vec![row("a", b"1")]);
+        let base = manifest_of(vec![row("a", b"1")?]);
+        let mut latest = manifest_of(vec![row("a", b"1")?]);
         latest.header.message = Some("newer revision message".to_string());
         let out = classify_pull(
             &behind(ChangeSet::default()),
@@ -1460,13 +1469,13 @@ mod tests {
     async fn metadata_only_change_keeps_local_changes() -> Res {
         // Metadata-only remote revision with an untouched-by-remote local add:
         // the local work is kept and the (empty) surgical update still proceeds.
-        let base = manifest_of(vec![row("a", b"1")]);
-        let mut latest = manifest_of(vec![row("a", b"1")]);
+        let base = manifest_of(vec![row("a", b"1")?]);
+        let mut latest = manifest_of(vec![row("a", b"1")?]);
         latest.header.message = Some("newer revision message".to_string());
         let mut changes = ChangeSet::new();
         changes.insert(
             PathBuf::from("new.txt"),
-            Change::Added(row("new.txt", b"x")),
+            Change::Added(row("new.txt", b"x")?),
         );
         let out = classify_pull(
             &behind(changes),

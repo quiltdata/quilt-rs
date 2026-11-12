@@ -738,7 +738,7 @@ mod tests {
         let added_file = status.changes.get(&logical_key).unwrap();
         if let Change::Added(added_row) = added_file {
             let reference_row = ManifestRow {
-                logical_key: crate::LogicalKey::new(logical_key).unwrap(),
+                logical_key: crate::LogicalKey::new(logical_key)?,
                 size: 16,
                 hash: Sha256ChunkedHash::try_from(fixtures::objects::LESS_THAN_8MB_HASH_B64)?
                     .into(),
@@ -854,7 +854,7 @@ mod tests {
         let added_file = status.changes.get(&file_path).unwrap();
         if let Change::Added(added_row) = added_file {
             let reference_row = ManifestRow {
-                logical_key: crate::LogicalKey::new("some.pq").unwrap(),
+                logical_key: crate::LogicalKey::new("some.pq")?,
                 size: 16,
                 hash: Crc64Hash::try_from("CRSFynAYcw4=")?.into(),
                 ..ManifestRow::default()

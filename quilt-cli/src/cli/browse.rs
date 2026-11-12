@@ -191,7 +191,7 @@ mod tests {
     }
 
     #[test]
-    fn json_carries_header_and_entries_in_manifest_vocabulary() {
+    fn json_carries_header_and_entries_in_manifest_vocabulary() -> Result<(), Error> {
         let output = Output {
             manifest: quilt_rs::manifest::Manifest {
                 header: quilt_rs::manifest::ManifestHeader {
@@ -201,7 +201,7 @@ mod tests {
                     workflow: None,
                 },
                 rows: vec![quilt_rs::manifest::ManifestRow {
-                    logical_key: quilt_rs::LogicalKey::new("data/one.csv").unwrap(),
+                    logical_key: quilt_rs::LogicalKey::new("data/one.csv")?,
                     physical_key: "s3://bucket/one.csv".to_string(),
                     hash: quilt_rs::object_hash::ObjectHash::default(),
                     size: 42,
@@ -214,6 +214,7 @@ mod tests {
             output.to_json().to_string(),
             r#"{"header":{"message":"initial","user_meta":{"owner":"team"},"workflow":null},"entries":[{"logical_key":"data/one.csv","physical_key":"s3://bucket/one.csv","size":42}]}"#
         );
+        Ok(())
     }
 
     /// `∅` is a table affordance and would be indistinguishable from a real

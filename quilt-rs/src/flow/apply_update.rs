@@ -337,10 +337,10 @@ mod tests {
 
     /// A row whose hash is `body`'s own: an install verifies what it fetches
     /// against the row, so the object put at `object` must be `body`.
-    fn row_at(key: &str, body: &[u8], object: &str) -> ManifestRow {
+    fn row_at(key: &str, body: &[u8], object: &str) -> Res<ManifestRow> {
         use sha2::Digest;
-        ManifestRow {
-            logical_key: crate::LogicalKey::new(key).unwrap(),
+        Ok(ManifestRow {
+            logical_key: crate::LogicalKey::new(key)?,
             physical_key: format!("s3://b/{object}"),
             hash: multihash::Multihash::<256>::wrap(0x12, &sha2::Sha256::digest(body))
                 .unwrap()
@@ -348,7 +348,7 @@ mod tests {
                 .unwrap(),
             size: body.len() as u64,
             meta: None,
-        }
+        })
     }
 
     /// The invariant the whole change exists for. An apply that dies part-way
@@ -414,7 +414,7 @@ mod tests {
                         &format!("objects/new-{k}"),
                     )
                 })
-                .collect(),
+                .collect::<Res<_>>()?,
             ..Manifest::default()
         };
         let new_hash = "deadbeef";
@@ -527,7 +527,7 @@ mod tests {
             "edited.txt",
             b"the content the pull verified",
             "objects/base",
-        )
+        )?
         .hash;
         let mut base = Manifest {
             rows: vec![base_row],
@@ -546,7 +546,7 @@ mod tests {
                 "edited.txt",
                 b"the remote's new content",
                 "objects/new-edited",
-            )],
+            )?],
             ..Manifest::default()
         };
         let new_hash = "deadbeef";
@@ -620,7 +620,7 @@ mod tests {
             ..PackageLineage::default()
         };
         let latest_manifest = Manifest {
-            rows: vec![row_at(".env", b"SECRET=remote", "objects/env")],
+            rows: vec![row_at(".env", b"SECRET=remote", "objects/env")?],
             ..Manifest::default()
         };
         let new_hash = "deadbeef";
@@ -692,7 +692,7 @@ mod tests {
             ..PackageLineage::default()
         };
         let latest_manifest = Manifest {
-            rows: vec![row_at(".env", b"SECRET=remote", "objects/env")],
+            rows: vec![row_at(".env", b"SECRET=remote", "objects/env")?],
             ..Manifest::default()
         };
         let new_hash = "deadbeef";
@@ -750,7 +750,7 @@ mod tests {
             .await?;
 
         let mut base = Manifest {
-            rows: vec![row_at("hidden.dat", b"old bytes", "objects/old")],
+            rows: vec![row_at("hidden.dat", b"old bytes", "objects/old")?],
             ..Manifest::default()
         };
         let lineage = PackageLineage {
@@ -760,7 +760,7 @@ mod tests {
             ..PackageLineage::default()
         };
         let latest_manifest = Manifest {
-            rows: vec![row_at("hidden.dat", b"new bytes", "objects/new")],
+            rows: vec![row_at("hidden.dat", b"new bytes", "objects/new")?],
             ..Manifest::default()
         };
         let new_hash = "deadbeef";
@@ -854,7 +854,7 @@ mod tests {
                         &format!("objects/new-{k}"),
                     )
                 })
-                .collect(),
+                .collect::<Res<_>>()?,
             ..Manifest::default()
         };
         let new_hash = "deadbeef";
@@ -943,8 +943,8 @@ mod tests {
 
         let latest_manifest = Manifest {
             rows: vec![
-                row_at(held, b"new-held", "objects/new-held"),
-                row_at(fresh, b"new-fresh", "objects/new-fresh"),
+                row_at(held, b"new-held", "objects/new-held")?,
+                row_at(fresh, b"new-fresh", "objects/new-fresh")?,
             ],
             ..Manifest::default()
         };
@@ -1111,7 +1111,7 @@ mod tests {
             rows: latest
                 .iter()
                 .map(|(key, body)| row_at(key, body, &format!("objects/new-{key}")))
-                .collect(),
+                .collect::<Res<_>>()?,
             ..Manifest::default()
         };
         publish(&remote, "deadbeef", &latest_manifest).await?;
@@ -1141,7 +1141,7 @@ mod tests {
                 rows: base
                     .iter()
                     .map(|(key, body)| row_at(key, body, &format!("objects/base-{key}")))
-                    .collect(),
+                    .collect::<Res<_>>()?,
                 ..Manifest::default()
             },
             latest: ManifestUri {
@@ -1223,7 +1223,7 @@ mod tests {
             &copy.storage,
             When::RenamedOnto(
                 copy.paths
-                    .object(row_at("a.txt", b"new-a", "").hash.digest()),
+                    .object(row_at("a.txt", b"new-a", "")?.hash.digest()),
             ),
         );
 

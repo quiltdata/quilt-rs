@@ -112,14 +112,14 @@ mod tests {
         }
     }
 
-    fn manifest(physical_key: &str) -> Manifest {
-        Manifest {
+    fn manifest(physical_key: &str) -> Res<Manifest> {
+        Ok(Manifest {
             header: ManifestHeader {
                 message: Some("Task TASK.md done".to_string()),
                 ..ManifestHeader::default()
             },
             rows: vec![ManifestRow {
-                logical_key: crate::LogicalKey::new("out.md").unwrap(),
+                logical_key: crate::LogicalKey::new("out.md")?,
                 physical_key: physical_key.to_string(),
                 hash: crate::object_hash::Sha256ChunkedHash::try_from(
                     "/UMjH1bsbrMLBKdd9cqGGvtjhWzawhz1BfrxgngUhVI=",
@@ -129,7 +129,7 @@ mod tests {
                 size: 29,
                 meta: None,
             }],
-        }
+        })
     }
 
     async fn remote_with_latest(hash: &str) -> Res<MockRemote> {
@@ -163,7 +163,7 @@ mod tests {
     async fn a_revision_onto_the_latest_it_read_becomes_latest() -> Res {
         let remote = remote_with_latest(PARENT).await?;
 
-        let pushed = push(&remote, manifest("s3://b/a/c/out.md?versionId=v1")).await?;
+        let pushed = push(&remote, manifest("s3://b/a/c/out.md?versionId=v1")?).await?;
 
         assert!(pushed.certified_latest);
         assert_eq!(read(&remote, LATEST).await?, pushed.manifest_uri.hash);
@@ -175,7 +175,7 @@ mod tests {
     async fn a_latest_that_moved_past_the_parent_is_kept() -> Res {
         let remote = remote_with_latest(SOMEONE_ELSE).await?;
 
-        let pushed = push(&remote, manifest("s3://b/a/c/out.md?versionId=v1")).await?;
+        let pushed = push(&remote, manifest("s3://b/a/c/out.md?versionId=v1")?).await?;
 
         assert!(!pushed.certified_latest);
         assert_eq!(read(&remote, LATEST).await?, SOMEONE_ELSE);
@@ -187,7 +187,7 @@ mod tests {
     async fn a_row_not_on_the_remote_publishes_nothing() -> Res {
         let remote = remote_with_latest(PARENT).await?;
 
-        let pushed = push(&remote, manifest("file:///foo/objects/out.md")).await;
+        let pushed = push(&remote, manifest("file:///foo/objects/out.md")?).await;
 
         assert!(
             matches!(pushed, Err(Error::PackageOp(PackageOpError::Push(_)))),
@@ -214,7 +214,7 @@ mod tests {
                 br#"{"type": "object", "required": ["owner"]}"#.to_vec(),
             )
             .await?;
-        let mut manifest = manifest("s3://b/a/c/out.md?versionId=v1");
+        let mut manifest = manifest("s3://b/a/c/out.md?versionId=v1")?;
         manifest.header.workflow = Some(crate::manifest::Workflow {
             config: "s3://b/.quilt/workflows/config.yml".parse()?,
             id: Some(crate::manifest::WorkflowId {

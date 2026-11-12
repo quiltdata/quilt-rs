@@ -316,14 +316,14 @@ mod tests {
     #[test]
     fn test_matches_content_identical_rows() -> Res {
         let left = ManifestRow {
-            logical_key: crate::LogicalKey::new("A").unwrap(),
+            logical_key: crate::LogicalKey::new("A")?,
             physical_key: "B".to_string(),
             hash: object_hash::Sha256Hash::try_from("deadbeef")?.into(),
             size: 1,
             meta: None,
         };
         let right = ManifestRow {
-            logical_key: crate::LogicalKey::new("A").unwrap(),
+            logical_key: crate::LogicalKey::new("A")?,
             physical_key: "B".to_string(),
             hash: object_hash::Sha256Hash::try_from("deadbeef")?.into(),
             size: 1,
@@ -338,14 +338,14 @@ mod tests {
         let mut meta = serde_json::Map::new();
         meta.insert("foo".to_string(), serde_json::json!("bar"));
         let left = ManifestRow {
-            logical_key: crate::LogicalKey::new("A").unwrap(),
+            logical_key: crate::LogicalKey::new("A")?,
             physical_key: "FOO".to_string(),
             hash: object_hash::Sha256Hash::try_from("deadbeef")?.into(),
             size: 1,
             meta: Some(serde_json::Value::Object(meta)),
         };
         let right = ManifestRow {
-            logical_key: crate::LogicalKey::new("A").unwrap(),
+            logical_key: crate::LogicalKey::new("A")?,
             physical_key: "BAR".to_string(),
             hash: object_hash::Sha256Hash::try_from("deadbeef")?.into(),
             size: 1,
@@ -493,7 +493,7 @@ mod tests {
         assert_eq!(
             checksummed_manifest.rows[0],
                     ManifestRow {
-                        logical_key: crate::LogicalKey::new("e0-0.txt".to_string()).unwrap(),
+                        logical_key: crate::LogicalKey::new("e0-0.txt".to_string())?,
                         physical_key: "s3://data-yaml-spec-tests/scale/10u/e0-0.txt?versionId=jHb6DGN43Ex7EhbxZc2G9JnAkWSeTfEY".to_string(),
                         size: 29,
                         hash: object_hash::Sha256ChunkedHash::try_from("/UMjH1bsbrMLBKdd9cqGGvtjhWzawhz1BfrxgngUhVI=")?.into(),
@@ -503,7 +503,7 @@ mod tests {
         assert_eq!(
             checksummed_manifest.rows[9],
                     ManifestRow {
-                        logical_key: crate::LogicalKey::new("e0-9.txt".to_string()).unwrap(),
+                        logical_key: crate::LogicalKey::new("e0-9.txt".to_string())?,
                         physical_key: "s3://data-yaml-spec-tests/scale/10u/e0-9.txt?versionId=T5tkWkC.7PVcpiFYRoCQKhhKC249fdBC".to_string(),
                         size: 29,
                         hash: object_hash::Sha256ChunkedHash::try_from("/UMjH1bsbrMLBKdd9cqGGvtjhWzawhz1BfrxgngUhVI=")?.into(),
