@@ -62,6 +62,12 @@ impl Seen {
 
 type SeenMap = BTreeMap<Namespace, Seen>;
 
+struct State {
+    seen: SeenMap,
+    /// A change the file does not hold yet: its write failed.
+    unsaved: bool,
+}
+
 /// Remember `now` as `namespace`'s entry, `None` when it is not installed,
 /// and return the entry for a move since it was last seen. A package seen
 /// for the first time has no move.
@@ -88,7 +94,7 @@ pub struct Outside {
     /// `None` keeps what was seen in memory only.
     path: Option<PathBuf>,
     lineage: DomainLineageIo,
-    seen: Mutex<SeenMap>,
+    state: Mutex<State>,
     record: Arc<Record>,
 }
 
@@ -118,7 +124,10 @@ impl Outside {
         Arc::new(Self {
             path: Some(path),
             lineage: DomainLineageIo::new(lineage),
-            seen: Mutex::new(seen),
+            state: Mutex::new(State {
+                seen,
+                unsaved: false,
+            }),
             record,
         })
     }
@@ -128,7 +137,10 @@ impl Outside {
         Arc::new(Self {
             path: None,
             lineage: DomainLineageIo::new(lineage),
-            seen: Mutex::new(SeenMap::new()),
+            state: Mutex::new(State {
+                seen: SeenMap::new(),
+                unsaved: false,
+            }),
             record,
         })
     }
@@ -138,13 +150,13 @@ impl Outside {
     pub fn hook(self: &Arc<Self>) -> LineageHook {
         let outside = Arc::clone(self);
         LineageHook::new(move |namespace, was, is| {
-            let mut seen = outside.seen.lock().expect("outside lock");
-            let before = seen.clone();
-            if let Some(draft) = saw(&mut seen, namespace, was) {
+            let mut state = outside.state.lock().expect("outside lock");
+            let before = state.seen.clone();
+            if let Some(draft) = saw(&mut state.seen, namespace, was) {
                 outside.record.insert_later(outside.record.number(draft));
             }
-            saw(&mut seen, namespace, is);
-            outside.save_if_changed(&before, &seen);
+            saw(&mut state.seen, namespace, is);
+            outside.save(&mut state, &before);
         })
     }
 
@@ -153,18 +165,20 @@ impl Outside {
         let found = self
             .lineage
             .read_locked(&LocalStorage::new(), |domain| {
-                let mut seen = self.seen.lock().expect("outside lock");
-                let before = seen.clone();
+                let mut state = self.state.lock().expect("outside lock");
+                let before = state.seen.clone();
                 for (namespace, lineage) in &domain.packages {
                     // Numbered under the lock, so a write after it, ours or
                     // another tool's, comes later; kept as pending, so a stop
                     // waits for it.
-                    if let Some(draft) = saw(&mut seen, namespace, Some(lineage)) {
+                    if let Some(draft) = saw(&mut state.seen, namespace, Some(lineage)) {
                         self.record.insert_later(self.record.number(draft));
                     }
                 }
-                seen.retain(|namespace, _| domain.packages.contains_key(namespace));
-                self.save_if_changed(&before, &seen);
+                state
+                    .seen
+                    .retain(|namespace, _| domain.packages.contains_key(namespace));
+                self.save(&mut state, &before);
             })
             .await;
         if let Err(err) = found {
@@ -172,24 +186,25 @@ impl Outside {
         }
     }
 
-    /// Write `seen` when it differs from `before`. Called under the lock on
-    /// `data.json`, so it is written at once: a stop right after a write
-    /// must not leave an older revision here, which the next start would
-    /// take for another tool's move.
-    fn save_if_changed(&self, before: &SeenMap, seen: &SeenMap) {
+    /// Write what was seen when it differs from `before`, or an earlier
+    /// write failed. Called under the lock on `data.json`, so it is written
+    /// at once: a stop right after a write must not leave an older revision
+    /// here, which the next start would take for another tool's move.
+    fn save(&self, state: &mut State, before: &SeenMap) {
         let Some(path) = &self.path else {
             return;
         };
-        if before == seen {
+        if !state.unsaved && *before == state.seen {
             return;
         }
-        let result = serde_json::to_vec(seen)
+        let result = serde_json::to_vec(&state.seen)
             .map_err(std::io::Error::other)
             .and_then(|bytes| {
                 let partial = path.with_extension("json.partial");
                 std::fs::write(&partial, bytes)?;
                 std::fs::rename(&partial, path)
             });
+        state.unsaved = result.is_err();
         if let Err(err) = result {
             warn!("outside: could not write {}: {err}", path.display());
         }
@@ -339,6 +354,30 @@ mod tests {
             kinds(&record).await,
             vec![Kind::Outside { published: false }]
         );
+    }
+
+    /// A write that failed is tried again on the next pass, though nothing
+    /// changed since.
+    #[tokio::test]
+    async fn a_failed_save_is_tried_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("data.json");
+        let theirs = DomainLineageIo::new(path.clone());
+        theirs
+            .write(&LocalStorage::new(), DomainLineage::new(dir.path()))
+            .await
+            .unwrap();
+        put(&theirs, on("a", None)).await;
+        let data_dir = dir.path().join("app");
+        let record = Arc::new(Record::in_memory(EventSink::new()));
+        let outside = Outside::open(&data_dir, path, record).await;
+
+        // The folder is missing, so the write fails.
+        outside.check().await;
+        assert!(!data_dir.join(FILE_NAME).exists());
+        std::fs::create_dir(&data_dir).unwrap();
+        outside.check().await;
+        assert!(data_dir.join(FILE_NAME).exists());
     }
 
     /// What was seen survives a restart, so a move while closed is found.
