@@ -25,9 +25,18 @@ fn navigate(services: &Services, to: Option<&str>, path: routes::Paths) {
     services.navigations.send_again(&services.events, to, path);
 }
 
-/// The page of a Quilt package URI.
+/// The page of a Quilt package URI. Windows hands a deep link over with a
+/// `/` after the bucket (`quilt+s3://bucket/#package=…`), which a package
+/// URI doesn't allow, so a lone `/` path is dropped.
 fn package_path(uri_str: &str) -> Result<routes::Paths> {
-    Ok(routes::Paths::RemotePackage(uri_str.parse()?))
+    let uri = match Url::parse(uri_str) {
+        Ok(mut url) if url.path() == "/" => {
+            url.set_path("");
+            url.into()
+        }
+        _ => uri_str.to_string(),
+    };
+    Ok(routes::Paths::RemotePackage(uri.parse()?))
 }
 
 /// The engine's `link` (`{url}/?t={token}`) turned to the page of a Quilt
@@ -354,6 +363,32 @@ mod tests {
             "a remote package page"
         );
         assert!(package_path("invalid-uri").is_err());
+    }
+
+    #[test]
+    fn a_package_link_with_a_slash_after_the_bucket_opens_its_package_page() {
+        let hash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let with_slash = package_path(&format!(
+            "quilt+s3://bucket/#package=foo/bar@{hash}&catalog=quilt.test"
+        ))
+        .unwrap();
+        let without = package_path(&format!(
+            "quilt+s3://bucket#package=foo/bar@{hash}&catalog=quilt.test"
+        ))
+        .unwrap();
+        assert_eq!(routes::page(with_slash), routes::page(without));
+    }
+
+    #[test]
+    fn a_package_link_with_any_other_path_or_a_query_is_refused() {
+        let hash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        for uri in [
+            format!("quilt+s3://bucket/x#package=foo/bar@{hash}"),
+            format!("quilt+s3://bucket//#package=foo/bar@{hash}"),
+            format!("quilt+s3://bucket/?q#package=foo/bar@{hash}"),
+        ] {
+            assert!(package_path(&uri).is_err(), "{uri} is refused");
+        }
     }
 
     #[test]
