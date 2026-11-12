@@ -37,7 +37,7 @@ use super::super::installed_package::{
     location, remote_target, run_reading,
 };
 use super::super::json_editor::focus_json_editor_within;
-use super::super::page::{Outcome, Page, PageHandle, critical};
+use super::super::page::{Outcome, Page, PageHandle, critical, success};
 use super::super::row_menu::RowCommand;
 use crate::routes;
 
@@ -812,10 +812,16 @@ fn CommitScreen(
             ignoring
                 .get()
                 .map(|data| {
+                    let ns = data.namespace.clone();
+                    // Re-read, and say the write on the band.
+                    let on_saved = move |lead| {
+                        outcome.try_set(Some(success(ns.clone(), lead)));
+                        reload.notify();
+                    };
                     view! {
                         <IgnorePopup
                             data=data
-                            refetch=reload
+                            on_saved=on_saved
                             on_close=move || ignoring.set(None)
                             lock=running
                         />

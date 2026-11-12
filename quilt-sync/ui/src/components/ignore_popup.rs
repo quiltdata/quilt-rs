@@ -1,6 +1,6 @@
 //! The two `.quiltignore` popups a file row's `[⋯]` opens: *Ignore* and
 //! *Stop ignoring*. Each is a kit popup form, so a refusal shows inside it,
-//! and each re-reads the page once its write lands.
+//! and each hands its page a sentence of what it wrote once the write lands.
 
 use leptos::prelude::*;
 use quilt_uri::S3PackageUri;
@@ -70,7 +70,9 @@ pub enum IgnoreHint {
 #[allow(clippy::needless_pass_by_value)]
 pub fn IgnorePopup(
     data: IgnorePopupData,
-    refetch: Trigger,
+    /// Called with what the write did, once it lands. The page re-reads and
+    /// says it on its band.
+    on_saved: impl Fn(String) + Clone + 'static,
     on_close: impl Fn() + 'static,
     /// A page's one-command lock. Given one, the popup does not add a pattern
     /// while another command holds it, and holds it while its own write runs,
@@ -119,11 +121,14 @@ pub fn IgnorePopup(
 
     let submit = Submit::new("Add to .quiltignore", move || {
         let (ns, uri, p) = (namespace.clone(), uri.clone(), pattern.get_untracked());
+        let on_saved = on_saved.clone();
         async move {
+            // The line the backend writes: the first, as typed.
+            let said = format!("Added {} to .quiltignore.", p.lines().next().unwrap_or(&p));
             holding(lock, commands::add_to_quiltignore(ns, p, uri))
                 .await
                 .map_err(|e| format!("Could not ignore this file: {e}"))?;
-            refetch.notify();
+            on_saved(said);
             Ok(())
         }
     });
@@ -242,6 +247,18 @@ fn adds_sentence(scope: commands::StopIgnoringScope, files: u64, bytes: u64) -> 
     }
 }
 
+/// What a *Stop ignoring* write did, for the page's band.
+fn stopped_sentence(scope: commands::StopIgnoringScope, shown: &str) -> String {
+    match scope {
+        commands::StopIgnoringScope::ThisPackage => {
+            format!("Stopped ignoring {shown} in this package.")
+        }
+        commands::StopIgnoringScope::AllPackages => {
+            format!("Stopped ignoring {shown} in all packages.")
+        }
+    }
+}
+
 /// *Stop ignoring*: writes `!` lines that bring a path back, either to the
 /// package's `.quiltignore` or to the user-wide one, after showing what the
 /// next sync adds.
@@ -249,7 +266,8 @@ fn adds_sentence(scope: commands::StopIgnoringScope, files: u64, bytes: u64) -> 
 #[allow(clippy::needless_pass_by_value)]
 pub fn UnignorePopup(
     data: UnignorePopupData,
-    refetch: Trigger,
+    /// As [`IgnorePopup`] takes it.
+    on_saved: impl Fn(String) + Clone + 'static,
     on_close: impl Fn() + 'static,
     /// A page's one-command lock, as [`IgnorePopup`] takes it: given one, the
     /// popup does not write while another command holds it, and holds it while
@@ -278,7 +296,9 @@ pub fn UnignorePopup(
         Submit::new("Stop ignoring", move || {
             let data = data.clone();
             let chosen = scope_of(&scope.get_untracked());
+            let on_saved = on_saved.clone();
             async move {
+                let said = stopped_sentence(chosen, &data.shown());
                 let write = commands::stop_ignoring(
                     data.namespace,
                     data.path,
@@ -289,7 +309,7 @@ pub fn UnignorePopup(
                 holding(lock, write)
                     .await
                     .map_err(|e| format!("Could not stop ignoring this file: {e}"))?;
-                refetch.notify();
+                on_saved(said);
                 Ok(())
             }
         })
@@ -400,7 +420,7 @@ mod tests {
             Some(lock) => view! {
                 <IgnorePopup
                     data=data.clone()
-                    refetch=Trigger::new()
+                    on_saved=|_| ()
                     on_close=|| ()
                     lock=lock
                 />
@@ -409,7 +429,7 @@ mod tests {
             None => view! {
                 <IgnorePopup
                     data=data.clone()
-                    refetch=Trigger::new()
+                    on_saved=|_| ()
                     on_close=|| ()
                 />
             }
@@ -590,6 +610,20 @@ mod tests {
             adds_sentence(AllPackages, 0, 0),
             "This adds no files to this package on the next sync, but brings back \
              the same paths in your other packages."
+        );
+    }
+
+    /// A saved *Stop ignoring* names the path and where it now counts.
+    #[test]
+    fn the_saved_sentence_names_the_scope() {
+        use commands::StopIgnoringScope::{AllPackages, ThisPackage};
+        assert_eq!(
+            stopped_sentence(ThisPackage, ".snakemake/"),
+            "Stopped ignoring .snakemake/ in this package."
+        );
+        assert_eq!(
+            stopped_sentence(AllPackages, ".snakemake/"),
+            "Stopped ignoring .snakemake/ in all packages."
         );
     }
 

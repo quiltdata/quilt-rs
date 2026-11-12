@@ -337,6 +337,17 @@ pub fn critical(namespace: String, lead: &str, detail: Option<String>) -> Outcom
     }
 }
 
+/// A success the page words, with nothing from the engine.
+#[must_use]
+pub fn success(namespace: String, lead: String) -> Outcome {
+    Outcome {
+        namespace,
+        variant: BannerVariant::Success,
+        lead,
+        detail: None,
+    }
+}
+
 /// The scaffold's life, over a small page mounted as the routes mount theirs.
 #[cfg(test)]
 mod tests {
