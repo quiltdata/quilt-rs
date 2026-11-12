@@ -47,7 +47,8 @@
 - Settings shows a role switched in the web catalog (<https://github.com/quiltdata/quilt-rs/pull/1354>)
 - The package page's paused band goes away as soon as the pause clears (<https://github.com/quiltdata/quilt-rs/pull/1330>)
 - QuiltSync refuses a package link with an invalid bucket or package name, or with parts it used to ignore, such as a user or port (<https://github.com/quiltdata/quilt-rs/pull/1359>, <https://github.com/quiltdata/quilt-rs/pull/1361>, <https://github.com/quiltdata/quilt-rs/pull/1363>)
-- A package link opens the right file when its path holds `&`, `=`, `+` or `%`, and *Open in catalog* opens the right page when it holds `?`, `#` or `%`, or says why it can't (<https://github.com/quiltdata/quilt-rs/pull/1363>)
+- Package links and *Open in catalog* work for file paths with special characters such as `&` or `#` (<https://github.com/quiltdata/quilt-rs/pull/1363>)
+- Package rows on the main page keep their tooltips and actions after the list refreshes (<https://github.com/quiltdata/quilt-rs/pull/1364>)
 
 ### Security
 
