@@ -74,7 +74,7 @@ impl std::fmt::Display for GcReport {
 /// Decimal units, as Finder counts them, with one decimal past bytes: the
 /// size every report sentence says, as in "freed 630.2 kB", up to "18.4 EB"
 /// for `u64::MAX`. Rounds as `format_size` in quilt-sync/ui does, so the
-/// app's pages and its toasts read the same figure; the space here is a
+/// app's pages and its inbox read the same figure; the space here is a
 /// plain one.
 #[must_use]
 pub fn format_bytes(bytes: u64) -> String {

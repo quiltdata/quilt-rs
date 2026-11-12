@@ -15,7 +15,6 @@ use crate::engine::Error;
 use crate::engine::autopull::PausedReason;
 use crate::engine::autopull::Watcher;
 use crate::engine::autopull::last_change::PendingCommit;
-use crate::engine::autopull::pull_toast;
 use crate::engine::commands::package_page::KeepingScope;
 use crate::engine::model;
 use crate::engine::model::QuiltModel;
@@ -23,10 +22,11 @@ use crate::engine::notify::Notify;
 use crate::engine::publish_settings::SharedPublishSettings;
 use crate::engine::quilt;
 use crate::engine::quilt::lineage::SyncScope;
+use crate::engine::record::Draft;
+use crate::engine::record::Record;
 use crate::engine::services::Services;
 use crate::engine::telemetry::MixpanelEvent;
 use crate::engine::telemetry::event::{PackageEvent, RemotePackageEvent};
-use crate::engine::toast::ToastCenter;
 
 /// Tells every client the list of installed packages changed, so main pages
 /// read it again. No payload.
@@ -224,7 +224,7 @@ fn write_failure_message(action: &str, err: &Error) -> String {
 
 /// Remedy sentence for "there is no session to act with", or `None` otherwise.
 ///
-/// A toast cannot navigate, so the message carries the remedy itself. Keyed on
+/// A band line cannot navigate, so the message carries the remedy itself. Keyed on
 /// whether there is a deployment: one can be signed into; ambient credentials
 /// are fixed in `~/.aws` or by `aws sso login`.
 fn auth_failure_message(err: &Error) -> Option<String> {
@@ -272,7 +272,7 @@ async fn package_publish_command(
     m: &impl model::QuiltModel,
     settings: &SharedPublishSettings,
     namespace: &str,
-) -> Result<(quilt_uri::Namespace, quilt::PublishOutcome), Error> {
+) -> Result<(quilt_uri::Namespace, quilt::PublishOutcome, Option<Draft>), Error> {
     let namespace = quilt_uri::Namespace::try_from(namespace)?;
     let installed = installed_package(m, &namespace).await?;
     // The message names the changes of the status walked under the lock, and
@@ -280,6 +280,8 @@ async fn package_publish_command(
     // Publish waits for the lock is then in both, as the tick does it.
     let locked = m.lock_package(&installed).await?;
     let status = m.locked_package_status(&locked, None).await?;
+    let base = m.get_installed_package_lineage(&installed).await?.base_hash;
+    let changes = status.changes.clone();
 
     let settings = settings.read().await.clone();
     // Box the publish future — the commit+push state machine exceeds the
@@ -293,7 +295,11 @@ async fn package_publish_command(
         model::HeadTask::Replace,
     ))
     .await?;
-    Ok((namespace, outcome))
+    let entry = outcome.push().map(|push| {
+        Draft::published(&namespace, Some(&base), &push.manifest_uri.hash, &changes)
+            .latest_or_not(push.certified_latest)
+    });
+    Ok((namespace, outcome, entry))
 }
 
 /// A publish by hand succeeded. One that pushed reached the bucket; one with
@@ -321,14 +327,21 @@ pub async fn package_publish(
     let tracing = &*s.telemetry;
     let watcher = &s.watcher;
     let result = package_publish_command(m, settings, &namespace).await;
-    match &result {
-        Ok((ns, outcome)) => {
-            watcher.clear_paused(ns).await;
-            watcher.note_published(ns).await;
-            note_publish_worked(m, watcher, ns, outcome.push().is_some()).await;
+    let result = match result {
+        Ok((ns, outcome, entry)) => {
+            watcher.clear_paused(&ns).await;
+            watcher.note_published(&ns).await;
+            note_publish_worked(m, watcher, &ns, outcome.push().is_some()).await;
+            if let Some(entry) = entry {
+                s.record.add(entry).await;
+            }
+            Ok((ns, outcome))
         }
-        Err(_) => note_publish_failed(m, watcher, &namespace).await,
-    }
+        Err(err) => {
+            note_publish_failed(m, watcher, &namespace).await;
+            Err(err)
+        }
+    };
     report_publish(tracing, &namespace, uri.as_ref(), result)
 }
 
@@ -356,22 +369,22 @@ fn report_publish(
         )));
     }
 
+    // The detail under the page's own "Published" line: nothing for a plain
+    // publish.
     let msg_ok = match &result {
         Ok((_, quilt::PublishOutcome::NothingToPublish)) => {
-            format!("Package {namespace} has nothing to publish")
+            "There was nothing to publish.".to_string()
         }
         Ok((_, outcome)) if outcome.push().is_some_and(|push| push.certified_latest) => {
-            format!("Successfully published package {namespace}")
+            String::new()
         }
-        Ok(_) => {
-            format!("Published {namespace}, but could not update latest: remote has newer changes")
-        }
+        Ok(_) => "The bucket has newer changes, so this revision is not the latest.".to_string(),
         _ => String::new(),
     };
     // TODO: route `Error` through `to_frontend_string()` so that
     // `login_required` / `setup_required` publish-time errors can trigger the
     // `/login` and `/setup` redirects in `ui::error_handler::handle_or_display`
-    // instead of surfacing as a plain toast. This requires `make_action` to
+    // instead of surfacing as a plain band line. This requires `make_action` to
     // parse the JSON envelope (or the command to bypass `Notify` for
     // these variants); both are out of scope here.
     let msg_err = |err: &Error| write_failure_message("publish package", err);
@@ -413,17 +426,32 @@ pub async fn package_commit_and_push(
             watcher.clear_paused(ns).await;
             watcher.note_published(ns).await;
             note_publish_worked(m, watcher, ns, outcome.push().is_some()).await;
+            // The commit page does not say which files the revision holds.
+            if let Some(push) = outcome.push() {
+                s.record
+                    .add(
+                        Draft::published(
+                            ns,
+                            None,
+                            &push.manifest_uri.hash,
+                            &quilt::lineage::ChangeSet::new(),
+                        )
+                        .latest_or_not(push.certified_latest),
+                    )
+                    .await;
+            }
         }
         Err(_) => note_publish_failed(m, watcher, &namespace).await,
     }
     report_publish(tracing, &namespace, uri.as_ref(), result)
 }
 
+/// The pull, and the revision the copy was on before it.
 async fn package_pull_command(
     m: &impl model::QuiltModel,
     watcher: &Watcher,
     namespace: &str,
-) -> Result<(quilt_uri::Namespace, quilt::flow::Pulled), Error> {
+) -> Result<(quilt_uri::Namespace, quilt::flow::Pulled, String), Error> {
     let namespace = quilt_uri::Namespace::try_from(namespace)?;
     let installed = installed_package(m, &namespace).await?;
     // Lock before raising the flag. While another writer (the `quilt` CLI, a
@@ -441,7 +469,7 @@ async fn package_pull_command(
             .await
     };
     match pulled {
-        Ok(pulled) => Ok((namespace, pulled)),
+        Ok(pulled) => Ok((namespace, pulled, lineage.base_hash)),
         Err(err) => {
             pause_on_conflict(watcher, &namespace, &lineage, &err).await;
             Err(err)
@@ -519,19 +547,19 @@ pub async fn package_pull(
         &*s.model,
         &s.telemetry,
         &s.watcher,
-        &s.toasts,
+        &s.record,
         &namespace,
         uri.as_ref(),
     ))
     .await
 }
 
-/// The Pull button's whole answer: the pull, its toast, its event and its line.
+/// The Pull button's whole answer: the pull, its entry, its event and its line.
 async fn pull_and_report(
     m: &impl model::QuiltModel,
     tracing: &crate::engine::telemetry::Telemetry,
     watcher: &Watcher,
-    toasts: &ToastCenter,
+    record: &Record,
     namespace: &str,
     uri: Option<&S3PackageUri>,
 ) -> Result<String, String> {
@@ -542,54 +570,40 @@ async fn pull_and_report(
     let mut notify = Notify::new(msg_init);
     // Another pull got there first: nothing arrived, so no pull event. A
     // failure keeps the event, which is what reports a refusal.
-    if !matches!(result, Ok((_, quilt::flow::Pulled::UpToDate))) {
+    if !matches!(result, Ok((_, quilt::flow::Pulled::UpToDate, _))) {
         notify = notify.on_success(
             tracing,
             MixpanelEvent::PackagePulled(RemotePackageEvent::for_uri(uri)),
         );
     }
     let mut msg_ok = String::new();
-    if let Ok((ns, pulled)) = &result {
+    if let Ok((ns, pulled, base)) = &result {
         watcher.clear_paused(ns).await;
         watcher.transfer_worked(m, ns, false).await;
         msg_ok = match pulled {
-            quilt::flow::Pulled::UpToDate => format!("Package {namespace} is already up to date"),
+            quilt::flow::Pulled::UpToDate => "Already up to date.".to_string(),
             quilt::flow::Pulled::Applied(report) => {
-                // The same report the tick posts, from the same wording. A
-                // manual pull brings files too, and "Successfully pulled" says
-                // nothing about which — which is the whole of what this
-                // feature adds.
-                let toast = pull_toast::report_toast(ns, report);
-                let reported = toast.is_some();
-                if let Some(toast) = toast {
-                    toasts
-                        .post(crate::engine::toast::ToastDraft {
-                            kind: toast.kind,
-                            title: Some(toast.title),
-                            body: toast.body,
-                            groups: toast.groups,
-                            timeout_ms: None,
-                        })
-                        .await;
-                }
-                pull_success_message(namespace, reported)
+                // The page is showing, so its band says what arrived; the
+                // record keeps it, and the page reads it there.
+                let entry = Draft::got(ns, Some(base), report);
+                let said = pull_success_message(&entry);
+                record.add(entry).await;
+                said
             }
         };
     }
     notify.map(result.map(|_| ()), msg_ok, msg_err)
 }
 
-/// The page's own confirmation of a pull — empty when the toast has already
-/// said it.
-///
-/// The toast names the package and what arrived, so this line would repeat it
-/// from behind the toast layer, where it reads as a backdrop rather than a
-/// message. It speaks only when there was no report to post.
-fn pull_success_message(namespace: &str, reported: bool) -> String {
-    if reported {
-        String::new()
+/// What arrived, under the page's own "Got the latest revision" line, naming
+/// the first few files of each group: nothing for a revision that moved no
+/// file.
+fn pull_success_message(entry: &Draft) -> String {
+    let files = entry.files_named(3);
+    if files.is_empty() {
+        files
     } else {
-        format!("Successfully pulled package {namespace}")
+        format!("{files}.")
     }
 }
 
@@ -676,9 +690,8 @@ async fn package_uninstall_command(
 /// Remove a package; with `prune`, also delete its downloaded files that no
 /// other package uses.
 ///
-/// What the prune freed goes to the toast stack, not the returned line: the
-/// page that confirms it returns to the package list on success, and only
-/// the stack outlives that.
+/// What the prune freed goes to the record, not the returned line: the page
+/// that confirms it returns to the package list on success.
 pub async fn package_uninstall(
     s: &Services,
     namespace: String,
@@ -687,17 +700,15 @@ pub async fn package_uninstall(
 ) -> Result<String, String> {
     let m = &*s.model;
     let tracing = &*s.telemetry;
-    let toasts = &*s.toasts;
     let msg_init = format!("Uninstalling package {namespace}");
     let msg_ok = format!("Successfully uninstalled package {namespace}");
     let msg_err = |err: &Error| format!("Failed to uninstall package: {err}");
 
-    let (result, toast) = settle_uninstall(
-        &namespace,
-        package_uninstall_command(m, &namespace, prune).await,
-    );
-    if let Some(toast) = toast {
-        toasts.post(toast).await;
+    let (result, outcome) = settle_uninstall(package_uninstall_command(m, &namespace, prune).await);
+    if result.is_ok()
+        && let Ok(ns) = quilt_uri::Namespace::try_from(namespace.as_str())
+    {
+        s.record.add(Draft::uninstalled(&ns, outcome)).await;
     }
     if result.is_ok() {
         s.watcher.prune_action_needed(m).await;
@@ -711,47 +722,23 @@ pub async fn package_uninstall(
         .map(result, msg_ok, msg_err)
 }
 
-/// Split an uninstall's answer into the command's result and the toast it
-/// posts.
+/// Split an uninstall's answer into the command's result and what its prune
+/// did, for the record.
 ///
 /// A prune that fails after the uninstall is not a failed uninstall: the
 /// package is gone, so the command succeeds and the page moves on, and the
-/// toast says what was left behind. Answering an error would leave the
+/// record says what was left behind. Answering an error would leave the
 /// page's confirmation open on a package that no longer exists.
 fn settle_uninstall(
-    namespace: &str,
     result: Result<Option<quilt::flow::Pruned>, Error>,
-) -> (Result<(), Error>, Option<crate::engine::toast::ToastDraft>) {
+) -> (Result<(), Error>, Option<String>) {
     match result {
-        Ok(pruned) => (Ok(()), pruned.map(|p| pruned_toast(namespace, &p))),
+        Ok(pruned) => (Ok(()), pruned.map(|p| format!("{p}."))),
         Err(Error::Quilt(err @ quilt::Error::PruneFailed(..))) => {
             tracing::warn!("{err}");
-            let toast = crate::engine::toast::ToastDraft {
-                kind: crate::engine::toast::ToastKind::Warning,
-                title: Some(namespace.to_string()),
-                body: format!("{err}."),
-                groups: Vec::new(),
-                timeout_ms: None,
-            };
-            (Ok(()), Some(toast))
+            (Ok(()), Some(format!("{err}.")))
         }
         Err(err) => (Err(err), None),
-    }
-}
-
-/// The toast saying what removing `namespace` freed, in gc's sentence, or
-/// which busy package kept its files.
-fn pruned_toast(namespace: &str, pruned: &quilt::flow::Pruned) -> crate::engine::toast::ToastDraft {
-    let kind = match pruned {
-        quilt::flow::Pruned::Freed(_) => crate::engine::toast::ToastKind::Success,
-        quilt::flow::Pruned::Busy(_) => crate::engine::toast::ToastKind::Info,
-    };
-    crate::engine::toast::ToastDraft {
-        kind,
-        title: Some(namespace.to_string()),
-        body: format!("Removed. {pruned}."),
-        groups: Vec::new(),
-        timeout_ms: None,
     }
 }
 
@@ -957,25 +944,10 @@ fn source_folder(source: Option<String>) -> Result<Option<PathBuf>, String> {
     }
 }
 
-/// The toast saying what the ignore rules kept out of a package created from
-/// a folder; `None` when they kept nothing out.
-fn left_out_toast(
-    namespace: &str,
-    left_out: &quilt::flow::LeftOut,
-) -> Option<crate::engine::toast::ToastDraft> {
-    (!left_out.is_empty()).then(|| crate::engine::toast::ToastDraft {
-        kind: crate::engine::toast::ToastKind::Info,
-        title: Some(namespace.to_string()),
-        body: format!("{left_out}."),
-        groups: Vec::new(),
-        timeout_ms: None,
-    })
-}
-
 /// Create a package, from a folder when `source` is given.
 ///
-/// What the ignore rules left out goes to the toast stack: the dialog
-/// closes on success, and only the stack outlives it.
+/// What the ignore rules left out goes to the record: the dialog closes on
+/// success.
 pub async fn package_create(
     s: &Services,
     namespace: String,
@@ -985,7 +957,6 @@ pub async fn package_create(
     let source = source_folder(source)?;
     let m = &*s.model;
     let tracing = &*s.telemetry;
-    let toasts = &*s.toasts;
     // A package created here has no remote yet, so it belongs to no deployment.
     let msg_init = format!("Creating package {namespace}");
     let msg_ok = format!("Successfully created package {namespace}");
@@ -1004,12 +975,8 @@ pub async fn package_create(
     let guard = applying.as_ref().map(|ns| s.watcher.apply_guard(ns));
     let result = package_create_command(m, &namespace, source, message).await;
     drop(guard);
-    if let Some(toast) = result
-        .as_ref()
-        .ok()
-        .and_then(|left_out| left_out_toast(&namespace, left_out))
-    {
-        toasts.post(toast).await;
+    if let (Ok(left_out), Some(ns)) = (&result, &applying) {
+        s.record.add(Draft::created(ns, left_out)).await;
     }
     if result.is_ok() {
         s.events.emit(PACKAGES_CHANGED_EVENT, ());
@@ -1347,6 +1314,8 @@ pub async fn get_revision_message(
 
 #[cfg(test)]
 mod tests {
+    use crate::engine::record::Draft;
+    use crate::engine::record::Record;
     use quilt_uri::fixtures;
     use std::sync::Arc;
 
@@ -1726,22 +1695,13 @@ mod tests {
         assert!(reporter.paused.lock().unwrap().is_empty());
     }
 
-    struct ToastCollector(Arc<std::sync::Mutex<Vec<crate::engine::toast::Toast>>>);
-
-    impl crate::engine::toast::ToastEmitter for ToastCollector {
-        fn emit(&self, toast: &crate::engine::toast::Toast) {
-            self.0.lock().unwrap().push(toast.clone());
-        }
-    }
-
-    /// Another pull got there first: the button says so, with no toast and
+    /// Another pull got there first: the button says so, with no entry and
     /// no pull event.
     #[tokio::test]
     async fn a_pull_that_finds_nothing_to_do_says_so_and_reports_nothing() {
         let watcher = Watcher::new_for_test(Arc::new(LogReporter));
         let telemetry = crate::engine::telemetry::Telemetry::default();
-        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let toasts = super::ToastCenter::new(Box::new(ToastCollector(Arc::clone(&seen))));
+        let record = Record::in_memory(crate::engine::events::EventSink::new());
         let mut model = installed_model();
         model
             .expect_get_installed_package_lineage()
@@ -1755,13 +1715,10 @@ mod tests {
             .returning(|_, _, _| Ok(quilt::flow::Pulled::UpToDate));
 
         let said =
-            super::pull_and_report(&model, &telemetry, &watcher, &toasts, "acme/demo", None).await;
+            super::pull_and_report(&model, &telemetry, &watcher, &record, "acme/demo", None).await;
 
-        assert_eq!(
-            said,
-            Ok("Package acme/demo is already up to date".to_string())
-        );
-        assert_eq!(seen.lock().unwrap().len(), 0, "no toast");
+        assert_eq!(said, Ok("Already up to date.".to_string()));
+        assert!(record.entries().await.is_empty(), "no entry");
         assert_eq!(telemetry.queued_events(), Vec::<String>::new());
     }
 
@@ -1771,10 +1728,10 @@ mod tests {
     async fn a_refused_pull_reports_the_refusal() {
         let watcher = Watcher::new_for_test(Arc::new(LogReporter));
         let telemetry = crate::engine::telemetry::Telemetry::default();
-        let toasts = super::ToastCenter::new(Box::new(ToastCollector(Arc::default())));
+        let record = Record::in_memory(crate::engine::events::EventSink::new());
         let model = failing_pull_model(pull_conflict_error);
 
-        super::pull_and_report(&model, &telemetry, &watcher, &toasts, "acme/demo", None)
+        super::pull_and_report(&model, &telemetry, &watcher, &record, "acme/demo", None)
             .await
             .expect_err("a conflict refuses the pull");
 
@@ -1855,10 +1812,7 @@ mod tests {
             )),
         );
 
-        assert_eq!(
-            said,
-            Ok("Package acme/demo has nothing to publish".to_string())
-        );
+        assert_eq!(said, Ok("There was nothing to publish.".to_string()));
         assert_eq!(telemetry.queued_events(), Vec::<String>::new());
     }
 
@@ -1879,10 +1833,7 @@ mod tests {
 
         let said = super::report_publish(&telemetry, "acme/demo", None, Ok((namespace, outcome)));
 
-        assert_eq!(
-            said,
-            Ok("Successfully published package acme/demo".to_string())
-        );
+        assert_eq!(said, Ok(String::new()), "the page's own line says it");
         assert_eq!(
             telemetry.queued_events(),
             vec![
@@ -2324,20 +2275,51 @@ mod tests {
         );
     }
 
-    /// One click, one message. The toast names the package and what arrived,
-    /// so the page's own line would repeat it — from behind the toast layer,
-    /// where its white box reads as a backdrop rather than as a message.
+    /// The page is showing, so its band says what arrived.
     #[test]
-    fn a_reported_pull_leaves_the_page_slot_to_the_toast() {
-        assert_eq!(super::pull_success_message("acme/rna-seq", true), "");
-    }
-
-    /// And when there was nothing to report — a metadata-only revision raises
-    /// no toast — the click still has to be answered.
-    #[test]
-    fn an_unreported_pull_still_confirms_the_click() {
-        let msg = super::pull_success_message("acme/rna-seq", false);
-        assert_eq!(msg, "Successfully pulled package acme/rna-seq");
+    fn a_pull_names_what_arrived() {
+        let ns: quilt_uri::Namespace = ("acme", "rna-seq").into();
+        let report = quilt::flow::PullReport {
+            manifest_uri: quilt_uri::ManifestUri {
+                bucket: "b".to_string(),
+                namespace: ns.clone(),
+                hash: "h".to_string(),
+                origin: None,
+            },
+            added: vec!["a.csv".into(), "b.csv".into()],
+            added_not_fetched: Vec::new(),
+            updated: Vec::new(),
+            removed: Vec::new(),
+            kept_not_removed: Vec::new(),
+            message: None,
+        };
+        let entry = Draft::got(&ns, None, &report);
+        assert_eq!(
+            super::pull_success_message(&entry),
+            "2 files new: a.csv, b.csv."
+        );
+        let many = Draft::got(
+            &ns,
+            None,
+            &quilt::flow::PullReport {
+                added: (0..5).map(|n| format!("f{n}").into()).collect(),
+                updated: vec!["u.csv".into()],
+                ..report.clone()
+            },
+        );
+        assert_eq!(
+            super::pull_success_message(&many),
+            "5 files new: f0, f1, f2 and 2 more; 1 file updated: u.csv."
+        );
+        let metadata_only = Draft::got(
+            &ns,
+            None,
+            &quilt::flow::PullReport {
+                added: Vec::new(),
+                ..report
+            },
+        );
+        assert_eq!(super::pull_success_message(&metadata_only), "");
     }
 
     /// A denied push must say the role cannot write here, not surface a raw
@@ -2355,7 +2337,7 @@ mod tests {
     }
 
     /// The denial message replaces the storage error rather than appending
-    /// to it: an `AccessDenied` in a toast reads as a bug, not as a role the
+    /// to it: an `AccessDenied` on the band reads as a bug, not as a role the
     /// user can change.
     #[test]
     fn push_denial_does_not_leak_the_raw_storage_error() {
@@ -2382,7 +2364,7 @@ mod tests {
         }))
     }
 
-    /// A write is where a stale session usually surfaces. The toast cannot
+    /// A write is where a stale session usually surfaces. The band cannot
     /// navigate to `/login` the way the error page does, so the message itself
     /// has to carry the remedy and the host.
     #[test]
@@ -2421,7 +2403,7 @@ mod tests {
     }
 
     /// A refused vend is the same dead end as a rejected credential, one step
-    /// earlier, so the toast must carry the same remedy rather than falling
+    /// earlier, so the band must carry the same remedy rather than falling
     /// through to `Failed to push package: …` and a bare error label.
     #[test]
     fn push_while_signed_out_names_signing_in() {
@@ -2670,10 +2652,9 @@ mod tests {
         assert!(err.to_string().contains("value.txt"), "got: {err}");
     }
 
-    /// A create from a folder says what the ignore rules left out, and a
-    /// create that left nothing out says nothing.
+    /// A create from a folder records what the ignore rules left out.
     #[tokio::test]
-    async fn the_create_toast_counts_what_was_left_out() -> Result<(), Error> {
+    async fn a_create_records_what_was_left_out() -> Result<(), Error> {
         let dir = tempfile::TempDir::new()?;
         let model = crate::engine::model::Model::create(dir.path());
         model.set_home(dir.path().join("home")).await?;
@@ -2685,71 +2666,59 @@ mod tests {
         let source = Some(source.path().to_path_buf());
 
         let left_out = super::package_create_command(&model, "acme/demo", source, None).await?;
-        let toast = super::left_out_toast("acme/demo", &left_out).expect("a toast");
-        assert_eq!(toast.kind, crate::engine::toast::ToastKind::Info);
-        assert_eq!(toast.title.as_deref(), Some("acme/demo"));
-        assert_eq!(
-            toast.body,
-            "1 file and 1 folder were left out by ignore rules."
-        );
+        let entry = Draft::created(&("acme", "demo").into(), &left_out);
+        assert_eq!(entry.files_line(), "2 files left out by ignore rules");
+        assert_eq!(entry.files[0].paths, [".DS_Store", ".git/"]);
 
         let left_out = super::package_create_command(&model, "acme/empty", None, None).await?;
-        assert_eq!(super::left_out_toast("acme/empty", &left_out), None);
+        assert_eq!(
+            Draft::created(&("acme", "empty").into(), &left_out).files,
+            []
+        );
         Ok(())
     }
 
-    /// The toast reads gc's sentence after the removal, or names the busy
-    /// package that kept the files.
+    /// An uninstall records gc's sentence, or the busy package that kept the
+    /// files; a prune that failed after it is a removed package whose record
+    /// says what was left, and any other failure stays one.
     #[test]
-    fn the_pruned_toast_says_what_was_freed() {
+    fn an_uninstall_records_what_its_prune_did() {
         let freed = quilt::flow::Pruned::Freed(quilt::flow::GcReport {
             objects: 6,
             bytes: 630_200,
             ..Default::default()
         });
-        let toast = super::pruned_toast("acme/demo", &freed);
-        assert_eq!(toast.kind, crate::engine::toast::ToastKind::Success);
-        assert_eq!(toast.title.as_deref(), Some("acme/demo"));
-        assert_eq!(toast.body, "Removed. Freed 630.2 kB: 6 objects.");
+        let (result, outcome) = super::settle_uninstall(Ok(Some(freed)));
+        assert!(result.is_ok());
+        assert_eq!(outcome.as_deref(), Some("Freed 630.2 kB: 6 objects."));
 
         let busy = quilt::flow::Pruned::Busy(("acme", "other").into());
-        let toast = super::pruned_toast("acme/demo", &busy);
-        assert_eq!(toast.kind, crate::engine::toast::ToastKind::Info);
         assert_eq!(
-            toast.body,
-            "Removed. Kept downloaded files: acme/other is busy."
+            super::settle_uninstall(Ok(Some(busy))).1.as_deref(),
+            Some("Kept downloaded files: acme/other is busy.")
         );
-    }
 
-    /// A prune that failed after the uninstall answers success, with a
-    /// warning toast saying what was left; any other failure stays one.
-    #[test]
-    fn a_failed_prune_is_a_removed_package_and_a_warning() {
         let failed = Error::Quilt(quilt::Error::PruneFailed(
             ("acme", "demo").into(),
             Box::new(quilt::Error::PackageBusy(("acme", "other").into())),
             None,
         ));
-        let (result, toast) = super::settle_uninstall("acme/demo", Err(failed));
+        let (result, outcome) = super::settle_uninstall(Err(failed));
         assert!(result.is_ok());
-        let toast = toast.expect("a toast");
-        assert_eq!(toast.kind, crate::engine::toast::ToastKind::Warning);
+        let outcome = outcome.expect("what was left");
         assert!(
-            toast
-                .body
-                .starts_with("Uninstalled acme/demo, but not all of its downloaded files"),
-            "{}",
-            toast.body
+            outcome.starts_with("Uninstalled acme/demo, but not all of its downloaded files"),
+            "{outcome}"
         );
 
         let other = Error::General("boom".to_string());
-        let (result, toast) = super::settle_uninstall("acme/demo", Err(other));
+        let (result, outcome) = super::settle_uninstall(Err(other));
         assert!(result.is_err());
-        assert!(toast.is_none());
+        assert!(outcome.is_none());
 
-        let (result, toast) = super::settle_uninstall("acme/demo", Ok(None));
+        let (result, outcome) = super::settle_uninstall(Ok(None));
         assert!(result.is_ok());
-        assert!(toast.is_none(), "no prune, no toast");
+        assert!(outcome.is_none(), "no prune, nothing to say");
     }
 
     /// `prune` deletes the package's objects; without it they stay.

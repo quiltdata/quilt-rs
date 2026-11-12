@@ -2206,7 +2206,7 @@ mod tests {
         use crate::engine::fake::{FakeEngine, ask};
 
         let engine = FakeEngine::install();
-        let _asked = ask("get_toasts");
+        let _asked = ask("get_record");
         sleep_ms(0).await;
         engine.hello();
         let _el = page(vec![settings()]).await;

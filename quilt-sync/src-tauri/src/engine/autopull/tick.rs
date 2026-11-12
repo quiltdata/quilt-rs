@@ -17,7 +17,6 @@ use crate::engine::autopull::WatcherInner;
 use crate::engine::autopull::activity::ActivityOp;
 use crate::engine::autopull::last_change::LastChange;
 use crate::engine::autopull::last_change::PendingCommit;
-use crate::engine::autopull::pull_toast;
 use crate::engine::autopull::reporter::LoginBlock;
 use crate::engine::autopull::reporter::PackageStatusEvent;
 use crate::engine::autopull::reporter::ignored_fingerprint;
@@ -32,16 +31,13 @@ use crate::engine::publish_settings::PublishSettings;
 use crate::engine::quilt;
 use crate::engine::quilt::flow::PullOutcome;
 use crate::engine::quilt::lineage::SyncScope;
+use crate::engine::record::Draft;
 use crate::engine::telemetry::prelude::*;
 
 #[derive(Debug)]
 pub(crate) struct RefreshOutcome {
     pub upstream: quilt::lineage::UpstreamState,
     pub has_changes: bool,
-    /// `Some(message)` only on the publish success path; `None` on
-    /// pull success, on quiet-window deferral, and on any no-action
-    /// tick. `run_once` reads this to call `report_published`.
-    pub published: Option<String>,
     /// What a successful pull brought — `None` on every other path, exactly
     /// as `published` is `None` on every path but a publish. The pull side of
     /// the pair `published`'s own comment implied and the tick could not give:
@@ -60,6 +56,23 @@ pub(crate) struct RefreshOutcome {
     pub publish_arm_at: Option<SystemTime>,
 }
 
+/// A publish autosync made: its message, and its entry for the record.
+#[derive(Debug)]
+pub(crate) struct Published {
+    pub message: String,
+    pub entry: Draft,
+}
+
+/// What a pass learned besides its outcome, kept also when it then fails.
+#[derive(Debug, Default)]
+pub(crate) struct Seen {
+    /// The status read reached the bucket, not only the last-known tip.
+    pub reached: bool,
+    /// Each revision a pass uploaded, in order, `latest` or not. A merge's
+    /// move after it can still fail, and they are reported all the same.
+    pub published: Vec<Published>,
+}
+
 impl RefreshOutcome {
     /// An outcome that reports the observed tree without publishing.
     fn observed(
@@ -70,7 +83,6 @@ impl RefreshOutcome {
         Self {
             upstream,
             has_changes,
-            published: None,
             pulled: None,
             fingerprint,
             publish_arm_at: None,
@@ -88,7 +100,6 @@ impl RefreshOutcome {
         Self {
             upstream,
             has_changes,
-            published: None,
             // Nothing was pulled: this arm reports a tree it only observed, and
             // says when publishing becomes possible. `main` added the field in
             // `e4cd6ea` while this constructor lived only on this branch.
@@ -375,7 +386,7 @@ pub(crate) async fn refresh_then_maybe_sync(
     push_enabled: bool,
     scope: SyncScope,
     aggregator: &SyncTrayAggregator,
-    reached: &mut bool,
+    seen: &mut Seen,
 ) -> Result<Option<RefreshOutcome>, WatchError> {
     let installed = model
         .get_installed_package(namespace)
@@ -435,7 +446,7 @@ pub(crate) async fn refresh_then_maybe_sync(
         Some(status) => status,
         None => walk_locked(model, &locked, walks, namespace, lineage).await?,
     };
-    *reached = status.latest_refreshed;
+    seen.reached = status.latest_refreshed;
     let upstream = status.upstream_state;
     let has_changes = !status.changes.is_empty();
     // Observed-tree fingerprint, taken before the publish path consumes `status`.
@@ -664,6 +675,9 @@ pub(crate) async fn refresh_then_maybe_sync(
         // placeholder, new field) applies identically regardless of who
         // triggered the publish; only autosync keeps the head's task. It
         // publishes on the held lock and reuses `status`, walked under it.
+        // What the revision commits, for the record: empty when it pushes a
+        // commit made before.
+        let changes = status.changes.clone();
         let published = {
             // The activity line spans the transfer and nothing else: the check never shows.
             let _activity = aggregator.activity_guard(ActivityOp::Publish, namespace);
@@ -684,10 +698,32 @@ pub(crate) async fn refresh_then_maybe_sync(
                 .as_ref()
                 .is_ok_and(|(outcome, _)| outcome.push().is_none_or(|push| !push.certified_latest))
         {
+            // Its revision was uploaded, even though it is not `latest`.
+            if let Ok((outcome, message)) = &published
+                && let Some(push) = outcome.push()
+            {
+                seen.published.push(Published {
+                    message: message.clone(),
+                    entry: Draft::published(
+                        namespace,
+                        Some(&lineage.base_hash),
+                        &push.manifest_uri.hash,
+                        &changes,
+                    )
+                    .latest_or_not(false),
+                });
+            }
             last_change.on_published(namespace).await;
-            return merge::onto_latest(model, &locked, &installed, aggregator, scope)
-                .await
-                .map(Some);
+            return merge::onto_latest(
+                model,
+                &locked,
+                &installed,
+                aggregator,
+                scope,
+                &mut seen.published,
+            )
+            .await
+            .map(Some);
         }
         return match published {
             // No new hash and no pending commit: nothing is left to publish,
@@ -712,10 +748,19 @@ pub(crate) async fn refresh_then_maybe_sync(
                 } else {
                     ""
                 };
+                let entry = Draft::published(
+                    namespace,
+                    Some(&lineage.base_hash),
+                    &push.manifest_uri.hash,
+                    &changes,
+                );
+                seen.published.push(Published {
+                    message,
+                    entry: entry.latest_or_not(push.certified_latest),
+                });
                 Ok(Some(RefreshOutcome {
                     upstream: quilt::lineage::UpstreamState::UpToDate,
                     has_changes: false,
-                    published: Some(message),
                     pulled: None,
                     fingerprint: settled_fingerprint(latest, &ignored),
                     publish_arm_at: None,
@@ -735,9 +780,16 @@ pub(crate) async fn refresh_then_maybe_sync(
         };
     }
     if diverged {
-        return merge::onto_latest(model, &locked, &installed, aggregator, scope)
-            .await
-            .map(Some);
+        return merge::onto_latest(
+            model,
+            &locked,
+            &installed,
+            aggregator,
+            scope,
+            &mut seen.published,
+        )
+        .await
+        .map(Some);
     }
 
     Ok(Some(RefreshOutcome::observed(
@@ -971,8 +1023,7 @@ pub(crate) async fn sync_package(
         return Pass::LeftToTasks;
     }
 
-    // Whether the status read reached the bucket, not only the last-known tip.
-    let mut reached = false;
+    let mut seen = Seen::default();
     let result = refresh_then_maybe_sync(
         model,
         &namespace,
@@ -985,9 +1036,17 @@ pub(crate) async fn sync_package(
         run.push_enabled,
         lineage.sync_scope.clone(),
         &inner.aggregator,
-        &mut reached,
+        &mut seen,
     )
     .await;
+    // A publish that landed is reported whatever followed it.
+    let published = !seen.published.is_empty();
+    for publish in std::mem::take(&mut seen.published) {
+        inner
+            .reporter
+            .report_published(&namespace, origin, &publish.message);
+        inner.reporter.report_recorded(publish.entry);
+    }
     // Another writer holds the package: nothing was observed, so nothing
     // is reported, and its pause, backoff and arm time stand as they were.
     let result = match result {
@@ -1015,7 +1074,7 @@ pub(crate) async fn sync_package(
     // The bucket answered the status read: its session and its access work,
     // whatever the pass then decided. A refusal below enters again.
     let package = Subject::package(&namespace);
-    if reached {
+    if seen.reached {
         inner.action_needed.session_works(origin);
         inner.action_needed.leave(&package, Kind::NoAccess);
     }
@@ -1025,24 +1084,19 @@ pub(crate) async fn sync_package(
             inner.login_blocked.write().await.remove(&namespace);
             // A pull or publish reached the bucket too. With nothing left to
             // publish, no publish is failing either way.
-            if outcome.pulled.is_some() || outcome.published.is_some() {
+            if outcome.pulled.is_some() || published {
                 inner.action_needed.session_works(origin);
                 inner.action_needed.leave(&package, Kind::NoAccess);
             }
-            if outcome.published.is_some() || inner.last_change.get(&namespace).await.is_none() {
+            if published || inner.last_change.get(&namespace).await.is_none() {
                 inner.action_needed.publish_settled(&namespace);
             }
-            if let Some(message) = outcome.published.as_deref() {
-                inner.reporter.report_published(&namespace, origin, message);
-            }
-            // What the pull brought, if it brought anything. `None` from
-            // `report_toast` is the metadata-only revision: hashes advanced
-            // and no file moved, and an entry that stands until dismissed
-            // must not say nothing.
-            if let Some(report) = outcome.pulled.as_ref()
-                && let Some(toast) = pull_toast::report_toast(&namespace, report)
-            {
-                inner.reporter.report_pulled(&namespace, toast);
+            if let Some(report) = outcome.pulled.as_ref() {
+                inner.reporter.report_recorded(Draft::got(
+                    &namespace,
+                    Some(&lineage.base_hash),
+                    report,
+                ));
             }
             inner.reporter.report_status(
                 &namespace,

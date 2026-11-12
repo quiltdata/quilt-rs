@@ -673,8 +673,8 @@ fn namespace_for<'a>(
 ///    `reconcile_from_model` re-adds the watch. Without this, an unmount
 ///    or directory deletion would silently stop monitoring until restart.
 /// 2. Forward a `SubscriberErrorEvent` to the reporter so the UI can
-///    react (currently it only toasts `inotify_limit`; the others are
-///    logged to the console).
+///    react (it enters the action-needed set; the details are
+///    logged).
 ///
 /// Returns the signals for the reactor: `Lost` for each dropped namespace, or,
 /// for an error with no path, `Rescan` for every watched one.

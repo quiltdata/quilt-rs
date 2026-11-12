@@ -25,9 +25,9 @@ mod package_ops;
 mod package_page;
 mod paths;
 mod quit;
+mod record;
 mod settings;
 mod system;
-mod toast;
 mod updates;
 
 pub use auth::*;
@@ -39,9 +39,9 @@ pub use package_ops::*;
 pub use package_page::*;
 pub use paths::*;
 pub use quit::*;
+pub use record::*;
 pub use settings::*;
 pub use system::*;
-pub use toast::*;
 pub use updates::*;
 
 #[cfg(test)]

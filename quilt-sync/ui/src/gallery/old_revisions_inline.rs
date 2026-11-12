@@ -19,7 +19,7 @@
 //! popover that is not the dialog's ancestor. A dialog mounted inside it would
 //! be unmounted mid-question. So the dialog and the question it asks belong to
 //! the pane, and the popover may close under it: Remove still runs, the
-//! notification reports it, and the popover, reopened, shows the list as it
+//! inbox records it, and the popover, reopened, shows the list as it
 //! stands — every remove button disabled while the removal runs.
 //!
 //! # The dialog closes on Remove; the work shows elsewhere
@@ -31,15 +31,12 @@
 //! the appbar's activity line says "Removing 4 old revisions of user/plate-07…",
 //! and every remove button is disabled, as it is while the package syncs.
 //!
-//! # The result is a notification from the stack
+//! # The result lands in the inbox
 //!
-//! The toast stack's, not the package page's outcome band. The band sits in the
-//! flow under the appbar and pushes the page down, and an open popover is in the
-//! top layer: it would stay where its trigger used to be. The stack floats, it
-//! outlives the page — a sweep the reader navigated away from still reports —
-//! and it is how autopull already reports a finished pull (`pull_toast.rs`). The
-//! gallery cannot mount `ToastStack`, which reads the backend on mount, so the
-//! card here is a copy of its markup and its styles.
+//! Not the package page's outcome band: the activity line showed the work, and
+//! the result outlives the page, so a sweep the reader navigated away from
+//! still reports. The bell's grey dot says it arrived; staying on the page
+//! reads it.
 //!
 //! # Sizes are what removing frees
 //!
@@ -75,8 +72,12 @@ use quilt_ui_kit::ButtonVariant;
 use quilt_ui_kit::Card;
 use quilt_ui_kit::CatalogLink;
 use quilt_ui_kit::ConfirmDialog;
+use quilt_ui_kit::EntryKind;
+use quilt_ui_kit::FileReport;
 use quilt_ui_kit::IconButton;
 use quilt_ui_kit::IconButtonVariant;
+use quilt_ui_kit::InboxEntry;
+use quilt_ui_kit::InboxFeed;
 use quilt_ui_kit::PageLayout;
 use quilt_ui_kit::PaneSection;
 use quilt_ui_kit::RevisionRow;
@@ -259,7 +260,7 @@ impl Ask {
 }
 
 /// One surface's state, with the page around it: its own activity line and its
-/// own notification, so every cell is live from the point it starts at and no
+/// own inbox, so every cell is live from the point it starts at and no
 /// two cells share a bar.
 #[derive(Clone, Copy)]
 struct Flow {
@@ -269,8 +270,8 @@ struct Flow {
     /// The package is locked by a sync. Every remove button refuses.
     syncing: RwSignal<bool>,
     activities: Activities,
-    /// The notification's sentence, once a removal has ended.
-    toast: RwSignal<Option<String>>,
+    /// The bell's inbox, which a removal that has ended adds to.
+    inbox: InboxFeed,
     /// The confirmation: what it asks, and whether it is open.
     ask: RwSignal<Option<Ask>>,
     open: RwSignal<bool>,
@@ -288,7 +289,7 @@ impl Flow {
             removing: RwSignal::new(None),
             syncing: RwSignal::new(false),
             activities: Activities::new(),
-            toast: RwSignal::new(None),
+            inbox: InboxFeed::new(),
             ask: RwSignal::new(None),
             open: RwSignal::new(false),
             removal_run: StoredValue::new(0),
@@ -372,11 +373,10 @@ impl Flow {
     }
 
     /// Starts removing `set` and returns, as the verb's action does: the dialog
-    /// closes, the line takes over, and the notification ends it.
+    /// closes, the line takes over, and the inbox records the end.
     fn start(self, set: Vec<usize>) {
         let run = Self::bump(self.removal_run);
         self.removing.set(Some(set.clone()));
-        self.toast.set(None);
         self.say();
         leptos::task::spawn_local(async move {
             after_a_beat(REMOVING_MS).await;
@@ -388,11 +388,7 @@ impl Flow {
                 .update(|rows| rows.retain(|i| !set.contains(i)));
             self.removing.set(None);
             self.say();
-            self.toast.set(Some(format!(
-                "Removed {} of {NAMESPACE} · freed {}",
-                plural(set.len(), "old revision", "old revisions"),
-                spelled(freed),
-            )));
+            self.removed(set.len(), format!("Freed {}.", spelled(freed)));
         });
     }
 
@@ -419,8 +415,25 @@ impl Flow {
         self.remaining.set(ALL.to_vec());
         self.removing.set(None);
         self.syncing.set(false);
-        self.toast.set(None);
+        self.inbox.entries.set(Vec::new());
         self.say();
+    }
+
+    /// The removal's entry in the inbox, unread.
+    fn removed(self, count: usize, outcome: String) {
+        self.inbox.entries.update(|all| {
+            all.push(InboxEntry {
+                id: all.len() as u64 + 1,
+                kind: EntryKind::RemovedRevisions { count },
+                package: NAMESPACE.to_string(),
+                revision: None,
+                report: FileReport::None,
+                outcome: Some(outcome),
+                at: js_sys::Date::now(),
+                unread: true,
+                href: "#".to_string(),
+            });
+        });
     }
 }
 
@@ -610,44 +623,23 @@ fn appbar(flow: Flow) -> AnyView {
     view! {
         <div class="g-window g-window--bar">
             <Provider value=flow.activities>
-                <PageLayout heading="Package" actions=appbar_actions()>
-                    ""
-                </PageLayout>
+                <Provider value=flow.inbox>
+                    <PageLayout heading="Package" actions=appbar_actions()>
+                        ""
+                    </PageLayout>
+                </Provider>
             </Provider>
         </div>
     }
     .into_any()
 }
 
-/// The notification, as `ToastStack` draws a `Success` card: the sentence and
-/// a dismiss. A copy, because the stack reads the backend on mount.
-fn toast(flow: Flow) -> impl IntoView {
-    move || {
-        flow.toast.get().map(|said| {
-            view! {
-                <div class="g-ori-toast" role="status">
-                    <span class="g-ori-toast__body">{said}</span>
-                    <button
-                        class="g-ori-toast__close"
-                        type="button"
-                        aria-label="Dismiss"
-                        on:click=move |_| flow.toast.set(None)
-                    >
-                        "\u{2715}"
-                    </button>
-                </div>
-            }
-        })
-    }
-}
-
-/// The page around a still surface: the appbar on top, the notification where
-/// the stack hangs, and the surface where the pane's popover opens.
+/// The page around a still surface: the appbar on top, and the surface where
+/// the pane's popover opens.
 fn staged(flow: Flow) -> AnyView {
     view! {
         <div class="g-ori-stage">
             {appbar(flow)}
-            <div class="g-ori-toasts">{toast(flow)}</div>
             <div class="g-ori-page g-ori-page--still">
                 <div class="g-ori-files">"the file list"</div>
                 {surface(flow)}
@@ -699,12 +691,8 @@ fn pane(flow: Flow) -> AnyView {
     .into_any()
 }
 
-/// The whole flow, live: the appbar, the stack's slot and the pane, with a
-/// stub sync to start and a reset.
-///
-/// The slot keeps its height when empty. A notification arriving in the flow
-/// would push the pane down under a popover that stays put — the very thing
-/// the real stack floats to avoid.
+/// The whole flow, live: the appbar and the pane, with a stub sync to start
+/// and a reset.
 fn live() -> AnyView {
     let flow = Flow::new(&ALL);
     view! {
@@ -721,7 +709,6 @@ fn live() -> AnyView {
                 <Button on_click=move |_| flow.reset()>"Reset"</Button>
             </div>
             {appbar(flow)}
-            <div class="g-ori-toasts g-ori-toasts--held">{toast(flow)}</div>
             {pane(flow)}
         </div>
     }
@@ -777,7 +764,7 @@ const NOTE: &str = "Removal where the list already is: the context pane's Histor
     popover, so the popover closing under it never takes the question away. Remove closes \
     the dialog; while the removal runs the \
     appbar says so and every remove button refuses, as it does while the package syncs. The \
-    end is a notification from the stack, and the list drops to what is left. \
+    end lands in the inbox, and the list drops to what is left. \
     \
     The live cell walks it all with stub delays: open the surface, remove a row or the lot, \
     start a sync to watch the buttons refuse, and reset.";
@@ -805,18 +792,10 @@ pub fn OldRevisionsInlineScene() -> impl IntoView {
             <Cell full=true label="removing — the appbar says so, every button refuses">
                 {staged(Flow::removing(&ALL, &OLDER))}
             </Cell>
-            <Cell full=true label="done — the notification, and the two kept rows">
+            <Cell full=true label="done — the bell's dot, and the two kept rows">
                 {
                     let flow = Flow::new(&KEPT);
-                    flow.toast
-                        .set(
-                            Some(
-                                format!(
-                                    "Removed 4 old revisions of {NAMESPACE} · freed {}",
-                                    format_size(freed(&OLDER, &ALL)),
-                                ),
-                            ),
-                        );
+                    flow.removed(4, format!("Freed {}.", format_size(freed(&OLDER, &ALL))));
                     staged(flow)
                 }
             </Cell>

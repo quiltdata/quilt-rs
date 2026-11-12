@@ -608,7 +608,7 @@ mod tests {
 
         for call in [
             json!({"id": 1, "cmd": "test_quiltignore_pattern", "args": {"pattern": "*.tmp", "path": "a.tmp"}}),
-            json!({"id": 2, "cmd": "get_toasts"}),
+            json!({"id": 2, "cmd": "get_record"}),
             json!({"id": 3, "cmd": "open_directory_picker"}),
             json!({"id": 4, "cmd": "nope"}),
         ] {
@@ -716,7 +716,7 @@ mod tests {
             socket.send(send(call)).await.unwrap();
         }
         socket
-            .send(send(json!({"id": 100, "cmd": "get_toasts"})))
+            .send(send(json!({"id": 100, "cmd": "get_record"})))
             .await
             .unwrap();
         socket

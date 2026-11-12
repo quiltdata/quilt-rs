@@ -10,10 +10,10 @@
 //!
 //! # What leads it
 //!
-//! While anything needs action, the panel leads with live lines drawn
-//! from [`ActionNeeded`]: one counting what the main page's queue holds, and one
-//! for each cause the queue does not show, with its remedy. They are state,
-//! not entries, so they leave when the cause clears.
+//! While anything needs action, the panel leads with a line for each cause
+//! in [`ActionNeeded`], worded as the tray menu words it and linking to the
+//! page that fixes it. They are state, not entries, so they leave when the
+//! cause clears.
 //!
 //! # The bell's badge
 //!
@@ -27,6 +27,13 @@
 //! An unread entry is highlighted, and one the backend marks read while the
 //! panel is open keeps its highlight until the panel closes: the panel
 //! remembers every entry it has seen unread since it opened.
+//!
+//! # On every page
+//!
+//! The [`Appbar`](crate::Appbar) draws the bell when an [`InboxFeed`] is
+//! provided above it, as the activity line follows
+//! [`Activities`](crate::Activities): the app fills the feed once, and every
+//! page's bar shows it, whatever controls the page puts beside it.
 //!
 //! Presentation only. The record, reading and the action-needed set are the
 //! caller's.
@@ -73,6 +80,8 @@ pub enum FileChange {
     NewNotDownloaded,
     Updated,
     Removed,
+    /// Removed by the remote, but edited here, so kept and no longer tracked.
+    Kept,
     /// Kept out of a created package by ignore rules.
     LeftOut,
 }
@@ -84,6 +93,7 @@ impl FileChange {
             Self::NewNotDownloaded => "new, not downloaded",
             Self::Updated => "updated",
             Self::Removed => "removed",
+            Self::Kept => "kept, removed on the remote",
             Self::LeftOut => "left out by ignore rules",
         }
     }
@@ -133,72 +143,23 @@ pub struct InboxEntry {
     pub href: String,
 }
 
-/// A action-needed cause the main page's queue does not show, with where it is
-/// fixed.
+/// One thing that needs action: what it is, and the page that fixes it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Cause {
     pub text: String,
     pub href: String,
 }
 
-impl Cause {
-    /// The filesystem watcher has failed; Settings is where it is seen to.
-    #[must_use]
-    pub fn watcher_stopped(settings_href: impl Into<String>) -> Self {
-        Self {
-            text: "File watching stopped".to_string(),
-            href: settings_href.into(),
-        }
-    }
-
-    /// A publish that has kept failing since `since`.
-    #[must_use]
-    pub fn publish_failing(
-        package: &str,
-        since: EpochMillis,
-        now: EpochMillis,
-        href: impl Into<String>,
-    ) -> Self {
-        Self {
-            text: format!(
-                "{package} has failed to publish {}",
-                for_how_long(now - since)
-            ),
-            href: href.into(),
-        }
-    }
-}
-
-/// `for an hour`, `for 2 hours`, `for 3 days`. Never under an hour: that is
-/// when a failing publish starts to need action.
-fn for_how_long(ms: f64) -> String {
-    #[expect(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        reason = "a whole, non-negative number of hours"
-    )]
-    let hours = (ms / 3_600_000.0).floor().max(1.0) as u64;
-    match hours {
-        1 => "for an hour".to_string(),
-        2..48 => format!("for {hours} hours"),
-        _ => format!("for {} days", hours / 24),
-    }
-}
-
 /// Everything that needs action now.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ActionNeeded {
-    /// How many the main page's queue holds.
-    pub in_queue: usize,
-    /// The main page, where the queue is.
-    pub queue_href: String,
-    pub elsewhere: Vec<Cause>,
+    pub causes: Vec<Cause>,
 }
 
 impl ActionNeeded {
     #[must_use]
     pub fn count(&self) -> usize {
-        self.in_queue + self.elsewhere.len()
+        self.causes.len()
     }
 }
 
@@ -232,11 +193,30 @@ impl Badge {
     }
 }
 
-/// The lead line about the queue.
-fn queue_line(count: usize) -> String {
-    match count {
-        1 => "1 thing needs your attention".to_string(),
-        n => format!("{n} things need your attention"),
+/// What the appbar's bell draws, provided once above every page. The caller
+/// fills `entries` and `action_needed`, and reads `open` to tell when the
+/// panel has stayed open long enough to read it.
+#[derive(Clone, Copy, Debug)]
+pub struct InboxFeed {
+    pub entries: RwSignal<Vec<InboxEntry>>,
+    pub action_needed: RwSignal<ActionNeeded>,
+    pub open: RwSignal<bool>,
+}
+
+impl InboxFeed {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            entries: RwSignal::new(Vec::new()),
+            action_needed: RwSignal::new(ActionNeeded::default()),
+            open: RwSignal::new(false),
+        }
+    }
+}
+
+impl Default for InboxFeed {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -289,7 +269,19 @@ pub fn Inbox(
             tight=true
             contained=true
         >
-            <InboxPanel entries=entries action_needed=action_needed open=open />
+            // Following a link closes it, so it neither stays over the page it
+            // opened nor goes on reading.
+            <div class=style::follow on:click=move |ev| {
+                let followed = ev
+                    .target()
+                    .and_then(|t| wasm_bindgen::JsCast::dyn_into::<web_sys::Element>(t).ok())
+                    .is_some_and(|el| el.closest("a").ok().flatten().is_some());
+                if followed {
+                    open.set(false);
+                }
+            }>
+                <InboxPanel entries=entries action_needed=action_needed open=open />
+            </div>
         </AnchoredOverlay>
     }
 }
@@ -334,20 +326,11 @@ pub fn InboxPanel(
     };
 
     let lead = move || {
-        let ActionNeeded {
-            in_queue,
-            queue_href,
-            elsewhere,
-        } = action_needed.get();
-        let queue = (in_queue > 0).then(|| (queue_line(in_queue), queue_href));
-        let lines: Vec<(String, String)> = queue
-            .into_iter()
-            .chain(elsewhere.into_iter().map(|c| (c.text, c.href)))
-            .collect();
-        (!lines.is_empty()).then(|| {
-            let items = lines
+        let causes = action_needed.get().causes;
+        (!causes.is_empty()).then(|| {
+            let items = causes
                 .into_iter()
-                .map(|(text, href)| {
+                .map(|Cause { text, href }| {
                     view! {
                         <li>
                             <a class=style::needs href=href>
@@ -358,7 +341,7 @@ pub fn InboxPanel(
                     }
                 })
                 .collect_view();
-            view! { <ul class=style::lead aria-label="Needs you">{items}</ul> }
+            view! { <ul class=style::lead aria-label="Action needed">{items}</ul> }
         })
     };
 
@@ -370,8 +353,10 @@ pub fn InboxPanel(
                 fallback=|| view! { <p class=style::empty>"Nothing new"</p> }
             >
                 <ol class=style::entries>
-                    // Keyed by id alone, so a row read while focused keeps its link.
-                    <For each=ordered key=|entry| entry.id let:entry>
+                    // Keyed by id and link, not the read flag, so a row read
+                    // while focused keeps its link, and one whose package went
+                    // takes its new one.
+                    <For each=ordered key=|entry| (entry.id, entry.href.clone()) let:entry>
                         {
                             let id = entry.id;
                             let highlighted = Signal::derive(move || {
@@ -431,11 +416,16 @@ mod tests {
         }
     }
 
-    fn queue(n: usize) -> ActionNeeded {
+    fn cause(text: &str, href: &str) -> Cause {
+        Cause {
+            text: text.to_string(),
+            href: href.to_string(),
+        }
+    }
+
+    fn causes(n: usize) -> ActionNeeded {
         ActionNeeded {
-            in_queue: n,
-            queue_href: "/".to_string(),
-            elsewhere: Vec::new(),
+            causes: (0..n).map(|i| cause(&format!("cause {i}"), "/")).collect(),
         }
     }
 
@@ -448,17 +438,6 @@ mod tests {
         assert_eq!(Badge::of(2, true).name(), "Inbox, 2 need action");
     }
 
-    #[test]
-    fn a_failing_publish_says_for_how_long() {
-        let now = 100.0 * 3_600_000.0;
-        let line = |hours: f64| {
-            Cause::publish_failing("user/plate-07", now - hours * 3_600_000.0, now, "/").text
-        };
-        assert_eq!(line(1.2), "user/plate-07 has failed to publish for an hour");
-        assert_eq!(line(2.5), "user/plate-07 has failed to publish for 2 hours");
-        assert_eq!(line(72.0), "user/plate-07 has failed to publish for 3 days");
-    }
-
     fn hrefs(el: &web_sys::Element, selector: &str) -> Vec<String> {
         let all = el.query_selector_all(selector).unwrap();
         (0..all.length())
@@ -468,6 +447,18 @@ mod tests {
                     .get_attribute("href")
             })
             .collect()
+    }
+
+    /// A package uninstalled elsewhere changes an entry's link, not its id.
+    #[wasm_bindgen_test]
+    async fn an_entry_takes_its_new_link() {
+        let entries = RwSignal::new(vec![entry(1, 10.0, true)]);
+        let el = mount(move || {
+            view! { <InboxPanel entries=entries action_needed=ActionNeeded::default() /> }
+        });
+        entries.update(|all| all[0].href = "/".to_string());
+        sleep_ms(0).await;
+        assert_eq!(hrefs(&el, "ol a"), ["/"]);
     }
 
     #[wasm_bindgen_test]
@@ -498,44 +489,35 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn with_no_entries_it_says_nothing_new() {
-        let el = mount(|| view! { <InboxPanel entries=Vec::new() action_needed=queue(2) /> });
+        let el = mount(|| view! { <InboxPanel entries=Vec::new() action_needed=causes(2) /> });
         let text = el.text_content().unwrap_or_default();
         assert!(text.contains("Nothing new"), "{text}");
-        assert!(text.contains("2 things need your attention"), "{text}");
+        assert!(text.contains("cause 1"), "{text}");
     }
 
-    /// The whole line is the link, not only a word in it.
+    /// Each cause is one line, and the whole line is the link to the page
+    /// that fixes it.
     #[wasm_bindgen_test]
-    fn the_queue_line_is_one_link_to_the_main_page() {
-        let el = mount(|| view! { <InboxPanel entries=Vec::new() action_needed=queue(1) /> });
-        let link = el
-            .query_selector("ul[aria-label='Needs you'] a")
-            .unwrap()
-            .expect("the line");
-        assert_eq!(link.get_attribute("href").as_deref(), Some("/"));
-        assert_eq!(
-            link.text_content().as_deref(),
-            Some("1 thing needs your attention")
-        );
-    }
-
-    #[wasm_bindgen_test]
-    fn the_causes_the_queue_does_not_show_lead_with_their_remedy() {
+    fn each_cause_leads_as_one_link_to_its_remedy() {
         let el = mount(|| {
             view! {
                 <InboxPanel
                     entries=Vec::new()
                     action_needed=ActionNeeded {
-                        in_queue: 1,
-                        queue_href: "/".to_string(),
-                        elsewhere: vec![Cause::watcher_stopped("/settings")],
+                        causes: vec![
+                            cause("user/plate-07 \u{2014} Has conflicts in 2 files", "/p"),
+                            cause("Watching package folders for changes stopped working", "/settings"),
+                        ],
                     }
                 />
             }
         });
+        let selector = "ul[aria-label='Action needed'] a";
+        assert_eq!(hrefs(&el, selector), ["/p", "/settings"]);
+        let link = el.query_selector(selector).unwrap().expect("a line");
         assert_eq!(
-            hrefs(&el, "ul[aria-label='Needs you'] a"),
-            ["/", "/settings"]
+            link.text_content().as_deref(),
+            Some("user/plate-07 \u{2014} Has conflicts in 2 files")
         );
     }
 
@@ -635,13 +617,85 @@ mod tests {
         assert!(link.is_same_node(Some(&after)), "inside the same link");
     }
 
+    /// More entries than fit: the panel stays the surface's bounded column
+    /// and scrolls, so the oldest can still be reached.
+    #[wasm_bindgen_test]
+    async fn an_overflowing_panel_scrolls() {
+        use crate::anchored_overlay::style as overlay;
+        use crate::test_support::load_module_style;
+        load_module_style(
+            include_str!("anchored_overlay.module.css"),
+            &[
+                ("root", overlay::root),
+                ("surface", overlay::surface),
+                ("tight", overlay::tight),
+                ("contained", overlay::contained),
+            ],
+        );
+        load_module_style(
+            include_str!("inbox.module.css"),
+            &[("panel", style::panel), ("follow", style::follow)],
+        );
+        let open = RwSignal::new(false);
+        let many: Vec<InboxEntry> = (1..=60).map(|id| entry(id, 10.0, false)).collect();
+        let el = mount(move || {
+            view! {
+                <Inbox
+                    entries=many
+                    action_needed=ActionNeeded::default()
+                    open=open
+                />
+            }
+        });
+        open.set(true);
+        sleep_ms(50).await;
+        let panel = el
+            .query_selector(&format!(".{}", style::panel))
+            .unwrap()
+            .expect("the panel");
+        let surface = el
+            .query_selector("[aria-label='Inbox'][popover]")
+            .unwrap()
+            .expect("the surface");
+        assert!(
+            panel.scroll_height() > panel.client_height(),
+            "the panel holds the overflow"
+        );
+        assert!(
+            panel.get_bounding_client_rect().bottom()
+                <= surface.get_bounding_client_rect().bottom() + 1.0,
+            "and stays inside the surface"
+        );
+    }
+
+    /// Following a link closes the panel.
+    #[wasm_bindgen_test]
+    fn following_a_link_closes_it() {
+        let open = RwSignal::new(true);
+        let el = mount(move || {
+            view! {
+                <Inbox
+                    entries=vec![entry(1, 10.0, true)]
+                    action_needed=ActionNeeded::default()
+                    open=open
+                />
+            }
+        });
+        let link: web_sys::HtmlElement = wasm_bindgen::JsCast::unchecked_into(
+            el.query_selector("ol a").unwrap().expect("an entry"),
+        );
+        link.set_attribute("href", "#").unwrap();
+        link.click();
+        assert!(!open.get_untracked());
+    }
+
     #[wasm_bindgen_test]
     fn the_bell_is_named_by_its_badge() {
         let el = mount(|| {
             view! {
                 <Inbox
                     entries=vec![entry(1, 10.0, true)]
-                    action_needed=queue(3)
+                    action_needed=causes(3)
                     open=RwSignal::new(false)
                 />
             }

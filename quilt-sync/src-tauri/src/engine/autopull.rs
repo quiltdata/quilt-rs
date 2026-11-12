@@ -25,7 +25,6 @@ use crate::engine::telemetry::prelude::*;
 pub mod activity;
 pub mod last_change;
 pub mod publish_timer;
-pub mod pull_toast;
 pub mod reporter;
 pub mod settings;
 pub mod status;
@@ -282,6 +281,7 @@ impl Watcher {
         let (tx, rx) = watch::channel(SyncTrayStatus::default());
         let aggregator = Arc::new(SyncTrayAggregator::new(tx));
         let run_model = Arc::clone(&model);
+        let task_reporter = Arc::clone(&reporter);
         let tasks = crate::engine::tasks::Tasks::new(
             data_dir,
             Arc::new(move |run| {
@@ -290,6 +290,7 @@ impl Watcher {
                     Box::pin(crate::engine::tasks::execute(&*run_model, run)).await;
                 });
             }),
+            Arc::new(move |draft| task_reporter.report_recorded(draft)),
         );
         let inner = Arc::new(WatcherInner {
             settings,

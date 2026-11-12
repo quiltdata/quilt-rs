@@ -130,6 +130,8 @@ pub fn run(args: Args) -> ExitCode {
                 () = stopped() => {}
             }
         }
+        // What the last pull or publish recorded, written before the stop.
+        engine.services.record.settle().await;
         engine.services.app.logging.shutdown();
         Ok(engine.into_lock())
     });

@@ -331,7 +331,7 @@ mod tests {
         quilt_ui_kit::test_support::unmount_earlier();
         let engine = FakeEngine::install();
         engine.as_headless();
-        let _asked = ask("get_toasts");
+        let _asked = ask("get_record");
         sleep_ms(0).await;
         engine.hello();
         let open = RwSignal::new(true);

@@ -60,6 +60,13 @@ impl<R: Runtime> Desktop for TauriDesktop<R> {
             .download_and_install(|_, _| {}, || {})
             .await
             .map_err(|e| e.to_string())?;
+        // A restart skips the exit hook, so the record's writes finish here.
+        if let Some(services) = self
+            .app
+            .try_state::<Arc<crate::engine::services::Services>>()
+        {
+            services.record.settle().await;
+        }
         self.app.restart();
     }
 

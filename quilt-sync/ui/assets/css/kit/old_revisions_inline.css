@@ -126,63 +126,6 @@
   flex: none;
 }
 
-/* Where the stack hangs: centred under the appbar. In the app it floats; here
- * it is in the flow so it covers nothing. */
-.g-ori-toasts {
-  display: flex;
-  justify-content: center;
-}
-
-/* The live cell's slot keeps its height when empty, so a notification
- * arriving does not move the pane under its open popover. */
-.g-ori-toasts--held {
-  min-height: 44px;
-}
-
-/* A copy of a success toast's card (`components/toasts.module.css`), whose
- * hashed classes this stylesheet cannot name. */
-.g-ori-toast {
-  display: flex;
-  gap: var(--q-space-4);
-  align-items: center;
-  width: min(44rem, 100%);
-  padding: var(--q-space-2) var(--q-space-2) var(--q-space-2) var(--q-space-4);
-  color: var(--q-fgColor-default);
-  background: var(--q-bgColor-default);
-  border-left: 4px solid var(--q-fgColor-success);
-  border-radius: 2px;
-  font-size: var(--q-text-body);
-  box-shadow:
-    rgb(0 0 0 / 32%) 0 10px 28px -6px,
-    rgb(0 0 0 / 24%) 0 4px 10px -2px,
-    rgb(0 0 0 / 12%) 0 0 0 1px;
-}
-
-.g-ori-toast__body {
-  flex: 1;
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.g-ori-toast__close {
-  display: flex;
-  flex: none;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  color: var(--q-fgColor-muted);
-  cursor: pointer;
-  background: none;
-  border: none;
-  border-radius: 2px;
-}
-
-.g-ori-toast__close:hover {
-  color: var(--q-fgColor-default);
-  background: var(--q-bgColor-neutral-muted);
-}
-
 /* The confirmation inline: `Dialog`'s box, title and footer at its width. */
 .g-ori-dialog {
   width: min(440px, 100%);
