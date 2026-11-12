@@ -77,8 +77,7 @@ impl<R: Runtime> Desktop for TauriDesktop<R> {
     fn foreign_link_handlers(&self) -> Vec<ForeignHandler> {
         self.app
             .try_state::<super::link_handler::LinkHandlers>()
-            .map(|handlers| handlers.foreign())
-            .unwrap_or_default()
+            .map_or_default(|handlers| handlers.foreign())
     }
 }
 

@@ -1175,11 +1175,7 @@ fn workflow_field(fixed: &Form, draft: Draft, shown: Memo<FieldErrors>) -> AnyVi
             }
         });
         let words = if fixed.choosable {
-            fixed
-                .options
-                .first()
-                .map(|o| o.label.clone())
-                .unwrap_or_default()
+            fixed.options.first().map_or_default(|o| o.label.clone())
         } else {
             fixed.words.clone()
         };

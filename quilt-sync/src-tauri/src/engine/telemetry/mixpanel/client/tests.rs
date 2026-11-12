@@ -168,9 +168,7 @@ async fn serve(mut stream: TcpStream, reply: &Reply, seen: &Mutex<Vec<Request>>)
             return;
         }
     };
-    let extra = retry_after
-        .map(|secs| format!("Retry-After: {secs}\r\n"))
-        .unwrap_or_default();
+    let extra = retry_after.map_or_default(|secs| format!("Retry-After: {secs}\r\n"));
     let head = format!(
         "HTTP/1.1 {status} Scripted\r\nContent-Length: {}\r\nConnection: close\r\n{extra}\r\n",
         body.len()

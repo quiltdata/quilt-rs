@@ -131,11 +131,7 @@ pub fn SplitButton(
         }
     });
     let label = Signal::derive(move || {
-        options.with_value(|o| {
-            o.get(index.get())
-                .map(|opt| opt.label.clone())
-                .unwrap_or_default()
-        })
+        options.with_value(|o| o.get(index.get()).map_or_default(|opt| opt.label.clone()))
     });
 
     let run = move |_| {

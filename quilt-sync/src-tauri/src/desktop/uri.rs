@@ -37,8 +37,7 @@ fn package_link(link: &str, uri_str: &str) -> Result<String> {
     let token = url
         .query_pairs()
         .find(|(key, _)| key == "t")
-        .map(|(_, token)| token.into_owned())
-        .unwrap_or_default();
+        .map_or_default(|(_, token)| token.into_owned());
     let mut url = routes::from_url(package_path(uri_str)?, url);
     url.query_pairs_mut().append_pair("t", &token);
     Ok(url.into())
@@ -96,8 +95,7 @@ fn parse_auth_params(url: &Url) -> Result<AuthParams> {
     if let Some(error) = params.get("error") {
         let description = params
             .get("error_description")
-            .map(|v| format!(": {v}"))
-            .unwrap_or_default();
+            .map_or_default(|v| format!(": {v}"));
         return Err(Error::General(format!(
             "OAuth error — {error}{description}"
         )));

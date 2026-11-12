@@ -108,7 +108,7 @@ impl Faults {
     #[cfg(test)]
     pub fn reported(&self) -> Vec<String> {
         match self {
-            Self::Recorded(recorded) => recorded.lock().map(|r| r.clone()).unwrap_or_default(),
+            Self::Recorded(recorded) => recorded.lock().map_or_default(|r| r.clone()),
             _ => Vec::new(),
         }
     }

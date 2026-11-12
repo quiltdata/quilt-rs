@@ -155,8 +155,7 @@ impl FakeStack {
         self.readable
             .iter()
             .find(|(held, _)| held == role)
-            .map(|(_, buckets)| buckets.clone())
-            .unwrap_or_default()
+            .map_or_default(|(_, buckets)| buckets.clone())
     }
 
     /// The registry's readable-bucket list. A GraphQL call in production, so
@@ -188,7 +187,7 @@ impl FakeStack {
         self.cache_clears
             .lock()
             .expect("cache clears")
-            .push(host.map(ToString::to_string).unwrap_or_default());
+            .push(host.map_or_default(ToString::to_string));
         let role = self.role.lock().expect("role").clone();
         *self.signing_role.lock().expect("signing role") = role;
     }

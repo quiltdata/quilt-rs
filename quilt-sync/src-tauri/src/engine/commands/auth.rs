@@ -517,7 +517,7 @@ mod tests {
             .returning(move |host: Option<Host>| {
                 log.lock()
                     .expect("cache clear log")
-                    .push(host.map(|h| h.to_string()).unwrap_or_default());
+                    .push(host.map_or_default(|h| h.to_string()));
             });
 
         RecordingModel {
@@ -671,7 +671,7 @@ mod tests {
             .returning(move |host: Option<Host>| {
                 log.lock()
                     .expect("cache clear log")
-                    .push(host.map(|h| h.to_string()).unwrap_or_default());
+                    .push(host.map_or_default(|h| h.to_string()));
             });
 
         let result = switch_role_command(
