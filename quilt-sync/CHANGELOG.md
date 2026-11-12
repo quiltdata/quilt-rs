@@ -47,6 +47,9 @@
 
 ### Fixed
 
+- QuiltSync refuses a package link that holds a user, port, query or path it used to ignore, or gives `package`, `path` or `catalog` twice
+- A package link whose file path holds `&`, `=`, `+` or `%` opens that file
+- *Open in catalog* opens the file's own page when its path holds `?`, `#` or `%`, and says why when a path has a `.` or `..` part, which no catalog link can hold
 - QuiltSync refuses a package link whose bucket name S3 does not allow, and checks a package the app's window asks for the same way (<https://github.com/quiltdata/quilt-rs/pull/1361>)
 - QuiltSync refuses a package link whose package name has a part that is `.` or `..` or holds `\`, `:` or a control character (<https://github.com/quiltdata/quilt-rs/pull/1359>)
 - Settings shows a role switched in the web catalog the next time you open it (<https://github.com/quiltdata/quilt-rs/pull/1354>)

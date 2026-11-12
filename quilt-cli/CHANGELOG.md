@@ -28,6 +28,8 @@
 
 ### Fixed
 
+- `quilt` refuses a package or S3 URI that holds a user, password, port, query, path or fragment it used to ignore, or gives a fragment key twice
+- `quilt pull` and `quilt push` print a package URI that parses back the same when the package name holds `&`, `=`, `+`, `%` or a space
 - `quilt` refuses a package or S3 URI whose bucket name S3 does not allow (<https://github.com/quiltdata/quilt-rs/pull/1361>)
 - `quilt` refuses a package name whose prefix or name is `.` or `..` or holds `\`, `:` or a control character (<https://github.com/quiltdata/quilt-rs/pull/1359>)
 - `quilt status` and `quilt list --fetch` work when the catalog can't be reached (<https://github.com/quiltdata/quilt-rs/pull/1338>)

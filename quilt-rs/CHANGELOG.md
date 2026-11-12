@@ -31,6 +31,7 @@
 
 ### Fixed
 
+- A package or S3 URI that holds a user, password, port, query, path or fragment it used to drop, or gives a fragment key twice, is refused with a parse error
 - A lineage file whose remote has a bucket name S3 does not allow, or a hash that is not a top hash, is refused with a parse error, and `set_remote` refuses such a bucket with a `UriError::Bucket` error before it asks S3 or saves anything (<https://github.com/quiltdata/quilt-rs/pull/1361>)
 - A package namespace whose prefix or name is `.` or `..` or holds `\`, `:` or a control character is refused with a `UriError::Namespace` error, whether it comes from a URI, a lineage file or a caller (<https://github.com/quiltdata/quilt-rs/pull/1359>)
 - A top hash read from a tag pointer (`latest` or a timestamp) must be 64 lowercase hex characters, as in a parsed `@` revision; anything else is a `UriError::Package` error instead of being used as the revision's hash (<https://github.com/quiltdata/quilt-rs/pull/1340>)
