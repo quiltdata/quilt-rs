@@ -119,10 +119,16 @@ impl TryFrom<&str> for S3Uri {
 
 impl fmt::Display for S3Uri {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut remote_url = Url::parse("s3://").unwrap();
-        remote_url
-            .set_host(Some(&self.bucket))
-            .expect("failed to set bucket");
+        // A bucket the parser would refuse is written escaped, so it is never
+        // read as a user, port or path.
+        let bucket = if check_bucket(&self.bucket).is_ok() {
+            self.bucket.clone()
+        } else {
+            percent_encoding::utf8_percent_encode(&self.bucket, percent_encoding::NON_ALPHANUMERIC)
+                .to_string()
+        };
+        let mut remote_url = Url::parse("s3://").map_err(|_| fmt::Error)?;
+        remote_url.set_host(Some(&bucket)).map_err(|_| fmt::Error)?;
         remote_url.set_path(&self.key);
         if let Some(version_id) = &self.version {
             remote_url
@@ -314,6 +320,26 @@ mod tests {
         assert_eq!(uri.key, "a#b");
         assert_eq!(uri.to_string(), "s3://bucket/a%23b");
         Ok(())
+    }
+
+    /// The fields are public, so a bucket the parser would refuse can be set
+    /// by hand; the address still renders, with the bucket escaped.
+    #[test]
+    fn a_hand_built_bad_bucket_still_renders() {
+        for (bucket, expected) in [
+            ("a b", "s3://a%20b/key"),
+            ("a/b", "s3://a%2Fb/key"),
+            ("a#b", "s3://a%23b/key"),
+            ("a:b", "s3://a%3Ab/key"),
+            ("", "s3:///key"),
+        ] {
+            let uri = S3Uri {
+                bucket: bucket.to_string(),
+                key: "key".to_string(),
+                version: None,
+            };
+            assert_eq!(uri.to_string(), expected, "{bucket:?}");
+        }
     }
 
     /// The parser refuses a bucket name S3 never allowed.

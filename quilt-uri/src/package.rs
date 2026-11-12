@@ -709,7 +709,10 @@ mod tests {
         for (fragment, key) in [
             ("package=team/pkg&package=other/pkg", "package"),
             ("package=team/pkg&path=a.csv&path=b.csv", "path"),
-            ("package=team/pkg&catalog=quilt.test&catalog=other.test", "catalog"),
+            (
+                "package=team/pkg&catalog=quilt.test&catalog=other.test",
+                "catalog",
+            ),
             ("package=team/pkg&path=a.csv&path=a.csv", "path"),
         ] {
             let input = format!("quilt+s3://bucket#{fragment}");
