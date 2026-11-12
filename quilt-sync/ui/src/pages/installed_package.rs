@@ -1356,8 +1356,6 @@ fn PackageScreen(
     // rebuilds. `link_outcome`, not `outcome`, which is the last command's.
     let link_outcome = Memo::new(move |_| routes::DeepLinkOutcome::from_query(&query.read()));
     provide_context(Carried(link_outcome));
-    // Staying on the page reads this package's inbox entries.
-    crate::components::inbox::read_package_on_dwell(ns.into());
     let mismatch = Memo::new(move |_| {
         link_outcome
             .get()
@@ -1403,6 +1401,12 @@ fn PackageScreen(
     // whenever `reload` fires — the watcher reporting news about this package,
     // or the failure arm's way out.
     let answer = page.read(ns, read);
+    // Staying on the page reads this package's inbox entries, once the page
+    // shows the package: a skeleton or a failed read shows nothing to read.
+    crate::components::inbox::read_package_on_dwell(
+        ns.into(),
+        Signal::derive(move || answer.with(|a| matches!(a, Some(Ok(_))))),
+    );
 
     // Not remembered: another package, or another visit, starts at the
     // default with every folder open, no search and the `All` facet. `ns` is a memo on

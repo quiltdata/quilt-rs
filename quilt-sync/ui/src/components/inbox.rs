@@ -253,15 +253,16 @@ pub fn provide_inbox() {
     }));
 }
 
-/// Read `namespace`'s entries while its page stays in a visible window. A
-/// page with no feed above it, as in the gallery, reads nothing.
-pub fn read_package_on_dwell(namespace: Signal<String>) {
+/// Read `namespace`'s entries while its page stays in a visible window and
+/// `shown`, drawing the package. A page with no feed above it, as in the
+/// gallery, reads nothing.
+pub fn read_package_on_dwell(namespace: Signal<String>, shown: Signal<bool>) {
     let Some(feed) = use_context::<InboxFeed>() else {
         return;
     };
     let visible = page_visible();
     read_on_dwell(Memo::new(move |_| {
-        if !visible.get() {
+        if !(visible.get() && shown.get()) {
             return None;
         }
         let package = namespace.get();
@@ -359,7 +360,10 @@ mod tests {
     #[wasm_bindgen_test]
     async fn an_arrival_does_not_restart_the_dwell() {
         use crate::engine::fake::FakeEngine;
-        use quilt_ui_kit::test_support::{mount, sleep_ms};
+        use quilt_ui_kit::test_support::{mount, sleep_ms, unmount_earlier};
+
+        // An earlier test's page would read into this test's engine.
+        unmount_earlier();
 
         let engine = FakeEngine::serving();
         let feed = InboxFeed::new();
@@ -371,7 +375,10 @@ mod tests {
         feed.entries.set(vec![unread(1)]);
         let _el = mount(move || {
             provide_context(feed);
-            read_package_on_dwell(Signal::stored("acme/demo".to_string()));
+            read_package_on_dwell(
+                Signal::stored("acme/demo".to_string()),
+                Signal::stored(true),
+            );
         });
 
         sleep_ms(1_200).await;
@@ -389,5 +396,42 @@ mod tests {
             [serde_json::json!(1)],
             "read on time, up to what was there"
         );
+    }
+
+    /// A page that has not drawn its package, a skeleton or a failed read,
+    /// reads nothing; once it does, its dwell starts.
+    #[wasm_bindgen_test]
+    async fn a_page_reads_only_once_it_shows_the_package() {
+        use crate::engine::fake::FakeEngine;
+        use quilt_ui_kit::test_support::{mount, sleep_ms, unmount_earlier};
+
+        // An earlier test's page would read into this test's engine.
+        unmount_earlier();
+
+        let engine = FakeEngine::serving();
+        let feed = InboxFeed::new();
+        feed.entries.set(vec![kit::InboxEntry {
+            unread: true,
+            ..entry_for(record_entry(RecordKind::Got)).unwrap()
+        }]);
+        let shown = RwSignal::new(false);
+        let _el = mount(move || {
+            provide_context(feed);
+            read_package_on_dwell(Signal::stored("acme/demo".to_string()), shown.into());
+        });
+        let marks = || {
+            engine
+                .all_requests()
+                .into_iter()
+                .filter(|r| r["cmd"] == "mark_read")
+                .count()
+        };
+
+        sleep_ms(2_200).await;
+        assert_eq!(marks(), 0, "nothing shown, nothing read");
+
+        shown.set(true);
+        sleep_ms(2_200).await;
+        assert_eq!(marks(), 1);
     }
 }
