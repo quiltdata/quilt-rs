@@ -27,8 +27,9 @@
 
 ### Fixed
 
+- `quilt pull` and `quilt push` print a package URI that parses back the same (<https://github.com/quiltdata/quilt-rs/pull/1363>)
 - `quilt status` and `quilt list --fetch` work when the catalog can't be reached (<https://github.com/quiltdata/quilt-rs/pull/1338>)
-- `quilt` refuses a package URI with an invalid bucket or package name (<https://github.com/quiltdata/quilt-rs/pull/1359>, <https://github.com/quiltdata/quilt-rs/pull/1361>)
+- `quilt` refuses a package URI with an invalid bucket or package name, or with parts it used to ignore, such as a user or port (<https://github.com/quiltdata/quilt-rs/pull/1359>, <https://github.com/quiltdata/quilt-rs/pull/1361>, <https://github.com/quiltdata/quilt-rs/pull/1363>)
 
 ### quilt-rs
 

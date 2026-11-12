@@ -394,7 +394,7 @@ fn file_row(
         let commands = row_commands(&path, held.as_ref(), published, unchanged.get());
         menu_actions(&commands, on_command)
     });
-    let uri = address.map(|package| crate::util::file_uri(package, &f.path).to_copy_string());
+    let uri = address.map(|package| crate::util::file_uri(package, &f.path).to_string());
     let is_copied = Signal::derive(move || {
         uri.as_ref()
             .is_some_and(|uri| copied.with(|c| c.as_ref().is_some_and(|c| &c.uri == uri)))
@@ -624,8 +624,12 @@ mod tests {
     async fn the_catalog_link_and_the_copy_name_the_held_revision() {
         let hash = "0123456789abcdef".repeat(4);
         let held = held_address(Some(&with_catalog()), Some(&hash)).expect("an address");
-        let link = crate::util::entry_catalog_url(&held, "one.csv").expect("a catalog link");
-        let latest = crate::util::entry_catalog_url(&with_catalog(), "one.csv").unwrap();
+        let link = crate::util::entry_catalog_url(&held, "one.csv")
+            .expect("a catalog")
+            .expect("a catalog link");
+        let latest = crate::util::entry_catalog_url(&with_catalog(), "one.csv")
+            .unwrap()
+            .unwrap();
         assert!(link.contains(&hash), "got {link}");
         assert_ne!(link, latest);
 

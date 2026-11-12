@@ -60,7 +60,10 @@ fn catalog() -> Option<Catalog> {
         &"user/plate-07".try_into().expect("a namespace"),
         Some("quilt-lab.example"),
     );
-    Catalog::new(Some(&package), Callback::new(|_url: String| ()))
+    Catalog::new(
+        Some(&package),
+        Callback::new(|_link: Result<String, String>| ()),
+    )
 }
 
 /// Three files a newer revision adds.

@@ -24,7 +24,12 @@
 
 ### Changed
 
-- **Breaking:** Package URIs are checked more strictly, and deserializing applies the same checks as parsing. An `@` revision must be a full top hash (64 lowercase hex characters), a bucket must be a name S3 allows (the new `UriError::Bucket`), and each half of a `Namespace` must be a plain folder name. The JSON form is unchanged. `Namespace` no longer converts from a plain tuple outside tests; use `TryFrom` (<https://github.com/quiltdata/quilt-rs/pull/1339>, <https://github.com/quiltdata/quilt-rs/pull/1359>, <https://github.com/quiltdata/quilt-rs/pull/1361>)
+- **Breaking:** Package URIs are checked more strictly, and deserializing applies the same checks as parsing. An `@` revision must be a full top hash (64 lowercase hex characters), a bucket must be a name S3 allows (the new `UriError::Bucket`), and each half of a `Namespace` must be a plain folder name. A user, password, port, query or path that parsing used to drop, or a fragment key given twice, is an error. The JSON form is unchanged. `Namespace` no longer converts from a plain tuple outside tests; use `TryFrom` (<https://github.com/quiltdata/quilt-rs/pull/1339>, <https://github.com/quiltdata/quilt-rs/pull/1359>, <https://github.com/quiltdata/quilt-rs/pull/1361>, <https://github.com/quiltdata/quilt-rs/pull/1363>)
+- **Breaking:** `S3PackageUri`'s `to_string()` escapes every value, so it parses back the same; `to_copy_string()` is gone. `display_for_host` keeps a `?`, `#` or `%` in its path part and refuses a `.` or `..` part, which no catalog URL keeps (<https://github.com/quiltdata/quilt-rs/pull/1363>)
+
+### Fixed
+
+- `S3Uri`'s `to_string()` writes a hand-built bucket the parser refuses escaped, instead of panicking (<https://github.com/quiltdata/quilt-rs/pull/1363>)
 
 ## [v0.4.3] - 2026-10-22
 

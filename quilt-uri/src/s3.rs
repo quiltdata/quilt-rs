@@ -42,14 +42,13 @@ impl S3Uri {
     ///
     /// # Errors
     ///
-    /// Returns [`UriError::UrlParse`] if `host`, the bucket, or the key yield
-    /// a string that is not a valid URL.
+    /// Returns [`UriError::S3`] if the bucket or a piece of the key is `.` or
+    /// `..`, which no catalog URL can keep.
     pub fn display_for_host(&self, host: &Host) -> Result<url::Url, UriError> {
-        let mut url = url::Url::parse(&format!(
-            "https://{}/b/{}/tree/{}",
-            host, self.bucket, self.key
-        ))?;
-
+        let segments = ["b", &self.bucket, "tree"]
+            .into_iter()
+            .chain(self.key.split('/'));
+        let mut url = host.web_url(segments).map_err(UriError::S3)?;
         if let Some(ref version) = self.version {
             url.query_pairs_mut().append_pair("version", version);
         }
@@ -65,6 +64,22 @@ impl TryFrom<&str> for S3Uri {
         if parsed_url.scheme() != "s3" {
             return Err(UriError::Scheme(format!(
                 "Expected s3:// scheme in {input}"
+            )));
+        }
+        let bucket = parsed_url.host_str().unwrap_or_default();
+        if !parsed_url.username().is_empty() || parsed_url.password().is_some() {
+            return Err(UriError::S3(format!(
+                "A user or password is not allowed before the bucket {bucket:?}"
+            )));
+        }
+        if let Some(port) = parsed_url.port() {
+            return Err(UriError::S3(format!(
+                "A port is not allowed after the bucket {bucket:?}; got {port}"
+            )));
+        }
+        if parsed_url.fragment().is_some() {
+            return Err(UriError::S3(format!(
+                "A fragment is not allowed in {input}; write `#` in a key as `%23`"
             )));
         }
         let bucket = parsed_url
@@ -106,10 +121,16 @@ impl TryFrom<&str> for S3Uri {
 
 impl fmt::Display for S3Uri {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut remote_url = Url::parse("s3://").unwrap();
-        remote_url
-            .set_host(Some(&self.bucket))
-            .expect("failed to set bucket");
+        // A bucket the parser would refuse is written escaped, so it is never
+        // read as a user, port or path.
+        let bucket = if check_bucket(&self.bucket).is_ok() {
+            self.bucket.clone()
+        } else {
+            percent_encoding::utf8_percent_encode(&self.bucket, percent_encoding::NON_ALPHANUMERIC)
+                .to_string()
+        };
+        let mut remote_url = Url::parse("s3://").map_err(|_| fmt::Error)?;
+        remote_url.set_host(Some(&bucket)).map_err(|_| fmt::Error)?;
         remote_url.set_path(&self.key);
         if let Some(version_id) = &self.version {
             remote_url
@@ -271,6 +292,123 @@ mod tests {
             "https://quilt.test/b/bucket/tree/foo/bar?version=abc"
         );
         Ok(())
+    }
+
+    /// Every part of the address is read or refused: a user, a password, a
+    /// port or a fragment is an error, not dropped.
+    #[test]
+    fn a_uri_refuses_parts_it_would_drop() {
+        for input in [
+            "s3://bucket@other-bucket/key",
+            "s3://user:pass@bucket/key",
+            "s3://:pass@bucket/key",
+            "s3://bucket:1/key",
+            "s3://bucket/a#b",
+            "s3://bucket/a#",
+            "s3://bucket/a?versionId=v#b",
+        ] {
+            let err = S3Uri::try_from(input).expect_err(&format!("{input} should not parse"));
+            assert!(
+                matches!(err, UriError::S3(_)),
+                "{input}: expected an S3 URI error, got {err}"
+            );
+        }
+    }
+
+    /// A key holding `#` is written `%23`, and reads back whole.
+    #[test]
+    fn a_key_holding_a_hash_sign_round_trips() -> Res {
+        let uri = S3Uri::try_from("s3://bucket/a%23b")?;
+        assert_eq!(uri.key, "a#b");
+        assert_eq!(uri.to_string(), "s3://bucket/a%23b");
+        Ok(())
+    }
+
+    /// The fields are public, so a bucket the parser would refuse can be set
+    /// by hand; the address still renders, with the bucket escaped.
+    #[test]
+    fn a_hand_built_bad_bucket_still_renders() {
+        for (bucket, expected) in [
+            ("a b", "s3://a%20b/key"),
+            ("a/b", "s3://a%2Fb/key"),
+            ("a#b", "s3://a%23b/key"),
+            ("a:b", "s3://a%3Ab/key"),
+            ("", "s3:///key"),
+        ] {
+            let uri = S3Uri {
+                bucket: bucket.to_string(),
+                key: "key".to_string(),
+                version: None,
+            };
+            assert_eq!(uri.to_string(), expected, "{bucket:?}");
+        }
+    }
+
+    /// Each piece of the key is one path segment of the catalog URL, so `?`,
+    /// `#`, `%` and spaces stay in the key.
+    #[test]
+    fn a_catalog_url_keeps_every_key_character_in_its_path() -> Res {
+        let host = fixtures::host();
+        for (key, version, expected) in [
+            (
+                "a?x=1#frag/b c%2F.csv",
+                None,
+                "https://quilt.test/b/bucket/tree/a%3Fx=1%23frag/b%20c%252F.csv",
+            ),
+            (
+                "dir/a?x.csv",
+                Some("v1"),
+                "https://quilt.test/b/bucket/tree/dir/a%3Fx.csv?version=v1",
+            ),
+            ("dir/", None, "https://quilt.test/b/bucket/tree/dir/"),
+            ("a..b/.x", None, "https://quilt.test/b/bucket/tree/a..b/.x"),
+        ] {
+            let uri = S3Uri {
+                bucket: "bucket".to_string(),
+                key: key.to_string(),
+                version: version.map(String::from),
+            };
+            let url = uri.display_for_host(&host)?;
+            assert_eq!(url.as_str(), expected, "{key:?}");
+            assert!(url.path().starts_with("/b/bucket/tree/"), "{url}");
+            assert_eq!(url.fragment(), None, "{url}");
+        }
+        Ok(())
+    }
+
+    /// A `.` or `..` segment has no catalog URL a browser keeps, so it is an
+    /// error.
+    #[test]
+    fn a_catalog_url_refuses_a_dot_segment() {
+        let host = fixtures::host();
+        for (bucket, key) in [
+            ("bucket", "../../../admin?x=1#frag"),
+            ("bucket", "a/./b"),
+            ("bucket", "a/.."),
+            ("..", "key"),
+        ] {
+            let uri = S3Uri {
+                bucket: bucket.to_string(),
+                key: key.to_string(),
+                version: None,
+            };
+            let err = uri
+                .display_for_host(&host)
+                .expect_err(&format!("{bucket:?} {key:?} should not render"));
+            assert!(matches!(err, UriError::S3(_)), "{key:?}: got {err}");
+        }
+    }
+
+    /// The error for a user or password names the bucket, never the user or
+    /// password themselves.
+    #[test]
+    fn the_error_for_a_user_does_not_repeat_it() {
+        for input in ["s3://KEY:secret@bucket/k", "s3://user:secret@bucket:1/k"] {
+            let err = S3Uri::try_from(input).expect_err(input).to_string();
+            assert!(err.contains("bucket"), "{err}");
+            assert!(!err.contains("secret"), "{err}");
+            assert!(!err.contains("KEY") && !err.contains("user:"), "{err}");
+        }
     }
 
     /// The parser refuses a bucket name S3 never allowed.

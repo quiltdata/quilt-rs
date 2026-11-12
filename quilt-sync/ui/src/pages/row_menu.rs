@@ -156,14 +156,16 @@ pub(crate) async fn carry_out(
                 })
         }
         RowCommand::OpenInCatalog(path) => {
-            let Some(url) = uri.and_then(|u| crate::util::entry_catalog_url(u, path)) else {
+            let Some(link) = uri.and_then(|u| crate::util::entry_catalog_url(u, path)) else {
                 return Ran::Done;
             };
-            commands::open_in_web_browser(url)
-                .await
-                .map_or_else(failed("Could not open this file in the catalog."), |_| {
-                    Ran::Done
-                })
+            let opened = match link {
+                Ok(url) => commands::open_in_web_browser(url).await.map(drop),
+                Err(reason) => Err(reason),
+            };
+            opened.map_or_else(failed("Could not open this file in the catalog."), |()| {
+                Ran::Done
+            })
         }
         RowCommand::CopyUri(_) | RowCommand::CopyPath(_) => {
             let copied = match clipped(command, namespace, uri, local).await {
@@ -208,7 +210,7 @@ pub(crate) async fn clipped(
 ) -> Result<Option<(String, Option<quilt_uri::S3PackageUri>)>, String> {
     let file = |path: &str| uri.map(|u| crate::util::file_uri(u, path));
     match command {
-        RowCommand::CopyUri(path) => Ok(file(path).map(|f| (f.to_copy_string(), Some(f)))),
+        RowCommand::CopyUri(path) => Ok(file(path).map(|f| (f.to_string(), Some(f)))),
         RowCommand::CopyPath(path) => {
             let on_disk = local(namespace.to_string(), path.clone()).await?;
             Ok(Some((on_disk, file(path))))
@@ -260,7 +262,7 @@ mod tests {
                  &path=runs/one%20two.csv&catalog=quilt.test"
             )
         );
-        assert_eq!(event.map(|u| u.to_copy_string()), Some(text));
+        assert_eq!(event.map(|u| u.to_string()), Some(text));
 
         // A New row: the full path on disk, as opening the file resolves it.
         let copy_path = RowCommand::CopyPath("runs/new.csv".to_string());
@@ -351,6 +353,27 @@ mod tests {
                 }
             ),
             "got {refused:?}"
+        );
+    }
+
+    /// A file whose path has no catalog URL fails with the reason, as a
+    /// banner shows it, instead of opening nothing.
+    #[wasm_bindgen_test]
+    async fn a_path_with_no_catalog_url_fails_with_the_reason() {
+        let ns = "user/plate-07";
+        let package =
+            crate::util::package_uri("team-bucket", &ns.try_into().unwrap(), Some("quilt.test"));
+        let open = RowCommand::OpenInCatalog("runs/../one.csv".to_string());
+        let ran = carry_out(&open, ns, Some(&package), at_home, || true).await;
+        assert!(
+            matches!(
+                &ran,
+                Ran::Failed {
+                    lead: "Could not open this file in the catalog.",
+                    detail,
+                } if detail.contains("`..`")
+            ),
+            "got {ran:?}"
         );
     }
 }
