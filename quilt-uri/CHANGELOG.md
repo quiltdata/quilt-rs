@@ -20,6 +20,7 @@
 
 ### Added
 
+- `check_bucket` tells whether a bucket name follows S3's legacy rule, the one parsing and deserializing apply, and says why not (<https://github.com/quiltdata/quilt-rs/pull/1361>)
 - `is_top_hash` tells whether a string is a top hash: 64 lowercase hex characters, the rule the `@` revision parse applies (<https://github.com/quiltdata/quilt-rs/pull/1340>)
 
 ### Changed

@@ -258,6 +258,61 @@ async fn test_set_remote_rejects_unreachable_bucket() -> Res {
     Ok(())
 }
 
+/// A bucket name S3 does not allow is refused before the bucket is asked
+/// for and before anything is saved, so the lineage file stays readable.
+#[test(tokio::test)]
+async fn set_remote_refuses_a_bucket_name_s3_does_not_allow() -> Res {
+    let (home, _temp_dir1) = Home::from_temp_dir()?;
+    let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
+    let storage = LocalStorage::new();
+    let namespace: Namespace = ("test", "badname").into();
+    paths
+        .scaffold_for_installing(&storage, &home, &namespace)
+        .await?;
+    let lineage_json = r#"{
+        "packages": {
+            "test/badname": {
+                "commit": null,
+                "remote": null,
+                "base_hash": "",
+                "latest_hash": "",
+                "paths": {}
+            }
+        },
+        "home": "/tmp/working_dir"
+    }"#;
+    storage
+        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
+        .await?;
+    let package = InstalledPackage {
+        lineage: PackageLineageIo::new(DomainLineageIo::new(paths.lineage()), namespace.clone()),
+        paths,
+        // Any call to it would fail as unreachable, so a bucket error here
+        // shows the name was refused first.
+        remote: std::sync::Arc::new(BadBucketRemote),
+        storage,
+        namespace,
+        state_store: None,
+    };
+
+    for bucket in ["existing-bucket#typo", "a b", ".."] {
+        let err = package
+            .set_remote(
+                bucket.to_string(),
+                Some(fixtures::host()),
+                WorkflowIntent::BucketDefault,
+            )
+            .await
+            .expect_err(bucket);
+        assert!(
+            matches!(err, Error::Uri(UriError::Bucket(_))),
+            "{bucket}: expected a bucket error, got {err}"
+        );
+    }
+    assert!(package.lineage().await?.remote_uri.is_none());
+    Ok(())
+}
+
 #[test(tokio::test)]
 async fn test_set_remote_rejects_change_on_pushed_package() -> Res {
     let (home, _temp_dir1) = Home::from_temp_dir()?;

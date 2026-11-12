@@ -8,7 +8,11 @@ use crate::UriError;
 /// A bucket name under S3's legacy rule: 1 to 255 of `A-Z a-z 0-9 . _ -`,
 /// and not `.` or `..`. Every name S3 allows passes, and each one is also a
 /// valid URL host.
-pub(crate) fn check_bucket(bucket: &str) -> Result<(), UriError> {
+///
+/// # Errors
+///
+/// Returns [`UriError::Bucket`] for any other name.
+pub fn check_bucket(bucket: &str) -> Result<(), UriError> {
     let valid = (1..=255).contains(&bucket.len())
         && bucket != "."
         && bucket != ".."
