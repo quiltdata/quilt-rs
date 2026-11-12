@@ -52,6 +52,34 @@ impl FromStr for Host {
     }
 }
 
+impl Host {
+    /// `https://{host}/` with each of `segments` as one escaped path segment.
+    ///
+    /// A `.` or `..` segment is an error: a browser reads it, and its escaped
+    /// form `%2E`, as a step up the path, so no URL keeps it.
+    pub(crate) fn web_url<'a>(
+        &self,
+        segments: impl IntoIterator<Item = &'a str>,
+    ) -> Result<url::Url, String> {
+        let mut url = url::Url::parse(&format!("https://{self}/")).map_err(|e| e.to_string())?;
+        {
+            let mut path = url
+                .path_segments_mut()
+                .map_err(|()| format!("{self} cannot hold a path"))?;
+            path.pop_if_empty();
+            for segment in segments {
+                if segment == "." || segment == ".." {
+                    return Err(format!(
+                        "cannot link to a `{segment}` path segment in the catalog"
+                    ));
+                }
+                path.push(segment);
+            }
+        }
+        Ok(url)
+    }
+}
+
 impl fmt::Display for Host {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.inner)

@@ -2281,11 +2281,6 @@ mod tests {
                 .unwrap(),
         );
         let target = remote_target_of(&data).unwrap();
-        assert!(
-            target
-                .address
-                .to_string()
-                .contains(&format!("@{hash}"))
-        );
+        assert!(target.address.to_string().contains(&format!("@{hash}")));
     }
 }

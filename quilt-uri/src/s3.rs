@@ -42,14 +42,13 @@ impl S3Uri {
     ///
     /// # Errors
     ///
-    /// Returns [`UriError::UrlParse`] if `host`, the bucket, or the key yield
-    /// a string that is not a valid URL.
+    /// Returns [`UriError::S3`] if the bucket or a piece of the key is `.` or
+    /// `..`, which no catalog URL can keep.
     pub fn display_for_host(&self, host: &Host) -> Result<url::Url, UriError> {
-        let mut url = url::Url::parse(&format!(
-            "https://{}/b/{}/tree/{}",
-            host, self.bucket, self.key
-        ))?;
-
+        let segments = ["b", &self.bucket, "tree"]
+            .into_iter()
+            .chain(self.key.split('/'));
+        let mut url = host.web_url(segments).map_err(UriError::S3)?;
         if let Some(ref version) = self.version {
             url.query_pairs_mut().append_pair("version", version);
         }
@@ -339,6 +338,61 @@ mod tests {
                 version: None,
             };
             assert_eq!(uri.to_string(), expected, "{bucket:?}");
+        }
+    }
+
+    /// Each piece of the key is one path segment of the catalog URL, so `?`,
+    /// `#`, `%` and spaces stay in the key.
+    #[test]
+    fn a_catalog_url_keeps_every_key_character_in_its_path() -> Res {
+        let host = fixtures::host();
+        for (key, version, expected) in [
+            (
+                "a?x=1#frag/b c%2F.csv",
+                None,
+                "https://quilt.test/b/bucket/tree/a%3Fx=1%23frag/b%20c%252F.csv",
+            ),
+            (
+                "dir/a?x.csv",
+                Some("v1"),
+                "https://quilt.test/b/bucket/tree/dir/a%3Fx.csv?version=v1",
+            ),
+            ("dir/", None, "https://quilt.test/b/bucket/tree/dir/"),
+            ("a..b/.x", None, "https://quilt.test/b/bucket/tree/a..b/.x"),
+        ] {
+            let uri = S3Uri {
+                bucket: "bucket".to_string(),
+                key: key.to_string(),
+                version: version.map(String::from),
+            };
+            let url = uri.display_for_host(&host)?;
+            assert_eq!(url.as_str(), expected, "{key:?}");
+            assert!(url.path().starts_with("/b/bucket/tree/"), "{url}");
+            assert_eq!(url.fragment(), None, "{url}");
+        }
+        Ok(())
+    }
+
+    /// A `.` or `..` segment has no catalog URL a browser keeps, so it is an
+    /// error.
+    #[test]
+    fn a_catalog_url_refuses_a_dot_segment() {
+        let host = fixtures::host();
+        for (bucket, key) in [
+            ("bucket", "../../../admin?x=1#frag"),
+            ("bucket", "a/./b"),
+            ("bucket", "a/.."),
+            ("..", "key"),
+        ] {
+            let uri = S3Uri {
+                bucket: bucket.to_string(),
+                key: key.to_string(),
+                version: None,
+            };
+            let err = uri
+                .display_for_host(&host)
+                .expect_err(&format!("{bucket:?} {key:?} should not render"));
+            assert!(matches!(err, UriError::S3(_)), "{key:?}: got {err}");
         }
     }
 

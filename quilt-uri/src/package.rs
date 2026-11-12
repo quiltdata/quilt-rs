@@ -485,25 +485,26 @@ impl S3PackageUri {
     ///
     /// # Errors
     ///
-    /// Returns [`UriError::UrlParse`] if `host`, the bucket, or the namespace
-    /// yield a string that is not a valid URL.
+    /// Returns [`UriError::Package`] if the bucket, the revision or a piece of
+    /// the logical path is `.` or `..`, which no catalog URL can keep.
     pub fn display_for_host(&self, host: &Host) -> Result<url::Url, UriError> {
-        let version = match &self.revision {
+        let revision = match &self.revision {
             RevisionPointer::Tag(tag) => tag.to_string(),
             RevisionPointer::Hash(hash) => hash.clone(),
         };
-        let mut url = url::Url::parse(&format!(
-            "https://{}/b/{}/packages/{}/tree/{}",
-            host, self.bucket, self.namespace, version
-        ))?;
-
-        if let Some(path) = &self.path {
-            let mut new_path = url.path().to_string();
-            new_path.push('/');
-            new_path.push_str(&path.display().to_string());
-            url.set_path(&new_path);
-        }
-        Ok(url)
+        let path = self.path.as_ref().map(|p| p.display().to_string());
+        let segments = [
+            "b",
+            &self.bucket,
+            "packages",
+            self.namespace.prefix(),
+            self.namespace.name(),
+            "tree",
+            &revision,
+        ]
+        .into_iter()
+        .chain(path.iter().flat_map(|p| p.split('/')));
+        host.web_url(segments).map_err(UriError::Package)
     }
 
     /// Renders this package URI as a web URL on its own catalog host.
@@ -941,6 +942,75 @@ mod tests {
             )
         );
         Ok(())
+    }
+
+    /// The namespace halves, the revision and each piece of the logical path
+    /// are one path segment each, so nothing in them moves the URL.
+    #[test]
+    fn a_catalog_url_keeps_every_value_in_its_own_segment() -> Res {
+        let host = fixtures::host();
+        for (namespace, path, expected) in [
+            (
+                ("a", "x?q=1#f"),
+                None,
+                "https://quilt.test/b/bucket/packages/a/x%3Fq=1%23f/tree/latest",
+            ),
+            (
+                ("team", "pkg"),
+                Some("a?q=1#f/b c%2F.csv"),
+                "https://quilt.test/b/bucket/packages/team/pkg/tree/latest/a%3Fq=1%23f/b%20c%252F.csv",
+            ),
+        ] {
+            let uri = S3PackageUri {
+                catalog: None,
+                bucket: "bucket".to_string(),
+                namespace: namespace.into(),
+                revision: RevisionPointer::Tag(Tag::Latest),
+                path: path.map(PathBuf::from),
+            };
+            let url = uri.display_for_host(&host)?;
+            assert_eq!(url.as_str(), expected);
+            assert_eq!(url.query(), None, "{url}");
+            assert_eq!(url.fragment(), None, "{url}");
+        }
+        Ok(())
+    }
+
+    /// A `.` or `..` segment has no catalog URL a browser keeps, so it is an
+    /// error.
+    #[test]
+    fn a_catalog_url_refuses_a_dot_segment() {
+        let host = fixtures::host();
+        let base = S3PackageUri {
+            catalog: None,
+            bucket: "bucket".to_string(),
+            namespace: ("team", "pkg").into(),
+            revision: RevisionPointer::Tag(Tag::Latest),
+            path: None,
+        };
+        for uri in [
+            S3PackageUri {
+                path: Some(PathBuf::from("../../../../admin")),
+                ..base.clone()
+            },
+            S3PackageUri {
+                path: Some(PathBuf::from("a/./b.csv")),
+                ..base.clone()
+            },
+            S3PackageUri {
+                revision: RevisionPointer::Hash("..".to_string()),
+                ..base.clone()
+            },
+            S3PackageUri {
+                bucket: "..".to_string(),
+                ..base.clone()
+            },
+        ] {
+            let err = uri
+                .display_for_host(&host)
+                .expect_err(&format!("{uri:?} should not render"));
+            assert!(matches!(err, UriError::Package(_)), "{uri:?}: got {err}");
+        }
     }
 
     #[test]
