@@ -301,6 +301,19 @@ impl TryFrom<&str> for S3PackageUri {
                 parsed_url.scheme()
             )));
         }
+        if !parsed_url.username().is_empty()
+            || parsed_url.password().is_some()
+            || parsed_url.port().is_some()
+        {
+            return Err(UriError::Package(format!(
+                "a user, password or port is not allowed before the bucket: {input}"
+            )));
+        }
+        if !parsed_url.path().is_empty() || parsed_url.query().is_some() {
+            return Err(UriError::Package(format!(
+                "a path or query is not allowed after the bucket: {input}"
+            )));
+        }
 
         let fragment = parsed_url.fragment().ok_or(UriError::Package(format!(
             "S3 package URI must contain a fragment: {input}"
@@ -665,6 +678,29 @@ mod tests {
             uri.unwrap_err().to_string(),
             r#"Invalid package URI: unexpected parameters in fragment: {"foo": "bar"}"#.to_string(),
         );
+    }
+
+    /// The address before the fragment is only the bucket: a user, a
+    /// password, a port, a query or any path, a lone `/` too, is an error.
+    #[test]
+    fn a_uri_refuses_parts_it_would_drop() {
+        for input in [
+            "quilt+s3://bucket@other-bucket#package=a/b",
+            "quilt+s3://user:pass@bucket#package=a/b",
+            "quilt+s3://:pass@bucket#package=a/b",
+            "quilt+s3://bucket:1#package=a/b",
+            "quilt+s3://bucket/x#package=a/b",
+            "quilt+s3://bucket/#package=a/b",
+            "quilt+s3://bucket?x=1#package=a/b",
+            "quilt+s3://bucket?#package=a/b",
+        ] {
+            let err =
+                S3PackageUri::try_from(input).expect_err(&format!("{input} should not parse"));
+            assert!(
+                matches!(err, UriError::Package(_)),
+                "{input}: expected a package error, got {err}"
+            );
+        }
     }
 
     /// A key given twice is an error, whichever one a reader would pick.

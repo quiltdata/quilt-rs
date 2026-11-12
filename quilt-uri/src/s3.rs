@@ -67,6 +67,19 @@ impl TryFrom<&str> for S3Uri {
                 "Expected s3:// scheme in {input}"
             )));
         }
+        if !parsed_url.username().is_empty()
+            || parsed_url.password().is_some()
+            || parsed_url.port().is_some()
+        {
+            return Err(UriError::S3(format!(
+                "A user, password or port is not allowed in {input}"
+            )));
+        }
+        if parsed_url.fragment().is_some() {
+            return Err(UriError::S3(format!(
+                "A fragment is not allowed in {input}; write `#` in a key as `%23`"
+            )));
+        }
         let bucket = parsed_url
             .host_str()
             .ok_or(UriError::S3(format!("Missing bucket in {input}")))?;
@@ -270,6 +283,36 @@ mod tests {
             uri_with_version.display_for_host(&host)?.as_str(),
             "https://quilt.test/b/bucket/tree/foo/bar?version=abc"
         );
+        Ok(())
+    }
+
+    /// Every part of the address is read or refused: a user, a password, a
+    /// port or a fragment is an error, not dropped.
+    #[test]
+    fn a_uri_refuses_parts_it_would_drop() {
+        for input in [
+            "s3://bucket@other-bucket/key",
+            "s3://user:pass@bucket/key",
+            "s3://:pass@bucket/key",
+            "s3://bucket:1/key",
+            "s3://bucket/a#b",
+            "s3://bucket/a#",
+            "s3://bucket/a?versionId=v#b",
+        ] {
+            let err = S3Uri::try_from(input).expect_err(&format!("{input} should not parse"));
+            assert!(
+                matches!(err, UriError::S3(_)),
+                "{input}: expected an S3 URI error, got {err}"
+            );
+        }
+    }
+
+    /// A key holding `#` is written `%23`, and reads back whole.
+    #[test]
+    fn a_key_holding_a_hash_sign_round_trips() -> Res {
+        let uri = S3Uri::try_from("s3://bucket/a%23b")?;
+        assert_eq!(uri.key, "a#b");
+        assert_eq!(uri.to_string(), "s3://bucket/a%23b");
         Ok(())
     }
 
