@@ -35,6 +35,9 @@ use tokio::sync::Mutex;
 use crate::engine::events::EventSink;
 use crate::engine::telemetry::prelude::*;
 
+mod outside;
+pub use outside::Outside;
+
 /// Event the window refetches the record on. Kept in lockstep with the UI.
 pub const RECORD_EVENT: &str = "record-changed";
 
@@ -59,6 +62,12 @@ pub enum Kind {
     Created,
     RemovedRevisions {
         count: usize,
+    },
+    /// Another tool on this computer moved the package's revision.
+    /// `published` when the new revision is the copy's own commit;
+    /// otherwise a publish cannot be told from a pull.
+    Outside {
+        published: bool,
     },
 }
 
@@ -237,6 +246,16 @@ impl Draft {
                 },
                 report.namespace.clone(),
             )
+        }
+    }
+
+    /// A move another tool made, with no file report: its report of what it
+    /// wrote is not available.
+    #[must_use]
+    pub fn outside(namespace: &Namespace, from: Option<&str>, to: &str, published: bool) -> Self {
+        Self {
+            revision: Some(revision(from, to)),
+            ..Self::new(Kind::Outside { published }, namespace.clone())
         }
     }
 

@@ -277,6 +277,7 @@ impl Watcher {
         reporter: Arc<dyn StatusReporter>,
         last_change: last_change::LastChange,
         action_needed: Arc<ActionNeeded>,
+        outside: Arc<crate::engine::record::Outside>,
     ) -> (Self, watch::Receiver<SyncTrayStatus>) {
         let (tx, rx) = watch::channel(SyncTrayStatus::default());
         let aggregator = Arc::new(SyncTrayAggregator::new(tx));
@@ -328,6 +329,9 @@ impl Watcher {
         let task_inner = Arc::clone(&inner);
         crate::engine::events::spawn(async move {
             loop {
+                // Whether autosync runs or not, and first at start, so a move
+                // made while the app was closed is found at once.
+                outside.check().await;
                 let cadence = pull_cadence(&task_inner.settings.read().await.pull);
                 // This deadline covers the sleep, which is when the Autosync
                 // card draws it. `run_once` arms again when the tick starts,
