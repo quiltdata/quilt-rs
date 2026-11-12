@@ -710,7 +710,7 @@ fn copy_uri(
 ) {
     let stamp = copied.bump();
     leptos::task::spawn_local(async move {
-        let answer = commands::copy_to_clipboard(address.to_copy_string(), Some(address)).await;
+        let answer = commands::copy_to_clipboard(address.to_string(), Some(address)).await;
         // A later copy speaks for both surfaces.
         if !copied.is_current(stamp) {
             return;
@@ -2221,7 +2221,7 @@ mod tests {
         )))
         .unwrap();
         assert_eq!(
-            target.address.to_copy_string(),
+            target.address.to_string(),
             "quilt+s3://team-bucket#package=team/dataset&catalog=quilt.test"
         );
         assert_eq!(
@@ -2235,7 +2235,7 @@ mod tests {
     fn behind_both_name_the_held_revision() {
         let target = remote_target_of(&holding_against(Some("def456"))).unwrap();
         assert_eq!(
-            target.address.to_copy_string(),
+            target.address.to_string(),
             "quilt+s3://team-bucket#package=team/dataset@abc1230000000000000000000000000000000000000000000000000000000000&catalog=quilt.test"
         );
         assert_eq!(
@@ -2264,7 +2264,7 @@ mod tests {
             Some("abc1230000000000000000000000000000000000000000000000000000000000".to_string());
         let target = remote_target_of(&d).unwrap();
         assert_eq!(
-            target.address.to_copy_string(),
+            target.address.to_string(),
             "quilt+s3://team-bucket#package=team/dataset"
         );
         assert_eq!(target.catalog_url, None);
@@ -2284,7 +2284,7 @@ mod tests {
         assert!(
             target
                 .address
-                .to_copy_string()
+                .to_string()
                 .contains(&format!("@{hash}"))
         );
     }

@@ -430,13 +430,6 @@ impl S3PackageUri {
         self.render(false, FRAGMENT_VALUE)
     }
 
-    /// The address in full for copying: the whole hash, and every fragment
-    /// value escaped, spaces too, so a pasted address stays one link.
-    #[must_use]
-    pub fn to_copy_string(&self) -> String {
-        self.render(true, COPY_VALUE)
-    }
-
     /// Each fragment value is escaped with `set`, safe to put beside the
     /// delimiters.
     ///
@@ -508,26 +501,11 @@ impl S3PackageUri {
     }
 }
 
+/// The full address: the whole hash, and every fragment value escaped, spaces
+/// too, so it parses back the same and a pasted address stays one link.
 impl fmt::Display for S3PackageUri {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let hash = match &self.revision {
-            RevisionPointer::Tag(Tag::Latest) => String::new(),
-            RevisionPointer::Tag(tag) => format!(":{tag}"),
-            RevisionPointer::Hash(h) => format!("@{h}"),
-        };
-        let path_part = match &self.path {
-            Some(p) => format!("&path={}", p.display()),
-            None => String::new(),
-        };
-        let catalog_part = match &self.catalog {
-            Some(p) => format!("&catalog={p}"),
-            None => String::new(),
-        };
-        write!(
-            f,
-            "quilt+s3://{}#package={}{}{}{}",
-            self.bucket, self.namespace, hash, path_part, catalog_part
-        )
+        f.write_str(&self.render(true, COPY_VALUE))
     }
 }
 
@@ -1354,17 +1332,18 @@ mod tests {
                 path: Some(PathBuf::from(path)),
             };
 
-            let back = S3PackageUri::try_from(uri.display().as_str())
-                .unwrap_or_else(|e| panic!("{path:?} -> {} : {e}", uri.display()));
-
-            assert_eq!(back, uri, "{path:?} came back as {}", uri.display());
+            for written in [uri.display(), uri.to_string()] {
+                let back = S3PackageUri::try_from(written.as_str())
+                    .unwrap_or_else(|e| panic!("{path:?} -> {written} : {e}"));
+                assert_eq!(back, uri, "{path:?} came back as {written}");
+            }
         }
     }
 
-    /// The copied form comes back whole whatever the values hold, pinned or at
+    /// The full form comes back whole whatever the values hold, pinned or at
     /// latest: every delimiter and space escaped, and the hash never shortened.
     #[test]
-    fn the_copy_string_round_trips() {
+    fn the_full_string_round_trips() {
         let hash = "0123456789abcdef".repeat(4);
         for revision in [
             RevisionPointer::Tag(Tag::Latest),
@@ -1385,7 +1364,7 @@ mod tests {
                     revision: revision.clone(),
                     path: Some(PathBuf::from(format!("dir/{value}.csv"))),
                 };
-                let copied = uri.to_copy_string();
+                let copied = uri.to_string();
 
                 assert!(!copied.contains(' '), "{copied}");
                 let back = S3PackageUri::try_from(copied.as_str())
@@ -1395,9 +1374,27 @@ mod tests {
         }
     }
 
-    /// Slashes stay literal in the copied form too, and the hash is whole.
+    /// A path that spells other fragment keys stays one path in `to_string()`.
     #[test]
-    fn the_copy_string_keeps_slashes_and_the_whole_hash() {
+    fn a_path_spelling_other_keys_stays_a_path() -> Res {
+        let uri = S3PackageUri {
+            catalog: Some(fixtures::host()),
+            bucket: "bucket".to_string(),
+            namespace: ("team", "pkg").into(),
+            revision: RevisionPointer::Tag(Tag::Latest),
+            path: Some(PathBuf::from("x&package=other/pkg&catalog=other.test")),
+        };
+        assert_eq!(
+            uri.to_string(),
+            "quilt+s3://bucket#package=team/pkg&path=x%26package%3Dother/pkg%26catalog%3Dother.test&catalog=quilt.test"
+        );
+        assert_eq!(S3PackageUri::try_from(uri.to_string().as_str())?, uri);
+        Ok(())
+    }
+
+    /// Slashes stay literal in the full form too, and the hash is whole.
+    #[test]
+    fn the_full_string_keeps_slashes_and_the_whole_hash() {
         let hash = "0123456789abcdef".repeat(4);
         let uri = S3PackageUri {
             catalog: Some("quilt.test".parse().unwrap()),
@@ -1408,7 +1405,7 @@ mod tests {
         };
 
         assert_eq!(
-            uri.to_copy_string(),
+            uri.to_string(),
             format!(
                 "quilt+s3://team-bucket#package=user/plate-07@{hash}&path=runs/a/one.csv&catalog=quilt.test"
             )

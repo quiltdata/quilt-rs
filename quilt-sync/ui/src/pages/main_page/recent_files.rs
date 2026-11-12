@@ -394,7 +394,7 @@ fn file_row(
         let commands = row_commands(&path, held.as_ref(), published, unchanged.get());
         menu_actions(&commands, on_command)
     });
-    let uri = address.map(|package| crate::util::file_uri(package, &f.path).to_copy_string());
+    let uri = address.map(|package| crate::util::file_uri(package, &f.path).to_string());
     let is_copied = Signal::derive(move || {
         uri.as_ref()
             .is_some_and(|uri| copied.with(|c| c.as_ref().is_some_and(|c| &c.uri == uri)))

@@ -208,7 +208,7 @@ pub(crate) async fn clipped(
 ) -> Result<Option<(String, Option<quilt_uri::S3PackageUri>)>, String> {
     let file = |path: &str| uri.map(|u| crate::util::file_uri(u, path));
     match command {
-        RowCommand::CopyUri(path) => Ok(file(path).map(|f| (f.to_copy_string(), Some(f)))),
+        RowCommand::CopyUri(path) => Ok(file(path).map(|f| (f.to_string(), Some(f)))),
         RowCommand::CopyPath(path) => {
             let on_disk = local(namespace.to_string(), path.clone()).await?;
             Ok(Some((on_disk, file(path))))
@@ -260,7 +260,7 @@ mod tests {
                  &path=runs/one%20two.csv&catalog=quilt.test"
             )
         );
-        assert_eq!(event.map(|u| u.to_copy_string()), Some(text));
+        assert_eq!(event.map(|u| u.to_string()), Some(text));
 
         // A New row: the full path on disk, as opening the file resolves it.
         let copy_path = RowCommand::CopyPath("runs/new.csv".to_string());
