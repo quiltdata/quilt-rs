@@ -1487,9 +1487,30 @@ fn MainPageRegions(
     }
 }
 
+/// What a *Recent files* row's failed command said, for the page's band.
+/// [`MainPage`] provides it as context; the feed's rows set it.
+#[derive(Clone, Copy)]
+pub(super) struct RowFailure(pub(super) RwSignal<Option<String>>);
+
+/// The band's report of a row command that failed. Dismissed by hand, or
+/// replaced by the next row command.
+fn row_failure_banner(failure: RowFailure) -> impl IntoView {
+    move || {
+        failure.0.get().map(|said| {
+            view! {
+                <Banner variant=BannerVariant::Critical on_dismiss=move |_| failure.0.set(None)>
+                    {said}
+                </Banner>
+            }
+        })
+    }
+}
+
 #[component]
 pub fn MainPage() -> impl IntoView {
     let reload = Trigger::new();
+    let failure = RowFailure(RwSignal::new(None));
+    provide_context(failure);
     // Events were lost while the socket was down.
     crate::engine::reread_on_reconnect(reload);
     // Light-phase reads still out, counted as the heavy phase counts its own
@@ -1542,6 +1563,7 @@ pub fn MainPage() -> impl IntoView {
             banner=view! {
                 <crate::components::UpdateNotice />
                 {move || link_handlers.get().and_then(Result::ok).map(|handlers| link_handler_banner(&handlers))}
+                {row_failure_banner(failure)}
             }
                 .into_any()
         >

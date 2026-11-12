@@ -32,7 +32,7 @@ use quilt_ui_kit::{Banner, BannerVariant, LoadFailure, PageLayout, publish_heigh
 use super::copy_mark::CopyMark;
 #[cfg(test)]
 use super::page::outcome_band;
-use super::page::{Page, PageHandle};
+use super::page::{Page, PageHandle, success};
 use super::row_menu::{COPY_FAILED, LocalPath, Ran, RowCommand, carry_out, local_path};
 use super::status_watch::StatusWatch;
 use crate::components::{IgnorePopup, IgnorePopupData, UnignorePopup, UnignorePopupData};
@@ -1095,11 +1095,19 @@ fn copy_outcome(namespace: String, command: &RowCommand) -> Outcome {
     }
 }
 
+/// A popup's saved write: re-read the page and say it on the band.
+fn said(w: Wiring, namespace: String) -> impl Fn(String) + Clone + 'static {
+    move |lead| {
+        w.outcome.try_set(Some(success(namespace.clone(), lead)));
+        w.reload.notify();
+    }
+}
+
 /// The popups a row's `[⋯]` opens, drawn outside the body so a re-read keeps
 /// them.
 ///
-/// Each shows its own refusal and re-reads the page once its write lands; the
-/// re-read is the report.
+/// Each shows its own refusal, and once its write lands re-reads the page and
+/// says what it wrote on the band.
 ///
 /// The page survives a switch of package, so an answer can land after the
 /// reader moved on. Both popups hold the page's lock while they wait, so no
@@ -1113,7 +1121,7 @@ fn row_popups(files: Files, w: Wiring) -> impl IntoView {
                 view! {
                     <IgnorePopup
                         data=data
-                        refetch=w.reload
+                        on_saved=said(w, ns.clone())
                         on_close=move || {
                             files
                                 .ignoring
@@ -1132,7 +1140,7 @@ fn row_popups(files: Files, w: Wiring) -> impl IntoView {
                 view! {
                     <UnignorePopup
                         data=data
-                        refetch=w.reload
+                        on_saved=said(w, ns.clone())
                         on_close=move || {
                             files
                                 .unignoring

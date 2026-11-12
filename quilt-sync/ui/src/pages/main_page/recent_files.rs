@@ -24,10 +24,12 @@ use quilt_ui_kit::Card;
 use quilt_ui_kit::FileRow;
 use quilt_ui_kit::GroupHeading;
 use quilt_ui_kit::NameTooltip;
+use quilt_ui_kit::readable;
 
 #[cfg(test)]
 use super::GROUP_NONE;
 use super::GROUP_PACKAGE;
+use super::RowFailure;
 use super::package_page_href;
 use crate::pages::copy_mark::CopyMark;
 use crate::pages::row_menu::{Ran, RowCommand, carry_out, local_path, menu_actions};
@@ -66,6 +68,7 @@ pub fn RecentFilesRegion(
     // One state rather than a flag per row: exactly one copy can be the most
     // recent, and the rows read it through their own `copied` prop.
     let state = CopyState::new();
+    let failure = use_context::<RowFailure>();
 
     if files.is_empty() {
         return view! {
@@ -167,6 +170,7 @@ pub fn RecentFilesRegion(
                                     addresses.clone(),
                                     unchanged.clone(),
                                     state,
+                                    failure,
                                 )
                             }
                         />
@@ -198,19 +202,25 @@ struct Copied {
 
 type CopyState = CopyMark<Copied>;
 
-/// Runs what a row's `[⋯]` or a click on the row chose. A failure is logged,
-/// never rendered: the words a reader sees come only from the kit. A copy
-/// reports on the row and the card's live region, and only one the backend
-/// confirmed draws a mark; a row that marked itself on click would be wrong in
-/// the case that matters, the clipboard refusing.
+/// Runs what a row's `[⋯]` or a click on the row chose. A failure is said on
+/// the page's band, when the page gave one. A copy also reports on the row and
+/// the card's live region, and only one the backend confirmed draws a mark; a
+/// row that marked itself on click would be wrong in the case that matters,
+/// the clipboard refusing.
 fn run_command(
     command: RowCommand,
     namespace: Namespace,
     address: Option<S3PackageUri>,
     state: CopyState,
+    failure: Option<RowFailure>,
 ) {
     let copying = matches!(command, RowCommand::CopyUri(_));
     let stamp = if copying { state.bump() } else { 0 };
+    // This command is now the last one: an earlier failure left up would
+    // outlive a retry that succeeds.
+    if let Some(RowFailure(said)) = failure {
+        said.set(None);
+    }
     spawn_local(async move {
         let ran = carry_out(
             &command,
@@ -229,6 +239,9 @@ fn run_command(
             }
             Ran::Failed { lead, detail } => {
                 web_sys::console::error_1(&format!("{lead} {detail}").into());
+                if let Some(RowFailure(said)) = failure {
+                    said.try_set(Some(format!("{lead} {}", readable(&detail))));
+                }
                 if copying {
                     state.settle(stamp, None, "Could not copy the address".to_string());
                 }
@@ -311,6 +324,7 @@ fn file_group(
     addresses: HashMap<Namespace, S3PackageUri>,
     unchanged: HashMap<Namespace, Signal<bool>>,
     state: CopyState,
+    failure: Option<RowFailure>,
 ) -> AnyView {
     let key = title.clone();
     let files = Signal::derive(move || {
@@ -352,7 +366,13 @@ fn file_group(
                     let on_command = Callback::new({
                         let run_with = run_with.clone();
                         move |command| {
-                            run_command(command, namespace.clone(), run_with.clone(), state);
+                            run_command(
+                                command,
+                                namespace.clone(),
+                                run_with.clone(),
+                                state,
+                                failure,
+                            );
                         }
                     });
                     file_row(&f, run_with.as_ref(), unchanged, on_command, state.copied)
@@ -1036,6 +1056,42 @@ mod tests {
         assert!(
             !el.text_content().unwrap_or_default().contains("Copied"),
             "and the row does not claim a copy that did not happen"
+        );
+    }
+
+    /// A row command that fails says so on the page's band. There is no
+    /// engine in this harness, so every command here fails.
+    #[wasm_bindgen_test]
+    async fn a_failed_row_command_is_said_on_the_band() {
+        let el = mount(move || {
+            let failure = RowFailure(RwSignal::new(None));
+            provide_context(failure);
+            view! {
+                <leptos_router::components::Router>
+                    <div data-band>{super::super::row_failure_banner(failure)}</div>
+                    <RecentFilesRegion
+                        files=vec![file("one.csv", "user/alpha", 1_000.0)]
+                        query=Signal::stored(String::new())
+                        group_by=Signal::stored(GROUP_NONE.to_string())
+                    />
+                </leptos_router::components::Router>
+            }
+        });
+        let band = || {
+            el.query_selector("[data-band]")
+                .unwrap()
+                .expect("the band")
+                .text_content()
+                .unwrap_or_default()
+        };
+        assert_eq!(band(), "", "nothing is said before a command runs");
+
+        item(&open_menu(&el).await, "Reveal in folder").click();
+        sleep_ms(50).await;
+        assert!(
+            band().starts_with("Could not show this file in its folder."),
+            "the failure is on the band: {}",
+            band()
         );
     }
 }
