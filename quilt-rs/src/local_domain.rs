@@ -117,6 +117,15 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
         self
     }
 
+    /// The domain with `hook` told of every package entry its writes of
+    /// `data.json` change, by any of its packages. Only the desktop app sets
+    /// one, to tell its own writes from another tool's.
+    #[must_use]
+    pub fn with_lineage_hook(mut self, hook: lineage::LineageHook) -> Self {
+        self.lineage = self.lineage.with_hook(hook);
+        self
+    }
+
     /// The user-wide ignore rules file, which every package reads below its
     /// own `.quiltignore`.
     #[must_use]

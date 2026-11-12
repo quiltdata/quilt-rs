@@ -34,6 +34,7 @@ use crate::engine::publish_settings;
 use crate::engine::publish_settings::SharedPublishSettings;
 use crate::engine::quilt;
 use crate::engine::quit::QuitGate;
+use crate::engine::record::Outside;
 use crate::engine::record::Record;
 use crate::engine::telemetry;
 use crate::engine::telemetry::Telemetry;
@@ -119,17 +120,20 @@ impl Services {
 
         // Only the app opens the package state store; the CLI never does.
         // One store for the last-change times and the walks' stat cache.
-        let state_store = Arc::new(quilt::state_store::PackageStateStore::new(
-            quilt::paths::DomainPaths::new(data_dir.clone()).state_db(),
-        ));
+        let paths = quilt::paths::DomainPaths::new(data_dir.clone());
+        let state_store = Arc::new(quilt::state_store::PackageStateStore::new(paths.state_db()));
         let last_change = autopull::last_change::LastChange::shared(Arc::clone(&state_store));
+        let events = EventSink::new();
+        let record = Arc::new(Record::open(&data_dir, events.clone()).await);
+        // Every lineage write of this process goes through its hook, so a
+        // revision that moved without it was moved by another tool.
+        let outside = Outside::open(&data_dir, paths.lineage(), Arc::clone(&record)).await;
         let model = Arc::new(Model::create_with_state_store(
             data_dir.clone(),
             state_store,
+            outside.hook(),
         ));
         let roles = Arc::new(RoleCache::default());
-        let events = EventSink::new();
-        let record = Arc::new(Record::open(&data_dir, events.clone()).await);
 
         let action_needed = Arc::new(ActionNeeded::default());
         let reporter = reporter(&events, &record, &action_needed, &telemetry);
@@ -142,6 +146,7 @@ impl Services {
             reporter.clone(),
             last_change,
             Arc::clone(&action_needed),
+            outside,
         );
         autopull::activity::spawn_forwarder(events.clone(), watcher.subscribe_activity());
         action_needed::spawn_forwarder(events.clone(), action_needed.subscribe());

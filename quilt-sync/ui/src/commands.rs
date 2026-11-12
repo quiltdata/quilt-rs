@@ -3081,6 +3081,9 @@ pub enum RecordKind {
     RemovedRevisions {
         count: usize,
     },
+    Outside {
+        published: bool,
+    },
     #[serde(other)]
     Unrecognised,
 }

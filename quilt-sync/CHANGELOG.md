@@ -26,6 +26,7 @@
 - When syncing stops until you act, such as a conflict or an expired sign-in, QuiltSync posts a system notification while its window is not in front. Clicking it opens the page that fixes it (<https://github.com/quiltdata/quilt-rs/pull/1330>, <https://github.com/quiltdata/quilt-rs/pull/1349>, <https://github.com/quiltdata/quilt-rs/pull/1351>)
 - The tray icon shows a red dot while some action is needed, and its menu lists what needs it, each line opening the page that fixes it (<https://github.com/quiltdata/quilt-rs/pull/1330>, <https://github.com/quiltdata/quilt-rs/pull/1351>)
 - A bell on the top bar opens an inbox of what happened: each pull and publish with its files, packages uninstalled or created, and old revisions removed, kept for 90 days. A grey dot marks unread entries and a count says how many things need action. Entries are read once the inbox, or the package's page, stays open for two seconds (<https://github.com/quiltdata/quilt-rs/pull/1343>)
+- The inbox lists a revision another tool, such as the quilt CLI, moved on this computer: *updated* or *published on this computer, outside QuiltSync*, with the revisions (<https://github.com/quiltdata/quilt-rs/pull/1356>)
 
 ### Changed
 

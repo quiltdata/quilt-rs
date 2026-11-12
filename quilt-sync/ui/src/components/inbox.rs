@@ -45,6 +45,7 @@ pub fn entry_for(entry: RecordEntry) -> Option<kit::InboxEntry> {
         RecordKind::Uninstalled => kit::EntryKind::Uninstalled,
         RecordKind::Created => kit::EntryKind::Created,
         RecordKind::RemovedRevisions { count } => kit::EntryKind::RemovedRevisions { count },
+        RecordKind::Outside { published } => kit::EntryKind::Outside { published },
         RecordKind::Unrecognised => return None,
     };
     let groups: Vec<kit::FileGroup> = files
@@ -329,6 +330,12 @@ mod tests {
         })
         .unwrap();
         assert_eq!(entry.href, "/");
+    }
+
+    #[wasm_bindgen_test]
+    fn a_change_outside_quiltsync_keeps_its_kind() {
+        let entry = entry_for(record_entry(RecordKind::Outside { published: true })).unwrap();
+        assert_eq!(entry.kind, kit::EntryKind::Outside { published: true });
     }
 
     #[wasm_bindgen_test]

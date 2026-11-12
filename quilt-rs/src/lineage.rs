@@ -2,8 +2,10 @@
 //! Module that contains various structs and helpers to work with `.quilt/lineage.json`.
 
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use serde::Deserialize;
 use serde::Serialize;
@@ -104,17 +106,92 @@ impl DomainLineage {
     }
 }
 
+type HookFn = dyn Fn(&Namespace, Option<&PackageLineage>, Option<&PackageLineage>) + Send + Sync;
+
+/// Told of each package entry a write of `data.json` changed: the entry as
+/// the write found it and as it left it, `None` when not installed.
+///
+/// It runs under the short lock, after the write landed, so it must return
+/// at once. It sees only this process's writes: another process, the quilt
+/// CLI among them, writes without it.
+#[derive(Clone)]
+pub struct LineageHook(Arc<HookFn>);
+
+impl LineageHook {
+    pub fn new(
+        hook: impl Fn(&Namespace, Option<&PackageLineage>, Option<&PackageLineage>)
+        + Send
+        + Sync
+        + 'static,
+    ) -> Self {
+        Self(Arc::new(hook))
+    }
+}
+
+impl std::fmt::Debug for LineageHook {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("LineageHook")
+    }
+}
+
+impl PartialEq for LineageHook {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for LineageHook {}
+
 /// Wrapper for reading and writing `DomainLineage`
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DomainLineageIo {
     path: PathBuf,
+    hook: Option<LineageHook>,
 }
 
 // TODO impl std::io::Write and std::io::Read for DomainLineageIo
 impl DomainLineageIo {
     #[must_use]
     pub fn new(path: PathBuf) -> Self {
-        DomainLineageIo { path }
+        DomainLineageIo { path, hook: None }
+    }
+
+    /// Tell `hook` of every package entry this handle's writes change.
+    #[must_use]
+    pub fn with_hook(mut self, hook: LineageHook) -> Self {
+        self.hook = Some(hook);
+        self
+    }
+
+    /// Read the whole record under the short lock and hand it to `look`, so no
+    /// write of this process or another lands while `look` runs.
+    pub async fn read_locked<T>(
+        &self,
+        storage: &(impl Storage + Sync),
+        look: impl FnOnce(&DomainLineage) -> T,
+    ) -> Res<T> {
+        let _locked = storage.lock_exclusive(self.lock_path()).await?;
+        Ok(look(&self.read(storage).await?))
+    }
+
+    /// Tell the hook of each package entry that differs from `before` to
+    /// `after`.
+    fn tell(&self, before: &DomainLineage, after: &DomainLineage) {
+        let Some(LineageHook(hook)) = &self.hook else {
+            return;
+        };
+        let namespaces: BTreeSet<&Namespace> = before
+            .packages
+            .keys()
+            .chain(after.packages.keys())
+            .collect();
+        for namespace in namespaces {
+            let was = before.packages.get(namespace);
+            let is = after.packages.get(namespace);
+            if was != is {
+                hook(namespace, was, is);
+            }
+        }
     }
 
     pub async fn read(&self, storage: &(impl Storage + Sync)) -> Res<DomainLineage> {
@@ -175,6 +252,7 @@ impl DomainLineageIo {
         let out = step(&mut lineage)?;
         if lineage != before {
             self.write_unlocked(storage, &lineage).await?;
+            self.tell(&before, &lineage);
         }
         Ok(out)
     }
@@ -299,7 +377,13 @@ impl DomainLineageIo {
         lineage: DomainLineage,
     ) -> Res<DomainLineage> {
         let _locked = storage.lock_exclusive(self.lock_path()).await?;
+        let before = if self.hook.is_some() {
+            self.read(storage).await.unwrap_or_default()
+        } else {
+            DomainLineage::default()
+        };
         self.write_unlocked(storage, &lineage).await?;
+        self.tell(&before, &lineage);
         Ok(lineage)
     }
 
@@ -1034,6 +1118,94 @@ mod tests {
             err,
             Error::InstallPackage(InstallPackageError::NotInstalled(_))
         ));
+        Ok(())
+    }
+
+    type Told = std::sync::Mutex<Vec<(Namespace, Option<String>, Option<String>)>>;
+
+    /// A handle whose hook notes each change as the base hashes before and
+    /// after.
+    fn hooked() -> (DomainLineageIo, Arc<Told>) {
+        let told = Arc::new(Told::default());
+        let noted = Arc::clone(&told);
+        let io = DomainLineageIo::new(PathBuf::from("lineage.json")).with_hook(LineageHook::new(
+            move |namespace, was, is| {
+                noted.lock().unwrap().push((
+                    namespace.clone(),
+                    was.map(|l| l.base_hash.clone()),
+                    is.map(|l| l.base_hash.clone()),
+                ));
+            },
+        ));
+        (io, told)
+    }
+
+    #[test(tokio::test)]
+    async fn the_hook_hears_each_changed_entry_once() -> Res {
+        let storage = MockStorage::default();
+        let (io, told) = hooked();
+        let foo = Namespace::from(("foo", "bar"));
+        let other = Namespace::from(("other", "pkg"));
+        let entry = |hash: &str| PackageLineage {
+            base_hash: hash.to_string(),
+            ..PackageLineage::default()
+        };
+        io.write(
+            &storage,
+            DomainLineage {
+                home: Home::from("/home/user/quilt"),
+                packages: BTreeMap::from([(other.clone(), entry("o"))]),
+            },
+        )
+        .await?;
+        io.update_package_lineage(&storage, &foo, |e| {
+            *e = Some(entry("a"));
+            Ok(())
+        })
+        .await?;
+        io.edit_package_lineage(&storage, &foo, |l| l.base_hash = "b".to_string())
+            .await?;
+        // A write that changes nothing is not told.
+        io.edit_package_lineage(&storage, &foo, |l| l.base_hash = "b".to_string())
+            .await?;
+        io.update_package_lineage(&storage, &foo, |e| {
+            *e = None;
+            Ok(())
+        })
+        .await?;
+
+        let some = |s: &str| Some(s.to_string());
+        assert_eq!(
+            *told.lock().unwrap(),
+            vec![
+                (other, None, some("o")),
+                (foo.clone(), None, some("a")),
+                (foo.clone(), some("a"), some("b")),
+                (foo, some("b"), None),
+            ]
+        );
+        Ok(())
+    }
+
+    /// A handle without the hook, as another process writes, tells nothing.
+    #[test(tokio::test)]
+    async fn a_write_without_the_hook_is_not_told() -> Res {
+        let storage = MockStorage::default();
+        let (io, told) = hooked();
+        io.write(&storage, DomainLineage::new("/home/user/quilt"))
+            .await?;
+        let foo = Namespace::from(("foo", "bar"));
+        DomainLineageIo::new(PathBuf::from("lineage.json"))
+            .update_package_lineage(&storage, &foo, |e| {
+                *e = Some(PackageLineage::default());
+                Ok(())
+            })
+            .await?;
+        let seen = io
+            .read_locked(&storage, |l| l.packages.contains_key(&foo))
+            .await?;
+        assert!(seen);
+        assert!(told.lock().unwrap().is_empty());
         Ok(())
     }
 
