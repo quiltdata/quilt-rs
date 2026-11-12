@@ -47,7 +47,7 @@
 
 ### Fixed
 
-- QuiltSync refuses a package link whose package name has a part that is `.` or `..` or holds `\`, `:` or a control character, so it never installs a package outside its home folder (<https://github.com/quiltdata/quilt-rs/pull/NNNN>)
+- QuiltSync refuses a package link whose package name has a part that is `.` or `..` or holds `\`, `:` or a control character (<https://github.com/quiltdata/quilt-rs/pull/1359>)
 - Settings shows a role switched in the web catalog the next time you open it (<https://github.com/quiltdata/quilt-rs/pull/1354>)
 - The package page drops its paused band as soon as the pause clears, also when autosync is turned back on (<https://github.com/quiltdata/quilt-rs/pull/1330>)
 - The package page opens when the catalog can't be reached, and says the information may be out of date; the commit page says so too and waits to publish (<https://github.com/quiltdata/quilt-rs/pull/1338>)

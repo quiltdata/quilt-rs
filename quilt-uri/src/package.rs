@@ -1067,9 +1067,9 @@ mod tests {
     #[test]
     fn a_uri_refuses_a_namespace_half_that_is_not_a_plain_folder_name() {
         for package in [
-            "../evil",
-            "evil/..",
-            "./evil",
+            "../x",
+            "x/..",
+            "./x",
             "%2e%2e/%2e%2e",
             "a/..%5C..%5C..%5Cx",
             "a%5Cb/c",
@@ -1091,7 +1091,7 @@ mod tests {
     /// Deserialize reaches the same check, so a stored namespace gets it too.
     #[test]
     fn a_deserialized_namespace_gets_the_same_check() {
-        for namespace in ["C:/evil", "a/C:", "../evil", "a/\\x", "a/b\u{0}", "a\nb/c"] {
+        for namespace in ["C:/x", "a/C:", "../x", "a/\\x", "a/b\u{0}", "a\nb/c"] {
             let json = serde_json::to_string(namespace).unwrap();
             assert!(
                 serde_json::from_str::<Namespace>(&json).is_err(),
@@ -1269,7 +1269,7 @@ mod tests {
     #[test]
     fn a_path_holding_fragment_delimiters_round_trips() {
         for path in [
-            "a&catalog=evil.csv",
+            "a&catalog=x.csv",
             "plus+one.csv",
             "a=b.csv",
             "hash#tag.csv",
@@ -1303,7 +1303,7 @@ mod tests {
         ] {
             for value in [
                 "a+b",
-                "a&catalog=evil",
+                "a&catalog=x",
                 "100%",
                 "hash#tag",
                 "a=b",
