@@ -404,14 +404,15 @@ impl Watcher {
     /// Only a conflict: it is the one pause the dry run's verdict speaks to.
     /// Every other reason, and a login block, stays.
     ///
-    /// Announced as a status event, because a clear is otherwise silent (see
-    /// [`Self::clear_paused`]) and an open page would keep offering Publish for
-    /// a conflict that is gone. `status` is the package's observation; its
-    /// fingerprint alone would not do, since a pause moves neither the upstream
-    /// state, the newer revision nor the tree, so a page may already have acted on that very
-    /// observation and would drop the event as old news. The fingerprint is
-    /// therefore marked as the clear's. The same observation sets the tray's
-    /// change count, since a safe verdict can keep local edits in place.
+    /// Announced as a status event too, beside the pause-cleared event every
+    /// clear sends: the main page's list re-reads only on status events, and
+    /// would keep offering Publish for a conflict that is gone. `status` is the
+    /// package's observation; its fingerprint alone would not do, since a pause
+    /// moves neither the upstream state, the newer revision nor the tree, so a
+    /// page may already have acted on that very observation and would drop the
+    /// event as old news. The fingerprint is therefore marked as the clear's.
+    /// The same observation sets the tray's change count, since a safe verdict
+    /// can keep local edits in place.
     pub async fn clear_pull_conflict(
         &self,
         namespace: &Namespace,
