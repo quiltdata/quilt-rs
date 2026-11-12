@@ -30,7 +30,9 @@ jobs:
         with:
           cache-target: release
 
-      - uses: taiki-e/install-action@parse-changelog
+      - uses: taiki-e/install-action@v2.90.3
+        with:
+          tool: parse-changelog
 
       - name: Resolve version and changelog notes
         id: meta

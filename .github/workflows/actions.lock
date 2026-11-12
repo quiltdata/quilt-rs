@@ -10,22 +10,19 @@ workflows:
         - 'actions/upload-pages-artifact@v5.0.0'
         - 'moonrepo/setup-rust@v1.3.0'
         - 'swatinem/rust-cache@v2.9.3'
-        - 'taiki-e/install-action@just'
-        - 'taiki-e/install-action@trunk'
         - 'taiki-e/install-action@v2.90.3'
     '.github/workflows/release-crate.yaml':
         - 'actions/checkout@v7.0.1'
         - 'moonrepo/setup-rust@v1.3.0'
         - 'rust-lang/crates-io-auth-action@v1.0.6'
         - 'swatinem/rust-cache@v2.9.3'
-        - 'taiki-e/install-action@parse-changelog'
+        - 'taiki-e/install-action@v2.90.3'
     '.github/workflows/release-quilt-sync.yaml':
         - 'actions/cache@v6.1.0'
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-node@v7.1.0'
         - 'moonrepo/setup-rust@v1.3.0'
         - 'swatinem/rust-cache@v2.9.3'
-        - 'taiki-e/install-action@trunk'
         - 'taiki-e/install-action@v2.90.3'
         - 'tauri-apps/tauri-action@v1.0.0'
     '.github/workflows/test.yaml':
@@ -37,7 +34,6 @@ workflows:
         - 'moonrepo/setup-rust@v1.3.0'
         - 'rvben/rumdl@v0.3.3'
         - 'swatinem/rust-cache@v2.9.3'
-        - 'taiki-e/install-action@just'
         - 'taiki-e/install-action@v2.90.3'
     '.github/workflows/upload-to-hubspot.yaml': []
 dependencies:
@@ -103,21 +99,6 @@ dependencies:
         commit: 'sha1-d1527c8f67ef9af357290475d4af4b0fab8f12e0'
         owner_id: 580492
         repo_id: 298565987
-    'taiki-e/install-action@just':
-        ref: 'just'
-        commit: 'sha1-66f567e72f7d264686a8d5f09f38f0829b4feb80'
-        owner_id: 43724913
-        repo_id: 442947557
-    'taiki-e/install-action@parse-changelog':
-        ref: 'parse-changelog'
-        commit: 'sha1-82853118809adb42e887a62bfb2e5c838fc3683c'
-        owner_id: 43724913
-        repo_id: 442947557
-    'taiki-e/install-action@trunk':
-        ref: 'trunk'
-        commit: 'sha1-b69c5ff9721a4cf42f450b5294baf75aa03318eb'
-        owner_id: 43724913
-        repo_id: 442947557
     'taiki-e/install-action@v2.90.3':
         ref: 'v2.90.3'
         commit: 'sha1-cfdb7ed4ccc7c7dce37759eae89dc5674b469b39'

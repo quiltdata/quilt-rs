@@ -47,10 +47,14 @@ jobs:
           cache-dependency-path: 'quilt-sync/ui/package-lock.json'
 
       - name: Install trunk
-        uses: taiki-e/install-action@trunk
+        uses: taiki-e/install-action@v2.90.3
+        with:
+          tool: trunk
 
       - name: Install just
-        uses: taiki-e/install-action@just
+        uses: taiki-e/install-action@v2.90.3
+        with:
+          tool: just
 
       # Matches the `stylance` crate in both UI crates' Cargo.toml: a skew breaks
       # styling silently.

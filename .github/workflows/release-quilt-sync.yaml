@@ -111,7 +111,9 @@ jobs:
           cache-dependency-path: 'quilt-sync/ui/package-lock.json'
 
       - name: Install trunk
-        uses: taiki-e/install-action@trunk
+        uses: taiki-e/install-action@v2.90.3
+        with:
+          tool: trunk
 
       # Trunk's pre_build hook shells out to `stylance` (quilt-sync/ui/Trunk.toml).
       # Pinned to the `stylance` library version in quilt-sync/ui/Cargo.toml.
