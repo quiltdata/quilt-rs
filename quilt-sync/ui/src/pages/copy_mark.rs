@@ -1,7 +1,7 @@
 //! What a page says about its last copy: the mark on the thing copied, and the
 //! words for a screen reader, both for [`ACKNOWLEDGE_FOR`].
 //!
-//! Stamped as `components/toasts.rs` is. Every click takes a fresh stamp, and
+//! Stamped. Every click takes a fresh stamp, and
 //! a write settles only while its own stamp is the newest, so two clicks inside
 //! one round trip cannot let the slower answer mark something the reader has
 //! already moved past, nor an earlier timer clear a later mark.

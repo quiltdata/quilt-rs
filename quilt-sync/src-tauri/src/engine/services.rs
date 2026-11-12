@@ -34,11 +34,11 @@ use crate::engine::publish_settings;
 use crate::engine::publish_settings::SharedPublishSettings;
 use crate::engine::quilt;
 use crate::engine::quit::QuitGate;
+use crate::engine::record::Outside;
+use crate::engine::record::Record;
 use crate::engine::telemetry;
 use crate::engine::telemetry::Telemetry;
 use crate::engine::telemetry::prelude::*;
-use crate::engine::toast::SinkToastEmitter;
-use crate::engine::toast::ToastCenter;
 use crate::engine::updates::Updates;
 
 pub struct Services {
@@ -49,7 +49,8 @@ pub struct Services {
     pub app: App,
     pub telemetry: Arc<Telemetry>,
     pub oauth: OAuthState,
-    pub toasts: Arc<ToastCenter>,
+    /// What happened, for the inbox.
+    pub record: Arc<Record>,
     pub publish_settings: SharedPublishSettings,
     pub autosync_settings: autopull::SharedAutosyncSettings,
     pub experimental_settings: SharedExperimentalSettings,
@@ -119,22 +120,23 @@ impl Services {
 
         // Only the app opens the package state store; the CLI never does.
         // One store for the last-change times and the walks' stat cache.
-        let state_store = Arc::new(quilt::state_store::PackageStateStore::new(
-            quilt::paths::DomainPaths::new(data_dir.clone()).state_db(),
-        ));
+        let paths = quilt::paths::DomainPaths::new(data_dir.clone());
+        let state_store = Arc::new(quilt::state_store::PackageStateStore::new(paths.state_db()));
         let last_change = autopull::last_change::LastChange::shared(Arc::clone(&state_store));
+        let events = EventSink::new();
+        let record = Arc::new(Record::open(&data_dir, events.clone()).await);
+        // Every lineage write of this process goes through its hook, so a
+        // revision that moved without it was moved by another tool.
+        let outside = Outside::open(&data_dir, paths.lineage(), Arc::clone(&record)).await;
         let model = Arc::new(Model::create_with_state_store(
             data_dir.clone(),
             state_store,
+            outside.hook(),
         ));
         let roles = Arc::new(RoleCache::default());
-        let events = EventSink::new();
-        let toasts = Arc::new(ToastCenter::new(Box::new(SinkToastEmitter::new(
-            events.clone(),
-        ))));
 
         let action_needed = Arc::new(ActionNeeded::default());
-        let reporter = reporter(&events, &toasts, &action_needed, &telemetry);
+        let reporter = reporter(&events, &record, &action_needed, &telemetry);
         let (watcher, tray_status) = Watcher::spawn(
             data_dir.clone(),
             Arc::clone(&model),
@@ -144,6 +146,7 @@ impl Services {
             reporter.clone(),
             last_change,
             Arc::clone(&action_needed),
+            outside,
         );
         autopull::activity::spawn_forwarder(events.clone(), watcher.subscribe_activity());
         action_needed::spawn_forwarder(events.clone(), action_needed.subscribe());
@@ -163,7 +166,7 @@ impl Services {
             app: App::new(version, logging),
             telemetry,
             oauth: OAuthState::default(),
-            toasts,
+            record,
             publish_settings,
             autosync_settings,
             experimental_settings,
@@ -184,14 +187,14 @@ impl Services {
 /// telemetry observes them on the way past.
 fn reporter(
     events: &EventSink,
-    toasts: &Arc<ToastCenter>,
+    record: &Arc<Record>,
     action_needed: &Arc<ActionNeeded>,
     telemetry: &Arc<Telemetry>,
 ) -> Arc<dyn StatusReporter> {
     Arc::new(TelemetryReporter::wrapping(
         Arc::new(SinkEventReporter::new(
             events.clone(),
-            Arc::clone(toasts),
+            Arc::clone(record),
             Arc::clone(action_needed),
         )),
         Arc::clone(telemetry),
@@ -213,25 +216,27 @@ mod tests {
             .expect("services");
         let mut events = s.events.subscribe();
 
-        assert_eq!(commands::get_toasts(&s).await, Ok(vec![]));
+        assert_eq!(commands::get_record(&s).await, Ok(vec![]));
         assert!(commands::get_settings_data(&s).await.is_ok());
 
-        s.toasts
-            .post(crate::engine::toast::ToastDraft {
-                body: "hello".into(),
-                ..Default::default()
-            })
+        let id = s
+            .record
+            .add(crate::engine::record::Draft::uninstalled(
+                &("acme", "demo").into(),
+                None,
+            ))
             .await;
-        let payload = loop {
+        loop {
             let (name, payload) =
                 tokio::time::timeout(std::time::Duration::from_secs(5), events.recv())
                     .await
                     .expect("an event in time")
                     .expect("the sink is open");
-            if name == "toast" {
-                break payload;
+            if name == crate::engine::record::RECORD_EVENT {
+                assert_eq!(payload, serde_json::Value::Null);
+                break;
             }
-        };
-        assert_eq!(payload["body"], "hello");
+        }
+        assert_eq!(commands::get_record(&s).await.unwrap()[0].entry.id, id);
     }
 }

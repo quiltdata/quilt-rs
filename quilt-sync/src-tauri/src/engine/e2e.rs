@@ -23,6 +23,8 @@ use url::Url;
 
 use crate::engine::commands;
 use crate::engine::model::QuiltModel;
+use crate::engine::navigation;
+use crate::engine::routes;
 use crate::engine::services::Services;
 use crate::engine::start;
 use crate::engine::start::Engine;
@@ -442,5 +444,39 @@ fn two_tabs_on_one_package_both_see_a_new_file() {
             driver.quit().await?;
         }
         Ok(())
+    });
+}
+
+/// The tray and a notice open the page that fixes something. On that page
+/// already, the window stays as it is: a reload would blank it while the UI
+/// loads again.
+#[test]
+fn a_window_sent_to_the_page_it_is_on_stays_without_a_reload() {
+    test(|base| async move {
+        let quiltsync = QuiltSync::start(&base, true).await;
+        let driver = browser().await;
+        driver
+            .goto(format!("{}&window", quiltsync.url("/")))
+            .await?;
+        driver.query(text("No packages yet")).first().await?;
+        mark(&driver).await?;
+
+        let followed = quiltsync
+            .on_engine(|s| async move {
+                s.navigations
+                    .send(&s.events, navigation::WINDOW, routes::Paths::Home);
+                // Followed once the engine stops holding it.
+                tokio::time::timeout(Duration::from_secs(30), async {
+                    while s.navigations.pending(navigation::WINDOW).is_some() {
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                })
+                .await
+            })
+            .await;
+        assert!(followed.is_ok(), "the page never said it followed");
+        driver.query(text("No packages yet")).first().await?;
+        assert!(still_marked(&driver).await?, "the page reloaded");
+        driver.quit().await
     });
 }

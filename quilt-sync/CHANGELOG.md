@@ -19,40 +19,50 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.28.0-dev]
+## [v0.28.0] - 2026-11-12
 
 ### Added
 
-- When syncing stops until you act, such as a conflict or an expired sign-in, QuiltSync posts a system notification while its window is not in front. Clicking it opens the page that fixes it, and Settings can turn it off (<https://github.com/quiltdata/quilt-rs/pull/1330>)
-- The tray icon shows a red dot while some action is needed, and its menu lists what needs it, each line opening the page that fixes it (<https://github.com/quiltdata/quilt-rs/pull/1330>)
+- A bell on the top bar opens an inbox of what happened: pulls and publishes with their files, packages created or uninstalled, old revisions removed, and revisions another tool, such as the `quilt` CLI, changed on this computer. It replaces the notification cards that stayed on screen until dismissed (<https://github.com/quiltdata/quilt-rs/pull/1343>, <https://github.com/quiltdata/quilt-rs/pull/1356>)
+- When syncing stops until you act, such as on a conflict or an expired sign-in, the tray icon shows a red dot and its menu lists what needs you, and QuiltSync posts a system notification. Each one opens the page that fixes it (<https://github.com/quiltdata/quilt-rs/pull/1330>, <https://github.com/quiltdata/quilt-rs/pull/1349>, <https://github.com/quiltdata/quilt-rs/pull/1351>)
 
 ### Changed
 
-- QuiltSync tells you about a new release while it runs, not only when it opens, and a dismissed update bar comes back after five minutes (<https://github.com/quiltdata/quilt-rs/pull/1336>)
-- QuiltSync has one design: the classic design and the *New design* switch in Settings are gone (<https://github.com/quiltdata/quilt-rs/pull/1319>)
-- Popups, the quit prompt and the update bar follow the dark theme (<https://github.com/quiltdata/quilt-rs/pull/1331>)
-- The metadata editor on the commit page follows the dark theme (<https://github.com/quiltdata/quilt-rs/pull/1335>, <https://github.com/quiltdata/quilt-rs/pull/1337>)
-- The settings page's *Saved* shows for 1.5 seconds, as long as *Copied* does (<https://github.com/quiltdata/quilt-rs/pull/1310>)
-- *Share mine* and *Promote my revision* say what the published revision would lose, its files and its metadata, and ask before replacing it (<https://github.com/quiltdata/quilt-rs/pull/1321>)
-- Autosync no longer pauses a package whose changes and a newer published revision touch different files: it publishes both together, and pauses only where the two changed the same file or the package metadata, and the resolve pane says why it paused
+- Autosync no longer pauses a package when your changes and a newer published revision touch different files: it publishes both together. It pauses only when both changed the same file or the package metadata, and says why
+  - <https://github.com/quiltdata/quilt-rs/pull/1320>
   - <https://github.com/quiltdata/quilt-rs/pull/1323>
   - <https://github.com/quiltdata/quilt-rs/pull/1327>
+- *Share mine* and *Promote my revision* say which files and metadata the published revision would lose, and ask first (<https://github.com/quiltdata/quilt-rs/pull/1321>)
+- *Get latest*, *Publish*, *Ignore* and *Stop ignoring* report on the page what they did, and *Get latest* names the files that arrived (<https://github.com/quiltdata/quilt-rs/pull/1343>, <https://github.com/quiltdata/quilt-rs/pull/1357>)
+- The commit page shows what is wrong with your message, workflow or metadata when you press *Publish* or *Save*, not while you type (<https://github.com/quiltdata/quilt-rs/pull/1346>)
+- When a bucket requires a workflow but names no default, QuiltSync no longer picks one for you (<https://github.com/quiltdata/quilt-rs/pull/1344>)
+- QuiltSync tells you about a new release while it runs, not only at start (<https://github.com/quiltdata/quilt-rs/pull/1336>)
+- QuiltSync has one design: the classic design and the *New design* switch are gone (<https://github.com/quiltdata/quilt-rs/pull/1319>)
+- Popups, the quit prompt, the update bar and the metadata editor follow the dark theme (<https://github.com/quiltdata/quilt-rs/pull/1331>, <https://github.com/quiltdata/quilt-rs/pull/1335>, <https://github.com/quiltdata/quilt-rs/pull/1337>)
 
 ### Fixed
 
-- The package page drops its paused band as soon as the pause clears, also when autosync is turned back on (<https://github.com/quiltdata/quilt-rs/pull/1330>)
-- The package page opens when the catalog can't be reached, and says the information may be out of date; the commit page says so too and waits to publish (<https://github.com/quiltdata/quilt-rs/pull/1338>)
-- A package task whose outcome loses `latest` to a revision published during the run lands its own changes on top of that revision instead of leaving the package Diverged, unless both changed the same file (<https://github.com/quiltdata/quilt-rs/pull/1320>)
-- *Open file*, *Reveal in folder* and *Copy path* refuse a path outside the package folder, and so does a catalog link that opens a file
-- A pull no longer deletes a file the new revision removed that you saved while it downloaded: the pull stops, or, once files are being replaced, the file stays as a new local file and the pull's notice names it (<https://github.com/quiltdata/quilt-rs/pull/1328>)
+- The package page opens when the catalog can't be reached and says its information may be out of date (<https://github.com/quiltdata/quilt-rs/pull/1338>)
+- A pull no longer deletes a file you saved while it downloaded (<https://github.com/quiltdata/quilt-rs/pull/1328>)
+- Settings shows a role switched in the web catalog (<https://github.com/quiltdata/quilt-rs/pull/1354>)
+- The package page's paused band goes away as soon as the pause clears (<https://github.com/quiltdata/quilt-rs/pull/1330>)
+- QuiltSync refuses a package link with an invalid bucket or package name, or with parts it used to ignore, such as a user or port (<https://github.com/quiltdata/quilt-rs/pull/1359>, <https://github.com/quiltdata/quilt-rs/pull/1361>, <https://github.com/quiltdata/quilt-rs/pull/1363>)
+- Package links and *Open in catalog* work for file paths with special characters such as `&` or `#` (<https://github.com/quiltdata/quilt-rs/pull/1363>)
+- Package rows on the main page keep their tooltips and actions after the list refreshes (<https://github.com/quiltdata/quilt-rs/pull/1364>)
+- Installing or pulling a package never writes outside its folder, whatever file paths its manifest names; *Open file*, *Reveal in folder*, *Copy path* and a catalog link that opens a file refuse a path outside the package folder
 
 ### Security
 
 - QuiltSync bundles SQLite 3.54.1, which fixes [RUSTSEC-2026-0459](https://rustsec.org/advisories/RUSTSEC-2026-0459) (<https://github.com/quiltdata/quilt-rs/pull/1326>)
+- QuiltSync no longer carries a Mixpanel API secret (<https://github.com/quiltdata/quilt-rs/pull/1350>)
 
 ### quilt-rs
 
-- Updated [from v0.52.0 to v0.53.0-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.52.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+- Updated [from v0.52.0 to v0.53.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.52.0...quilt-rs/v0.53.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
+### quilt-uri
+
+- Updated [from v0.4.3 to v0.5.0](https://github.com/quiltdata/quilt-rs/compare/quilt-uri/v0.4.3...quilt-uri/v0.5.0) (see [quilt-uri/CHANGELOG.md](../quilt-uri/CHANGELOG.md))
 
 ## [v0.27.0] - 2026-11-05
 

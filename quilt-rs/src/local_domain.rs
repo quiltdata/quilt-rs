@@ -117,6 +117,15 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
         self
     }
 
+    /// The domain with `hook` told of every package entry its writes of
+    /// `data.json` change, by any of its packages. Only the desktop app sets
+    /// one, to tell its own writes from another tool's.
+    #[must_use]
+    pub fn with_lineage_hook(mut self, hook: lineage::LineageHook) -> Self {
+        self.lineage = self.lineage.with_hook(hook);
+        self
+    }
+
     /// The user-wide ignore rules file, which every package reads below its
     /// own `.quiltignore`.
     #[must_use]
@@ -492,11 +501,14 @@ mod tests {
                     remote_uri: Some(ManifestUri {
                         bucket: "test-bucket".to_string(),
                         namespace: namespace.clone(),
-                        hash: "abcdef".to_string(),
+                        hash: "abcdef0000000000000000000000000000000000000000000000000000000000"
+                            .to_string(),
                         origin: None,
                     }),
-                    base_hash: "abcdef".to_string(),
-                    latest_hash: "abcdef".to_string(),
+                    base_hash: "abcdef0000000000000000000000000000000000000000000000000000000000"
+                        .to_string(),
+                    latest_hash: "abcdef0000000000000000000000000000000000000000000000000000000000"
+                        .to_string(),
                     paths: std::collections::BTreeMap::new(),
                     ..PackageLineage::default()
                 },

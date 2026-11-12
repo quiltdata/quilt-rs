@@ -137,7 +137,6 @@ jobs:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          MIXPANEL_API_SECRET: ${{ secrets.MIXPANEL_API_SECRET }}
           MIXPANEL_PROJECT_TOKEN: ${{ vars.MIXPANEL_PROJECT_TOKEN }}
           SENTRY_DSN: ${{ vars.SENTRY_DSN }}
           # Auto updater signing keys - required for cryptographic verification

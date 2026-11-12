@@ -25,7 +25,6 @@ use crate::engine::telemetry::prelude::*;
 pub mod activity;
 pub mod last_change;
 pub mod publish_timer;
-pub mod pull_toast;
 pub mod reporter;
 pub mod settings;
 pub mod status;
@@ -278,10 +277,12 @@ impl Watcher {
         reporter: Arc<dyn StatusReporter>,
         last_change: last_change::LastChange,
         action_needed: Arc<ActionNeeded>,
+        outside: Arc<crate::engine::record::Outside>,
     ) -> (Self, watch::Receiver<SyncTrayStatus>) {
         let (tx, rx) = watch::channel(SyncTrayStatus::default());
         let aggregator = Arc::new(SyncTrayAggregator::new(tx));
         let run_model = Arc::clone(&model);
+        let task_reporter = Arc::clone(&reporter);
         let tasks = crate::engine::tasks::Tasks::new(
             data_dir,
             Arc::new(move |run| {
@@ -290,6 +291,7 @@ impl Watcher {
                     Box::pin(crate::engine::tasks::execute(&*run_model, run)).await;
                 });
             }),
+            Arc::new(move |draft| task_reporter.report_recorded(draft)),
         );
         let inner = Arc::new(WatcherInner {
             settings,
@@ -327,6 +329,9 @@ impl Watcher {
         let task_inner = Arc::clone(&inner);
         crate::engine::events::spawn(async move {
             loop {
+                // Whether autosync runs or not, and first at start, so a move
+                // made while the app was closed is found at once.
+                outside.check().await;
                 let cadence = pull_cadence(&task_inner.settings.read().await.pull);
                 // This deadline covers the sleep, which is when the Autosync
                 // card draws it. `run_once` arms again when the tick starts,
@@ -399,14 +404,15 @@ impl Watcher {
     /// Only a conflict: it is the one pause the dry run's verdict speaks to.
     /// Every other reason, and a login block, stays.
     ///
-    /// Announced as a status event, because a clear is otherwise silent (see
-    /// [`Self::clear_paused`]) and an open page would keep offering Publish for
-    /// a conflict that is gone. `status` is the package's observation; its
-    /// fingerprint alone would not do, since a pause moves neither the upstream
-    /// state, the newer revision nor the tree, so a page may already have acted on that very
-    /// observation and would drop the event as old news. The fingerprint is
-    /// therefore marked as the clear's. The same observation sets the tray's
-    /// change count, since a safe verdict can keep local edits in place.
+    /// Announced as a status event too, beside the pause-cleared event every
+    /// clear sends: the main page's list re-reads only on status events, and
+    /// would keep offering Publish for a conflict that is gone. `status` is the
+    /// package's observation; its fingerprint alone would not do, since a pause
+    /// moves neither the upstream state, the newer revision nor the tree, so a
+    /// page may already have acted on that very observation and would drop the
+    /// event as old news. The fingerprint is therefore marked as the clear's.
+    /// The same observation sets the tray's change count, since a safe verdict
+    /// can keep local edits in place.
     pub async fn clear_pull_conflict(
         &self,
         namespace: &Namespace,

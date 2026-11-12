@@ -131,7 +131,7 @@ async fn test_certify_latest_pushes_pending_commit_then_tags() -> Res {
     // push's "rebuilt hash must equal commit hash" check happy without
     // wiring real objects.
     let local_hash = crate::fixtures::top_hash::EMPTY_NULL_TOP_HASH;
-    let install_hash = "I_HASH";
+    let install_hash = "1111111111111111111111111111111111111111111111111111111111111111";
     let other_hash = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
 
     paths
@@ -259,8 +259,8 @@ async fn test_certify_latest_skips_push_when_no_pending_commit() -> Res {
     let namespace: Namespace = ("test", "pushed").into();
     let bucket = "b";
 
-    let pushed_hash = "X_HASH";
-    let other_hash = "Y_HASH";
+    let pushed_hash = "9999999999999999999999999999999999999999999999999999999999999999";
+    let other_hash = "8888888888888888888888888888888888888888888888888888888888888888";
 
     paths
         .scaffold_for_installing(&storage, &home, &namespace)
@@ -917,7 +917,7 @@ async fn test_pull_refreshes_latest_hash_when_remote_moved() -> Res {
     let remote = MockRemote::default();
     let namespace: Namespace = ("test", "pull_refresh").into();
     let bucket = "bkt";
-    let install_hash = "INSTALL_HASH";
+    let install_hash = "1111111111111111111111111111111111111111111111111111111111111111";
     let new_hash = NEW_HASH;
 
     paths
@@ -1006,7 +1006,7 @@ async fn test_pull_up_to_date_returns_up_to_date_and_writes_latest_hash() -> Res
     let namespace: Namespace = ("test", "pull_up_to_date").into();
     let bucket = "bkt";
     let base_hash = BASE_HASH;
-    let stale_hash = "STALE_HASH";
+    let stale_hash = "5555555555555555555555555555555555555555555555555555555555555555";
 
     paths
         .scaffold_for_installing(&storage, &home, &namespace)
@@ -1070,7 +1070,7 @@ async fn test_pull_up_to_date_returns_up_to_date_and_writes_latest_hash() -> Res
     Ok(())
 }
 
-/// A `Behind` package: installed at `INSTALL_HASH` with one tracked `a.txt`,
+/// A `Behind` package: installed at `install_hash` with one tracked `a.txt`,
 /// while the remote `latest` tag has moved to `NEW_HASH`, whose manifest is
 /// `latest_manifest`. No local changes.
 async fn behind_package(
@@ -1085,7 +1085,7 @@ async fn behind_package(
     let remote = MockRemote::default();
     let namespace: Namespace = ("test", "pull_outcome").into();
     let bucket = "bkt";
-    let install_hash = "INSTALL_HASH";
+    let install_hash = "1111111111111111111111111111111111111111111111111111111111111111";
     let new_hash = NEW_HASH;
 
     paths
@@ -1447,9 +1447,9 @@ async fn test_pull_outcome_diverged_by_hash_is_up_to_date_no_network() -> Res {
     let remote = MockRemote::default();
     let namespace: Namespace = ("test", "diverged_hash").into();
     let bucket = "bkt";
-    let remote_hash = "R_HASH";
-    let base_hash = "B_HASH";
-    let latest_hash = "L_HASH";
+    let remote_hash = "7777777777777777777777777777777777777777777777777777777777777777";
+    let base_hash = "6666666666666666666666666666666666666666666666666666666666666666";
+    let latest_hash = "4444444444444444444444444444444444444444444444444444444444444444";
 
     paths
         .scaffold_for_installing(&storage, &home, &namespace)

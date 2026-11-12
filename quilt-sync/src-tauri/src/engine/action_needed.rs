@@ -113,13 +113,37 @@ impl Cause {
     }
 }
 
+/// Sent with the tray menu's line and the page that fixes it, so the window's
+/// inbox lists each entry as the tray does.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(into = "Wire")]
 pub struct Entry {
     pub subject: Subject,
     pub cause: Cause,
     /// When the cause started. Kept while its details change.
     pub since: DateTime<Utc>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Wire {
+    subject: Subject,
+    cause: Cause,
+    since: DateTime<Utc>,
+    line: String,
+    page: String,
+}
+
+impl From<Entry> for Wire {
+    fn from(entry: Entry) -> Self {
+        Self {
+            line: entry.menu_line(),
+            page: routes::page(entry.page()),
+            subject: entry.subject,
+            cause: entry.cause,
+            since: entry.since,
+        }
+    }
 }
 
 impl Entry {
@@ -191,7 +215,7 @@ impl Entry {
         match (&self.subject, &self.cause) {
             (_, Cause::Watcher { .. }) => routes::Paths::Settings,
             (Subject::Package { namespace }, _) => {
-                routes::Paths::InstalledPackage(namespace.clone(), routes::EntriesFilter::default())
+                routes::Paths::InstalledPackage(namespace.clone())
             }
             _ => routes::Paths::Home,
         }
@@ -604,6 +628,8 @@ mod tests {
                 "subject": {"kind": "package", "namespace": "a/b"},
                 "cause": {"kind": "paused", "reason": {"kind": "pull_conflict", "files": ["x"]}},
                 "since": "1970-01-01T00:00:00Z",
+                "line": "a/b — Has a conflict in 1 file",
+                "page": "/installed-package?namespace=a%2Fb",
             })
         );
     }

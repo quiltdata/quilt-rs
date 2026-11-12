@@ -19,24 +19,26 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.41.0-dev]
+## [v0.41.0] - 2026-11-12
 
 ### Added
 
-- `quilt` says on stderr when a newer release is out, e.g. `quilt 0.41.0 is available (you have 0.40.2). Run "quilt upgrade"`. The line is yellow and comes below the command's output. It asks crates.io at most every six hours, never holds back the output or fails a command, and is skipped when stderr is not a terminal, when `CI` is set, or with `QUILT_NO_UPDATE_CHECK=1`
-- `quilt upgrade` installs the latest prebuilt release with `cargo binstall`. When no prebuilt binary can be installed, it asks before building from source with `cargo install --locked`, and without a terminal it builds nothing. Without cargo it points at the releases page; on Windows it prints the command to run
+- `quilt` says when a newer release is out, and `quilt upgrade` installs it. Set `QUILT_NO_UPDATE_CHECK=1` to turn the check off (<https://github.com/quiltdata/quilt-rs/pull/1332>, <https://github.com/quiltdata/quilt-rs/pull/1334>)
 
 ### Fixed
 
+- `quilt install` and `quilt pull` refuse a package whose manifest names a file outside the package folder, instead of writing it there
+- `quilt pull` and `quilt push` print a package URI that parses back the same (<https://github.com/quiltdata/quilt-rs/pull/1363>)
 - `quilt status` and `quilt list --fetch` work when the catalog can't be reached (<https://github.com/quiltdata/quilt-rs/pull/1338>)
+- `quilt` refuses a package URI with an invalid bucket or package name, or with parts it used to ignore, such as a user or port (<https://github.com/quiltdata/quilt-rs/pull/1359>, <https://github.com/quiltdata/quilt-rs/pull/1361>, <https://github.com/quiltdata/quilt-rs/pull/1363>)
 
 ### quilt-rs
 
-- Updated [from v0.52.0 to v0.53.0-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.52.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+- Updated [from v0.52.0 to v0.53.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.52.0...quilt-rs/v0.53.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
 
 ### quilt-uri
 
-- Updated [from v0.4.3 to v0.5.0-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-uri/v0.4.3...main) (see [quilt-uri/CHANGELOG.md](../quilt-uri/CHANGELOG.md)) (<https://github.com/quiltdata/quilt-rs/pull/1339>)
+- Updated [from v0.4.3 to v0.5.0](https://github.com/quiltdata/quilt-rs/compare/quilt-uri/v0.4.3...quilt-uri/v0.5.0) (see [quilt-uri/CHANGELOG.md](../quilt-uri/CHANGELOG.md))
 
 ## [v0.40.2] - 2026-11-05
 

@@ -9,19 +9,22 @@ pub fn catalog_url(uri: &S3PackageUri) -> Option<String> {
 }
 
 /// Format the catalog HTTPS URL for an individual entry inside a package.
-/// Returns `None` if the parent URI has no catalog host. Call from the
+/// `None` if the parent URI has no catalog host; an error, with its reason,
+/// when the path has no catalog URL (a `.` or `..` piece). Call from the
 /// "Open in catalog" click handler so we only build the URL on click,
 /// not for every row at render time.
-pub fn entry_catalog_url(pkg_uri: &S3PackageUri, filename: &str) -> Option<String> {
-    // Existence check: skip the clone when there's no catalog, since
-    // the downstream `display_for_catalog()` would return None anyway.
-    // `?` propagates the None; the bound `&Host` is discarded.
+pub fn entry_catalog_url(pkg_uri: &S3PackageUri, filename: &str) -> Option<Result<String, String>> {
     pkg_uri.catalog.as_ref()?;
     let entry_uri = S3PackageUri {
         path: Some(std::path::PathBuf::from(filename)),
         ..pkg_uri.clone()
     };
-    catalog_url(&entry_uri)
+    Some(
+        entry_uri
+            .display_for_catalog()
+            .map(|u| u.to_string())
+            .map_err(|e| e.to_string()),
+    )
 }
 
 /// The `quilt+s3` handle of an installed package, from the parts the main

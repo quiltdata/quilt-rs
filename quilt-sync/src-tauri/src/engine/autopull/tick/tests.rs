@@ -85,7 +85,6 @@ fn enabled() -> AutosyncSettings {
             ..PushSettings::default()
         },
         close_to_tray: false,
-        notify_action_needed: true,
     }
 }
 
@@ -508,13 +507,13 @@ async fn run_once_behind_and_clean_pulls_and_emits_up_to_date() -> Result<(), Er
             crate::engine::autopull::reporter::settled_fingerprint("h1", "")
         );
     }
-    // The mock's report names no files — the metadata-only shape, whose hashes
-    // advance and whose files do not. An entry that stands until dismissed must
-    // not say nothing, so silence is the correct outcome here.
-    assert!(
-        reporter.pulled.lock().unwrap().is_empty(),
-        "a pull that moved nothing posted a toast"
-    );
+    // The mock's report names no files: the metadata-only shape, whose hashes
+    // advance and whose files do not. The revision still moved, so the record
+    // keeps it, with no files.
+    let recorded = reporter.recorded.lock().unwrap().clone();
+    assert_eq!(recorded.len(), 1);
+    assert_eq!(recorded[0].kind, crate::engine::record::Kind::Got);
+    assert_eq!(recorded[0].files, []);
     assert!(inner.paused.read().await.is_empty());
     Ok(())
 }
@@ -691,18 +690,17 @@ async fn a_pull_reports_what_it_brought() -> Result<(), Error> {
 
     run_once(&model, &RoleCache::default(), &inner).await?;
 
-    let pulled = reporter.pulled.lock().unwrap();
-    assert_eq!(pulled.len(), 1, "the pull reported nothing");
-    assert_eq!(pulled[0].0, ns);
-    // The lead sentence states the event; without it the toast opens with a
-    // package name and a file count and never says why it is on screen.
-    assert_eq!(pulled[0].1.body, "Updated to a newer revision.");
-    let groups = &pulled[0].1.groups;
-    assert_eq!(groups.len(), 2, "one group per kind of change");
-    assert_eq!(groups[0].heading, "1 file new, not downloaded");
-    assert_eq!(groups[0].items, ["qc/summary.csv"]);
-    assert_eq!(groups[1].heading, "1 file updated");
-    assert_eq!(groups[1].items, ["reads/day2.fastq"]);
+    let recorded = reporter.recorded.lock().unwrap();
+    assert_eq!(recorded.len(), 1, "the pull recorded nothing");
+    assert_eq!(recorded[0].namespace, ns);
+    assert_eq!(recorded[0].kind, crate::engine::record::Kind::Got);
+    assert_eq!(recorded[0].revision.as_ref().unwrap().to, "h1");
+    assert_eq!(
+        recorded[0].files_line(),
+        "1 file new, not downloaded, 1 file updated"
+    );
+    assert_eq!(recorded[0].files[0].paths, ["qc/summary.csv"]);
+    assert_eq!(recorded[0].files[1].paths, ["reads/day2.fastq"]);
     Ok(())
 }
 
@@ -1092,7 +1090,7 @@ async fn dry_run_login_required_is_classified() -> Result<(), Error> {
         true,
         SyncScope::IndividualFiles,
         &test_aggregator(),
-        &mut false,
+        &mut Seen::default(),
     )
     .await;
 
@@ -1385,7 +1383,7 @@ async fn no_action_tick_carries_status_fingerprint() -> Result<(), Error> {
         false,
         SyncScope::IndividualFiles,
         &test_aggregator(),
-        &mut false,
+        &mut Seen::default(),
     )
     .await
     .expect("no-action tick should be Ok")
@@ -1821,7 +1819,7 @@ fn inner_with(
 }
 
 /// A pull that raced another pull finds nothing to do: the tick keeps
-/// syncing quietly, with no toast and no pause.
+/// syncing quietly, with no entry and no pause.
 #[tokio::test]
 async fn a_pull_that_finds_nothing_to_do_reports_nothing() -> Result<(), Error> {
     let mut model = behind_clean_model();
@@ -1841,7 +1839,7 @@ async fn a_pull_that_finds_nothing_to_do_reports_nothing() -> Result<(), Error> 
     };
     run_once(&model, &RoleCache::default(), &inner).await?;
 
-    assert!(reporter.pulled.lock().unwrap().is_empty(), "no toast");
+    assert!(reporter.recorded.lock().unwrap().is_empty(), "no entry");
     assert!(reporter.paused.lock().unwrap().is_empty(), "no pause");
     Ok(())
 }
@@ -2529,7 +2527,11 @@ async fn our_own_interrupted_claim_is_published_by_the_sweep_not_autosync() -> R
     let mut settings = enabled();
     settings.push.idle_timeout_secs = 0;
     let inner = WatcherInner {
-        tasks: crate::engine::tasks::Tasks::new(dir.path().to_path_buf(), Arc::new(|_| {})),
+        tasks: crate::engine::tasks::Tasks::new(
+            dir.path().to_path_buf(),
+            Arc::new(|_| {}),
+            Arc::new(|_| {}),
+        ),
         ..make_inner(settings)
     };
 

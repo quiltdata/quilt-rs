@@ -46,7 +46,7 @@ pub(crate) struct ReactorState {
     /// Kind of the last `Err` returned by `reconcile`. A failed `add()`
     /// doesn't insert into the subscription's watched set, so the next
     /// reconcile retries the same namespaces and fails the same way; this
-    /// marker keeps us from emitting a fresh `inotify_limit` toast every
+    /// marker keeps us from emitting a fresh `inotify_limit` error every
     /// 5 s. Cleared whenever a reconcile returns `Ok`.
     pub last_reconcile_error_kind: Option<&'static str>,
 }
@@ -143,7 +143,7 @@ async fn drive(state: &mut ReactorState, model: &impl QuiltModel, inner: &Watche
                 } else {
                     // Disabled: drain any live watches so the OS releases
                     // the inotify slots. Especially important when the user
-                    // toggles off in response to the inotify-limit toast.
+                    // toggles off in response to the inotify-limit notice.
                     // `reconcile(Vec::new())` is a no-op if already empty.
                     if let Err(err) = state.subscription.reconcile(Vec::new(), None) {
                         emit_subscriber_error(state.reporter.as_ref(), &err);
@@ -151,7 +151,7 @@ async fn drive(state: &mut ReactorState, model: &impl QuiltModel, inner: &Watche
                     inner.walks.clear();
                     state.trailing.clear();
                     // Re-enabling later should be able to surface the
-                    // inotify-limit toast again if the limit still applies.
+                    // inotify-limit notice again if the limit still applies.
                     state.last_reconcile_error_kind = None;
                     // Turned off, it is not failing.
                     state.reporter.report_subscriber_recovered();

@@ -1,6 +1,6 @@
 [package]
 name = "quilt-sync"
-version = "0.28.0-dev"
+version = "0.28.0"
 authors = ["Quilt Data, Inc."]
 description = "Cross-platform desktop application for editing Quilt data packages"
 documentation = "https://docs.quiltdata.com"
@@ -36,7 +36,6 @@ reqwest.workspace = true
 rfd = { version = "0.17.2", default-features = false, features = ["gtk3"] }
 # Debug builds read `ui/dist` from disk on every request; release builds embed it.
 rust-embed = { version = "8", features = ["mime-guess"] }
-rust-i18n = "4.2.4"
 semver = "1.0.28"
 # Without the default `transport`, which brings native-tls (OpenSSL on Linux).
 # Sentry sends through reqwest with rustls instead.
@@ -99,7 +98,7 @@ serial_test = "4"
 # Paused time keeps the retry tests from sleeping for real.
 tokio = { workspace = true, features = ["test-util"] }
 tokio-test.workspace = true
-tokio-tungstenite = "0.29"
+tokio-tungstenite = "0.30"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-single-instance = { version = "2.5.5", features = ["deep-link"] }

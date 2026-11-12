@@ -168,6 +168,7 @@ pub use inbox::FileGroup;
 pub use inbox::FileReport;
 pub use inbox::Inbox;
 pub use inbox::InboxEntry;
+pub use inbox::InboxFeed;
 pub use inbox::InboxPanel;
 pub use inbox::Revision;
 pub use json_display::Expanded;

@@ -27,8 +27,6 @@ use engine::services::Services;
 use engine::start;
 use engine::start::Started;
 
-rust_i18n::i18n!("locales");
-
 /// Print to the terminal that started us. A Windows release build is a GUI
 /// program with no console, so without this headless's link goes nowhere.
 #[cfg(windows)]
@@ -90,7 +88,7 @@ fn main() -> ExitCode {
                 return;
             }
             if let Some(uri_str) = argv.get(1) {
-                info!("Single-instance deep link: {:?}", uri_str);
+                info!("Single-instance deep link: {}", uri::for_log_str(uri_str));
                 if let Err(err) = uri::handle_deep_link_url(app, uri_str) {
                     error!("{}", err);
                 }
@@ -183,6 +181,8 @@ fn main() -> ExitCode {
             if matches!(event, tauri::RunEvent::Exit)
                 && let Some(services) = app_handle.try_state::<Arc<Services>>()
             {
+                // What the last pull or publish recorded, written before exit.
+                tauri::async_runtime::block_on(services.record.settle());
                 services.app.logging.shutdown();
             }
         });

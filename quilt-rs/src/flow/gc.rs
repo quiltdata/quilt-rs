@@ -74,7 +74,7 @@ impl std::fmt::Display for GcReport {
 /// Decimal units, as Finder counts them, with one decimal past bytes: the
 /// size every report sentence says, as in "freed 630.2 kB", up to "18.4 EB"
 /// for `u64::MAX`. Rounds as `format_size` in quilt-sync/ui does, so the
-/// app's pages and its toasts read the same figure; the space here is a
+/// app's pages and its inbox read the same figure; the space here is a
 /// plain one.
 #[must_use]
 pub fn format_bytes(bytes: u64) -> String {
@@ -426,8 +426,12 @@ pub(crate) async fn lock_every_package(
             let Some(lock_file) = entry.path.file_name() else {
                 continue;
             };
-            if let Some(name) = lock_file.to_string_lossy().strip_suffix(".lock") {
-                namespaces.insert((owner.as_ref(), name).into());
+            // A lock whose name is no valid namespace belongs to no package
+            // this library can open, so there is nothing to wait for.
+            if let Some(name) = lock_file.to_string_lossy().strip_suffix(".lock")
+                && let Ok(namespace) = Namespace::try_from(format!("{owner}/{name}"))
+            {
+                namespaces.insert(namespace);
             }
         }
     }
@@ -838,6 +842,20 @@ mod tests {
         std::fs::write(paths.installed_dir().join(".DS_Store"), "")?;
         std::fs::write(paths.installed_dir().join("acme/.DS_Store"), "")?;
         std::fs::write(paths.locks_dir().join(".DS_Store"), "")?;
+
+        assert!(domain.gc().await?.is_empty());
+        Ok(())
+    }
+
+    /// A lock file whose name is no valid namespace is skipped, even while
+    /// someone holds it.
+    #[test(tokio::test)]
+    async fn a_lock_with_an_invalid_name_is_skipped() -> Res {
+        let (domain, paths, _dir) = domain().await?;
+        create(&domain, "acme/kept", &[("a.txt", "a")]).await?;
+        let invalid = Namespace::from(("acme", "."));
+        let _held = package_lock::lock(&LocalStorage::new(), &paths, &invalid).await?;
+        assert!(paths.locks_dir().join("acme/..lock").is_file());
 
         assert!(domain.gc().await?.is_empty());
         Ok(())

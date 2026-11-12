@@ -755,10 +755,15 @@ pub async fn get_main_page_packages(s: &Services) -> Result<MainPagePackages, St
 /// [`load_rows`] — the same one `get_main_page_packages` uses — with an empty
 /// paused-reasons map: the Accounts card has no use for package state.
 pub async fn get_main_page_accounts(s: &Services) -> Result<MainPageAccounts, String> {
-    let m = &*s.model;
-    let tracing = &*s.telemetry;
-    let data_dir = s.data_dir.clone();
-    let auth_hosts = quilt::paths::list_auth_hosts(&data_dir);
+    accounts_from_model(&*s.model, &s.telemetry, &s.data_dir).await
+}
+
+async fn accounts_from_model(
+    m: &impl model::QuiltModel,
+    tracing: &crate::engine::telemetry::Telemetry,
+    data_dir: &std::path::Path,
+) -> Result<MainPageAccounts, String> {
+    let auth_hosts = quilt::paths::list_auth_hosts(data_dir);
     let rows = load_rows(m, tracing, &HashMap::new())
         .await
         .map_err(|e| e.to_string())?;
@@ -772,6 +777,28 @@ pub async fn get_main_page_accounts(s: &Services) -> Result<MainPageAccounts, St
         .collect();
 
     Ok(MainPageAccounts { hosts })
+}
+
+/// The Settings page's Accounts card, light phase, on the page's load: the
+/// main page's light read after clearing the role cache.
+///
+/// Opening Settings is a role refresh, like a main page load: each host's
+/// `refresh_main_page_account` then asks `/me` afresh, so a role switched in
+/// the web catalog shows here, and a changed role runs the client flush. The
+/// page's later re-reads use `get_main_page_accounts`: they follow a switch,
+/// a sign-out or an accounts event, each of which already moved the cache.
+pub async fn get_settings_accounts(s: &Services) -> Result<MainPageAccounts, String> {
+    settings_accounts_from_model(&*s.model, &s.roles, &s.telemetry, &s.data_dir).await
+}
+
+async fn settings_accounts_from_model(
+    m: &impl model::QuiltModel,
+    roles: &RoleCache,
+    tracing: &crate::engine::telemetry::Telemetry,
+    data_dir: &std::path::Path,
+) -> Result<MainPageAccounts, String> {
+    roles.invalidate(None).await;
+    accounts_from_model(m, tracing, data_dir).await
 }
 
 /// Fill in one host's role. Extracted from the command so it is testable without
@@ -1445,7 +1472,7 @@ mod tests {
                     catalog: Some(host.parse().unwrap()),
                     bucket: "bucket".to_string(),
                     namespace: "team/pkg".try_into().unwrap(),
-                    revision: quilt_uri::RevisionPointer::Hash("abcdef".to_string()),
+                    revision: quilt_uri::RevisionPointer::Hash(fixtures::TOP_HASH.to_string()),
                     path: None,
                 }),
             })
@@ -1465,9 +1492,9 @@ mod tests {
                     origin: Some(host.parse().unwrap()),
                     bucket: "test".to_string(),
                     namespace: "team/one".try_into().unwrap(),
-                    hash: "abcdef".to_string(),
+                    hash: fixtures::TOP_HASH.to_string(),
                 },
-                "abcdef".to_string(),
+                fixtures::TOP_HASH.to_string(),
             ),
             None => quilt::lineage::PackageLineage::default(),
         };
@@ -2527,6 +2554,54 @@ mod tests {
             2,
             "roles.invalidate(None) must run at the top of every load, or the second load would serve the first load's cached role name"
         );
+    }
+
+    /// Opening Settings asks the role again: a switch made in the web catalog
+    /// between two visits shows on the second. The page's re-read, by
+    /// contrast, keeps what the cache holds.
+    #[tokio::test]
+    async fn a_settings_visit_names_a_role_switched_since_the_last_one() {
+        let active = std::sync::Arc::new(std::sync::Mutex::new("analyst".to_string()));
+        let mut model = crate::engine::model::mocks::create();
+        model
+            .expect_get_installed_packages_list()
+            .returning(|| Ok(Vec::new()));
+        let answer = active.clone();
+        model.expect_refresh_roles().returning(move |_| {
+            Ok(RoleInfo {
+                current: answer.lock().unwrap().clone(),
+                available: vec!["analyst".to_string(), "admin".to_string()],
+            })
+        });
+        model.expect_clear_remote_client_cache().returning(|_| ());
+        let data_dir = tempfile::tempdir().unwrap();
+        let tracing = crate::engine::telemetry::Telemetry::default();
+        let roles = RoleCache::default();
+
+        let visit = || async {
+            settings_accounts_from_model(&model, &roles, &tracing, data_dir.path())
+                .await
+                .expect("accounts");
+            refresh_account_for(&model, &roles, "quilt.test", true)
+                .await
+                .current_role
+        };
+
+        assert_eq!(visit().await.as_deref(), Some("analyst"));
+        // Switched in the web catalog: nothing tells the app.
+        *active.lock().unwrap() = "admin".to_string();
+
+        accounts_from_model(&model, &tracing, data_dir.path())
+            .await
+            .expect("accounts");
+        let reread = refresh_account_for(&model, &roles, "quilt.test", true).await;
+        assert_eq!(
+            reread.current_role.as_deref(),
+            Some("analyst"),
+            "a re-read keeps the cache"
+        );
+
+        assert_eq!(visit().await.as_deref(), Some("admin"));
     }
 
     /// A single package on `quilt.test` whose status call answers with `status`,

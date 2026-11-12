@@ -18,14 +18,37 @@ use crate::Host;
 use crate::ManifestUri;
 use crate::Tag;
 use crate::UriError;
+use crate::s3::check_bucket;
 
 /// This is the revision (or "hash") of the package.
 /// "Package" itself is a handle, but each package has revision.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "_tag", content = "value")]
+#[serde(tag = "_tag", content = "value", try_from = "RawRevisionPointer")]
 pub enum RevisionPointer {
     Hash(String),
     Tag(Tag),
+}
+
+/// The serialized form of [`RevisionPointer`], read before its hash is checked.
+#[derive(Deserialize)]
+#[serde(tag = "_tag", content = "value")]
+enum RawRevisionPointer {
+    Hash(String),
+    Tag(Tag),
+}
+
+impl TryFrom<RawRevisionPointer> for RevisionPointer {
+    type Error = UriError;
+
+    fn try_from(raw: RawRevisionPointer) -> Result<Self, Self::Error> {
+        match raw {
+            RawRevisionPointer::Hash(hash) => {
+                check_stored_hash(&hash)?;
+                Ok(Self::Hash(hash))
+            }
+            RawRevisionPointer::Tag(tag) => Ok(Self::Tag(tag)),
+        }
+    }
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -87,16 +110,29 @@ impl fmt::Display for Namespace {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl From<(String, String)> for Namespace {
     fn from((prefix, name): (String, String)) -> Self {
         Namespace { prefix, name }
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl From<(&str, &str)> for Namespace {
     fn from((prefix, name): (&str, &str)) -> Self {
         (prefix.to_string(), name.to_string()).into()
     }
+}
+
+/// Each half is a folder name on disk, so it must stay a single folder on
+/// every platform: not `.` or `..`, and no separator, drive colon or control
+/// character.
+fn is_plain_half(half: &str) -> bool {
+    half != "."
+        && half != ".."
+        && !half
+            .chars()
+            .any(|c| matches!(c, '/' | '\\' | ':') || c.is_control())
 }
 
 impl TryFrom<&str> for Namespace {
@@ -114,6 +150,11 @@ impl TryFrom<&str> for Namespace {
         if name.contains('/') {
             return Err(UriError::Namespace(format!(
                 "namespace must contain exactly one `/`; got: {input}"
+            )));
+        }
+        if !is_plain_half(prefix) || !is_plain_half(name) {
+            return Err(UriError::Namespace(format!(
+                "namespace prefix and name must not be `.` or `..` or hold `\\`, `:` or control characters; got: {input:?}"
             )));
         }
         Ok(Namespace {
@@ -215,12 +256,38 @@ impl From<&ManifestUri> for S3PackageHandle {
 /// Also, this URI has path, so you can use it as an URI for referencing files in package.
 /// You can use this URL for both packages and files in packages.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "RawS3PackageUri")]
 pub struct S3PackageUri {
     pub catalog: Option<Host>,
     pub bucket: String,
     pub namespace: Namespace,
     pub revision: RevisionPointer,
     pub path: Option<PathBuf>,
+}
+
+/// The serialized form of [`S3PackageUri`], read before its bucket is checked.
+#[derive(Deserialize)]
+struct RawS3PackageUri {
+    catalog: Option<Host>,
+    bucket: String,
+    namespace: Namespace,
+    revision: RevisionPointer,
+    path: Option<PathBuf>,
+}
+
+impl TryFrom<RawS3PackageUri> for S3PackageUri {
+    type Error = UriError;
+
+    fn try_from(raw: RawS3PackageUri) -> Result<Self, Self::Error> {
+        check_bucket(&raw.bucket)?;
+        Ok(Self {
+            catalog: raw.catalog,
+            bucket: raw.bucket,
+            namespace: raw.namespace,
+            revision: raw.revision,
+            path: raw.path,
+        })
+    }
 }
 
 impl TryFrom<&str> for S3PackageUri {
@@ -234,13 +301,35 @@ impl TryFrom<&str> for S3PackageUri {
                 parsed_url.scheme()
             )));
         }
+        let bucket = parsed_url.host_str().unwrap_or_default();
+        if !parsed_url.username().is_empty() || parsed_url.password().is_some() {
+            return Err(UriError::Package(format!(
+                "a user or password is not allowed before the bucket {bucket:?}"
+            )));
+        }
+        if let Some(port) = parsed_url.port() {
+            return Err(UriError::Package(format!(
+                "a port is not allowed after the bucket {bucket:?}; got {port}"
+            )));
+        }
+        if !parsed_url.path().is_empty() || parsed_url.query().is_some() {
+            return Err(UriError::Package(format!(
+                "a path or query is not allowed after the bucket: {input}"
+            )));
+        }
 
         let fragment = parsed_url.fragment().ok_or(UriError::Package(format!(
             "S3 package URI must contain a fragment: {input}"
         )))?;
-        let mut params: HashMap<_, _> = form_urlencoded::parse(fragment.as_bytes())
-            .into_owned()
-            .collect();
+        let mut params = HashMap::new();
+        for (key, value) in form_urlencoded::parse(fragment.as_bytes()).into_owned() {
+            if params.contains_key(&key) {
+                return Err(UriError::Package(format!(
+                    "`{key}` is given more than once in the fragment"
+                )));
+            }
+            params.insert(key, value);
+        }
 
         let pkg_spec = params
             .remove("package")
@@ -269,11 +358,7 @@ impl TryFrom<&str> for S3PackageUri {
                     "package spec may contain only one \"@\"".to_string(),
                 ));
             }
-            if !is_top_hash(top_hash) {
-                return Err(UriError::Package(format!(
-                    "hash must be 64 lowercase hex characters, got {top_hash:?}"
-                )));
-            }
+            check_top_hash(top_hash)?;
             (namespace.into(), RevisionPointer::Hash(top_hash.into()))
         } else {
             (pkg_spec, RevisionPointer::Tag(Tag::Latest))
@@ -296,6 +381,7 @@ impl TryFrom<&str> for S3PackageUri {
             "expected host in S3 package URI, got {}",
             parsed_url.host_str().unwrap_or_default()
         )))?;
+        check_bucket(bucket)?;
 
         Ok(Self {
             bucket: bucket.to_string(),
@@ -311,6 +397,26 @@ impl TryFrom<&str> for S3PackageUri {
 #[must_use]
 pub fn is_top_hash(hash: &str) -> bool {
     hash.len() == 64 && hash.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// A stored hash is a top hash, or empty for a remote that is set but not
+/// pushed yet.
+pub(crate) fn check_stored_hash(hash: &str) -> Result<(), UriError> {
+    if hash.is_empty() {
+        Ok(())
+    } else {
+        check_top_hash(hash)
+    }
+}
+
+fn check_top_hash(hash: &str) -> Result<(), UriError> {
+    if is_top_hash(hash) {
+        Ok(())
+    } else {
+        Err(UriError::Package(format!(
+            "hash must be 64 lowercase hex characters, got {hash:?}"
+        )))
+    }
 }
 
 /// The characters that would otherwise be read as fragment structure.
@@ -344,13 +450,6 @@ impl S3PackageUri {
     #[must_use]
     pub fn display(&self) -> String {
         self.render(false, FRAGMENT_VALUE)
-    }
-
-    /// The address in full for copying: the whole hash, and every fragment
-    /// value escaped, spaces too, so a pasted address stays one link.
-    #[must_use]
-    pub fn to_copy_string(&self) -> String {
-        self.render(true, COPY_VALUE)
     }
 
     /// Each fragment value is escaped with `set`, safe to put beside the
@@ -389,25 +488,26 @@ impl S3PackageUri {
     ///
     /// # Errors
     ///
-    /// Returns [`UriError::UrlParse`] if `host`, the bucket, or the namespace
-    /// yield a string that is not a valid URL.
+    /// Returns [`UriError::Package`] if the bucket, the revision or a piece of
+    /// the logical path is `.` or `..`, which no catalog URL can keep.
     pub fn display_for_host(&self, host: &Host) -> Result<url::Url, UriError> {
-        let version = match &self.revision {
+        let revision = match &self.revision {
             RevisionPointer::Tag(tag) => tag.to_string(),
             RevisionPointer::Hash(hash) => hash.clone(),
         };
-        let mut url = url::Url::parse(&format!(
-            "https://{}/b/{}/packages/{}/tree/{}",
-            host, self.bucket, self.namespace, version
-        ))?;
-
-        if let Some(path) = &self.path {
-            let mut new_path = url.path().to_string();
-            new_path.push('/');
-            new_path.push_str(&path.display().to_string());
-            url.set_path(&new_path);
-        }
-        Ok(url)
+        let path = self.path.as_ref().map(|p| p.display().to_string());
+        let segments = [
+            "b",
+            &self.bucket,
+            "packages",
+            self.namespace.prefix(),
+            self.namespace.name(),
+            "tree",
+            &revision,
+        ]
+        .into_iter()
+        .chain(path.iter().flat_map(|p| p.split('/')));
+        host.web_url(segments).map_err(UriError::Package)
     }
 
     /// Renders this package URI as a web URL on its own catalog host.
@@ -424,26 +524,11 @@ impl S3PackageUri {
     }
 }
 
+/// The full address: the whole hash, and every fragment value escaped, spaces
+/// too, so it parses back the same and a pasted address stays one link.
 impl fmt::Display for S3PackageUri {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let hash = match &self.revision {
-            RevisionPointer::Tag(Tag::Latest) => String::new(),
-            RevisionPointer::Tag(tag) => format!(":{tag}"),
-            RevisionPointer::Hash(h) => format!("@{h}"),
-        };
-        let path_part = match &self.path {
-            Some(p) => format!("&path={}", p.display()),
-            None => String::new(),
-        };
-        let catalog_part = match &self.catalog {
-            Some(p) => format!("&catalog={p}"),
-            None => String::new(),
-        };
-        write!(
-            f,
-            "quilt+s3://{}#package={}{}{}{}",
-            self.bucket, self.namespace, hash, path_part, catalog_part
-        )
+        f.write_str(&self.render(true, COPY_VALUE))
     }
 }
 
@@ -597,6 +682,66 @@ mod tests {
             uri.unwrap_err().to_string(),
             r#"Invalid package URI: unexpected parameters in fragment: {"foo": "bar"}"#.to_string(),
         );
+    }
+
+    /// The address before the fragment is only the bucket: a user, a
+    /// password, a port, a query or any path, a lone `/` too, is an error.
+    #[test]
+    fn a_uri_refuses_parts_it_would_drop() {
+        for input in [
+            "quilt+s3://bucket@other-bucket#package=a/b",
+            "quilt+s3://user:pass@bucket#package=a/b",
+            "quilt+s3://:pass@bucket#package=a/b",
+            "quilt+s3://bucket:1#package=a/b",
+            "quilt+s3://bucket/x#package=a/b",
+            "quilt+s3://bucket/#package=a/b",
+            "quilt+s3://bucket?x=1#package=a/b",
+            "quilt+s3://bucket?#package=a/b",
+        ] {
+            let err =
+                S3PackageUri::try_from(input).expect_err(&format!("{input} should not parse"));
+            assert!(
+                matches!(err, UriError::Package(_)),
+                "{input}: expected a package error, got {err}"
+            );
+        }
+    }
+
+    /// The error for a user or password names the bucket, never the user or
+    /// password themselves.
+    #[test]
+    fn the_error_for_a_user_does_not_repeat_it() {
+        for input in [
+            "quilt+s3://KEY:secret@bucket#package=a/b",
+            "quilt+s3://user:secret@bucket:1#package=a/b",
+        ] {
+            let err = S3PackageUri::try_from(input).expect_err(input).to_string();
+            assert!(err.contains("bucket"), "{err}");
+            assert!(!err.contains("secret"), "{err}");
+            assert!(!err.contains("KEY") && !err.contains("user:"), "{err}");
+        }
+    }
+
+    /// A key given twice is an error, whichever one a reader would pick.
+    #[test]
+    fn a_repeated_fragment_key_is_refused() {
+        for (fragment, key) in [
+            ("package=team/pkg&package=other/pkg", "package"),
+            ("package=team/pkg&path=a.csv&path=b.csv", "path"),
+            (
+                "package=team/pkg&catalog=quilt.test&catalog=other.test",
+                "catalog",
+            ),
+            ("package=team/pkg&path=a.csv&path=a.csv", "path"),
+        ] {
+            let input = format!("quilt+s3://bucket#{fragment}");
+            let err = S3PackageUri::try_from(input.as_str())
+                .expect_err(&format!("{fragment} should not parse"));
+            assert!(
+                matches!(&err, UriError::Package(msg) if msg.contains(&format!("`{key}`"))),
+                "{fragment}: expected a package error naming {key}, got {err}"
+            );
+        }
     }
 
     #[test]
@@ -817,6 +962,75 @@ mod tests {
         Ok(())
     }
 
+    /// The namespace halves, the revision and each piece of the logical path
+    /// are one path segment each, so nothing in them moves the URL.
+    #[test]
+    fn a_catalog_url_keeps_every_value_in_its_own_segment() -> Res {
+        let host = fixtures::host();
+        for (namespace, path, expected) in [
+            (
+                ("a", "x?q=1#f"),
+                None,
+                "https://quilt.test/b/bucket/packages/a/x%3Fq=1%23f/tree/latest",
+            ),
+            (
+                ("team", "pkg"),
+                Some("a?q=1#f/b c%2F.csv"),
+                "https://quilt.test/b/bucket/packages/team/pkg/tree/latest/a%3Fq=1%23f/b%20c%252F.csv",
+            ),
+        ] {
+            let uri = S3PackageUri {
+                catalog: None,
+                bucket: "bucket".to_string(),
+                namespace: namespace.into(),
+                revision: RevisionPointer::Tag(Tag::Latest),
+                path: path.map(PathBuf::from),
+            };
+            let url = uri.display_for_host(&host)?;
+            assert_eq!(url.as_str(), expected);
+            assert_eq!(url.query(), None, "{url}");
+            assert_eq!(url.fragment(), None, "{url}");
+        }
+        Ok(())
+    }
+
+    /// A `.` or `..` segment has no catalog URL a browser keeps, so it is an
+    /// error.
+    #[test]
+    fn a_catalog_url_refuses_a_dot_segment() {
+        let host = fixtures::host();
+        let base = S3PackageUri {
+            catalog: None,
+            bucket: "bucket".to_string(),
+            namespace: ("team", "pkg").into(),
+            revision: RevisionPointer::Tag(Tag::Latest),
+            path: None,
+        };
+        for uri in [
+            S3PackageUri {
+                path: Some(PathBuf::from("../../../../admin")),
+                ..base.clone()
+            },
+            S3PackageUri {
+                path: Some(PathBuf::from("a/./b.csv")),
+                ..base.clone()
+            },
+            S3PackageUri {
+                revision: RevisionPointer::Hash("..".to_string()),
+                ..base.clone()
+            },
+            S3PackageUri {
+                bucket: "..".to_string(),
+                ..base.clone()
+            },
+        ] {
+            let err = uri
+                .display_for_host(&host)
+                .expect_err(&format!("{uri:?} should not render"));
+            assert!(matches!(err, UriError::Package(_)), "{uri:?}: got {err}");
+        }
+    }
+
     #[test]
     fn test_display_for_catalog() -> Res {
         let uri_with_catalog: S3PackageUri =
@@ -891,9 +1105,12 @@ mod tests {
 
     #[test]
     fn test_revision_pointer_serde_round_trip_hash() {
-        let revision = RevisionPointer::Hash("abc123".to_string());
+        let revision = RevisionPointer::Hash(fixtures::TOP_HASH.to_string());
         let json = serde_json::to_string(&revision).unwrap();
-        assert_eq!(json, r#"{"_tag":"Hash","value":"abc123"}"#);
+        assert_eq!(
+            json,
+            format!(r#"{{"_tag":"Hash","value":"{}"}}"#, fixtures::TOP_HASH)
+        );
         let parsed: RevisionPointer = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, revision);
     }
@@ -1044,6 +1261,55 @@ mod tests {
         );
     }
 
+    /// Each half becomes a folder name on disk, so the URI parser refuses any
+    /// half that would not stay one folder.
+    #[test]
+    fn a_uri_refuses_a_namespace_half_that_is_not_a_plain_folder_name() {
+        for package in [
+            "../x",
+            "x/..",
+            "./x",
+            "%2e%2e/%2e%2e",
+            "a/..%5C..%5C..%5Cx",
+            "a%5Cb/c",
+            "a/b%00",
+            "a%0Ab/c",
+            "a/b%09c",
+            "a/b%7F",
+        ] {
+            let input = format!("quilt+s3://bucket#package={package}");
+            let err = S3PackageUri::try_from(input.as_str())
+                .expect_err(&format!("{package} should not parse"));
+            assert!(
+                matches!(err, UriError::Namespace(_)),
+                "{package}: expected a namespace error, got {err}"
+            );
+        }
+    }
+
+    /// Deserialize reaches the same check, so a stored namespace gets it too.
+    #[test]
+    fn a_deserialized_namespace_gets_the_same_check() {
+        for namespace in ["C:/x", "a/C:", "../x", "a/\\x", "a/b\u{0}", "a\nb/c"] {
+            let json = serde_json::to_string(namespace).unwrap();
+            assert!(
+                serde_json::from_str::<Namespace>(&json).is_err(),
+                "{namespace:?} should not deserialize"
+            );
+        }
+    }
+
+    /// Dots, dashes and underscores inside a half still parse.
+    #[test]
+    fn a_dotted_namespace_still_parses() -> Res {
+        let uri = S3PackageUri::try_from("quilt+s3://bucket#package=my.team_1/plate-07.v2")?;
+        assert_eq!(uri.namespace.prefix(), "my.team_1");
+        assert_eq!(uri.namespace.name(), "plate-07.v2");
+        let ns: Namespace = serde_json::from_str("\"..a/b..\"").unwrap();
+        assert_eq!(ns.to_string(), "..a/b..");
+        Ok(())
+    }
+
     #[test]
     fn test_display_method_short_and_long_hash() {
         // Short hash (<= 12 chars) is rendered verbatim.
@@ -1188,7 +1454,7 @@ mod tests {
             bucket: "bucket".to_string(),
             catalog: Some(fixtures::host()),
             namespace: ("foo", "bar").into(),
-            revision: RevisionPointer::Hash("abc123".to_string()),
+            revision: RevisionPointer::Hash(fixtures::TOP_HASH.to_string()),
             path: Some(PathBuf::from("read/me.md")),
         };
         let json = serde_json::to_string(&uri).unwrap();
@@ -1202,7 +1468,7 @@ mod tests {
     #[test]
     fn a_path_holding_fragment_delimiters_round_trips() {
         for path in [
-            "a&catalog=evil.csv",
+            "a&catalog=x.csv",
             "plus+one.csv",
             "a=b.csv",
             "hash#tag.csv",
@@ -1218,17 +1484,18 @@ mod tests {
                 path: Some(PathBuf::from(path)),
             };
 
-            let back = S3PackageUri::try_from(uri.display().as_str())
-                .unwrap_or_else(|e| panic!("{path:?} -> {} : {e}", uri.display()));
-
-            assert_eq!(back, uri, "{path:?} came back as {}", uri.display());
+            for written in [uri.display(), uri.to_string()] {
+                let back = S3PackageUri::try_from(written.as_str())
+                    .unwrap_or_else(|e| panic!("{path:?} -> {written} : {e}"));
+                assert_eq!(back, uri, "{path:?} came back as {written}");
+            }
         }
     }
 
-    /// The copied form comes back whole whatever the values hold, pinned or at
+    /// The full form comes back whole whatever the values hold, pinned or at
     /// latest: every delimiter and space escaped, and the hash never shortened.
     #[test]
-    fn the_copy_string_round_trips() {
+    fn the_full_string_round_trips() {
         let hash = "0123456789abcdef".repeat(4);
         for revision in [
             RevisionPointer::Tag(Tag::Latest),
@@ -1236,7 +1503,7 @@ mod tests {
         ] {
             for value in [
                 "a+b",
-                "a&catalog=evil",
+                "a&catalog=x",
                 "100%",
                 "hash#tag",
                 "a=b",
@@ -1249,7 +1516,7 @@ mod tests {
                     revision: revision.clone(),
                     path: Some(PathBuf::from(format!("dir/{value}.csv"))),
                 };
-                let copied = uri.to_copy_string();
+                let copied = uri.to_string();
 
                 assert!(!copied.contains(' '), "{copied}");
                 let back = S3PackageUri::try_from(copied.as_str())
@@ -1259,9 +1526,27 @@ mod tests {
         }
     }
 
-    /// Slashes stay literal in the copied form too, and the hash is whole.
+    /// A path that spells other fragment keys stays one path in `to_string()`.
     #[test]
-    fn the_copy_string_keeps_slashes_and_the_whole_hash() {
+    fn a_path_spelling_other_keys_stays_a_path() -> Res {
+        let uri = S3PackageUri {
+            catalog: Some(fixtures::host()),
+            bucket: "bucket".to_string(),
+            namespace: ("team", "pkg").into(),
+            revision: RevisionPointer::Tag(Tag::Latest),
+            path: Some(PathBuf::from("x&package=other/pkg&catalog=other.test")),
+        };
+        assert_eq!(
+            uri.to_string(),
+            "quilt+s3://bucket#package=team/pkg&path=x%26package%3Dother/pkg%26catalog%3Dother.test&catalog=quilt.test"
+        );
+        assert_eq!(S3PackageUri::try_from(uri.to_string().as_str())?, uri);
+        Ok(())
+    }
+
+    /// Slashes stay literal in the full form too, and the hash is whole.
+    #[test]
+    fn the_full_string_keeps_slashes_and_the_whole_hash() {
         let hash = "0123456789abcdef".repeat(4);
         let uri = S3PackageUri {
             catalog: Some("quilt.test".parse().unwrap()),
@@ -1272,7 +1557,7 @@ mod tests {
         };
 
         assert_eq!(
-            uri.to_copy_string(),
+            uri.to_string(),
             format!(
                 "quilt+s3://team-bucket#package=user/plate-07@{hash}&path=runs/a/one.csv&catalog=quilt.test"
             )
@@ -1295,5 +1580,109 @@ mod tests {
             uri.display(),
             "quilt+s3://team-bucket#package=user/plate-07&path=runs/a/one.csv"
         );
+    }
+
+    /// Deserializing a hash revision applies the parser's top hash rule.
+    #[test]
+    fn a_deserialized_hash_revision_must_be_a_top_hash() {
+        for hash in [
+            "../../../../tmp/x",
+            "abc123",
+            "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF",
+        ] {
+            let json = format!(
+                r#"{{"_tag":"Hash","value":{}}}"#,
+                serde_json::to_string(hash).unwrap()
+            );
+            assert!(
+                serde_json::from_str::<RevisionPointer>(&json).is_err(),
+                "{hash:?} should not deserialize"
+            );
+        }
+    }
+
+    /// A remote set but not pushed yet has an empty hash, and its package URI
+    /// still reads.
+    #[test]
+    fn a_package_uri_not_pushed_yet_reads() {
+        let uri = S3PackageUri::from(ManifestUri {
+            origin: None,
+            bucket: "team-bucket".to_string(),
+            namespace: ("user", "plate-07").into(),
+            hash: String::new(),
+        });
+        let json = serde_json::to_string(&uri).unwrap();
+        assert_eq!(serde_json::from_str::<S3PackageUri>(&json).unwrap(), uri);
+    }
+
+    /// The parser refuses a bucket name S3 never allowed.
+    #[test]
+    fn a_uri_refuses_a_bucket_name_s3_does_not_allow() {
+        for bucket in ["..", ".", "Bad_Bucket!", "a%20b", "a%2Fb"] {
+            let input = format!("quilt+s3://{bucket}#package=foo/bar");
+            let err = S3PackageUri::try_from(input.as_str())
+                .expect_err(&format!("{bucket} should not parse"));
+            assert!(
+                matches!(err, UriError::Bucket(_)),
+                "{bucket}: expected a bucket error, got {err}"
+            );
+        }
+    }
+
+    /// Deserializing a package URI applies the same bucket rule.
+    #[test]
+    fn a_deserialized_package_uri_gets_the_bucket_check() {
+        for bucket in ["../../x", "..", ".", "", "a b", "a/b", "a#b", "a@b", "a:b"] {
+            let uri = S3PackageUri {
+                catalog: None,
+                bucket: bucket.to_string(),
+                namespace: ("foo", "bar").into(),
+                revision: RevisionPointer::Tag(Tag::Latest),
+                path: None,
+            };
+            let json = serde_json::to_string(&uri).unwrap();
+            assert!(
+                serde_json::from_str::<S3PackageUri>(&json).is_err(),
+                "{bucket:?} should not deserialize"
+            );
+        }
+    }
+
+    /// Names from before S3's 2018 rules, with uppercase and `_`, still read.
+    #[test]
+    fn a_legacy_bucket_name_still_reads() -> Res {
+        let uri = S3PackageUri::try_from("quilt+s3://My_Old.Bucket-1#package=foo/bar")?;
+        assert_eq!(uri.bucket, "My_Old.Bucket-1");
+        let json = serde_json::to_string(&uri).unwrap();
+        assert_eq!(serde_json::from_str::<S3PackageUri>(&json).unwrap(), uri);
+        Ok(())
+    }
+
+    /// The JSON form is what lineage files and the app hold, so it stays as is.
+    #[test]
+    fn a_package_uri_keeps_its_json_form() {
+        let json = format!(
+            r#"{{"catalog":"quilt.test","bucket":"team-bucket","namespace":"user/plate-07","revision":{{"_tag":"Hash","value":"{}"}},"path":"runs/one.csv"}}"#,
+            fixtures::TOP_HASH
+        );
+        let uri = S3PackageUri {
+            catalog: Some(fixtures::host()),
+            bucket: "team-bucket".to_string(),
+            namespace: ("user", "plate-07").into(),
+            revision: RevisionPointer::Hash(fixtures::TOP_HASH.to_string()),
+            path: Some(PathBuf::from("runs/one.csv")),
+        };
+        assert_eq!(serde_json::to_string(&uri).unwrap(), json);
+        assert_eq!(serde_json::from_str::<S3PackageUri>(&json).unwrap(), uri);
+
+        let latest = r#"{"catalog":null,"bucket":"team-bucket","namespace":"user/plate-07","revision":{"_tag":"Tag","value":"latest"},"path":null}"#;
+        let uri = S3PackageUri {
+            catalog: None,
+            path: None,
+            revision: RevisionPointer::Tag(Tag::Latest),
+            ..uri
+        };
+        assert_eq!(serde_json::to_string(&uri).unwrap(), latest);
+        assert_eq!(serde_json::from_str::<S3PackageUri>(latest).unwrap(), uri);
     }
 }

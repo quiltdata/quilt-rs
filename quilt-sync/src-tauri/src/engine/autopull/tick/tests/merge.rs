@@ -366,9 +366,29 @@ async fn changes_to_different_files_land_on_latest_together_and_the_copy_resumes
         [(ns(), "mine".to_string())],
         "reported as a publish"
     );
-    let pulled = reporter.pulled.lock().unwrap();
+    let pulled = got(&reporter);
     assert_eq!(pulled.len(), 1, "and as a pull");
-    assert_eq!(pulled[0].1.groups[0].items, ["b.csv"]);
+    assert_eq!(pulled[0].files[0].paths, ["b.csv"]);
+    let published = reporter.recorded.lock().unwrap()[0].clone();
+    assert_eq!(
+        published.kind,
+        crate::engine::record::Kind::Published,
+        "and recorded as a publish first"
+    );
+    assert_eq!(published.files_line(), "1 file updated");
+    assert_eq!(published.files[0].paths, ["a.csv"], "the copy's own change");
+}
+
+/// The pulls the record was given.
+fn got(reporter: &RecordingReporter) -> Vec<crate::engine::record::Draft> {
+    reporter
+        .recorded
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|d| d.kind == crate::engine::record::Kind::Got)
+        .cloned()
+        .collect()
 }
 
 #[tokio::test]
@@ -547,7 +567,7 @@ async fn a_latest_that_keeps_moving_pauses_the_copy_after_three_attempts() {
         )
     });
 
-    let (inner, _) = tick(&model).await;
+    let (inner, reporter) = tick(&model).await;
 
     let remote = seen(&remote);
     assert_eq!(
@@ -558,6 +578,16 @@ async fn a_latest_that_keeps_moving_pauses_the_copy_after_three_attempts() {
     assert_eq!(
         inner.paused.read().await.get(&ns()),
         Some(&PausedReason::MergeRefused(MergeBlock::LatestMoved))
+    );
+    // Each upload is a revision in the bucket, and the record says so.
+    let recorded = reporter.recorded.lock().unwrap();
+    assert_eq!(recorded.len(), 3, "one entry per upload");
+    assert!(
+        recorded
+            .iter()
+            .all(|d| d.kind == crate::engine::record::Kind::Published
+                && d.outcome.as_deref()
+                    == Some("The bucket has newer changes, so this revision is not the latest."))
     );
 }
 
@@ -593,6 +623,26 @@ async fn an_edit_during_the_merge_to_a_path_it_published_is_published_next_tick(
         "published as an ordinary change, not merged again"
     );
     assert!(inner.paused.read().await.is_empty());
+}
+
+/// A move that fails after the merge published still leaves the publish in
+/// the record: the retry finds the change on `latest` and publishes nothing.
+#[tokio::test]
+async fn a_merge_whose_move_fails_is_still_recorded_as_published() {
+    let (model, remote) = model_of(Copy::new(
+        vec![file("a.csv", "1")],
+        vec![file("a.csv", "mine")],
+        vec![file("a.csv", "1"), file("b.csv", "theirs")],
+    ));
+    remote.lock().unwrap().failing_moves = 1;
+
+    let (_, reporter) = tick(&model).await;
+
+    assert_eq!(seen(&remote).events, ["push onto h1", "move to r1"]);
+    let recorded = reporter.recorded.lock().unwrap();
+    assert_eq!(recorded.len(), 1);
+    assert_eq!(recorded[0].kind, crate::engine::record::Kind::Published);
+    assert_eq!(reporter.published.lock().unwrap().len(), 1);
 }
 
 /// The merge publishes and its move fails, so the copy keeps its old base, and
@@ -711,10 +761,7 @@ async fn an_edit_during_the_merge_to_a_path_the_other_side_changed_keeps_the_cop
         "the next tick retries"
     );
     assert_eq!(reporter.published.lock().unwrap().len(), 1);
-    assert!(
-        reporter.pulled.lock().unwrap().is_empty(),
-        "nothing written"
-    );
+    assert!(got(&reporter).is_empty(), "nothing written");
 }
 
 /// Beside an edit to `b.csv`, a local file the walk does not list, such as an
@@ -765,8 +812,7 @@ async fn the_copy_moves_to_the_merged_revision_not_one_published_after_it() {
     let (_, reporter) = tick(&model).await;
 
     assert_eq!(seen(&remote).events, ["push onto h1", "move to r1"]);
-    let pulled = reporter.pulled.lock().unwrap();
-    assert_eq!(pulled[0].1.groups[0].items, ["b.csv"]);
+    assert_eq!(got(&reporter)[0].files[0].paths, ["b.csv"]);
 }
 
 /// The tick after an edit kept the copy at its own revision: `latest` already

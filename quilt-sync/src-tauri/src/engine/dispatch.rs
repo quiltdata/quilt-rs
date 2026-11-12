@@ -18,7 +18,7 @@ use crate::engine::commands::{
     AccountHost, AutosyncPatch, CommitData, CommitViolation, CommitWorkflows, FreedSpace,
     KeepingScope, LoginData, LoginErrorData, MainPageAccounts, MainPagePackageRefresh,
     MainPagePackages, MainPageRecentFiles, MainPageWatcher, NotDownloaded, PackagePageData,
-    PathCheck, RemotePackageResult, RevisionHistoryData, RolesData, SetRemoteResponse,
+    PathCheck, RecordRow, RemotePackageResult, RevisionHistoryData, RolesData, SetRemoteResponse,
     SettingsData, SetupData, StopIgnoringPreview, StopIgnoringScope, StorageSize,
 };
 use crate::engine::desktop::{Desktop, ForeignHandler, NOT_AVAILABLE};
@@ -27,7 +27,6 @@ use crate::engine::navigation::Navigation;
 use crate::engine::quilt::flow::PullPreview;
 use crate::engine::services::Services;
 use crate::engine::tasks::settings::TaskSettings;
-use crate::engine::toast::Toast;
 use crate::engine::updates::UpdateInfo;
 
 /// Builds [`dispatch`] from the table below. Each group calls its functions in
@@ -163,6 +162,7 @@ commands! {
         validate_commit_candidate(namespace: String, workflow_id: String, message: String, user_meta: String, name: String) -> Vec<CommitViolation>;
         get_main_page_packages() -> MainPagePackages;
         get_main_page_accounts() -> MainPageAccounts;
+        get_settings_accounts() -> MainPageAccounts;
         refresh_main_page_account(host: String) -> AccountHost;
         refresh_main_page_package(namespace: String) -> MainPagePackageRefresh;
         get_main_page_watcher() -> MainPageWatcher;
@@ -215,10 +215,10 @@ commands! {
         package_file_path(namespace: String, path: LogicalKey) -> String;
         open_in_web_browser(url: String) -> String;
         setup(directory: String) -> String;
-        get_toasts() -> Vec<Toast>;
+        get_record() -> Vec<RecordRow>;
+        mark_read(up_to: u64, namespace: Option<quilt_uri::Namespace>) -> ();
         pending_navigation(page: String) -> Option<Navigation>;
         navigation_done(page: String, id: String) -> ();
-        dismiss_toast(id: u64) -> ();
         report_ui_panic(message: String) -> ();
         quit_prompt_shown(generation: u64) -> ();
         quit_cancel() -> ();

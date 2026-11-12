@@ -22,13 +22,12 @@ use crate::engine::model;
 use crate::engine::notify::Notify;
 use crate::engine::quilt;
 use crate::engine::quilt::lineage::UpstreamState;
+use crate::engine::record::Draft;
+use crate::engine::record::Record;
 use crate::engine::services::Services;
 use crate::engine::telemetry::MixpanelEvent;
 use crate::engine::telemetry::event::RemotePackageEvent;
 use crate::engine::telemetry::prelude::*;
-use crate::engine::toast::ToastCenter;
-use crate::engine::toast::ToastDraft;
-use crate::engine::toast::ToastKind;
 
 /// Everything the package page draws, for one package.
 #[derive(Serialize)]
@@ -969,7 +968,7 @@ async fn get_revision_history_from_model(
 }
 
 /// Remove old revisions of `namespace` and the objects only they used, then
-/// post what it freed to the notification stack. A refusal (busy, protected,
+/// record what it freed. A refusal (busy, protected,
 /// gone) is the error, for the page's band; nothing was removed.
 ///
 /// Not under the page's command lock: the package's own lock guards it, and
@@ -980,29 +979,22 @@ pub async fn remove_revisions(
     hashes: Vec<String>,
 ) -> Result<String, String> {
     let m = &*s.model;
-    let toasts = &*s.toasts;
-    remove_revisions_command(m, toasts, namespace, hashes).await
+    remove_revisions_command(m, &s.record, namespace, hashes).await
 }
 
 async fn remove_revisions_command(
     m: &impl model::QuiltModel,
-    toasts: &ToastCenter,
+    record: &Record,
     namespace: String,
     hashes: Vec<String>,
 ) -> Result<String, String> {
     let notify = Notify::new(format!("Removing old revisions of {namespace}"));
     let result = remove_revisions_from_model(m, &namespace, hashes).await;
     if let Ok(report) = &result {
-        toasts
-            .post(ToastDraft {
-                kind: ToastKind::Success,
-                body: report.to_string(),
-                ..ToastDraft::default()
-            })
-            .await;
+        record.add(Draft::removed_revisions(report)).await;
     }
     let msg_err = |err: &Error| format!("Could not remove old revisions: {}", err.user_facing());
-    // The toast has said it; the band says nothing more.
+    // The activity line showed the work, and the record keeps the result.
     notify.map(result.map(|_| ()), String::new(), msg_err)
 }
 
@@ -2716,14 +2708,6 @@ mod tests {
         assert_eq!(data.removable_frees, None);
     }
 
-    struct Collector(std::sync::Arc<std::sync::Mutex<Vec<crate::engine::toast::Toast>>>);
-
-    impl crate::engine::toast::ToastEmitter for Collector {
-        fn emit(&self, toast: &crate::engine::toast::Toast) {
-            self.0.lock().unwrap().push(toast.clone());
-        }
-    }
-
     fn report() -> quilt::flow::RemovalReport {
         quilt::flow::RemovalReport {
             namespace: NS.try_into().unwrap(),
@@ -2735,33 +2719,31 @@ mod tests {
         }
     }
 
-    /// The result is the stack's to say: a Success toast with the report's
-    /// own sentence, and nothing for the band.
+    /// The result is the record's to keep, and the band says nothing.
     #[tokio::test]
-    async fn a_removal_posts_its_report_as_a_success_toast() {
+    async fn a_removal_records_what_it_freed() {
         let mut m = crate::engine::model::mocks::create();
         m.expect_get_installed_package()
             .returning(|ns| Ok(Some(make_installed_package(ns.clone()))));
         m.expect_package_remove_revisions()
             .withf(|_, hashes| hashes == &BTreeSet::from(["old-1".to_string()]))
             .returning(|_, _| Ok(report()));
-        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        let toasts = ToastCenter::new(Box::new(Collector(std::sync::Arc::clone(&seen))));
+        let record = Record::in_memory(crate::engine::events::EventSink::new());
 
         let said =
-            remove_revisions_command(&m, &toasts, NS.to_string(), vec!["old-1".to_string()]).await;
+            remove_revisions_command(&m, &record, NS.to_string(), vec!["old-1".to_string()]).await;
 
         assert_eq!(said, Ok(String::new()));
-        let seen = seen.lock().unwrap();
-        assert_eq!(seen.len(), 1);
-        assert_eq!(seen[0].kind, ToastKind::Success);
+        let entries = record.entries().await;
+        assert_eq!(entries.len(), 1);
         assert_eq!(
-            seen[0].body,
-            "Removed 4 old revisions of team/dataset \u{b7} freed 6.9 MB"
+            entries[0].kind,
+            crate::engine::record::Kind::RemovedRevisions { count: 4 }
         );
+        assert_eq!(entries[0].outcome.as_deref(), Some("Freed 6.9 MB."));
     }
 
-    /// A refusal goes to the band, and the stack says nothing.
+    /// A refusal goes to the band, and the record keeps nothing.
     #[tokio::test]
     async fn a_busy_package_is_the_bands_and_posts_nothing() {
         let mut m = crate::engine::model::mocks::create();
@@ -2771,15 +2753,14 @@ mod tests {
             .returning(|installed, _| {
                 Err(quilt::Error::PackageBusy(installed.namespace.clone()).into())
             });
-        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        let toasts = ToastCenter::new(Box::new(Collector(std::sync::Arc::clone(&seen))));
+        let record = Record::in_memory(crate::engine::events::EventSink::new());
 
         let said =
-            remove_revisions_command(&m, &toasts, NS.to_string(), vec!["old-1".to_string()]).await;
+            remove_revisions_command(&m, &record, NS.to_string(), vec!["old-1".to_string()]).await;
 
         let err = said.expect_err("refused");
         assert!(err.contains("team/dataset is busy"), "{err}");
-        assert!(seen.lock().unwrap().is_empty());
+        assert_eq!(record.entries().await, []);
     }
 
     /// The revision mode reads publication only. The mock has no usage read,

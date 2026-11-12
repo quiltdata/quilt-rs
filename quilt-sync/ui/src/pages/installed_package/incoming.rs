@@ -151,13 +151,16 @@ pub fn state_with_summary(label: AnyView, summary: Option<AnyView>) -> AnyView {
 #[derive(Clone)]
 pub struct Catalog {
     package: S3PackageUri,
-    open: Callback<String>,
+    open: Callback<Result<String, String>>,
 }
 
 impl Catalog {
     /// `None` when the package has no catalog host: nothing to link to.
     #[must_use]
-    pub fn new(package: Option<&S3PackageUri>, open: Callback<String>) -> Option<Self> {
+    pub fn new(
+        package: Option<&S3PackageUri>,
+        open: Callback<Result<String, String>>,
+    ) -> Option<Self> {
         let package = package.filter(|p| p.catalog.is_some())?;
         Some(Self {
             package: package.clone(),
@@ -165,14 +168,15 @@ impl Catalog {
         })
     }
 
-    /// A file at the newer revision, in the catalog.
-    fn href(&self, hash: &str, path: &str) -> Option<String> {
+    /// A file at the newer revision, in the catalog, or why it has no link.
+    fn href(&self, hash: &str, path: &str) -> Result<String, String> {
         let newer = S3PackageUri {
             revision: RevisionPointer::Hash(hash.to_string()),
             path: None,
             ..self.package.clone()
         };
         crate::util::entry_catalog_url(&newer, path)
+            .unwrap_or_else(|| Err("This package has no catalog.".to_string()))
     }
 }
 
@@ -719,7 +723,7 @@ fn summary(
 /// The link to a file's newer version in the catalog, drawn as revision rows
 /// draw theirs: a real anchor, so the address can be copied, whose navigation
 /// is cancelled and handed to the opener, which on the page is the browser.
-fn catalog_link(href: String, open: Callback<String>) -> AnyView {
+fn catalog_link(href: String, open: Callback<Result<String, String>>) -> AnyView {
     let followed = href.clone();
     let middled = href.clone();
     view! {
@@ -730,17 +734,34 @@ fn catalog_link(href: String, open: Callback<String>) -> AnyView {
             title=OPEN_LABEL
             on:click=move |ev| {
                 ev.prevent_default();
-                open.run(followed.clone());
+                open.run(Ok(followed.clone()));
             }
             on:auxclick=move |ev| {
                 if ev.button() == MIDDLE_BUTTON {
                     ev.prevent_default();
-                    open.run(middled.clone());
+                    open.run(Ok(middled.clone()));
                 }
             }
         >
             {icons::link_external()}
         </a>
+    }
+    .into_any()
+}
+
+/// A file with no catalog address keeps its link's place: a click says why,
+/// on the same band a failed open uses.
+fn no_catalog_link(reason: String, open: Callback<Result<String, String>>) -> AnyView {
+    view! {
+        <button
+            type="button"
+            class=style::open
+            aria-label=OPEN_LABEL
+            title=reason.clone()
+            on:click=move |_| open.run(Err(reason.clone()))
+        >
+            {icons::link_external()}
+        </button>
     }
     .into_any()
 }
@@ -758,10 +779,12 @@ fn file_list(rows: Vec<Coming>, links: Option<&(Catalog, String)>) -> AnyView {
                 .map(|row| {
                     let link = links
                         .map(|(catalog, hash)| {
-                            match catalog.href(hash, &row.path).filter(|_| row.change != Change::Deleted)
-                            {
-                                Some(href) => catalog_link(href, catalog.open),
-                                None => view! { <span class=style::open /> }.into_any(),
+                            if row.change == Change::Deleted {
+                                return view! { <span class=style::open /> }.into_any();
+                            }
+                            match catalog.href(hash, &row.path) {
+                                Ok(href) => catalog_link(href, catalog.open),
+                                Err(reason) => no_catalog_link(reason, catalog.open),
                             }
                         });
                     view! {
@@ -1445,7 +1468,7 @@ mod tests {
                         check=Signal::stored(Some(check))
                         conflicts=Signal::stored(None)
                         kept=Kept::Folders(Vec::new())
-                        catalog=Catalog::new(Some(&package), Callback::new(|_: String| ()))
+                        catalog=Catalog::new(Some(&package), Callback::new(|_: Result<String, String>| ()))
                         on_retry=Callback::new(|()| ())
                     />
                 }
@@ -1477,5 +1500,54 @@ mod tests {
         let bare = draw(None);
         assert!(hrefs(&bare).is_empty(), "no host, no links");
         assert_eq!(bare.query_selector_all("ul li").unwrap().length(), 3);
+    }
+
+    /// A file whose path has no catalog address keeps its link's place, and a
+    /// click hands the opener the reason, which the page shows on its band.
+    #[wasm_bindgen_test]
+    fn a_file_with_no_catalog_address_says_why() {
+        let check = PullCheck::Ready(PullPreview {
+            outcome: PullOutcome::CleanUpdate,
+            added: vec!["raw/../a.csv".to_string()],
+            changed: Vec::new(),
+            removed: Vec::new(),
+            latest_hash: Some("abc123".to_string()),
+        });
+        let opened = RwSignal::new(None::<Result<String, String>>);
+        let el = mount(move || {
+            let package = crate::util::package_uri(
+                "lab-bucket",
+                &"user/plate-07".try_into().unwrap(),
+                Some("lab.example"),
+            );
+            view! {
+                <IncomingSummary
+                    check=Signal::stored(Some(check.clone()))
+                    conflicts=Signal::stored(None)
+                    kept=Kept::Folders(Vec::new())
+                    catalog=Catalog::new(
+                        Some(&package),
+                        Callback::new(move |link| opened.set(Some(link))),
+                    )
+                    on_retry=Callback::new(|()| ())
+                />
+            }
+        });
+        assert!(
+            el.query_selector("ul a").unwrap().is_none(),
+            "no link to follow"
+        );
+        let button = el
+            .query_selector("ul button")
+            .unwrap()
+            .expect("the link's place is kept")
+            .unchecked_into::<web_sys::HtmlElement>();
+        button.click();
+        let reason = match opened.get_untracked() {
+            Some(Err(reason)) => reason,
+            other => panic!("expected a reason, got {other:?}"),
+        };
+        assert!(reason.contains("`..`"), "{reason}");
+        assert_eq!(button.get_attribute("title"), Some(reason));
     }
 }

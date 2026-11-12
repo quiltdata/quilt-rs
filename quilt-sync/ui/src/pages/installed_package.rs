@@ -32,7 +32,7 @@ use quilt_ui_kit::{Banner, BannerVariant, LoadFailure, PageLayout, publish_heigh
 use super::copy_mark::CopyMark;
 #[cfg(test)]
 use super::page::outcome_band;
-use super::page::{Page, PageHandle};
+use super::page::{Page, PageHandle, success};
 use super::row_menu::{COPY_FAILED, LocalPath, Ran, RowCommand, carry_out, local_path};
 use super::status_watch::StatusWatch;
 use crate::components::{IgnorePopup, IgnorePopupData, UnignorePopup, UnignorePopupData};
@@ -128,10 +128,7 @@ async fn holding<T>(
 /// Run a command, hold the page while it runs, and report only what the band
 /// is for.
 ///
-/// Success says nothing here. A command whose success IS worth a sentence —
-/// undo — sets its own outcome, because it is the exception rather than the
-/// rule, and a helper that reported every success would put `Get latest`'s
-/// line on the page behind the toast that already carried its report.
+/// Success says nothing here; [`run_said`] is the one that says it.
 ///
 /// Starting retracts whatever the band said last, in `holding`, so a failure
 /// does not outlive the retry that succeeds.
@@ -150,6 +147,41 @@ pub(super) fn run(
     after: Reread,
     task: impl std::future::Future<Output = Result<String, String>> + 'static,
 ) {
+    run_with(busy, outcome, namespace, None, on_failure, after, task);
+}
+
+/// [`run`], and a success says `on_success` on the band, with the backend's
+/// text as its detail. For the commands whose result the reader is waiting
+/// for on this page: Get latest's files and Publish.
+pub(super) fn run_said(
+    busy: RwSignal<bool>,
+    outcome: RwSignal<Option<Outcome>>,
+    namespace: String,
+    on_success: &'static str,
+    on_failure: &'static str,
+    after: Reread,
+    task: impl std::future::Future<Output = Result<String, String>> + 'static,
+) {
+    run_with(
+        busy,
+        outcome,
+        namespace,
+        Some(on_success),
+        on_failure,
+        after,
+        task,
+    );
+}
+
+fn run_with(
+    busy: RwSignal<bool>,
+    outcome: RwSignal<Option<Outcome>>,
+    namespace: String,
+    on_success: Option<&'static str>,
+    on_failure: &'static str,
+    after: Reread,
+    task: impl std::future::Future<Output = Result<String, String>> + 'static,
+) {
     // The controls are disabled while this is true, so this guard only
     // catches a press already in flight when the signal was written.
     if busy.get_untracked() {
@@ -161,13 +193,23 @@ pub(super) fn run(
             (Reread::OnSuccess(reload), true) | (Reread::Always(reload), _) => Some(reload),
             _ => None,
         };
-        if let Err(message) = answer {
-            outcome.set(Some(Outcome {
+        match answer {
+            Ok(message) => {
+                if let Some(lead) = on_success {
+                    outcome.set(Some(Outcome {
+                        namespace,
+                        variant: BannerVariant::Success,
+                        lead: lead.to_string(),
+                        detail: (!message.is_empty()).then_some(message),
+                    }));
+                }
+            }
+            Err(message) => outcome.set(Some(Outcome {
                 namespace,
                 variant: BannerVariant::Critical,
                 lead: on_failure.to_string(),
                 detail: Some(message),
-            }));
+            })),
         }
         if let Some(reload) = reload {
             reload.notify();
@@ -1053,11 +1095,19 @@ fn copy_outcome(namespace: String, command: &RowCommand) -> Outcome {
     }
 }
 
+/// A popup's saved write: re-read the page and say it on the band.
+fn said(w: Wiring, namespace: String) -> impl Fn(String) + Clone + 'static {
+    move |lead| {
+        w.outcome.try_set(Some(success(namespace.clone(), lead)));
+        w.reload.notify();
+    }
+}
+
 /// The popups a row's `[⋯]` opens, drawn outside the body so a re-read keeps
 /// them.
 ///
-/// Each shows its own refusal and re-reads the page once its write lands; the
-/// re-read is the report.
+/// Each shows its own refusal, and once its write lands re-reads the page and
+/// says what it wrote on the band.
 ///
 /// The page survives a switch of package, so an answer can land after the
 /// reader moved on. Both popups hold the page's lock while they wait, so no
@@ -1071,7 +1121,7 @@ fn row_popups(files: Files, w: Wiring) -> impl IntoView {
                 view! {
                     <IgnorePopup
                         data=data
-                        refetch=w.reload
+                        on_saved=said(w, ns.clone())
                         on_close=move || {
                             files
                                 .ignoring
@@ -1090,7 +1140,7 @@ fn row_popups(files: Files, w: Wiring) -> impl IntoView {
                 view! {
                     <UnignorePopup
                         data=data
-                        refetch=w.reload
+                        on_saved=said(w, ns.clone())
                         on_close=move || {
                             files
                                 .unignoring
@@ -1133,24 +1183,30 @@ fn download_outcome(namespace: String, asked: usize, left_out: &NotDownloaded) -
 /// takes `busy` nor clears the band. A link cannot be disabled, and one that
 /// silently did nothing while busy would be worse than one that opens.
 fn catalog_opener(namespace: String, outcome: RwSignal<Option<Outcome>>) -> Callback<String> {
-    browser_opener(
+    let open = browser_opener(
         namespace,
         outcome,
         "Could not open this revision in the catalog.",
-    )
+    );
+    Callback::new(move |url: String| open.run(Ok(url)))
 }
 
 /// Opens an address in the browser, reporting a failure on the keyed band
-/// with `lead`. [`catalog_opener`]'s, for any catalog link.
+/// with `lead`. [`catalog_opener`]'s, for any catalog link. An address that
+/// could not be built comes as its reason, and is reported the same way.
 fn browser_opener(
     namespace: String,
     outcome: RwSignal<Option<Outcome>>,
     lead: &'static str,
-) -> Callback<String> {
-    Callback::new(move |url: String| {
+) -> Callback<Result<String, String>> {
+    Callback::new(move |link: Result<String, String>| {
         let namespace = namespace.clone();
         leptos::task::spawn_local(async move {
-            if let Err(detail) = commands::open_in_web_browser(url).await {
+            let opened = match link {
+                Ok(url) => commands::open_in_web_browser(url).await.map(drop),
+                Err(reason) => Err(reason),
+            };
+            if let Err(detail) = opened {
                 outcome.try_set(Some(Outcome {
                     namespace,
                     variant: BannerVariant::Critical,
@@ -1359,6 +1415,12 @@ fn PackageScreen(
     // whenever `reload` fires — the watcher reporting news about this package,
     // or the failure arm's way out.
     let answer = page.read(ns, read);
+    // Staying on the page reads this package's inbox entries, once the page
+    // shows the package: a skeleton or a failed read shows nothing to read.
+    crate::components::inbox::read_package_on_dwell(
+        ns.into(),
+        Signal::derive(move || answer.with(|a| matches!(a, Some(Ok(_))))),
+    );
 
     // Not remembered: another package, or another visit, starts at the
     // default with every folder open, no search and the `All` facet. `ns` is a memo on
@@ -2532,8 +2594,8 @@ mod tests {
         );
     }
 
-    const PLAIN: &str = "/installed-package?namespace=team%2Fdataset&filter=unmodified";
-    const RESOLVE: &str = "/installed-package?namespace=team%2Fdataset&filter=unmodified&resolve=1";
+    const PLAIN: &str = "/installed-package?namespace=team%2Fdataset";
+    const RESOLVE: &str = "/installed-package?namespace=team%2Fdataset&resolve=1";
 
     fn compared() -> commands::ResolveData {
         commands::ResolveData::Compared {
@@ -2716,6 +2778,20 @@ mod tests {
         assert_eq!(asked.first().map(String::as_str), Some("team/q%20report"));
     }
 
+    /// Older links carry `filter=unmodified`; they still open the package.
+    #[wasm_bindgen_test]
+    async fn an_old_link_with_a_filter_opens_the_package() {
+        ASKED_FOR.with(|a| a.borrow_mut().clear());
+        screen_at(
+            "/installed-package?namespace=team%2Fdataset&filter=unmodified",
+            recorded_read,
+        )
+        .await;
+        let asked = ASKED_FOR.with(|a| a.borrow().clone());
+        quilt_ui_kit::test_support::unmount_earlier();
+        assert_eq!(asked.first().map(String::as_str), Some("team/dataset"));
+    }
+
     /// The page at `address`, reading through `read`, inside a router.
     async fn screen_at(address: &str, read: PageRead) -> web_sys::Element {
         screen_resolving(address, read, ResolveCommands::app()).await
@@ -2884,13 +2960,12 @@ mod tests {
         let before = history_length();
         let el = screen_at(RESOLVE, settled_read).await;
 
-        assert_eq!(search(), "?namespace=team%2Fdataset&filter=unmodified");
+        assert_eq!(search(), "?namespace=team%2Fdataset");
         assert_eq!(history_length(), before, "replaced, not pushed");
         element_saying(&el, "History (1)");
     }
 
-    const REVISION: &str =
-        "/installed-package?namespace=team%2Fdataset&filter=unmodified&revision=0123456789abcdef";
+    const REVISION: &str = "/installed-package?namespace=team%2Fdataset&revision=0123456789abcdef";
 
     #[wasm_bindgen_test]
     async fn the_revision_summary_links_to_the_revision_mode() {
@@ -2926,12 +3001,12 @@ mod tests {
     async fn another_revision_normalises_in_place() {
         let before = history_length();
         let el = screen_at(
-            "/installed-package?namespace=team%2Fdataset&filter=unmodified&revision=older",
+            "/installed-package?namespace=team%2Fdataset&revision=older",
             settled_read,
         )
         .await;
 
-        assert_eq!(search(), "?namespace=team%2Fdataset&filter=unmodified");
+        assert_eq!(search(), "?namespace=team%2Fdataset");
         assert_eq!(history_length(), before, "replaced, not pushed");
         element_saying(&el, "History (1)");
     }
@@ -3186,10 +3261,7 @@ mod tests {
         let el = screen_at(RESOLVE, refused_read).await;
 
         element_saying(&el, "Could not compare the revisions.");
-        assert_eq!(
-            search(),
-            "?namespace=team%2Fdataset&filter=unmodified&resolve=1"
-        );
+        assert_eq!(search(), "?namespace=team%2Fdataset&resolve=1");
     }
 
     #[wasm_bindgen_test]
@@ -3204,7 +3276,7 @@ mod tests {
             .click();
         sleep_ms(50).await;
 
-        assert_eq!(search(), "?namespace=team%2Fdataset&filter=unmodified");
+        assert_eq!(search(), "?namespace=team%2Fdataset");
         assert_eq!(
             history_length(),
             before,

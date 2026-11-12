@@ -100,8 +100,10 @@ pub(crate) struct SettingsIo {
     pub write: fn(Write) -> Answer<()>,
     pub measure: fn() -> Answer<commands::StorageSize>,
     pub free: fn() -> Answer<FreedSpace>,
-    /// The accounts' light read: every host, roles not yet asked.
-    pub accounts: fn() -> Answer<Vec<AccountHostData>>,
+    /// The accounts' light read: every host, roles not yet asked. `true` on
+    /// the page's first read, which forgets the cached roles so each host is
+    /// asked again.
+    pub accounts: fn(bool) -> Answer<Vec<AccountHostData>>,
     /// One host's role, asked.
     pub settle_account: fn(String) -> Answer<AccountHostData>,
     /// Erase one host's credentials: `erase_auth`, which also drops the
@@ -144,8 +146,15 @@ fn free() -> Answer<FreedSpace> {
     Box::pin(commands::run_gc())
 }
 
-fn read_accounts() -> Answer<Vec<AccountHostData>> {
-    Box::pin(async { commands::get_main_page_accounts().await.map(|d| d.hosts) })
+fn read_accounts(fresh: bool) -> Answer<Vec<AccountHostData>> {
+    Box::pin(async move {
+        let read = if fresh {
+            commands::get_settings_accounts().await
+        } else {
+            commands::get_main_page_accounts().await
+        };
+        read.map(|d| d.hosts)
+    })
 }
 
 fn settle_account(host: String) -> Answer<AccountHostData> {
@@ -288,7 +297,6 @@ struct Fields {
     publish_minutes: RwSignal<String>,
     watch: RwSignal<bool>,
     tray: RwSignal<bool>,
-    notify: RwSignal<bool>,
     agent_tasks: RwSignal<bool>,
     /// One of `LOG_LEVELS`.
     log_level: RwSignal<String>,
@@ -313,7 +321,6 @@ impl Fields {
             publish_minutes: RwSignal::new(String::new()),
             watch: RwSignal::new(false),
             tray: RwSignal::new(false),
-            notify: RwSignal::new(false),
             agent_tasks: RwSignal::new(false),
             log_level: RwSignal::new(String::new()),
             rules_off: RwSignal::new(BTreeSet::new()),
@@ -345,7 +352,6 @@ struct Written {
     publish_secs: StoredValue<u64>,
     watch: StoredValue<bool>,
     tray: StoredValue<bool>,
-    notify: StoredValue<bool>,
     agent_tasks: StoredValue<bool>,
     log_level: StoredValue<String>,
     rules_off: StoredValue<BTreeSet<String>>,
@@ -368,7 +374,6 @@ impl Written {
             publish_secs: StoredValue::new(0),
             watch: StoredValue::new(false),
             tray: StoredValue::new(false),
-            notify: StoredValue::new(false),
             agent_tasks: StoredValue::new(false),
             log_level: StoredValue::new(String::new()),
             rules_off: StoredValue::new(BTreeSet::new()),
@@ -403,7 +408,6 @@ fn seed_all(fields: Fields, written: Written, d: &SettingsData) {
     seed(fields.publish, written.publish, autosync.push_enabled);
     seed(fields.watch, written.watch, d.fswatcher.enabled);
     seed(fields.tray, written.tray, autosync.close_to_tray);
-    seed(fields.notify, written.notify, autosync.notify_action_needed);
     seed(
         fields.agent_tasks,
         written.agent_tasks,
@@ -756,7 +760,7 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
 
     // ── Saving as each control changes ──
     let save = move |row: Saved, write: Write| saves.push(Some(row), write, None, io, page);
-    let toggles: [Toggle; 6] = [
+    let toggles: [Toggle; 5] = [
         (fields.pull, written.pull, Saved::Pull, |on| {
             Write::Autosync(AutosyncPatch {
                 pull_enabled: Some(on),
@@ -773,12 +777,6 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
         (fields.tray, written.tray, Saved::Tray, |on| {
             Write::Autosync(AutosyncPatch {
                 close_to_tray: Some(on),
-                ..AutosyncPatch::default()
-            })
-        }),
-        (fields.notify, written.notify, Saved::Notify, |on| {
-            Write::Autosync(AutosyncPatch {
-                notify_action_needed: Some(on),
                 ..AutosyncPatch::default()
             })
         }),
@@ -945,8 +943,12 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
         account_reads.update_value(|n| *n += 1);
         let this = account_reads.get_value();
         let current = move || account_reads.try_get_value() == Some(this);
+        // Opening the page asks every role again, as the main page's load
+        // does: a switch made in the web catalog is not in the cache. A
+        // re-read follows a change the cache already took.
+        let fresh = this == 1;
         leptos::task::spawn_local(async move {
-            let Ok(hosts) = (io.accounts)().await else {
+            let Ok(hosts) = (io.accounts)(fresh).await else {
                 if current() {
                     accounts.try_set(Accounts::Failed);
                 }
@@ -1318,7 +1320,7 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
                 }
                     .into_any()
                 accounts=view! { <div class=style::slot data-accounts>{accounts_card}</div> }.into_any()
-                app=view! { <AppCard tray=fields.tray notify=fields.notify saved=just_saved pending=pending /> }.into_any()
+                app=view! { <AppCard tray=fields.tray saved=just_saved pending=pending /> }.into_any()
                 storage=view! { <div class=style::slot data-storage>{storage_card}</div> }.into_any()
                 experimental=view! {
                     <ExperimentalCard
@@ -1481,6 +1483,8 @@ mod tests {
         static WRITE_DELAY: Cell<i32> = const { Cell::new(0) };
         static WRITE_FAILS: Cell<bool> = const { Cell::new(false) };
         static ACCOUNT_READS: Cell<usize> = const { Cell::new(0) };
+        /// Each accounts read's `fresh`, in order.
+        static FRESH_READS: RefCell<Vec<bool>> = const { RefCell::new(Vec::new()) };
         static FREE_DELAY: Cell<i32> = const { Cell::new(0) };
         static FREE_FAILS: Cell<bool> = const { Cell::new(false) };
         static MEASURES: Cell<usize> = const { Cell::new(0) };
@@ -1529,7 +1533,6 @@ mod tests {
                 pull_interval_secs: 45,
                 idle_timeout_secs: 300,
                 close_to_tray: false,
-                notify_action_needed: true,
             },
             fswatcher: FsWatcherSettingsData { enabled: true },
             experimental: ExperimentalSettingsData::default(),
@@ -1600,8 +1603,9 @@ mod tests {
         })
     }
 
-    fn stub_accounts() -> Answer<Vec<AccountHostData>> {
+    fn stub_accounts(fresh: bool) -> Answer<Vec<AccountHostData>> {
         ACCOUNT_READS.with(|r| r.set(r.get() + 1));
+        FRESH_READS.with(|r| r.borrow_mut().push(fresh));
         Box::pin(async {
             Ok(vec![AccountHostData {
                 host: "quilt.test".to_string(),
@@ -1646,6 +1650,7 @@ mod tests {
         WRITE_DELAY.with(|d| d.set(0));
         WRITE_FAILS.with(|f| f.set(false));
         ACCOUNT_READS.with(|r| r.set(0));
+        FRESH_READS.with(|r| r.borrow_mut().clear());
         FREE_DELAY.with(|d| d.set(0));
         FREE_FAILS.with(|f| f.set(false));
         MEASURES.with(|m| m.set(0));
@@ -1720,7 +1725,6 @@ mod tests {
     const PULL: &str = "Get new revisions";
     const WATCH: &str = "Watch folders for changes";
     const TRAY: &str = "Keep running in the tray";
-    const NOTIFY: &str = "Notify me when syncing stops until I act";
 
     fn minutes(el: &web_sys::Element, n: u32) -> web_sys::HtmlInputElement {
         el.query_selector_all("input[type=number]")
@@ -2051,23 +2055,6 @@ mod tests {
         assert_eq!(reads(), 2, "one re-read, after the queue ran");
     }
 
-    /// The notify toggle shows what is stored, on by default, and turning it
-    /// off writes that one setting.
-    #[wasm_bindgen_test]
-    async fn the_notify_toggle_saves_only_itself() {
-        let el = page(vec![settings()]).await;
-        assert!(toggle(&el, NOTIFY).checked(), "on as stored");
-        toggle(&el, NOTIFY).click();
-        sleep_ms(50).await;
-        assert_eq!(
-            writes(),
-            vec![Write::Autosync(AutosyncPatch {
-                notify_action_needed: Some(false),
-                ..AutosyncPatch::default()
-            })]
-        );
-    }
-
     /// A toggle is held while its own save is out, so a second click cannot
     /// queue a second save of the same setting; the others stay free.
     #[wasm_bindgen_test]
@@ -2219,7 +2206,7 @@ mod tests {
         use crate::engine::fake::{FakeEngine, ask};
 
         let engine = FakeEngine::install();
-        let _asked = ask("get_toasts");
+        let _asked = ask("get_record");
         sleep_ms(0).await;
         engine.hello();
         let _el = page(vec![settings()]).await;
@@ -2227,6 +2214,25 @@ mod tests {
         engine.event(commands::ACCOUNTS_CHANGED_EVENT, &serde_json::Value::Null);
         sleep_ms(50).await;
         assert_eq!(ACCOUNT_READS.with(Cell::get), before + 1);
+    }
+
+    /// Opening the page asks the roles afresh; a re-read keeps the cache,
+    /// which the change that caused it already moved.
+    #[wasm_bindgen_test]
+    async fn only_the_first_accounts_read_forgets_the_cached_roles() {
+        use crate::engine::fake::{FakeEngine, ask};
+
+        let engine = FakeEngine::install();
+        let _asked = ask("get_record");
+        sleep_ms(0).await;
+        engine.hello();
+        let _el = page(vec![settings()]).await;
+        engine.event(commands::ACCOUNTS_CHANGED_EVENT, &serde_json::Value::Null);
+        sleep_ms(50).await;
+        assert_eq!(FRESH_READS.with(|r| r.borrow().clone()), vec![true, false]);
+
+        let _el = page(vec![settings()]).await;
+        assert_eq!(FRESH_READS.with(|r| r.borrow().clone()), vec![true]);
     }
 
     /// The backend trims what Publishing saves; the re-read's value replaces

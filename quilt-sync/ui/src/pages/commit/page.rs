@@ -10,9 +10,10 @@
 //! the new answer.
 //!
 //! Live validation loads the rules, checks the candidate after a debounce and
-//! keys the answer. Every violation shows at once and blocks the primary. This
-//! page is the review before a publish, so
-//! a publish that would be refused says so before the click.
+//! keys the answer. What it finds waits for the reader's first press of
+//! Publish or Save: that press sends nothing while a field has an error, shows
+//! every error and focuses the first. From then on the errors are live and
+//! block the primary.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -26,8 +27,8 @@ use crate::commands::{self, CommitData, CommitViolation, EntryData, JunkSummary,
 use crate::commands::{CommitWorkflows, WorkflowIntent};
 use crate::components::{IgnorePopup, IgnorePopupData};
 use crate::pages::workflow::{
-    PreviousWorkflow, WorkflowOption, WorkflowView, WorkflowViewKind, build_workflow_view,
-    missing_settings_workflow, shows_settings_workflow_hint,
+    CHOOSE_A_WORKFLOW, PreviousWorkflow, WorkflowOption, WorkflowView, WorkflowViewKind,
+    build_workflow_view, missing_settings_workflow, needs_workflow, shows_settings_workflow_hint,
 };
 use quilt_ui_kit::LoadFailure;
 
@@ -35,7 +36,8 @@ use super::super::installed_package::{
     BucketDialog, BucketDraft, CopiedMark, MenuCommand, RemoveDialog, Uninstall, ask_to_remove,
     location, remote_target, run_reading,
 };
-use super::super::page::{Outcome, Page, PageHandle, critical};
+use super::super::json_editor::focus_json_editor_within;
+use super::super::page::{Outcome, Page, PageHandle, critical, success};
 use super::super::row_menu::RowCommand;
 use crate::routes;
 
@@ -202,65 +204,6 @@ fn caption(violations: &[CommitViolation], field: ViolationField) -> Option<Stri
     (!messages.is_empty()).then(|| messages.join(" "))
 }
 
-/// The select's options and where it starts, from the [`WorkflowView`].
-///
-/// The select cannot grey an option, so a disabled one (`None` on a bucket
-/// that requires a workflow) is left out — unless the view starts on it, which
-/// it does on a required bucket that names no default: then it stays, at the
-/// head, so the reader still has to choose, and `needs_choice` says so. With
-/// one workflow left there is nothing to choose, and it starts on that one.
-///
-/// Labels are made unique, since two workflows may share a name: the label
-/// is how the select names an option, and the draft keeps the intent.
-pub(crate) fn workflow_choices(view: &WorkflowView) -> (Vec<WorkflowOption>, WorkflowIntent, bool) {
-    let enabled: Vec<WorkflowOption> = view
-        .options
-        .iter()
-        .filter(|o| !o.disabled)
-        .cloned()
-        .collect();
-    let start = view.options.get(view.initial);
-    let (mut options, initial, needs_choice) = match start {
-        Some(start) if start.disabled && enabled.len() == 1 => {
-            (enabled.clone(), enabled[0].intent.clone(), false)
-        }
-        Some(start) if start.disabled && !enabled.is_empty() => {
-            let mut options = vec![start.clone()];
-            options.extend(enabled);
-            (options, start.intent.clone(), true)
-        }
-        Some(start) => (enabled, start.intent.clone(), false),
-        None => (enabled, WorkflowIntent::BucketDefault, false),
-    };
-    unique_labels(&mut options);
-    (options, initial, needs_choice)
-}
-
-/// Give every option its own label, so the select's label names exactly one
-/// intent. A name two workflows share gets the workflow's id; anything that
-/// still collides — a workflow whose own name reads like that, say — gets a
-/// counter. The first holder of a label keeps it as it is.
-fn unique_labels(options: &mut [WorkflowOption]) {
-    let shared: Vec<bool> = options
-        .iter()
-        .map(|o| options.iter().filter(|p| p.label == o.label).count() > 1)
-        .collect();
-    let mut used = std::collections::HashSet::new();
-    for (option, shared) in options.iter_mut().zip(shared) {
-        let mut label = match &option.intent {
-            WorkflowIntent::Named(id) if shared => format!("{} ({id})", option.label),
-            _ => option.label.clone(),
-        };
-        let base = label.clone();
-        let mut n = 2;
-        while !used.insert(label.clone()) {
-            label = format!("{base} ({n})");
-            n += 1;
-        }
-        option.label = label;
-    }
-}
-
 /// Said under the metadata, and on the primary, when the metadata is not
 /// JSON: the save's parser refuses it whatever the workflow.
 pub(crate) const METADATA_NOT_JSON: &str =
@@ -275,10 +218,6 @@ pub(crate) fn metadata_problem(text: &str) -> Option<String> {
         .then(|| METADATA_NOT_JSON.to_string())
 }
 
-/// What the primary says while a required workflow is still unchosen.
-pub(crate) const CHOOSE_A_WORKFLOW: &str =
-    "This bucket requires a workflow. Choose one to publish.";
-
 /// The form's fixed facts, from one answer: what the page validates and
 /// submits against. Compared, so a re-read that changed nothing here does not
 /// re-run validation.
@@ -290,11 +229,10 @@ struct Form {
     previous_meta: String,
     settings_meta: Option<String>,
     settings_workflow: Option<String>,
-    /// The select's options, from [`workflow_choices`].
+    /// The select's options.
     options: Vec<WorkflowOption>,
     initial: WorkflowIntent,
-    /// Starting on `initial` means nothing is chosen yet; it blocks.
-    needs_choice: bool,
+    kind: WorkflowViewKind,
     /// The bucket's workflows file is malformed, in the field's words.
     invalid: Option<String>,
     choosable: bool,
@@ -311,7 +249,10 @@ impl Form {
             previous.preselect_id(),
             d.settings_workflow.as_deref(),
         );
-        let (options, initial, needs_choice) = workflow_choices(&view);
+        let initial = view
+            .options
+            .get(view.initial)
+            .map_or(WorkflowIntent::BucketDefault, |o| o.intent.clone());
         // Only where there is a bucket to refuse it: a package with no bucket
         // saves locally, where no workflow is checked, and has no Publish.
         let missing = has_bucket
@@ -329,9 +270,9 @@ impl Form {
             words: workflow_words(&view.kind, has_bucket),
             invalid: matches!(d.workflows, CommitWorkflows::Invalid { .. })
                 .then(|| workflow_words(&view.kind, has_bucket)),
-            options,
+            options: view.options,
             initial,
-            needs_choice,
+            kind: view.kind,
             choosable,
             missing_settings_workflow: missing,
         }
@@ -351,18 +292,59 @@ impl Form {
             .map(|o| o.intent.clone())
     }
 
-    /// Whether `intent` is the unchosen start a required bucket refuses.
+    /// Whether `intent` is `None` on a bucket that requires a workflow.
     fn unchosen(&self, intent: &WorkflowIntent) -> bool {
-        self.needs_choice && *intent == self.initial
+        needs_workflow(&self.kind, intent)
     }
 
-    /// Why the workflow keeps the revision from being saved, if it does: a
-    /// malformed workflows file refuses every save until it is fixed, and a
-    /// required workflow must be chosen first.
-    fn workflow_problem(&self, intent: &WorkflowIntent) -> Option<String> {
-        self.invalid
-            .clone()
-            .or_else(|| self.unchosen(intent).then(|| CHOOSE_A_WORKFLOW.to_string()))
+    /// What the reader can fix in the form: the check's violations, metadata
+    /// that is not JSON and an unchosen required workflow.
+    fn field_errors(
+        &self,
+        violations: &[CommitViolation],
+        metadata: &str,
+        workflow: &WorkflowIntent,
+    ) -> FieldErrors {
+        FieldErrors {
+            message: caption(violations, ViolationField::Message),
+            // The package name is fixed here; a workflow that rejects it says
+            // so under the workflow, the field that brought the rule.
+            workflow: caption(violations, ViolationField::Name).or_else(|| {
+                self.unchosen(workflow)
+                    .then(|| CHOOSE_A_WORKFLOW.to_string())
+            }),
+            metadata: caption(violations, ViolationField::Metadata)
+                .or_else(|| metadata_problem(metadata)),
+        }
+    }
+}
+
+/// A field of the form, in its order on the page.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Field {
+    Message,
+    Workflow,
+    Metadata,
+}
+
+/// Each field's error, if it has one.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct FieldErrors {
+    message: Option<String>,
+    workflow: Option<String>,
+    metadata: Option<String>,
+}
+
+impl FieldErrors {
+    /// The first field with an error, in the form's order, and the error.
+    fn first(&self) -> Option<(Field, &str)> {
+        [
+            (Field::Message, &self.message),
+            (Field::Workflow, &self.workflow),
+            (Field::Metadata, &self.metadata),
+        ]
+        .into_iter()
+        .find_map(|(field, error)| error.as_deref().map(|e| (field, e)))
     }
 }
 
@@ -612,6 +594,9 @@ fn CommitScreen(
     /// [`check_rules`] unless a test says otherwise.
     #[prop(optional_no_strip)]
     rules: Option<RulesCheck>,
+    /// [`save_revision`] unless a test says otherwise.
+    #[prop(optional_no_strip)]
+    save: Option<Save>,
 ) -> impl IntoView {
     let query = routes::use_query();
     let ns = Memo::new(move |_| query.read().get("namespace").unwrap_or_default());
@@ -644,9 +629,13 @@ fn CommitScreen(
     // into *Publish* under the reader's next click. Another package starts
     // on Publish.
     let choice = RwSignal::new(0_usize);
+    // Whether the reader has pressed Publish or Save: field errors wait for
+    // it. The page's for the same reason, so errors that showed stay shown.
+    let pressed = RwSignal::new(false);
     Effect::new(move |_| {
         ns.track();
         choice.set(0);
+        pressed.set(false);
     });
     let ignoring = RwSignal::new(None::<IgnorePopupData>);
     let goto = RwSignal::new(None::<String>);
@@ -716,10 +705,38 @@ fn CommitScreen(
         Some((key, violations)) if key == live_key.get() => violations,
         _ => Vec::new(),
     });
+    let errors = Memo::new(move |_| {
+        form.with(|f| {
+            f.as_ref().map_or_else(FieldErrors::default, |f| {
+                violations.with(|v| {
+                    draft
+                        .metadata
+                        .with(|m| draft.workflow.with(|w| f.field_errors(v, m, w)))
+                })
+            })
+        })
+    });
+    // What the fields show: nothing until the first press.
+    let shown = Memo::new(move |_| {
+        if pressed.get() {
+            errors.get()
+        } else {
+            FieldErrors::default()
+        }
+    });
 
     // ── Commands ──
+    let save = save.unwrap_or(save_revision);
     let run = Callback::new(move |publish: bool| {
         if running.get_untracked() {
+            return;
+        }
+        pressed.set(true);
+        if let Some(field) = errors.with_untracked(|e| e.first().map(|(field, _)| field)) {
+            if field == Field::Metadata {
+                draft.editing.set(true);
+            }
+            focus_field(field);
             return;
         }
         let Some(Ok(d)) = answer.get_untracked() else {
@@ -736,13 +753,7 @@ fn CommitScreen(
         outcome.set(None);
         leptos::task::spawn_local(async move {
             let ns = namespace.to_string();
-            let result = if publish {
-                commands::package_commit_and_push(ns.clone(), message, metadata, workflow, uri)
-                    .await
-            } else {
-                commands::package_commit(ns.clone(), message, metadata, workflow, uri).await
-            };
-            match result {
+            match save(publish, ns.clone(), message, metadata, workflow, uri).await {
                 // The command's own notification reports it; arriving is the rest.
                 Ok(_) => {
                     goto.try_set(Some(routes::package_page_href(&namespace)));
@@ -784,7 +795,7 @@ fn CommitScreen(
             &d,
             fixed,
             draft,
-            violations,
+            shown,
             running,
             choice,
             run,
@@ -801,10 +812,16 @@ fn CommitScreen(
             ignoring
                 .get()
                 .map(|data| {
+                    let ns = data.namespace.clone();
+                    // Re-read, and say the write on the band.
+                    let on_saved = move |lead| {
+                        outcome.try_set(Some(success(ns.clone(), lead)));
+                        reload.notify();
+                    };
                     view! {
                         <IgnorePopup
                             data=data
-                            refetch=reload
+                            on_saved=on_saved
                             on_close=move || ignoring.set(None)
                             lock=running
                         />
@@ -842,7 +859,7 @@ fn column(
     d: &CommitData,
     fixed: Form,
     draft: Draft,
-    violations: Memo<Vec<CommitViolation>>,
+    shown: Memo<FieldErrors>,
     running: RwSignal<bool>,
     choice: RwSignal<usize>,
     run: Callback<bool>,
@@ -859,14 +876,13 @@ fn column(
     let (no_access, no_session) = (d.no_access_reason.clone(), d.no_session);
     let host = d.no_session_host.clone();
     let unreachable = d.unreachable.clone();
-    let unchosen = fixed.clone();
+    let invalid = fixed.invalid.clone();
     let blocked = Signal::derive(move || {
-        // The checks that need no workflow come with the ones that do: a
-        // local or ungoverned package runs no live check at all.
-        let check = violations
-            .with(|v| v.first().map(|v| v.message.clone()))
-            .or_else(|| draft.metadata.with(|m| metadata_problem(m)))
-            .or_else(|| unchosen.workflow_problem(&draft.workflow.read()));
+        // A malformed workflows file refuses every save, and the form cannot
+        // fix it, so it blocks from the start; the fields' errors once shown.
+        let check = invalid
+            .clone()
+            .or_else(|| shown.with(|e| e.first().map(|(_, error)| error.to_string())));
         blocked_reason(
             no_access.as_deref(),
             no_session,
@@ -885,8 +901,7 @@ fn column(
 
     let problem = problem_banner(d, ignoring, running);
 
-    let message_error =
-        Signal::derive(move || violations.with(|v| caption(v, ViolationField::Message)));
+    let message_error = Signal::derive(move || shown.with(|e| e.message.clone()));
     let message = view! {
         <div data-commit-message>
             <MessageField
@@ -899,9 +914,11 @@ fn column(
     }
     .into_any();
 
-    let workflow = workflow_field(&fixed, draft, violations);
+    let workflow = workflow_field(&fixed, draft, shown);
+    let workflow = view! { <div data-commit-workflow>{workflow}</div> }.into_any();
 
-    let metadata = metadata_field(d, &fixed, draft, violations);
+    let metadata = metadata_field(d, &fixed, draft, shown);
+    let metadata = view! { <div data-commit-metadata>{metadata}</div> }.into_any();
 
     // Ignore opens the popup, which writes `.quiltignore`, so it waits for the
     // lock; the rest write nothing.
@@ -968,17 +985,12 @@ fn column(
 
 /// The metadata field: the preview or the editor, with the check's caption
 /// and the settings line while the draft is still the Settings value.
-fn metadata_field(
-    d: &CommitData,
-    fixed: &Form,
-    draft: Draft,
-    violations: Memo<Vec<CommitViolation>>,
-) -> AnyView {
+fn metadata_field(d: &CommitData, fixed: &Form, draft: Draft, shown: Memo<FieldErrors>) -> AnyView {
+    // The read's own note, not the check's, so it does not wait for a press.
     let user_meta_error = d.user_meta_error.clone();
     let metadata_error = Signal::derive(move || {
-        violations
-            .with(|v| caption(v, ViolationField::Metadata))
-            .or_else(|| draft.metadata.with(|m| metadata_problem(m)))
+        shown
+            .with(|e| e.metadata.clone())
             .or_else(|| user_meta_error.clone())
     });
     let settings_meta = fixed.settings_meta.clone();
@@ -1015,6 +1027,65 @@ fn focus_message(focus_ref: NodeRef<leptos::html::Div>) {
             drop(input.focus());
         }
     });
+}
+
+/// Put the cursor in `field`, once the press has redrawn the form: the
+/// metadata editor opens first.
+fn focus_field(field: Field) {
+    request_animation_frame(move || {
+        let Some(document) = web_sys::window().and_then(|w| w.document()) else {
+            return;
+        };
+        let target = match field {
+            Field::Message => "[data-commit-message] input",
+            Field::Workflow => "[data-commit-workflow] select",
+            Field::Metadata => {
+                if let Ok(Some(within)) = document.query_selector("[data-commit-metadata]") {
+                    focus_json_editor_within(&within);
+                }
+                return;
+            }
+        };
+        let input = document
+            .query_selector(target)
+            .ok()
+            .flatten()
+            .and_then(|el| wasm_bindgen::JsCast::dyn_into::<web_sys::HtmlElement>(el).ok());
+        if let Some(input) = input {
+            drop(input.focus());
+        }
+    });
+}
+
+/// The save: publish or not, namespace, message, metadata, workflow and
+/// remote in, the backend's report out. A parameter so a test can answer
+/// without an engine.
+pub(crate) type Save = fn(
+    bool,
+    String,
+    String,
+    String,
+    WorkflowIntent,
+    Option<quilt_uri::S3PackageUri>,
+) -> Pin<Box<dyn Future<Output = Result<String, String>>>>;
+
+fn save_revision(
+    publish: bool,
+    namespace: String,
+    message: String,
+    metadata: String,
+    workflow: WorkflowIntent,
+    uri: Option<quilt_uri::S3PackageUri>,
+) -> Pin<Box<dyn Future<Output = Result<String, String>>>> {
+    if publish {
+        Box::pin(commands::package_commit_and_push(
+            namespace, message, metadata, workflow, uri,
+        ))
+    } else {
+        Box::pin(commands::package_commit(
+            namespace, message, metadata, workflow, uri,
+        ))
+    }
 }
 
 /// The problems banner, with *Ignore them* opening the ignore popup on the
@@ -1067,23 +1138,11 @@ fn problem_banner(
 
 /// The workflow field: the select, or its words, with the check's caption,
 /// the settings line and the missing-workflow warning.
-fn workflow_field(fixed: &Form, draft: Draft, violations: Memo<Vec<CommitViolation>>) -> AnyView {
-    // The package name is fixed here; a workflow that rejects it says so under
-    // the workflow, the field that brought the rule.
-    // An unchosen required workflow says so here too, on the field, not only
-    // in the disabled button's tooltip, which a keyboard or touch never
-    // reaches. A malformed file is already the field's words.
-    let blocking = fixed.clone();
-    let workflow_error = Signal::derive(move || {
-        violations
-            .with(|v| caption(v, ViolationField::Name))
-            .or_else(|| {
-                draft
-                    .workflow
-                    .with(|w| blocking.unchosen(w))
-                    .then(|| CHOOSE_A_WORKFLOW.to_string())
-            })
-    });
+fn workflow_field(fixed: &Form, draft: Draft, shown: Memo<FieldErrors>) -> AnyView {
+    // An unchosen required workflow says so here, on the field, not only in
+    // the disabled button's tooltip, which a keyboard or touch never reaches.
+    // A malformed file is already the field's words.
+    let workflow_error = Signal::derive(move || shown.with(|e| e.workflow.clone()));
     let note = fixed
         .missing_settings_workflow
         .as_deref()
@@ -1274,6 +1333,80 @@ mod tests {
         });
         sleep_ms(80).await;
         el
+    }
+
+    /// A bucket that requires a workflow and names `plates` its default.
+    fn required_with_default(
+        _: String,
+    ) -> Pin<Box<dyn Future<Output = Result<CommitData, String>>>> {
+        let info = |id: &str| commands::WorkflowInfo {
+            id: id.to_string(),
+            name: Some(id.to_string()),
+            description: None,
+            metadata_schema_url: None,
+            entries_schema_url: None,
+        };
+        let mut d = commit_data();
+        d.workflows = CommitWorkflows::Available {
+            workflows: vec![info("plates"), info("exports")],
+            default_workflow: Some("plates".to_string()),
+            is_workflow_required: true,
+            config_url: None,
+        };
+        Box::pin(async move { Ok(d) })
+    }
+
+    /// `None` stays in the list on a bucket that requires a workflow. Picking
+    /// it is a field error like any other: a press says a workflow is
+    /// required and turns Publish off, until a workflow is picked again.
+    #[wasm_bindgen_test]
+    async fn none_on_a_required_bucket_blocks_until_a_workflow_is_picked() {
+        let el = page_reading("/commit?namespace=org%2Fpkg", required_with_default).await;
+        // The closed bucket dialog holds a disabled select of its own.
+        let select: web_sys::HtmlSelectElement = el
+            .query_selector("select:not([disabled])")
+            .unwrap()
+            .expect("the workflow select")
+            .unchecked_into();
+        let pick = |label: &str| {
+            select.set_value(label);
+            select
+                .dispatch_event(&web_sys::Event::new("change").unwrap())
+                .unwrap();
+        };
+        let says = |el: &web_sys::Element| {
+            el.text_content()
+                .unwrap_or_default()
+                .contains(CHOOSE_A_WORKFLOW)
+        };
+        let face = |el: &web_sys::Element| -> web_sys::HtmlButtonElement {
+            el.query_selector("[data-primary-action] button")
+                .unwrap()
+                .unwrap()
+                .unchecked_into()
+        };
+        assert_eq!(select.value(), "plates (default)");
+        let listed = select.query_selector_all("option").unwrap().length();
+        assert_eq!(listed, 3, "None is listed");
+        assert!(!says(&el));
+
+        pick("None");
+        sleep_ms(30).await;
+        assert!(!says(&el), "not before a press");
+        assert!(!face(&el).disabled());
+
+        face(&el).click();
+        sleep_ms(30).await;
+        assert!(says(&el), "markup was {}", el.inner_html());
+        assert!(face(&el).disabled(), "Publish is off");
+
+        pick("exports");
+        sleep_ms(30).await;
+        assert!(!says(&el));
+
+        pick("None");
+        sleep_ms(30).await;
+        assert!(says(&el));
     }
 
     fn message_input(el: &web_sys::Element) -> web_sys::HtmlInputElement {
@@ -1802,12 +1935,10 @@ mod tests {
             .dispatch_event(&web_sys::Event::new("input").unwrap())
             .unwrap();
         sleep_ms(30).await;
-        let face: web_sys::HtmlButtonElement = el
-            .query_selector("[data-primary-action] button")
-            .unwrap()
-            .unwrap()
-            .unchecked_into();
-        assert!(face.disabled(), "markup was {}", el.inner_html());
+        assert!(!face(&el).disabled(), "on until the reader presses it");
+        face(&el).click();
+        sleep_ms(30).await;
+        assert!(face(&el).disabled(), "markup was {}", el.inner_html());
         assert!(
             el.text_content().unwrap().contains(METADATA_NOT_JSON),
             "the reason is under the field; markup was {}",
@@ -2109,6 +2240,9 @@ mod tests {
             }
         });
         sleep_ms(past_the_pause()).await;
+        // The errors show once the reader presses; this press sends nothing.
+        face(&el).click();
+        sleep_ms(30).await;
         let refused = |el: &web_sys::Element| {
             el.text_content()
                 .unwrap_or_default()
@@ -2297,6 +2431,8 @@ mod tests {
 
         assert_eq!(BUCKET.get(), "other-bucket");
         assert_eq!(editor(&el).value(), EDITED, "the edit survived");
+        face(&el).click();
+        sleep_ms(30).await;
         assert!(
             el.text_content()
                 .unwrap_or_default()
@@ -2305,6 +2441,254 @@ mod tests {
             el.inner_html()
         );
         assert!(face(&el).disabled(), "Publish is off");
+    }
+
+    thread_local! {
+        /// What the save seam was asked to send: publish or save, and the message.
+        static SENT: std::cell::RefCell<Vec<(bool, String)>> = const {
+            std::cell::RefCell::new(Vec::new())
+        };
+    }
+
+    #[allow(clippy::needless_pass_by_value, reason = "the seam's signature")]
+    fn recorded_save(
+        publish: bool,
+        _: String,
+        message: String,
+        _: String,
+        _: WorkflowIntent,
+        _: Option<quilt_uri::S3PackageUri>,
+    ) -> Pin<Box<dyn Future<Output = Result<String, String>>>> {
+        SENT.with(|s| s.borrow_mut().push((publish, message)));
+        Box::pin(async { Ok(String::new()) })
+    }
+
+    const VAGUE: &str = "Say which plate changed.";
+
+    /// Refuses a message that does not name a plate, as the placeholder
+    /// does not.
+    #[allow(clippy::needless_pass_by_value, reason = "the seam's signature")]
+    fn wants_a_plate(
+        _: String,
+        _: String,
+        _: bool,
+        message: String,
+        _: String,
+    ) -> Pin<Box<dyn Future<Output = Vec<CommitViolation>>>> {
+        let violations = if message.contains("plate") {
+            Vec::new()
+        } else {
+            vec![CommitViolation {
+                field: ViolationField::Message,
+                message: VAGUE.to_string(),
+            }]
+        };
+        Box::pin(async move { violations })
+    }
+
+    const NO_OWNER: &str = "Metadata needs an owner.";
+
+    fn wants_an_owner(
+        _: String,
+        _: String,
+        _: bool,
+        _: String,
+        _: String,
+    ) -> Pin<Box<dyn Future<Output = Vec<CommitViolation>>>> {
+        Box::pin(async {
+            vec![CommitViolation {
+                field: ViolationField::Metadata,
+                message: NO_OWNER.to_string(),
+            }]
+        })
+    }
+
+    fn takes_anything(
+        _: String,
+        _: String,
+        _: bool,
+        _: String,
+        _: String,
+    ) -> Pin<Box<dyn Future<Output = Vec<CommitViolation>>>> {
+        Box::pin(async { Vec::new() })
+    }
+
+    /// The routed page over `read`, with `rules` checking and the save seam
+    /// recording, once the first check has landed.
+    async fn checked_page(read: CommitRead, rules: RulesCheck) -> web_sys::Element {
+        SENT.with(|s| s.borrow_mut().clear());
+        unmount_earlier();
+        web_sys::window()
+            .unwrap()
+            .history()
+            .unwrap()
+            .replace_state_with_url(
+                &wasm_bindgen::JsValue::NULL,
+                "",
+                Some("/commit?namespace=org%2Fpkg"),
+            )
+            .unwrap();
+        let el = mount(move || {
+            view! {
+                <Router>
+                    <Routes fallback=|| view! { "no route" }>
+                        <Route
+                            path=path!("/commit")
+                            view=move || {
+                                view! {
+                                    <CommitScreen
+                                        read=read
+                                        rules=Some(rules)
+                                        save=Some(recorded_save)
+                                    />
+                                }
+                            }
+                        />
+                    </Routes>
+                </Router>
+            }
+        });
+        sleep_ms(past_the_pause()).await;
+        el
+    }
+
+    fn face(el: &web_sys::Element) -> web_sys::HtmlButtonElement {
+        el.query_selector("[data-primary-action] button")
+            .unwrap()
+            .expect("the primary")
+            .unchecked_into()
+    }
+
+    fn says(el: &web_sys::Element, words: &str) -> bool {
+        el.text_content().unwrap_or_default().contains(words)
+    }
+
+    fn focused() -> Option<web_sys::Element> {
+        web_sys::window()
+            .unwrap()
+            .document()
+            .unwrap()
+            .active_element()
+    }
+
+    fn sent() -> Vec<(bool, String)> {
+        SENT.with(|s| s.borrow().clone())
+    }
+
+    /// A fresh page says nothing about fields the reader has not touched,
+    /// and Publish is on, though the check already refuses the message.
+    #[wasm_bindgen_test]
+    async fn a_fresh_page_shows_no_errors_and_publish_is_on() {
+        let el = checked_page(governed, wants_a_plate).await;
+        assert!(!says(&el, VAGUE), "markup was {}", el.inner_html());
+        assert!(!face(&el).disabled(), "markup was {}", el.inner_html());
+    }
+
+    /// A press with an error sends nothing, shows the error under its field
+    /// and puts the cursor there. A re-read keeps the errors showing.
+    #[wasm_bindgen_test]
+    async fn a_press_with_errors_shows_them_focuses_the_first_and_sends_nothing() {
+        let el = checked_page(governed, wants_a_plate).await;
+        face(&el).click();
+        sleep_ms(80).await;
+
+        assert_eq!(sent(), []);
+        assert!(says(&el, VAGUE), "markup was {}", el.inner_html());
+        assert_eq!(focused(), Some(message_input(&el).unchecked_into()));
+        assert!(face(&el).disabled(), "off while the error stands");
+
+        quilt_ui_kit::test_support::element_saying(&el, "Refresh").click();
+        sleep_ms(past_the_pause()).await;
+        assert!(says(&el, VAGUE), "kept through a re-read");
+    }
+
+    /// After the press the errors follow the edits: fixing the message clears
+    /// its error and turns Publish back on, and the next press publishes.
+    #[wasm_bindgen_test]
+    async fn errors_follow_the_edits_after_a_press() {
+        let el = checked_page(governed, wants_a_plate).await;
+        face(&el).click();
+        sleep_ms(80).await;
+        let input = message_input(&el);
+        input.set_value("Re-imaged plate 7");
+        input
+            .dispatch_event(&web_sys::Event::new("input").unwrap())
+            .unwrap();
+        sleep_ms(past_the_pause()).await;
+
+        assert!(!says(&el, VAGUE), "markup was {}", el.inner_html());
+        assert!(!face(&el).disabled());
+        face(&el).click();
+        sleep_ms(80).await;
+        assert_eq!(sent(), [(true, "Re-imaged plate 7".to_string())]);
+    }
+
+    /// A press on a valid form publishes at once.
+    #[wasm_bindgen_test]
+    async fn a_valid_press_publishes() {
+        let el = checked_page(governed, takes_anything).await;
+        face(&el).click();
+        sleep_ms(80).await;
+        assert_eq!(sent(), [(true, "Updated 1203 files".to_string())]);
+    }
+
+    /// A metadata error opens the editor and puts the cursor in it.
+    #[wasm_bindgen_test]
+    async fn a_metadata_error_opens_the_editor_and_takes_the_focus() {
+        let el = checked_page(governed, wants_an_owner).await;
+        assert!(el.query_selector("textarea").unwrap().is_none(), "closed");
+        face(&el).click();
+        sleep_ms(80).await;
+
+        assert_eq!(sent(), []);
+        assert!(says(&el, NO_OWNER), "markup was {}", el.inner_html());
+        let editor = el
+            .query_selector("[data-commit-metadata] textarea")
+            .unwrap()
+            .expect("the editor opened");
+        assert_eq!(focused(), Some(editor));
+    }
+
+    /// A required bucket with several workflows and no default.
+    fn required(_: String) -> Pin<Box<dyn Future<Output = Result<CommitData, String>>>> {
+        let info = |id: &str| commands::WorkflowInfo {
+            id: id.to_string(),
+            name: Some(id.to_string()),
+            description: None,
+            metadata_schema_url: None,
+            entries_schema_url: None,
+        };
+        let mut d = commit_data();
+        d.workflows = CommitWorkflows::Available {
+            workflows: vec![info("plates"), info("exports")],
+            default_workflow: None,
+            is_workflow_required: true,
+            config_url: None,
+        };
+        Box::pin(async move { Ok(d) })
+    }
+
+    /// An unchosen required workflow waits for the press too, and then the
+    /// select takes the focus.
+    #[wasm_bindgen_test]
+    async fn an_unchosen_workflow_says_so_on_the_press() {
+        let el = checked_page(required, takes_anything).await;
+        assert!(
+            !says(&el, CHOOSE_A_WORKFLOW),
+            "markup was {}",
+            el.inner_html()
+        );
+        assert!(!face(&el).disabled());
+
+        face(&el).click();
+        sleep_ms(80).await;
+        assert_eq!(sent(), []);
+        assert!(says(&el, CHOOSE_A_WORKFLOW));
+        let select = el
+            .query_selector("[data-commit-workflow] select")
+            .unwrap()
+            .expect("the workflow select");
+        assert_eq!(focused(), Some(select));
     }
 
     fn entry(path: &str, status: &str) -> EntryData {
@@ -2345,108 +2729,8 @@ mod tests {
         );
     }
 
-    fn option(label: &str, intent: WorkflowIntent, disabled: bool) -> WorkflowOption {
-        WorkflowOption {
-            label: label.to_string(),
-            intent,
-            disabled,
-        }
-    }
-
     fn named(id: &str) -> WorkflowIntent {
         WorkflowIntent::Named(id.to_string())
-    }
-
-    fn available(options: Vec<WorkflowOption>, initial: usize) -> WorkflowView {
-        WorkflowView {
-            kind: WorkflowViewKind::Available {
-                is_workflow_required: true,
-            },
-            options,
-            initial,
-        }
-    }
-
-    /// A required bucket with one workflow and no default: the view starts on
-    /// the greyed `None`; here the one workflow is the start, so it can run.
-    #[test]
-    fn the_only_workflow_of_a_required_bucket_is_the_start() {
-        let (options, initial, needs_choice) = workflow_choices(&available(
-            vec![
-                option("None", WorkflowIntent::NoWorkflow, true),
-                option("Plate reads", named("plates"), false),
-            ],
-            0,
-        ));
-        assert_eq!(initial, named("plates"));
-        assert!(!needs_choice);
-        assert_eq!(options.len(), 1);
-    }
-
-    /// With several to choose from, the greyed start stays and blocks.
-    #[test]
-    fn several_workflows_of_a_required_bucket_must_be_chosen() {
-        let (options, initial, needs_choice) = workflow_choices(&available(
-            vec![
-                option("None", WorkflowIntent::NoWorkflow, true),
-                option("Plate reads", named("plates"), false),
-                option("Exports", named("exports"), false),
-            ],
-            0,
-        ));
-        assert_eq!(initial, WorkflowIntent::NoWorkflow);
-        assert!(needs_choice);
-        let labels: Vec<_> = options.iter().map(|o| o.label.as_str()).collect();
-        assert_eq!(labels, ["None", "Plate reads", "Exports"]);
-        assert_eq!(super::super::tests::banned_in(CHOOSE_A_WORKFLOW), None);
-    }
-
-    /// Two workflows with one name stay two choices, each its own id.
-    #[test]
-    fn workflows_sharing_a_name_stay_apart() {
-        let (options, initial, _) = workflow_choices(&available(
-            vec![
-                option("None", WorkflowIntent::NoWorkflow, false),
-                option("Plates", named("plates-a"), false),
-                option("Plates", named("plates-b"), false),
-            ],
-            2,
-        ));
-        assert_eq!(initial, named("plates-b"));
-        let labels: Vec<_> = options.iter().map(|o| o.label.as_str()).collect();
-        assert_eq!(labels, ["None", "Plates (plates-a)", "Plates (plates-b)"]);
-    }
-
-    /// A workflow whose own name reads like a told-apart one cannot take
-    /// another's label: every label names one intent.
-    #[test]
-    fn no_two_options_share_a_label() {
-        let (options, _, _) = workflow_choices(&available(
-            vec![
-                option("None", WorkflowIntent::NoWorkflow, false),
-                option("Plates (plates-a)", named("odd"), false),
-                option("Plates", named("plates-a"), false),
-                option("Plates", named("plates-a-2"), false),
-                option("None", named("none"), false),
-            ],
-            0,
-        ));
-        let labels: Vec<_> = options.iter().map(|o| o.label.clone()).collect();
-        let mut distinct = labels.clone();
-        distinct.sort();
-        distinct.dedup();
-        assert_eq!(distinct.len(), labels.len(), "{labels:?}");
-        let form_intents: Vec<_> = options.iter().map(|o| o.intent.clone()).collect();
-        assert_eq!(
-            form_intents,
-            [
-                WorkflowIntent::NoWorkflow,
-                named("odd"),
-                named("plates-a"),
-                named("plates-a-2"),
-                named("none")
-            ]
-        );
     }
 
     /// Through the page's own form: every option's label leads back to its
@@ -2475,8 +2759,8 @@ mod tests {
         }
     }
 
-    /// A malformed workflows file refuses every save, and so does an
-    /// unchosen required workflow: both block the primary, in words.
+    /// A malformed workflows file refuses every save, in words; an unchosen
+    /// required workflow is the field's error.
     #[test]
     fn a_broken_or_unchosen_workflow_blocks() {
         let mut d = commit_data();
@@ -2486,7 +2770,7 @@ mod tests {
         };
         let form = Form::of(&d);
         assert_eq!(
-            form.workflow_problem(&form.initial).as_deref(),
+            form.invalid.as_deref(),
             Some("The bucket's workflows file is not valid: bad yaml")
         );
 
@@ -2505,10 +2789,57 @@ mod tests {
         };
         let form = Form::of(&d);
         assert_eq!(
-            form.workflow_problem(&form.initial).as_deref(),
+            form.field_errors(&[], "", &form.initial)
+                .workflow
+                .as_deref(),
             Some(CHOOSE_A_WORKFLOW)
         );
-        assert_eq!(form.workflow_problem(&named("plates")), None);
+        assert_eq!(form.field_errors(&[], "", &named("plates")).workflow, None);
+        assert_eq!(super::super::tests::banned_in(CHOOSE_A_WORKFLOW), None);
+
+        // With a default it starts there, and `None` picked later is an error too.
+        d.workflows = CommitWorkflows::Available {
+            workflows: vec![info("plates"), info("exports")],
+            default_workflow: Some("plates".to_string()),
+            is_workflow_required: true,
+            config_url: None,
+        };
+        let form = Form::of(&d);
+        assert_eq!(form.field_errors(&[], "", &form.initial).workflow, None);
+        assert_eq!(form.options[0].intent, WorkflowIntent::NoWorkflow);
+        assert_eq!(
+            form.field_errors(&[], "", &WorkflowIntent::NoWorkflow)
+                .workflow
+                .as_deref(),
+            Some(CHOOSE_A_WORKFLOW)
+        );
+    }
+
+    /// The first error is the first field's in the form's order, whatever
+    /// order the check reported them in.
+    #[test]
+    fn the_first_error_follows_the_form() {
+        let form = Form::of(&commit_data());
+        let violation = |field, message: &str| CommitViolation {
+            field,
+            message: message.to_string(),
+        };
+        let errors = form.field_errors(
+            &[
+                violation(ViolationField::Metadata, "missing owner"),
+                violation(ViolationField::Name, "handle mismatch"),
+            ],
+            "{}",
+            &WorkflowIntent::BucketDefault,
+        );
+        assert_eq!(errors.first(), Some((Field::Workflow, "handle mismatch")));
+        let errors = form.field_errors(&[], "{ \"plate\": ", &WorkflowIntent::BucketDefault);
+        assert_eq!(errors.first(), Some((Field::Metadata, METADATA_NOT_JSON)));
+        assert_eq!(
+            form.field_errors(&[], "{}", &WorkflowIntent::BucketDefault)
+                .first(),
+            None
+        );
     }
 
     /// Blank keeps the current metadata; any JSON is accepted, as the

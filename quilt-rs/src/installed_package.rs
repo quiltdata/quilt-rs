@@ -1545,6 +1545,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
                 "Cannot change remote on a package that has already been pushed".to_string(),
             )));
         }
+        quilt_uri::check_bucket(&bucket)?;
         // Validate the bucket up front so a typo surfaces here instead of
         // later at push time as an opaque S3 routing error. This is an
         // unauthenticated HEAD against s3.amazonaws.com — works even when

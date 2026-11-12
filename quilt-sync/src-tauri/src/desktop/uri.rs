@@ -1,7 +1,6 @@
 use std::str::FromStr;
 use std::sync::Arc;
 
-use rust_i18n::t;
 use tauri::AppHandle;
 use tauri::Manager;
 use tauri_plugin_deep_link::DeepLinkExt;
@@ -23,7 +22,7 @@ use crate::engine::telemetry::prelude::*;
 fn navigate(services: &Services, to: Option<&str>, path: routes::Paths) {
     let to = to.unwrap_or(navigation::WINDOW);
     debug!("Sending page {} to {}", to, path);
-    services.navigations.send(&services.events, to, path);
+    services.navigations.send_again(&services.events, to, path);
 }
 
 /// The page of a Quilt package URI.
@@ -154,7 +153,7 @@ fn landing_after_login(redirect: Option<&str>) -> routes::Paths {
     reason = "cohesive deep-link auth-callback handling"
 )]
 fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
-    debug!("login_with_code: parsing auth params from {}", url);
+    debug!("login_with_code: parsing auth params from {}", for_log(url));
     let auth_params = parse_auth_params(url)?;
     let handle = app_handle.clone();
     let host = auth_params.host.clone();
@@ -215,11 +214,7 @@ fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
                 navigate(
                     &s,
                     landing.page.as_deref(),
-                    routes::Paths::LoginError(
-                        host,
-                        t!("login_error.title").into(),
-                        err.to_string(),
-                    ),
+                    routes::Paths::LoginError(host, "Login failed".into(), err.to_string()),
                 );
             }
         }
@@ -228,10 +223,35 @@ fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
     Ok(())
 }
 
+/// Render a deep-link URL for a log line. An auth callback (`quilt://`) carries a
+/// one-time authorization code in its query; dropping the query keeps that code
+/// out of the log files (and so out of the support archive and the crash
+/// reporter). A package link (`quilt+s3://`) holds nothing secret, so it is
+/// logged whole.
+fn for_log(url: &Url) -> String {
+    if url.scheme() == "quilt" {
+        let mut redacted = url.clone();
+        redacted.set_query(None);
+        redacted.to_string()
+    } else {
+        url.to_string()
+    }
+}
+
+/// [`for_log`] for a deep-link string that has not been parsed yet. An
+/// unparseable string still has anything after `?` dropped, in case it holds a
+/// code.
+pub(crate) fn for_log_str(raw: &str) -> String {
+    match raw.parse::<Url>() {
+        Ok(url) => for_log(&url),
+        Err(_) => raw.split('?').next().unwrap_or_default().to_string(),
+    }
+}
+
 /// Dispatch a deep link URL to the appropriate handler based on scheme
 pub fn handle_deep_link_url(app_handle: &AppHandle, url_str: &str) -> Result {
-    debug!("handle_deep_link_url: {}", url_str);
     let url: Url = url_str.parse().map_err(Error::ParseUrl)?;
+    debug!("handle_deep_link_url: {}", for_log(&url));
 
     match url.scheme() {
         "quilt+s3" => navigate_to_package(app_handle, url_str),
@@ -254,7 +274,11 @@ fn handle_deep_link_navigation(app_handle: &AppHandle, urls: &[Url]) {
     // with the launch needs no wait for it.
     let url_str = first_url.to_string();
     if let Err(err) = handle_deep_link_url(app_handle, &url_str) {
-        error!("Failed to handle deep link '{}': {}", url_str, err);
+        error!(
+            "Failed to handle deep link '{}': {}",
+            for_log(first_url),
+            err
+        );
     }
 }
 
@@ -264,21 +288,23 @@ pub fn setup_deep_link_handler(app_handle: &AppHandle) {
     let handle_for_runtime = app_handle.clone();
     deep_link.on_open_url(move |event| {
         let urls = event.urls();
+        let logged: Vec<String> = urls.iter().map(for_log).collect();
         // On Linux, the single-instance plugin already handles deep links
         // via argv. Skip on_open_url to avoid duplicate handling.
         if cfg!(target_os = "linux") {
             debug!(
                 "Skipping on_open_url (handled by single-instance): {:?}",
-                urls
+                logged
             );
             return;
         }
-        info!("Processing runtime deep link: {:?}", urls);
+        info!("Processing runtime deep link: {:?}", logged);
         handle_deep_link_navigation(&handle_for_runtime, &urls);
     });
 
     if let Ok(Some(urls)) = deep_link.get_current() {
-        info!("Processing startup deep link: {:?}", urls);
+        let logged: Vec<String> = urls.iter().map(for_log).collect();
+        info!("Processing startup deep link: {:?}", logged);
         handle_deep_link_navigation(app_handle, &urls);
     }
 }
@@ -286,6 +312,41 @@ pub fn setup_deep_link_handler(app_handle: &AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_auth_callback_is_logged_without_its_query() {
+        let url: Url = "quilt://auth/callback?host=quilt.test&code=one-time-code&state=xyz"
+            .parse()
+            .unwrap();
+        let logged = for_log(&url);
+        assert!(
+            !logged.contains("one-time-code"),
+            "code is dropped: {logged}"
+        );
+        assert!(!logged.contains("code="), "query is dropped: {logged}");
+        assert!(
+            logged.contains("quilt://auth/callback"),
+            "scheme, host and path are kept: {logged}"
+        );
+    }
+
+    #[test]
+    fn a_package_link_is_logged_whole() {
+        let url: Url =
+            "quilt+s3://bucket#package=foo/bar@0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                .parse()
+                .unwrap();
+        assert_eq!(for_log(&url), url.to_string());
+    }
+
+    #[test]
+    fn an_unparseable_deep_link_is_logged_without_its_query() {
+        let logged = for_log_str("not a url?code=one-time-code");
+        assert!(
+            !logged.contains("one-time-code"),
+            "code is dropped: {logged}"
+        );
+    }
 
     #[test]
     fn a_package_link_opens_its_package_page() {
@@ -337,10 +398,9 @@ mod tests {
             .unwrap();
         navigate(&services, Some("a-tab"), routes::Paths::Settings);
         navigate(&services, None, routes::Paths::Home);
-        assert_eq!(
-            services.navigations.pending("a-tab").unwrap().page,
-            "/settings"
-        );
+        let tab = services.navigations.pending("a-tab").unwrap();
+        assert_eq!(tab.page, "/settings");
+        assert!(tab.again, "a link opened twice runs twice");
         assert_eq!(
             services
                 .navigations
@@ -442,27 +502,19 @@ mod tests {
     #[test]
     fn a_login_from_a_package_or_commit_page_lands_there() {
         assert_eq!(
-            landing_after_login(Some(
-                "/installed-package?namespace=org%2Fpkg&filter=unmodified"
-            )),
-            routes::Paths::InstalledPackage(
-                ("org", "pkg").into(),
-                routes::EntriesFilter::for_installed_package()
-            )
+            landing_after_login(Some("/installed-package?namespace=org%2Fpkg")),
+            routes::Paths::InstalledPackage(("org", "pkg").into())
         );
         // A deep link's warning rides along in `back`; the page still parses.
         assert_eq!(
             landing_after_login(Some(
-                "/installed-package?namespace=org%2Fpkg&filter=unmodified&mismatch=abc&mrbucket=b"
+                "/installed-package?namespace=org%2Fpkg&mismatch=abc&mrbucket=b"
             )),
-            routes::Paths::InstalledPackage(
-                ("org", "pkg").into(),
-                routes::EntriesFilter::for_installed_package()
-            )
+            routes::Paths::InstalledPackage(("org", "pkg").into())
         );
         assert_eq!(
             landing_after_login(Some("/commit?namespace=org%2Fpkg")),
-            routes::Paths::Commit(("org", "pkg").into(), routes::EntriesFilter::default())
+            routes::Paths::Commit(("org", "pkg").into())
         );
     }
 

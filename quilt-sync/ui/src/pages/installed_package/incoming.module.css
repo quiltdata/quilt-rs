@@ -113,6 +113,14 @@
   color: var(--q-fgColor-muted);
 }
 
+/* A file with no catalog address: the same icon, a click says why. */
+button.open {
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
 .open svg {
   width: 16px;
   height: 16px;

@@ -40,6 +40,26 @@ pub(crate) fn focus_json_editor(editor_ref: NodeRef<html::Div>) -> bool {
         .is_some_and(|editor| focus_json_editor_js(&editor))
 }
 
+/// Put the cursor in the editor inside `within`, or in its textarea when the
+/// editor did not mount.
+pub(crate) fn focus_json_editor_within(within: &web_sys::Element) {
+    let find = |selector: &str| {
+        within
+            .query_selector(selector)
+            .ok()
+            .flatten()
+            .and_then(|el| wasm_bindgen::JsCast::dyn_into::<web_sys::HtmlElement>(el).ok())
+    };
+    if let Some(editor) = find("[data-json-editor]").filter(|_| bundle_loaded())
+        && focus_json_editor_js(&editor)
+    {
+        return;
+    }
+    if let Some(textarea) = find("textarea") {
+        drop(textarea.focus());
+    }
+}
+
 #[component]
 pub(crate) fn JsonEditor(
     node_ref: NodeRef<html::Div>,
@@ -85,6 +105,6 @@ pub(crate) fn JsonEditor(
     });
 
     view! {
-        <div class=class.unwrap_or("metadata") node_ref=node_ref></div>
+        <div class=class.unwrap_or("metadata") node_ref=node_ref data-json-editor></div>
     }
 }

@@ -17,6 +17,7 @@ use crate::engine::Error;
 use crate::engine::model::QuiltModel;
 use crate::engine::quilt;
 use crate::engine::quilt::lineage::UpstreamState;
+use crate::engine::record::Draft;
 use crate::engine::telemetry::prelude::*;
 
 pub mod acp;
@@ -33,11 +34,15 @@ use settings::TaskSettings;
 
 pub type SpawnRun = Arc<dyn Fn(Run) + Send + Sync>;
 
+/// Keeps a run's uploads in the record, as autosync's are kept.
+pub type Record = Arc<dyn Fn(Draft) + Send + Sync>;
+
 pub struct Tasks {
     /// `None` keeps tasks off.
     data_dir: Option<PathBuf>,
     in_flight: Arc<Mutex<BTreeSet<Namespace>>>,
     spawn_run: SpawnRun,
+    record: Record,
 }
 
 impl Default for Tasks {
@@ -46,15 +51,17 @@ impl Default for Tasks {
             data_dir: None,
             in_flight: Arc::default(),
             spawn_run: Arc::new(|_| {}),
+            record: Arc::new(|_| {}),
         }
     }
 }
 
 impl Tasks {
-    pub fn new(data_dir: PathBuf, spawn_run: SpawnRun) -> Self {
+    pub fn new(data_dir: PathBuf, spawn_run: SpawnRun, record: Record) -> Self {
         Self {
             data_dir: Some(data_dir),
             spawn_run,
+            record,
             ..Self::default()
         }
     }
@@ -111,6 +118,7 @@ pub struct Run {
     pub claim_hash: String,
     /// Where the run's outcome is saved before it is published.
     pub data_dir: PathBuf,
+    record: Record,
     /// Released when the run ends, by being dropped with it.
     _hold: Hold,
 }
@@ -211,6 +219,7 @@ impl Tasks {
     }
 }
 
+#[allow(clippy::too_many_lines, reason = "one branch per verdict")]
 async fn try_check<M: QuiltModel>(
     model: &M,
     tasks: &Tasks,
@@ -258,8 +267,9 @@ async fn try_check<M: QuiltModel>(
     };
     let workflow = carried_workflow(workflow.as_ref());
     if verdict == Verdict::Interrupted {
+        let record = &tasks.record;
         return sweep(
-            model, data_dir, &locked, pkg, workflow, &lineage, user_meta, tree,
+            model, data_dir, &locked, pkg, workflow, &lineage, user_meta, tree, record,
         )
         .await;
     }
@@ -314,6 +324,7 @@ async fn try_check<M: QuiltModel>(
                 claim,
                 claim_hash: push.manifest_uri.hash.clone(),
                 data_dir: data_dir.to_path_buf(),
+                record: Arc::clone(&tasks.record),
                 _hold: hold,
             });
             return Ok(());
@@ -437,6 +448,7 @@ async fn sweep<M: QuiltModel>(
     head: &quilt::lineage::PackageLineage,
     user_meta: &Value,
     Tree { status, commit }: Tree,
+    record: &Record,
 ) -> Result<(), Error> {
     if !sweepable(status.upstream_state) {
         return Ok(());
@@ -497,7 +509,7 @@ async fn sweep<M: QuiltModel>(
     };
     let tree = Tree { status, commit };
     publish_outcome(
-        model, locked, pkg, workflow, head, user_meta, claim, message, tree,
+        model, locked, pkg, workflow, head, user_meta, claim, message, tree, record,
     )
     .await
 }
@@ -537,6 +549,7 @@ async fn publish_outcome<M: QuiltModel>(
     mut claim: Value,
     mut message: String,
     Tree { status, commit }: Tree,
+    record: &Record,
 ) -> Result<(), Error> {
     // A pending commit makes the walk compare against it, not the claim.
     let counted = matches!(claim["status"].as_str(), Some("done" | "failed")) && commit.is_none();
@@ -558,17 +571,39 @@ async fn publish_outcome<M: QuiltModel>(
         .clone()
         .filter(|uri| counted && uri.hash == head.base_hash);
     let meta = agent_exec::with_claim(user_meta, claim);
+    let changes = status.changes.clone();
     let published = publish(model, locked, pkg, workflow, meta, message, status).await?;
     let Some(push) = published.push() else {
         return Ok(());
     };
+    // The outcome is the run's work, as any publish; one that changes only
+    // the metadata says nothing a reader looks for.
+    if !metadata_only {
+        record(
+            Draft::published(
+                &pkg.namespace,
+                Some(&head.base_hash),
+                &push.manifest_uri.hash,
+                &changes,
+            )
+            .latest_or_not(push.certified_latest),
+        );
+    }
     if push.certified_latest {
         return Ok(());
     }
     if metadata_only {
         reset_if_clean(model, pkg, locked).await?;
     } else if let Some(base) = built_on {
-        match rebase::onto_latest(model, &pkg.namespace, &base, &push.manifest_uri, user_meta).await
+        match rebase::onto_latest(
+            model,
+            &pkg.namespace,
+            &base,
+            &push.manifest_uri,
+            user_meta,
+            record,
+        )
+        .await
         {
             Ok(true) => reset_if_clean(model, pkg, locked).await?,
             Ok(false) => {}
@@ -839,7 +874,16 @@ async fn finish<M: QuiltModel>(
     let workflow = carried_workflow(head.header.workflow.as_ref());
     let message = outcome_message(&run.document, &claim);
     publish_outcome(
-        model, &locked, &installed, workflow, &lineage, &base, claim, message, tree,
+        model,
+        &locked,
+        &installed,
+        workflow,
+        &lineage,
+        &base,
+        claim,
+        message,
+        tree,
+        &run.record,
     )
     .await
 }

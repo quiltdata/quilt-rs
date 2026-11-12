@@ -87,14 +87,10 @@ impl Analytics {
 
 fn mixpanel_client() -> Option<MixpanelClient> {
     let token = env::mixpanel_project_token();
-    let secret = env::mixpanel_api_secret();
     if token.is_none() {
         eprintln!("No MIXPANEL_PROJECT_TOKEN configured, Mixpanel disabled");
     }
-    if secret.is_none() {
-        eprintln!("No MIXPANEL_API_SECRET configured");
-    }
-    token.map(|token| MixpanelClient::new(&token, secret.as_deref()))
+    token.map(|token| MixpanelClient::new(&token))
 }
 
 /// Whether a failed send means **we** are wrong, or the network was.

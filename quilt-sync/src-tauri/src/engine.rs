@@ -29,13 +29,13 @@ pub mod oauth;
 pub mod publish_settings;
 pub mod quilt;
 pub mod quit;
+pub mod record;
 pub mod routes;
 pub mod server;
 pub mod services;
 pub mod start;
 pub mod tasks;
 pub mod telemetry;
-pub mod toast;
 pub mod updates;
 
 pub use error::Error;

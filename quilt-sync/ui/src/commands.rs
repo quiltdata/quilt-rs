@@ -291,19 +291,12 @@ pub struct PublishSettingsData {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-#[allow(clippy::struct_excessive_bools, reason = "one field per toggle")]
 pub struct AutosyncSettingsData {
     pub pull_enabled: bool,
     pub push_enabled: bool,
     pub pull_interval_secs: u64,
     pub idle_timeout_secs: u64,
     pub close_to_tray: bool,
-    #[serde(default = "notify_by_default")]
-    pub notify_action_needed: bool,
-}
-
-const fn notify_by_default() -> bool {
-    true
 }
 
 impl Default for AutosyncSettingsData {
@@ -314,7 +307,6 @@ impl Default for AutosyncSettingsData {
             pull_interval_secs: 60,
             idle_timeout_secs: 300,
             close_to_tray: false,
-            notify_action_needed: true,
         }
     }
 }
@@ -1275,6 +1267,12 @@ pub async fn get_main_page_accounts() -> Result<MainPageAccountsData, String> {
     engine::invoke_unit("get_main_page_accounts").await
 }
 
+/// As [`get_main_page_accounts`], with the cached roles forgotten first, so
+/// each host's role is asked again: the Settings page's load.
+pub async fn get_settings_accounts() -> Result<MainPageAccountsData, String> {
+    engine::invoke_unit("get_settings_accounts").await
+}
+
 /// A link type that Windows opens with another program, or with none.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -1349,9 +1347,8 @@ pub struct PackageStatusEvent {
 pub const PACKAGE_STATUS_EVENT: &str = "package-status-changed";
 
 /// Payload of the `autosync-published` engine event — emitted after a
-/// background autosync tick successfully publishes a package. UI listens
-/// for this on the installed-packages list page and surfaces it as a
-/// toast, mirroring the manual Commit & Push success notification.
+/// background autosync tick successfully publishes a package. The inbox
+/// learns of it from the record instead.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PublishedEvent {
@@ -1525,7 +1522,6 @@ pub struct AutosyncPatch {
     pub pull_interval_secs: Option<u64>,
     pub idle_timeout_secs: Option<u64>,
     pub close_to_tray: Option<bool>,
-    pub notify_action_needed: Option<bool>,
 }
 
 /// Change the autosync settings `patch` names and leave the rest as stored.
@@ -1629,8 +1625,9 @@ pub async fn package_set_sync_scope(
     .await
 }
 
-/// Payload of the `fswatcher-subscriber-error` engine event. Surfaced as a
-/// one-shot toast (e.g. for `kind == "inotify_limit"` on Linux).
+/// Payload of the `fswatcher-subscriber-error` engine event (e.g. for
+/// `kind == "inotify_limit"` on Linux). The inbox shows it from the
+/// action-needed set.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SubscriberErrorEvent {
@@ -1753,7 +1750,7 @@ pub async fn package_pull_outcome(namespace: String) -> Result<PullPreview, Stri
 }
 
 /// Remove a package; with `prune`, also delete its downloaded files that no
-/// other package uses. What that freed arrives as a toast.
+/// other package uses. What that freed goes to the inbox.
 pub async fn package_uninstall(
     namespace: String,
     uri: Option<S3PackageUri>,
@@ -1930,6 +1927,8 @@ pub struct Navigation {
     pub id: String,
     /// The address, without the host.
     pub page: String,
+    /// Already on that page, load it again rather than stay.
+    pub again: bool,
 }
 
 /// Where the engine sent this page, if anywhere, until it says it went.
@@ -2284,7 +2283,7 @@ mod tests {
 
         let engine = FakeEngine::install();
         engine.as_headless();
-        let _asked = ask("get_toasts");
+        let _asked = ask("get_record");
         sleep_ms(0).await;
         engine.hello();
         sleep_ms(0).await;
@@ -3063,65 +3062,131 @@ mod tests {
     }
 }
 
-// ── Toasts (server-emitted notifications) ──
+// ── The record (what happened, for the inbox) ──
 
-/// Event name for a newly posted toast. Kept in lockstep with the backend's
-/// `toast::TOAST_EVENT`.
-pub const TOAST_EVENT: &str = "toast";
+/// Event saying the record changed: an entry added or entries read. No
+/// payload; the window reads the record again. Kept in lockstep with the
+/// backend's `record::RECORD_EVENT`.
+pub const RECORD_EVENT: &str = "record-changed";
 
-/// A toast was dismissed, maybe in another window or tab. Carries its id. Kept
-/// in lockstep with the backend's `toast::TOAST_DISMISSED_EVENT`.
-pub const TOAST_DISMISSED_EVENT: &str = "toast-dismissed";
+/// What one entry records. Mirrors the backend's `record::Kind`; a kind
+/// added there degrades to `Unrecognised`.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum RecordKind {
+    Got,
+    Published,
+    Uninstalled,
+    Created,
+    RemovedRevisions {
+        count: usize,
+    },
+    Outside {
+        published: bool,
+    },
+    #[serde(other)]
+    Unrecognised,
+}
 
+/// One kind of change in an entry's files. Mirrors the backend's
+/// `record::FileChange`.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub enum ToastKind {
-    Info,
-    Success,
-    Warning,
-    Error,
+pub enum RecordFileChange {
+    New,
+    NewNotDownloaded,
+    Updated,
+    Removed,
+    Kept,
+    LeftOut,
+    #[serde(other)]
+    Unrecognised,
 }
 
-/// A list under a heading. Mirrors the backend's `toast::ToastGroup`.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct ToastGroup {
-    pub heading: String,
-    pub items: Vec<String>,
-    /// How many items the heading counts but `items` does not show.
-    pub more: usize,
+pub struct RecordFileGroup {
+    pub change: RecordFileChange,
+    pub count: usize,
+    pub paths: Vec<String>,
 }
 
-/// One server-emitted notification. Mirrors the backend's `toast::Toast`.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct Toast {
+pub struct RecordRevision {
+    pub from: Option<String>,
+    pub to: String,
+}
+
+/// One event. Mirrors the backend's `record::Entry`.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordEntry {
     pub id: u64,
-    pub kind: ToastKind,
-    pub title: Option<String>,
-    /// The lead sentence: what happened.
-    pub body: String,
-    /// The detail, as lists rather than as indented text in `body`.
-    #[serde(default)]
-    pub groups: Vec<ToastGroup>,
-    /// `None` stands until dismissed.
-    pub timeout_ms: Option<u32>,
+    #[serde(flatten)]
+    pub kind: RecordKind,
+    pub namespace: Namespace,
+    pub revision: Option<RecordRevision>,
+    pub files: Vec<RecordFileGroup>,
+    pub outcome: Option<String>,
+    /// RFC 3339.
+    pub at: String,
+    pub read: bool,
+    /// Whether the package is installed now, so its page can open it.
+    #[serde(default = "installed")]
+    pub installed: bool,
 }
 
-/// Every undismissed toast, oldest first — the mount-time hydration read that
-/// catches whatever was posted while no window was open.
-pub async fn get_toasts() -> Result<Vec<Toast>, String> {
+fn installed() -> bool {
+    true
+}
+
+/// Every entry kept, oldest first. Read again on `packages-changed` too, for
+/// [`RecordEntry::installed`].
+pub async fn get_record() -> Result<Vec<RecordEntry>, String> {
     #[derive(Serialize)]
     struct Args {}
-    engine::invoke("get_toasts", &Args {}).await
+    engine::invoke("get_record", &Args {}).await
 }
 
-pub async fn dismiss_toast(id: u64) -> Result<(), String> {
+/// The reader has looked at the entries up to `up_to`: all of them, or only
+/// `namespace`'s.
+pub async fn mark_read(up_to: u64, namespace: Option<Namespace>) -> Result<(), String> {
     #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
     struct Args {
-        id: u64,
+        up_to: u64,
+        namespace: Option<Namespace>,
     }
-    engine::invoke("dismiss_toast", &Args { id }).await
+    engine::invoke("mark_read", &Args { up_to, namespace }).await
+}
+
+#[cfg(test)]
+mod record_tests {
+    use super::*;
+
+    /// Pins the backend's wire form, which `record::tests` pins on its side.
+    #[test]
+    fn an_entry_reads_from_the_backend_wire_form() {
+        let entry: RecordEntry = serde_json::from_value(serde_json::json!({
+            "id": 7,
+            "kind": "removedRevisions",
+            "count": 2,
+            "namespace": "acme/demo",
+            "revision": null,
+            "files": [{"change": "newNotDownloaded", "count": 1, "paths": ["a"]}],
+            "outcome": null,
+            "at": "1970-01-01T00:00:00Z",
+            "read": false,
+            "installed": false,
+        }))
+        .unwrap();
+        assert_eq!(entry.kind, RecordKind::RemovedRevisions { count: 2 });
+        assert_eq!(entry.files[0].change, RecordFileChange::NewNotDownloaded);
+        assert!(!entry.installed);
+        let later: RecordKind = serde_json::from_str(r#"{"kind":"somethingNew"}"#).unwrap();
+        assert_eq!(later, RecordKind::Unrecognised);
+    }
 }
 
 // ── Autopull activity (what autopull is doing right now) ──
@@ -3214,6 +3279,10 @@ pub struct ActionNeededEntry {
     pub cause: ActionNeededCause,
     /// When the cause started, RFC 3339.
     pub since: String,
+    /// The tray menu's line for it.
+    pub line: String,
+    /// The page that fixes it.
+    pub page: String,
 }
 
 /// What needs action now: the mount-time read before following
@@ -3233,7 +3302,8 @@ mod action_needed_tests {
         let entry: ActionNeededEntry = serde_json::from_str(
             r#"{"subject":{"kind":"package","namespace":"a/b"},
                 "cause":{"kind":"paused","reason":{"kind":"pull_conflict","files":["x"]}},
-                "since":"1970-01-01T00:00:00Z"}"#,
+                "since":"1970-01-01T00:00:00Z",
+                "line":"a/b — Has a conflict in 1 file","page":"/"}"#,
         )
         .unwrap();
         assert_eq!(

@@ -2,8 +2,7 @@
 //! publishes a package, the line says so.
 //!
 //! What it reports is autopull's transfers and nothing else, in autopull's own
-//! slot of the line: the page's removal of old revisions and the reconnect notice are the others. Mounted once in `App`, beside the notification
-//! stack, and drawing nothing itself: it writes the [`kit::Activities`] that
+//! slot of the line: the page's removal of old revisions and the reconnect notice are the others. Mounted once in `App`, and drawing nothing itself: it writes the [`kit::Activities`] that
 //! `App` provides, and the kit's [`ActivityLine`](kit::ActivityLine) draws them.
 //!
 //! # State, not deltas
@@ -13,12 +12,10 @@
 //! replaces autopull's slot outright, and a missed update costs nothing: the
 //! next one says what is true.
 //!
-//! # Not the notification stack
+//! # Not the inbox
 //!
-//! [`ToastStack`](super::ToastStack) says what *happened* and keeps it until
-//! dismissed; this says what is running and keeps nothing. They share a
-//! mount-then-listen shape and no names and no store, so neither can outlive or
-//! overwrite the other.
+//! The [inbox](super::inbox) says what *happened* and keeps it; this says what
+//! is running and keeps nothing.
 
 use leptos::prelude::*;
 use leptos::task::spawn_local;
@@ -50,7 +47,7 @@ pub fn activities_for(activity: Option<&commands::AutopullActivity>) -> Vec<Acti
 }
 
 /// The line's list, plus the stamp that stops a slow hydration read from
-/// overwriting a newer event — as the notification stack's store does.
+/// overwriting a newer event.
 ///
 /// Every event and every issued read takes a fresh stamp, and a read's answer is
 /// adopted only while its own stamp is still the newest.

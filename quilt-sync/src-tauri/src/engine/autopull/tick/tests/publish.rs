@@ -139,7 +139,6 @@ async fn make_inner_with_flags(
                 ..PushSettings::default()
             },
             close_to_tray: false,
-            notify_action_needed: true,
         })),
         publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
         paused: RwLock::new(BTreeMap::new()),
@@ -427,6 +426,7 @@ async fn a_deferred_publish_records_when_it_will_arm() -> Result<(), Error> {
     let (mut model, _) = fixture_with_lineage_and_status(lineage.clone(), status);
     model.expect_locked_package_publish().times(0);
 
+    let mut seen = Seen::default();
     let outcome = refresh_then_maybe_sync(
         &model,
         &ns,
@@ -439,7 +439,7 @@ async fn a_deferred_publish_records_when_it_will_arm() -> Result<(), Error> {
         true,
         SyncScope::default(),
         &test_aggregator(),
-        &mut false,
+        &mut seen,
     )
     .await
     .expect("a deferral is an Ok outcome")
@@ -479,6 +479,7 @@ async fn a_quiet_tree_that_publishes_records_no_arm_time() -> Result<(), Error> 
             ))
         });
 
+    let mut seen = Seen::default();
     let outcome = refresh_then_maybe_sync(
         &model,
         &ns,
@@ -491,14 +492,14 @@ async fn a_quiet_tree_that_publishes_records_no_arm_time() -> Result<(), Error> 
         true,
         SyncScope::default(),
         &test_aggregator(),
-        &mut false,
+        &mut seen,
     )
     .await
     .expect("a quiet tree publishes")
     .expect("the package was not busy");
 
     assert!(
-        outcome.published.is_some(),
+        !seen.published.is_empty(),
         "the fixture must actually reach the publish path, or the None below is vacuous"
     );
     assert!(outcome.publish_arm_at.is_none());
@@ -1039,7 +1040,6 @@ async fn publish_quiet_window_reads_idle_timeout_not_pull_cadence() -> Result<()
             idle_timeout_secs: 60,
         },
         close_to_tray: false,
-        notify_action_needed: true,
     };
     let reporter = Arc::new(RecordingReporter::default());
     let inner = WatcherInner {
