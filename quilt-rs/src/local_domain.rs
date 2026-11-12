@@ -501,11 +501,14 @@ mod tests {
                     remote_uri: Some(ManifestUri {
                         bucket: "test-bucket".to_string(),
                         namespace: namespace.clone(),
-                        hash: "abcdef".to_string(),
+                        hash: "abcdef0000000000000000000000000000000000000000000000000000000000"
+                            .to_string(),
                         origin: None,
                     }),
-                    base_hash: "abcdef".to_string(),
-                    latest_hash: "abcdef".to_string(),
+                    base_hash: "abcdef0000000000000000000000000000000000000000000000000000000000"
+                        .to_string(),
+                    latest_hash: "abcdef0000000000000000000000000000000000000000000000000000000000"
+                        .to_string(),
                     paths: std::collections::BTreeMap::new(),
                     ..PackageLineage::default()
                 },

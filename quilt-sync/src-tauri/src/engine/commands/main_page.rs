@@ -1472,7 +1472,7 @@ mod tests {
                     catalog: Some(host.parse().unwrap()),
                     bucket: "bucket".to_string(),
                     namespace: "team/pkg".try_into().unwrap(),
-                    revision: quilt_uri::RevisionPointer::Hash("abcdef".to_string()),
+                    revision: quilt_uri::RevisionPointer::Hash(fixtures::TOP_HASH.to_string()),
                     path: None,
                 }),
             })
@@ -1492,9 +1492,9 @@ mod tests {
                     origin: Some(host.parse().unwrap()),
                     bucket: "test".to_string(),
                     namespace: "team/one".try_into().unwrap(),
-                    hash: "abcdef".to_string(),
+                    hash: fixtures::TOP_HASH.to_string(),
                 },
-                "abcdef".to_string(),
+                fixtures::TOP_HASH.to_string(),
             ),
             None => quilt::lineage::PackageLineage::default(),
         };

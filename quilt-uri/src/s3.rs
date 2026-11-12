@@ -5,6 +5,25 @@ use url::Url;
 use crate::Host;
 use crate::UriError;
 
+/// A bucket name under S3's legacy rule: 1 to 255 of `A-Z a-z 0-9 . _ -`,
+/// and not `.` or `..`. Every name S3 allows passes, and each one is also a
+/// valid URL host.
+pub(crate) fn check_bucket(bucket: &str) -> Result<(), UriError> {
+    let valid = (1..=255).contains(&bucket.len())
+        && bucket != "."
+        && bucket != ".."
+        && bucket
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'));
+    if valid {
+        Ok(())
+    } else {
+        Err(UriError::Bucket(format!(
+            "bucket must be 1 to 255 letters, digits, `.`, `_` or `-`, and not `.` or `..`; got {bucket:?}"
+        )))
+    }
+}
+
 /// struct representation of the generic `s3://url`
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(any(test, feature = "test-support"), derive(Default))]
@@ -47,6 +66,7 @@ impl TryFrom<&str> for S3Uri {
         let bucket = parsed_url
             .host_str()
             .ok_or(UriError::S3(format!("Missing bucket in {input}")))?;
+        check_bucket(bucket)?;
 
         let path = parsed_url
             .path()
@@ -247,5 +267,19 @@ mod tests {
             "https://quilt.test/b/bucket/tree/foo/bar?version=abc"
         );
         Ok(())
+    }
+
+    /// The parser refuses a bucket name S3 never allowed.
+    #[test]
+    fn a_uri_refuses_a_bucket_name_s3_does_not_allow() {
+        for bucket in ["..", "Bad_Bucket!", "a%20b"] {
+            let input = format!("s3://{bucket}/key");
+            let err =
+                S3Uri::try_from(input.as_str()).expect_err(&format!("{bucket} should not parse"));
+            assert!(
+                matches!(err, UriError::Bucket(_)),
+                "{bucket}: expected a bucket error, got {err}"
+            );
+        }
     }
 }

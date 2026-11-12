@@ -278,11 +278,11 @@ async fn test_set_remote_rejects_change_on_pushed_package() -> Res {
                 "remote": {
                     "bucket": "old-bucket",
                     "namespace": "test/overwrite",
-                    "hash": "abc123",
+                    "hash": "abcdef0000000000000000000000000000000000000000000000000000000000",
                     "origin": "one.quilt.test"
                 },
-                "base_hash": "abc123",
-                "latest_hash": "abc123",
+                "base_hash": "abcdef0000000000000000000000000000000000000000000000000000000000",
+                "latest_hash": "abcdef0000000000000000000000000000000000000000000000000000000000",
                 "paths": {}
             }
         },
@@ -342,11 +342,11 @@ async fn test_set_remote_is_idempotent_on_pushed_package() -> Res {
                 "remote": {
                     "bucket": "my-bucket",
                     "namespace": "test/idempotent",
-                    "hash": "abc123",
+                    "hash": "abcdef0000000000000000000000000000000000000000000000000000000000",
                     "origin": "quilt.test"
                 },
-                "base_hash": "abc123",
-                "latest_hash": "abc123",
+                "base_hash": "abcdef0000000000000000000000000000000000000000000000000000000000",
+                "latest_hash": "abcdef0000000000000000000000000000000000000000000000000000000000",
                 "paths": {}
             }
         },
@@ -380,7 +380,10 @@ async fn test_set_remote_is_idempotent_on_pushed_package() -> Res {
         .remote_uri
         .as_ref()
         .expect("remote_uri should be set");
-    assert_eq!(remote_uri.hash, "abc123", "hash should be preserved");
+    assert_eq!(
+        remote_uri.hash, "abcdef0000000000000000000000000000000000000000000000000000000000",
+        "hash should be preserved"
+    );
 
     Ok(())
 }

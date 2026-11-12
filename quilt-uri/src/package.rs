@@ -18,14 +18,37 @@ use crate::Host;
 use crate::ManifestUri;
 use crate::Tag;
 use crate::UriError;
+use crate::s3::check_bucket;
 
 /// This is the revision (or "hash") of the package.
 /// "Package" itself is a handle, but each package has revision.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "_tag", content = "value")]
+#[serde(tag = "_tag", content = "value", try_from = "RawRevisionPointer")]
 pub enum RevisionPointer {
     Hash(String),
     Tag(Tag),
+}
+
+/// The serialized form of [`RevisionPointer`], read before its hash is checked.
+#[derive(Deserialize)]
+#[serde(tag = "_tag", content = "value")]
+enum RawRevisionPointer {
+    Hash(String),
+    Tag(Tag),
+}
+
+impl TryFrom<RawRevisionPointer> for RevisionPointer {
+    type Error = UriError;
+
+    fn try_from(raw: RawRevisionPointer) -> Result<Self, Self::Error> {
+        match raw {
+            RawRevisionPointer::Hash(hash) => {
+                check_top_hash(&hash)?;
+                Ok(Self::Hash(hash))
+            }
+            RawRevisionPointer::Tag(tag) => Ok(Self::Tag(tag)),
+        }
+    }
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -233,12 +256,38 @@ impl From<&ManifestUri> for S3PackageHandle {
 /// Also, this URI has path, so you can use it as an URI for referencing files in package.
 /// You can use this URL for both packages and files in packages.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "RawS3PackageUri")]
 pub struct S3PackageUri {
     pub catalog: Option<Host>,
     pub bucket: String,
     pub namespace: Namespace,
     pub revision: RevisionPointer,
     pub path: Option<PathBuf>,
+}
+
+/// The serialized form of [`S3PackageUri`], read before its bucket is checked.
+#[derive(Deserialize)]
+struct RawS3PackageUri {
+    catalog: Option<Host>,
+    bucket: String,
+    namespace: Namespace,
+    revision: RevisionPointer,
+    path: Option<PathBuf>,
+}
+
+impl TryFrom<RawS3PackageUri> for S3PackageUri {
+    type Error = UriError;
+
+    fn try_from(raw: RawS3PackageUri) -> Result<Self, Self::Error> {
+        check_bucket(&raw.bucket)?;
+        Ok(Self {
+            catalog: raw.catalog,
+            bucket: raw.bucket,
+            namespace: raw.namespace,
+            revision: raw.revision,
+            path: raw.path,
+        })
+    }
 }
 
 impl TryFrom<&str> for S3PackageUri {
@@ -287,11 +336,7 @@ impl TryFrom<&str> for S3PackageUri {
                     "package spec may contain only one \"@\"".to_string(),
                 ));
             }
-            if !is_top_hash(top_hash) {
-                return Err(UriError::Package(format!(
-                    "hash must be 64 lowercase hex characters, got {top_hash:?}"
-                )));
-            }
+            check_top_hash(top_hash)?;
             (namespace.into(), RevisionPointer::Hash(top_hash.into()))
         } else {
             (pkg_spec, RevisionPointer::Tag(Tag::Latest))
@@ -314,6 +359,7 @@ impl TryFrom<&str> for S3PackageUri {
             "expected host in S3 package URI, got {}",
             parsed_url.host_str().unwrap_or_default()
         )))?;
+        check_bucket(bucket)?;
 
         Ok(Self {
             bucket: bucket.to_string(),
@@ -329,6 +375,16 @@ impl TryFrom<&str> for S3PackageUri {
 #[must_use]
 pub fn is_top_hash(hash: &str) -> bool {
     hash.len() == 64 && hash.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+pub(crate) fn check_top_hash(hash: &str) -> Result<(), UriError> {
+    if is_top_hash(hash) {
+        Ok(())
+    } else {
+        Err(UriError::Package(format!(
+            "hash must be 64 lowercase hex characters, got {hash:?}"
+        )))
+    }
 }
 
 /// The characters that would otherwise be read as fragment structure.
@@ -909,9 +965,12 @@ mod tests {
 
     #[test]
     fn test_revision_pointer_serde_round_trip_hash() {
-        let revision = RevisionPointer::Hash("abc123".to_string());
+        let revision = RevisionPointer::Hash(fixtures::TOP_HASH.to_string());
         let json = serde_json::to_string(&revision).unwrap();
-        assert_eq!(json, r#"{"_tag":"Hash","value":"abc123"}"#);
+        assert_eq!(
+            json,
+            format!(r#"{{"_tag":"Hash","value":"{}"}}"#, fixtures::TOP_HASH)
+        );
         let parsed: RevisionPointer = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, revision);
     }
@@ -1255,7 +1314,7 @@ mod tests {
             bucket: "bucket".to_string(),
             catalog: Some(fixtures::host()),
             namespace: ("foo", "bar").into(),
-            revision: RevisionPointer::Hash("abc123".to_string()),
+            revision: RevisionPointer::Hash(fixtures::TOP_HASH.to_string()),
             path: Some(PathBuf::from("read/me.md")),
         };
         let json = serde_json::to_string(&uri).unwrap();
@@ -1362,5 +1421,96 @@ mod tests {
             uri.display(),
             "quilt+s3://team-bucket#package=user/plate-07&path=runs/a/one.csv"
         );
+    }
+
+    /// Deserializing a hash revision applies the parser's top hash rule.
+    #[test]
+    fn a_deserialized_hash_revision_must_be_a_top_hash() {
+        for hash in [
+            "../../../../tmp/x",
+            "abc123",
+            "",
+            "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF",
+        ] {
+            let json = format!(
+                r#"{{"_tag":"Hash","value":{}}}"#,
+                serde_json::to_string(hash).unwrap()
+            );
+            assert!(
+                serde_json::from_str::<RevisionPointer>(&json).is_err(),
+                "{hash:?} should not deserialize"
+            );
+        }
+    }
+
+    /// The parser refuses a bucket name S3 never allowed.
+    #[test]
+    fn a_uri_refuses_a_bucket_name_s3_does_not_allow() {
+        for bucket in ["..", ".", "Bad_Bucket!", "a%20b", "a%2Fb"] {
+            let input = format!("quilt+s3://{bucket}#package=foo/bar");
+            let err = S3PackageUri::try_from(input.as_str())
+                .expect_err(&format!("{bucket} should not parse"));
+            assert!(
+                matches!(err, UriError::Bucket(_)),
+                "{bucket}: expected a bucket error, got {err}"
+            );
+        }
+    }
+
+    /// Deserializing a package URI applies the same bucket rule.
+    #[test]
+    fn a_deserialized_package_uri_gets_the_bucket_check() {
+        for bucket in ["../../x", "..", ".", "", "a b", "a/b", "a#b", "a@b", "a:b"] {
+            let uri = S3PackageUri {
+                catalog: None,
+                bucket: bucket.to_string(),
+                namespace: ("foo", "bar").into(),
+                revision: RevisionPointer::Tag(Tag::Latest),
+                path: None,
+            };
+            let json = serde_json::to_string(&uri).unwrap();
+            assert!(
+                serde_json::from_str::<S3PackageUri>(&json).is_err(),
+                "{bucket:?} should not deserialize"
+            );
+        }
+    }
+
+    /// Names from before S3's 2018 rules, with uppercase and `_`, still read.
+    #[test]
+    fn a_legacy_bucket_name_still_reads() -> Res {
+        let uri = S3PackageUri::try_from("quilt+s3://My_Old.Bucket-1#package=foo/bar")?;
+        assert_eq!(uri.bucket, "My_Old.Bucket-1");
+        let json = serde_json::to_string(&uri).unwrap();
+        assert_eq!(serde_json::from_str::<S3PackageUri>(&json).unwrap(), uri);
+        Ok(())
+    }
+
+    /// The JSON form is what lineage files and the app hold, so it stays as is.
+    #[test]
+    fn a_package_uri_keeps_its_json_form() {
+        let json = format!(
+            r#"{{"catalog":"quilt.test","bucket":"team-bucket","namespace":"user/plate-07","revision":{{"_tag":"Hash","value":"{}"}},"path":"runs/one.csv"}}"#,
+            fixtures::TOP_HASH
+        );
+        let uri = S3PackageUri {
+            catalog: Some(fixtures::host()),
+            bucket: "team-bucket".to_string(),
+            namespace: ("user", "plate-07").into(),
+            revision: RevisionPointer::Hash(fixtures::TOP_HASH.to_string()),
+            path: Some(PathBuf::from("runs/one.csv")),
+        };
+        assert_eq!(serde_json::to_string(&uri).unwrap(), json);
+        assert_eq!(serde_json::from_str::<S3PackageUri>(&json).unwrap(), uri);
+
+        let latest = r#"{"catalog":null,"bucket":"team-bucket","namespace":"user/plate-07","revision":{"_tag":"Tag","value":"latest"},"path":null}"#;
+        let uri = S3PackageUri {
+            catalog: None,
+            path: None,
+            revision: RevisionPointer::Tag(Tag::Latest),
+            ..uri
+        };
+        assert_eq!(serde_json::to_string(&uri).unwrap(), latest);
+        assert_eq!(serde_json::from_str::<S3PackageUri>(latest).unwrap(), uri);
     }
 }

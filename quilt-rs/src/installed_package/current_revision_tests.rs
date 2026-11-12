@@ -75,7 +75,7 @@ async fn current_revision_prefers_a_pending_commit_over_the_remote_hash() -> Res
         .commit
         .expect("a locally created package has a pending commit")
         .hash;
-    let remote_hash = "published-revision".to_string();
+    let remote_hash = "9".repeat(64);
 
     package
         .lineage
