@@ -1943,14 +1943,12 @@ mod tests {
         m: &impl model::QuiltModel,
         paused: Option<PausedReason>,
     ) -> MainPagePackage {
-        let paused_reasons = paused
-            .map(|paused| {
-                HashMap::from([(
-                    quilt_uri::Namespace::try_from("team/one").expect("a valid fixture namespace"),
-                    paused,
-                )])
-            })
-            .unwrap_or_default();
+        let paused_reasons = paused.map_or_default(|paused| {
+            HashMap::from([(
+                quilt_uri::Namespace::try_from("team/one").expect("a valid fixture namespace"),
+                paused,
+            )])
+        });
         let packages = get_main_page_packages_from_model(
             m,
             &RoleCache::default(),

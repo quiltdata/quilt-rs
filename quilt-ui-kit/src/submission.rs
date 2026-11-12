@@ -148,7 +148,7 @@ impl Submission {
         view! {
             <Show when=move || error.get().is_some()>
                 <Banner variant=BannerVariant::Critical on_dismiss=move |_| error.set(None)>
-                    {move || error.get().map(|e| readable(&e)).unwrap_or_default()}
+                    {move || error.get().map_or_default(|e| readable(&e))}
                 </Banner>
             </Show>
         }

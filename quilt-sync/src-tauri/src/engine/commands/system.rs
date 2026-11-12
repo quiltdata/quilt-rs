@@ -131,11 +131,8 @@ async fn run_gc_command(m: &impl QuiltModel) -> Result<FreedSpace, String> {
     // success message is the report's own sentence, known only once it ends.
     let notify = Notify::new("Freeing up space".to_string());
     let result = m.gc().await;
-    let freed_bytes = result
-        .as_ref()
-        .map(|report| report.bytes)
-        .unwrap_or_default();
-    let msg_ok = result.as_ref().map(ToString::to_string).unwrap_or_default();
+    let freed_bytes = result.as_ref().map_or_default(|report| report.bytes);
+    let msg_ok = result.as_ref().map_or_default(ToString::to_string);
     let msg_err = |err: &Error| format!("Failed to free up space: {}", err.user_facing());
 
     notify

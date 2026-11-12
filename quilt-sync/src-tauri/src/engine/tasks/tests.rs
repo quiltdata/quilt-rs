@@ -59,9 +59,7 @@ struct Revision {
 type Published = Arc<Mutex<Vec<Revision>>>;
 
 fn changed_paths(status: Option<&quilt::lineage::InstalledPackageStatus>) -> BTreeSet<String> {
-    status
-        .map(|s| s.changes.keys().map(|p| p.display().to_string()).collect())
-        .unwrap_or_default()
+    status.map_or_default(|s| s.changes.keys().map(|p| p.display().to_string()).collect())
 }
 
 /// The agent's `out.md`, left in the tree.
