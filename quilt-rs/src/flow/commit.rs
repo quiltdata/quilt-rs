@@ -306,7 +306,7 @@ pub async fn commit_package(
     };
 
     let header = ManifestHeader {
-        message: Some(message.clone()),
+        message: Some(Some(message.clone())),
         workflow,
         user_meta,
         ..ManifestHeader::default()
@@ -340,7 +340,7 @@ pub async fn commit_package(
         remote,
         host,
         &namespace.to_string(),
-        header.message.as_deref(),
+        header.message(),
         header.user_meta.as_ref(),
         header.workflow.as_ref(),
         &entries,

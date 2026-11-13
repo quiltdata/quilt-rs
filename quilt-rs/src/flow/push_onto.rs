@@ -48,7 +48,7 @@ pub async fn push_onto(
         parent.origin.as_ref(),
         &parent.bucket,
         &parent.namespace.to_string(),
-        manifest.header.message.as_deref(),
+        manifest.header.message(),
         manifest.header.user_meta.as_ref(),
         manifest.header.workflow.as_ref(),
         &entries,
@@ -115,7 +115,7 @@ mod tests {
     fn manifest(physical_key: &str) -> Res<Manifest> {
         Ok(Manifest {
             header: ManifestHeader {
-                message: Some("Task TASK.md done".to_string()),
+                message: Some(Some("Task TASK.md done".to_string())),
                 ..ManifestHeader::default()
             },
             rows: vec![ManifestRow {

@@ -139,7 +139,7 @@ pub async fn recommit_for_remote(
                 remote,
                 host,
                 &namespace.to_string(),
-                header.message.as_deref(),
+                header.message(),
                 header.user_meta.as_ref(),
                 header.workflow.as_ref(),
                 Some(config),
@@ -152,7 +152,7 @@ pub async fn recommit_for_remote(
                 remote,
                 host,
                 &namespace.to_string(),
-                header.message.as_deref(),
+                header.message(),
                 header.user_meta.as_ref(),
                 header.workflow.as_ref(),
                 &entries,
@@ -240,7 +240,7 @@ mod tests {
 
         // Build manifest
         let header = ManifestHeader {
-            message: Some("Initial commit".to_string()),
+            message: Some(Some("Initial commit".to_string())),
             user_meta: Some(serde_json::json!({"key": "value"})),
             ..ManifestHeader::default()
         };
@@ -403,8 +403,8 @@ mod tests {
         let new_manifest = Manifest::from_path(&storage, &manifest_path).await?;
 
         assert_eq!(
-            new_manifest.header.message,
-            Some("Initial commit".to_string()),
+            new_manifest.header.message(),
+            Some("Initial commit"),
             "Message should be preserved"
         );
         assert_eq!(
@@ -482,7 +482,7 @@ mod tests {
 
         // Build empty manifest
         let header = ManifestHeader {
-            message: Some("Empty package".to_string()),
+            message: Some(Some("Empty package".to_string())),
             ..ManifestHeader::default()
         };
         let stream = tokio_stream::iter(vec![Ok(Vec::<Res<ManifestRow>>::new())]);
@@ -536,7 +536,7 @@ mod tests {
         storage.create_dir_all(&installed_dir).await?;
 
         let header = ManifestHeader {
-            message: Some("msg".to_string()),
+            message: Some(Some("msg".to_string())),
             ..ManifestHeader::default()
         };
         let stream = tokio_stream::iter(vec![Ok(Vec::<Res<ManifestRow>>::new())]);

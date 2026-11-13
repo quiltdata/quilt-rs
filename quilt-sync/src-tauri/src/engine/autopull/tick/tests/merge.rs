@@ -24,7 +24,7 @@ fn file(key: &str, content: &str) -> Result<quilt::manifest::ManifestRow, Error>
 fn revision(message: &str, rows: Vec<quilt::manifest::ManifestRow>) -> quilt::manifest::Manifest {
     quilt::manifest::Manifest {
         header: quilt::manifest::ManifestHeader {
-            message: Some(message.to_string()),
+            message: Some(Some(message.to_string())),
             ..quilt::manifest::ManifestHeader::default()
         },
         rows,
@@ -266,7 +266,7 @@ fn moved(
         updated: Vec::new(),
         removed: Vec::new(),
         kept_not_removed: Vec::new(),
-        message: target.header.message.clone(),
+        message: target.header.message().map(str::to_owned),
     };
     for row in &target.rows {
         match ours
@@ -411,7 +411,7 @@ async fn the_merged_revision_carries_this_copys_message_under_latests_header() -
     tick(&model).await;
 
     let remote = seen(&remote);
-    assert_eq!(remote.latest().header.message.as_deref(), Some("mine"));
+    assert_eq!(remote.latest().header.message(), Some("mine"));
     assert_eq!(remote.latest().header.workflow, workflow);
     Ok(())
 }

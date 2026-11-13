@@ -1404,7 +1404,7 @@ mod tests {
             Ok(quilt::manifest::Manifest {
                 header: quilt::manifest::ManifestHeader {
                     version: "v0".to_string(),
-                    message: None,
+                    message: Some(None),
                     user_meta: None,
                     workflow: Some(quilt::manifest::Workflow {
                         config: config_uri,
@@ -1473,7 +1473,7 @@ mod tests {
             Ok(quilt::manifest::Manifest {
                 header: quilt::manifest::ManifestHeader {
                     version: "v0".to_string(),
-                    message: None,
+                    message: Some(None),
                     user_meta: None,
                     workflow: Some(quilt::manifest::Workflow {
                         config: config_uri,
@@ -1540,7 +1540,7 @@ mod tests {
             Ok(quilt::manifest::Manifest {
                 header: quilt::manifest::ManifestHeader {
                     version: "v0".to_string(),
-                    message: None,
+                    message: Some(None),
                     user_meta: None,
                     workflow: None,
                 },
@@ -1601,7 +1601,7 @@ mod tests {
             Ok(quilt::manifest::Manifest {
                 header: quilt::manifest::ManifestHeader {
                     version: "v0".to_string(),
-                    message: None,
+                    message: Some(None),
                     user_meta: None,
                     workflow: None,
                 },

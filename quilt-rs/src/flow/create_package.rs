@@ -214,7 +214,7 @@ pub async fn create_package(
 
     // Build initial manifest
     let header = ManifestHeader {
-        message: Some(message.unwrap_or_else(|| "Created package".to_string())),
+        message: Some(Some(message.unwrap_or_else(|| "Created package".to_string()))),
         ..ManifestHeader::default()
     };
 
@@ -548,8 +548,8 @@ mod tests {
         let manifest_path = paths.installed_manifest(&namespace, &commit.hash);
         let manifest = Manifest::from_path(&storage, &manifest_path).await?;
         assert_eq!(
-            manifest.header.message,
-            Some("My custom message".to_string())
+            manifest.header.message(),
+            Some("My custom message")
         );
         Ok(())
     }

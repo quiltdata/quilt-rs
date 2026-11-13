@@ -75,7 +75,7 @@ pub fn compare_for_resolve<S: BuildHasher>(
         })
         .count();
     ResolveComparison {
-        published_message: published.header.message.clone(),
+        published_message: published.header.message().map(str::to_owned),
         differing,
         lost,
         user_meta_differs: user_meta(current) != user_meta(published),
@@ -122,7 +122,7 @@ mod tests {
     }
 
     fn with_message(mut manifest: Manifest, message: Option<&str>) -> Manifest {
-        manifest.header.message = message.map(str::to_owned);
+        manifest.header.message = Some(message.map(str::to_owned));
         manifest
     }
 

@@ -84,3 +84,20 @@ async fn a_repeated_logical_key_is_named_in_the_error() -> Res {
     assert!(err.to_string().contains("data.csv"), "{err}");
     Ok(())
 }
+
+#[test(tokio::test)]
+async fn a_header_without_message_keeps_it_absent_on_save() -> Res {
+    let path = std::env::current_dir()?.join(
+        "fixtures/quilt3-packages/3426a3f721e41a1d83174c691432a39ff13720426267fc799dccf3583153e850-no-message.jsonl",
+    );
+    let manifest = Manifest::from_path(&LocalStorage::default(), &path).await?;
+
+    let saved = manifest.to_jsonlines();
+    let header_line = saved.lines().next().expect("a header line");
+    let header: serde_json::Value = serde_json::from_str(header_line)?;
+    assert!(header.get("message").is_none(), "{header_line}");
+
+    let reread = Manifest::from_reader(saved.as_bytes()).await?;
+    assert_eq!(reread, manifest);
+    Ok(())
+}

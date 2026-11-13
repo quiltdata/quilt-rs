@@ -122,7 +122,7 @@ async fn test_empty_manifest_header_null_empty() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         ManifestHeader {
-            message: None,
+            message: Some(None),
             ..ManifestHeader::default()
         },
         tokio_stream::empty(),
@@ -157,7 +157,7 @@ async fn test_empty_manifest_header_null_none() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         ManifestHeader {
-            message: None,
+            message: Some(None),
             user_meta: None,
             ..ManifestHeader::default()
         },
@@ -193,7 +193,7 @@ async fn test_empty_manifest_header_null_null() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         ManifestHeader {
-            message: None,
+            message: Some(None),
             user_meta: Some(serde_json::Value::Null),
             ..ManifestHeader::default()
         },
@@ -229,7 +229,7 @@ async fn test_empty_manifest_header_initial_empty() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         ManifestHeader {
-            message: Some("Initial".to_string()),
+            message: Some(Some("Initial".to_string())),
             user_meta: Some(serde_json::json!({})),
             ..ManifestHeader::default()
         },
@@ -265,7 +265,7 @@ async fn test_empty_manifest_header_initial_none() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         ManifestHeader {
-            message: Some("Initial".to_string()),
+            message: Some(Some("Initial".to_string())),
             user_meta: None,
             ..ManifestHeader::default()
         },
@@ -301,7 +301,7 @@ async fn test_empty_manifest_header_initial_null() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         ManifestHeader {
-            message: Some("Initial".to_string()),
+            message: Some(Some("Initial".to_string())),
             user_meta: Some(serde_json::Value::Null),
             ..ManifestHeader::default()
         },
@@ -337,7 +337,7 @@ async fn test_empty_manifest_header_initial_meta() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         ManifestHeader {
-            message: Some("Initial".to_string()),
+            message: Some(Some("Initial".to_string())),
             user_meta: Some(serde_json::json!({"key": "value"})),
             ..ManifestHeader::default()
         },
@@ -373,7 +373,7 @@ async fn test_empty_manifest_header_initial_complex_meta() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         ManifestHeader {
-            message: Some("Initial".to_string()),
+            message: Some(Some("Initial".to_string())),
             user_meta: Some(serde_json::json!({"author": "user", "timestamp": "2024-01-01"})),
             ..ManifestHeader::default()
         },
@@ -424,7 +424,7 @@ async fn test_empty_manifest_header_initial_large_meta() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         ManifestHeader {
-            message: Some("Initial".to_string()),
+            message: Some(Some("Initial".to_string())),
             user_meta: Some(large_meta.clone()),
             ..ManifestHeader::default()
         },
@@ -463,7 +463,7 @@ async fn test_empty_manifest_header_empty_empty_simple_workflow() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         ManifestHeader {
-            message: Some(String::new()),
+            message: Some(Some(String::new())),
             user_meta: Some(serde_json::json!({})),
             workflow: Some(Workflow {
                 config: "s3://workflow/config".parse()?,
@@ -509,7 +509,7 @@ async fn test_empty_manifest_header_empty_empty_complex_workflow() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         ManifestHeader {
-            message: Some(String::new()),
+            message: Some(Some(String::new())),
             user_meta: Some(serde_json::json!({})),
             workflow: Some(Workflow {
                 config: "s3://workflow/config".parse()?,
@@ -561,7 +561,7 @@ async fn test_empty_manifest_header_initial_empty_simple_workflow() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         ManifestHeader {
-            message: Some("Initial".to_string()),
+            message: Some(Some("Initial".to_string())),
             user_meta: Some(serde_json::json!({})),
             workflow: Some(Workflow {
                 config: "s3://workflow/config".parse()?,
@@ -607,7 +607,7 @@ async fn test_empty_manifest_header_initial_empty_complex_workflow() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         ManifestHeader {
-            message: Some("Initial".to_string()),
+            message: Some(Some("Initial".to_string())),
             user_meta: Some(serde_json::json!({})),
             workflow: Some(Workflow {
                 config: "s3://workflow/config".parse()?,
@@ -659,7 +659,7 @@ async fn test_empty_manifest_header_empty_none_simple_workflow() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         ManifestHeader {
-            message: Some(String::new()),
+            message: Some(Some(String::new())),
             user_meta: None,
             workflow: Some(Workflow {
                 config: "s3://workflow/config".parse()?,
@@ -705,7 +705,7 @@ async fn test_empty_manifest_header_empty_null_simple_workflow() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         ManifestHeader {
-            message: Some(String::new()),
+            message: Some(Some(String::new())),
             user_meta: Some(serde_json::Value::Null),
             workflow: Some(Workflow {
                 config: "s3://workflow/config".parse()?,
@@ -751,7 +751,7 @@ async fn test_empty_manifest_header_initial_meta_simple_workflow() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         ManifestHeader {
-            message: Some("Initial".to_string()),
+            message: Some(Some("Initial".to_string())),
             user_meta: Some(serde_json::json!({"key": "value"})),
             workflow: Some(Workflow {
                 config: "s3://workflow/config".parse()?,
@@ -797,7 +797,7 @@ async fn test_empty_manifest_header_initial_none_complex_workflow() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         ManifestHeader {
-            message: Some("Initial".to_string()),
+            message: Some(Some("Initial".to_string())),
             user_meta: None,
             workflow: Some(Workflow {
                 config: "s3://workflow/config".parse()?,

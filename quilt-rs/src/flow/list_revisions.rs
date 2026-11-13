@@ -62,7 +62,7 @@ impl Revision {
         Self {
             hash,
             obtained,
-            message: header.message,
+            message: header.message.flatten(),
             meta,
             workflow: header.workflow.and_then(|w| w.id).map(|id| id.id),
         }

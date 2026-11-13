@@ -73,7 +73,7 @@ pub(super) async fn onto_latest<M: QuiltModel>(
             info!("autosync: {namespace}: latest already holds this copy's change");
             return move_to(&held, &theirs_uri).await;
         }
-        let message = merged.header.message.clone().unwrap_or_default();
+        let message = merged.header.message().unwrap_or_default().to_owned();
         let changes = crate::engine::record::changes_between(&theirs.rows, &merged.rows);
         let pushed = {
             let _activity = aggregator.activity_guard(ActivityOp::Publish, namespace);

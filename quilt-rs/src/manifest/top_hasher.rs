@@ -146,11 +146,9 @@ fn serialize_manifest_header(
 ) -> Res<serde_json::Map<String, serde_json::Value>> {
     let mut header_meta = serde_json::Map::new();
 
-    // Handle message
+    // A header without a `message` key hashes without it.
     if let Some(message) = &manifest_header.message {
         header_meta.insert("message".to_string(), serde_json::to_value(message)?);
-    } else {
-        header_meta.insert("message".to_string(), serde_json::Value::Null);
     }
 
     // Handle user_meta - preserve null vs missing distinction for header
@@ -375,7 +373,7 @@ mod tests {
     #[test]
     fn test_manifest_header_null_empty_no_rows() -> Res {
         let header = ManifestHeader {
-            message: None,
+            message: Some(None),
             ..ManifestHeader::default()
         };
 
@@ -392,7 +390,7 @@ mod tests {
     #[test]
     fn test_manifest_header_null_none_no_rows() -> Res {
         let header = ManifestHeader {
-            message: None,
+            message: Some(None),
             user_meta: None,
             ..ManifestHeader::default()
         };
@@ -410,7 +408,7 @@ mod tests {
     #[test]
     fn test_manifest_header_null_null_no_rows() -> Res {
         let header = ManifestHeader {
-            message: None,
+            message: Some(None),
             user_meta: Some(serde_json::Value::Null),
             ..ManifestHeader::default()
         };
@@ -428,7 +426,7 @@ mod tests {
     #[test]
     fn test_manifest_header_initial_empty_no_rows() -> Res {
         let header = ManifestHeader {
-            message: Some("Initial".to_string()),
+            message: Some(Some("Initial".to_string())),
             user_meta: Some(serde_json::json!({})),
             ..ManifestHeader::default()
         };
@@ -446,7 +444,7 @@ mod tests {
     #[test]
     fn test_manifest_header_initial_none_no_rows() -> Res {
         let header = ManifestHeader {
-            message: Some("Initial".to_string()),
+            message: Some(Some("Initial".to_string())),
             user_meta: None,
             ..ManifestHeader::default()
         };
@@ -464,7 +462,7 @@ mod tests {
     #[test]
     fn test_manifest_header_initial_null_no_rows() -> Res {
         let header = ManifestHeader {
-            message: Some("Initial".to_string()),
+            message: Some(Some("Initial".to_string())),
             user_meta: Some(serde_json::Value::Null),
             ..ManifestHeader::default()
         };
@@ -482,7 +480,7 @@ mod tests {
     #[test]
     fn test_manifest_header_initial_meta_no_rows() -> Res {
         let header = ManifestHeader {
-            message: Some("Initial".to_string()),
+            message: Some(Some("Initial".to_string())),
             user_meta: Some(serde_json::json!({"key": "value"})),
             ..ManifestHeader::default()
         };
@@ -500,7 +498,7 @@ mod tests {
     #[test]
     fn test_manifest_header_initial_complex_meta_no_rows() -> Res {
         let header = ManifestHeader {
-            message: Some("Initial".to_string()),
+            message: Some(Some("Initial".to_string())),
             user_meta: Some(serde_json::json!({"author": "user", "timestamp": "2024-01-01"})),
             ..ManifestHeader::default()
         };
@@ -518,7 +516,7 @@ mod tests {
     #[test]
     fn test_manifest_header_initial_large_meta_no_rows() -> Res {
         let header = ManifestHeader {
-            message: Some("Initial".to_string()),
+            message: Some(Some("Initial".to_string())),
             user_meta: Some(serde_json::json!({
                 "author": "user",
                 "timestamp": "2024-01-01T10:30:00Z",
@@ -547,7 +545,7 @@ mod tests {
     #[test]
     fn test_manifest_header_empty_empty_simple_workflow_no_rows() -> Res {
         let header = ManifestHeader {
-            message: Some(String::new()),
+            message: Some(Some(String::new())),
             user_meta: Some(serde_json::json!({})),
             workflow: Some(Workflow {
                 config: "s3://workflow/config".parse()?,
@@ -572,7 +570,7 @@ mod tests {
     #[test]
     fn test_manifest_header_empty_empty_complex_workflow_no_rows() -> Res {
         let header = ManifestHeader {
-            message: Some(String::new()),
+            message: Some(Some(String::new())),
             user_meta: Some(serde_json::json!({})),
             workflow: Some(Workflow {
                 config: "s3://workflow/config".parse()?,
@@ -605,7 +603,7 @@ mod tests {
         // An entries-schema-only stamp must hash identically to quilt3's — the
         // constant is corroborated against quilt3, not copied from this output.
         let header = ManifestHeader {
-            message: Some(String::new()),
+            message: Some(Some(String::new())),
             user_meta: Some(serde_json::json!({})),
             workflow: Some(Workflow {
                 config: "s3://workflow/config".parse()?,
@@ -635,7 +633,7 @@ mod tests {
     fn test_manifest_header_empty_empty_dual_workflow_no_rows() -> Res {
         // Both schemas stamped; hash corroborated against quilt3.
         let header = ManifestHeader {
-            message: Some(String::new()),
+            message: Some(Some(String::new())),
             user_meta: Some(serde_json::json!({})),
             workflow: Some(Workflow {
                 config: "s3://workflow/config".parse()?,
@@ -670,7 +668,7 @@ mod tests {
     #[test]
     fn test_manifest_header_initial_empty_simple_workflow_no_rows() -> Res {
         let header = ManifestHeader {
-            message: Some("Initial".to_string()),
+            message: Some(Some("Initial".to_string())),
             user_meta: Some(serde_json::json!({})),
             workflow: Some(Workflow {
                 config: "s3://workflow/config".parse()?,
@@ -695,7 +693,7 @@ mod tests {
     #[test]
     fn test_manifest_header_initial_empty_complex_workflow_no_rows() -> Res {
         let header = ManifestHeader {
-            message: Some("Initial".to_string()),
+            message: Some(Some("Initial".to_string())),
             user_meta: Some(serde_json::json!({})),
             workflow: Some(Workflow {
                 config: "s3://workflow/config".parse()?,
@@ -726,7 +724,7 @@ mod tests {
     #[test]
     fn test_manifest_header_empty_none_simple_workflow_no_rows() -> Res {
         let header = ManifestHeader {
-            message: Some(String::new()),
+            message: Some(Some(String::new())),
             user_meta: None,
             workflow: Some(Workflow {
                 config: "s3://workflow/config".parse()?,
@@ -751,7 +749,7 @@ mod tests {
     #[test]
     fn test_manifest_header_empty_null_simple_workflow_no_rows() -> Res {
         let header = ManifestHeader {
-            message: Some(String::new()),
+            message: Some(Some(String::new())),
             user_meta: Some(serde_json::Value::Null),
             workflow: Some(Workflow {
                 config: "s3://workflow/config".parse()?,
@@ -776,7 +774,7 @@ mod tests {
     #[test]
     fn test_manifest_header_initial_meta_simple_workflow_no_rows() -> Res {
         let header = ManifestHeader {
-            message: Some("Initial".to_string()),
+            message: Some(Some("Initial".to_string())),
             user_meta: Some(serde_json::json!({"key": "value"})),
             workflow: Some(Workflow {
                 config: "s3://workflow/config".parse()?,
@@ -801,7 +799,7 @@ mod tests {
     #[test]
     fn test_manifest_header_initial_none_complex_workflow_no_rows() -> Res {
         let header = ManifestHeader {
-            message: Some("Initial".to_string()),
+            message: Some(Some("Initial".to_string())),
             user_meta: None,
             workflow: Some(Workflow {
                 config: "s3://workflow/config".parse()?,
@@ -832,7 +830,7 @@ mod tests {
     #[test]
     fn test_checksummed_manifest_top_hash_direct() -> Res {
         let header = ManifestHeader {
-            message: Some("Initial".to_string()),
+            message: Some(Some("Initial".to_string())),
             user_meta: None,
             ..ManifestHeader::default()
         };
