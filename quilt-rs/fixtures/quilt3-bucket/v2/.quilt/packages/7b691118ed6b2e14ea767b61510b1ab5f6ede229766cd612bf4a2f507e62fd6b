@@ -1,0 +1,3 @@
+{"version": "v0", "message": "v2"}
+{"logical_key": "data.txt", "physical_keys": ["s3://quilt3-bucket/quilt3/pkg/data.txt?versionId=16072a92-b079-4368-8e52-f161a8c1750b"], "size": 4, "hash": {"type": "sha2-256-chunked", "value": "2mO054XBdfxa9I6KtxdcLtutLfKxwFsQ9qJ3nHSv1yA="}, "meta": {}}
+{"logical_key": "same.txt", "physical_keys": ["s3://quilt3-bucket/quilt3/pkg/same.txt?versionId=e149f653-b0e2-4a42-bbf9-7e5252419564"], "size": 5, "hash": {"type": "sha2-256-chunked", "value": "/7DeV2WjzVk9dWhntMZP668jMClFGq72UkVvkfskOk4="}, "meta": {}}
