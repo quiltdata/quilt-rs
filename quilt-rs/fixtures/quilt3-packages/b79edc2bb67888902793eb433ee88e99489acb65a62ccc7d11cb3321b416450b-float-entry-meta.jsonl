@@ -1,0 +1,2 @@
+{"message":"","user_meta":{},"version":"v0"}
+{"logical_key":"data.csv","physical_keys":["s3://bucket/data.csv"],"hash":{"type":"sha2-256-chunked","value":"Xb1PbjJeWof4zD7zuHc9PI7sLiz/Ykj4gphlaZEt3xA="},"size":16,"meta":{"tiny":1e-7,"negative_tiny":-2.5e-8,"below_fixed":1e-5,"smallest_fixed":0.0001,"fraction":0.1,"one":1.0,"largest_fixed":1e15,"big":1e16,"huge":1.5e300,"negative_zero":-0.0,"subnormal":5e-324,"max":1.7976931348623157e308,"digits":123456789.123,"nested":{"list":[1e-7,3e22,0.5]}}}

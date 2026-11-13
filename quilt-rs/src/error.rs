@@ -212,6 +212,9 @@ pub enum ManifestError {
 
     #[error("Table error: {0}")]
     Table(String),
+
+    #[error("Manifest lists the logical key {0:?} more than once")]
+    DuplicateLogicalKey(String),
 }
 
 #[derive(Error, Debug)]

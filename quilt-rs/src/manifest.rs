@@ -171,9 +171,15 @@ impl Manifest {
         }
 
         let mut rows = Vec::new();
+        let mut seen = std::collections::HashSet::new();
 
         while let Some(line) = lines.next_line().await? {
             let row: Quilt3ManifestRow = serde_json::from_str(&line)?;
+            if !seen.insert(row.logical_key.clone()) {
+                return Err(Error::Manifest(ManifestError::DuplicateLogicalKey(
+                    row.logical_key.to_string(),
+                )));
+            }
             rows.push(ManifestRow::try_from(row)?);
         }
 
@@ -298,6 +304,9 @@ impl From<&Manifest> for ByteStream {
         manifest.to_jsonlines().into_bytes().into()
     }
 }
+
+#[cfg(test)]
+mod quilt3_fixtures_tests;
 
 #[cfg(test)]
 mod tests {

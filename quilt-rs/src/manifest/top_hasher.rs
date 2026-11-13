@@ -7,7 +7,6 @@ use std::fmt;
 
 use aws_smithy_checksums::ChecksumAlgorithm;
 use serde::Serialize;
-use serde_json_fmt::JsonFormat;
 
 use crate::Res;
 use crate::manifest::ManifestHeader;
@@ -17,15 +16,115 @@ use crate::manifest::Workflow;
 #[cfg(test)]
 use crate::manifest::WorkflowId;
 
-/// Serialize JSON to match Python's `json.JSONEncoder` `separators=(',', ':')` and `ensure_ascii=True`
-/// TODO: Also implement `sort_keys=True` to fully match Python's behavior
+/// Serialize JSON the way quilt3 does for the top hash:
+/// `json.JSONEncoder(sort_keys=True, separators=(',', ':'))`, which also sets
+/// `ensure_ascii=True` and writes floats with Python's `repr`.
 fn serialize_like_python<T: Serialize>(value: &T) -> Res<String> {
-    // Use serde-json-fmt to configure JSON formatting to match Python's behavior
-    // JsonFormat::new() defaults to compact format (comma:",", colon":") which matches Python
-    let format = JsonFormat::new().ascii(true); // Match Python's ensure_ascii=True - escape non-ASCII characters
+    let mut out = String::new();
+    write_python_json(&mut out, &serde_json::to_value(value)?);
+    Ok(out)
+}
 
-    let json_str = format.format_to_string(value)?;
-    Ok(json_str)
+fn write_python_json(out: &mut String, value: &serde_json::Value) {
+    use serde_json::Value;
+    match value {
+        Value::Null => out.push_str("null"),
+        Value::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
+        Value::Number(n) => match n.as_f64() {
+            Some(f) if n.is_f64() => out.push_str(&python_float_repr(f)),
+            _ => out.push_str(&n.to_string()),
+        },
+        Value::String(s) => write_python_string(out, s),
+        Value::Array(items) => {
+            out.push('[');
+            for (i, item) in items.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                write_python_json(out, item);
+            }
+            out.push(']');
+        }
+        Value::Object(map) => {
+            // Byte order of UTF-8 is code point order, which is how Python sorts.
+            let mut entries: Vec<_> = map.iter().collect();
+            entries.sort_by(|a, b| a.0.cmp(b.0));
+            out.push('{');
+            for (i, (key, item)) in entries.into_iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                write_python_string(out, key);
+                out.push(':');
+                write_python_json(out, item);
+            }
+            out.push('}');
+        }
+    }
+}
+
+/// Python's `ensure_ascii` escaping: everything outside `' '..='~'` is escaped,
+/// with UTF-16 surrogate pairs above U+FFFF.
+fn write_python_string(out: &mut String, s: &str) {
+    use std::fmt::Write;
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{08}' => out.push_str("\\b"),
+            '\u{0c}' => out.push_str("\\f"),
+            ' '..='~' => out.push(c),
+            _ => {
+                let mut units = [0u16; 2];
+                for unit in c.encode_utf16(&mut units) {
+                    let _ = write!(out, "\\u{unit:04x}");
+                }
+            }
+        }
+    }
+    out.push('"');
+}
+
+/// Python's `float.__repr__`: the shortest digits that read back the same,
+/// written plain when the exponent is in `-4..16`, else as `1e-07` / `1.5e+300`.
+fn python_float_repr(f: f64) -> String {
+    // Rust's `{:e}` gives the same shortest digits, as `1.5e300` or `-1e-7`.
+    let sci = format!("{f:e}");
+    let (mantissa, exp) = sci.split_once('e').expect("{:e} always has an exponent");
+    let exp: i32 = exp.parse().expect("{:e} exponent is an integer");
+    let (sign, mantissa) = match mantissa.strip_prefix('-') {
+        Some(m) => ("-", m),
+        None => ("", mantissa),
+    };
+    let digits: String = mantissa.chars().filter(|c| *c != '.').collect();
+
+    if (-4..16).contains(&exp) {
+        let point = exp + 1; // digits before the decimal point
+        if point <= 0 {
+            let zeros = "0".repeat(usize::try_from(-point).unwrap_or_default());
+            format!("{sign}0.{zeros}{digits}")
+        } else {
+            let point = usize::try_from(point).unwrap_or_default();
+            if digits.len() > point {
+                format!("{sign}{}.{}", &digits[..point], &digits[point..])
+            } else {
+                let zeros = "0".repeat(point - digits.len());
+                format!("{sign}{digits}{zeros}.0")
+            }
+        }
+    } else {
+        let exp_sign = if exp < 0 { '-' } else { '+' };
+        let mantissa = if digits.len() > 1 {
+            format!("{}.{}", &digits[..1], &digits[1..])
+        } else {
+            digits
+        };
+        format!("{sign}{mantissa}e{exp_sign}{:02}", exp.abs())
+    }
 }
 
 fn serialize_manifest_header(
@@ -66,25 +165,27 @@ fn serialize_manifest_header(
     Ok(header_meta)
 }
 
-/// An entry's `meta` as the top hash reads it, so null, absent and `{}` are one value.
-pub(crate) fn normalized_entry_meta(
-    meta: Option<&serde_json::Value>,
-) -> serde_json::Map<String, serde_json::Value> {
-    match meta {
-        Some(serde_json::Value::Object(obj)) => {
-            let mut m = obj.clone();
-            m.values_mut().for_each(serde_json::Value::sort_all_objects);
-            m.sort_keys();
-            m
-        }
-        Some(serde_json::Value::Null) | None => serde_json::Map::default(), // quilt3: meta = meta or {}
-        Some(other) => {
-            // If meta is not an object or null, wrap it in an object
-            let mut obj = serde_json::Map::new();
-            obj.insert("user_meta".to_string(), other.clone());
-            obj
-        }
+/// An entry's `meta` as the top hash reads it.
+///
+/// quilt3 keeps `meta or {}`, so an absent `meta` and every value Python reads
+/// as false (`null`, `false`, `0`, `0.0`, `""`, `[]`, `{}`) are `{}`; anything
+/// else is kept as is.
+pub(crate) fn normalized_entry_meta(meta: Option<&serde_json::Value>) -> serde_json::Value {
+    use serde_json::Value;
+    let is_falsy = match meta {
+        None | Some(Value::Null) => true,
+        Some(Value::Bool(b)) => !b,
+        Some(Value::Number(n)) => n.as_f64() == Some(0.0),
+        Some(Value::String(s)) => s.is_empty(),
+        Some(Value::Array(a)) => a.is_empty(),
+        Some(Value::Object(o)) => o.is_empty(),
+    };
+    if is_falsy {
+        return Value::Object(serde_json::Map::default());
     }
+    let mut value = meta.cloned().unwrap_or_default();
+    value.sort_all_objects();
+    value
 }
 
 pub fn serialize_manifest_row_entry(
@@ -101,7 +202,7 @@ pub fn serialize_manifest_row_entry(
             "logical_key".to_string(),
             serde_json::to_value(&manifest_row.logical_key)?,
         ),
-        ("meta".to_string(), serde_json::Value::Object(meta)),
+        ("meta".to_string(), meta),
         (
             "size".to_string(),
             serde_json::Value::Number(manifest_row.size.into()),
@@ -172,6 +273,40 @@ mod tests {
     use crate::object_hash::Crc64Hash;
     use crate::object_hash::Sha256ChunkedHash;
     use crate::object_hash::Sha256Hash;
+
+    /// Expected text is Python's `repr(float(input))`.
+    #[test]
+    fn floats_are_written_as_python_repr() {
+        for (input, expected) in [
+            ("1e-7", "1e-07"),
+            ("-2.5e-8", "-2.5e-08"),
+            ("1e-5", "1e-05"),
+            ("0.0001", "0.0001"),
+            ("0.00012345", "0.00012345"),
+            ("0.1", "0.1"),
+            ("1.0", "1.0"),
+            ("-0.0", "-0.0"),
+            ("0.0", "0.0"),
+            ("100.0", "100.0"),
+            ("123456789.123", "123456789.123"),
+            ("1e15", "1000000000000000.0"),
+            ("999999999999999.9", "999999999999999.9"),
+            ("1e16", "1e+16"),
+            ("1.5e300", "1.5e+300"),
+            ("5e-324", "5e-324"),
+            ("1.7976931348623157e308", "1.7976931348623157e+308"),
+            ("3e22", "3e+22"),
+            ("0.30000000000000004", "0.30000000000000004"),
+            ("2.5", "2.5"),
+            ("1234567890123456.0", "1234567890123456.0"),
+            ("12345678901234567.0", "1.2345678901234568e+16"),
+            ("-1e-4", "-0.0001"),
+            ("9.999999999999999e-5", "9.999999999999999e-05"),
+        ] {
+            let f: f64 = input.parse().unwrap();
+            assert_eq!(python_float_repr(f), expected, "{input}");
+        }
+    }
 
     #[test]
     fn test_manifest_header_default_no_rows() -> Res {
