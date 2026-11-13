@@ -336,9 +336,10 @@ impl Args {
     }
 
     /// Whether this run may show the newer-release notice: not while
-    /// `quilt upgrade` acts on it.
+    /// `quilt upgrade` acts on it, and not from `quilt version`, which writes
+    /// nothing and asks nothing of the network.
     pub fn shows_update_notice(&self) -> bool {
-        !matches!(self.command, Commands::Upgrade)
+        !matches!(self.command, Commands::Upgrade | Commands::Version { .. })
     }
 
     /// The format of the command's result: `--json` or `--format`, then

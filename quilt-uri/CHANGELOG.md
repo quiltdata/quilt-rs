@@ -20,7 +20,7 @@
 
 ### Added
 
-- `VERSION` holds the crate's version (<https://github.com/quiltdata/quilt-rs/pull/PRNUM>)
+- `VERSION` holds the crate's version (<https://github.com/quiltdata/quilt-rs/pull/1371>)
 
 ## [v0.5.0] - 2026-11-12
 

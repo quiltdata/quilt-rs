@@ -23,7 +23,7 @@
 
 ### Added
 
-- `quilt version` prints what `quilt --version` prints, and `quilt version --details` adds what a bug report needs: the library versions, the OS, and the folders quilt uses (<https://github.com/quiltdata/quilt-rs/pull/PRNUM>)
+- `quilt version` prints what `quilt --version` prints, and `quilt version --details` adds what a bug report needs: the library versions, the OS, and the folders quilt uses (<https://github.com/quiltdata/quilt-rs/pull/1371>)
 
 ### quilt-rs
 

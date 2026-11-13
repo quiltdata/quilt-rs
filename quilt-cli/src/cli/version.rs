@@ -302,6 +302,12 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn version_skips_the_update_check() {
+        let args = Args::try_parse_from(["quilt", "version", "--details"]).expect("parses");
+        assert!(!args.shows_update_notice());
+    }
+
     /// `-v` stays the global logs flag; it does not ask for details.
     #[test]
     fn verbose_does_not_mean_details() {
