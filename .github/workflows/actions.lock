@@ -32,7 +32,7 @@ workflows:
         - 'biomejs/setup-biome@v2.7.1'
         - 'dorny/paths-filter@v4.0.3'
         - 'moonrepo/setup-rust@v1.3.0'
-        - 'rvben/rumdl@v0.3.3'
+        - 'rvben/rumdl@v0.3.4'
         - 'swatinem/rust-cache@v2.9.3'
         - 'taiki-e/install-action@v2.90.3'
     '.github/workflows/upload-to-hubspot.yaml': []
@@ -89,9 +89,9 @@ dependencies:
         commit: 'sha1-3268eb413133e2960fa4ae0e963ca76380c54cd9'
         owner_id: 5430905
         repo_id: 1008931044
-    'rvben/rumdl@v0.3.3':
-        ref: 'v0.3.3'
-        commit: 'sha1-dac508e6b2f52c1d869811d138ffc1ff2b9f6e71'
+    'rvben/rumdl@v0.3.4':
+        ref: 'v0.3.4'
+        commit: 'sha1-0d3d6e4f07c585a9433df162949ca0fe280a40dd'
         owner_id: 5196381
         repo_id: 940812004
     'swatinem/rust-cache@v2.9.3':
