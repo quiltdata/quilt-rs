@@ -474,6 +474,27 @@ pub async fn install_paths(
     Ok((lineage, report))
 }
 
+/// Refuses a package two of whose keys name one local file, or where one
+/// key's file would be a folder of another's, before anything is written.
+///
+/// Sorted as local paths, a path that is also a folder comes right before one
+/// of the paths inside it, and a repeated path right before its twin, so
+/// comparing neighbours is enough.
+fn refuse_clashing_local_paths(rows: &[ManifestRow]) -> Res {
+    let mut keys: Vec<&LogicalKey> = rows.iter().map(|row| &row.logical_key).collect();
+    keys.sort_unstable_by(|a, b| a.as_path().cmp(b.as_path()));
+    match keys
+        .windows(2)
+        .find(|pair| pair[1].as_path().starts_with(pair[0].as_path()))
+    {
+        Some(pair) => Err(Error::InstallPath(InstallPathError::LocalPathClash(
+            pair[0].to_string(),
+            pair[1].to_string(),
+        ))),
+        None => Ok(()),
+    }
+}
+
 /// Installs paths **over** whatever the working tree already holds for them.
 /// Its report never lists `already_installed` paths.
 ///
@@ -515,6 +536,7 @@ pub(crate) async fn install_paths_over(
     protect: &Protect<'_>,
     on_mismatch: OnMismatch,
 ) -> Res<(PackageLineage, InstallPathsReport)> {
+    refuse_clashing_local_paths(&manifest.rows)?;
     if entries_paths.is_empty() {
         info!("No paths to install");
         protect.check_removals(storage, &working_dir).await?;
@@ -528,9 +550,8 @@ pub(crate) async fn install_paths_over(
     let remote_uri = lineage.remote()?.clone();
 
     info!(
-        "⏳ Installing {} paths for package {}",
-        entries_paths.len(),
-        namespace
+        "⏳ Installing {} paths for package {namespace}",
+        entries_paths.len()
     );
 
     // for each path in entries_paths:
@@ -1405,5 +1426,127 @@ mod keys_outside_the_package {
         assert!(result.is_err(), "installed an absolute key: {key}");
         assert!(!outside.path().join("planted").exists());
         Ok(())
+    }
+}
+
+/// Keys holding `\` are one name in quilt3's format, but Windows reads the `\`
+/// as a folder separator. A package whose keys then name one local file, or a
+/// file and its folder, must be refused before anything is written.
+#[cfg(test)]
+mod keys_holding_a_backslash {
+    use super::*;
+    use test_log::test;
+
+    use crate::io::remote::mocks::MockRemote;
+    use crate::io::storage::LocalStorage;
+    use crate::lineage::Home;
+    use crate::paths;
+    use quilt_uri::ManifestUri;
+
+    fn files_in(dir: &Path) -> Vec<PathBuf> {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return Vec::new();
+        };
+        let mut files = Vec::new();
+        for path in entries.flatten().map(|entry| entry.path()) {
+            if path.is_dir() {
+                files.extend(files_in(&path));
+            } else {
+                files.push(path);
+            }
+        }
+        files
+    }
+
+    /// Reads a manifest with `keys`, each file holding `body of <key>`, and
+    /// installs all of them into a real folder. Returns what the install
+    /// returned, and the files the package folder holds afterwards.
+    async fn install_all(keys: &[&str]) -> Res<(Res, Vec<PathBuf>)> {
+        use sha2::Digest;
+
+        let (home, _home_dir) = Home::from_temp_dir()?;
+        let (domain_paths, _domain_dir) = DomainPaths::from_temp_dir()?;
+        let namespace = Namespace::from(("foo", "bar"));
+        let package_home = paths::package_home(&home, &namespace);
+        let storage = LocalStorage::default();
+        domain_paths
+            .scaffold_for_installing(&storage, &home, &namespace)
+            .await?;
+
+        let remote = MockRemote::default();
+        let mut jsonl = String::from("{\"version\":\"v0\",\"message\":\"\"}\n");
+        for (i, key) in keys.iter().enumerate() {
+            let body = format!("body of {key}");
+            let physical_key = format!("s3://bucket/{i}");
+            remote
+                .put_object(None, &physical_key.parse()?, body.clone().into_bytes())
+                .await?;
+            let row = serde_json::json!({
+                "logical_key": key,
+                "physical_keys": [physical_key],
+                "hash": {"type": "SHA256", "value": hex::encode(sha2::Sha256::digest(&body))},
+                "size": body.len(),
+                "meta": {},
+            });
+            jsonl.push_str(&row.to_string());
+            jsonl.push('\n');
+        }
+        let mut manifest = Manifest::from_reader(jsonl.as_bytes()).await?;
+        let keys: Vec<PathBuf> = manifest
+            .rows
+            .iter()
+            .map(|row| row.logical_key.to_path_buf())
+            .collect();
+        let result = install_paths(
+            PackageLineage {
+                remote_uri: Some(ManifestUri::default()),
+                ..PackageLineage::default()
+            },
+            &mut manifest,
+            &domain_paths,
+            package_home.clone(),
+            namespace,
+            &storage,
+            &remote,
+            &keys.iter().collect::<Vec<_>>(),
+        )
+        .await;
+        let result = result.map(|(lineage, _)| {
+            assert_eq!(lineage.paths.len(), manifest.rows.len());
+            for row in &manifest.rows {
+                let body = std::fs::read(row.logical_key.join_to(&package_home)).unwrap();
+                assert_eq!(body, format!("body of {}", row.logical_key).into_bytes());
+            }
+        });
+        Ok((result, files_in(&package_home)))
+    }
+
+    async fn assert_refused_on_windows(keys: [&str; 2]) -> Res {
+        let (result, files) = install_all(&keys).await?;
+        if cfg!(windows) {
+            let err = result.expect_err("installed keys that clash on Windows");
+            let Error::InstallPath(InstallPathError::LocalPathClash(first, second)) = err else {
+                panic!("refused with {err}");
+            };
+            let mut named = [first, second];
+            named.sort();
+            let mut expected = keys.map(String::from);
+            expected.sort();
+            assert_eq!(named, expected);
+            assert!(files.is_empty(), "wrote {files:?}");
+        } else {
+            result?;
+        }
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn a_file_and_a_file_under_it_by_backslash() -> Res {
+        assert_refused_on_windows(["data", "data\\x.csv"]).await
+    }
+
+    #[test(tokio::test)]
+    async fn a_slash_key_and_its_backslash_twin() -> Res {
+        assert_refused_on_windows(["a/b", "a\\b"]).await
     }
 }

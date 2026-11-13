@@ -1,8 +1,10 @@
 //!
 //! A package-relative file path that is known to stay inside the package folder.
 
-use std::borrow::Borrow;
+use std::cmp::Ordering;
 use std::fmt;
+use std::hash::Hash;
+use std::hash::Hasher;
 use std::ops::Deref;
 use std::path::Path;
 use std::path::PathBuf;
@@ -30,11 +32,47 @@ use thiserror::Error;
 ///
 /// Anywhere else a `\` is part of a name.
 ///
+/// Keys compare and sort by their `/`-separated names on every OS, the order
+/// of quilt3's top hash, so `a/c` sorts before `a-b`, and `a\b` after both.
+///
 /// [`LogicalKey::join_to`] is the way to turn a key into a local path.
 /// `LogicalKey` derefs to [`Path`] for reading, but on purpose isn't
 /// `AsRef<Path>`, so `folder.join(&key)` doesn't compile.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Debug)]
 pub struct LogicalKey(PathBuf);
+
+impl LogicalKey {
+    fn bytes(&self) -> &[u8] {
+        self.0.as_os_str().as_encoded_bytes()
+    }
+}
+
+impl PartialEq for LogicalKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.bytes() == other.bytes()
+    }
+}
+
+impl Eq for LogicalKey {}
+
+impl Hash for LogicalKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.bytes().hash(state);
+    }
+}
+
+impl Ord for LogicalKey {
+    fn cmp(&self, other: &Self) -> Ordering {
+        let slash = |b: &u8| *b == b'/';
+        self.bytes().split(slash).cmp(other.bytes().split(slash))
+    }
+}
+
+impl PartialOrd for LogicalKey {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
 
 /// Why a path can't be a [`LogicalKey`].
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
@@ -99,6 +137,14 @@ impl LogicalKey {
         path
     }
 
+    /// Whether `other` is inside this key taken as a folder, by `/` names.
+    pub(crate) fn is_folder_of(&self, other: &Self) -> bool {
+        other
+            .bytes()
+            .strip_prefix(self.bytes())
+            .is_some_and(|rest| rest.starts_with(b"/"))
+    }
+
     #[must_use]
     pub fn as_path(&self) -> &Path {
         &self.0
@@ -117,12 +163,6 @@ impl Deref for LogicalKey {
     type Target = Path;
 
     fn deref(&self) -> &Path {
-        &self.0
-    }
-}
-
-impl Borrow<Path> for LogicalKey {
-    fn borrow(&self) -> &Path {
         &self.0
     }
 }
@@ -214,6 +254,19 @@ impl<'de> Deserialize<'de> for LogicalKey {
 mod tests {
     use super::*;
     use crate::Res;
+
+    #[test]
+    fn keys_sort_by_their_slash_separated_names() -> Res {
+        let mut keys = ["a\\b", "a-b", "a/c"]
+            .into_iter()
+            .map(LogicalKey::new)
+            .collect::<Result<Vec<_>, _>>()?;
+        keys.sort();
+        let sorted: Vec<String> = keys.iter().map(ToString::to_string).collect();
+        assert_eq!(sorted, ["a/c", "a-b", "a\\b"]);
+        assert_ne!(LogicalKey::new("a/b")?, LogicalKey::new("a\\b")?);
+        Ok(())
+    }
 
     #[test]
     fn keys_inside_the_package_are_accepted() {

@@ -3,9 +3,9 @@
 
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
-use std::path::Path;
 use std::path::PathBuf;
 
+use crate::LogicalKey;
 use crate::flow::list_revisions::holds_user_meta;
 use crate::manifest::Manifest;
 use crate::manifest::ManifestHeader;
@@ -64,11 +64,11 @@ pub fn merge_rows_onto(
     theirs: Vec<ManifestRow>,
 ) -> Result<Vec<ManifestRow>, Vec<PathBuf>> {
     let (base, ours) = (by_key(base), by_key(ours));
-    let mut merged: BTreeMap<PathBuf, ManifestRow> = theirs
+    let mut merged: BTreeMap<LogicalKey, ManifestRow> = theirs
         .into_iter()
-        .map(|row| (row.logical_key.to_path_buf(), row))
+        .map(|row| (row.logical_key.clone(), row))
         .collect();
-    let keys: BTreeSet<&Path> = base.keys().chain(ours.keys()).copied().collect();
+    let keys: BTreeSet<&LogicalKey> = base.keys().chain(ours.keys()).copied().collect();
     let mut collisions = Vec::new();
     for key in keys {
         let (was, now) = (base.get(key).copied(), ours.get(key).copied());
@@ -81,20 +81,20 @@ pub fn merge_rows_onto(
             continue;
         }
         match now {
-            Some(row) => merged.insert(key.to_path_buf(), row.clone()),
+            Some(row) => merged.insert(key.clone(), row.clone()),
             None => merged.remove(key),
         };
     }
     if !collisions.is_empty() {
         return Err(collisions);
     }
-    // Keys sort by component, so a key that is a folder of others sorts right
-    // before one of them.
-    let merged_keys: Vec<&PathBuf> = merged.keys().collect();
+    // Keys sort by their `/` names, so a key that is a folder of others sorts
+    // right before one of them.
+    let merged_keys: Vec<&LogicalKey> = merged.keys().collect();
     let mut folders: Vec<PathBuf> = merged_keys
         .windows(2)
-        .filter(|pair| pair[1].starts_with(pair[0]))
-        .flat_map(|pair| [pair[0].clone(), pair[1].clone()])
+        .filter(|pair| pair[0].is_folder_of(pair[1]))
+        .flat_map(|pair| [pair[0].to_path_buf(), pair[1].to_path_buf()])
         .collect();
     folders.dedup();
     if !folders.is_empty() {
@@ -103,10 +103,8 @@ pub fn merge_rows_onto(
     Ok(merged.into_values().collect())
 }
 
-fn by_key(rows: &[ManifestRow]) -> BTreeMap<&Path, &ManifestRow> {
-    rows.iter()
-        .map(|row| (row.logical_key.as_path(), row))
-        .collect()
+fn by_key(rows: &[ManifestRow]) -> BTreeMap<&LogicalKey, &ManifestRow> {
+    rows.iter().map(|row| (&row.logical_key, row)).collect()
 }
 
 fn same_row(a: Option<&ManifestRow>, b: Option<&ManifestRow>) -> bool {
@@ -184,6 +182,33 @@ mod tests {
                 row("a.csv", b"mine")?,
                 row("b.csv", b"theirs")?,
                 row("new.csv", b"n")?,
+            ]
+        );
+        Ok(())
+    }
+
+    /// A `\\` is part of a name on every OS, so neither pair is one key or a
+    /// file and its folder.
+    #[test]
+    fn keys_holding_a_backslash_merge_as_names() -> Res {
+        let ours = rows(vec![row("z", b"mine")?]);
+        let theirs = rows(vec![
+            row("a/b", b"1")?,
+            row("a\\b", b"2")?,
+            row("data", b"3")?,
+            row("data\\x.csv", b"4")?,
+        ]);
+
+        let merged = merge_onto(&Manifest::default(), &ours, theirs).expect("merged");
+
+        assert_eq!(
+            merged.rows,
+            [
+                row("a/b", b"1")?,
+                row("a\\b", b"2")?,
+                row("data", b"3")?,
+                row("data\\x.csv", b"4")?,
+                row("z", b"mine")?,
             ]
         );
         Ok(())
