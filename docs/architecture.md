@@ -222,17 +222,14 @@ resolves `Diverged` against the remote.
 - The remote `latest` tag is re-read mid-push; the certify decision uses
   that fresh value, not the possibly-stale one from the last status
   check.
-- The push certifies its revision as `latest` when any of: it is the
-  first push, the caller was tracking the tip
-  (`base_hash == latest_hash`), or no latest tag exists yet.
-- **First push always certifies.** `is_first_push` is captured before
-  `base_hash` is filled in, and it short-circuits the tracking check: the
-  very first push of a package certifies its revision as `latest`
-  unconditionally — even when the remote already carries a different
-  `latest` (the state the classifier reports as `Diverged` when a
-  teammate published the same namespace first). The rationale recorded in
-  the code: the user explicitly pushed this version. Only *subsequent*
-  pushes respect a moved `latest`.
+- The push certifies its revision as `latest` when any of: no latest tag
+  exists yet, the tag already names the pushed revision, or the caller was
+  tracking the tip (`base_hash == latest_hash`, `base_hash` non-empty).
+- **A first push respects another writer's `latest`.** A first push has an
+  empty `base_hash`, so when the bucket already has a `latest` for the
+  name that is another revision, the push uploads but leaves the tag, as
+  a later push whose base fell behind does. `base_hash` stays empty, so
+  the copy reads `Diverged` until the user promotes or resets.
 - `certified_latest = false` means the upload itself succeeded but
   someone else pushed in the meantime, so the `latest` tag was not
   moved.

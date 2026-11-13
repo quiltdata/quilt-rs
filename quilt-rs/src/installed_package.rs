@@ -53,8 +53,9 @@ use quilt_uri::UriError;
 pub struct PushOutcome {
     pub manifest_uri: ManifestUri,
     /// Whether the pushed revision was certified as "latest".
-    /// `false` when the remote's latest tag moved since we last checked
-    /// (i.e. someone else pushed in the meantime).
+    /// `false` when the remote's latest tag names another revision than our
+    /// base: someone else pushed in the meantime, or, on a first push, had
+    /// already published under this name.
     pub certified_latest: bool,
 }
 
