@@ -474,7 +474,7 @@ pub async fn pull_package(
         &delta,
         &applied,
         &snapshot.status.changes,
-        snapshot.latest_manifest.header.message.clone(),
+        snapshot.latest_manifest.header.message().map(str::to_owned),
     );
 
     info!("✔️ Successfully pulled (surgical), outcome={outcome:?}");

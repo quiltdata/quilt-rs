@@ -223,7 +223,7 @@ mod tests {
         // Should recover: delete stale cache, re-fetch, succeed
         let manifest = cache_remote_manifest(&paths, &storage, &remote, &manifest_uri).await?;
 
-        assert_eq!(manifest.header.message, Some("Initial".to_string()));
+        assert_eq!(manifest.header.message(), Some("Initial"));
         assert_eq!(manifest.rows.len(), 10);
         assert!(manifest.get_record(&PathBuf::from("e0-0.txt")).is_some());
 

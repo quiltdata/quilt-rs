@@ -2192,7 +2192,7 @@ mod tests {
                 .any(|row| row.logical_key.as_path() == std::path::Path::new("data.csv")),
             "the revision holds the file"
         );
-        assert_eq!(revision.header.message.as_deref(), Some("Add data.csv"));
+        assert_eq!(revision.header.message(), Some("Add data.csv"));
     }
 
     fn installed_model() -> MockQuiltModel {

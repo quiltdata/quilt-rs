@@ -355,7 +355,7 @@ pub async fn revision_message(
     manifest_uri: ManifestUri,
 ) -> Result<Option<String>, Error> {
     let manifest = model.browse_remote_manifest(&manifest_uri).await?;
-    Ok(manifest.header.message)
+    Ok(manifest.header.message().map(str::to_owned))
 }
 
 pub async fn get_or_register_client(
@@ -423,7 +423,9 @@ mod tests {
                 Ok(quilt::manifest::Manifest {
                     header: quilt::manifest::ManifestHeader {
                         version: "v0".to_string(),
-                        message: Some("Add benchling report".to_string()),
+                        message: quilt::manifest::HeaderMessage::Text(
+                            "Add benchling report".to_string(),
+                        ),
                         user_meta: None,
                         workflow: None,
                     },
