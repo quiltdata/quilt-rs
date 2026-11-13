@@ -33,7 +33,7 @@
 ### Fixed
 
 - The top hash matches quilt3's for metadata holding floats such as `1e-7` or `1e16`, and for an entry `meta` that is not an object, so quilt3 opens such packages (<https://github.com/quiltdata/quilt-rs/pull/1372>)
-- A manifest that lists one logical key twice is refused when read, as quilt3 refuses it (<https://github.com/quiltdata/quilt-rs/pull/1372>)
+- A manifest that lists one logical key twice, or a key that is also the folder of another (`data` and `data/x.csv`), is refused when read, as quilt3 refuses it (<https://github.com/quiltdata/quilt-rs/pull/1372>)
 
 ### quilt-uri
 

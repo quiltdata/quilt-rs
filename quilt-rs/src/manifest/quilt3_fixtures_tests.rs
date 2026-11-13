@@ -109,3 +109,25 @@ async fn a_key_that_is_also_a_folder_is_named_in_the_error() -> Res {
     }
     Ok(())
 }
+
+/// quilt3's own top-hash fixture (`test_top_hash_stable`). Its header has no
+/// `message` key, which quilt-rs still hashes as `"message": null`.
+#[test(tokio::test)]
+#[ignore = "a header with no message key still hashes as if it were null"]
+async fn quilt3_fixture_without_a_message_hashes_to_its_name() -> Res {
+    let name = "3426a3f721e41a1d83174c691432a39ff13720426267fc799dccf3583153e850-no-message.jsonl";
+    let path = std::env::current_dir()?
+        .join("fixtures/quilt3-known-differences")
+        .join(name);
+    let manifest = Manifest::from_path(&LocalStorage::default(), &path).await?;
+    let storage = MockStorage::default();
+    let (_, top_hash) = build_manifest_from_rows_stream(
+        &storage,
+        storage.temp_dir.path().to_path_buf(),
+        manifest.header.clone(),
+        manifest.records_stream().await,
+    )
+    .await?;
+    assert_eq!(top_hash, name.split_once('-').unwrap().0);
+    Ok(())
+}
