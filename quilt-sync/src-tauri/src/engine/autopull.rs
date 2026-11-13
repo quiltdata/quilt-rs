@@ -6,6 +6,7 @@ use std::time::SystemTime;
 
 use chrono::DateTime;
 use chrono::Utc;
+use futures_util::StreamExt;
 use quilt_uri::Host;
 use quilt_uri::Namespace;
 use tokio::sync::RwLock;
@@ -784,6 +785,9 @@ pub(crate) async fn observe_walk(
     }
 }
 
+/// How many packages the startup walk walks at once, as `quilt list --fetch` does.
+const STARTUP_WALKS: usize = 8;
+
 /// Walk every package once at launch, with no pull or publish, as the file
 /// watcher does on a change. Until its first walk the app doesn't know a package has
 /// changes, and the first check is a whole interval away. The stat cache keeps
@@ -796,15 +800,17 @@ pub(crate) async fn walk_every_package(model: &impl QuiltModel, inner: &WatcherI
             return;
         }
     };
-    for package in packages {
-        crate::engine::fswatcher::reactor::process_signal(
-            model,
-            inner.reporter.as_ref(),
-            Some(inner),
-            crate::engine::fswatcher::subscriber::MappingSignal::changed(package.namespace),
-        )
+    // Side by side, as the reactor walks: each walk keeps its own package's state.
+    futures_util::stream::iter(packages)
+        .for_each_concurrent(STARTUP_WALKS, |package| {
+            crate::engine::fswatcher::reactor::process_signal(
+                model,
+                inner.reporter.as_ref(),
+                Some(inner),
+                crate::engine::fswatcher::subscriber::MappingSignal::changed(package.namespace),
+            )
+        })
         .await;
-    }
 }
 
 /// When a package publishes: its last change plus the wait. `None` when it has
@@ -904,6 +910,143 @@ mod tests {
                 "{namespace} has a time before the first check"
             );
         }
+    }
+
+    /// A model whose walks each take a second, counting how many run at once.
+    struct SlowWalks {
+        quilt: tokio::sync::Mutex<crate::engine::quilt::LocalDomain>,
+        packages: Vec<Namespace>,
+        running: std::sync::atomic::AtomicUsize,
+        most: std::sync::atomic::AtomicUsize,
+    }
+
+    impl SlowWalks {
+        fn new(count: usize) -> Self {
+            Self {
+                quilt: tokio::sync::Mutex::new(crate::engine::quilt::LocalDomain::new(
+                    std::path::PathBuf::new(),
+                )),
+                packages: (0..count)
+                    .map(|i| ("acme", format!("pkg{i}").as_str()).into())
+                    .collect(),
+                running: std::sync::atomic::AtomicUsize::new(0),
+                most: std::sync::atomic::AtomicUsize::new(0),
+            }
+        }
+
+        fn package(namespace: &Namespace) -> crate::engine::quilt::InstalledPackage {
+            crate::engine::quilt::LocalDomain::new(std::path::PathBuf::new())
+                .create_installed_package(namespace.clone())
+        }
+    }
+
+    #[allow(
+        clippy::unused_async_trait_impl,
+        reason = "only the walk itself waits; the rest return canned values"
+    )]
+    impl QuiltModel for SlowWalks {
+        type Locked = Namespace;
+
+        fn get_quilt(&self) -> &tokio::sync::Mutex<crate::engine::quilt::LocalDomain> {
+            &self.quilt
+        }
+
+        async fn get_installed_packages_list(
+            &self,
+        ) -> Result<Vec<crate::engine::quilt::InstalledPackage>, crate::engine::error::Error>
+        {
+            Ok(self.packages.iter().map(Self::package).collect())
+        }
+
+        async fn get_installed_package(
+            &self,
+            namespace: &Namespace,
+        ) -> Result<Option<crate::engine::quilt::InstalledPackage>, crate::engine::error::Error>
+        {
+            Ok(Some(Self::package(namespace)))
+        }
+
+        async fn get_installed_package_lineage(
+            &self,
+            _package: &crate::engine::quilt::InstalledPackage,
+        ) -> Result<crate::engine::quilt::lineage::PackageLineage, crate::engine::error::Error>
+        {
+            Ok(crate::engine::quilt::lineage::PackageLineage::default())
+        }
+
+        async fn recompute_local_status(
+            &self,
+            package: &crate::engine::quilt::InstalledPackage,
+            _host_config: Option<quilt_rs::io::remote::HostConfig>,
+        ) -> Result<
+            crate::engine::quilt::lineage::InstalledPackageStatus,
+            crate::engine::error::Error,
+        > {
+            use std::sync::atomic::Ordering;
+            let now = self.running.fetch_add(1, Ordering::SeqCst) + 1;
+            self.most.fetch_max(now, Ordering::SeqCst);
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            self.running.fetch_sub(1, Ordering::SeqCst);
+            // Each package's own file, so a status mixed up between packages shows.
+            let mut changes = BTreeMap::new();
+            changes.insert(
+                std::path::PathBuf::from(format!("{}.txt", package.namespace)),
+                crate::engine::quilt::lineage::Change::Added(
+                    crate::engine::quilt::manifest::ManifestRow::default(),
+                ),
+            );
+            Ok(crate::engine::quilt::lineage::InstalledPackageStatus::new(
+                crate::engine::quilt::lineage::UpstreamState::UpToDate,
+                changes,
+            ))
+        }
+    }
+
+    /// Walks run side by side, at most [`STARTUP_WALKS`] at once, so startup
+    /// takes about the slowest walk, not the sum.
+    #[tokio::test(start_paused = true)]
+    async fn the_startup_walk_runs_packages_side_by_side() {
+        let model = SlowWalks::new(STARTUP_WALKS * 2);
+        let inner = inner_for_tests(AutosyncSettings::default());
+
+        let started = tokio::time::Instant::now();
+        walk_every_package(&model, &inner).await;
+
+        assert_eq!(started.elapsed(), Duration::from_secs(2));
+        assert_eq!(
+            model.most.load(std::sync::atomic::Ordering::SeqCst),
+            STARTUP_WALKS
+        );
+        for namespace in &model.packages {
+            assert!(inner.last_change.get(namespace).await.is_some());
+        }
+    }
+
+    /// Side by side, the walk reports what one package at a time reports.
+    #[tokio::test(start_paused = true)]
+    async fn the_startup_walk_reports_what_a_walk_one_at_a_time_reports() {
+        let model = SlowWalks::new(STARTUP_WALKS + 3);
+        let recording = Arc::new(reporter::test_support::RecordingReporter::default());
+        let mut inner = inner_for_tests(AutosyncSettings::default());
+        inner.reporter = recording.clone();
+
+        walk_every_package(&model, &inner).await;
+
+        let mut reported = recording.statuses.lock().unwrap().clone();
+        reported.sort_by(|a, b| a.0.cmp(&b.0));
+        let one_at_a_time = Arc::new(reporter::test_support::RecordingReporter::default());
+        for namespace in &model.packages {
+            crate::engine::fswatcher::reactor::process_signal(
+                &model,
+                one_at_a_time.as_ref(),
+                None,
+                crate::engine::fswatcher::subscriber::MappingSignal::changed(namespace.clone()),
+            )
+            .await;
+        }
+        let mut expected = one_at_a_time.statuses.lock().unwrap().clone();
+        expected.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(reported, expected);
     }
 
     /// The retired unfocused and closed intervals are never read.

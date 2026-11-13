@@ -21,6 +21,10 @@
 
 ## [v0.28.1-dev]
 
+### Changed
+
+- QuiltSync starts faster with many packages: at launch it checks up to eight packages at once instead of one after another (<https://github.com/quiltdata/quilt-rs/pull/1376>)
+
 ### Fixed
 
 - Publishing a new package no longer replaces the latest revision someone else already published under the same name: the package shows the conflict, and you choose which revision stays latest (<https://github.com/quiltdata/quilt-rs/pull/1373>)
