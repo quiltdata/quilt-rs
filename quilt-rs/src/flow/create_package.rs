@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use tracing::debug;
 use tracing::info;
+use tracing::warn;
 
 use url::Url;
 
@@ -102,6 +103,10 @@ async fn walk_source_dir(
                 queue.push_back(file_path);
             } else if file_type.is_file() {
                 let relative = crate::paths::logical_key(file_path.strip_prefix(source)?);
+                if let Err(err) = crate::LogicalKey::new(&relative) {
+                    warn!("Left out of the package: {err}");
+                    continue;
+                }
                 if let Some(by) = rules.file_ignored_by(&relative, false) {
                     left_out.files.push((relative, by));
                     continue;
@@ -173,7 +178,7 @@ pub async fn create_package(
             }
 
             // Copy to package home (working copy)
-            let work_dest = package_home.join(&relative_path);
+            let work_dest = row.logical_key.join_to(&package_home);
             if let Some(parent) = work_dest.parent() {
                 storage.create_dir_all(parent).await?;
             }

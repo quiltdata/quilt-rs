@@ -50,7 +50,7 @@ impl DownloadCounts {
     #[must_use]
     pub fn count<'a>(
         lineage: &PackageLineage,
-        rows: impl IntoIterator<Item = (&'a PathBuf, u64)>,
+        rows: impl IntoIterator<Item = (&'a Path, u64)>,
         changes: &ChangeSet,
         on_disk: &BTreeSet<PathBuf>,
     ) -> Self {
@@ -149,7 +149,7 @@ mod tests {
     ) -> DownloadCounts {
         DownloadCounts::count(
             lineage,
-            rows.iter().map(|(key, size)| (key, *size)),
+            rows.iter().map(|(key, size)| (key.as_path(), *size)),
             changes,
             &BTreeSet::new(),
         )
@@ -240,7 +240,7 @@ mod tests {
             &lineage,
             rows(&["data/here.csv", "data/new.csv"])
                 .iter()
-                .map(|(key, size)| (key, *size)),
+                .map(|(key, size)| (key.as_path(), *size)),
             &changes,
             &on_disk,
         );

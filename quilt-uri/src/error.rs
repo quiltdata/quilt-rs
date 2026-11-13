@@ -9,6 +9,9 @@ pub enum UriError {
     #[error("Invalid file:// URI: {0}")]
     FileScheme(Url),
 
+    #[error("Invalid bucket: {0}")]
+    Bucket(String),
+
     #[error("Invalid host: {0}")]
     Host(String),
 

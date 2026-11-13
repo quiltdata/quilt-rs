@@ -9,6 +9,7 @@ use url::Url;
 
 use crate::Error;
 use crate::InstallPathError;
+use crate::LogicalKey;
 use crate::Res;
 use crate::checksum::refresh_hash;
 use crate::error::PackageOpError;
@@ -158,7 +159,7 @@ async fn place_where_absent(
     let mut existing = Vec::new();
     for (_, working_dest, row) in staged {
         if storage.exists(working_dest).await {
-            existing.push(row.logical_key.clone());
+            existing.push(row.logical_key.to_path_buf());
         }
     }
     if !existing.is_empty() {
@@ -170,7 +171,7 @@ async fn place_where_absent(
     for (staged_path, working_dest, row) in staged {
         let last_modified = commit_staged(storage, staged_path, working_dest).await?;
         lineage.paths.insert(
-            row.logical_key.clone(),
+            row.logical_key.to_path_buf(),
             PathState {
                 timestamp: last_modified,
                 hash: row.hash.clone().into(),
@@ -246,13 +247,13 @@ async fn swap_staged_into_place(
             // file at an untracked path may also already hold the incoming
             // bytes, as an interrupted pull leaves it; anything else at one
             // `base` never had is the user's own.
-            let tracked = lineage.paths.contains_key(&row.logical_key);
+            let tracked = lineage.paths.contains_key(row.logical_key.as_path());
             let unchanged = if !tracked
                 && (!storage.exists(working_dest).await
                     || holds(storage, working_dest, row.clone()).await)
             {
                 true
-            } else if let Some(base_row) = rows.get(&row.logical_key) {
+            } else if let Some(base_row) = rows.get(row.logical_key.as_path()) {
                 holds(storage, working_dest, base_row.clone()).await
             } else {
                 tracked
@@ -263,13 +264,13 @@ async fn swap_staged_into_place(
                     row.logical_key.display()
                 );
                 return Err(Error::PackageOp(PackageOpError::PullConflict(vec![
-                    row.logical_key.clone(),
+                    row.logical_key.to_path_buf(),
                 ])));
             }
         }
         let last_modified = commit_staged(storage, staged_path, working_dest).await?;
         lineage.paths.insert(
-            row.logical_key.clone(),
+            row.logical_key.to_path_buf(),
             PathState {
                 timestamp: last_modified,
                 hash: row.hash.clone().into(),
@@ -291,7 +292,7 @@ async fn stream_remote_with_installed_rows(
             rows_result.map(|rows| {
                 rows.into_iter()
                     .map(|row_result| {
-                        row_result.map(|row| match local_entries.get(&row.logical_key) {
+                        row_result.map(|row| match local_entries.get(row.logical_key.as_path()) {
                             Some(local_row) => local_row.clone(),
                             None => row,
                         })
@@ -346,7 +347,7 @@ impl Protect<'_> {
             return Ok(false);
         };
         match rows.get(path) {
-            Some(row) => edited(storage, &working_dir.join(path), row).await,
+            Some(row) => edited(storage, &row.logical_key.join_to(working_dir), row).await,
             None => Ok(false),
         }
     }
@@ -401,7 +402,10 @@ async fn refuse_existing_working_files(
     debug!("🔍 Checking for local files at the requested paths");
     let mut existing = Vec::new();
     for path in entries_paths {
-        if storage.exists(working_dir.join(path)).await {
+        if storage
+            .exists(LogicalKey::new(path.as_path())?.join_to(working_dir))
+            .await
+        {
             existing.push((*path).clone());
         }
     }
@@ -579,7 +583,7 @@ pub(crate) async fn install_paths_over(
             )
             .await?
             {
-                let path = row.logical_key.clone();
+                let path = row.logical_key.to_path_buf();
                 match (&on_mismatch, mismatch) {
                     (OnMismatch::Refuse, m) => return Err(Error::InstallPath(m.refusal(path))),
                     (OnMismatch::Skip, Mismatch::Replaced) => skipped.push(path),
@@ -602,12 +606,16 @@ pub(crate) async fn install_paths_over(
                 place
             );
             // The row goes in unchanged — `physical_key` and all.
-            entries.insert(row.logical_key.clone(), row.clone());
+            entries.insert(row.logical_key.to_path_buf(), row.clone());
 
             // Staged, not written: the working tree stays wholly at its current
             // revision until every file is ready.
             let staged_path = stage_object(storage, &object_dest, &run_staging).await?;
-            staged.push((staged_path, working_dir.join(&row.logical_key), row.clone()));
+            staged.push((
+                staged_path,
+                row.logical_key.join_to(&working_dir),
+                row.clone(),
+            ));
             debug!("✔️ Staged {}", row.logical_key.display());
         }
         Ok(staged)
@@ -786,7 +794,7 @@ mod tests {
         let mut manifest = Manifest::default();
         manifest
             .insert_record(ManifestRow {
-                logical_key: single_object_path.clone(),
+                logical_key: crate::LogicalKey::new(single_object_path.clone())?,
                 hash: hash.try_into()?,
                 physical_key: remote_file_url,
                 ..ManifestRow::default()
@@ -836,25 +844,25 @@ mod tests {
             ..PackageLineage::default()
         };
         let row_1 = ManifestRow {
-            logical_key: PathBuf::from("a"),
+            logical_key: crate::LogicalKey::new("a")?,
             physical_key: "file:///ignored".to_string(),
             hash: multihash::Multihash::wrap(0x12, b"one")?.try_into()?,
             ..ManifestRow::default()
         };
         let row_2 = ManifestRow {
-            logical_key: PathBuf::from("b/b"),
+            logical_key: crate::LogicalKey::new("b/b")?,
             physical_key: "s3://bucket/foo/bar".to_string(),
             hash: sha256_of(b"two").try_into()?,
             ..ManifestRow::default()
         };
         let row_3 = ManifestRow {
-            logical_key: PathBuf::from("c/c/c"),
+            logical_key: crate::LogicalKey::new("c/c/c")?,
             physical_key: "file:///ignored".to_string(),
             hash: multihash::Multihash::wrap(0x12, b"three")?.try_into()?,
             ..ManifestRow::default()
         };
         let row_4 = ManifestRow {
-            logical_key: PathBuf::from("d/d/d/d"),
+            logical_key: crate::LogicalKey::new("d/d/d/d")?,
             physical_key: "s3://bucket/foo/baz".to_string(),
             hash: sha256_of(b"four").try_into()?,
             ..ManifestRow::default()
@@ -888,12 +896,11 @@ mod tests {
             .put_object(None, &remote_object_uri_4, b"four".to_vec())
             .await?;
 
-        let entries_paths = vec![
-            &row_1.logical_key,
-            &row_2.logical_key,
-            &row_3.logical_key,
-            &row_4.logical_key,
-        ];
+        let keys: Vec<PathBuf> = [&row_1, &row_2, &row_3, &row_4]
+            .iter()
+            .map(|row| row.logical_key.to_path_buf())
+            .collect();
+        let entries_paths: Vec<&PathBuf> = keys.iter().collect();
 
         // Lineage does not track anything before the installation
         assert!(lineage.paths.is_empty());
@@ -911,15 +918,31 @@ mod tests {
         .await?;
 
         // Now lineage tracks the files in the working directory
-        assert!(lineage.paths.contains_key(&row_1.logical_key));
-        assert!(lineage.paths.contains_key(&row_2.logical_key));
-        assert!(lineage.paths.contains_key(&row_3.logical_key));
-        assert!(lineage.paths.contains_key(&row_4.logical_key));
+        assert!(lineage.paths.contains_key(row_1.logical_key.as_path()));
+        assert!(lineage.paths.contains_key(row_2.logical_key.as_path()));
+        assert!(lineage.paths.contains_key(row_3.logical_key.as_path()));
+        assert!(lineage.paths.contains_key(row_4.logical_key.as_path()));
         // And working directory of the package contains the files
-        assert!(storage.exists(&package_home.join(&row_1.logical_key)).await);
-        assert!(storage.exists(&package_home.join(&row_2.logical_key)).await);
-        assert!(storage.exists(&package_home.join(&row_3.logical_key)).await);
-        assert!(storage.exists(&package_home.join(&row_4.logical_key)).await);
+        assert!(
+            storage
+                .exists(&row_1.logical_key.join_to(&package_home))
+                .await
+        );
+        assert!(
+            storage
+                .exists(&row_2.logical_key.join_to(&package_home))
+                .await
+        );
+        assert!(
+            storage
+                .exists(&row_3.logical_key.join_to(&package_home))
+                .await
+        );
+        assert!(
+            storage
+                .exists(&row_4.logical_key.join_to(&package_home))
+                .await
+        );
 
         Ok(())
     }
@@ -991,7 +1014,7 @@ mod tests {
             let hash = sha256_of(&body);
 
             let row = ManifestRow {
-                logical_key: path.clone(),
+                logical_key: crate::LogicalKey::new(path.clone())?,
                 physical_key: place.clone(),
                 hash: hash.try_into()?,
                 ..ManifestRow::default()
@@ -1073,7 +1096,7 @@ mod tests {
         let mut manifest = Manifest::default();
         manifest
             .insert_record(ManifestRow {
-                logical_key: requested.clone(),
+                logical_key: crate::LogicalKey::new(requested.clone())?,
                 hash: hash.try_into()?,
                 physical_key: remote_file_url,
                 ..ManifestRow::default()
@@ -1200,7 +1223,7 @@ mod tests {
 
     fn row(key: &str) -> Res<ManifestRow> {
         Ok(ManifestRow {
-            logical_key: PathBuf::from(key),
+            logical_key: crate::LogicalKey::new(key)?,
             hash: multihash::Multihash::wrap(0x12, b"anything")?.try_into()?,
             ..ManifestRow::default()
         })
@@ -1292,4 +1315,95 @@ mod tests {
     }
 
     // TODO: fail if manifest entry has invalid URL
+}
+
+/// A manifest is untrusted input: reading one and installing its rows must
+/// never write outside the package's working folder.
+#[cfg(test)]
+mod keys_outside_the_package {
+    use super::*;
+    use test_log::test;
+
+    use crate::io::remote::mocks::MockRemote;
+    use crate::io::storage::LocalStorage;
+    use crate::lineage::Home;
+    use crate::paths;
+    use quilt_uri::ManifestUri;
+
+    /// Reads a one-row manifest keyed `key` and installs that row into a real
+    /// folder. Returns what the read-and-install returned.
+    async fn read_and_install(key: &str) -> Res<Res<(PackageLineage, InstallPathsReport)>> {
+        use sha2::Digest;
+
+        let (home, _home_dir) = Home::from_temp_dir()?;
+        let (domain_paths, _domain_dir) = DomainPaths::from_temp_dir()?;
+        let namespace = Namespace::from(("foo", "bar"));
+        let package_home = paths::package_home(&home, &namespace);
+        let storage = LocalStorage::default();
+        domain_paths
+            .scaffold_for_installing(&storage, &home, &namespace)
+            .await?;
+
+        let body = b"planted";
+        let digest = sha2::Sha256::digest(body);
+        let remote = MockRemote::default();
+        let physical_key = "s3://bucket/planted";
+        remote
+            .put_object(None, &physical_key.parse()?, body.to_vec())
+            .await?;
+        let jsonl = format!(
+            "{{\"version\":\"v0\",\"message\":\"\"}}\n{}\n",
+            serde_json::json!({
+                "logical_key": key,
+                "physical_keys": [physical_key],
+                "hash": {"type": "SHA256", "value": hex::encode(digest)},
+                "size": body.len(),
+                "meta": {},
+            })
+        );
+
+        Ok(async {
+            let mut manifest = Manifest::from_reader(jsonl.as_bytes()).await?;
+            let path = manifest.rows[0].logical_key.to_path_buf();
+            install_paths(
+                PackageLineage {
+                    remote_uri: Some(ManifestUri::default()),
+                    ..PackageLineage::default()
+                },
+                &mut manifest,
+                &domain_paths,
+                package_home,
+                namespace,
+                &storage,
+                &remote,
+                &[&path],
+            )
+            .await
+        }
+        .await)
+    }
+
+    #[test(tokio::test)]
+    async fn a_parent_dir_key_is_refused_and_writes_nothing() -> Res {
+        let outside = tempfile::TempDir::new()?;
+        // The package folder is `<home>/foo/bar`; climb out of it and into `outside`.
+        let key = format!(
+            "../../../../../../../../../..{}",
+            outside.path().join("planted").display()
+        );
+        let result = read_and_install(&key).await?;
+        assert!(result.is_err(), "installed a key that climbs out: {key}");
+        assert!(!outside.path().join("planted").exists());
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn an_absolute_key_is_refused_and_writes_nothing() -> Res {
+        let outside = tempfile::TempDir::new()?;
+        let key = outside.path().join("planted").display().to_string();
+        let result = read_and_install(&key).await?;
+        assert!(result.is_err(), "installed an absolute key: {key}");
+        assert!(!outside.path().join("planted").exists());
+        Ok(())
+    }
 }

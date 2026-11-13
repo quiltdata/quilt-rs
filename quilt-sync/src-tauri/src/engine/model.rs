@@ -298,7 +298,7 @@ pub trait QuiltModel {
         let sizes = manifest
             .rows
             .into_iter()
-            .map(|row| (row.logical_key, row.size))
+            .map(|row| (row.logical_key.into(), row.size))
             .collect();
         Ok((sizes, on_disk))
     }
@@ -331,7 +331,7 @@ pub trait QuiltModel {
         while let Some(page) = stream.next().await {
             if let Ok(rows) = page {
                 for row in rows.into_iter().flatten() {
-                    records.insert(row.logical_key.clone(), row);
+                    records.insert(row.logical_key.to_path_buf(), row);
                 }
             }
         }
@@ -616,10 +616,10 @@ pub trait QuiltModel {
     async fn file_path(
         &self,
         namespace: &quilt_uri::Namespace,
-        relative_path: &PathBuf,
+        relative_path: &quilt::LogicalKey,
     ) -> Result<PathBuf, Error> {
         let package_home = self.package_home(namespace).await?;
-        let file_path = package_home.join(relative_path);
+        let file_path = relative_path.join_to(&package_home);
         if !file_path.exists() {
             return Err(Error::FsOpen(
                 crate::engine::error::FsOpenError::PathNotFound(file_path),
@@ -640,7 +640,7 @@ pub trait QuiltModel {
     async fn reveal_in_file_browser(
         &self,
         namespace: &quilt_uri::Namespace,
-        path: &PathBuf,
+        path: &quilt::LogicalKey,
     ) -> Result<PathBuf, Error> {
         let file_path = self.file_path(namespace, path).await?;
         opener::reveal(&file_path)?;
@@ -650,7 +650,7 @@ pub trait QuiltModel {
     async fn open_in_default_application(
         &self,
         namespace: &quilt_uri::Namespace,
-        path: &PathBuf,
+        path: &quilt::LogicalKey,
     ) -> Result<PathBuf, Error> {
         let file_path = self.file_path(namespace, path).await?;
         opener::open(&file_path)?;

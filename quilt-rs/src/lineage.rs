@@ -880,11 +880,11 @@ mod tests {
                             remote_uri: Some(ManifestUri {
                                 bucket: "bucket".to_string(),
                                 namespace: ("foo", "bar").into(),
-                                hash: "abcdef".to_string(),
+                                hash: "abcdef0000000000000000000000000000000000000000000000000000000000".to_string(),
                                 origin: None,
                             }),
-                            base_hash: "abcdef".to_string(),
-                            latest_hash: "abcdef".to_string(),
+                            base_hash: "abcdef0000000000000000000000000000000000000000000000000000000000".to_string(),
+                            latest_hash: "abcdef0000000000000000000000000000000000000000000000000000000000".to_string(),
                             paths: BTreeMap::from([(
                                 PathBuf::from("foo"),
                                 PathState {
@@ -938,11 +938,14 @@ mod tests {
             remote_uri: Some(ManifestUri {
                 bucket: "bucket".to_string(),
                 namespace: namespace.clone(),
-                hash: "abcdef".to_string(),
+                hash: "abcdef0000000000000000000000000000000000000000000000000000000000"
+                    .to_string(),
                 origin: None,
             }),
-            base_hash: "abcdef".to_string(),
-            latest_hash: "abcdef".to_string(),
+            base_hash: "abcdef0000000000000000000000000000000000000000000000000000000000"
+                .to_string(),
+            latest_hash: "abcdef0000000000000000000000000000000000000000000000000000000000"
+                .to_string(),
             paths: BTreeMap::new(),
             ..PackageLineage::default()
         };
@@ -1001,11 +1004,14 @@ mod tests {
             remote_uri: Some(ManifestUri {
                 bucket: "bucket".to_string(),
                 namespace: namespace.clone(),
-                hash: "abcdef".to_string(),
+                hash: "abcdef0000000000000000000000000000000000000000000000000000000000"
+                    .to_string(),
                 origin: None,
             }),
-            base_hash: "abcdef".to_string(),
-            latest_hash: "abcdef".to_string(),
+            base_hash: "abcdef0000000000000000000000000000000000000000000000000000000000"
+                .to_string(),
+            latest_hash: "abcdef0000000000000000000000000000000000000000000000000000000000"
+                .to_string(),
             paths: BTreeMap::new(),
             ..PackageLineage::default()
         };

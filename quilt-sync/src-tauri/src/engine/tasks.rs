@@ -651,7 +651,7 @@ async fn check_out<M: QuiltModel>(
     let mut missing = Vec::new();
     for row in rows {
         let path = &row.logical_key;
-        if lineage.paths.contains_key(path) {
+        if lineage.paths.contains_key(path.as_path()) {
             continue;
         }
         if !agent_exec::inside_package(path) {
@@ -660,9 +660,9 @@ async fn check_out<M: QuiltModel>(
                 path.display()
             )));
         }
-        let on_disk = tokio::fs::symlink_metadata(home.join(path)).await;
+        let on_disk = tokio::fs::symlink_metadata(path.join_to(&home)).await;
         if !on_disk.is_ok_and(|meta| meta.is_file()) {
-            missing.push(path.clone());
+            missing.push(path.to_path_buf());
         }
     }
     if missing.is_empty() {
@@ -806,7 +806,10 @@ async fn recheck_claim<M: QuiltModel>(
 }
 
 fn lists(manifest: &quilt::manifest::Manifest, path: &std::path::Path) -> bool {
-    manifest.rows.iter().any(|row| row.logical_key == path)
+    manifest
+        .rows
+        .iter()
+        .any(|row| row.logical_key.as_path() == path)
 }
 
 /// The manifest of `lineage`'s remote at `hash`.

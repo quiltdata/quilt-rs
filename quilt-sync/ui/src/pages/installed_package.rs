@@ -1183,24 +1183,30 @@ fn download_outcome(namespace: String, asked: usize, left_out: &NotDownloaded) -
 /// takes `busy` nor clears the band. A link cannot be disabled, and one that
 /// silently did nothing while busy would be worse than one that opens.
 fn catalog_opener(namespace: String, outcome: RwSignal<Option<Outcome>>) -> Callback<String> {
-    browser_opener(
+    let open = browser_opener(
         namespace,
         outcome,
         "Could not open this revision in the catalog.",
-    )
+    );
+    Callback::new(move |url: String| open.run(Ok(url)))
 }
 
 /// Opens an address in the browser, reporting a failure on the keyed band
-/// with `lead`. [`catalog_opener`]'s, for any catalog link.
+/// with `lead`. [`catalog_opener`]'s, for any catalog link. An address that
+/// could not be built comes as its reason, and is reported the same way.
 fn browser_opener(
     namespace: String,
     outcome: RwSignal<Option<Outcome>>,
     lead: &'static str,
-) -> Callback<String> {
-    Callback::new(move |url: String| {
+) -> Callback<Result<String, String>> {
+    Callback::new(move |link: Result<String, String>| {
         let namespace = namespace.clone();
         leptos::task::spawn_local(async move {
-            if let Err(detail) = commands::open_in_web_browser(url).await {
+            let opened = match link {
+                Ok(url) => commands::open_in_web_browser(url).await.map(drop),
+                Err(reason) => Err(reason),
+            };
+            if let Err(detail) = opened {
                 outcome.try_set(Some(Outcome {
                     namespace,
                     variant: BannerVariant::Critical,

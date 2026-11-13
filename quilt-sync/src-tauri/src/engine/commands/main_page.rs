@@ -1472,7 +1472,7 @@ mod tests {
                     catalog: Some(host.parse().unwrap()),
                     bucket: "bucket".to_string(),
                     namespace: "team/pkg".try_into().unwrap(),
-                    revision: quilt_uri::RevisionPointer::Hash("abcdef".to_string()),
+                    revision: quilt_uri::RevisionPointer::Hash(fixtures::TOP_HASH.to_string()),
                     path: None,
                 }),
             })
@@ -1492,9 +1492,9 @@ mod tests {
                     origin: Some(host.parse().unwrap()),
                     bucket: "test".to_string(),
                     namespace: "team/one".try_into().unwrap(),
-                    hash: "abcdef".to_string(),
+                    hash: fixtures::TOP_HASH.to_string(),
                 },
-                "abcdef".to_string(),
+                fixtures::TOP_HASH.to_string(),
             ),
             None => quilt::lineage::PackageLineage::default(),
         };
@@ -1943,14 +1943,12 @@ mod tests {
         m: &impl model::QuiltModel,
         paused: Option<PausedReason>,
     ) -> MainPagePackage {
-        let paused_reasons = paused
-            .map(|paused| {
-                HashMap::from([(
-                    quilt_uri::Namespace::try_from("team/one").expect("a valid fixture namespace"),
-                    paused,
-                )])
-            })
-            .unwrap_or_default();
+        let paused_reasons = paused.map_or_default(|paused| {
+            HashMap::from([(
+                quilt_uri::Namespace::try_from("team/one").expect("a valid fixture namespace"),
+                paused,
+            )])
+        });
         let packages = get_main_page_packages_from_model(
             m,
             &RoleCache::default(),

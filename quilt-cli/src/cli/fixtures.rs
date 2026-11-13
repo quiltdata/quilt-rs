@@ -224,14 +224,42 @@ pub mod old_revisions {
 
     pub type Package = InstalledPackage<LocalStorage, MockRemote>;
 
+    /// The top hash a revision label stands for: the label's bytes in hex,
+    /// padded with zeros on the left.
+    #[must_use]
+    pub fn top_hash(label: &str) -> String {
+        use std::fmt::Write;
+        let hex = label.bytes().fold(String::new(), |mut hex, b| {
+            write!(hex, "{b:02x}").expect("writing to a String");
+            hex
+        });
+        format!("{hex:0>64}")
+    }
+
+    /// The label a [`top_hash`] stands for.
+    #[must_use]
+    pub fn label(top_hash: &str) -> String {
+        let hex = top_hash.trim_start_matches('0');
+        let hex = if hex.len() % 2 == 1 {
+            format!("0{hex}")
+        } else {
+            hex.to_string()
+        };
+        let bytes = (0..hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).expect("a top_hash"))
+            .collect();
+        String::from_utf8(bytes).expect("a top_hash")
+    }
+
     /// [`NAMESPACE`] holding [`REVISIONS`], each obtained a minute after the
     /// one before it, its remote at `current-rev` on a catalog. The temp dirs
     /// must outlive the package.
     pub async fn package() -> Result<(Package, [TempDir; 2]), Error> {
         let remote = MockRemote::default();
         let namespace: Namespace = NAMESPACE.into();
-        for (n, (hash, _)) in REVISIONS.iter().enumerate() {
-            if *hash == "local-rev" {
+        for (n, (label, _)) in REVISIONS.iter().enumerate() {
+            if *label == "local-rev" {
                 continue;
             }
             remote
@@ -242,7 +270,7 @@ pub mod old_revisions {
                         tag_key(&namespace, &format!("175850000{n}"))
                     )
                     .parse()?,
-                    hash.as_bytes().to_vec(),
+                    top_hash(label).into_bytes(),
                 )
                 .await?;
         }
@@ -257,6 +285,7 @@ pub mod old_revisions {
             .await?;
         // Built as JSON, not formatted in: a Windows path's backslashes
         // would be escapes inside a JSON string.
+        let current = top_hash("current-rev");
         let lineage_json = serde_json::json!({
             "packages": {
                 "test/history": {
@@ -264,11 +293,11 @@ pub mod old_revisions {
                     "remote": {
                         "bucket": "bucket",
                         "namespace": "test/history",
-                        "hash": "current-rev",
+                        "hash": current,
                         "origin": "quilt.test"
                     },
-                    "base_hash": "current-rev",
-                    "latest_hash": "current-rev",
+                    "base_hash": current,
+                    "latest_hash": current,
                     "paths": {}
                 }
             },
@@ -281,13 +310,13 @@ pub mod old_revisions {
 
         std::fs::create_dir_all(paths.objects_dir())?;
         let start = SystemTime::now() - Duration::from_secs(3600);
-        for (n, (hash, len)) in REVISIONS.iter().enumerate() {
+        for (n, (label, len)) in REVISIONS.iter().enumerate() {
             let mut rows = Vec::new();
             if *len > 0 {
-                let object = paths.objects_dir().join(format!("{hash}-object"));
+                let object = paths.objects_dir().join(format!("{label}-object"));
                 std::fs::write(&object, "x".repeat(*len))?;
                 rows.push(ManifestRow {
-                    logical_key: format!("{hash}.txt").into(),
+                    logical_key: format!("{label}.txt").parse()?,
                     physical_key: url::Url::from_file_path(&object)
                         .expect("absolute")
                         .to_string(),
@@ -298,7 +327,7 @@ pub mod old_revisions {
                 rows,
                 ..Manifest::default()
             };
-            let path = paths.installed_manifest(&namespace, hash);
+            let path = paths.installed_manifest(&namespace, &top_hash(label));
             std::fs::write(&path, manifest.to_jsonlines())?;
             let minutes = u64::try_from(n).expect("a few revisions") * 60;
             std::fs::File::options()
@@ -353,13 +382,13 @@ pub mod old_revisions {
         Ok((package, dirs))
     }
 
-    /// The hashes `package` holds, sorted.
+    /// The labels of the revisions `package` holds, sorted.
     pub async fn held(package: &Package) -> Result<Vec<String>, Error> {
         let mut held: Vec<String> = package
             .revisions()
             .await?
             .into_iter()
-            .map(|revision| revision.hash)
+            .map(|revision| label(&revision.hash))
             .collect();
         held.sort();
         Ok(held)

@@ -139,6 +139,13 @@ impl From<quilt::Error> for Error {
     }
 }
 
+#[cfg(test)]
+impl From<quilt::LogicalKeyError> for Error {
+    fn from(err: quilt::LogicalKeyError) -> Error {
+        Error::Quilt(err.into())
+    }
+}
+
 impl From<quilt::InstallPackageError> for Error {
     fn from(err: quilt::InstallPackageError) -> Error {
         Error::Quilt(quilt::Error::InstallPackage(err))

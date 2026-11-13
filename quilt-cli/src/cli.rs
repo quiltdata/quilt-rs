@@ -984,6 +984,13 @@ impl From<quilt_rs::Error> for Error {
     }
 }
 
+#[cfg(test)]
+impl From<quilt_rs::LogicalKeyError> for Error {
+    fn from(err: quilt_rs::LogicalKeyError) -> Error {
+        Error::Quilt(err.into())
+    }
+}
+
 impl From<quilt_uri::UriError> for Error {
     fn from(err: quilt_uri::UriError) -> Error {
         Error::Quilt(quilt_rs::Error::Uri(err))

@@ -7,6 +7,7 @@
 
 use std::path::Path;
 
+use crate::LogicalKey;
 use crate::Res;
 use crate::io::remote::HostConfig;
 use crate::io::storage::Storage;
@@ -63,11 +64,11 @@ pub async fn calculate_hash(
     let (hash, size) = hash_file(storage, path, host_config.checksums.algorithm_code()).await?;
 
     Ok(ManifestRow {
-        logical_key: logical_key.to_path_buf(),
+        logical_key: LogicalKey::new(logical_key)?,
         physical_key: crate::paths::file_url(path)?,
         size,
         hash,
-        ..ManifestRow::default()
+        meta: None,
     })
 }
 
@@ -131,7 +132,7 @@ mod tests {
             .into();
 
         let manifest_row = ManifestRow {
-            logical_key: PathBuf::from("bar"),
+            logical_key: crate::LogicalKey::new("bar")?,
             hash: hash.try_into()?,
             size: file_content.len() as u64,
             ..ManifestRow::default()
@@ -160,7 +161,7 @@ mod tests {
         // Test with wrong hash - should return updated ManifestRow
         let wrong_hash = Multihash::wrap(MULTIHASH_SHA256, b"wrong_hash_data")?;
         let test_manifest_row = ManifestRow {
-            logical_key: PathBuf::from("bar"),
+            logical_key: crate::LogicalKey::new("bar")?,
             hash: wrong_hash.try_into()?,
             size: 999, // Wrong size to test that refresh_hash updates it
             ..ManifestRow::default()
@@ -187,7 +188,7 @@ mod tests {
         // Let's test a valid case instead - using a valid hash should work
         let valid_hash = Crc64Hash::default().into();
         let manifest_row = ManifestRow {
-            logical_key: PathBuf::from("bar"),
+            logical_key: crate::LogicalKey::new("bar")?,
             hash: valid_hash,
             size: file_content.len() as u64,
             ..ManifestRow::default()

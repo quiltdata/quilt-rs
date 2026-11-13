@@ -144,8 +144,14 @@ mod tests {
 
     use crate::cli::create;
     use crate::cli::fixtures::old_revisions::held;
+    use crate::cli::fixtures::old_revisions::label;
     use crate::cli::fixtures::old_revisions::package as package_with_old_revisions;
+    use crate::cli::fixtures::old_revisions::top_hash;
     use crate::cli::model::create_model_in_temp_dir;
+
+    fn labels(hashes: &[String]) -> Vec<String> {
+        hashes.iter().map(|hash| label(hash)).collect()
+    }
 
     /// Without a count, every removable revision goes, and the kept ones stay:
     /// the current one and the unpublished one.
@@ -155,16 +161,17 @@ mod tests {
 
         let output = remove_old(&package, None).await?;
 
-        assert_eq!(output.removed, ["old-1", "old-2", "old-3"]);
+        assert_eq!(labels(&output.removed), ["old-1", "old-2", "old-3"]);
         assert_eq!(
             output.to_string(),
             "Removed 3 old revisions of test/history \u{b7} freed 211.9 kB"
         );
+        let removed = ["old-1", "old-2", "old-3"].map(top_hash);
         assert_eq!(
             output.to_json(),
             serde_json::json!({
                 "namespace": "test/history",
-                "removed": ["old-1", "old-2", "old-3"],
+                "removed": removed,
                 "revisions": 3,
                 "objects": 2,
                 "bytes": 211_900,
@@ -183,7 +190,7 @@ mod tests {
 
         let output = remove_old(&package, NonZeroUsize::new(2)).await?;
 
-        assert_eq!(output.removed, ["old-1", "old-2"]);
+        assert_eq!(labels(&output.removed), ["old-1", "old-2"]);
         assert_eq!(
             output.to_string(),
             "Removed 2 old revisions of test/history \u{b7} freed 211.9 kB"
@@ -200,7 +207,7 @@ mod tests {
 
         let output = remove_old(&package, NonZeroUsize::new(10)).await?;
 
-        assert_eq!(output.removed, ["old-1", "old-2", "old-3"]);
+        assert_eq!(labels(&output.removed), ["old-1", "old-2", "old-3"]);
         assert_eq!(held(&package).await?, ["current-rev", "local-rev"]);
 
         let again = remove_old(&package, NonZeroUsize::new(1)).await?;

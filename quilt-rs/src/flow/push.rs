@@ -333,8 +333,6 @@ mod tests {
 
     use test_log::test;
 
-    use std::path::PathBuf;
-
     use aws_sdk_s3::primitives::ByteStream;
 
     use crate::fixtures;
@@ -566,13 +564,13 @@ mod tests {
             .to_string()
     }
 
-    fn wrapped_meta_row(user_meta: &Value) -> ManifestRow {
-        ManifestRow {
-            logical_key: PathBuf::from("a.txt"),
+    fn wrapped_meta_row(user_meta: &Value) -> Res<ManifestRow> {
+        Ok(ManifestRow {
+            logical_key: crate::LogicalKey::new("a.txt")?,
             physical_key: local_file_url("/b/a/r0"),
             meta: Some(json!({ "user_meta": user_meta })),
             ..ManifestRow::default()
-        }
+        })
     }
 
     /// The entries gate validates each entry's *unwrapped* user metadata,
@@ -589,7 +587,7 @@ mod tests {
 
         let mut manifest = governed_manifest();
         manifest
-            .insert_record(wrapped_meta_row(&json!({ "note": "x" })))
+            .insert_record(wrapped_meta_row(&json!({ "note": "x" }))?)
             .await?;
 
         let err = push_package(
@@ -644,7 +642,7 @@ mod tests {
         manifest
             .insert_record(ManifestRow {
                 size: file_content.len() as u64,
-                ..wrapped_meta_row(&json!({ "approved": true }))
+                ..wrapped_meta_row(&json!({ "approved": true }))?
             })
             .await?;
 
@@ -709,7 +707,7 @@ mod tests {
         let mut manifest = governed_manifest();
         manifest
             .insert_record(ManifestRow {
-                logical_key: PathBuf::from("b.txt"),
+                logical_key: crate::LogicalKey::new("b.txt")?,
                 physical_key: local_file_url("/b/a/rb"),
                 size: file_content.len() as u64,
                 ..ManifestRow::default()
@@ -717,7 +715,7 @@ mod tests {
             .await?;
         manifest
             .insert_record(ManifestRow {
-                logical_key: PathBuf::from("a.txt"),
+                logical_key: crate::LogicalKey::new("a.txt")?,
                 physical_key: local_file_url("/b/a/ra"),
                 size: file_content.len() as u64,
                 ..ManifestRow::default()
@@ -1126,7 +1124,7 @@ mod tests {
 
             manifest
                 .insert_record(ManifestRow {
-                    logical_key: PathBuf::from(format!("e0-{i}.txt")),
+                    logical_key: crate::LogicalKey::new(format!("e0-{i}.txt"))?,
                     physical_key: url::Url::from_file_path(&file_path)
                         .expect("absolute")
                         .to_string(),

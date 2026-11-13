@@ -366,7 +366,7 @@ mod tests {
         let manifest_src = fixtures::manifest_with_objects_all_sizes::manifest().await?;
         let base_record = manifest_src.get_record(&PathBuf::from("0mb.bin")).unwrap();
         let added = ManifestRow {
-            logical_key: PathBuf::from("foo"),
+            logical_key: crate::LogicalKey::new("foo")?,
             hash: base_record.hash.clone(),
             size: base_record.size,
             physical_key: base_record.physical_key.clone(),
@@ -458,15 +458,15 @@ mod tests {
         }
     }
 
-    fn row_from_fixture(fixture: &Manifest, source_key: &str) -> ManifestRow {
+    fn row_from_fixture(fixture: &Manifest, source_key: &str) -> Res<ManifestRow> {
         let base_record = fixture.get_record(&PathBuf::from(source_key)).unwrap();
-        ManifestRow {
-            logical_key: PathBuf::from("foo"),
+        Ok(ManifestRow {
+            logical_key: crate::LogicalKey::new("foo")?,
             hash: base_record.hash.clone(),
             size: base_record.size,
             physical_key: base_record.physical_key.clone(),
             ..ManifestRow::default()
-        }
+        })
     }
 
     /// Invariants a successful first-push revision of `foo/bar` must satisfy.
@@ -506,7 +506,7 @@ mod tests {
         // but gives the lineage a first-push `remote_uri` and seeds the remote
         // so `upload_row` / `tag_latest` can complete.
         let manifest_src = fixtures::manifest_with_objects_all_sizes::manifest().await?;
-        let added = row_from_fixture(&manifest_src, "0mb.bin");
+        let added = row_from_fixture(&manifest_src, "0mb.bin")?;
 
         let paths = DomainPaths::new(std::path::absolute("/foo")?);
         let (storage, remote) =
@@ -550,7 +550,7 @@ mod tests {
         // swaps its content to a new hash. The resulting revision is then
         // pushed end-to-end.
         let manifest_src = fixtures::manifest_with_objects_all_sizes::manifest().await?;
-        let modified = row_from_fixture(&manifest_src, "less-then-8mb.txt");
+        let modified = row_from_fixture(&manifest_src, "less-then-8mb.txt")?;
 
         // Seed working-dir and remote objects with the *real* less-than-8mb
         // bytes so the declared row hash matches what MockRemote computes on
@@ -585,7 +585,7 @@ mod tests {
         // is the row `Change::Modified` replaces.
         let mut manifest = Manifest::default();
         manifest
-            .insert_record(row_from_fixture(&manifest_src, "0mb.bin"))
+            .insert_record(row_from_fixture(&manifest_src, "0mb.bin")?)
             .await?;
 
         let outcome = publish_package(
@@ -624,7 +624,7 @@ mod tests {
         use crate::manifest::WorkflowId;
 
         let manifest_src = fixtures::manifest_with_objects_all_sizes::manifest().await?;
-        let added = row_from_fixture(&manifest_src, "0mb.bin");
+        let added = row_from_fixture(&manifest_src, "0mb.bin")?;
 
         let paths = DomainPaths::new(std::path::absolute("/foo")?);
         let (storage, remote) =
@@ -708,7 +708,7 @@ mod tests {
         // resulting empty manifest. Push uploads zero rows but still writes
         // the manifest file and certifies it as latest.
         let manifest_src = fixtures::manifest_with_objects_all_sizes::manifest().await?;
-        let existing = row_from_fixture(&manifest_src, "0mb.bin");
+        let existing = row_from_fixture(&manifest_src, "0mb.bin")?;
 
         // Remove has nothing to copy into the object store, but setup still
         // seeds /working-dir/foo so the helper stays uniform across tests.
@@ -759,7 +759,7 @@ mod tests {
         // a non-empty `user_meta` and commit message flow through
         // `CommitOptions` into `flow::commit`, then push succeeds.
         let manifest_src = fixtures::manifest_with_objects_all_sizes::manifest().await?;
-        let added = row_from_fixture(&manifest_src, "0mb.bin");
+        let added = row_from_fixture(&manifest_src, "0mb.bin")?;
 
         let paths = DomainPaths::new(std::path::absolute("/foo")?);
         let (storage, remote) =

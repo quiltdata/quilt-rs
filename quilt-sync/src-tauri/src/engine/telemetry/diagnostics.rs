@@ -74,8 +74,7 @@ pub async fn collect(
         .get_home()
         .await
         .ok()
-        .map(|h| h.as_ref().display().to_string())
-        .unwrap_or_default();
+        .map_or_default(|h| h.as_ref().display().to_string());
 
     Ok(DiagnosticInfo {
         version: app.version.to_string(),

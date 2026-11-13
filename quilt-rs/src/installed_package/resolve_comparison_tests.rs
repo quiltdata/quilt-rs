@@ -15,15 +15,18 @@ use crate::paths::tag_key;
 const REMOTE: &str = r#"{
     "bucket": "bucket",
     "namespace": "test/resolve",
-    "hash": "base-rev",
+    "hash": "1111111111111111111111111111111111111111111111111111111111111111",
     "origin": "quilt.test"
 }"#;
 
 const REMOTE_WITHOUT_CATALOG: &str = r#"{
     "bucket": "bucket",
     "namespace": "test/resolve",
-    "hash": "base-rev"
+    "hash": "1111111111111111111111111111111111111111111111111111111111111111"
 }"#;
+
+/// The revision this copy is based on, and its remote's hash.
+const BASE_REV: &str = "1111111111111111111111111111111111111111111111111111111111111111";
 
 /// The published `latest`: a pointer holds a full top hash.
 const PUB_REV: &str = "2222222222222222222222222222222222222222222222222222222222222222";
@@ -47,7 +50,7 @@ fn manifest(message: &str, rows: &[(&str, &str)]) -> String {
 
 /// An installed `test/resolve` with a two-revision pending chain
 /// (`local-1` then `local-2`) over `remote_json`, whose on-disk
-/// `latest_hash` is the stale `base-rev`. The temp dirs must outlive the
+/// `latest_hash` is the stale `BASE_REV`. The temp dirs must outlive the
 /// package.
 async fn diverged_over<R: Remote>(
     remote: R,
@@ -71,8 +74,8 @@ async fn diverged_over<R: Remote>(
                         "prev_hashes": ["local-1"]
                     }},
                     "remote": {remote_json},
-                    "base_hash": "base-rev",
-                    "latest_hash": "base-rev",
+                    "base_hash": "{BASE_REV}",
+                    "latest_hash": "{BASE_REV}",
                     "paths": {{}}
                 }}}},
             "home": "/tmp/working_dir"
@@ -102,7 +105,7 @@ async fn diverged_over<R: Remote>(
 }
 
 /// A remote whose `latest` has moved to `PUB_REV` past the lineage's
-/// `base-rev`, and whose registry lists `base-rev`, `PUB_REV` and `local-1`.
+/// `BASE_REV`, and whose registry lists `BASE_REV`, `PUB_REV` and `local-1`.
 async fn published_remote() -> Res<MockRemote> {
     let remote = MockRemote::default();
     let namespace: Namespace = ("test", "resolve").into();
@@ -124,12 +127,12 @@ async fn published_remote() -> Res<MockRemote> {
     remote
         .put_object(
             None,
-            &"s3://bucket/.quilt/packages/base-rev".parse()?,
+            &format!("s3://bucket/.quilt/packages/{BASE_REV}").parse()?,
             manifest("Stale", &[("same.txt", EMPTY_HASH), ("a.txt", EMPTY_HASH)]).into_bytes(),
         )
         .await?;
     for (timestamp, hash) in [
-        ("1758500000", "base-rev"),
+        ("1758500000", BASE_REV),
         ("1758500001", PUB_REV),
         ("1758500002", "local-1"),
     ] {

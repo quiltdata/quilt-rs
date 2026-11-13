@@ -227,7 +227,7 @@ pub async fn upload_row(
         .to_file_path()
         .map_err(|()| UriError::FileScheme(local_url))?;
 
-    let object_uri = ObjectUri::new(package_handle, row.logical_key.clone());
+    let object_uri = ObjectUri::new(package_handle, row.logical_key.to_path_buf());
     log::info!("Uploading to S3: {object_uri}");
 
     let host_config = committed_checksums(host_config, &row);

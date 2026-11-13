@@ -32,6 +32,7 @@ use std::collections::HashMap;
 
 use leptos::prelude::*;
 use leptos::reactive::owner::WeakOwner;
+use leptos::tachys::reactive_graph::OwnedView;
 
 use quilt_uri::Namespace;
 use quilt_uri::S3PackageUri;
@@ -590,8 +591,7 @@ fn package_group(
             groups
                 .iter()
                 .find(|group| group.title == key)
-                .map(|group| group.rows.clone())
-                .unwrap_or_default()
+                .map_or_default(|group| group.rows.clone())
         })
     });
     // The heading is its own reactive node: `group_annotation` reads the store's
@@ -1186,7 +1186,13 @@ fn MainPageRegions(
                             previous.cleanup();
                         }
                         shown.set_value(Some(answer.clone()));
-                        answer.with(move || {
+                        // Built under the answer too, not only made there: the
+                        // rows' effects and components are created when the view
+                        // is built, under whatever owner builds it, and the
+                        // `Suspend`'s goes at the next refetch while the rows
+                        // stay on screen.
+                        let owner = answer.clone();
+                        let view = answer.with(move || {
                             first_load.answered();
                             // The light phase's payload, held for the life of this
                             // resolve: it is the base the store's projection writes
@@ -1448,7 +1454,8 @@ fn MainPageRegions(
                                 </div>
                             }
                                 .into_any()
-                        })
+                        });
+                        OwnedView::new_with_owner(view, owner).into_any()
                     }
                     // A missing session or setup goes to sign-in or setup.
                     Err(err) if first_load.redirect(&err) => ().into_any(),
@@ -4398,6 +4405,90 @@ mod tests {
             el.text_content().unwrap().contains("No files yet"),
             "and it is the feed that is drawn, not the packages view"
         );
+    }
+
+    /// The rows a refetch keeps on screen still answer a hover. Rows owned by
+    /// the `Suspend` died with it, and each hover then read a disposed signal.
+    #[wasm_bindgen_test]
+    async fn a_row_s_tooltip_opens_while_a_refetch_is_out() {
+        forget_toolbar();
+        let reload = Trigger::new();
+        let started = Rc::new(Cell::new(0usize));
+        let released = Rc::new(Cell::new(0usize));
+        let el = mount({
+            let (started, released) = (started.clone(), released.clone());
+            move || {
+                let packages = LocalResource::new(move || {
+                    reload.track();
+                    started.set(started.get() + 1);
+                    let (read, released) = (started.get(), released.clone());
+                    async move {
+                        while released.get() < read {
+                            sleep_ms(5).await;
+                        }
+                        Ok(MainPagePackagesData {
+                            packages: vec![pkg("user/plate-07", PackageState::Latest)],
+                        })
+                    }
+                });
+                let accounts = LocalResource::new(move || {
+                    reload.track();
+                    async move { Ok(one_signed_out_host()) }
+                });
+                view! {
+                    <leptos_router::components::Router>
+                        <MainPageRegions packages=packages accounts=accounts reload=reload />
+                    </leptos_router::components::Router>
+                }
+            }
+        });
+        released.set(1);
+        for _ in 0..200 {
+            if el.query_selector("a[aria-describedby]").unwrap().is_some() {
+                break;
+            }
+            sleep_ms(5).await;
+        }
+        let reads_started = |n: usize| {
+            let started = started.clone();
+            async move {
+                for _ in 0..200 {
+                    if started.get() >= n {
+                        return;
+                    }
+                    sleep_ms(5).await;
+                }
+                panic!("read {n} never started; {} did", started.get());
+            }
+        };
+        // A second reload while the first refetch is out queues a third read.
+        // When the refetch answers, its resolve is cleaned up and the third
+        // read starts, with that answer's rows still on screen.
+        reload.notify();
+        reads_started(2).await;
+        reload.notify();
+        released.set(2);
+        reads_started(3).await;
+        sleep_ms(20).await;
+        assert_eq!(released.get(), 2, "the third read is still out");
+
+        let link = el
+            .query_selector("a[aria-describedby]")
+            .unwrap()
+            .expect("the old row is shown");
+        let wrapper = link.parent_element().unwrap();
+        let init = web_sys::PointerEventInit::new();
+        init.set_pointer_type("mouse");
+        let enter = web_sys::PointerEvent::new_with_event_init_dict("pointerenter", &init).unwrap();
+        wrapper.dispatch_event(&enter).unwrap();
+        sleep_ms(700).await;
+        let tip = quilt_ui_kit::test_support::describing_tooltip(&link).expect("the row's tooltip");
+        assert!(
+            tip.matches(":popover-open").unwrap(),
+            "a hover during the refetch opened no tooltip"
+        );
+        released.set(3);
+        sleep_ms(50).await;
     }
 
     #[wasm_bindgen_test]

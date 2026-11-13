@@ -59,9 +59,7 @@ struct Revision {
 type Published = Arc<Mutex<Vec<Revision>>>;
 
 fn changed_paths(status: Option<&quilt::lineage::InstalledPackageStatus>) -> BTreeSet<String> {
-    status
-        .map(|s| s.changes.keys().map(|p| p.display().to_string()).collect())
-        .unwrap_or_default()
+    status.map_or_default(|s| s.changes.keys().map(|p| p.display().to_string()).collect())
 }
 
 /// The agent's `out.md`, left in the tree.
@@ -159,23 +157,25 @@ fn expect_downloads(
 fn expect_latest(model: &mut MockQuiltModel, meta: Value, paths: &'static [&'static str]) {
     model
         .expect_browse_remote_manifest()
-        .returning(move |_| Ok(manifest(&meta, paths)));
+        .returning(move |_| manifest(&meta, paths));
 }
 
-fn manifest(meta: &Value, paths: &[&str]) -> quilt::manifest::Manifest {
-    quilt::manifest::Manifest {
+fn manifest(meta: &Value, paths: &[&str]) -> Result<quilt::manifest::Manifest, Error> {
+    Ok(quilt::manifest::Manifest {
         header: quilt::manifest::ManifestHeader {
             user_meta: Some(meta.clone()),
             ..quilt::manifest::ManifestHeader::default()
         },
         rows: paths
             .iter()
-            .map(|key| quilt::manifest::ManifestRow {
-                logical_key: PathBuf::from(key),
-                ..quilt::manifest::ManifestRow::default()
+            .map(|key| {
+                Ok(quilt::manifest::ManifestRow {
+                    logical_key: quilt::LogicalKey::new(key)?,
+                    ..quilt::manifest::ManifestRow::default()
+                })
             })
-            .collect(),
-    }
+            .collect::<Result<_, Error>>()?,
+    })
 }
 
 /// Tasks in a temporary data folder that keep every run they are asked to
@@ -323,7 +323,7 @@ impl Fixture {
         let rows = self.rows;
         model
             .expect_get_installed_package_manifest()
-            .returning(move |_, _| Ok(manifest(&meta, rows)));
+            .returning(move |_, _| manifest(&meta, rows));
         model
             .expect_try_lock_package()
             .returning(|p| Ok(Some(p.namespace.clone())));
@@ -468,26 +468,6 @@ async fn a_path_this_copy_tracks_is_not_downloaded_again() {
         *fixture.events.lock().unwrap(),
         ["download sub/TASK.md", "walk", "publish"]
     );
-}
-
-/// The download comes before the claim, outside any permission check.
-#[tokio::test]
-async fn a_revision_listing_a_path_outside_the_package_is_not_claimed() {
-    let fixture = Fixture {
-        rows: &["TASK.md", "../outside.csv"],
-        ..Fixture::new()
-    };
-
-    fixture
-        .check(unclaimed(), fresh(BTreeMap::new()), true)
-        .await;
-
-    assert_eq!(
-        *fixture.events.lock().unwrap(),
-        [] as [&str; 0],
-        "nothing downloaded"
-    );
-    assert_eq!(fixture.metas(), [] as [Value; 0], "nothing is claimed");
 }
 
 #[tokio::test]
@@ -1057,7 +1037,7 @@ fn rereading_model(
             Some(pulled) if uri.hash == "h3" => pulled,
             _ => &latest_meta,
         };
-        Ok(manifest(meta, &["TASK.md", "NEXT.md"]))
+        manifest(meta, &["TASK.md", "NEXT.md"])
     });
     model
         .expect_lock_package()
@@ -1591,21 +1571,21 @@ async fn a_head_that_no_longer_holds_the_claim_gets_no_outcome() -> Result<(), E
 }
 
 /// A row at `key` whose bytes read `content`.
-fn file(key: &str, content: &str) -> quilt::manifest::ManifestRow {
+fn file(key: &str, content: &str) -> Result<quilt::manifest::ManifestRow, Error> {
     let hex = content.bytes().fold(String::new(), |mut hex, byte| {
         use std::fmt::Write;
         write!(hex, "{byte:02x}").expect("written");
         hex
     });
-    quilt::manifest::ManifestRow {
-        logical_key: PathBuf::from(key),
+    Ok(quilt::manifest::ManifestRow {
+        logical_key: quilt::LogicalKey::new(key)?,
         physical_key: format!("s3://quilt-dev/acme/demo/{key}?versionId={content}"),
         hash: quilt::object_hash::Sha256Hash::try_from(hex.as_str())
             .expect("hex")
             .into(),
         size: content.len() as u64,
         meta: None,
-    }
+    })
 }
 
 fn revision(meta: Value, rows: Vec<quilt::manifest::ManifestRow>) -> quilt::manifest::Manifest {
@@ -1740,12 +1720,12 @@ async fn finish_among(fixture: &Fixture, revisions: Revisions) -> Arc<Mutex<Remo
 }
 
 #[tokio::test]
-async fn an_outcome_lands_on_a_latest_that_gained_other_entries() {
-    let task = file("TASK.md", "do it");
-    let others = file("others.csv", "theirs");
+async fn an_outcome_lands_on_a_latest_that_gained_other_entries() -> Result<(), Error> {
+    let task = file("TASK.md", "do it")?;
+    let others = file("others.csv", "theirs")?;
     for outcome in [
         vec![task.clone()],
-        vec![task.clone(), file("out.md", "result")],
+        vec![task.clone(), file("out.md", "result")?],
     ] {
         let fixture = Fixture::new();
         let expected: BTreeSet<String> = outcome
@@ -1773,13 +1753,14 @@ async fn an_outcome_lands_on_a_latest_that_gained_other_entries() {
             "and the copy is reset to it"
         );
     }
+    Ok(())
 }
 
 #[tokio::test]
-async fn an_outcome_adding_a_file_the_agent_also_published_rebases_cleanly() {
+async fn an_outcome_adding_a_file_the_agent_also_published_rebases_cleanly() -> Result<(), Error> {
     let fixture = Fixture::new();
-    let task = file("TASK.md", "do it");
-    let result = file("out.md", "result");
+    let task = file("TASK.md", "do it")?;
+    let result = file("out.md", "result")?;
 
     let remote = finish_among(
         &fixture,
@@ -1794,35 +1775,38 @@ async fn an_outcome_adding_a_file_the_agent_also_published_rebases_cleanly() {
     let remote = remote.lock().unwrap();
     assert_eq!(remote.latest, "r1");
     assert_eq!(remote.latest().rows, [task, result]);
+    Ok(())
 }
 
 #[tokio::test]
-async fn an_outcome_whose_change_collides_with_another_writers_stays_diverged() {
+async fn an_outcome_whose_change_collides_with_another_writers_stays_diverged() -> Result<(), Error>
+{
     let fixture = Fixture::new();
-    let task = file("TASK.md", "do it");
+    let task = file("TASK.md", "do it")?;
 
     let remote = finish_among(
         &fixture,
         Revisions::new(
-            vec![task.clone(), file("data.csv", "v1")],
-            vec![task.clone(), file("data.csv", "ours")],
-            vec![task.clone(), file("data.csv", "theirs")],
+            vec![task.clone(), file("data.csv", "v1")?],
+            vec![task.clone(), file("data.csv", "ours")?],
+            vec![task.clone(), file("data.csv", "theirs")?],
         ),
     )
     .await;
 
     assert_eq!(remote.lock().unwrap().latest, "h4", "nothing over theirs");
     assert_eq!(*fixture.events.lock().unwrap(), ["publish"], "no reset");
+    Ok(())
 }
 
 /// The pre-prompt re-read pulled `pulled.csv`, which another writer has since
 /// removed.
 #[tokio::test]
-async fn a_revision_the_reread_pulled_is_not_counted_as_the_runs_change() {
+async fn a_revision_the_reread_pulled_is_not_counted_as_the_runs_change() -> Result<(), Error> {
     let fixture = Fixture::new();
-    let task = file("TASK.md", "do it");
-    let pulled = file("pulled.csv", "pulled");
-    let result = file("out.md", "result");
+    let task = file("TASK.md", "do it")?;
+    let pulled = file("pulled.csv", "pulled")?;
+    let result = file("out.md", "result")?;
     let revisions = Revisions {
         claim: vec![task.clone()],
         ..Revisions::new(
@@ -1836,11 +1820,12 @@ async fn a_revision_the_reread_pulled_is_not_counted_as_the_runs_change() {
 
     let remote = remote.lock().unwrap();
     assert_eq!(remote.latest().rows, [task, result]);
+    Ok(())
 }
 
 /// The user committed by hand during the run, and pushed it or not.
 #[tokio::test]
-async fn an_outcome_built_on_a_hand_commit_stays_diverged() {
+async fn an_outcome_built_on_a_hand_commit_stays_diverged() -> Result<(), Error> {
     let pending = Fixture {
         pending_commit: true,
         ..Fixture::new()
@@ -1851,14 +1836,14 @@ async fn an_outcome_built_on_a_hand_commit_stays_diverged() {
         ..Fixture::new()
     };
     for fixture in [pending, pushed] {
-        let task = file("TASK.md", "do it");
+        let task = file("TASK.md", "do it")?;
 
         let remote = finish_among(
             &fixture,
             Revisions::new(
                 vec![task.clone()],
-                vec![task.clone(), file("out.md", "result")],
-                vec![task.clone(), file("others.csv", "theirs")],
+                vec![task.clone(), file("out.md", "result")?],
+                vec![task.clone(), file("others.csv", "theirs")?],
             ),
         )
         .await;
@@ -1866,6 +1851,7 @@ async fn an_outcome_built_on_a_hand_commit_stays_diverged() {
         assert_eq!(remote.lock().unwrap().latest, "h4");
         assert_eq!(*fixture.events.lock().unwrap(), ["publish"], "no reset");
     }
+    Ok(())
 }
 
 /// Another writer's revision: `latest`'s rows and `row`, still under the claim.
@@ -1879,11 +1865,12 @@ fn writer(
 }
 
 #[tokio::test]
-async fn a_writer_who_publishes_during_the_rebase_keeps_latest_and_the_rebase_is_redone_onto_it() {
+async fn a_writer_who_publishes_during_the_rebase_keeps_latest_and_the_rebase_is_redone_onto_it()
+-> Result<(), Error> {
     let fixture = Fixture::new();
-    let task = file("TASK.md", "do it");
-    let result = file("out.md", "result");
-    let theirs = file("theirs.csv", "theirs");
+    let task = file("TASK.md", "do it")?;
+    let result = file("out.md", "result")?;
+    let theirs = file("theirs.csv", "theirs")?;
     let revisions = Revisions {
         writers: vec![writer(std::slice::from_ref(&task), theirs.clone())],
         ..Revisions::new(
@@ -1903,24 +1890,26 @@ async fn a_writer_who_publishes_during_the_rebase_keeps_latest_and_the_rebase_is
         ["publish", "push onto h4", "push onto w1", "reset"],
         "the second push builds on theirs"
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn a_rebase_that_keeps_losing_latest_gives_up_after_three_attempts() {
+async fn a_rebase_that_keeps_losing_latest_gives_up_after_three_attempts() -> Result<(), Error> {
     let fixture = Fixture::new();
-    let task = file("TASK.md", "do it");
+    let task = file("TASK.md", "do it")?;
     let revisions = Revisions {
         writers: ["a", "b", "c"]
+            .iter()
             .map(|name| {
-                writer(
+                Ok(writer(
                     std::slice::from_ref(&task),
-                    file(&format!("{name}.csv"), name),
-                )
+                    file(&format!("{name}.csv"), name)?,
+                ))
             })
-            .into(),
+            .collect::<Result<_, Error>>()?,
         ..Revisions::new(
             vec![task.clone()],
-            vec![task.clone(), file("out.md", "result")],
+            vec![task.clone(), file("out.md", "result")?],
             vec![task.clone()],
         )
     };
@@ -1943,51 +1932,54 @@ async fn a_rebase_that_keeps_losing_latest_gives_up_after_three_attempts() {
         ["out.md"],
         "the run's own change"
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn a_file_where_latest_gained_a_folder_stays_diverged() {
+async fn a_file_where_latest_gained_a_folder_stays_diverged() -> Result<(), Error> {
     let fixture = Fixture::new();
-    let task = file("TASK.md", "do it");
+    let task = file("TASK.md", "do it")?;
 
     let remote = finish_among(
         &fixture,
         Revisions::new(
             vec![task.clone()],
-            vec![task.clone(), file("results", "ours")],
-            vec![task.clone(), file("results/output.csv", "theirs")],
+            vec![task.clone(), file("results", "ours")?],
+            vec![task.clone(), file("results/output.csv", "theirs")?],
         ),
     )
     .await;
 
     assert_eq!(remote.lock().unwrap().latest, "h4");
+    Ok(())
 }
 
 #[tokio::test]
-async fn a_run_that_replaces_a_file_with_a_folder_rebases() {
+async fn a_run_that_replaces_a_file_with_a_folder_rebases() -> Result<(), Error> {
     let fixture = Fixture::new();
-    let task = file("TASK.md", "do it");
-    let output = file("results/output.csv", "ours");
-    let others = file("others.csv", "theirs");
+    let task = file("TASK.md", "do it")?;
+    let output = file("results/output.csv", "ours")?;
+    let others = file("others.csv", "theirs")?;
 
     let remote = finish_among(
         &fixture,
         Revisions::new(
-            vec![task.clone(), file("results", "old")],
+            vec![task.clone(), file("results", "old")?],
             vec![task.clone(), output.clone()],
-            vec![task.clone(), file("results", "old"), others.clone()],
+            vec![task.clone(), file("results", "old")?, others.clone()],
         ),
     )
     .await;
 
     let remote = remote.lock().unwrap();
     assert_eq!(remote.latest().rows, [task, others, output]);
+    Ok(())
 }
 
 #[tokio::test]
-async fn a_task_registered_during_the_run_survives_the_outcome() {
+async fn a_task_registered_during_the_run_survives_the_outcome() -> Result<(), Error> {
     let fixture = Fixture::new();
-    let task = file("TASK.md", "do it");
+    let task = file("TASK.md", "do it")?;
     let mut registered = edited_head();
     registered["next"] = json!({ "document": "NEXT.md" });
     let revisions = Revisions {
@@ -2004,13 +1996,14 @@ async fn a_task_registered_during_the_run_survives_the_outcome() {
         Some(agent_exec::with_claim(&registered, outcome_claim)),
         "latest's metadata, with only the claim moved on"
     );
+    Ok(())
 }
 
 /// Another writer moved the package to another workflow during the run.
 #[tokio::test]
-async fn the_rebased_outcome_keeps_latests_workflow_under_its_own_message() {
+async fn the_rebased_outcome_keeps_latests_workflow_under_its_own_message() -> Result<(), Error> {
     let fixture = Fixture::new();
-    let task = file("TASK.md", "do it");
+    let task = file("TASK.md", "do it")?;
     let switched = Some(quilt::manifest::Workflow {
         config: quilt_uri::S3Uri {
             bucket: "quilt-dev".to_string(),
@@ -2035,6 +2028,7 @@ async fn the_rebased_outcome_keeps_latests_workflow_under_its_own_message() {
     let remote = remote.lock().unwrap();
     assert_eq!(remote.latest().header.workflow, switched);
     assert_eq!(remote.latest().header.message, Some(message));
+    Ok(())
 }
 
 /// The outcome is already published, so its publish did not fail.
@@ -2053,56 +2047,59 @@ async fn a_rebase_that_cannot_read_the_remote_leaves_the_package_diverged() {
 }
 
 #[tokio::test]
-async fn another_writers_change_to_only_an_entrys_meta_on_a_path_the_run_changed_stays_diverged() {
+async fn another_writers_change_to_only_an_entrys_meta_on_a_path_the_run_changed_stays_diverged()
+-> Result<(), Error> {
     let fixture = Fixture::new();
-    let task = file("TASK.md", "do it");
+    let task = file("TASK.md", "do it")?;
     let reviewed = quilt::manifest::ManifestRow {
         meta: Some(json!({ "reviewed": true })),
-        ..file("data.csv", "v1")
+        ..file("data.csv", "v1")?
     };
 
     let remote = finish_among(
         &fixture,
         Revisions::new(
-            vec![task.clone(), file("data.csv", "v1")],
-            vec![task.clone(), file("data.csv", "v2")],
+            vec![task.clone(), file("data.csv", "v1")?],
+            vec![task.clone(), file("data.csv", "v2")?],
             vec![task.clone(), reviewed],
         ),
     )
     .await;
 
     assert_eq!(remote.lock().unwrap().latest, "h4");
+    Ok(())
 }
 
 /// The top hash reads null, absent and `{}` alike.
 #[tokio::test]
-async fn an_entry_meta_written_as_empty_is_no_change() {
+async fn an_entry_meta_written_as_empty_is_no_change() -> Result<(), Error> {
     let fixture = Fixture::new();
-    let task = file("TASK.md", "do it");
+    let task = file("TASK.md", "do it")?;
     let empty = quilt::manifest::ManifestRow {
         meta: Some(json!({})),
-        ..file("data.csv", "v1")
+        ..file("data.csv", "v1")?
     };
 
     let remote = finish_among(
         &fixture,
         Revisions::new(
-            vec![task.clone(), file("data.csv", "v1")],
-            vec![task.clone(), file("data.csv", "v2")],
+            vec![task.clone(), file("data.csv", "v1")?],
+            vec![task.clone(), file("data.csv", "v2")?],
             vec![task.clone(), empty],
         ),
     )
     .await;
 
     let remote = remote.lock().unwrap();
-    assert_eq!(remote.latest().rows, [task, file("data.csv", "v2")]);
+    assert_eq!(remote.latest().rows, [task, file("data.csv", "v2")?]);
+    Ok(())
 }
 
 /// The user cancelled the task in a revision published during the run.
 #[tokio::test]
-async fn a_latest_that_no_longer_holds_the_claim_gets_no_rebase() {
+async fn a_latest_that_no_longer_holds_the_claim_gets_no_rebase() -> Result<(), Error> {
     let fixture = Fixture::new();
-    let task = file("TASK.md", "do it");
+    let task = file("TASK.md", "do it")?;
     let mut cancelled = edited_head();
     cancelled["agent_exec"]["claim"] = json!({ "status": "cancelled" });
     let revisions = Revisions {
@@ -2114,16 +2111,18 @@ async fn a_latest_that_no_longer_holds_the_claim_gets_no_rebase() {
 
     assert_eq!(remote.lock().unwrap().latest, "h4");
     assert_eq!(*fixture.events.lock().unwrap(), ["publish"]);
+    Ok(())
 }
 
 #[tokio::test]
-async fn a_reset_that_refuses_after_the_rebase_leaves_latest_holding_the_outcome() {
+async fn a_reset_that_refuses_after_the_rebase_leaves_latest_holding_the_outcome()
+-> Result<(), Error> {
     let fixture = Fixture {
         edited_after_publish: written(),
         ..Fixture::new()
     };
-    let task = file("TASK.md", "do it");
-    let result = file("out.md", "result");
+    let task = file("TASK.md", "do it")?;
+    let result = file("out.md", "result")?;
 
     let remote = finish_among(
         &fixture,
@@ -2143,6 +2142,7 @@ async fn a_reset_that_refuses_after_the_rebase_leaves_latest_holding_the_outcome
         ["publish", "push onto h4"],
         "the copy stays Diverged"
     );
+    Ok(())
 }
 
 #[tokio::test]

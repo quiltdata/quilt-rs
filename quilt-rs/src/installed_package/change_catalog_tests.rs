@@ -15,7 +15,7 @@ use crate::lineage::PackageLineageIo;
 use crate::lineage::UpstreamState;
 use crate::paths::DomainPaths;
 
-const HASH: &str = "abcdef";
+const HASH: &str = "abcdef0000000000000000000000000000000000000000000000000000000000";
 
 /// A package published to `bkt` at `HASH`, which is also the remote's
 /// `latest`, holding a pending commit on top. `catalog` is the remote's

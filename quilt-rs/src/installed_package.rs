@@ -607,7 +607,10 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
             .await;
         let counts = lineage::DownloadCounts::count(
             &lineage,
-            manifest.rows.iter().map(|row| (&row.logical_key, row.size)),
+            manifest
+                .rows
+                .iter()
+                .map(|row| (row.logical_key.as_path(), row.size)),
             &status.changes,
             &on_disk,
         );
@@ -1129,9 +1132,8 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         let mut backlog: Vec<PathBuf> = manifest
             .rows
             .iter()
-            .map(|row| &row.logical_key)
+            .map(|row| row.logical_key.to_path_buf())
             .filter(|key| lineage::DownloadCounts::in_backlog(lineage, &no_changes, &on_disk, key))
-            .cloned()
             .collect();
         backlog.sort();
         Ok(backlog)
@@ -1148,11 +1150,11 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
     ) -> BTreeSet<PathBuf> {
         let mut on_disk = BTreeSet::new();
         for key in manifest.rows.iter().map(|row| &row.logical_key) {
-            if !lineage.paths.contains_key(key)
+            if !lineage.paths.contains_key(key.as_path())
                 && lineage.sync_scope.covers_untracked(key)
-                && self.storage.exists(package_home.join(key)).await
+                && self.storage.exists(key.join_to(package_home)).await
             {
-                on_disk.insert(key.clone());
+                on_disk.insert(key.to_path_buf());
             }
         }
         on_disk
@@ -1543,6 +1545,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
                 "Cannot change remote on a package that has already been pushed".to_string(),
             )));
         }
+        quilt_uri::check_bucket(&bucket)?;
         // Validate the bucket up front so a typo surfaces here instead of
         // later at push time as an opaque S3 routing error. This is an
         // unauthenticated HEAD against s3.amazonaws.com — works even when

@@ -448,6 +448,21 @@ mod tests {
         Ok(())
     }
 
+    /// A logical path holding fragment delimiters comes back from the route
+    /// as the same path.
+    #[test]
+    fn a_remote_package_path_with_delimiters_round_trips() -> Result<()> {
+        let mut uri = quilt_uri::S3PackageUri::try_from("quilt+s3://test#package=foo/bar")?;
+        uri.path = Some("x&package=other/pkg&catalog=other.test a+b%41.csv".into());
+        let page_url = from_url(
+            Paths::RemotePackage(uri.clone()),
+            Url::parse("http://test:1234/")?,
+        );
+        let route: Paths = page_url.as_str().parse()?;
+        assert_eq!(route, Paths::RemotePackage(uri));
+        Ok(())
+    }
+
     #[test]
     fn test_settings() -> Result<()> {
         let page_url = from_url(Paths::Settings, Url::parse("http://test:1234/")?);

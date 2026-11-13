@@ -131,11 +131,8 @@ async fn run_gc_command(m: &impl QuiltModel) -> Result<FreedSpace, String> {
     // success message is the report's own sentence, known only once it ends.
     let notify = Notify::new("Freeing up space".to_string());
     let result = m.gc().await;
-    let freed_bytes = result
-        .as_ref()
-        .map(|report| report.bytes)
-        .unwrap_or_default();
-    let msg_ok = result.as_ref().map(ToString::to_string).unwrap_or_default();
+    let freed_bytes = result.as_ref().map_or_default(|report| report.bytes);
+    let msg_ok = result.as_ref().map_or_default(ToString::to_string);
     let msg_err = |err: &Error| format!("Failed to free up space: {}", err.user_facing());
 
     notify
@@ -241,18 +238,17 @@ pub async fn send_crash_report(
 async fn reveal_in_file_browser_command(
     m: &model::Model,
     namespace: &str,
-    path: &str,
+    path: &quilt::LogicalKey,
 ) -> Result<(), Error> {
     let namespace = quilt_uri::Namespace::try_from(namespace)?;
-    m.reveal_in_file_browser(&namespace, &PathBuf::from(path))
-        .await?;
+    m.reveal_in_file_browser(&namespace, path).await?;
     Ok(())
 }
 
 pub async fn reveal_in_file_browser(
     s: &Services,
     namespace: String,
-    path: String,
+    path: quilt::LogicalKey,
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
     let m = &*s.model;
@@ -305,18 +301,17 @@ pub async fn open_in_file_browser(
 async fn open_in_default_application_command(
     m: &model::Model,
     namespace: &str,
-    path: &str,
+    path: &quilt::LogicalKey,
 ) -> Result<(), Error> {
     let namespace = quilt_uri::Namespace::try_from(namespace)?;
-    m.open_in_default_application(&namespace, &PathBuf::from(path))
-        .await?;
+    m.open_in_default_application(&namespace, path).await?;
     Ok(())
 }
 
 pub async fn open_in_default_application(
     s: &Services,
     namespace: String,
-    path: String,
+    path: quilt::LogicalKey,
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
     let m = &*s.model;
@@ -343,10 +338,10 @@ pub async fn open_in_default_application(
 async fn package_file_path_command(
     m: &impl QuiltModel,
     namespace: &str,
-    path: &str,
+    path: &quilt::LogicalKey,
 ) -> Result<PathBuf, Error> {
     let namespace = quilt_uri::Namespace::try_from(namespace)?;
-    m.file_path(&namespace, &PathBuf::from(path)).await
+    m.file_path(&namespace, path).await
 }
 
 /// The absolute path of one of a package's files, for the file pane's *Copy
@@ -356,7 +351,7 @@ async fn package_file_path_command(
 pub async fn package_file_path(
     s: &Services,
     namespace: String,
-    path: String,
+    path: quilt::LogicalKey,
 ) -> Result<String, String> {
     let m = &*s.model;
     package_file_path_command(m, &namespace, &path)
@@ -525,13 +520,16 @@ mod tests {
     /// *Copy path* asks where the file is, and gets the path opening the file
     /// would open: the package's home joined with its path inside it.
     #[tokio::test]
-    async fn a_package_file_s_path_is_where_opening_it_would_look() {
+    async fn a_package_file_s_path_is_where_opening_it_would_look() -> Result<(), Error> {
         let mut m = model::MockQuiltModel::new();
         m.expect_file_path()
             .withf(|ns, path| ns.to_string() == "team/plate" && path == &PathBuf::from("raw/a.csv"))
-            .returning(|_, path| Ok(PathBuf::from("/Users/me/QuiltSync/team/plate").join(path)));
+            .returning(|_, path| {
+                Ok(path.join_to(std::path::Path::new("/Users/me/QuiltSync/team/plate")))
+            });
 
-        let found = package_file_path_command(&m, "team/plate", "raw/a.csv")
+        let key = quilt::LogicalKey::new("raw/a.csv")?;
+        let found = package_file_path_command(&m, "team/plate", &key)
             .await
             .expect("a file that is there has a path");
 
@@ -539,24 +537,26 @@ mod tests {
             found,
             PathBuf::from("/Users/me/QuiltSync/team/plate/raw/a.csv")
         );
+        Ok(())
     }
 
     /// A file that is not there has no path to copy, and says why, as opening
     /// it would.
     #[tokio::test]
-    async fn a_missing_file_has_no_path_to_copy() {
+    async fn a_missing_file_has_no_path_to_copy() -> Result<(), Error> {
         let mut m = model::MockQuiltModel::new();
         m.expect_file_path().returning(|_, path| {
             Err(Error::FsOpen(
-                crate::engine::error::FsOpenError::PathNotFound(path.clone()),
+                crate::engine::error::FsOpenError::PathNotFound(path.to_path_buf()),
             ))
         });
 
         assert!(
-            package_file_path_command(&m, "team/plate", "raw/gone.csv")
+            package_file_path_command(&m, "team/plate", &"raw/gone.csv".parse()?)
                 .await
                 .is_err()
         );
+        Ok(())
     }
 
     /// A mail link's subject and body stay out of the log; other URLs are

@@ -1272,7 +1272,9 @@ pub async fn handle_remote_package(
                 return Err(Error::from(quilt::Error::InstallPath(err)).to_frontend_string());
             }
         }
-        m.open_in_default_application(&s3_uri.namespace, path)
+        let key = quilt::LogicalKey::new(path.as_path())
+            .map_err(|e| Error::from(quilt::Error::from(e)).to_frontend_string())?;
+        m.open_in_default_application(&s3_uri.namespace, &key)
             .await
             .map_err(|e| e.to_frontend_string())?;
     }
@@ -2187,7 +2189,7 @@ mod tests {
             revision
                 .rows
                 .iter()
-                .any(|row| row.logical_key == std::path::Path::new("data.csv")),
+                .any(|row| row.logical_key.as_path() == std::path::Path::new("data.csv")),
             "the revision holds the file"
         );
         assert_eq!(revision.header.message.as_deref(), Some("Add data.csv"));
@@ -2474,7 +2476,7 @@ mod tests {
             catalog: Some(fixtures::host()),
             bucket: "reqbucket".to_string(),
             namespace: ("foo", "bar").into(),
-            revision: quilt_uri::RevisionPointer::Hash("aaaa1111".to_string()),
+            revision: quilt_uri::RevisionPointer::Hash(fixtures::TOP_HASH.to_string()),
             path: None,
         }
     }

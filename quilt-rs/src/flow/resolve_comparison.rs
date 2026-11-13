@@ -97,11 +97,13 @@ mod tests {
 
     use multihash::Multihash;
 
+    use crate::Res;
+
     use crate::manifest::ManifestRow;
 
-    fn row(key: &str, hash_seed: &[u8]) -> ManifestRow {
-        ManifestRow {
-            logical_key: PathBuf::from(key),
+    fn row(key: &str, hash_seed: &[u8]) -> Res<ManifestRow> {
+        Ok(ManifestRow {
+            logical_key: crate::LogicalKey::new(key)?,
             physical_key: format!("s3://b/{key}"),
             hash: Multihash::<256>::wrap(0x12, hash_seed)
                 .unwrap()
@@ -109,7 +111,7 @@ mod tests {
                 .unwrap(),
             size: hash_seed.len() as u64,
             meta: None,
-        }
+        })
     }
 
     fn manifest_of(rows: Vec<ManifestRow>) -> Manifest {
@@ -137,9 +139,9 @@ mod tests {
     }
 
     #[test]
-    fn a_key_on_either_side_or_with_other_content_differs() {
-        let current = manifest_of(vec![row("a", b"1"), row("b", b"2"), row("c", b"3")]);
-        let published = manifest_of(vec![row("a", b"1"), row("b", b"other"), row("d", b"4")]);
+    fn a_key_on_either_side_or_with_other_content_differs() -> Res {
+        let current = manifest_of(vec![row("a", b"1")?, row("b", b"2")?, row("c", b"3")?]);
+        let published = manifest_of(vec![row("a", b"1")?, row("b", b"other")?, row("d", b"4")?]);
 
         let comparison = compare_for_resolve(&current, &published, None, &HashSet::new());
 
@@ -147,16 +149,18 @@ mod tests {
             comparison.differing,
             vec![PathBuf::from("b"), PathBuf::from("c"), PathBuf::from("d")]
         );
+        Ok(())
     }
 
     #[test]
-    fn a_metadata_only_difference_marks_no_file() {
-        let current = with_message(manifest_of(vec![row("a", b"1")]), Some("Mine"));
-        let published = with_message(manifest_of(vec![row("a", b"1")]), Some("Theirs"));
+    fn a_metadata_only_difference_marks_no_file() -> Res {
+        let current = with_message(manifest_of(vec![row("a", b"1")?]), Some("Mine"));
+        let published = with_message(manifest_of(vec![row("a", b"1")?]), Some("Theirs"));
 
         let comparison = compare_for_resolve(&current, &published, None, &HashSet::new());
 
         assert!(comparison.differing.is_empty(), "{comparison:?}");
+        Ok(())
     }
 
     fn with_entry_meta(mut row: ManifestRow, meta: Option<serde_json::Value>) -> ManifestRow {
@@ -170,49 +174,52 @@ mod tests {
     }
 
     #[test]
-    fn keys_only_this_revision_lists_lose_nothing() {
-        let current = manifest_of(vec![row("a", b"1"), row("new", b"2")]);
-        let published = manifest_of(vec![row("a", b"1")]);
+    fn keys_only_this_revision_lists_lose_nothing() -> Res {
+        let current = manifest_of(vec![row("a", b"1")?, row("new", b"2")?]);
+        let published = manifest_of(vec![row("a", b"1")?]);
 
         let comparison = compare_for_resolve(&current, &published, None, &HashSet::new());
 
         assert_eq!(comparison.lost, 0);
         assert!(!comparison.user_meta_differs);
+        Ok(())
     }
 
     #[test]
-    fn a_published_key_lacked_or_held_otherwise_is_lost() {
+    fn a_published_key_lacked_or_held_otherwise_is_lost() -> Res {
         let current = manifest_of(vec![
-            row("same", b"1"),
-            row("content", b"mine"),
-            with_entry_meta(row("meta", b"3"), Some(serde_json::json!({"k": "mine"}))),
+            row("same", b"1")?,
+            row("content", b"mine")?,
+            with_entry_meta(row("meta", b"3")?, Some(serde_json::json!({"k": "mine"}))),
         ]);
         let published = manifest_of(vec![
-            row("same", b"1"),
-            row("content", b"theirs"),
-            with_entry_meta(row("meta", b"3"), Some(serde_json::json!({"k": "theirs"}))),
-            row("gone", b"4"),
+            row("same", b"1")?,
+            row("content", b"theirs")?,
+            with_entry_meta(row("meta", b"3")?, Some(serde_json::json!({"k": "theirs"}))),
+            row("gone", b"4")?,
         ]);
 
         let comparison = compare_for_resolve(&current, &published, None, &HashSet::new());
 
         assert_eq!(comparison.lost, 3, "content, meta and gone");
+        Ok(())
     }
 
     #[test]
-    fn null_absent_and_empty_entry_meta_are_one() {
+    fn null_absent_and_empty_entry_meta_are_one() -> Res {
         let current = manifest_of(vec![
-            with_entry_meta(row("a", b"1"), None),
-            with_entry_meta(row("b", b"2"), Some(serde_json::Value::Null)),
+            with_entry_meta(row("a", b"1")?, None),
+            with_entry_meta(row("b", b"2")?, Some(serde_json::Value::Null)),
         ]);
         let published = manifest_of(vec![
-            with_entry_meta(row("a", b"1"), Some(serde_json::json!({}))),
-            with_entry_meta(row("b", b"2"), None),
+            with_entry_meta(row("a", b"1")?, Some(serde_json::json!({}))),
+            with_entry_meta(row("b", b"2")?, None),
         ]);
 
         let comparison = compare_for_resolve(&current, &published, None, &HashSet::new());
 
         assert_eq!(comparison.lost, 0);
+        Ok(())
     }
 
     #[test]

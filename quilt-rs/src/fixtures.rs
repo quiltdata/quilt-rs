@@ -59,7 +59,7 @@ pub mod manifest_with_objects_all_sizes {
         let mut manifest = Manifest::default();
         manifest
             .insert_record(ManifestRow {
-                logical_key: PathBuf::from("0mb.bin"),
+                logical_key: crate::LogicalKey::new("0mb.bin")?,
                 size: 0,
                 hash: create_multihash(objects::ZERO_HASH_B64)?.try_into()?,
                 ..ManifestRow::default()
@@ -67,7 +67,7 @@ pub mod manifest_with_objects_all_sizes {
             .await?;
         manifest
             .insert_record(ManifestRow {
-                logical_key: PathBuf::from("bigger-than-8mb.txt"),
+                logical_key: crate::LogicalKey::new("bigger-than-8mb.txt")?,
                 size: 18_874_368,
                 hash: create_multihash(objects::MORE_THAN_8MB_HASH_B64)?.try_into()?,
                 ..ManifestRow::default()
@@ -75,7 +75,7 @@ pub mod manifest_with_objects_all_sizes {
             .await?;
         manifest
             .insert_record(ManifestRow {
-                logical_key: PathBuf::from("equal-to-8mb.txt"),
+                logical_key: crate::LogicalKey::new("equal-to-8mb.txt")?,
                 size: 8_388_608,
                 hash: create_multihash(objects::EQUAL_TO_8MB_HASH_B64)?.try_into()?,
                 ..ManifestRow::default()
@@ -83,7 +83,7 @@ pub mod manifest_with_objects_all_sizes {
             .await?;
         manifest
             .insert_record(ManifestRow {
-                logical_key: PathBuf::from("less-then-8mb.txt"),
+                logical_key: crate::LogicalKey::new("less-then-8mb.txt")?,
                 size: 16,
                 hash: create_multihash(objects::LESS_THAN_8MB_HASH_B64)?.try_into()?,
                 ..ManifestRow::default()
@@ -91,7 +91,7 @@ pub mod manifest_with_objects_all_sizes {
             .await?;
         manifest
             .insert_record(ManifestRow {
-                logical_key: PathBuf::from("one/two two/three three three/READ ME.md"),
+                logical_key: crate::LogicalKey::new("one/two two/three three three/READ ME.md")?,
                 size: 20,
                 hash: create_multihash(objects::NESTED_HASH_B64)?.try_into()?,
                 ..ManifestRow::default()
