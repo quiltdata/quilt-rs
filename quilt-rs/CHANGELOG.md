@@ -30,7 +30,7 @@
 - Building from source now requires Rust 1.99 or newer (<https://github.com/quiltdata/quilt-rs/pull/1370>)
 - **Breaking:** `ManifestError` has two new variants, `DuplicateLogicalKey` and `FileAndFolder`, for a manifest whose logical keys do not form a tree (<https://github.com/quiltdata/quilt-rs/pull/1372>)
 - A package's first push no longer replaces a `latest` someone else already published under the same name: it uploads the revision, returns `certified_latest: false`, and leaves the package `Diverged` so `certify_latest` or `reset_to_latest` decides which revision is `latest` (<https://github.com/quiltdata/quilt-rs/pull/1373>)
-- `ManifestHeader::message` is `Option<Option<String>>`: `None` when the header has no `message` key, `Some(None)` when it is `null`; `ManifestHeader::message()` returns the text (<https://github.com/quiltdata/quilt-rs/pull/1375>)
+- **Breaking:** `ManifestHeader::message` is `Option<Option<String>>`: `None` when the header has no `message` key, `Some(None)` when it is `null`; `ManifestHeader::message()` returns the text (<https://github.com/quiltdata/quilt-rs/pull/1375>)
 
 ### Fixed
 
