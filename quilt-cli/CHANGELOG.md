@@ -19,7 +19,11 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.41.1-dev]
+## [v0.42.0-dev]
+
+### Added
+
+- `quilt version` prints what `quilt --version` prints, and `quilt version --details` adds what a bug report needs: the library versions, the OS, and the folders quilt uses (<https://github.com/quiltdata/quilt-rs/pull/1371>)
 
 ### Changed
 

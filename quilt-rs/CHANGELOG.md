@@ -21,6 +21,10 @@
 
 ## [v0.53.1-dev]
 
+### Added
+
+- `VERSION` holds the crate's version, and `LocalDomain::stored_home` reads the home without setting one, `None` when the domain has none yet (<https://github.com/quiltdata/quilt-rs/pull/1371>)
+
 ### Changed
 
 - Building from source now requires Rust 1.99 or newer (<https://github.com/quiltdata/quilt-rs/pull/1370>)
