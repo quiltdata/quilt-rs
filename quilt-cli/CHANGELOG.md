@@ -25,6 +25,10 @@
 
 - `quilt version` prints what `quilt --version` prints, and `quilt version --details` adds what a bug report needs: the library versions, the OS, and the folders quilt uses (<https://github.com/quiltdata/quilt-rs/pull/1371>)
 
+### Changed
+
+- Building from source now requires Rust 1.99 or newer (<https://github.com/quiltdata/quilt-rs/pull/1370>)
+
 ### quilt-rs
 
 - Updated [from v0.53.0 to v0.53.1-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.53.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))

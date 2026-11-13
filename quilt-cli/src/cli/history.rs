@@ -48,9 +48,7 @@ impl Row {
     }
 
     fn frees_words(&self) -> String {
-        self.frees
-            .map(quilt_rs::flow::format_bytes)
-            .unwrap_or_default()
+        self.frees.map_or_default(quilt_rs::flow::format_bytes)
     }
 }
 

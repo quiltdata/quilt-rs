@@ -17,13 +17,11 @@ use crate::engine::telemetry::prelude::*;
 const FEED: &str = "https://www.quilt.bio/hubfs/latest.json";
 
 /// How long a check's answer stands before the next asks the feed again.
-#[allow(clippy::duration_suboptimal_units)]
-const FRESH: Duration = Duration::from_secs(6 * 60 * 60);
+const FRESH: Duration = Duration::from_hours(6);
 
 /// How long a failed read stands, so an outage costs one request, not one per
 /// page.
-#[allow(clippy::duration_suboptimal_units)]
-const RETRY: Duration = Duration::from_secs(10 * 60);
+const RETRY: Duration = Duration::from_mins(10);
 
 /// A newer version, and where to download it for this machine.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
