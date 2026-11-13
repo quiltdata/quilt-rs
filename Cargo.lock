@@ -5777,6 +5777,7 @@ dependencies = [
  "reqwest-middleware",
  "reqwest-retry",
  "rusqlite",
+ "ryu",
  "serde",
  "serde-saphyr",
  "serde_json",

@@ -92,15 +92,29 @@ fn write_python_string(out: &mut String, s: &str) {
 /// Python's `float.__repr__`: the shortest digits that read back the same,
 /// written plain when the exponent is in `-4..16`, else as `1e-07` / `1.5e+300`.
 fn python_float_repr(f: f64) -> String {
-    // Rust's `{:e}` gives the same shortest digits, as `1.5e300` or `-1e-7`.
-    let sci = format!("{f:e}");
-    let (mantissa, exp) = sci.split_once('e').expect("{:e} always has an exponent");
-    let exp: i32 = exp.parse().expect("{:e} exponent is an integer");
-    let (sign, mantissa) = match mantissa.strip_prefix('-') {
-        Some(m) => ("-", m),
-        None => ("", mantissa),
+    // ryu picks the same shortest digits as Python, ties included; Rust's
+    // `{:e}` does not always. Its text mixes plain and exponent forms.
+    let mut buffer = ryu::Buffer::new();
+    let text = buffer.format_finite(f);
+    let (sign, text) = match text.strip_prefix('-') {
+        Some(t) => ("-", t),
+        None => ("", text),
     };
-    let digits: String = mantissa.chars().filter(|c| *c != '.').collect();
+    let (mantissa, exp) = text.split_once('e').unwrap_or((text, "0"));
+    let exp: i32 = exp.parse().expect("ryu writes an integer exponent");
+    let (int_part, frac_part) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+    let all_digits = format!("{int_part}{frac_part}");
+    let digits = all_digits.trim_start_matches('0');
+    let leading_zeros = all_digits.len() - digits.len();
+    let digits = digits.trim_end_matches('0');
+    if digits.is_empty() {
+        return format!("{sign}0.0");
+    }
+    let digits = digits.to_string();
+    // Exponent of the first significant digit.
+    let exp = exp + i32::try_from(int_part.len()).unwrap_or_default()
+        - 1
+        - i32::try_from(leading_zeros).unwrap_or_default();
 
     if (-4..16).contains(&exp) {
         let point = exp + 1; // digits before the decimal point
@@ -302,6 +316,8 @@ mod tests {
             ("12345678901234567.0", "1.2345678901234568e+16"),
             ("-1e-4", "-0.0001"),
             ("9.999999999999999e-5", "9.999999999999999e-05"),
+            // Two shortest candidates; Python keeps the nearer one.
+            ("667962307169479.2", "667962307169479.2"),
         ] {
             let f: f64 = input.parse().unwrap();
             assert_eq!(python_float_repr(f), expected, "{input}");

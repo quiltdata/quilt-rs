@@ -44,6 +44,7 @@ reqwest.workspace = true
 reqwest-middleware.workspace = true
 reqwest-retry.workspace = true
 rusqlite.workspace = true
+ryu.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
