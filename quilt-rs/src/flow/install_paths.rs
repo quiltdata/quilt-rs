@@ -1549,4 +1549,21 @@ mod keys_holding_a_backslash {
     async fn a_slash_key_and_its_backslash_twin() -> Res {
         assert_refused_on_windows(["a/b", "a\\b"]).await
     }
+
+    /// Windows keeps a leading `.` folder in a path and drops the others, but
+    /// both name the same place.
+    #[test(tokio::test)]
+    async fn a_key_and_its_twin_under_a_leading_dot_folder() -> Res {
+        assert_refused_on_windows(["a/b", ".\\a\\b"]).await
+    }
+
+    #[test(tokio::test)]
+    async fn a_file_and_a_file_under_it_behind_a_leading_dot_folder() -> Res {
+        assert_refused_on_windows(["data", ".\\data\\x.csv"]).await
+    }
+
+    #[test(tokio::test)]
+    async fn a_key_and_its_twin_with_an_inner_dot_folder() -> Res {
+        assert_refused_on_windows(["a/b", "a\\.\\b"]).await
+    }
 }
