@@ -94,6 +94,26 @@ impl LocalDomain {
             state_store: None,
         }
     }
+
+    /// The stored home, or `None` when the domain has none yet, as on a
+    /// domain no command has used. Only reads: it writes and creates nothing.
+    /// A record that exists but can't be read, such as for lack of
+    /// permission, is an error, not `None`.
+    pub async fn stored_home(&self) -> Res<Option<Home>> {
+        match self.get_home().await {
+            Ok(home) => Ok(Some(home)),
+            Err(Error::Lineage(LineageError::MissingHome)) => Ok(None),
+            // `Missing` also covers a record whose folder can't be looked into.
+            Err(Error::Lineage(LineageError::Missing)) => {
+                match tokio::fs::try_exists(self.paths.lineage()).await {
+                    Ok(false) => Ok(None),
+                    Ok(true) => Err(Error::Lineage(LineageError::Missing)),
+                    Err(err) => Err(err.into()),
+                }
+            }
+            Err(err) => Err(err),
+        }
+    }
 }
 
 impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
@@ -148,16 +168,6 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
     pub async fn get_home(&self) -> Res<Home> {
         let lineage: DomainLineage = self.lineage.read(&self.storage).await?;
         Ok(lineage.home)
-    }
-
-    /// The stored home, or `None` when the domain has none yet, as on a
-    /// domain no command has used. Only reads: it writes and creates nothing.
-    pub async fn stored_home(&self) -> Res<Option<Home>> {
-        match self.get_home().await {
-            Ok(home) => Ok(Some(home)),
-            Err(Error::Lineage(LineageError::Missing | LineageError::MissingHome)) => Ok(None),
-            Err(err) => Err(err),
-        }
     }
 
     /// See [`lineage::DomainLineageIo::set_home`]: creates the home folder,
@@ -492,6 +502,35 @@ mod tests {
 
         assert_eq!(domain.stored_home().await?, None);
         assert!(!root.exists());
+        Ok(())
+    }
+
+    /// A domain whose folder can't be looked into is not reported as having
+    /// no home.
+    #[cfg(unix)]
+    #[test(tokio::test)]
+    async fn stored_home_on_an_unreadable_domain_is_an_error() -> Res<()> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = TempDir::new()?;
+        let domain = LocalDomain::new(temp_dir.path());
+        domain.set_home(temp_dir.path()).await?;
+        let folder = domain
+            .paths
+            .lineage()
+            .parent()
+            .expect("a folder")
+            .to_path_buf();
+        std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o000))?;
+        let readable = std::fs::read(domain.paths.lineage()).is_ok();
+
+        let result = domain.stored_home().await;
+
+        std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o700))?;
+        // Root reads it anyway.
+        if !readable {
+            assert!(result.is_err(), "{result:?}");
+        }
         Ok(())
     }
 
