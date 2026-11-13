@@ -212,7 +212,7 @@ mod tests {
         let row = calculate_hash(&storage, file_path, &logical_key, &host_config).await?;
 
         assert_eq!(row.hash.algorithm(), MULTIHASH_CRC64_NVME);
-        assert_eq!(row.logical_key, logical_key);
+        assert_eq!(row.logical_key.as_path(), logical_key);
 
         assert_eq!(row.size, storage.read_bytes(file_path).await?.len() as u64);
         assert_eq!(row.hash.to_string(), "LZmmpqbBItw=");
@@ -237,7 +237,7 @@ mod tests {
         let row = calculate_hash(&storage, file_path, &logical_key, &host_config).await?;
 
         assert_eq!(row.hash.algorithm(), MULTIHASH_SHA256_CHUNKED);
-        assert_eq!(row.logical_key, logical_key);
+        assert_eq!(row.logical_key.as_path(), logical_key);
         assert_eq!(row.size, file_content.len() as u64);
         assert_eq!(
             row.hash.to_string(),

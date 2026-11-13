@@ -219,24 +219,6 @@ impl FromStr for LogicalKey {
     }
 }
 
-impl PartialEq<Path> for LogicalKey {
-    fn eq(&self, other: &Path) -> bool {
-        self.0 == other
-    }
-}
-
-impl PartialEq<PathBuf> for LogicalKey {
-    fn eq(&self, other: &PathBuf) -> bool {
-        &self.0 == other
-    }
-}
-
-impl PartialEq<LogicalKey> for PathBuf {
-    fn eq(&self, other: &LogicalKey) -> bool {
-        self == &other.0
-    }
-}
-
 impl Serialize for LogicalKey {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         self.0.serialize(serializer)

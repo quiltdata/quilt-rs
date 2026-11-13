@@ -191,7 +191,7 @@ fn model_of(copy: Copy) -> (MockQuiltModel, Arc<Mutex<Remote>>) {
             // The commit takes the walked changes into the copy's revision.
             let ours = remote.revisions.get_mut("ours").expect("ours");
             for (path, change) in status.map_or_default(|status| status.changes) {
-                ours.rows.retain(|row| row.logical_key != path);
+                ours.rows.retain(|row| row.logical_key.as_path() != path);
                 if let quilt::lineage::Change::Added(row) | quilt::lineage::Change::Modified(row) =
                     change
                 {
