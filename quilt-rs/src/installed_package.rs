@@ -1917,6 +1917,8 @@ impl<S: Storage + Clone + Sync, R: Remote> LockedPackage<S, R> {
 #[cfg(test)]
 mod change_catalog_tests;
 #[cfg(test)]
+mod cross_client_tests;
+#[cfg(test)]
 mod current_revision_tests;
 #[cfg(test)]
 mod move_to_tests;

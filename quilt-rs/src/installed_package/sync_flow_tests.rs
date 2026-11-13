@@ -2035,7 +2035,7 @@ async fn test_commit_and_push_key_a_file_in_a_folder_with_slashes() -> Res {
         rows,
         [(
             "data/raw/a.csv".to_string(),
-            "s3://b/test/slash/data/raw/a.csv?versionId=version".to_string()
+            "s3://b/test/slash/data/raw/a.csv?versionId=version-1".to_string()
         )]
     );
     Ok(())
