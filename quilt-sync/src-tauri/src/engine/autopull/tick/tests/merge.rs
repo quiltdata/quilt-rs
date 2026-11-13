@@ -24,7 +24,7 @@ fn file(key: &str, content: &str) -> Result<quilt::manifest::ManifestRow, Error>
 fn revision(message: &str, rows: Vec<quilt::manifest::ManifestRow>) -> quilt::manifest::Manifest {
     quilt::manifest::Manifest {
         header: quilt::manifest::ManifestHeader {
-            message: Some(Some(message.to_string())),
+            message: quilt::manifest::HeaderMessage::Text(message.to_string()),
             ..quilt::manifest::ManifestHeader::default()
         },
         rows,

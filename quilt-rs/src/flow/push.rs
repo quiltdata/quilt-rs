@@ -333,6 +333,7 @@ mod tests {
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::CommitState;
     use crate::lineage::PackageLineage;
+    use crate::manifest::HeaderMessage;
     use crate::manifest::ManifestHeader;
     use crate::manifest::Workflow;
     use crate::manifest::WorkflowId;
@@ -400,7 +401,7 @@ mod tests {
     fn governed_manifest() -> Manifest {
         Manifest {
             header: ManifestHeader {
-                message: Some(Some("msg".to_string())),
+                message: HeaderMessage::Text("msg".to_string()),
                 user_meta: None,
                 workflow: Some(governed_gate_workflow()),
                 ..ManifestHeader::default()
@@ -752,7 +753,7 @@ mod tests {
     fn header_none_manifest() -> Manifest {
         Manifest {
             header: ManifestHeader {
-                message: Some(Some("msg".to_string())),
+                message: HeaderMessage::Text("msg".to_string()),
                 user_meta: None,
                 workflow: None,
                 ..ManifestHeader::default()
@@ -1102,7 +1103,7 @@ mod tests {
             .await?;
 
         let mut manifest = Manifest::default();
-        manifest.header.message = Some(Some("Initial".to_string()));
+        manifest.header.message = HeaderMessage::Text("Initial".to_string());
         manifest.header.user_meta = None;
 
         let file_content = b"Thu Feb 29 19:07:56 PST 2024\n";

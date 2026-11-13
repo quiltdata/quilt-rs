@@ -489,6 +489,7 @@ mod tests {
     use crate::io::remote::HostChecksums;
     use crate::io::remote::HostConfig;
     use crate::io::storage::mocks::MockStorage;
+    use crate::manifest::HeaderMessage;
 
     use crate::Res;
     use crate::lineage::Change;
@@ -597,7 +598,7 @@ mod tests {
     fn a_metadata_only_revision_brings_no_paths() -> Res {
         let base = manifest_of(vec![row("a", b"1")?]);
         let mut latest = manifest_of(vec![row("a", b"1")?]);
-        latest.header.message = Some(Some("newer revision message".to_string()));
+        latest.header.message = HeaderMessage::Text("newer revision message".to_string());
         assert_eq!(
             IncomingPaths::from_delta(&remote_delta(&base, &latest)),
             IncomingPaths::default()
@@ -1454,7 +1455,7 @@ mod tests {
         // `CleanUpdate`, never `UpToDate`, even though the row delta is empty.
         let base = manifest_of(vec![row("a", b"1")?]);
         let mut latest = manifest_of(vec![row("a", b"1")?]);
-        latest.header.message = Some(Some("newer revision message".to_string()));
+        latest.header.message = HeaderMessage::Text("newer revision message".to_string());
         let out = classify_pull(
             &behind(ChangeSet::default()),
             &base,
@@ -1471,7 +1472,7 @@ mod tests {
         // the local work is kept and the (empty) surgical update still proceeds.
         let base = manifest_of(vec![row("a", b"1")?]);
         let mut latest = manifest_of(vec![row("a", b"1")?]);
-        latest.header.message = Some(Some("newer revision message".to_string()));
+        latest.header.message = HeaderMessage::Text("newer revision message".to_string());
         let mut changes = ChangeSet::new();
         changes.insert(
             PathBuf::from("new.txt"),

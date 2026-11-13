@@ -99,6 +99,7 @@ mod tests {
 
     use crate::Res;
 
+    use crate::manifest::HeaderMessage;
     use crate::manifest::ManifestRow;
 
     fn row(key: &str, hash_seed: &[u8]) -> Res<ManifestRow> {
@@ -122,7 +123,8 @@ mod tests {
     }
 
     fn with_message(mut manifest: Manifest, message: Option<&str>) -> Manifest {
-        manifest.header.message = Some(message.map(str::to_owned));
+        manifest.header.message =
+            message.map_or(HeaderMessage::Null, |m| HeaderMessage::Text(m.to_owned()));
         manifest
     }
 

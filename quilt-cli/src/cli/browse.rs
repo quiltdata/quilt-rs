@@ -190,7 +190,7 @@ mod tests {
             manifest: quilt_rs::manifest::Manifest {
                 header: quilt_rs::manifest::ManifestHeader {
                     version: "v0".to_string(),
-                    message: Some(Some("initial".to_string())),
+                    message: quilt_rs::manifest::HeaderMessage::Text("initial".to_string()),
                     user_meta: Some(serde_json::json!({"owner": "team"})),
                     workflow: None,
                 },
@@ -219,7 +219,7 @@ mod tests {
             manifest: quilt_rs::manifest::Manifest {
                 header: quilt_rs::manifest::ManifestHeader {
                     version: "v0".to_string(),
-                    message: Some(None),
+                    message: quilt_rs::manifest::HeaderMessage::Null,
                     user_meta: None,
                     workflow: None,
                 },

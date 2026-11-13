@@ -31,36 +31,62 @@ use crate::object_hash;
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct ManifestHeader {
     pub version: String,
-    /// `None` when the header has no `message` key, `Some(None)` when it is
-    /// `null`. quilt3 hashes the header as read, so the two give different top
-    /// hashes.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "deserialize_present"
-    )]
-    pub message: Option<Option<String>>,
+    #[serde(default, skip_serializing_if = "HeaderMessage::is_missing")]
+    pub message: HeaderMessage,
     #[serde(skip_serializing_if = "Option::is_none")] // Attempt to be quilt3-compatible.
     pub user_meta: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workflow: Option<Workflow>,
 }
 
-/// Wraps a present field in `Some`, so a `null` value stays apart from a
-/// missing key, which `#[serde(default)]` leaves as `None`.
-fn deserialize_present<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
-where
-    D: Deserializer<'de>,
-    T: Deserialize<'de>,
-{
-    T::deserialize(deserializer).map(Some)
+/// A header's `message`. quilt3 hashes the header as read, so a missing key,
+/// `null` and a string each give a different top hash.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub enum HeaderMessage {
+    /// The header has no `message` key.
+    #[default]
+    Missing,
+    /// `"message": null`
+    Null,
+    /// `"message": "<text>"`
+    Text(String),
+}
+
+impl HeaderMessage {
+    #[must_use]
+    pub fn is_missing(&self) -> bool {
+        matches!(self, Self::Missing)
+    }
+
+    /// The message text; `None` when it is missing or `null`.
+    #[must_use]
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            Self::Text(text) => Some(text),
+            Self::Missing | Self::Null => None,
+        }
+    }
+}
+
+/// A missing key never reaches this: the field skips it on write.
+impl Serialize for HeaderMessage {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.as_str().serialize(serializer)
+    }
+}
+
+/// A missing key never reaches this: `#[serde(default)]` gives `Missing`.
+impl<'de> Deserialize<'de> for HeaderMessage {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(Option::<String>::deserialize(deserializer)?.map_or(Self::Null, Self::Text))
+    }
 }
 
 impl ManifestHeader {
     /// The commit message, if the header has one.
     #[must_use]
     pub fn message(&self) -> Option<&str> {
-        self.message.as_ref()?.as_deref()
+        self.message.as_str()
     }
 }
 
@@ -68,7 +94,7 @@ impl Default for ManifestHeader {
     fn default() -> Self {
         ManifestHeader {
             version: "v0".to_string(),
-            message: Some(Some(String::new())),
+            message: HeaderMessage::Text(String::new()),
             user_meta: Some(serde_json::Value::Object(serde_json::Map::new())),
             workflow: None,
         }
@@ -540,7 +566,7 @@ mod tests {
         assert_eq!(
             checksummed_manifest.header,
             ManifestHeader {
-                message: Some(Some("Initial".to_string())),
+                message: HeaderMessage::Text("Initial".to_string()),
                 user_meta: None,
                 ..ManifestHeader::default()
             }
@@ -571,8 +597,8 @@ mod tests {
     #[test(tokio::test)]
     async fn a_null_message_stays_null_and_a_missing_one_stays_missing() -> Res {
         for (line, message) in [
-            (r#"{"version":"v0","message":null}"#, Some(None)),
-            (r#"{"version":"v0"}"#, None),
+            (r#"{"version":"v0","message":null}"#, HeaderMessage::Null),
+            (r#"{"version":"v0"}"#, HeaderMessage::Missing),
         ] {
             let manifest = Manifest::from_reader(format!("{line}\n").as_bytes()).await?;
             assert_eq!(manifest.header.message, message, "{line}");
@@ -585,7 +611,7 @@ mod tests {
     fn test_manifest_header_default() -> Res {
         let header = ManifestHeader::default();
         assert_eq!(header.version, "v0");
-        assert_eq!(header.message, Some(Some(String::new())));
+        assert_eq!(header.message, HeaderMessage::Text(String::new()));
         assert_eq!(header.user_meta, Some(serde_json::json!({})));
         assert_eq!(header.workflow, None);
         Ok(())

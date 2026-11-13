@@ -196,6 +196,7 @@ mod tests {
     use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::PathState;
+    use crate::manifest::HeaderMessage;
 
     /// Helper: create a local package with a single file using the given `host_config`,
     /// returning (lineage, manifest, storage, paths, namespace).
@@ -240,7 +241,7 @@ mod tests {
 
         // Build manifest
         let header = ManifestHeader {
-            message: Some(Some("Initial commit".to_string())),
+            message: HeaderMessage::Text("Initial commit".to_string()),
             user_meta: Some(serde_json::json!({"key": "value"})),
             ..ManifestHeader::default()
         };
@@ -482,7 +483,7 @@ mod tests {
 
         // Build empty manifest
         let header = ManifestHeader {
-            message: Some(Some("Empty package".to_string())),
+            message: HeaderMessage::Text("Empty package".to_string()),
             ..ManifestHeader::default()
         };
         let stream = tokio_stream::iter(vec![Ok(Vec::<Res<ManifestRow>>::new())]);
@@ -536,7 +537,7 @@ mod tests {
         storage.create_dir_all(&installed_dir).await?;
 
         let header = ManifestHeader {
-            message: Some(Some("msg".to_string())),
+            message: HeaderMessage::Text("msg".to_string()),
             ..ManifestHeader::default()
         };
         let stream = tokio_stream::iter(vec![Ok(Vec::<Res<ManifestRow>>::new())]);

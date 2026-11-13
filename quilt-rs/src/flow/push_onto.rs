@@ -96,6 +96,7 @@ mod tests {
 
     use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::mocks::MockStorage;
+    use crate::manifest::HeaderMessage;
     use crate::manifest::ManifestHeader;
     use quilt_uri::S3Uri;
 
@@ -115,7 +116,7 @@ mod tests {
     fn manifest(physical_key: &str) -> Res<Manifest> {
         Ok(Manifest {
             header: ManifestHeader {
-                message: Some(Some("Task TASK.md done".to_string())),
+                message: HeaderMessage::Text("Task TASK.md done".to_string()),
                 ..ManifestHeader::default()
             },
             rows: vec![ManifestRow {

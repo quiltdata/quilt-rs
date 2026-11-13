@@ -1677,7 +1677,8 @@ async fn finish_among(fixture: &Fixture, revisions: Revisions) -> Arc<Mutex<Remo
         if uri.hash == "h3" {
             let published = &published.lock().unwrap()[0];
             let mut revision = revision(published.meta.clone(), outcome.clone());
-            revision.header.message = Some(Some(published.message.clone()));
+            revision.header.message =
+                quilt::manifest::HeaderMessage::Text(published.message.clone());
             return Ok(revision);
         }
         let remote = state.lock().unwrap();

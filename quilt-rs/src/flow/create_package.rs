@@ -20,6 +20,7 @@ use crate::lineage::CommitState;
 use crate::lineage::DomainLineage;
 use crate::lineage::PackageLineage;
 use crate::lineage::PathState;
+use crate::manifest::HeaderMessage;
 use crate::manifest::ManifestHeader;
 use crate::manifest::ManifestRow;
 use crate::paths::DomainPaths;
@@ -214,9 +215,7 @@ pub async fn create_package(
 
     // Build initial manifest
     let header = ManifestHeader {
-        message: Some(Some(
-            message.unwrap_or_else(|| "Created package".to_string()),
-        )),
+        message: HeaderMessage::Text(message.unwrap_or_else(|| "Created package".to_string())),
         ..ManifestHeader::default()
     };
 
