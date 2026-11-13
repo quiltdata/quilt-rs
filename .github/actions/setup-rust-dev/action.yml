@@ -10,7 +10,7 @@ runs:
   using: "composite"
   steps:
     - name: Setup Rust
-      uses: moonrepo/setup-rust@v1
+      uses: moonrepo/setup-rust@v1.3.0
       with:
         # Its cache is one per OS, shared by every job. rust-cache below keeps one per job.
         cache: false
@@ -18,7 +18,7 @@ runs:
         targets: ${{ inputs.targets }}
 
     - name: Cache Rust build
-      uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      uses: Swatinem/rust-cache@v2.9.3
       with:
         # rust-cache adds the job id and the runner's OS to the key; the workflow
         # keeps apart jobs of one id in two workflows.

@@ -23,7 +23,7 @@ jobs:
       version: ${{ steps.draft.outputs.version }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
       - name: Find or create the draft
         id: draft
@@ -89,14 +89,14 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
       - name: Install Ubuntu dependencies
         if: matrix.platform == 'ubuntu-24.04'
-        uses: ./.github/actions/install-ubuntu-deps
+        uses: $/.github/actions/install-ubuntu-deps
 
       - name: Setup Rust for release
-        uses: ./.github/actions/setup-rust-minimal
+        uses: $/.github/actions/setup-rust-minimal
         with:
           cache-target: release
           # Both macOS legs run on one runner type; only `args` tells them apart.
@@ -104,21 +104,18 @@ jobs:
           targets: ${{ matrix.platform == 'macos-15' && 'aarch64-apple-darwin,x86_64-apple-darwin,wasm32-unknown-unknown' || 'wasm32-unknown-unknown' }}
 
       - name: Setup Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@v7.1.0
         with:
           node-version: '26'
           cache: 'npm'
           cache-dependency-path: 'quilt-sync/ui/package-lock.json'
 
-      - name: Install trunk
-        uses: taiki-e/install-action@trunk
-
       # Trunk's pre_build hook shells out to `stylance` (quilt-sync/ui/Trunk.toml).
       # Pinned to the `stylance` library version in quilt-sync/ui/Cargo.toml.
-      - name: Install stylance
-        uses: taiki-e/install-action@v2
+      - name: Install trunk and stylance
+        uses: taiki-e/install-action@v2.90.3
         with:
-          tool: stylance-cli@0.8.4
+          tool: trunk,stylance-cli@0.8.4
 
       # Provides Invoke-ArtifactSigning for quilt-sync/src-tauri/windows-sign.ps1.
       - name: Install Azure Trusted Signing module
@@ -128,7 +125,7 @@ jobs:
 
       - name: Build the app
         id: tauri
-        uses: tauri-apps/tauri-action@v1
+        uses: tauri-apps/tauri-action@v1.0.0
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
