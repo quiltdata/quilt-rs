@@ -522,21 +522,16 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
 
-      - name: Install just
-        uses: taiki-e/install-action@v2.90.3
-        with:
-          tool: just
-
       # The runner must match the `wasm-bindgen` library in Cargo.lock: the two
       # refuse to work together across versions.
       - name: Determine wasm-bindgen version
         id: wasm-bindgen-version
         run: cargo metadata --format-version 1 --locked | jq -r '"version=" + (.packages[] | select(.name == "wasm-bindgen") | .version)' >> "$GITHUB_OUTPUT"
 
-      - name: Install wasm-bindgen-cli
+      - name: Install just and wasm-bindgen-cli
         uses: taiki-e/install-action@v2.90.3
         with:
-          tool: wasm-bindgen-cli@${{ steps.wasm-bindgen-version.outputs.version }}
+          tool: just,wasm-bindgen-cli@${{ steps.wasm-bindgen-version.outputs.version }}
 
       # Headless Firefox and geckodriver come with the runner image.
       - name: Test (wasm)
@@ -565,19 +560,14 @@ jobs:
           cache: 'npm'
           cache-dependency-path: 'quilt-sync/ui/package-lock.json'
 
-      - name: Install trunk and just
-        uses: taiki-e/install-action@v2.90.3
-        with:
-          tool: trunk,just
-
       # Trunk's pre_build hook shells out to `stylance` (quilt-sync/ui/Trunk.toml).
       # Pinned to the `stylance` library version in quilt-sync/ui/Cargo.toml: the
       # CLI generates the hashed class names the library resolves, so a skew
       # between them breaks styling silently rather than loudly.
-      - name: Install stylance
+      - name: Install trunk, just and stylance
         uses: taiki-e/install-action@v2.90.3
         with:
-          tool: stylance-cli@0.8.4
+          tool: trunk,just,stylance-cli@0.8.4
 
       - name: Build
         run: just release-build
@@ -616,16 +606,11 @@ jobs:
           cache: 'npm'
           cache-dependency-path: quilt-sync/ui/package-lock.json
 
-      - name: Install trunk, cargo-nextest and just
+      # stylance is pinned for the reason given in `frontend build`.
+      - name: Install trunk, cargo-nextest, just and stylance
         uses: taiki-e/install-action@v2.90.3
         with:
-          tool: trunk,nextest,just
-
-      # Pinned for the reason given in `frontend build`.
-      - name: Install stylance
-        uses: taiki-e/install-action@v2.90.3
-        with:
-          tool: stylance-cli@0.8.4
+          tool: trunk,nextest,just,stylance-cli@0.8.4
 
       # The runner's Chrome; the tests fetch the chromedriver that matches it.
       - name: Test

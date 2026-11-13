@@ -110,17 +110,12 @@ jobs:
           cache: 'npm'
           cache-dependency-path: 'quilt-sync/ui/package-lock.json'
 
-      - name: Install trunk
-        uses: taiki-e/install-action@v2.90.3
-        with:
-          tool: trunk
-
       # Trunk's pre_build hook shells out to `stylance` (quilt-sync/ui/Trunk.toml).
       # Pinned to the `stylance` library version in quilt-sync/ui/Cargo.toml.
-      - name: Install stylance
+      - name: Install trunk and stylance
         uses: taiki-e/install-action@v2.90.3
         with:
-          tool: stylance-cli@0.8.4
+          tool: trunk,stylance-cli@0.8.4
 
       # Provides Invoke-ArtifactSigning for quilt-sync/src-tauri/windows-sign.ps1.
       - name: Install Azure Trusted Signing module

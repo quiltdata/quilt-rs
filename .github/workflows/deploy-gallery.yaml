@@ -46,22 +46,12 @@ jobs:
           cache: 'npm'
           cache-dependency-path: 'quilt-sync/ui/package-lock.json'
 
-      - name: Install trunk
+      # stylance matches the `stylance` crate in both UI crates' Cargo.toml: a
+      # skew breaks styling silently.
+      - name: Install trunk, just and stylance
         uses: taiki-e/install-action@v2.90.3
         with:
-          tool: trunk
-
-      - name: Install just
-        uses: taiki-e/install-action@v2.90.3
-        with:
-          tool: just
-
-      # Matches the `stylance` crate in both UI crates' Cargo.toml: a skew breaks
-      # styling silently.
-      - name: Install stylance
-        uses: taiki-e/install-action@v2.90.3
-        with:
-          tool: stylance-cli@0.8.4
+          tool: trunk,just,stylance-cli@0.8.4
 
       # A project site lives under `/<repo>/`: the app's gallery at its root,
       # the kit's storybook under `kit/`.
