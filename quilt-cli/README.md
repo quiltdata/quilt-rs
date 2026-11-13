@@ -173,9 +173,10 @@ gc`.
 `quilt version --details` adds the quilt-rs and quilt-uri versions, the OS and
 architecture, and the folders quilt uses: the domain, whether it came from
 `--domain`, `QUILT_DOMAIN` or the default, the default domain, and the home, or
-`not set`. It only reads: it creates no folder and skips the newer-release check. Under `--json` the same
-fields are `version`, `quilt_rs`, `quilt_uri`, `os`, `arch`, `domain`,
-`domain_from`, `default_domain` and `home` (`null` when not set).
+`not set`. It only reads: it creates no folder and skips the newer-release
+check. Under `--json` the same fields are `version`, `quilt_rs`, `quilt_uri`,
+`os`, `arch`, `domain`, `domain_from`, `default_domain` and `home` (`null`
+when not set).
 
 Run `quilt <command> --help` for arguments.
 
