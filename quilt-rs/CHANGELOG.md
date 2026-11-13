@@ -19,6 +19,16 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.53.1-dev]
+
+### Added
+
+- `VERSION` holds the crate's version, and `LocalDomain::stored_home` reads the home without setting one, `None` when the domain has none yet (<https://github.com/quiltdata/quilt-rs/pull/PRNUM>)
+
+### quilt-uri
+
+- Updated [from v0.5.0 to v0.5.1-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-uri/v0.5.0...main) (see [quilt-uri/CHANGELOG.md](../quilt-uri/CHANGELOG.md))
+
 ## [v0.53.0] - 2026-11-12
 
 ### Added

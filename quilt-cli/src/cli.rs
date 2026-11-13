@@ -38,6 +38,7 @@ mod text;
 mod undo_commit;
 mod uninstall;
 mod upgrade;
+mod version;
 
 #[cfg(test)]
 mod fixtures;
@@ -120,11 +121,13 @@ fn parse_optional_namespace(namespace: Option<String>) -> Result<Option<Namespac
 fn get_domain_dir(dir_arg: Option<PathBuf>) -> Result<PathBuf, Error> {
     match dir_arg {
         Some(user_specified_dir) => Ok(user_specified_dir),
-        None => match dirs::data_local_dir() {
-            Some(default_user_dir) => Ok(default_user_dir.join(DOMAIN_DIR_NAMESPACE)),
-            None => Err(Error::Domain),
-        },
+        None => default_domain_dir().ok_or(Error::Domain),
     }
+}
+
+/// The domain used when neither `--domain` nor `QUILT_DOMAIN` names one.
+fn default_domain_dir() -> Option<PathBuf> {
+    dirs::data_local_dir().map(|dir| dir.join(DOMAIN_DIR_NAMESPACE))
 }
 
 fn get_default_home_dir() -> Result<PathBuf, Error> {
@@ -308,6 +311,11 @@ impl Args {
                 clap::error::ErrorKind::ArgumentConflict,
                 "the argument '--json' cannot be used with '--format <FORMAT>'",
             ));
+        }
+        if let Commands::Version { domain_from, .. } = &mut parsed.command
+            && parsed.domain.is_some()
+        {
+            *domain_from = version::DomainFrom::from_source(domain_source);
         }
         if parsed.verbose && parsed.log.is_some() {
             return Err(command.error(
@@ -629,6 +637,16 @@ enum Commands {
     /// source with `cargo install --locked quilt-cli`, and without a terminal
     /// it does not build. On Windows it prints the command to run instead.
     Upgrade,
+    /// Print the version
+    Version {
+        /// Also print the library versions, the platform, and the folders
+        /// quilt uses, for bug reports
+        #[arg(long)]
+        details: bool,
+        // Filled in by `try_parse_with_env`, which sees where `--domain` came from.
+        #[arg(skip)]
+        domain_from: version::DomainFrom,
+    },
 }
 
 /// The line a writer prints when another quilt process, such as `QuiltSync`,
@@ -670,6 +688,7 @@ impl Commands {
                 | Commands::Role { .. }
                 | Commands::Home { dir: Some(_), .. }
                 | Commands::Upgrade
+                | Commands::Version { .. }
         )
     }
 }
@@ -685,6 +704,22 @@ pub async fn init(args: Args) -> Result<Std, Error> {
     //       If it is None, we use:
     //         * home directory ~/.local/share/com.quiltdata.quilt-sync`
     //         * or temporary directory
+    if let Commands::Version {
+        details,
+        domain_from,
+    } = args.command
+    {
+        let domain = match args.domain {
+            Some(domain) => Some(domain),
+            None => default_domain_dir(),
+        };
+        return Ok(version::command(version::Input {
+            details,
+            domain,
+            domain_from,
+        })
+        .await);
+    }
     let root_dir = get_domain_dir(args.domain)?;
     let m = Model::from(root_dir);
 
@@ -897,6 +932,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             Ok(uninstall::command(m, args).await)
         }
         Commands::Upgrade => Ok(upgrade::command()),
+        Commands::Version { .. } => unreachable!("handled before the domain is opened"),
     }
 }
 
@@ -1587,6 +1623,8 @@ mod tests {
     struct Parsed {
         domain: Result<PathBuf, String>,
         json: bool,
+        /// Where `quilt version` says the domain came from.
+        domain_from: Option<String>,
     }
 
     /// Parses `argv` with each named variable set to its value (or removed,
@@ -1645,6 +1683,10 @@ mod tests {
             .map_err(|err| err.to_string())
             .map(|args| Parsed {
                 json: args.format() == Format::Json,
+                domain_from: match &args.command {
+                    Commands::Version { domain_from, .. } => Some(domain_from.to_string()),
+                    _ => None,
+                },
                 domain: get_domain_dir(args.domain).map_err(|err| err.to_string()),
             });
         println!(
@@ -1668,6 +1710,44 @@ mod tests {
             ),
             Ok(domain)
         );
+    }
+
+    #[test]
+    fn version_says_where_the_domain_came_from() {
+        let from = |argv: &[&str], value: Option<&str>| {
+            parse_under_env(argv, &[(DOMAIN_ENV, value)])
+                .map(|parsed| parsed.domain_from)
+                .expect("parses")
+        };
+        let version = ["quilt", "version", "--details"];
+        assert_eq!(from(&version, None).as_deref(), Some("default"));
+        assert_eq!(from(&version, Some("")).as_deref(), Some("default"));
+        assert_eq!(
+            from(&version, Some("/tmp/quilt-env-domain")).as_deref(),
+            Some("QUILT_DOMAIN")
+        );
+        for argv in [
+            [
+                "quilt",
+                "version",
+                "--details",
+                "-d",
+                "/tmp/quilt-flag-domain",
+            ],
+            [
+                "quilt",
+                "--domain",
+                "/tmp/quilt-flag-domain",
+                "version",
+                "--details",
+            ],
+        ] {
+            assert_eq!(
+                from(&argv, Some("/tmp/quilt-env-domain")).as_deref(),
+                Some("--domain"),
+                "{argv:?}"
+            );
+        }
     }
 
     #[test]

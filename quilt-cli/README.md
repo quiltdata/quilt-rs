@@ -52,6 +52,7 @@ cargo install quilt-cli
 | `remove-revisions` | Remove old revisions this copy no longer needs |
 | `login`     | Authenticate against a Quilt stack               |
 | `role`      | Show or switch your active role on a stack       |
+| `version`   | Print the version, as `quilt --version` does     |
 
 `list`'s `last synced` column compares commits: your last commit against the
 remote tip as of the package's last install, pull or push, read from local
@@ -167,6 +168,14 @@ nothing to remove it says so and succeeds. Under `--json` it prints the
 `removed` hashes, oldest first, with `revisions`, `objects` and `bytes` freed;
 `kept_for` names a package that was busy, so the files were kept for `quilt
 gc`.
+
+`version` prints what `quilt --version` prints. For a bug report,
+`quilt version --details` adds the quilt-rs and quilt-uri versions, the OS and
+architecture, and the folders quilt uses: the domain, whether it came from
+`--domain`, `QUILT_DOMAIN` or the default, the default domain, and the home, or
+`not set`. It only reads, and creates no folder. Under `--json` the same
+fields are `version`, `quilt_rs`, `quilt_uri`, `os`, `arch`, `domain`,
+`domain_from`, `default_domain` and `home` (`null` when not set).
 
 Run `quilt <command> --help` for arguments.
 

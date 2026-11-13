@@ -7,6 +7,7 @@ use tracing::{debug, info, trace, warn};
 
 use crate::Error;
 use crate::InstallPackageError;
+use crate::LineageError;
 use crate::Res;
 use crate::flow;
 use crate::installed_package::InstalledPackage;
@@ -147,6 +148,16 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
     pub async fn get_home(&self) -> Res<Home> {
         let lineage: DomainLineage = self.lineage.read(&self.storage).await?;
         Ok(lineage.home)
+    }
+
+    /// The stored home, or `None` when the domain has none yet, as on a
+    /// domain no command has used. Only reads: it writes and creates nothing.
+    pub async fn stored_home(&self) -> Res<Option<Home>> {
+        match self.get_home().await {
+            Ok(home) => Ok(Some(home)),
+            Err(Error::Lineage(LineageError::Missing | LineageError::MissingHome)) => Ok(None),
+            Err(err) => Err(err),
+        }
     }
 
     /// See [`lineage::DomainLineageIo::set_home`]: creates the home folder,
@@ -467,6 +478,32 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(domain.user_quiltignore())?,
             "!.env\n"
+        );
+        Ok(())
+    }
+
+    /// A domain that was never used, not even its folder, has no home, and
+    /// reading that creates nothing.
+    #[test(tokio::test)]
+    async fn stored_home_on_a_missing_domain_is_none_and_creates_nothing() -> Res<()> {
+        let temp_dir = TempDir::new()?;
+        let root = temp_dir.path().join("missing");
+        let domain = LocalDomain::new(&root);
+
+        assert_eq!(domain.stored_home().await?, None);
+        assert!(!root.exists());
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn stored_home_reads_the_home_that_was_set() -> Res<()> {
+        let temp_dir = TempDir::new()?;
+        let domain = LocalDomain::new(temp_dir.path());
+        domain.set_home(temp_dir.path()).await?;
+
+        assert_eq!(
+            domain.stored_home().await?,
+            Some(Home::from(temp_dir.path()))
         );
         Ok(())
     }

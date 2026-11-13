@@ -4,7 +4,7 @@ description = "Parser and types for Quilt+ URIs."
 keywords = ["quilt", "uri", "parser", "data", "wasm"]
 categories = ["parser-implementations", "wasm"]
 
-version = "0.5.0"
+version = "0.5.1-dev"
 
 # Inherit from workspace
 edition.workspace = true

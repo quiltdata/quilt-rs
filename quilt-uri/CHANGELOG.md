@@ -16,6 +16,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.5.1-dev]
+
+### Added
+
+- `VERSION` holds the crate's version (<https://github.com/quiltdata/quilt-rs/pull/PRNUM>)
+
 ## [v0.5.0] - 2026-11-12
 
 ### Added
