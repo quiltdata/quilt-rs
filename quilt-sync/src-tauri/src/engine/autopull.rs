@@ -974,8 +974,10 @@ mod tests {
             &self,
             package: &crate::engine::quilt::InstalledPackage,
             _host_config: Option<quilt_rs::io::remote::HostConfig>,
-        ) -> Result<crate::engine::quilt::lineage::InstalledPackageStatus, crate::engine::error::Error>
-        {
+        ) -> Result<
+            crate::engine::quilt::lineage::InstalledPackageStatus,
+            crate::engine::error::Error,
+        > {
             use std::sync::atomic::Ordering;
             let now = self.running.fetch_add(1, Ordering::SeqCst) + 1;
             self.most.fetch_max(now, Ordering::SeqCst);
