@@ -1425,15 +1425,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "37b2a672a2cb129a2e41c10b1224bb368f9f37a2b16b612598138befd7b37eb5"
 
 [[package]]
-name = "castaway"
-version = "0.2.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dec551ab6e7578819132c713a93c022a05d60159dc86e7a7050223577484c55a"
-dependencies = [
- "rustversion",
-]
-
-[[package]]
 name = "cc"
 version = "1.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1604,19 +1595,6 @@ checksum = "4356eba6976435498d05a311ee9fc486da3bc81c200d3f0d7dd9703b41913f92"
 dependencies = [
  "bytes",
  "memchr",
-]
-
-[[package]]
-name = "compact_str"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "79fcda08c33bb58b97008b2cdada6622500e949e060f5913361763121abd2416"
-dependencies = [
- "castaway",
- "cfg-if",
- "itoa",
- "static_assertions",
- "zmij",
 ]
 
 [[package]]
@@ -5769,7 +5747,7 @@ dependencies = [
 
 [[package]]
 name = "quilt-rs"
-version = "0.53.1-dev"
+version = "0.54.0-dev"
 dependencies = [
  "async-trait",
  "aws-config",
@@ -5799,8 +5777,8 @@ dependencies = [
  "reqwest-middleware",
  "reqwest-retry",
  "rusqlite",
+ "ryu",
  "serde",
- "serde-json-fmt",
  "serde-saphyr",
  "serde_json",
  "sha2 0.11.1",
@@ -6869,17 +6847,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "serde-json-fmt"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7121d04949f44e0aa0a162bda74121c2ec9df5496ce80bda52396c4817238898"
-dependencies = [
- "compact_str",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "serde-saphyr"
 version = "2.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7400,12 +7367,6 @@ name = "stable_deref_trait"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
-
-[[package]]
-name = "static_assertions"
-version = "1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "static_vcruntime"
