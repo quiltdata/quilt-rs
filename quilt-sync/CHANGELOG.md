@@ -23,7 +23,7 @@
 
 ### Changed
 
-- QuiltSync starts faster with many packages: at launch it checks up to eight packages at once instead of one after another (PRLINK)
+- QuiltSync starts faster with many packages: at launch it checks up to eight packages at once instead of one after another (<https://github.com/quiltdata/quilt-rs/pull/1376>)
 
 ### Fixed
 
