@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -477,19 +478,28 @@ pub async fn install_paths(
 /// Refuses a package two of whose keys name one local file, or where one
 /// key's file would be a folder of another's, before anything is written.
 ///
-/// Sorted as local paths, a path that is also a folder comes right before one
+/// A key's local path is its folders and file name without any `.` folder:
+/// Windows reads `.\a\b` as `a\b`, though its `Path` keeps a leading `.`.
+/// Sorted by those names, a path that is also a folder comes right before one
 /// of the paths inside it, and a repeated path right before its twin, so
 /// comparing neighbours is enough.
 fn refuse_clashing_local_paths(rows: &[ManifestRow]) -> Res {
-    let mut keys: Vec<&LogicalKey> = rows.iter().map(|row| &row.logical_key).collect();
-    keys.sort_unstable_by(|a, b| a.as_path().cmp(b.as_path()));
-    match keys
+    let mut local: Vec<(Vec<Component>, &LogicalKey)> = rows
+        .iter()
+        .map(|row| {
+            let names = row.logical_key.as_path().components();
+            let names = names.filter(|name| *name != Component::CurDir).collect();
+            (names, &row.logical_key)
+        })
+        .collect();
+    local.sort_unstable();
+    match local
         .windows(2)
-        .find(|pair| pair[1].as_path().starts_with(pair[0].as_path()))
+        .find(|pair| pair[1].0.starts_with(&pair[0].0))
     {
         Some(pair) => Err(Error::InstallPath(InstallPathError::LocalPathClash(
-            pair[0].to_string(),
-            pair[1].to_string(),
+            pair[0].1.to_string(),
+            pair[1].1.to_string(),
         ))),
         None => Ok(()),
     }
