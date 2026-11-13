@@ -940,6 +940,10 @@ mod tests {
         }
     }
 
+    #[allow(
+        clippy::unused_async_trait_impl,
+        reason = "only the walk itself waits; the rest return canned values"
+    )]
     impl QuiltModel for SlowWalks {
         type Locked = Namespace;
 
