@@ -4,9 +4,8 @@ name: Test
 # locally. This file holds only triggers, setup and secrets.
 
 on:
-  # Toolchain canary: `rust-toolchain.toml` floats on `stable` and
-  # `setup-rust-dev` inherits it, so every run resolves a fresh compiler.
-  # Without a schedule, a new release is first seen when it breaks some PR.
+  # Daily, for what changes without a commit: new advisories for
+  # `cargo deny`, and the tools installed at their latest version.
   schedule:
     # Off the hour: scheduled runs on the hour contend for runners.
     - cron: "17 7 * * *"
