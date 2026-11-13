@@ -24,13 +24,15 @@ jobs:
     outputs:
       tag: ${{ steps.meta.outputs.tag }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
 
-      - uses: ./.github/actions/setup-rust-minimal
+      - uses: $/.github/actions/setup-rust-minimal
         with:
           cache-target: release
 
-      - uses: taiki-e/install-action@parse-changelog
+      - uses: taiki-e/install-action@v2.90.3
+        with:
+          tool: parse-changelog
 
       - name: Resolve version and changelog notes
         id: meta
@@ -104,9 +106,9 @@ jobs:
             os: windows-latest
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
 
-      - uses: ./.github/actions/setup-rust-minimal
+      - uses: $/.github/actions/setup-rust-minimal
         with:
           cache-target: release
           cache-key: ${{ matrix.target }}
@@ -154,13 +156,13 @@ jobs:
       id-token: write
       contents: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
 
-      - uses: ./.github/actions/setup-rust-minimal
+      - uses: $/.github/actions/setup-rust-minimal
         with:
           cache-target: release
 
-      - uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
+      - uses: rust-lang/crates-io-auth-action@v1.0.6
         id: auth
 
       - name: Promote GitHub release (draft -> public)

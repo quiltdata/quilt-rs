@@ -25,7 +25,7 @@ runs:
     # The runner's Ubuntu mirror is sometimes slow enough to stall the job, so package files come from the cache
     - name: Restore package files
       id: apt-restore
-      uses: actions/cache/restore@v6
+      uses: actions/cache/restore@v6.1.0
       with:
         path: ~/apt-archives
         key: ${{ steps.apt-key.outputs.key }}
@@ -42,7 +42,7 @@ runs:
     # Pull requests restore main's cache and never write their own.
     - name: Save package files
       if: steps.apt-restore.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
-      uses: actions/cache/save@v6
+      uses: actions/cache/save@v6.1.0
       with:
         path: ~/apt-archives
         key: ${{ steps.apt-key.outputs.key }}
