@@ -179,25 +179,23 @@ impl TryFrom<Quilt3ManifestRow> for ManifestRow {
 
 /// A package is a tree: no key twice, and no key that is also a folder.
 ///
-/// Folders split on `/` only, as in quilt3; a `\` is part of a name. Sorted by
-/// their `/` parts, a key that is also a folder comes right before one of the
-/// keys inside it, and a repeated key right before its twin, so comparing
-/// neighbours is enough and needs no copy of any folder.
+/// In key order (see [`LogicalKey`]), a key that is also a folder comes right
+/// before one of the keys inside it, and a repeated key right before its twin,
+/// so comparing neighbours is enough.
 fn check_tree(rows: &[ManifestRow]) -> Res {
-    let mut keys: Vec<String> = rows.iter().map(|row| row.logical_key.to_string()).collect();
-    keys.sort_unstable_by(|a, b| a.split('/').cmp(b.split('/')));
+    let mut keys: Vec<&LogicalKey> = rows.iter().map(|row| &row.logical_key).collect();
+    keys.sort_unstable();
     for pair in keys.windows(2) {
-        let (first, next) = (&pair[0], &pair[1]);
+        let (first, next) = (pair[0], pair[1]);
         if first == next {
             return Err(Error::Manifest(ManifestError::DuplicateLogicalKey(
-                first.clone(),
+                first.to_string(),
             )));
         }
-        if next
-            .strip_prefix(first.as_str())
-            .is_some_and(|rest| rest.starts_with('/'))
-        {
-            return Err(Error::Manifest(ManifestError::FileAndFolder(first.clone())));
+        if first.is_folder_of(next) {
+            return Err(Error::Manifest(ManifestError::FileAndFolder(
+                first.to_string(),
+            )));
         }
     }
     Ok(())

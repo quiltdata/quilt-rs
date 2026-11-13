@@ -149,6 +149,15 @@ pub enum InstallPathError {
     #[error("{} is not in the package's current revision", .0.display())]
     NotInRevision(PathBuf),
 
+    /// Two keys of the package name one local file, or the first key's file
+    /// would be a folder of the second's. Windows reads a `\` in a key as a
+    /// folder separator, so `a/b` and `a\b` are one file there, and `data`
+    /// can't be a file and the folder of `data\x.csv`.
+    #[error(
+        "'{0}' and '{1}' can't both be installed on this system: they name the same local file, or the first is a folder of the second"
+    )]
+    LocalPathClash(String, String),
+
     #[error(
         "A local file is already at {}",
         .0.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", ")

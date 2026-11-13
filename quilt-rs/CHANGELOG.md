@@ -29,11 +29,14 @@
 
 - Building from source now requires Rust 1.99 or newer (<https://github.com/quiltdata/quilt-rs/pull/1370>)
 - **Breaking:** `ManifestError` has two new variants, `DuplicateLogicalKey` and `FileAndFolder`, for a manifest whose logical keys do not form a tree (<https://github.com/quiltdata/quilt-rs/pull/1372>)
+- **Breaking:** `InstallPathError` has a new variant, `LocalPathClash`, for a package whose logical keys name the same local file, or a file and its folder, on this system (<https://github.com/quiltdata/quilt-rs/pull/1377>)
+- **Breaking:** `LogicalKey` compares and sorts by its `/`-separated names on every OS, and no longer implements `Borrow<Path>` or equality with `Path` and `PathBuf`; compare `as_path()` for a native path (<https://github.com/quiltdata/quilt-rs/pull/1377>)
 - A package's first push no longer replaces a `latest` someone else already published under the same name: it uploads the revision, returns `certified_latest: false`, and leaves the package `Diverged` so `certify_latest` or `reset_to_latest` decides which revision is `latest` (<https://github.com/quiltdata/quilt-rs/pull/1373>)
 - **Breaking:** `ManifestHeader::message` is a `HeaderMessage`: `Missing` when the header has no `message` key, `Null` when it is `null`, or `Text`; `ManifestHeader::message()` returns the text (<https://github.com/quiltdata/quilt-rs/pull/1375>)
 
 ### Fixed
 
+- On Windows, the top hash matches quilt3's for logical keys holding `\`, merging onto `latest` keeps keys such as `a/b` and `a\b` apart, and installing a package whose keys name one local file there (`a/b` and `a\b`, or `data` and `data\x.csv`) is refused before any file is written (<https://github.com/quiltdata/quilt-rs/pull/1377>)
 - The top hash matches quilt3's for metadata holding floats such as `1e-7` or `1e16`, and for an entry `meta` that is not an object, so quilt3 opens such packages (<https://github.com/quiltdata/quilt-rs/pull/1372>)
 - A manifest that lists one logical key twice, or a key that is also the folder of another (`data` and `data/x.csv`), is refused when read, as quilt3 refuses it (<https://github.com/quiltdata/quilt-rs/pull/1372>)
 - A manifest header with no `message` key keeps its quilt3 top hash, and saving it again leaves the key out (<https://github.com/quiltdata/quilt-rs/pull/1375>)
