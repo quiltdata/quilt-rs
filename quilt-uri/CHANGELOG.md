@@ -26,6 +26,10 @@
 
 - Building from source now requires Rust 1.99 or newer (<https://github.com/quiltdata/quilt-rs/pull/1370>)
 
+### Fixed
+
+- In a `quilt+s3://` fragment, `+` is a literal `+`, so `path=C++.csv` names `C++.csv`, and a %-escape that is not UTF-8, such as `%FF`, is an error instead of U+FFFD (<https://github.com/quiltdata/quilt-rs/pull/1372>)
+
 ## [v0.5.0] - 2026-11-12
 
 ### Added

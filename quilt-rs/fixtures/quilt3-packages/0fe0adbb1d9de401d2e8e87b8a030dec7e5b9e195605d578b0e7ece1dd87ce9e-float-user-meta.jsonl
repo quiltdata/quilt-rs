@@ -1,0 +1,2 @@
+{"message":"floats","user_meta":{"threshold":1e-7,"scale":1e16,"ratio":0.25},"version":"v0"}
+{"logical_key":"data.csv","physical_keys":["s3://bucket/data.csv"],"hash":{"type":"sha2-256-chunked","value":"Xb1PbjJeWof4zD7zuHc9PI7sLiz/Ykj4gphlaZEt3xA="},"size":16,"meta":{}}

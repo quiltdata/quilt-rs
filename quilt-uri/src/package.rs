@@ -12,7 +12,6 @@ use serde::Serializer;
 use serde::de;
 use serde::de::Visitor;
 use url::Url;
-use url::form_urlencoded;
 
 use crate::Host;
 use crate::ManifestUri;
@@ -322,7 +321,7 @@ impl TryFrom<&str> for S3PackageUri {
             "S3 package URI must contain a fragment: {input}"
         )))?;
         let mut params = HashMap::new();
-        for (key, value) in form_urlencoded::parse(fragment.as_bytes()).into_owned() {
+        for (key, value) in parse_fragment(fragment)? {
             if params.contains_key(&key) {
                 return Err(UriError::Package(format!(
                     "`{key}` is given more than once in the fragment"
@@ -419,9 +418,36 @@ fn check_top_hash(hash: &str) -> Result<(), UriError> {
     }
 }
 
+/// Reads the fragment's `key=value` pairs the way quilt3 does.
+///
+/// Like a form query, but `+` is a literal `+`, and an escape whose bytes are
+/// not UTF-8 is an error instead of U+FFFD. Empty pieces are skipped, and a
+/// piece without `=` is a key with an empty value.
+fn parse_fragment(fragment: &str) -> Result<Vec<(String, String)>, UriError> {
+    let decode = |part: &str| {
+        percent_encoding::percent_decode_str(part)
+            .decode_utf8()
+            .map(std::borrow::Cow::into_owned)
+            .map_err(|_| {
+                UriError::Package(format!(
+                    "the fragment has a %-escape that is not UTF-8: {part:?}"
+                ))
+            })
+    };
+    fragment
+        .split('&')
+        .filter(|piece| !piece.is_empty())
+        .map(|piece| {
+            let (key, value) = piece.split_once('=').unwrap_or((piece, ""));
+            Ok((decode(key)?, decode(value)?))
+        })
+        .collect()
+}
+
 /// The characters that would otherwise be read as fragment structure.
 ///
-/// `&`, `=` and `#` delimit; `+` decodes as a space and `%` opens an escape.
+/// `&`, `=` and `#` delimit and `%` opens an escape. `+` reads back as `+`,
+/// but form decoders elsewhere read it as a space, so it is escaped too.
 /// Everything else is left alone — `/` above all, because a namespace and a
 /// logical key are full of them and these addresses are read and pasted by
 /// hand.
@@ -455,9 +481,8 @@ impl S3PackageUri {
     /// Each fragment value is escaped with `set`, safe to put beside the
     /// delimiters.
     ///
-    /// The parse side reads the fragment with `form_urlencoded`, so anything written
-    /// raw comes back changed or truncated: a logical key holding `&` ends the value
-    /// early and the rest is read as another parameter.
+    /// Anything written raw can come back changed or truncated: a logical key
+    /// holding `&` ends the value early and the rest is read as another parameter.
     fn render(&self, full_hash: bool, set: &'static percent_encoding::AsciiSet) -> String {
         let encode = |value: &str| percent_encoding::utf8_percent_encode(value, set).to_string();
         let hash = match &self.revision {
@@ -740,6 +765,45 @@ mod tests {
             assert!(
                 matches!(&err, UriError::Package(msg) if msg.contains(&format!("`{key}`"))),
                 "{fragment}: expected a package error naming {key}, got {err}"
+            );
+        }
+    }
+
+    /// Expected values come from quilt3's `PackageUri.parse`: a `+` is not a
+    /// space, and an escape stays an escape.
+    #[test]
+    fn a_plus_in_the_fragment_is_a_plus() {
+        for (fragment, namespace, path) in [
+            ("package=a/b&path=C++.csv", "a/b", Some("C++.csv")),
+            ("package=a/b&path=a%2Bb+c", "a/b", Some("a+b+c")),
+            ("package=a/b&path=a%20b", "a/b", Some("a b")),
+            ("package=a/b&path=%C3%A9", "a/b", Some("\u{e9}")),
+            ("package=a/b&path=100%", "a/b", Some("100%")),
+            ("package=a+b/c", "a+b/c", None),
+        ] {
+            let input = format!("quilt+s3://bucket#{fragment}");
+            let uri = S3PackageUri::try_from(input.as_str())
+                .unwrap_or_else(|e| panic!("{fragment}: {e}"));
+            assert_eq!(uri.namespace.to_string(), namespace, "{fragment}");
+            assert_eq!(uri.path, path.map(PathBuf::from), "{fragment}");
+        }
+    }
+
+    /// quilt3 refuses these rather than reading U+FFFD.
+    #[test]
+    fn a_fragment_escape_that_is_not_utf8_is_refused() {
+        for fragment in [
+            "package=a/b&path=%FF",
+            "package=a/b%FF",
+            "package=a/b&path=%E2%82",
+            "package=a/b&pa%FFth=x",
+        ] {
+            let input = format!("quilt+s3://bucket#{fragment}");
+            let err = S3PackageUri::try_from(input.as_str())
+                .expect_err(&format!("{fragment} should not parse"));
+            assert!(
+                matches!(&err, UriError::Package(msg) if msg.contains("UTF-8")),
+                "{fragment}: expected a package error about UTF-8, got {err}"
             );
         }
     }
@@ -1463,8 +1527,8 @@ mod tests {
     }
 
     /// A logical key is user data and may hold anything a filesystem allows.
-    /// The fragment is read with `form_urlencoded`, so every character that
-    /// means something there has to survive the trip out and back.
+    /// Every character that means something in the fragment has to survive
+    /// the trip out and back.
     #[test]
     fn a_path_holding_fragment_delimiters_round_trips() {
         for path in [

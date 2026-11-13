@@ -5,7 +5,7 @@ keywords = ["data", "versioning", "s3", "manifest", "reproducibility"]
 categories = ["filesystem", "science", "api-bindings"]
 
 # Inherit from workspace
-version = "0.53.1-dev"
+version = "0.54.0-dev"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -44,9 +44,9 @@ reqwest.workspace = true
 reqwest-middleware.workspace = true
 reqwest-retry.workspace = true
 rusqlite.workspace = true
+ryu.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-serde-json-fmt.workspace = true
 sha2.workspace = true
 serde-saphyr.workspace = true
 tempfile.workspace = true
