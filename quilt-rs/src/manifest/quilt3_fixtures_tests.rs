@@ -86,6 +86,31 @@ async fn a_repeated_logical_key_is_named_in_the_error() -> Res {
 }
 
 #[test(tokio::test)]
+async fn a_key_that_is_also_a_folder_is_named_in_the_error() -> Res {
+    for (first, second) in [("data", "data/x.csv"), ("data/x.csv", "data")] {
+        let row = |key: &str| {
+            format!(
+                r#"{{"logical_key":"{key}","physical_keys":["s3://bucket/{key}"],"hash":{{"type":"SHA256","value":"00"}},"size":1,"meta":{{}}}}"#
+            )
+        };
+        let text = format!(
+            "{}\n{}\n{}\n",
+            r#"{"message":"","user_meta":{},"version":"v0"}"#,
+            row(first),
+            row(second),
+        );
+        let err = Manifest::from_reader(text.as_bytes())
+            .await
+            .expect_err("a key that is also a folder should not load");
+        assert!(
+            matches!(&err, Error::Manifest(ManifestError::FileAndFolder(key)) if key == "data"),
+            "{first} then {second}: {err}"
+        );
+    }
+    Ok(())
+}
+
+#[test(tokio::test)]
 async fn a_header_without_message_keeps_it_absent_on_save() -> Res {
     let path = std::env::current_dir()?.join(
         "fixtures/quilt3-packages/3426a3f721e41a1d83174c691432a39ff13720426267fc799dccf3583153e850-no-message.jsonl",

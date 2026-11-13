@@ -474,7 +474,7 @@ pub(crate) async fn refresh_then_maybe_sync(
 
     // A `Diverged` copy is merged onto `latest` after the publish branch has
     // committed and pushed what it holds, which needs both directions on and
-    // a base shared with `latest`: a first push would certify over it.
+    // a base shared with `latest` to merge from.
     // Otherwise it pauses on the first observation, rather than re-emitting
     // `diverged` every tick while the UI looks healthy.
     let diverged = upstream == quilt::lineage::UpstreamState::Diverged;

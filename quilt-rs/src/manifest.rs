@@ -197,11 +197,30 @@ impl Manifest {
         }
 
         let mut rows = Vec::new();
-        let mut seen = std::collections::HashSet::new();
+        // A package is a tree: no key twice, and no key that is also a folder.
+        let mut files = std::collections::HashSet::new();
+        let mut folders = std::collections::HashSet::new();
 
         while let Some(line) = lines.next_line().await? {
             let row: Quilt3ManifestRow = serde_json::from_str(&line)?;
-            if !seen.insert(row.logical_key.clone()) {
+            let key = row.logical_key.as_path().to_path_buf();
+            if folders.contains(&key) {
+                return Err(Error::Manifest(ManifestError::FileAndFolder(
+                    row.logical_key.to_string(),
+                )));
+            }
+            for folder in key.ancestors().skip(1) {
+                if folder.as_os_str().is_empty() {
+                    break;
+                }
+                if files.contains(folder) {
+                    return Err(Error::Manifest(ManifestError::FileAndFolder(
+                        folder.display().to_string(),
+                    )));
+                }
+                folders.insert(folder.to_path_buf());
+            }
+            if !files.insert(key) {
                 return Err(Error::Manifest(ManifestError::DuplicateLogicalKey(
                     row.logical_key.to_string(),
                 )));

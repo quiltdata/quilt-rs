@@ -28,12 +28,13 @@
 ### Changed
 
 - Building from source now requires Rust 1.99 or newer (<https://github.com/quiltdata/quilt-rs/pull/1370>)
+- A package's first push no longer replaces a `latest` someone else already published under the same name: it uploads the revision, returns `certified_latest: false`, and leaves the package `Diverged` so `certify_latest` or `reset_to_latest` decides which revision is `latest` (<https://github.com/quiltdata/quilt-rs/pull/1373>)
 - `ManifestHeader::message` is `Option<Option<String>>`: `None` when the header has no `message` key, `Some(None)` when it is `null`; `ManifestHeader::message()` returns the text (<TODO: PR link>)
 
 ### Fixed
 
 - The top hash matches quilt3's for metadata holding floats such as `1e-7` or `1e16`, and for an entry `meta` that is not an object, so quilt3 opens such packages (<https://github.com/quiltdata/quilt-rs/pull/1372>)
-- A manifest that lists one logical key twice is refused when read, as quilt3 refuses it (<https://github.com/quiltdata/quilt-rs/pull/1372>)
+- A manifest that lists one logical key twice, or a key that is also the folder of another (`data` and `data/x.csv`), is refused when read, as quilt3 refuses it (<https://github.com/quiltdata/quilt-rs/pull/1372>)
 - A manifest header with no `message` key keeps its quilt3 top hash, and saving it again leaves the key out (<TODO: PR link>)
 
 ### quilt-uri

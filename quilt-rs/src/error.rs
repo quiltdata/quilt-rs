@@ -215,6 +215,9 @@ pub enum ManifestError {
 
     #[error("Manifest lists the logical key {0:?} more than once")]
     DuplicateLogicalKey(String),
+
+    #[error("Manifest lists {0:?} both as a file and as a folder")]
+    FileAndFolder(String),
 }
 
 #[derive(Error, Debug)]

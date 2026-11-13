@@ -87,8 +87,9 @@ async fn stream_uploaded_local_rows<'a>(
 pub struct PushResult {
     pub lineage: PackageLineage,
     /// Whether the pushed revision was certified as "latest".
-    /// `false` when the remote's latest tag has moved (someone else pushed)
-    /// since we last checked.
+    /// `false` when the remote's latest tag names another revision than our
+    /// base: someone else pushed since we last checked, or, on a first push,
+    /// had already published under this name.
     pub certified_latest: bool,
 }
 
@@ -157,7 +158,6 @@ pub(crate) async fn push_package_impl(
     };
 
     let remote_uri = lineage.remote()?.clone();
-    let is_first_push = lineage.base_hash.is_empty();
 
     debug!("⏳ Fetching remote manifest");
     let remote_manifest = if remote_uri.hash.is_empty() {
@@ -287,15 +287,6 @@ pub(crate) async fn push_package_impl(
 
     lineage.remote_uri = Some(new_manifest_uri.clone());
 
-    // Update base_hash after a successful push. Only needed for first push
-    // where base_hash is "" — without this, the package would appear as Diverged
-    // instead of UpToDate after push.
-    // On subsequent pushes, certify_latest() below handles the update via
-    // update_latest(), which sets both base_hash and latest_hash.
-    if lineage.base_hash.is_empty() {
-        lineage.base_hash = new_manifest_uri.hash.clone();
-    }
-
     if new_manifest_uri.hash != commit.hash {
         debug!("❌ Hash mismatch, copying cached to installed");
         // Otherwise, lineage will be pointing to the wrong/inexisting hash
@@ -305,13 +296,15 @@ pub(crate) async fn push_package_impl(
         )))?;
     }
 
-    // Certify latest when:
-    // - first push (base_hash was empty): always certify, even if the remote already
-    //   has a different "latest" — the user explicitly pushed this version;
-    // - tracking (base_hash == latest_hash): we're up-to-date with remote;
-    // - no existing latest: remote has never had a "latest" tag.
-    if is_first_push || lineage.base_hash == lineage.latest_hash || lineage.latest_hash.is_empty() {
-        debug!("⏳ Certifying new latest (first push, tracking, or no existing latest)");
+    // Certify latest when the remote has no "latest" yet, when it already is
+    // what we pushed, or when it is still our base. A first push has no base,
+    // so another writer's "latest" stays, and the empty base leaves the copy
+    // Diverged until the user promotes or resets.
+    if lineage.latest_hash.is_empty()
+        || lineage.latest_hash == new_manifest_uri.hash
+        || (!lineage.base_hash.is_empty() && lineage.base_hash == lineage.latest_hash)
+    {
+        debug!("⏳ Certifying new latest (no existing latest, already ours, or tracking)");
         let lineage = flow::certify_latest(lineage, remote, new_manifest_uri).await?;
         return Ok(PushResult {
             lineage,
@@ -1038,7 +1031,7 @@ mod tests {
             .put_object(
                 None,
                 &S3Uri::try_from("s3://b/.quilt/named_packages/a/c/latest")?,
-                b"abcdef0000000000000000000000000000000000000000000000000000000000".to_vec(),
+                fixtures::top_hash::EMPTY_NULL_TOP_HASH.as_bytes().to_vec(),
             )
             .await?;
         let mut manifest = Manifest::default();
@@ -1059,8 +1052,7 @@ mod tests {
             hash: fixtures::top_hash::EMPTY_NULL_TOP_HASH.to_string(),
             origin: None,
         };
-        // First push with an existing remote "latest": certify_latest is called,
-        // so both base_hash and latest_hash point to the pushed hash.
+        // First push onto a "latest" that already is the pushed revision.
         assert!(result.certified_latest);
         assert_eq!(
             result.lineage,
@@ -1154,17 +1146,27 @@ mod tests {
             hash: fixtures::manifest::TOP_HASH.to_string(),
             origin: None,
         };
-        // First push with an existing remote "latest": certify_latest is called,
-        // so both base_hash and latest_hash point to the pushed hash.
-        assert!(result.certified_latest);
+        // First push onto another revision's "latest": uploaded, but "latest"
+        // stays theirs and the empty base leaves the copy Diverged.
+        assert!(!result.certified_latest);
         assert_eq!(
             result.lineage,
             PackageLineage {
-                remote_uri: Some(manifest_uri.clone()),
-                base_hash: manifest_uri.hash.clone(),
-                latest_hash: manifest_uri.hash,
+                remote_uri: Some(manifest_uri),
+                base_hash: String::new(),
+                latest_hash: "a".repeat(64),
                 ..PackageLineage::default()
             }
+        );
+        let latest = remote
+            .get_object_stream(
+                None,
+                &S3Uri::try_from("s3://b/.quilt/named_packages/f/a/latest")?,
+            )
+            .await?;
+        assert_eq!(
+            latest.body.collect().await?.to_vec(),
+            "a".repeat(64).as_bytes()
         );
         Ok(())
     }

@@ -16,37 +16,38 @@ use crate::manifest::Workflow;
 #[cfg(test)]
 use crate::manifest::WorkflowId;
 
-/// Serialize JSON the way quilt3 does for the top hash:
-/// `json.JSONEncoder(sort_keys=True, separators=(',', ':'))`, which also sets
-/// `ensure_ascii=True` and writes floats with Python's `repr`.
-fn serialize_like_python<T: Serialize>(value: &T) -> Res<String> {
+/// The text of one part of the top hash, in quilt3's top-hash encoding:
+/// keys sorted at every level, no spaces, non-ASCII escaped, and floats in
+/// the form [`hash_float_text`] gives. quilt3's `Package._calculate_top_hash`
+/// is the reference.
+fn encode_hash_part<T: Serialize>(value: &T) -> Res<String> {
     let mut out = String::new();
-    write_python_json(&mut out, &serde_json::to_value(value)?);
+    write_hash_json(&mut out, &serde_json::to_value(value)?);
     Ok(out)
 }
 
-fn write_python_json(out: &mut String, value: &serde_json::Value) {
+fn write_hash_json(out: &mut String, value: &serde_json::Value) {
     use serde_json::Value;
     match value {
         Value::Null => out.push_str("null"),
         Value::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
         Value::Number(n) => match n.as_f64() {
-            Some(f) if n.is_f64() => out.push_str(&python_float_repr(f)),
+            Some(f) if n.is_f64() => out.push_str(&hash_float_text(f)),
             _ => out.push_str(&n.to_string()),
         },
-        Value::String(s) => write_python_string(out, s),
+        Value::String(s) => write_hash_string(out, s),
         Value::Array(items) => {
             out.push('[');
             for (i, item) in items.iter().enumerate() {
                 if i > 0 {
                     out.push(',');
                 }
-                write_python_json(out, item);
+                write_hash_json(out, item);
             }
             out.push(']');
         }
         Value::Object(map) => {
-            // Byte order of UTF-8 is code point order, which is how Python sorts.
+            // Keys sort by code point, which is the byte order of UTF-8.
             let mut entries: Vec<_> = map.iter().collect();
             entries.sort_by(|a, b| a.0.cmp(b.0));
             out.push('{');
@@ -54,18 +55,19 @@ fn write_python_json(out: &mut String, value: &serde_json::Value) {
                 if i > 0 {
                     out.push(',');
                 }
-                write_python_string(out, key);
+                write_hash_string(out, key);
                 out.push(':');
-                write_python_json(out, item);
+                write_hash_json(out, item);
             }
             out.push('}');
         }
     }
 }
 
-/// Python's `ensure_ascii` escaping: everything outside `' '..='~'` is escaped,
-/// with UTF-16 surrogate pairs above U+FFFF.
-fn write_python_string(out: &mut String, s: &str) {
+/// A JSON string with everything outside `' '..='~'` escaped: the short forms
+/// for quote, backslash and five controls, else `\uXXXX` in lowercase hex,
+/// as a UTF-16 surrogate pair above U+FFFF.
+fn write_hash_string(out: &mut String, s: &str) {
     use std::fmt::Write;
     out.push('"');
     for c in s.chars() {
@@ -89,11 +91,13 @@ fn write_python_string(out: &mut String, s: &str) {
     out.push('"');
 }
 
-/// Python's `float.__repr__`: the shortest digits that read back the same,
-/// written plain when the exponent is in `-4..16`, else as `1e-07` / `1.5e+300`.
-fn python_float_repr(f: f64) -> String {
-    // ryu picks the same shortest digits as Python, ties included; Rust's
-    // `{:e}` does not always. Its text mixes plain and exponent forms.
+/// A float as the top hash writes it: the shortest digits that read back as
+/// the same float, the nearer one on a tie. Plain when the exponent is in
+/// `-4..16` (`0.0001`, `1.0`), else with a signed exponent of at least two
+/// digits (`1e-07`, `1.5e+300`).
+fn hash_float_text(f: f64) -> String {
+    // ryu breaks ties toward the nearer value; Rust's `{:e}` does not always.
+    // Its text mixes plain and exponent forms, so read digits and exponent.
     let mut buffer = ryu::Buffer::new();
     let text = buffer.format_finite(f);
     let (sign, text) = match text.strip_prefix('-') {
@@ -179,9 +183,8 @@ fn serialize_manifest_header(
 
 /// An entry's `meta` as the top hash reads it.
 ///
-/// quilt3 keeps `meta or {}`, so an absent `meta` and every value Python reads
-/// as false (`null`, `false`, `0`, `0.0`, `""`, `[]`, `{}`) are `{}`; anything
-/// else is kept as is.
+/// An absent `meta` and every empty or false one (`null`, `false`, `0`, `0.0`,
+/// `""`, `[]`, `{}`) are `{}`; anything else is kept as is.
 pub(crate) fn normalized_entry_meta(meta: Option<&serde_json::Value>) -> serde_json::Value {
     use serde_json::Value;
     let is_falsy = match meta {
@@ -252,7 +255,7 @@ impl TopHasher {
     /// Append `ManifestHeader` to the hasher
     pub fn append_header(&mut self, manifest_header: &ManifestHeader) -> Res {
         let value = serialize_manifest_header(manifest_header)?;
-        let value_str = serialize_like_python(&value)?;
+        let value_str = encode_hash_part(&value)?;
         self.hasher.update(value_str.as_bytes());
         Ok(())
     }
@@ -260,7 +263,7 @@ impl TopHasher {
     /// Append `ManifestRow` to the hasher
     pub fn append(&mut self, manifest_row: &ManifestRow) -> Res {
         let value = serialize_manifest_row_entry(manifest_row)?;
-        let value_str = serialize_like_python(&value)?;
+        let value_str = encode_hash_part(&value)?;
         self.hasher.update(value_str.as_bytes());
         Ok(())
     }
@@ -286,9 +289,9 @@ mod tests {
     use crate::object_hash::Sha256ChunkedHash;
     use crate::object_hash::Sha256Hash;
 
-    /// Expected text is Python's `repr(float(input))`.
+    /// Expected text is what quilt3's top-hash encoder writes for the float.
     #[test]
-    fn floats_are_written_as_python_repr() {
+    fn floats_are_written_as_quilt3_writes_them() {
         for (input, expected) in [
             ("1e-7", "1e-07"),
             ("-2.5e-8", "-2.5e-08"),
@@ -314,11 +317,11 @@ mod tests {
             ("12345678901234567.0", "1.2345678901234568e+16"),
             ("-1e-4", "-0.0001"),
             ("9.999999999999999e-5", "9.999999999999999e-05"),
-            // Two shortest candidates; Python keeps the nearer one.
+            // Two shortest candidates; the nearer one wins.
             ("667962307169479.2", "667962307169479.2"),
         ] {
             let f: f64 = input.parse().unwrap();
-            assert_eq!(python_float_repr(f), expected, "{input}");
+            assert_eq!(hash_float_text(f), expected, "{input}");
         }
     }
 
