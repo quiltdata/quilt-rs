@@ -25,7 +25,7 @@ Fastest, via [`cargo-binstall`](https://github.com/cargo-bins/cargo-binstall)
 cargo binstall quilt-cli
 ```
 
-Or build from source (needs Rust 1.97+):
+Or build from source (needs Rust 1.99+):
 
 ```bash
 cargo install quilt-cli

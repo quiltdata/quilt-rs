@@ -567,8 +567,7 @@ impl From<StripPrefixError> for Error {
 
 /// The tail [`Error::PruneFailed`] adds when a busy package kept the rest.
 fn kept_by_busy(busy: Option<&Namespace>) -> String {
-    busy.map(|namespace| format!("; {namespace} is busy, so the rest were kept too"))
-        .unwrap_or_default()
+    busy.map_or_default(|namespace| format!("; {namespace} is busy, so the rest were kept too"))
 }
 
 #[cfg(test)]

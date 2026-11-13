@@ -19,6 +19,16 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.53.1-dev]
+
+### Changed
+
+- Building from source now requires Rust 1.99 or newer (<https://github.com/quiltdata/quilt-rs/pull/1370>)
+
+### quilt-uri
+
+- Updated [from v0.5.0 to v0.5.1-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-uri/v0.5.0...main) (see [quilt-uri/CHANGELOG.md](../quilt-uri/CHANGELOG.md))
+
 ## [v0.53.0] - 2026-11-12
 
 ### Added

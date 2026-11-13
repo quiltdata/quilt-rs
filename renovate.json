@@ -17,6 +17,11 @@
       "matchUpdateTypes": ["minor", "patch"],
       "groupName": "Rust crates (minor and patch)",
       "schedule": ["before 6am on monday"]
+    },
+    {
+      "description": "The toolchain follows each new stable Rust, and the crates support the release before it. On a minor bump, the same PR fixes new clippy lints and raises the workspace rust-version to the release the toolchain leaves.",
+      "matchManagers": ["rust-toolchain"],
+      "prBodyNotes": ["On a minor bump, fix new clippy lints in this PR and raise the workspace `rust-version` in `Cargo.toml` to the release the toolchain leaves: for 1.100.0 → 1.101.0, set `1.100`. A patch bump needs neither."]
     }
   ]
 }

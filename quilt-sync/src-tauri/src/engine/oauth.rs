@@ -10,15 +10,11 @@ use crate::engine::Error;
 use crate::engine::quilt;
 use crate::engine::telemetry::prelude::*;
 
-// `Duration::from_mins(10)` would read better, but is gated on Rust 1.91;
-// workspace MSRV is 1.85.
-#[allow(clippy::duration_suboptimal_units)]
-const TTL: Duration = Duration::from_secs(10 * 60);
+const TTL: Duration = Duration::from_mins(10);
 
 /// How long an expired login is kept, so its callback can still tell the page
 /// that asked that it expired.
-#[allow(clippy::duration_suboptimal_units)]
-const FORGET: Duration = Duration::from_secs(24 * 60 * 60);
+const FORGET: Duration = Duration::from_hours(24);
 
 /// Pending OAuth authorization state, keyed by its `state` token, so two
 /// logins to one host each land on their own page.

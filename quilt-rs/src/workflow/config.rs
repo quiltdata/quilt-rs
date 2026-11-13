@@ -163,7 +163,7 @@ impl WorkflowsConfig {
         let workflows = yaml
             .get("workflows")
             .and_then(Value::as_object)
-            .map(|workflows| {
+            .map_or_default(|workflows| {
                 workflows
                     .iter()
                     .map(|(id, entry)| WorkflowInfo {
@@ -175,8 +175,7 @@ impl WorkflowsConfig {
                             .map(String::from),
                     })
                     .collect()
-            })
-            .unwrap_or_default();
+            });
 
         Ok(WorkflowsConfig {
             default_workflow,
