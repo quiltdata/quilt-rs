@@ -43,10 +43,7 @@ impl std::fmt::Display for Output {
         let mut output: Vec<String> = Vec::new();
         let header = self.manifest.header.clone();
 
-        let message = match &header.message {
-            Some(msg) => msg.clone(),
-            None => "∅".to_string(),
-        };
+        let message = header.message().unwrap_or("∅").to_string();
 
         let user_meta = match &header.user_meta {
             Some(meta) => match serde_json::to_string(&meta) {
@@ -106,7 +103,7 @@ impl Render for Output {
 
         serde_json::json!({
             "header": {
-                "message": header.message.as_deref(),
+                "message": header.message(),
                 "user_meta": &header.user_meta,
                 "workflow": &header.workflow,
             },
@@ -166,10 +163,7 @@ mod tests {
             let output_str = format!("{output}");
             assert_eq!(output_str, get_browse_output()?);
 
-            assert_eq!(
-                output.manifest.header.message.as_ref(),
-                Some(&"Test message".to_string()),
-            );
+            assert_eq!(output.manifest.header.message(), Some("Test message"),);
             assert_eq!(
                 output
                     .manifest
@@ -196,7 +190,7 @@ mod tests {
             manifest: quilt_rs::manifest::Manifest {
                 header: quilt_rs::manifest::ManifestHeader {
                     version: "v0".to_string(),
-                    message: Some("initial".to_string()),
+                    message: quilt_rs::manifest::HeaderMessage::Text("initial".to_string()),
                     user_meta: Some(serde_json::json!({"owner": "team"})),
                     workflow: None,
                 },
@@ -225,7 +219,7 @@ mod tests {
             manifest: quilt_rs::manifest::Manifest {
                 header: quilt_rs::manifest::ManifestHeader {
                     version: "v0".to_string(),
-                    message: None,
+                    message: quilt_rs::manifest::HeaderMessage::Null,
                     user_meta: None,
                     workflow: None,
                 },

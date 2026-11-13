@@ -1677,7 +1677,8 @@ async fn finish_among(fixture: &Fixture, revisions: Revisions) -> Arc<Mutex<Remo
         if uri.hash == "h3" {
             let published = &published.lock().unwrap()[0];
             let mut revision = revision(published.meta.clone(), outcome.clone());
-            revision.header.message = Some(published.message.clone());
+            revision.header.message =
+                quilt::manifest::HeaderMessage::Text(published.message.clone());
             return Ok(revision);
         }
         let remote = state.lock().unwrap();
@@ -2027,7 +2028,7 @@ async fn the_rebased_outcome_keeps_latests_workflow_under_its_own_message() -> R
     let message = fixture.published.lock().unwrap()[0].message.clone();
     let remote = remote.lock().unwrap();
     assert_eq!(remote.latest().header.workflow, switched);
-    assert_eq!(remote.latest().header.message, Some(message));
+    assert_eq!(remote.latest().header.message(), Some(message.as_str()));
     Ok(())
 }
 

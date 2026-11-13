@@ -125,6 +125,7 @@ mod tests {
     use multihash::Multihash;
 
     use crate::Res;
+    use crate::manifest::HeaderMessage;
     use serde_json::json;
 
     fn row(key: &str, content: &[u8]) -> Res<ManifestRow> {
@@ -378,9 +379,9 @@ mod tests {
     #[test]
     fn the_result_carries_this_message_under_latests_header() {
         let mut ours = Manifest::default();
-        ours.header.message = Some("Mine".to_string());
+        ours.header.message = HeaderMessage::Text("Mine".to_string());
         let mut theirs = Manifest::default();
-        theirs.header.message = Some("Theirs".to_string());
+        theirs.header.message = HeaderMessage::Text("Theirs".to_string());
         let workflow = crate::manifest::Workflow {
             config: "s3://b/.quilt/workflows/config.yml".parse().unwrap(),
             id: None,
@@ -389,7 +390,7 @@ mod tests {
 
         let merged = merge_onto(&Manifest::default(), &ours, theirs).expect("merged");
 
-        assert_eq!(merged.header.message.as_deref(), Some("Mine"));
+        assert_eq!(merged.header.message(), Some("Mine"));
         assert_eq!(merged.header.workflow, Some(workflow));
     }
 }

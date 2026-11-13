@@ -17,7 +17,7 @@ pub fn create_remote_manifest() -> quilt::manifest::Manifest {
     quilt::manifest::Manifest {
         header: quilt::manifest::ManifestHeader {
             version: "v0".to_string(),
-            message: None,
+            message: quilt::manifest::HeaderMessage::Null,
             user_meta: None,
             workflow: None,
         },
