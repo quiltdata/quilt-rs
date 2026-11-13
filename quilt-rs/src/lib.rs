@@ -69,3 +69,6 @@ pub use package_lock::on_package_lock_wait;
 pub use workflow::WorkflowValidationError;
 
 pub type Res<T = ()> = std::result::Result<T, Error>;
+
+/// This crate's version, as published.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");

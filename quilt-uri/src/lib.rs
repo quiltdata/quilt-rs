@@ -27,3 +27,6 @@ pub use s3::check_bucket;
 pub use tag::Seconds;
 pub use tag::Tag;
 pub use tag::TagUri;
+
+/// This crate's version, as published.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
