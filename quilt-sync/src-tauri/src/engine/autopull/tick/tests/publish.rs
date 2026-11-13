@@ -675,7 +675,7 @@ async fn run_once_pauses_on_foreign_remote_diverged() -> Result<(), Error> {
     let host = fixtures::host();
     // Foreign-remote `Diverged`: `remote.hash` empty, `latest_hash`
     // non-empty (a teammate published under the same namespace). Its edits
-    // are not published: a first push would certify over the teammate's.
+    // are not published: there is no shared base to merge from.
     let lineage = quilt::lineage::PackageLineage {
         remote_uri: Some(quilt_uri::ManifestUri {
             bucket: "bucket".to_string(),
