@@ -125,6 +125,32 @@ impl TryFrom<Quilt3ManifestRow> for ManifestRow {
     }
 }
 
+/// A package is a tree: no key twice, and no key that is also a folder.
+///
+/// Folders split on `/` only, as in quilt3; a `\` is part of a name. Sorted by
+/// their `/` parts, a key that is also a folder comes right before one of the
+/// keys inside it, and a repeated key right before its twin, so comparing
+/// neighbours is enough and needs no copy of any folder.
+fn check_tree(rows: &[ManifestRow]) -> Res {
+    let mut keys: Vec<String> = rows.iter().map(|row| row.logical_key.to_string()).collect();
+    keys.sort_unstable_by(|a, b| a.split('/').cmp(b.split('/')));
+    for pair in keys.windows(2) {
+        let (first, next) = (&pair[0], &pair[1]);
+        if first == next {
+            return Err(Error::Manifest(ManifestError::DuplicateLogicalKey(
+                first.clone(),
+            )));
+        }
+        if next
+            .strip_prefix(first.as_str())
+            .is_some_and(|rest| rest.starts_with('/'))
+        {
+            return Err(Error::Manifest(ManifestError::FileAndFolder(first.clone())));
+        }
+    }
+    Ok(())
+}
+
 /// Legacy JSONL in-memory manifest
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Default)]
 pub struct Manifest {
@@ -171,33 +197,12 @@ impl Manifest {
         }
 
         let mut rows = Vec::new();
-        // A package is a tree: no key twice, and no key that is also a folder.
-        // Folders split on `/` only, as in quilt3; a `\` is part of a name.
-        let mut files = std::collections::HashSet::new();
-        let mut folders = std::collections::HashSet::new();
-
         while let Some(line) = lines.next_line().await? {
             let row: Quilt3ManifestRow = serde_json::from_str(&line)?;
-            let key = row.logical_key.to_string();
-            if folders.contains(&key) {
-                return Err(Error::Manifest(ManifestError::FileAndFolder(key)));
-            }
-            let mut rest = key.as_str();
-            while let Some((folder, _)) = rest.rsplit_once('/') {
-                if files.contains(folder) {
-                    return Err(Error::Manifest(ManifestError::FileAndFolder(
-                        folder.to_string(),
-                    )));
-                }
-                folders.insert(folder.to_string());
-                rest = folder;
-            }
-            if !files.insert(key.clone()) {
-                return Err(Error::Manifest(ManifestError::DuplicateLogicalKey(key)));
-            }
             rows.push(ManifestRow::try_from(row)?);
         }
 
+        check_tree(&rows)?;
         Ok(Manifest { header, rows })
     }
 
