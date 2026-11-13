@@ -774,19 +774,18 @@ mod tests {
     #[test]
     fn a_plus_in_the_fragment_is_a_plus() {
         for (fragment, namespace, path) in [
-            ("package=a/b&path=C++.csv", "a/b", "C++.csv"),
-            ("package=a/b&path=a%2Bb+c", "a/b", "a+b+c"),
-            ("package=a/b&path=a%20b", "a/b", "a b"),
-            ("package=a/b&path=%C3%A9", "a/b", "\u{e9}"),
-            ("package=a/b&path=100%", "a/b", "100%"),
-            ("package=a+b/c", "a+b/c", ""),
+            ("package=a/b&path=C++.csv", "a/b", Some("C++.csv")),
+            ("package=a/b&path=a%2Bb+c", "a/b", Some("a+b+c")),
+            ("package=a/b&path=a%20b", "a/b", Some("a b")),
+            ("package=a/b&path=%C3%A9", "a/b", Some("\u{e9}")),
+            ("package=a/b&path=100%", "a/b", Some("100%")),
+            ("package=a+b/c", "a+b/c", None),
         ] {
             let input = format!("quilt+s3://bucket#{fragment}");
             let uri = S3PackageUri::try_from(input.as_str())
                 .unwrap_or_else(|e| panic!("{fragment}: {e}"));
             assert_eq!(uri.namespace.to_string(), namespace, "{fragment}");
-            let parsed_path = uri.path.map(|p| p.display().to_string()).unwrap_or_default();
-            assert_eq!(parsed_path, path, "{fragment}");
+            assert_eq!(uri.path, path.map(PathBuf::from), "{fragment}");
         }
     }
 
