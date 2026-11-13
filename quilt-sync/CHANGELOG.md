@@ -23,7 +23,7 @@
 
 ### Fixed
 
-- Publishing a new package no longer replaces the latest revision someone else already published under the same name: the package shows the conflict, and you choose which revision stays latest (PR_LINK)
+- Publishing a new package no longer replaces the latest revision someone else already published under the same name: the package shows the conflict, and you choose which revision stays latest (<https://github.com/quiltdata/quilt-rs/pull/1373>)
 
 ### quilt-rs
 
