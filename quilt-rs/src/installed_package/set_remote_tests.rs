@@ -615,8 +615,8 @@ async fn test_set_remote_recommits_existing_commit() -> Res {
         .installed_manifest(&namespace, &new_commit.hash);
     let manifest = Manifest::from_path(&package.storage, &manifest_path).await?;
     assert_eq!(
-        manifest.header.message,
-        Some("Initial commit".to_string()),
+        manifest.header.message(),
+        Some("Initial commit"),
         "Message should be preserved after recommit"
     );
     assert_eq!(

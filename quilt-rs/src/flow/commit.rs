@@ -23,6 +23,7 @@ use crate::lineage::CommitState;
 use crate::lineage::InstalledPackageStatus;
 use crate::lineage::PackageLineage;
 use crate::lineage::PathState;
+use crate::manifest::HeaderMessage;
 use crate::manifest::Manifest;
 use crate::manifest::ManifestHeader;
 use crate::manifest::ManifestRow;
@@ -306,7 +307,7 @@ pub async fn commit_package(
     };
 
     let header = ManifestHeader {
-        message: Some(message.clone()),
+        message: HeaderMessage::Text(message.clone()),
         workflow,
         user_meta,
         ..ManifestHeader::default()
@@ -340,7 +341,7 @@ pub async fn commit_package(
         remote,
         host,
         &namespace.to_string(),
-        header.message.as_deref(),
+        header.message(),
         header.user_meta.as_ref(),
         header.workflow.as_ref(),
         &entries,

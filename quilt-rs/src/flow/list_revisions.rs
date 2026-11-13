@@ -58,11 +58,12 @@ impl Revision {
     /// The facts `header` records about the revision at `hash`.
     #[must_use]
     pub fn from_header(hash: String, obtained: DateTime<Utc>, header: ManifestHeader) -> Self {
+        let message = header.message().map(str::to_owned);
         let meta = header.user_meta.filter(holds_user_meta);
         Self {
             hash,
             obtained,
-            message: header.message,
+            message,
             meta,
             workflow: header.workflow.and_then(|w| w.id).map(|id| id.id),
         }

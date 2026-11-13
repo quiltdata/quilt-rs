@@ -20,6 +20,7 @@ use crate::lineage::CommitState;
 use crate::lineage::DomainLineage;
 use crate::lineage::PackageLineage;
 use crate::lineage::PathState;
+use crate::manifest::HeaderMessage;
 use crate::manifest::ManifestHeader;
 use crate::manifest::ManifestRow;
 use crate::paths::DomainPaths;
@@ -214,7 +215,7 @@ pub async fn create_package(
 
     // Build initial manifest
     let header = ManifestHeader {
-        message: Some(message.unwrap_or_else(|| "Created package".to_string())),
+        message: HeaderMessage::Text(message.unwrap_or_else(|| "Created package".to_string())),
         ..ManifestHeader::default()
     };
 
@@ -547,10 +548,7 @@ mod tests {
         let commit = pkg.commit.as_ref().unwrap();
         let manifest_path = paths.installed_manifest(&namespace, &commit.hash);
         let manifest = Manifest::from_path(&storage, &manifest_path).await?;
-        assert_eq!(
-            manifest.header.message,
-            Some("My custom message".to_string())
-        );
+        assert_eq!(manifest.header.message(), Some("My custom message"));
         Ok(())
     }
 }
