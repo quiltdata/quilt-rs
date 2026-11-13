@@ -5,6 +5,7 @@ use clap::CommandFactory;
 use crate::cli::Args;
 use crate::cli::output::Render;
 use crate::cli::output::Std;
+use crate::cli::text::printable_line;
 
 #[derive(Debug)]
 pub struct Input {
@@ -60,8 +61,12 @@ fn version_line() -> String {
     Args::command().render_version().trim_end().to_string()
 }
 
+/// One line per field: a newline or control character in a path is escaped.
 fn path_text(path: Option<&PathBuf>) -> String {
-    path.map_or_else(|| "unknown".to_string(), |path| path.display().to_string())
+    path.map_or_else(
+        || "unknown".to_string(),
+        |path| printable_line(&path.display().to_string()),
+    )
 }
 
 impl std::fmt::Display for Output {
@@ -83,9 +88,9 @@ impl std::fmt::Display for Output {
             path_text(details.default_domain.as_ref())
         )?;
         match &details.home {
-            Ok(Some(home)) => write!(f, "home: {}", home.display()),
+            Ok(Some(home)) => write!(f, "home: {}", path_text(Some(home))),
             Ok(None) => write!(f, "home: not set"),
-            Err(err) => write!(f, "home: unreadable: {err}"),
+            Err(err) => write!(f, "home: unreadable: {}", printable_line(err)),
         }
     }
 }
@@ -306,6 +311,24 @@ mod tests {
     fn version_skips_the_update_check() {
         let args = Args::try_parse_from(["quilt", "version", "--details"]).expect("parses");
         assert!(!args.shows_update_notice());
+    }
+
+    /// A path can't add a field of its own or reach the terminal raw.
+    #[cfg(unix)]
+    #[test(tokio::test)]
+    async fn details_escape_control_characters_in_a_path() -> Result<(), Error> {
+        let parent = tempfile::tempdir()?;
+        let domain = parent.path().join("a\nhome: /elsewhere\u{1b}[2J");
+
+        let stdout = run(version_args(&domain, true), Format::Text).await?;
+
+        assert_eq!(stdout.lines().count(), 9, "{stdout}");
+        assert!(!stdout.contains('\u{1b}'), "{stdout}");
+        assert!(
+            stdout.contains("a\\u{a}home: /elsewhere\\u{1b}[2J"),
+            "{stdout}"
+        );
+        Ok(())
     }
 
     /// `-v` stays the global logs flag; it does not ask for details.
