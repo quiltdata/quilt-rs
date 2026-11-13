@@ -2040,3 +2040,199 @@ async fn test_commit_and_push_key_a_file_in_a_folder_with_slashes() -> Res {
     );
     Ok(())
 }
+
+/// Another writer's revision, already `latest` under the name a local
+/// package first pushes to.
+const THEIR_HASH: &str = "7777777777777777777777777777777777777777777777777777777777777777";
+
+/// A package made locally, committed and never pushed, whose bucket holds
+/// `latest` (when given) under the same name.
+async fn first_push_package(
+    latest: Option<&str>,
+) -> Res<(
+    InstalledPackage<LocalStorage, MockRemote>,
+    Vec<tempfile::TempDir>,
+)> {
+    let (home, temp_dir1) = Home::from_temp_dir()?;
+    let (paths, temp_dir2) = DomainPaths::from_temp_dir()?;
+    let storage = LocalStorage::new();
+    let remote = MockRemote::default();
+    let namespace: Namespace = ("test", "first_push").into();
+    let bucket = "b";
+    // The hash push rebuilds from the manifest below.
+    let local_hash = crate::fixtures::top_hash::EMPTY_NULL_TOP_HASH;
+
+    paths
+        .scaffold_for_installing(&storage, &home, &namespace)
+        .await?;
+    paths.scaffold_for_caching(&storage, bucket).await?;
+    let lineage_json = serde_json::json!({
+        "packages": {
+            "test/first_push": {
+                "commit": {
+                    "timestamp": "2024-01-01T00:00:00Z",
+                    "hash": local_hash,
+                    "prev_hashes": []
+                },
+                "remote": {
+                    "bucket": bucket,
+                    "namespace": "test/first_push",
+                    "hash": ""
+                },
+                "base_hash": "",
+                "latest_hash": "",
+                "paths": {}
+            }
+        },
+        "home": home.as_ref(),
+    });
+    storage
+        .write_byte_stream(
+            &paths.lineage(),
+            lineage_json.to_string().into_bytes().into(),
+        )
+        .await?;
+    let manifest = b"{\"version\":\"v0\",\"message\":\"\",\"user_meta\":null}\n".to_vec();
+    storage
+        .write_byte_stream(
+            &paths.installed_manifest(&namespace, local_hash),
+            manifest.into(),
+        )
+        .await?;
+
+    if let Some(latest) = latest {
+        remote
+            .put_object(
+                None,
+                &S3Uri::try_from("s3://b/.quilt/named_packages/test/first_push/latest")?,
+                latest.as_bytes().to_vec(),
+            )
+            .await?;
+        remote
+            .put_object(
+                None,
+                &S3Uri::try_from(format!("s3://b/.quilt/packages/{latest}").as_str())?,
+                br#"{"version": "v0"}"#.to_vec(),
+            )
+            .await?;
+    }
+
+    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
+    let package = InstalledPackage {
+        lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
+        paths,
+        remote: std::sync::Arc::new(remote),
+        storage,
+        namespace,
+        state_store: None,
+    };
+    Ok((package, vec![temp_dir1, temp_dir2]))
+}
+
+async fn latest_tag(package: &InstalledPackage<LocalStorage, MockRemote>) -> Res<String> {
+    let latest_uri = S3Uri::try_from("s3://b/.quilt/named_packages/test/first_push/latest")?;
+    let body = package
+        .remote
+        .get_object_stream(None, &latest_uri)
+        .await?
+        .body
+        .collect()
+        .await?
+        .to_vec();
+    Ok(String::from_utf8(body).expect("utf-8 tag"))
+}
+
+/// Push a [`first_push_package`] whose bucket's `latest` is another
+/// writer's revision; check it uploaded without taking over `latest`.
+async fn push_over_their_latest() -> Res<(
+    InstalledPackage<LocalStorage, MockRemote>,
+    Vec<tempfile::TempDir>,
+)> {
+    let local_hash = crate::fixtures::top_hash::EMPTY_NULL_TOP_HASH;
+    let (package, temp_dirs) = first_push_package(Some(THEIR_HASH)).await?;
+
+    let Pushed::Uploaded(outcome) = package.push(None).await? else {
+        panic!("a pending commit must upload");
+    };
+
+    assert!(!outcome.certified_latest);
+    assert_eq!(outcome.manifest_uri.hash, local_hash);
+    assert_eq!(latest_tag(&package).await?, THEIR_HASH);
+    let revision = S3Uri::try_from(format!("s3://b/.quilt/packages/{local_hash}").as_str())?;
+    assert!(package.remote.exists(None, &revision).await?);
+    let lineage = package.lineage().await?;
+    assert!(lineage.commit.is_none());
+    assert_eq!(lineage.base_hash, "");
+    assert_eq!(lineage.latest_hash, THEIR_HASH);
+    assert_eq!(
+        crate::lineage::UpstreamState::from(lineage),
+        crate::lineage::UpstreamState::Diverged
+    );
+    Ok((package, temp_dirs))
+}
+
+/// A first push onto a name another writer already published uploads the
+/// revision but leaves their `latest`, and the copy reads Diverged.
+/// Promoting it then makes it `latest`.
+#[test(tokio::test)]
+async fn test_first_push_over_their_latest_then_promote() -> Res {
+    let local_hash = crate::fixtures::top_hash::EMPTY_NULL_TOP_HASH;
+    let (package, _temp_dirs) = push_over_their_latest().await?;
+
+    package.certify_latest().await?;
+
+    assert_eq!(latest_tag(&package).await?, local_hash);
+    let lineage = package.lineage().await?;
+    assert_eq!(lineage.base_hash, local_hash);
+    assert_eq!(lineage.latest_hash, local_hash);
+    assert_eq!(
+        crate::lineage::UpstreamState::from(lineage),
+        crate::lineage::UpstreamState::UpToDate
+    );
+    Ok(())
+}
+
+/// The same copy reset instead takes the other writer's `latest`.
+#[test(tokio::test)]
+async fn test_first_push_over_their_latest_then_reset() -> Res {
+    let (package, _temp_dirs) = push_over_their_latest().await?;
+
+    package.reset_to_latest().await?;
+
+    assert_eq!(latest_tag(&package).await?, THEIR_HASH);
+    let lineage = package.lineage().await?;
+    assert_eq!(lineage.remote()?.hash, THEIR_HASH);
+    assert_eq!(lineage.base_hash, THEIR_HASH);
+    assert_eq!(lineage.latest_hash, THEIR_HASH);
+    assert_eq!(
+        crate::lineage::UpstreamState::from(lineage),
+        crate::lineage::UpstreamState::UpToDate
+    );
+    Ok(())
+}
+
+/// A first push onto a name with no `latest`, or whose `latest` already is
+/// the pushed revision, becomes `latest`.
+#[test(tokio::test)]
+async fn test_first_push_certifies_without_another_latest() -> Res {
+    let local_hash = crate::fixtures::top_hash::EMPTY_NULL_TOP_HASH;
+    for latest in [None, Some(local_hash)] {
+        let (package, _temp_dirs) = first_push_package(latest).await?;
+
+        let Pushed::Uploaded(outcome) = package.push(None).await? else {
+            panic!("a pending commit must upload");
+        };
+
+        assert!(outcome.certified_latest, "{latest:?}");
+        assert_eq!(latest_tag(&package).await?, local_hash, "{latest:?}");
+        let lineage = package.lineage().await?;
+        assert_eq!(lineage.base_hash, local_hash, "{latest:?}");
+        assert_eq!(lineage.latest_hash, local_hash, "{latest:?}");
+        assert_eq!(
+            crate::lineage::UpstreamState::from(lineage),
+            crate::lineage::UpstreamState::UpToDate,
+            "{latest:?}"
+        );
+    }
+    Ok(())
+}

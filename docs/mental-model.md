@@ -73,7 +73,7 @@ operation mutates*.
 | `InstalledPackage::set_remote` | unchanged | `""` (empty until first push) | unchanged | unchanged |
 | `InstalledPackage::change_catalog` (catalog only) | unchanged | unchanged | unchanged | unchanged |
 | `flow::commit` | new top hash | unchanged | unchanged | unchanged |
-| `flow::push` | `None` (taken) | new uploaded hash | first push → new hash; certifying push → via `update_latest` | re-resolved from remote mid-push; ← new hash if certified |
+| `flow::push` | `None` (taken) | new uploaded hash | certifying push → via `update_latest`; else unchanged | re-resolved from remote mid-push; ← new hash if certified |
 | `flow::certify_latest` | — (cleared by inner push) | already set | ← `latest_hash` (via `update_latest`) | ← new manifest hash |
 | `flow::pull` (surgical) | must be `None` | ← `latest_hash` | ← `latest_hash` | already advanced |
 | `flow::reset_to_latest` | **`None`** (cleared since #677) | ← `latest.hash` | ← `latest.hash` | ← `latest.hash` |
@@ -110,14 +110,15 @@ Local-only package created as `H1`; a teammate has already pushed
 | create → `H1` | `H1` | — | `""` | `""` | Local |
 | `set_remote` (recommit → `H1'`) | `H1'` | `""` | `""` | `""` | Local |
 | status refresh sees teammate's `H2` | `H1'` | `""` | `""` | `H2` | Diverged |
-| push | — | `H1'` | `H1'` | `H1'` | UpToDate |
+| push | — | `H1'` | `""` | `H2` | Diverged |
+| Promote (Certify Latest) | — | `H1'` | `H1'` | `H1'` | UpToDate |
+| Overwrite (Reset Local) — alternate exit | — | `H2` | `H2` | `H2` | UpToDate |
 
-Push exits this `Diverged` unaided: an empty `base_hash` on entry
-marks the push as first, which short-circuits the certify guard —
-the first push always certifies, de-certifying the teammate's `H2`
-without a resolve step. Only non-first pushes decline the
-tag and report `certified_latest: false` (see the Push contract in
-[`docs/architecture.md`](architecture.md)).
+The push uploads `H1'` but leaves the teammate's `H2` as `latest` and
+reports `certified_latest: false`, as any push whose base is not
+`latest` does (see the Push contract in
+[`docs/architecture.md`](architecture.md)). The empty `base_hash` keeps
+the copy `Diverged`, so the user picks which revision is `latest`.
 
 ## Writer invariants
 
