@@ -84,3 +84,28 @@ async fn a_repeated_logical_key_is_named_in_the_error() -> Res {
     assert!(err.to_string().contains("data.csv"), "{err}");
     Ok(())
 }
+
+#[test(tokio::test)]
+async fn a_key_that_is_also_a_folder_is_named_in_the_error() -> Res {
+    for (first, second) in [("data", "data/x.csv"), ("data/x.csv", "data")] {
+        let row = |key: &str| {
+            format!(
+                r#"{{"logical_key":"{key}","physical_keys":["s3://bucket/{key}"],"hash":{{"type":"SHA256","value":"00"}},"size":1,"meta":{{}}}}"#
+            )
+        };
+        let text = format!(
+            "{}\n{}\n{}\n",
+            r#"{"message":"","user_meta":{},"version":"v0"}"#,
+            row(first),
+            row(second),
+        );
+        let err = Manifest::from_reader(text.as_bytes())
+            .await
+            .expect_err("a key that is also a folder should not load");
+        assert!(
+            matches!(&err, Error::Manifest(ManifestError::FileAndFolder(key)) if key == "data"),
+            "{first} then {second}: {err}"
+        );
+    }
+    Ok(())
+}
