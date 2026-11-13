@@ -131,3 +131,24 @@ async fn quilt3_fixture_without_a_message_hashes_to_its_name() -> Res {
     assert_eq!(top_hash, name.split_once('-').unwrap().0);
     Ok(())
 }
+
+/// quilt3 splits keys on `/` only, so a `\\` never makes a folder, on any OS.
+#[test(tokio::test)]
+async fn a_backslash_is_part_of_a_name_not_a_folder() -> Res {
+    let row = |key: &str| {
+        format!(
+            r#"{{"logical_key":{key:?},"physical_keys":["s3://bucket/x"],"hash":{{"type":"SHA256","value":"00"}},"size":1,"meta":{{}}}}"#
+        )
+    };
+    for keys in [["data", "data\\x.csv"], ["a/b", "a\\b"]] {
+        let text = format!(
+            "{}\n{}\n{}\n",
+            r#"{"message":"","user_meta":{},"version":"v0"}"#,
+            row(keys[0]),
+            row(keys[1]),
+        );
+        let manifest = Manifest::from_reader(text.as_bytes()).await?;
+        assert_eq!(manifest.rows.len(), 2, "{keys:?}");
+    }
+    Ok(())
+}

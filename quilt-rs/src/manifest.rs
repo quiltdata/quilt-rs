@@ -172,32 +172,28 @@ impl Manifest {
 
         let mut rows = Vec::new();
         // A package is a tree: no key twice, and no key that is also a folder.
+        // Folders split on `/` only, as in quilt3; a `\` is part of a name.
         let mut files = std::collections::HashSet::new();
         let mut folders = std::collections::HashSet::new();
 
         while let Some(line) = lines.next_line().await? {
             let row: Quilt3ManifestRow = serde_json::from_str(&line)?;
-            let key = row.logical_key.as_path().to_path_buf();
+            let key = row.logical_key.to_string();
             if folders.contains(&key) {
-                return Err(Error::Manifest(ManifestError::FileAndFolder(
-                    row.logical_key.to_string(),
-                )));
+                return Err(Error::Manifest(ManifestError::FileAndFolder(key)));
             }
-            for folder in key.ancestors().skip(1) {
-                if folder.as_os_str().is_empty() {
-                    break;
-                }
+            let mut rest = key.as_str();
+            while let Some((folder, _)) = rest.rsplit_once('/') {
                 if files.contains(folder) {
                     return Err(Error::Manifest(ManifestError::FileAndFolder(
-                        folder.display().to_string(),
+                        folder.to_string(),
                     )));
                 }
-                folders.insert(folder.to_path_buf());
+                folders.insert(folder.to_string());
+                rest = folder;
             }
-            if !files.insert(key) {
-                return Err(Error::Manifest(ManifestError::DuplicateLogicalKey(
-                    row.logical_key.to_string(),
-                )));
+            if !files.insert(key.clone()) {
+                return Err(Error::Manifest(ManifestError::DuplicateLogicalKey(key)));
             }
             rows.push(ManifestRow::try_from(row)?);
         }
