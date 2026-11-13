@@ -5744,7 +5744,7 @@ dependencies = [
 
 [[package]]
 name = "quilt-cli"
-version = "0.41.0"
+version = "0.41.1-dev"
 dependencies = [
  "anstream",
  "anstyle",
@@ -5769,7 +5769,7 @@ dependencies = [
 
 [[package]]
 name = "quilt-rs"
-version = "0.53.0"
+version = "0.53.1-dev"
 dependencies = [
  "async-trait",
  "aws-config",
@@ -5912,7 +5912,7 @@ dependencies = [
 
 [[package]]
 name = "quilt-uri"
-version = "0.5.0"
+version = "0.5.1-dev"
 dependencies = [
  "percent-encoding",
  "serde",
