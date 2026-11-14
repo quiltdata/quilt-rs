@@ -49,7 +49,7 @@ jobs:
     name: changes
     # Which jobs a pull request needs, by the files it changes. Every other
     # event, the merge queue included, runs every job. A job left out shows as skipped.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     # The filter lists a pull request's files through the API.
     permissions:
@@ -119,7 +119,7 @@ jobs:
     name: markdown
     needs: changes
     if: needs.changes.outputs.md == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
       - name: Checkout repository
@@ -145,7 +145,7 @@ jobs:
     name: css
     needs: changes
     if: needs.changes.outputs.css == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     env:
       # Pinned, so a new Biome release cannot fail an unrelated PR; Renovate
@@ -177,7 +177,7 @@ jobs:
     # and `quilt-ui-kit` are tested in the `frontend` jobs.
     needs: changes
     if: needs.changes.outputs.crates == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     env:
       # The crates above, for the recipes' cargo commands.
@@ -333,7 +333,7 @@ jobs:
     # upstream; run `gh actions-lock` and commit the result.
     needs: changes
     if: needs.changes.outputs.actions == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     env:
       GH_TOKEN: ${{ github.token }}
@@ -355,7 +355,7 @@ jobs:
     name: cargo-deny
     needs: changes
     if: needs.changes.outputs.crates == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
       - name: Checkout repository
@@ -377,7 +377,7 @@ jobs:
     # on every crate but the UI.
     needs: changes
     if: needs.changes.outputs.sync == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     env:
       # QuiltSync's backend, for the recipes' cargo commands.
@@ -466,7 +466,7 @@ jobs:
     name: frontend lint
     needs: changes
     if: needs.changes.outputs.ui == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
       - name: Checkout repository
@@ -510,7 +510,7 @@ jobs:
     name: frontend wasm tests
     needs: changes
     if: needs.changes.outputs.ui == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
       - name: Checkout repository
@@ -540,7 +540,7 @@ jobs:
     name: frontend build
     needs: changes
     if: needs.changes.outputs.ui == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
       - name: Checkout repository
@@ -577,7 +577,7 @@ jobs:
     # `quilt-sync`: they run the backend and the UI it serves.
     needs: changes
     if: needs.changes.outputs.sync == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     env:
       # Same crate as `quilt-sync`.
@@ -637,7 +637,7 @@ jobs:
       - frontend-build
       - e2e
     if: always()
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
       - name: Fail if any job failed or was cancelled
