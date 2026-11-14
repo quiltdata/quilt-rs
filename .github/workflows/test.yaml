@@ -129,7 +129,7 @@ jobs:
       # sha256. It installs the latest rumdl, as a local `cargo install rumdl`
       # does.
       - name: Install rumdl
-        uses: rvben/rumdl@v0.3.3
+        uses: rvben/rumdl@v0.3.4
         with:
           install-only: true
 
