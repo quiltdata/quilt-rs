@@ -49,7 +49,7 @@ jobs:
       # stylance matches the `stylance` crate in both UI crates' Cargo.toml: a
       # skew breaks styling silently.
       - name: Install trunk, just and stylance
-        uses: taiki-e/install-action@v2.90.3
+        uses: taiki-e/install-action@v2.90.4
         with:
           tool: trunk,just,stylance-cli@0.8.4
 

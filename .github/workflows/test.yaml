@@ -134,7 +134,7 @@ jobs:
           install-only: true
 
       - name: Install just
-        uses: taiki-e/install-action@v2.90.3
+        uses: taiki-e/install-action@v2.90.4
         with:
           tool: just
 
@@ -162,7 +162,7 @@ jobs:
           version: ${{ env.BIOME_VERSION }}
 
       - name: Install just
-        uses: taiki-e/install-action@v2.90.3
+        uses: taiki-e/install-action@v2.90.4
         with:
           tool: just
 
@@ -192,7 +192,7 @@ jobs:
           targets: wasm32-unknown-unknown
 
       - name: Install cargo-nextest and just
-        uses: taiki-e/install-action@v2.90.3
+        uses: taiki-e/install-action@v2.90.4
         with:
           tool: nextest,just
 
@@ -253,7 +253,7 @@ jobs:
           components: clippy
 
       - name: Install cargo-nextest and just
-        uses: taiki-e/install-action@v2.90.3
+        uses: taiki-e/install-action@v2.90.4
         with:
           tool: nextest,just
 
@@ -314,7 +314,7 @@ jobs:
         uses: $/.github/actions/setup-rust-minimal
 
       - name: Install cargo-nextest and just
-        uses: taiki-e/install-action@v2.90.3
+        uses: taiki-e/install-action@v2.90.4
         with:
           tool: nextest,just
 
@@ -364,7 +364,7 @@ jobs:
       # A prebuilt binary, not EmbarkStudios/cargo-deny-action: that action builds
       # a Docker image from Docker Hub, and anonymous pulls hit its rate limit.
       - name: Install cargo-deny and just
-        uses: taiki-e/install-action@v2.90.3
+        uses: taiki-e/install-action@v2.90.4
         with:
           tool: cargo-deny,just
 
@@ -395,7 +395,7 @@ jobs:
         uses: $/.github/actions/setup-rust-dev
 
       - name: Install cargo-nextest and just
-        uses: taiki-e/install-action@v2.90.3
+        uses: taiki-e/install-action@v2.90.4
         with:
           tool: nextest,just
 
@@ -448,7 +448,7 @@ jobs:
           components: clippy
 
       - name: Install cargo-nextest and just
-        uses: taiki-e/install-action@v2.90.3
+        uses: taiki-e/install-action@v2.90.4
         with:
           tool: nextest,just
 
@@ -478,7 +478,7 @@ jobs:
           targets: wasm32-unknown-unknown
 
       - name: Install cargo-nextest and just
-        uses: taiki-e/install-action@v2.90.3
+        uses: taiki-e/install-action@v2.90.4
         with:
           tool: nextest,just
 
@@ -528,7 +528,7 @@ jobs:
         run: cargo metadata --format-version 1 --locked | jq -r '"version=" + (.packages[] | select(.name == "wasm-bindgen") | .version)' >> "$GITHUB_OUTPUT"
 
       - name: Install just and wasm-bindgen-cli
-        uses: taiki-e/install-action@v2.90.3
+        uses: taiki-e/install-action@v2.90.4
         with:
           tool: just,wasm-bindgen-cli@${{ steps.wasm-bindgen-version.outputs.version }}
 
@@ -564,7 +564,7 @@ jobs:
       # CLI generates the hashed class names the library resolves, so a skew
       # between them breaks styling silently rather than loudly.
       - name: Install trunk, just and stylance
-        uses: taiki-e/install-action@v2.90.3
+        uses: taiki-e/install-action@v2.90.4
         with:
           tool: trunk,just,stylance-cli@0.8.4
 
@@ -607,7 +607,7 @@ jobs:
 
       # stylance is pinned for the reason given in `frontend build`.
       - name: Install trunk, cargo-nextest, just and stylance
-        uses: taiki-e/install-action@v2.90.3
+        uses: taiki-e/install-action@v2.90.4
         with:
           tool: trunk,nextest,just,stylance-cli@0.8.4
 
