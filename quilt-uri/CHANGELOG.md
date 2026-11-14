@@ -24,7 +24,7 @@
 
 ### Changed
 
-- Under the hood, a catalog host name is normalized by one function, with its edge cases pinned by tests; the rule is unchanged (<https://github.com/quiltdata/quilt-rs/pull/1381>)
+- `Host` parses a catalog name with quiltx's rule, so quilt-rs and quiltx name a catalog alike: `https://host/` and `host/path` become `host`, surrounding whitespace and an empty port are dropped, a Unicode name is kept as typed instead of becoming punycode, and an IP address is refused. A name that is only dots, such as `..`, is refused too (<https://github.com/quiltdata/quilt-rs/pull/1381>, <https://github.com/quiltdata/quilt-rs/pull/1382>)
 - Building from source now requires Rust 1.99 or newer (<https://github.com/quiltdata/quilt-rs/pull/1370>)
 
 ### Fixed

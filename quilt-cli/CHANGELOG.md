@@ -27,6 +27,7 @@
 
 ### Changed
 
+- `quilt login <host>` and the other commands that take a catalog host read `https://host/` as `host`; an IP address is refused, and a Unicode name is kept as typed, not converted to punycode, as in `quiltx` (<https://github.com/quiltdata/quilt-rs/pull/1382>)
 - Building from source now requires Rust 1.99 or newer (<https://github.com/quiltdata/quilt-rs/pull/1370>)
 - `quilt push` of a new package no longer replaces a `latest` someone else already published under the same name: it uploads the revision and warns that `latest` was not updated (<https://github.com/quiltdata/quilt-rs/pull/1373>)
 

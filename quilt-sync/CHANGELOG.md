@@ -23,6 +23,7 @@
 
 ### Changed
 
+- A catalog typed at login can be written as `https://host/` and is read as `host`; an IP address is refused, and a Unicode name is kept as typed, not converted to punycode, as in the `quiltx` command (<https://github.com/quiltdata/quilt-rs/pull/1382>)
 - QuiltSync starts faster with many packages: at launch it checks up to eight packages at once instead of one after another (<https://github.com/quiltdata/quilt-rs/pull/1376>)
 
 ### Fixed
