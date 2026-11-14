@@ -137,7 +137,7 @@ async fn create_immutable_object_copy(
         row.logical_key.to_path_buf(),
         PathState {
             timestamp: storage.modified_timestamp(&work_dest).await?,
-            hash: current_hash.into(),
+            hash: Some(current_hash.into()),
         },
     );
     Ok(row)

@@ -175,7 +175,7 @@ async fn place_where_absent(
             row.logical_key.to_path_buf(),
             PathState {
                 timestamp: last_modified,
-                hash: row.hash.clone().into(),
+                hash: Some(row.hash.clone().into()),
             },
         );
         debug!("✔️ Swapped in {}", working_dest.display());
@@ -274,7 +274,7 @@ async fn swap_staged_into_place(
             row.logical_key.to_path_buf(),
             PathState {
                 timestamp: last_modified,
-                hash: row.hash.clone().into(),
+                hash: Some(row.hash.clone().into()),
             },
         );
         debug!("✔️ Swapped in {}", working_dest.display());
