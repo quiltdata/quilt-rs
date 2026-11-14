@@ -76,18 +76,17 @@ async fn atomic_write(
         .await
         .inspect_err(cleanup)?;
     fs::rename(&tmp, path).await.inspect_err(cleanup)?;
+    #[cfg(unix)]
     if sync_folder {
         sync_dir(parent).await;
     }
+    #[cfg(not(unix))]
+    let _ = sync_folder;
     Ok(())
 }
 
-/// Windows has no directory fsync.
-#[cfg(not(unix))]
-async fn sync_dir(_: &Path) {}
-
-/// Makes a rename into `dir` survive a power loss. A failure is logged, not
-/// returned: the new file is already in place.
+/// Makes a rename into `dir` survive a power loss. Windows has no directory
+/// fsync. A failure is logged, not returned: the new file is already in place.
 #[cfg(unix)]
 async fn sync_dir(dir: &Path) {
     let synced = async { fs::File::open(dir).await?.sync_all().await };
