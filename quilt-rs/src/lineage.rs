@@ -529,6 +529,42 @@ mod tests {
         Ok(())
     }
 
+    /// A catalog host kept in a package's remote is read back whatever it is: one
+    /// the rule for typed names would refuse, such as an IP address, must not make
+    /// the whole `.quilt/data.json` unreadable.
+    #[test]
+    fn a_stored_catalog_host_is_read_back_as_stored() -> Res {
+        for origin in ["quilt.test", "127.0.0.1", "[::1]", "xn--bcher-kva.example"] {
+            let json = format!(
+                r#"{{
+                    "packages": {{
+                        "test/stored": {{
+                            "commit": null,
+                            "remote": {{
+                                "bucket": "bucket",
+                                "namespace": "test/stored",
+                                "hash": "abcdef0000000000000000000000000000000000000000000000000000000000",
+                                "origin": "{origin}"
+                            }},
+                            "base_hash": "abcdef0000000000000000000000000000000000000000000000000000000000",
+                            "latest_hash": "abcdef0000000000000000000000000000000000000000000000000000000000",
+                            "paths": {{}}
+                        }}
+                    }},
+                    "home": "/tmp/working_dir"
+                }}"#
+            );
+            let lineage = DomainLineage::from_slice(json.as_bytes())
+                .unwrap_or_else(|e| panic!("origin {origin}: {e}"));
+            let again = serde_json::to_value(&lineage)?;
+            assert_eq!(
+                again["packages"]["test/stored"]["remote"]["origin"], origin,
+                "origin {origin} does not round-trip"
+            );
+        }
+        Ok(())
+    }
+
     #[test]
     fn test_domain_lineage_from_temp_dir() -> Res {
         let (lineage, temp_dir) = DomainLineage::from_temp_dir()?;
