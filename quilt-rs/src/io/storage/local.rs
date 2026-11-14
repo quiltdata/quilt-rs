@@ -59,7 +59,20 @@ async fn atomic_write(path: &Path, body: ByteStream, private: bool) -> std::io::
     write_stream(&tmp, body, private)
         .await
         .inspect_err(cleanup)?;
-    fs::rename(&tmp, path).await.inspect_err(cleanup)
+    fs::rename(&tmp, path).await.inspect_err(cleanup)?;
+    #[cfg(unix)]
+    sync_dir(parent).await;
+    Ok(())
+}
+
+/// Makes a rename into `dir` survive a power loss. Windows has no directory
+/// fsync. A failure is logged, not returned: the new file is already in place.
+#[cfg(unix)]
+async fn sync_dir(dir: &Path) {
+    let synced = async { fs::File::open(dir).await?.sync_all().await };
+    if let Err(err) = synced.await {
+        warn!("❌ Could not sync {}: {}", dir.display(), err);
+    }
 }
 
 pub(super) async fn write(path: &Path, body: ByteStream, private: bool) -> Res {
@@ -518,6 +531,59 @@ mod tests {
             .await?;
 
         assert_eq!(fs::read(&dest).await?, b"updated");
+        Ok(())
+    }
+
+    /// Counts the warnings logged while it is the default subscriber.
+    #[cfg(unix)]
+    struct Warnings(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+    #[cfg(unix)]
+    impl tracing::Subscriber for Warnings {
+        fn enabled(&self, metadata: &tracing::Metadata<'_>) -> bool {
+            *metadata.level() == tracing::Level::WARN
+        }
+        fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+            tracing::span::Id::from_u64(1)
+        }
+        fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+        fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+        fn event(&self, _: &tracing::Event<'_>) {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+        fn enter(&self, _: &tracing::span::Id) {}
+        fn exit(&self, _: &tracing::span::Id) {}
+    }
+
+    /// A directory that cannot be opened to sync it still takes the write,
+    /// since the new file is in place by then, and the failed sync is logged.
+    #[test(tokio::test)]
+    #[cfg(unix)]
+    async fn a_write_whose_directory_cannot_be_synced_succeeds_and_warns() -> Res {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = tempdir()?;
+        let dir = temp_dir.path().join("unreadable");
+        std::fs::create_dir(&dir)?;
+        let dest = dir.join("data.json");
+        // Write and search, but no read: the directory cannot be opened.
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o300))?;
+        // Root ignores the mode, so there the sync would not fail: nothing to test.
+        if std::fs::File::open(&dir).is_ok() {
+            return Ok(());
+        }
+
+        let warnings = std::sync::Arc::default();
+        let logging = tracing::subscriber::set_default(Warnings(std::sync::Arc::clone(&warnings)));
+        let result = LocalStorage::default()
+            .write_byte_stream(&dest, ByteStream::from_static(b"new"))
+            .await;
+        drop(logging);
+
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
+        result?;
+        assert_eq!(fs::read(&dest).await?, b"new");
+        assert_eq!(warnings.load(std::sync::atomic::Ordering::SeqCst), 1);
         Ok(())
     }
 
