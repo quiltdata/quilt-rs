@@ -2236,3 +2236,56 @@ async fn test_first_push_certifies_without_another_latest() -> Res {
     }
     Ok(())
 }
+
+/// A local package with `data.txt` committed, and its `data.json` as stored.
+async fn committed_data_txt() -> Res<(
+    InstalledPackage<LocalStorage, RemoteS3>,
+    tempfile::TempDir,
+    serde_json::Value,
+)> {
+    let temp_dir = tempfile::TempDir::new()?;
+    let domain = crate::local_domain::LocalDomain::new(temp_dir.path());
+    domain.set_home(temp_dir.path()).await?;
+    let (package, _) = domain
+        .create_package(("demo", "tracked").into(), None, Some("empty".to_string()))
+        .await?;
+    std::fs::write(package.package_home().await?.join("data.txt"), b"content")?;
+    package
+        .commit(
+            "add".to_string(),
+            UserMeta::Keep,
+            None,
+            Some(HostConfig::default()),
+        )
+        .await?;
+    let record = serde_json::from_slice(&std::fs::read(package.paths.lineage())?)?;
+    Ok((package, temp_dir, record))
+}
+
+/// Builds that require `paths[].hash` cannot load an entry without it.
+#[test(tokio::test)]
+async fn a_committed_file_is_stored_with_its_hash() -> Res {
+    let (_package, _temp_dir, record) = committed_data_txt().await?;
+    let entry = &record["packages"]["demo/tracked"]["paths"]["data.txt"];
+    assert!(entry["hash"].is_string(), "{entry}");
+    Ok(())
+}
+
+/// A later release stops writing `paths[].hash`.
+#[test(tokio::test)]
+async fn a_package_tracked_without_path_hashes_has_a_status() -> Res {
+    let (package, _temp_dir, mut record) = committed_data_txt().await?;
+    record["packages"]["demo/tracked"]["paths"]["data.txt"]
+        .as_object_mut()
+        .expect("the commit tracks data.txt")
+        .remove("hash");
+    std::fs::write(package.paths.lineage(), serde_json::to_vec(&record)?)?;
+
+    let status = package
+        .status(Some(HostConfig::default()))
+        .await
+        .expect("a package whose entries have no hash has a status");
+
+    assert!(status.changes.is_empty(), "{:?}", status.changes);
+    Ok(())
+}

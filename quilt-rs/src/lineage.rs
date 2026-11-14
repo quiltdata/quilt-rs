@@ -641,26 +641,47 @@ mod tests {
         assert_eq!(scope("whole"), &SyncScope::EntirePackage);
     }
 
-    const PATH_WITHOUT_HASH: &[u8] = br#"{"packages":{"a/b":{"commit":null,"base_hash":"","latest_hash":"","paths":{"f.csv":{"timestamp":"2025-01-16T12:50:20.534Z"}}}},"home":"/home/directory"}"#;
+    /// A record of `a/b` tracking `f.csv`, its entry ending in `hash_field`.
+    fn path_entry(hash_field: &str) -> Vec<u8> {
+        format!(r#"{{"packages":{{"a/b":{{"commit":null,"base_hash":"","latest_hash":"","paths":{{"f.csv":{{"timestamp":"2025-01-16T12:50:20.534Z"{hash_field}}}}}}}}},"home":"/home/directory"}}"#).into_bytes()
+    }
 
     /// A later version stops writing `paths[].hash`; this one must still load
     /// the file.
     #[test]
     fn a_path_entry_without_a_hash_reads() {
-        let lineage = DomainLineage::from_slice(PATH_WITHOUT_HASH)
-            .expect("a path entry without a hash parses");
+        let lineage =
+            DomainLineage::from_slice(&path_entry("")).expect("a path entry without a hash parses");
         let entry = &lineage.packages[&Namespace::from(("a", "b"))].paths[&PathBuf::from("f.csv")];
         assert_eq!(entry.hash, None);
     }
 
     #[test]
     fn a_path_entry_read_without_a_hash_is_written_without_one() {
-        let lineage = DomainLineage::from_slice(PATH_WITHOUT_HASH).unwrap();
+        let lineage = DomainLineage::from_slice(&path_entry("")).unwrap();
         let written = serde_json::to_value(&lineage).unwrap();
         let entry = written["packages"]["a/b"]["paths"]["f.csv"]
             .as_object()
             .unwrap();
         assert!(!entry.contains_key("hash"), "{entry:?}");
+    }
+
+    #[test]
+    fn a_null_path_hash_reads_as_none() {
+        let lineage = DomainLineage::from_slice(&path_entry(r#","hash":null"#))
+            .expect("a null path hash parses");
+        let entry = &lineage.packages[&Namespace::from(("a", "b"))].paths[&PathBuf::from("f.csv")];
+        assert_eq!(entry.hash, None);
+    }
+
+    /// An empty hash is malformed, not absent.
+    #[test]
+    fn an_empty_path_hash_fails_to_read() {
+        let err = DomainLineage::from_slice(&path_entry(r#","hash":"""#)).unwrap_err();
+        assert!(
+            matches!(err, Error::Lineage(LineageError::Parse(_))),
+            "{err:?}"
+        );
     }
 
     #[test(tokio::test)]

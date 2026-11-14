@@ -22,20 +22,20 @@ fn multihash_to_str<S: ser::Serializer>(
     hash: &Option<Multihash<256>>,
     serializer: S,
 ) -> Result<S::Ok, S::Error> {
-    match hash {
-        Some(hash) => serializer.serialize_str(&hex::encode(hash.to_bytes())),
-        None => serializer.serialize_none(),
-    }
+    hash.as_ref()
+        .map(|hash| hex::encode(hash.to_bytes()))
+        .serialize(serializer)
 }
 
 fn str_to_multihash<'de, D: de::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<Multihash<256>>, D::Error> {
-    let s = String::deserialize(deserializer)?;
-    let bytes = hex::decode(s).map_err(de::Error::custom)?;
-    Multihash::from_bytes(&bytes)
-        .map(Some)
-        .map_err(de::Error::custom)
+    Option::<String>::deserialize(deserializer)?
+        .map(|s| {
+            let bytes = hex::decode(s).map_err(de::Error::custom)?;
+            Multihash::from_bytes(&bytes).map_err(de::Error::custom)
+        })
+        .transpose()
 }
 
 /// State of the file tracked in lineage
@@ -48,8 +48,8 @@ pub struct PathState {
     /// We don't track files modifications in real time.
     /// We calculate hash when we commit or install file.
     ///
-    /// `None` when the entry was read without one, and written back without one:
-    /// `Multihash::default()` would store a hash of no file.
+    /// `None` when the entry has no hash, absent or `null`; written back without
+    /// one, since `Multihash::default()` would store a hash of no file.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
