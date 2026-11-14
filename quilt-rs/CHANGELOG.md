@@ -33,7 +33,7 @@
 - **Breaking:** `LogicalKey` compares and sorts by its `/`-separated names on every OS, and no longer implements `Borrow<Path>` or equality with `Path` and `PathBuf`; compare `as_path()` for a native path (<https://github.com/quiltdata/quilt-rs/pull/1377>)
 - A package's first push no longer replaces a `latest` someone else already published under the same name: it uploads the revision, returns `certified_latest: false`, and leaves the package `Diverged` so `certify_latest` or `reset_to_latest` decides which revision is `latest` (<https://github.com/quiltdata/quilt-rs/pull/1373>)
 - **Breaking:** `ManifestHeader::message` is a `HeaderMessage`: `Missing` when the header has no `message` key, `Null` when it is `null`, or `Text`; `ManifestHeader::message()` returns the text (<https://github.com/quiltdata/quilt-rs/pull/1375>)
-- **Breaking:** `PathState::hash` is an `Option`: a `data.json` path entry without a hash, as a later release will write, reads as `None` and is written back without one (<https://github.com/quiltdata/quilt-rs/pull/PRNUM>)
+- **Breaking:** `PathState::hash` is an `Option`: a `data.json` path entry without a hash, as a later release will write, reads as `None` and is written back without one (<https://github.com/quiltdata/quilt-rs/pull/1380>)
 
 ### Fixed
 
