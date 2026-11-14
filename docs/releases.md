@@ -98,6 +98,19 @@ crates.io until a maintainer approves the draft.
    `CARGO_REGISTRY_TOKEN` secret).
 3. `cargo publish -p <crate>`.
 
+**No git dependencies.** crates.io takes none, and `quiltx-core` is one until
+it is published or moves into this workspace (phase 2 of
+[#1378](https://github.com/quiltdata/quilt-rs/issues/1378)); the workspace
+`Cargo.toml` pins it by commit with no `version`. Until then none of
+`quilt-uri`, `quilt-rs` or `quilt-cli` can be released to crates.io. `prepare`
+fails on it in a "Refuse a git dependency" step (`cargo tree -p <crate>` shows
+a source URL for a git crate), before the draft release exists, and `cargo
+publish` would refuse as well. `deny.toml` sets `wildcards = "warn"` for the
+same reason: cargo-deny counts a git dependency of a published crate as a
+wildcard. Return it to `deny` once the dependency is a registry crate. The pin
+also has to be the commit on quiltx's `main` (or a tag), not a branch commit
+that may never merge.
+
 GitHub promote runs first so that if `cargo publish` flakes, the
 recoverable side (the GitHub Release) has already shipped and only the
 crates.io step needs a re-run; the reverse order is irrecoverable.

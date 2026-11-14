@@ -511,7 +511,7 @@ enum Commands {
         /// Code from the `https://QUILT_STACK/code` page
         #[arg(short, long)]
         code: Option<String>,
-        #[arg(long)]
+        #[arg(long, value_parser = Host::from_user_input)]
         host: Host,
     },
     /// List installed packages

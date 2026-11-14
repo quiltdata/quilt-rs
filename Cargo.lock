@@ -5893,11 +5893,23 @@ name = "quilt-uri"
 version = "0.5.1-dev"
 dependencies = [
  "percent-encoding",
+ "quiltx-core",
  "serde",
  "serde_json",
  "test-log",
  "thiserror 2.0.21",
  "url",
+]
+
+[[package]]
+name = "quiltx-core"
+version = "0.1.0"
+source = "git+https://github.com/quiltdata/quiltx?rev=0a6b16ffd72e2f9c227458f82163a6e58ab6c52b#0a6b16ffd72e2f9c227458f82163a6e58ab6c52b"
+dependencies = [
+ "dirs",
+ "libc",
+ "unicode-normalization",
+ "unicode-properties",
 ]
 
 [[package]]
@@ -8752,6 +8764,21 @@ name = "unicode-ident"
 version = "1.0.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2c754d6c33795a1c324727428e5a7dedb5b06195f9890bdbcba760d3e246563"
+
+[[package]]
+name = "unicode-normalization"
+version = "0.1.26"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75cd3fb03d5288b3ba9a1ee103ac7e9cbb59f0b03d64f8ddfcc04dd42758a85d"
+dependencies = [
+ "tinyvec",
+]
+
+[[package]]
+name = "unicode-properties"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "993ad287eb20e8ba755312801cfe1413e0f25d604075863acaddca10b04c1833"
 
 [[package]]
 name = "unicode-segmentation"

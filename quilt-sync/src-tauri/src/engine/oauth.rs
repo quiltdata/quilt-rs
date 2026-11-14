@@ -200,7 +200,9 @@ mod tests {
 
     #[test]
     fn redirect_uri_encodes_ipv6_host() {
-        let host: quilt_uri::Host = "[::1]".parse().unwrap();
+        // Not parsed from text: a typed IP address is refused, but a `Host` can
+        // still hold one, and its brackets and colons must be escaped.
+        let host = quilt_uri::Host::from(url::Host::<String>::Ipv6(std::net::Ipv6Addr::LOCALHOST));
         assert_eq!(
             redirect_uri(&host),
             "quilt://auth/callback?host=%5B%3A%3A1%5D"
