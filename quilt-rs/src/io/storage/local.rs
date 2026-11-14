@@ -50,11 +50,7 @@ async fn write_stream(path: &Path, mut body: ByteStream, private: bool) -> std::
 ///
 /// On failure the temp file is cleaned up.
 async fn atomic_write(path: &Path, body: ByteStream, private: bool) -> std::io::Result<()> {
-    // A bare file name's parent is "", which cannot be opened to sync it.
-    let parent = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
+    let parent = path.parent().unwrap_or(Path::new("."));
     fs::create_dir_all(parent).await?;
     let tmp = temp_path_in(parent);
     let cleanup = |_: &std::io::Error| {
