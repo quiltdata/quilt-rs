@@ -50,7 +50,11 @@ async fn write_stream(path: &Path, mut body: ByteStream, private: bool) -> std::
 ///
 /// On failure the temp file is cleaned up.
 async fn atomic_write(path: &Path, body: ByteStream, private: bool) -> std::io::Result<()> {
-    let parent = path.parent().unwrap_or(Path::new("."));
+    // A bare file name's parent is "", which cannot be opened to sync it.
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
     fs::create_dir_all(parent).await?;
     let tmp = temp_path_in(parent);
     let cleanup = |_: &std::io::Error| {
@@ -59,7 +63,20 @@ async fn atomic_write(path: &Path, body: ByteStream, private: bool) -> std::io::
     write_stream(&tmp, body, private)
         .await
         .inspect_err(cleanup)?;
-    fs::rename(&tmp, path).await.inspect_err(cleanup)
+    fs::rename(&tmp, path).await.inspect_err(cleanup)?;
+    #[cfg(unix)]
+    sync_dir(parent).await;
+    Ok(())
+}
+
+/// Makes a rename into `dir` survive a power loss. Windows has no directory
+/// fsync. A failure is logged, not returned: the new file is already in place.
+#[cfg(unix)]
+async fn sync_dir(dir: &Path) {
+    let synced = async { fs::File::open(dir).await?.sync_all().await };
+    if let Err(err) = synced.await {
+        warn!("❌ Could not sync {}: {}", dir.display(), err);
+    }
 }
 
 pub(super) async fn write(path: &Path, body: ByteStream, private: bool) -> Res {
@@ -518,6 +535,34 @@ mod tests {
             .await?;
 
         assert_eq!(fs::read(&dest).await?, b"updated");
+        Ok(())
+    }
+
+    /// A directory that cannot be opened to sync it still takes the write,
+    /// since the new file is in place by then.
+    #[test(tokio::test)]
+    #[cfg(unix)]
+    async fn a_write_succeeds_when_its_directory_cannot_be_synced() -> Res {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = tempdir()?;
+        let dir = temp_dir.path().join("unreadable");
+        std::fs::create_dir(&dir)?;
+        let dest = dir.join("data.json");
+        // Write and search, but no read: the directory cannot be opened.
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o300))?;
+        // Root ignores the mode, so there the sync would not fail: nothing to test.
+        if std::fs::File::open(&dir).is_ok() {
+            return Ok(());
+        }
+
+        let result = LocalStorage::default()
+            .write_byte_stream(&dest, ByteStream::from_static(b"new"))
+            .await;
+
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
+        result?;
+        assert_eq!(fs::read(&dest).await?, b"new");
         Ok(())
     }
 
