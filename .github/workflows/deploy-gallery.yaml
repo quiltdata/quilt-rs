@@ -11,6 +11,7 @@ on:
       - 'quilt-sync/ui/**'
       - 'quilt-ui-kit/**'
       - 'quilt-uri/**'
+      - 'quilt-auth/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'rust-toolchain.toml'

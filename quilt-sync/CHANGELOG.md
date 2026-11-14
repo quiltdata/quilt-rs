@@ -23,6 +23,7 @@
 
 ### Changed
 
+- Signing in reads the catalog name as the `quiltx` command does: `https://host/` is read as `host`, and an IP address, a port or a percent escape is refused. A Unicode name is kept as typed, so a catalog first signed in to after this release is stored in a folder named with the Unicode name, not its punycode form. Accounts already stored, including one under an IP address or a punycode name, still appear and can sign out and switch roles. Only signing in is strict: the places that name a catalog that already exists (`push --host`/`--origin`, `role --host`, setting a package's remote, installing from a catalog, the bucket form) read the name as before, so they still take an IP address. A catalog on an IP address can no longer be signed in to again by name: keep using a stored account while its refresh token lasts, and once it expires the account cannot be renewed through sign-in (<https://github.com/quiltdata/quilt-rs/pull/1382>)
 - QuiltSync starts faster with many packages: at launch it checks up to eight packages at once instead of one after another (<https://github.com/quiltdata/quilt-rs/pull/1376>)
 
 ### Fixed

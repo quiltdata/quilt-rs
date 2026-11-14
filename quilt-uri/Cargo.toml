@@ -20,6 +20,7 @@ test-support = []
 
 [dependencies]
 percent-encoding.workspace = true
+quilt-auth = { path = "../quilt-auth", version = "0.1.0-dev" }
 serde.workspace = true
 thiserror.workspace = true
 url.workspace = true
