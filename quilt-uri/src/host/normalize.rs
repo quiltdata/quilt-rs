@@ -2,7 +2,7 @@
 //!
 //! - [`typed`] is for a name a person types or pastes: the login form in
 //!   `QuiltSync`, `quilt login --host`. It is quiltx's `normalize_dns` (the
-//!   `quiltx-core` crate), so quilt-rs and quiltx name a catalog the same way and
+//!   `quilt-auth` crate), so quilt-rs and quiltx name a catalog the same way and
 //!   key its credentials alike. The text is trimmed and lowercased and otherwise
 //!   kept: a Unicode name is **not** converted to punycode. `https://host/...` and
 //!   `host/path` are reduced to `host`. A port, an IP address (also in its
@@ -27,8 +27,8 @@ use crate::UriError;
 
 /// The host a person's `input` names, or why it is not one.
 pub(super) fn typed(input: &str) -> Result<url::Host, UriError> {
-    let name = quiltx_core::dns::normalize_dns(input, false)
-        .map_err(|e| UriError::Host(describe(&e.0)))?;
+    let name =
+        quilt_auth::dns::normalize_dns(input, false).map_err(|e| UriError::Host(describe(&e.0)))?;
     let refuse = |why: &str| Err(UriError::Host(why.to_string()));
     if is_only_dots(&name) {
         return refuse("not a valid catalog host name");

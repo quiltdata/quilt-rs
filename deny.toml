@@ -62,10 +62,7 @@ allow = [
 
 [bans]
 multiple-versions = "warn"
-# "warn", not "deny": cargo-deny counts a git dependency of a published crate as a
-# wildcard (it has no version), and `quiltx-core` is one for now. The release
-# workflow's "Refuse a git dependency" step is what stops it reaching crates.io.
-wildcards = "warn"
+wildcards = "deny"
 # `quilt-sync`/`quilt-sync-ui` depend on workspace siblings via `path = "..."`
 # without a version, which Cargo records as `*`. That's expected for path
 # deps — only flag wildcards on registry crates.
@@ -82,5 +79,3 @@ deny = [
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-# quiltx-core, by commit, until it is published or moves into this workspace.
-allow-git = ["https://github.com/quiltdata/quiltx"]

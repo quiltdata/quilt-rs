@@ -1,0 +1,32 @@
+[package]
+name = "quilt-auth"
+description = "Transport-free authentication helpers shared by quilt-rs and quiltx: catalog host normalization and credential locations."
+keywords = ["quilt", "auth", "host", "dns"]
+categories = ["authentication"]
+
+version = "0.1.0-dev"
+
+# Inherit from workspace
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+# NFKC, for the check urllib.parse makes on a non-ASCII host.
+unicode-normalization = "0.1"
+# General category Nd, for Python's notion of a decimal digit.
+unicode-properties = { version = "0.1", default-features = false, features = ["general-category"] }
+
+[target.'cfg(unix)'.dependencies]
+# getpwuid_r, for the passwd home directory.
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+# The Local AppData folder (the same crate and call quilt-rs uses); the rest of the
+# data-dir rules are in src/paths.rs because they must match platformdirs exactly.
+dirs.workspace = true
+
+[lints]
+workspace = true

@@ -5721,6 +5721,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "quilt-auth"
+version = "0.1.0-dev"
+dependencies = [
+ "dirs",
+ "libc",
+ "unicode-normalization",
+ "unicode-properties",
+]
+
+[[package]]
 name = "quilt-cli"
 version = "0.42.0-dev"
 dependencies = [
@@ -5893,23 +5903,12 @@ name = "quilt-uri"
 version = "0.5.1-dev"
 dependencies = [
  "percent-encoding",
- "quiltx-core",
+ "quilt-auth",
  "serde",
  "serde_json",
  "test-log",
  "thiserror 2.0.21",
  "url",
-]
-
-[[package]]
-name = "quiltx-core"
-version = "0.1.0"
-source = "git+https://github.com/quiltdata/quiltx?rev=0a6b16ffd72e2f9c227458f82163a6e58ab6c52b#0a6b16ffd72e2f9c227458f82163a6e58ab6c52b"
-dependencies = [
- "dirs",
- "libc",
- "unicode-normalization",
- "unicode-properties",
 ]
 
 [[package]]
