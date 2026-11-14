@@ -205,7 +205,7 @@ pub async fn create_package(
                 relative_path,
                 PathState {
                     timestamp: storage.modified_timestamp(&work_dest).await?,
-                    hash: row.hash.into(),
+                    hash: Some(row.hash.into()),
                 },
             );
 

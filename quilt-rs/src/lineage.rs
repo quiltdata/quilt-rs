@@ -641,6 +641,28 @@ mod tests {
         assert_eq!(scope("whole"), &SyncScope::EntirePackage);
     }
 
+    const PATH_WITHOUT_HASH: &[u8] = br#"{"packages":{"a/b":{"commit":null,"base_hash":"","latest_hash":"","paths":{"f.csv":{"timestamp":"2025-01-16T12:50:20.534Z"}}}},"home":"/home/directory"}"#;
+
+    /// A later version stops writing `paths[].hash`; this one must still load
+    /// the file.
+    #[test]
+    fn a_path_entry_without_a_hash_reads() {
+        let lineage = DomainLineage::from_slice(PATH_WITHOUT_HASH)
+            .expect("a path entry without a hash parses");
+        let entry = &lineage.packages[&Namespace::from(("a", "b"))].paths[&PathBuf::from("f.csv")];
+        assert_eq!(entry.hash, None);
+    }
+
+    #[test]
+    fn a_path_entry_read_without_a_hash_is_written_without_one() {
+        let lineage = DomainLineage::from_slice(PATH_WITHOUT_HASH).unwrap();
+        let written = serde_json::to_value(&lineage).unwrap();
+        let entry = written["packages"]["a/b"]["paths"]["f.csv"]
+            .as_object()
+            .unwrap();
+        assert!(!entry.contains_key("hash"), "{entry:?}");
+    }
+
     #[test(tokio::test)]
     async fn test_domain_lineage_from_file() -> Res {
         let storage = MockStorage::default();
@@ -892,12 +914,14 @@ mod tests {
                                         1_737_031_820_534,
                                     )
                                     .unwrap(),
-                                    hash: Sha256ChunkedHash::from_async_read(
-                                        bytes,
-                                        bytes.len() as u64,
-                                    )
-                                    .await?
-                                    .into(),
+                                    hash: Some(
+                                        Sha256ChunkedHash::from_async_read(
+                                            bytes,
+                                            bytes.len() as u64,
+                                        )
+                                        .await?
+                                        .into(),
+                                    ),
                                 },
                             )]),
                             ..PackageLineage::default()
@@ -912,18 +936,18 @@ mod tests {
 
         assert_eq!(lineage.as_ref(), &PathBuf::from("/tmp/working_dir"));
 
-        let multihash_from_lineage = lineage
+        let hash_from_lineage = lineage
             .packages
             .get(&(("foo".to_string(), "bar".to_string()).into()))
             .unwrap()
             .paths
             .get(&PathBuf::from("foo"))
             .unwrap()
-            .hash;
-        let hash_from_lineage = base64::encode(multihash_from_lineage.digest());
+            .hash
+            .map(|hash| base64::encode(hash.digest()));
         assert_eq!(
-            hash_from_lineage,
-            "Xb1PbjJeWof4zD7zuHc9PI7sLiz/Ykj4gphlaZEt3xA="
+            hash_from_lineage.as_deref(),
+            Some("Xb1PbjJeWof4zD7zuHc9PI7sLiz/Ykj4gphlaZEt3xA=")
         );
         Ok(())
     }
