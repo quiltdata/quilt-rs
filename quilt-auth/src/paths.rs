@@ -158,7 +158,7 @@ fn from_bytes(b: Vec<u8>) -> PathBuf {
 #[cfg(not(unix))]
 #[allow(
     clippy::needless_pass_by_value,
-    reason = "the Unix variant consumes the bytes; both take the same type"
+    reason = "only the Unix variant consumes the bytes; this branch is Windows and wasm32, and both take the same type"
 )]
 fn from_bytes(b: Vec<u8>) -> PathBuf {
     PathBuf::from(String::from_utf8_lossy(&b).into_owned())
