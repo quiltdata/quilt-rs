@@ -304,7 +304,7 @@ pub async fn build_manifest_from_rows_stream(
     let manifest = Manifest { header, rows };
 
     storage
-        .write_byte_stream(&temp_path, ByteStream::from(&manifest))
+        .write_staged_byte_stream(&temp_path, ByteStream::from(&manifest))
         .await?;
 
     let top_hash = top_hasher.finalize();
