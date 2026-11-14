@@ -24,7 +24,7 @@
 
 ### Changed
 
-- `Host` parses a catalog name with quiltx's rule, so quilt-rs and quiltx name a catalog alike: `https://host/` and `host/path` become `host`, surrounding whitespace and an empty port are dropped, a Unicode name is kept as typed instead of becoming punycode, and an IP address is refused. A name that is only dots, such as `..`, is refused too (<https://github.com/quiltdata/quilt-rs/pull/1381>, <https://github.com/quiltdata/quilt-rs/pull/1382>)
+- `Host::from_user_input` reads a catalog name a person typed by quiltx's rule, so quilt-rs and quiltx name a catalog alike: `https://host/` and `host/path` become `host`, surrounding whitespace and an empty port are dropped, a Unicode name is kept as typed instead of becoming punycode, and an IP address (in any spelling), a port, a percent escape and an invisible character are refused. `Host::from_str`, which reads names back from disk and from `quilt+s3://` URIs, takes all of that and still takes what it took before, an IP address included. Both refuse a name that is only dots, such as `..` (<https://github.com/quiltdata/quilt-rs/pull/1381>, <https://github.com/quiltdata/quilt-rs/pull/1382>)
 - Building from source now requires Rust 1.99 or newer (<https://github.com/quiltdata/quilt-rs/pull/1370>)
 
 ### Fixed

@@ -48,6 +48,21 @@ jobs:
             echo "title=$CRATE v$VERSION"
           } >> "$GITHUB_OUTPUT"
 
+      # crates.io takes no git dependency, and `quiltx-core` is one until it is
+      # published or moves into this workspace (docs/releases.md). Fail here, before
+      # the draft exists, rather than at `cargo publish`.
+      - name: Refuse a git dependency
+        env:
+          CRATE: ${{ inputs.crate }}
+        run: |
+          set -euo pipefail
+          git_deps=$(cargo tree -p "$CRATE" --edges normal,build --prefix none | grep -E '\((https?|ssh|git)(\+[a-z]+)?://' | sort -u || true)
+          if [ -n "$git_deps" ]; then
+            echo "::error::$CRATE depends on a crate from git, which crates.io refuses; publish it or move it into the workspace first:"
+            echo "$git_deps"
+            exit 1
+          fi
+
       # Every release starts as a draft and opts out of "latest":
       # - `--draft` lets a maintainer review notes/tag placement (and, for
       #   quilt-cli, wait for the `binaries` job to attach archives) before

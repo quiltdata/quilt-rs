@@ -23,7 +23,7 @@
 
 ### Changed
 
-- A catalog typed at login can be written as `https://host/` and is read as `host`; an IP address is refused, and a Unicode name is kept as typed, not converted to punycode, as in the `quiltx` command (<https://github.com/quiltdata/quilt-rs/pull/1382>)
+- Signing in reads the catalog name as the `quiltx` command does: `https://host/` is read as `host`, and an IP address, a port or a percent escape is refused. A Unicode name is kept as typed, so a catalog first signed in to after this release is stored in a folder named with the Unicode name, not its punycode form. Accounts already stored, including one under an IP address or a punycode name, still appear and can sign out and switch roles (<https://github.com/quiltdata/quilt-rs/pull/1382>)
 - QuiltSync starts faster with many packages: at launch it checks up to eight packages at once instead of one after another (<https://github.com/quiltdata/quilt-rs/pull/1376>)
 
 ### Fixed

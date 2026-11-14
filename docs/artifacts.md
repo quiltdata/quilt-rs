@@ -60,8 +60,14 @@ Another client may share this store, and can rely on what follows.
 
 **Location.** `$DATA_DIR` is the platform path in the table above. The CLI
 uses the same one unless `--domain` or `QUILT_DOMAIN` names another. `<host>`
-is the catalog's host name alone, with no scheme or port, lowercased and
-IDNA-encoded as the WHATWG URL standard parses a host: `open.quiltdata.com`.
+is the catalog's host name alone, with no scheme or port, lowercased:
+`open.quiltdata.com`. A name typed at login is normalized as quiltx does, and kept
+as typed otherwise, so a Unicode name is a folder named with that Unicode name
+(`bücher.example`), not its punycode form. A folder written by an earlier version
+for such a name is still named in punycode (`xn--bcher-kva.example`), and is still
+read; a client that shares the store should look for both spellings of a Unicode
+name. A folder named with an IP address, written by an earlier version, is also
+still read.
 `.auth/.locks/` holds the locks, not a host.
 
 **Files.** Each is one JSON object. Timestamps are RFC 3339 strings in UTC.

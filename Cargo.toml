@@ -47,8 +47,10 @@ multihash = "0.19.5"
 percent-encoding = "2.3.2"
 # The portable, Python-free half of quiltx's auth core (host normalization), pinned
 # by commit. `default-features = false` leaves out PyO3 and the modules that call
-# into Python.
-quiltx-core = { package = "quiltx-core", version = "0.1.0", git = "https://github.com/quiltdata/quiltx", rev = "0a6b16ffd72e2f9c227458f82163a6e58ab6c52b", default-features = false }
+# into Python. It has no `version` on purpose: crates.io takes no git dependency,
+# so `cargo publish` refuses `quilt-uri`, `quilt-rs` and `quilt-cli` until this
+# is a published crate (see docs/releases.md).
+quiltx-core = { package = "quiltx-core", git = "https://github.com/quiltdata/quiltx", rev = "0a6b16ffd72e2f9c227458f82163a6e58ab6c52b", default-features = false }
 regex = "1.13.1"
 reqwest = { version = "0.13.5", features = ["form", "json"] }
 reqwest-middleware = { version = "0.5.2", features = ["form", "json"] }
