@@ -6,6 +6,8 @@ use std::str::FromStr;
 
 use crate::UriError;
 
+mod normalize;
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Host {
     inner: url::Host,
@@ -46,9 +48,7 @@ impl FromStr for Host {
     type Err = UriError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        url::Host::parse(s)
-            .map_err(|e| UriError::Host(e.to_string()))
-            .map(Host::from)
+        normalize::normalize(s).map(Host::from)
     }
 }
 
@@ -103,6 +103,14 @@ mod tests {
         let result = Host::from_str("[::1");
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), UriError::Host(_)));
+    }
+
+    #[test]
+    fn test_host_from_str_and_deserialize_share_one_rule() {
+        let typed = Host::from_str("Quilt.TEST").unwrap();
+        let stored: Host = serde_json::from_str("\"Quilt.TEST\"").unwrap();
+        assert_eq!(typed, stored);
+        assert_eq!(typed.to_string(), "quilt.test");
     }
 
     #[test]
