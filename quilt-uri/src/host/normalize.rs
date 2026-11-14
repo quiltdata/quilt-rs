@@ -28,7 +28,7 @@ use crate::UriError;
 /// The host a person's `input` names, or why it is not one.
 pub(super) fn typed(input: &str) -> Result<url::Host, UriError> {
     let name = quiltx_core::dns::normalize_dns(input, false)
-        .map_err(|e| UriError::Host(describe(&e.0, input)))?;
+        .map_err(|e| UriError::Host(describe(&e.0)))?;
     let refuse = |why: &str| Err(UriError::Host(why.to_string()));
     if is_only_dots(&name) {
         return refuse("not a valid catalog host name");
@@ -84,7 +84,7 @@ fn is_only_dots(name: &str) -> bool {
 
 /// What `normalize_dns` said, in words that are about a host name rather than a
 /// command line, and that do not repeat the input.
-fn describe(quiltx_message: &str, input: &str) -> String {
+fn describe(quiltx_message: &str) -> String {
     if quiltx_message == "catalog DNS name is required" {
         return "a catalog host name is required".to_string();
     }
@@ -94,19 +94,9 @@ fn describe(quiltx_message: &str, input: &str) -> String {
     if quiltx_message.starts_with("IP-address") {
         return "an IP address is not a catalog host name".to_string();
     }
+    // `http://` and any other scheme alike; the text of the scheme is not echoed.
     if quiltx_message.starts_with("http://") {
-        let scheme = input.trim().split_once("://").map(|(scheme, _)| {
-            // `urlsplit` drops tabs and line breaks before it reads the scheme.
-            scheme
-                .chars()
-                .filter(|c| !matches!(c, '\t' | '\n' | '\r'))
-                .collect::<String>()
-                .to_ascii_lowercase()
-        });
-        return match scheme.as_deref() {
-            Some("http") | None => "http:// is not supported; use https://".to_string(),
-            Some(other) => format!("the scheme {other:?} is not supported; use https://"),
-        };
+        return "only https:// is supported".to_string();
     }
     "not a valid catalog host name".to_string()
 }
@@ -179,18 +169,17 @@ mod tests {
 
     #[test]
     fn a_scheme_but_https_is_refused() {
-        let http = "http:// is not supported; use https://";
-        assert_eq!(refused("http://quilt.test"), http);
-        assert_eq!(refused("HTTP://quilt.test"), http);
-        assert_eq!(refused("ht\ttp://quilt.test"), http);
-        assert_eq!(
-            refused("ftp://quilt.test"),
-            r#"the scheme "ftp" is not supported; use https://"#
-        );
-        assert_eq!(
-            refused("FTP://quilt.test"),
-            r#"the scheme "ftp" is not supported; use https://"#
-        );
+        // One fixed message: the scheme the person typed is not echoed.
+        for input in [
+            "http://quilt.test",
+            "HTTP://quilt.test",
+            "ht\ttp://quilt.test",
+            "ftp://quilt.test",
+            "FTP://quilt.test",
+            "javascript://quilt.test",
+        ] {
+            assert_eq!(refused(input), "only https:// is supported", "{input:?}");
+        }
     }
 
     #[test]

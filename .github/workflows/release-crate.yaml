@@ -56,7 +56,10 @@ jobs:
           CRATE: ${{ inputs.crate }}
         run: |
           set -euo pipefail
-          git_deps=$(cargo tree -p "$CRATE" --edges normal,build --prefix none | grep -E '\((https?|ssh|git)(\+[a-z]+)?://' | sort -u || true)
+          # `cargo tree` runs on its own, so its failure fails the step. The
+          # `|| true` below is only grep's "no match" status.
+          tree=$(cargo tree -p "$CRATE" --edges normal,build --prefix none)
+          git_deps=$(echo "$tree" | grep -E '\((https?|ssh|git)(\+[a-z]+)?://' | sort -u || true)
           if [ -n "$git_deps" ]; then
             echo "::error::$CRATE depends on a crate from git, which crates.io refuses; publish it or move it into the workspace first:"
             echo "$git_deps"

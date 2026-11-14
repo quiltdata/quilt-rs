@@ -27,7 +27,7 @@
 
 ### Changed
 
-- `quilt login --host` reads the catalog name as `quiltx` does: `https://host/` is read as `host`, and an IP address, a port or a percent escape is refused. A Unicode name is kept as typed, so a catalog first signed in to after this release is stored in a folder named with the Unicode name, not its punycode form. Accounts already stored, including one under an IP address or a punycode name, still work (<https://github.com/quiltdata/quilt-rs/pull/1382>)
+- `quilt login --host` reads the catalog name as `quiltx` does: `https://host/` is read as `host`, and an IP address, a port or a percent escape is refused. A Unicode name is kept as typed, so a catalog first signed in to after this release is stored in a folder named with the Unicode name, not its punycode form. Accounts already stored, including one under an IP address or a punycode name, still work. Only `quilt login` is strict: `push --host`/`--origin`, `role --host` and the other commands that name a catalog that already exists read the name as before, so they still take an IP address. A catalog on an IP address can no longer be signed in to again by name: keep using a stored account while its refresh token lasts, and once it expires the account cannot be renewed through `quilt login` (<https://github.com/quiltdata/quilt-rs/pull/1382>)
 - Building from source now requires Rust 1.99 or newer (<https://github.com/quiltdata/quilt-rs/pull/1370>)
 - `quilt push` of a new package no longer replaces a `latest` someone else already published under the same name: it uploads the revision and warns that `latest` was not updated (<https://github.com/quiltdata/quilt-rs/pull/1373>)
 

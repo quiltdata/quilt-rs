@@ -68,6 +68,14 @@ for such a name is still named in punycode (`xn--bcher-kva.example`), and is sti
 read; a client that shares the store should look for both spellings of a Unicode
 name. A folder named with an IP address, written by an earlier version, is also
 still read.
+
+Only signing in is strict about the name. The places that name a catalog that
+already exists (`quilt push --host` and `--origin`, `quilt role --host`, a
+package's remote, installing from a catalog, QuiltSync's bucket form) read it
+as before and still take an IP address, so a stored account on an IP address
+keeps working. It cannot be signed in to again by name: once its refresh token
+expires, the account cannot be renewed through sign-in (a known limitation).
+
 `.auth/.locks/` holds the locks, not a host.
 
 **Files.** Each is one JSON object. Timestamps are RFC 3339 strings in UTC.
