@@ -8,7 +8,9 @@ version = "0.1.0-dev"
 
 # Inherit from workspace
 edition.workspace = true
-rust-version.workspace = true
+# Lower than the workspace's: quiltx builds this crate from source and supports
+# Rust 1.85. Checked by building and testing it on 1.85.
+rust-version = "1.85"
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
