@@ -101,6 +101,16 @@ mod tests {
     }
 
     #[test]
+    fn a_name_of_only_dots_is_accepted() {
+        // Pinned, not endorsed: `DomainPaths::auth_host` joins the name under
+        // `.auth/`, so `..` would name the auth folder's parent. The rule that
+        // replaces this one refuses these.
+        assert_eq!(shown("."), ".");
+        assert_eq!(shown(".."), "..");
+        assert_eq!(shown("..."), "...");
+    }
+
+    #[test]
     fn whitespace_and_empty_are_refused() {
         rejected("");
         rejected(" ");
