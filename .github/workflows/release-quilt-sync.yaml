@@ -113,7 +113,7 @@ jobs:
       # Trunk's pre_build hook shells out to `stylance` (quilt-sync/ui/Trunk.toml).
       # Pinned to the `stylance` library version in quilt-sync/ui/Cargo.toml.
       - name: Install trunk and stylance
-        uses: taiki-e/install-action@v2.90.3
+        uses: taiki-e/install-action@v2.90.4
         with:
           tool: trunk,stylance-cli@0.8.4
 
