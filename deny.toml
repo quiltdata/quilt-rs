@@ -79,3 +79,5 @@ deny = [
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# quiltx-core, by commit, until it is published or moves into this workspace.
+allow-git = ["https://github.com/quiltdata/quiltx"]
