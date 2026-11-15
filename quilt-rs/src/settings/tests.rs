@@ -37,7 +37,6 @@ async fn a_default_round_trips_as_a_bare_host() -> Res {
     let json: Value = serde_json::from_slice(&bytes)?;
     assert_eq!(json, serde_json::json!({ "default_catalog": "quilt.test" }));
     assert!(dir.join(SETTINGS_LOCK).exists());
-    assert!(!dir.join("settings.json.tmp").exists());
     Ok(())
 }
 
@@ -173,19 +172,22 @@ async fn a_bad_default_is_an_error_to_read_and_a_set_repairs_it() -> Res {
 }
 
 #[test(tokio::test)]
-async fn concurrent_sets_never_corrupt_the_file() -> Res {
-    let (settings, ..) = settings();
-    let hosts: Vec<Host> = (0..8).map(|i| host(&format!("h{i}.quilt.test"))).collect();
-    let mut tasks = tokio::task::JoinSet::new();
-    for h in hosts.clone() {
+async fn a_change_waits_for_the_settings_lock() -> Res {
+    let (settings, storage, dir) = settings();
+    storage.create_private_dir(&dir).await?;
+    let held = storage.lock_exclusive(dir.join(SETTINGS_LOCK)).await?;
+
+    let waiting = tokio::spawn({
         let settings = settings.clone();
-        tasks.spawn(async move { settings.set_default_catalog(&h).await });
-    }
-    while let Some(done) = tasks.join_next().await {
-        done.unwrap()?;
-    }
-    let stored = settings.default_catalog().await?.unwrap();
-    assert!(hosts.contains(&stored));
+        async move { settings.set_default_catalog(&fixtures::host()).await }
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert!(!waiting.is_finished());
+    assert_eq!(settings.default_catalog().await?, None);
+
+    drop(held);
+    waiting.await.unwrap()?;
+    assert_eq!(settings.default_catalog().await?, Some(fixtures::host()));
     Ok(())
 }
 

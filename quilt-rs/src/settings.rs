@@ -1,20 +1,13 @@
 //! The shared, non-secret `settings.json` that every Quilt client reads: today
 //! it holds one key, `default_catalog`.
 //!
-//! The file lives in the shared folder described by quilt-specs#46: `com.quiltdata.auth`
-//! under [`dirs::data_local_dir`], or the folder named by `QUILT_AUTH_DIR`.
-//! It holds no secret, so it is a plain file, and the folder is 0700 on Unix.
-//! Every change takes `settings.json.lock` first and is written through a
-//! temp file and a rename.
+//! The file lives in the shared folder of quilt-specs#46: `com.quiltdata.auth`
+//! under [`dirs::data_local_dir`], or `QUILT_AUTH_DIR`. Every change takes
+//! `settings.json.lock` first and keeps the keys it does not know. A file that
+//! is not a JSON object is an error and is never replaced.
 //!
-//! The file is shared with keys this crate does not know (the specs put the
-//! per-bucket ambient profiles there next), so a change rewrites only its own
-//! key and keeps the rest. A file that cannot be read as a JSON object is an
-//! error and is never replaced.
-//!
-//! A missing file, or a missing key, means "no default catalog". Nothing in this
-//! crate consults the default on its own: a caller that wants it as a fallback
-//! asks [`effective_catalog`], which keeps a package's own catalog first.
+//! A missing file or key means no default catalog. Nothing here consults the
+//! default on its own; [`effective_catalog`] keeps a package's catalog first.
 
 use std::io::ErrorKind;
 use std::path::Path;
@@ -143,6 +136,7 @@ impl<S: Storage + Sync> SharedSettings<S> {
     /// Removes the default catalog, keeping every other key. Returns whether
     /// there was one to remove. With no file, creates nothing.
     pub async fn clear_default_catalog(&self) -> Res<bool> {
+        // Unlocked: this only decides the no-op. The file is read again under the lock.
         if !self.storage.exists(self.file()).await {
             return Ok(false);
         }
@@ -174,12 +168,10 @@ impl<S: Storage + Sync> SharedSettings<S> {
     }
 
     async fn write(&self, map: &Map<String, Value>) -> Res {
-        let path = self.file();
-        let temp = self.dir.join(format!("{SETTINGS_FILE}.tmp"));
         let bytes = serde_json::to_vec_pretty(map)?;
-        // The lock is held, so no other writer uses the temp file.
-        self.storage.write_byte_stream(&temp, bytes.into()).await?;
-        self.storage.rename(&temp, &path).await
+        self.storage
+            .write_byte_stream(self.file(), bytes.into())
+            .await
     }
 }
 

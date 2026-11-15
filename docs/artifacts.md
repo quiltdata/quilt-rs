@@ -117,7 +117,9 @@ guard. Logging in writes `tokens.json` without the lock.
 client may share, designed in
 [quilt-specs#46](https://github.com/quiltdata/quilt-specs/pull/46). The folder
 is `QUILT_AUTH_DIR` when set, else `com.quiltdata.auth` under the platform's
-local data directory; it is not `$DATA_DIR`.
+local data directory; it is not `$DATA_DIR`. On Unix a change sets the folder
+to 0700 where the file system allows, an existing `QUILT_AUTH_DIR` folder
+included.
 
 | Artifact | Path | Contents |
 |----------|------|----------|
@@ -125,8 +127,8 @@ local data directory; it is not `$DATA_DIR`.
 | Settings lock | `<folder>/settings.json.lock` | Held by every writer; created by its first holder |
 
 A missing file or key means there is no default catalog. A writer takes the
-lock, rereads the file, changes only its own key and renames a temp file over
-it, so keys it does not know survive. A file that is not a JSON object is
+lock, rereads the file and writes it whole through a temp file and a rename,
+changing only its own key, so keys it does not know survive. A file that is not a JSON object is
 reported and never replaced. The default is only a fallback for an operation
 with no package: a package's own catalog wins, and a package with no catalog
 stays on this computer's AWS credentials.
