@@ -340,6 +340,20 @@ pub enum PackageOpError {
     #[error("Push error: {0}")]
     Push(String),
 
+    /// A push whose parent is no longer `latest`: the revision was written,
+    /// and `latest` was left alone.
+    #[error(
+        "Pushed revision {top_hash}, but did not make it latest: latest is {latest}, but this push was built on {expected}. The revision is saved, and latest is unchanged."
+    )]
+    PushedNotLatest {
+        /// The top hash of the revision that was written.
+        top_hash: String,
+        /// The revision `latest` still names.
+        latest: String,
+        /// What the push was built on: "revision <hash>", or "no earlier revision".
+        expected: String,
+    },
+
     #[error("Publish error: {0}")]
     Publish(String),
 

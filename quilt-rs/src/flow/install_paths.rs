@@ -48,7 +48,7 @@ pub struct InstallPathsReport {
 }
 
 /// Why fetched bytes were not stored: they do not hash to the row.
-enum Mismatch {
+pub(super) enum Mismatch {
     /// The `physical_key` has no `versionId`, or the `null` one S3 writes while
     /// versioning is suspended, so a later revision may have replaced the
     /// object it names.
@@ -78,7 +78,7 @@ impl Mismatch {
 /// read as a local modification nobody made, and a retry would take them from
 /// the store as a cache hit. So the fetch lands in this apply's staging
 /// directory and moves into the store only once it hashes to the row.
-async fn cache_immutable_object(
+pub(super) async fn cache_immutable_object(
     storage: &impl Storage,
     remote: &impl Remote,
     host: Option<&Host>,
@@ -483,7 +483,7 @@ pub async fn install_paths(
 /// Sorted by those names, a path that is also a folder comes right before one
 /// of the paths inside it, and a repeated path right before its twin, so
 /// comparing neighbours is enough.
-fn refuse_clashing_local_paths(rows: &[ManifestRow]) -> Res {
+pub(super) fn refuse_clashing_local_paths(rows: &[ManifestRow]) -> Res {
     let mut local: Vec<(Vec<Component>, &LogicalKey)> = rows
         .iter()
         .map(|row| {

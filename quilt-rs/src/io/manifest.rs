@@ -226,13 +226,75 @@ pub async fn upload_row(
     let file_path = local_url
         .to_file_path()
         .map_err(|()| UriError::FileScheme(local_url))?;
+    upload_row_from_path(remote, host_config, package_handle, row, &file_path).await
+}
 
+/// Where the bytes of a row come from when the caller supplies them, rather
+/// than the row naming a `file://` path.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RowContent {
+    /// A file on disk, which may be anywhere: it need not be under a package
+    /// home or any managed working folder.
+    Path(PathBuf),
+    /// The bytes themselves, held in memory by the caller.
+    Bytes(Vec<u8>),
+}
+
+/// [`upload_row`], for a row whose bytes the caller supplies: the row's own
+/// `physical_key` is ignored and its `size` is taken from the content. Its
+/// `hash` only picks the checksum type, as in [`upload_row`], and is replaced
+/// by the one S3 answers with.
+///
+/// A [`RowContent::Path`] uploads straight from that file. The multipart upload
+/// and the checksum S3 computes both read a file, so [`RowContent::Bytes`] is
+/// staged to a private temporary file for the length of the upload and removed
+/// after it, success or failure. Nothing lands in any package home.
+pub async fn upload_row_content(
+    storage: &(impl Storage + Sync),
+    remote: &impl Remote,
+    host_config: &HostConfig,
+    package_handle: S3PackageHandle,
+    row: ManifestRow,
+    content: &RowContent,
+) -> Res<ManifestRow> {
+    match content {
+        RowContent::Path(path) => {
+            let size = storage.open_file(path).await?.metadata().await?.len();
+            let row = ManifestRow { size, ..row };
+            upload_row_from_path(remote, host_config, package_handle, row, path).await
+        }
+        RowContent::Bytes(bytes) => {
+            let staging = tempfile::tempdir()?;
+            let staged = staging.path().join(uuid::Uuid::new_v4().to_string());
+            storage
+                .write_byte_stream(&staged, ByteStream::from(bytes.clone()))
+                .await?;
+            let row = ManifestRow {
+                size: bytes.len() as u64,
+                ..row
+            };
+            let uploaded =
+                upload_row_from_path(remote, host_config, package_handle, row, &staged).await;
+            // Best effort: `staging` also removes the directory when it drops.
+            let _ = storage.remove_file(&staged).await;
+            uploaded
+        }
+    }
+}
+
+async fn upload_row_from_path(
+    remote: &impl Remote,
+    host_config: &HostConfig,
+    package_handle: S3PackageHandle,
+    row: ManifestRow,
+    file_path: &std::path::Path,
+) -> Res<ManifestRow> {
     let object_uri = ObjectUri::new(package_handle, row.logical_key.to_path_buf());
     log::info!("Uploading to S3: {object_uri}");
 
     let host_config = committed_checksums(host_config, &row);
     let (remote_url, hash) = remote
-        .upload_file(&host_config, &file_path, &object_uri.into(), row.size)
+        .upload_file(&host_config, file_path, &object_uri.into(), row.size)
         .await?;
 
     // Update the manifest with the sha2-256-chunked checksum

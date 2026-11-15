@@ -39,6 +39,18 @@ let installed_package = local_domain.install_package(&manifest_uri).await?;
 5. **Commit** — create a local package version (`flow::commit_package`)
 6. **Push** — upload changes to remote (`flow::push_package`)
 
+## Without a package home
+
+Two calls work from a manifest alone, with no `InstalledPackage`, lineage or
+managed working folder:
+
+- `flow::push_files` uploads rows from files or bytes the caller supplies, and
+  publishes the manifest. If `latest` has moved past the revision the push was
+  built on, the revision is still saved, `latest` is left alone, and the error
+  (`PackageOpError::PushedNotLatest`) carries the pushed top hash.
+- `flow::install_to` places a manifest's files in any folder, checking each
+  against its row's hash first.
+
 ## Hash Algorithms
 
 Supports multiple algorithms via `checksum::ObjectHash`:
