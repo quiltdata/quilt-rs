@@ -23,6 +23,7 @@
 
 ### Added
 
+- `flow::read_object` streams an object's bytes and checks them against the row's hash as they arrive, ending the stream with a checksum error after the last chunk when they do not match. On by default (`ReadOptions::unverified()` turns it off), and skipped for objects already in the object store (<https://github.com/quiltdata/quilt-rs/pull/1388>)
 - `settings` module: `SharedSettings` reads, sets and clears a default catalog (`default_catalog`, a bare host) in the shared `settings.json`, taking it from quilt3's `config.yml` when none is stored, and `effective_catalog` keeps a package's own catalog ahead of it (<https://github.com/quiltdata/quilt-rs/pull/1384>)
 - `VERSION` holds the crate's version, and `LocalDomain::stored_home` reads the home without setting one, `None` when the domain has none yet (<https://github.com/quiltdata/quilt-rs/pull/1371>)
 
