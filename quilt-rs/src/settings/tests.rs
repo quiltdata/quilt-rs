@@ -477,32 +477,33 @@ async fn a_first_quilt3_config_without_a_catalog_is_not_skipped_for_the_next() -
 
 #[test]
 fn quilt3_keeps_its_config_where_platformdirs_does() {
-    let data = || Some(PathBuf::from("/data"));
+    // Absolute on every platform, so the XDG check sees what it would on a real path.
+    let root = std::env::temp_dir();
+    let (data, xdg) = (root.join("data"), root.join("xdg"));
+    let config = |dir: &PathBuf, app: &str| dir.join(app).join("config.yml");
+    let data_dir = || Some(data.clone());
     assert_eq!(
-        quilt3_config_files_from(false, None, data()),
-        [PathBuf::from("/data/Quilt/config.yml")]
+        quilt3_config_files_from(false, None, data_dir()),
+        [config(&data, "Quilt")]
     );
     // An absolute XDG_DATA_HOME comes first; a relative one is ignored.
     assert_eq!(
-        quilt3_config_files_from(false, Some("/xdg".into()), data()),
-        [
-            PathBuf::from("/xdg/Quilt/config.yml"),
-            PathBuf::from("/data/Quilt/config.yml")
-        ]
+        quilt3_config_files_from(false, Some(xdg.clone()), data_dir()),
+        [config(&xdg, "Quilt"), config(&data, "Quilt")]
     );
     assert_eq!(
-        quilt3_config_files_from(false, Some("xdg".into()), data()),
-        [PathBuf::from("/data/Quilt/config.yml")]
+        quilt3_config_files_from(false, Some("xdg".into()), data_dir()),
+        [config(&data, "Quilt")]
     );
     // Linux's data dir is the XDG one, so it is not listed twice.
     assert_eq!(
-        quilt3_config_files_from(false, Some("/data".into()), data()),
-        [PathBuf::from("/data/Quilt/config.yml")]
+        quilt3_config_files_from(false, Some(data.clone()), data_dir()),
+        [config(&data, "Quilt")]
     );
     // Windows nests the app under its author and ignores XDG_DATA_HOME.
     assert_eq!(
-        quilt3_config_files_from(true, Some("/xdg".into()), data()),
-        [PathBuf::from("/data/QuiltData/Quilt/config.yml")]
+        quilt3_config_files_from(true, Some(xdg), data_dir()),
+        [data.join("QuiltData").join("Quilt").join("config.yml")]
     );
     assert_eq!(
         quilt3_config_files_from(false, None, None),
