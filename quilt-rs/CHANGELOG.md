@@ -38,6 +38,7 @@
 
 - On Windows, the top hash matches quilt3's for logical keys holding `\`, merging onto `latest` keeps keys such as `a/b` and `a\b` apart, and installing a package whose keys name one local file there (`a/b` and `a\b`, or `data` and `data\x.csv`) is refused before any file is written (<https://github.com/quiltdata/quilt-rs/pull/1377>)
 - The top hash matches quilt3's for metadata holding floats such as `1e-7` or `1e16`, and for an entry `meta` that is not an object, so quilt3 opens such packages (<https://github.com/quiltdata/quilt-rs/pull/1372>)
+- A manifest row with no `meta` key still reads as empty metadata, and writing a manifest always emits `"meta":{}` so quilt3 can load the row
 - A manifest that lists one logical key twice, or a key that is also the folder of another (`data` and `data/x.csv`), is refused when read, as quilt3 refuses it (<https://github.com/quiltdata/quilt-rs/pull/1372>)
 - A manifest header with no `message` key keeps its quilt3 top hash, and saving it again leaves the key out (<https://github.com/quiltdata/quilt-rs/pull/1375>)
 

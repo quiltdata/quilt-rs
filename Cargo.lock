@@ -5892,6 +5892,7 @@ dependencies = [
 name = "quilt-uri"
 version = "0.5.1-dev"
 dependencies = [
+ "log",
  "percent-encoding",
  "serde",
  "serde_json",

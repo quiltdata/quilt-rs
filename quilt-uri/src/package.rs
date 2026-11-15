@@ -363,7 +363,9 @@ impl TryFrom<&str> for S3PackageUri {
             (pkg_spec, RevisionPointer::Tag(Tag::Latest))
         };
 
-        let path = params.remove("path").map(PathBuf::from);
+        let path = params
+            .remove("path")
+            .and_then(|value| tidy_package_path(&value, trailing_padding_was_on_path(input)));
 
         let catalog = match params.remove("catalog") {
             Some(c) => Some(c.parse()?),
@@ -415,6 +417,42 @@ fn check_top_hash(hash: &str) -> Result<(), UriError> {
         Err(UriError::Package(format!(
             "hash must be 64 lowercase hex characters, got {hash:?}"
         )))
+    }
+}
+
+/// ASCII whitespace or a C0 control other than NUL, which a pasted URI may
+/// carry around a fragment value.
+fn is_uri_padding(c: char) -> bool {
+    c.is_ascii_whitespace() || (c.is_ascii_control() && c != '\0')
+}
+
+/// The URL parser already drops trailing padding on the last fragment value.
+fn trailing_padding_was_on_path(input: &str) -> bool {
+    let stripped = input.trim_end_matches(is_uri_padding);
+    if stripped == input {
+        return false;
+    }
+    stripped
+        .rsplit_once('#')
+        .and_then(|(_, fragment)| fragment.rsplit('&').next())
+        .is_some_and(|pair| pair.split('=').next() == Some("path"))
+}
+
+/// Accept a path quilt3 would accept, but never silently name a different entry.
+///
+/// Leading or trailing padding is trimmed and warned about. An empty `path=`
+/// is no path, matching quilt3.
+fn tidy_package_path(value: &str, raw_path_had_trailing_padding: bool) -> Option<PathBuf> {
+    let trimmed = value.trim_matches(is_uri_padding);
+    if trimmed != value || raw_path_had_trailing_padding {
+        log::warn!(
+            "trimmed leading or trailing whitespace from package URI path {value:?} to {trimmed:?}"
+        );
+    }
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(trimmed))
     }
 }
 
@@ -786,6 +824,32 @@ mod tests {
                 .unwrap_or_else(|e| panic!("{fragment}: {e}"));
             assert_eq!(uri.namespace.to_string(), namespace, "{fragment}");
             assert_eq!(uri.path, path.map(PathBuf::from), "{fragment}");
+        }
+    }
+
+    /// quilt3 accepts these; padding is trimmed so the URI cannot silently
+    /// name a different entry, and an empty `path=` is no path.
+    #[test]
+    fn a_padded_or_empty_path_is_trimmed_to_the_real_entry() {
+        for (input, path) in [
+            ("quilt+s3://bucket#package=a/b&path=a.csv", Some("a.csv")),
+            ("quilt+s3://bucket#package=a/b&path=a.csv ", Some("a.csv")),
+            ("quilt+s3://bucket#package=a/b&path=a.csv\t", Some("a.csv")),
+            ("quilt+s3://bucket#package=a/b&path= a.csv", Some("a.csv")),
+            ("quilt+s3://bucket#package=a/b&path=", None),
+            (
+                "quilt+s3://bucket#package=a/b&path=&catalog=quilt.test",
+                None,
+            ),
+            ("quilt+s3://bucket#package=a/b&path=%20", None),
+            ("quilt+s3://bucket#package=a/b&path=a.csv%20", Some("a.csv")),
+            (
+                "quilt+s3://bucket#package=a/b&path=a.csv\u{1}",
+                Some("a.csv"),
+            ),
+        ] {
+            let uri = S3PackageUri::try_from(input).unwrap_or_else(|e| panic!("{input:?}: {e}"));
+            assert_eq!(uri.path, path.map(PathBuf::from), "{input:?}");
         }
     }
 
