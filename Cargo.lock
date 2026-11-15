@@ -5761,6 +5761,7 @@ dependencies = [
  "base64 0.23.1",
  "bytes",
  "chrono",
+ "dirs",
  "getrandom 0.4.3",
  "gitignores",
  "hex",

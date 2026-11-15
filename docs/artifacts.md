@@ -111,6 +111,26 @@ refresh waiting on it finds no `tokens.json` afterwards and writes nothing.
 quilt-rs takes no lock for a host with no `<host>/`, which has no session to
 guard. Logging in writes `tokens.json` without the lock.
 
+## Shared settings (`$QUILT_AUTH_DIR/settings.json`)
+
+*Library API only; no client reads it yet.* Non-secret settings every Quilt
+client may share, designed in
+[quilt-specs#46](https://github.com/quiltdata/quilt-specs/pull/46). The folder
+is `QUILT_AUTH_DIR` when set, else `com.quiltdata.auth` under the platform's
+local data directory; it is not `$DATA_DIR`.
+
+| Artifact | Path | Contents |
+|----------|------|----------|
+| Settings | `<folder>/settings.json` | One JSON object; `default_catalog` is a bare catalog host, as in `.auth/<host>` |
+| Settings lock | `<folder>/settings.json.lock` | Held by every writer; created by its first holder |
+
+A missing file or key means there is no default catalog. A writer takes the
+lock, rereads the file, changes only its own key and renames a temp file over
+it, so keys it does not know survive. A file that is not a JSON object is
+reported and never replaced. The default is only a fallback for an operation
+with no package: a package's own catalog wins, and a package with no catalog
+stays on this computer's AWS credentials.
+
 ## Logs (`$DATA_DIR/logs/`)
 
 *QuiltSync only.* Opened by **Debug → Show logs**. Path is hardcoded relative
