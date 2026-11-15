@@ -18,6 +18,7 @@ use quilt_uri::Host;
 use quilt_uri::Namespace;
 
 mod browse;
+mod catalog;
 mod commit;
 mod create;
 mod gc;
@@ -390,11 +391,33 @@ impl PackageRef {
 }
 
 #[derive(Subcommand, Debug)]
+enum CatalogAction {
+    /// Make this Quilt stack the default
+    Set {
+        /// Ex. open.quiltdata.com
+        host: Host,
+    },
+    /// Forget the default; quilt3's is not taken again
+    Clear,
+}
+
+#[derive(Subcommand, Debug)]
 enum Commands {
     /// Browse remote manifest
     Browse {
         #[arg(value_name = "PKG_URI")]
         uri: String,
+    },
+    /// Show, set or clear the default catalog
+    ///
+    /// The default is what `login` and `role` use when you leave out `--host`.
+    /// It is kept in `settings.json` in the shared folder (`QUILT_AUTH_DIR`),
+    /// and is never used for a package: a package keeps the catalog it was
+    /// installed from, or none. With nothing stored, it is taken from quilt3's
+    /// `config.yml`, which is only read.
+    Catalog {
+        #[command(subcommand)]
+        action: Option<CatalogAction>,
     },
     /// Create a new local package
     Create {
@@ -511,8 +534,10 @@ enum Commands {
         /// Code from the `https://QUILT_STACK/code` page
         #[arg(short, long)]
         code: Option<String>,
+        /// Quilt stack to log in to. Omit to use the default catalog.
+        /// Ex. open.quiltdata.com
         #[arg(long)]
-        host: Host,
+        host: Option<Host>,
     },
     /// List installed packages
     ///
@@ -591,10 +616,10 @@ enum Commands {
     /// client signed in as you can read and write, this CLI and the desktop
     /// app alike. Listing marks the active role with a leading asterisk.
     Role {
-        /// Quilt stack to read the role from.
+        /// Quilt stack to read the role from. Omit to use the default catalog.
         /// Ex. open.quiltdata.com
         #[arg(long)]
-        host: Host,
+        host: Option<Host>,
         /// Switch to this role instead of listing the roles you hold
         #[arg(long, value_name = "ROLE")]
         set: Option<String>,
@@ -686,6 +711,7 @@ impl Commands {
             self,
             Commands::Login { .. }
                 | Commands::Browse { .. }
+                | Commands::Catalog { .. }
                 | Commands::Role { .. }
                 | Commands::Home { dir: Some(_), .. }
                 | Commands::Upgrade
@@ -739,6 +765,17 @@ pub async fn init(args: Args) -> Result<Std, Error> {
 
             log::debug!("Browsing {args:?}");
             Ok(browse::command(m, args).await)
+        }
+        Commands::Catalog { action } => {
+            let action = match action {
+                None => catalog::Action::Show,
+                Some(CatalogAction::Set { host }) => catalog::Action::Set(host),
+                Some(CatalogAction::Clear) => catalog::Action::Clear,
+            };
+            let args = catalog::Input { action };
+
+            log::debug!("Catalog {args:?}");
+            Ok(catalog::command(m, args).await)
         }
         Commands::Create {
             namespace,
@@ -832,6 +869,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             Ok(keep::command(m, args).await)
         }
         Commands::Login { code, host } => {
+            let host = catalog::host_or_default(host).await?;
             if let Some(code) = code {
                 let args = login::Input { code, host };
 
@@ -902,6 +940,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             Ok(remove_revisions::command(m, args).await)
         }
         Commands::Role { host, set } => {
+            let host = catalog::host_or_default(host).await?;
             let args = role::Input { host, set };
 
             log::debug!("Role {args:?}");
@@ -964,6 +1003,12 @@ Then run:
 > quilt login --host {0} --code YOUR_CODE"
     )]
     LoginRequired(Host),
+
+    #[error("No catalog given and no default set. Pass --host, or run \"quilt catalog set HOST\"")]
+    NoCatalog,
+
+    #[error("Could not determine the folder for shared settings. Set QUILT_AUTH_DIR")]
+    SettingsDir,
 
     #[error("Package {0} not found")]
     NamespaceNotFound(Namespace),
@@ -1061,6 +1106,8 @@ impl Error {
                 _ => "quilt_error",
             },
             Error::LoginRequired(_) => "login_required",
+            Error::NoCatalog => "no_catalog",
+            Error::SettingsDir => "settings_dir",
             Error::NamespaceNotFound(_) => "namespace_not_found",
             Error::NoDownloadWithPath => "no_download_with_path",
             Error::NamespaceRequired => "namespace_required",
@@ -1183,6 +1230,8 @@ mod tests {
                 "namespace_not_found",
             ),
             (Error::LoginRequired(fixtures::host()), "login_required"),
+            (Error::NoCatalog, "no_catalog"),
+            (Error::SettingsDir, "settings_dir"),
             (
                 Error::Json(
                     serde_json::from_str::<serde_json::Value>("{").expect_err("malformed JSON"),
@@ -1278,8 +1327,37 @@ mod tests {
         let Commands::Role { host, set } = switching.command else {
             panic!("expected the role command");
         };
-        assert_eq!(host.to_string(), "quilt.test");
+        assert_eq!(host.unwrap().to_string(), "quilt.test");
         assert_eq!(set.as_deref(), Some("ReadOnly"));
+    }
+
+    /// `--host` is optional on `login` and `role`: left out, they use the
+    /// default catalog. `catalog` alone shows it.
+    #[test]
+    fn host_is_optional_where_a_default_can_stand_in() {
+        let login = Args::try_parse_from(["quilt", "login"]).unwrap();
+        assert!(matches!(login.command, Commands::Login { host: None, .. }));
+        let role = Args::try_parse_from(["quilt", "role"]).unwrap();
+        assert!(matches!(role.command, Commands::Role { host: None, .. }));
+
+        let show = Args::try_parse_from(["quilt", "catalog"]).unwrap();
+        assert!(matches!(show.command, Commands::Catalog { action: None }));
+        let set = Args::try_parse_from(["quilt", "catalog", "set", "quilt.test"]).unwrap();
+        let Commands::Catalog {
+            action: Some(CatalogAction::Set { host }),
+        } = set.command
+        else {
+            panic!("expected catalog set");
+        };
+        assert_eq!(host.to_string(), "quilt.test");
+        let clear = Args::try_parse_from(["quilt", "catalog", "clear"]).unwrap();
+        assert!(matches!(
+            clear.command,
+            Commands::Catalog {
+                action: Some(CatalogAction::Clear)
+            }
+        ));
+        assert!(Args::try_parse_from(["quilt", "catalog", "set"]).is_err());
     }
 
     /// `--host` names the Quilt stack for a first push, as in `login` and
@@ -2086,7 +2164,7 @@ mod tests {
         let commands = [
             Commands::Login {
                 code: None,
-                host: fixtures::host(),
+                host: Some(fixtures::host()),
             },
             Commands::Browse {
                 uri: "not-a-package-uri".to_string(),
@@ -2132,7 +2210,7 @@ mod tests {
             json: false,
             command: Commands::Login {
                 code: None,
-                host: fixtures::host(),
+                host: Some(fixtures::host()),
             },
         };
 

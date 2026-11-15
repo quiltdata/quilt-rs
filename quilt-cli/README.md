@@ -50,6 +50,7 @@ cargo install quilt-cli
 | `uninstall` | Remove a package; `--prune` also deletes its files |
 | `gc`        | Delete stored files no installed package uses    |
 | `remove-revisions` | Remove old revisions this copy no longer needs |
+| `catalog`   | Show, set or clear the default Quilt stack       |
 | `login`     | Authenticate against a Quilt stack               |
 | `role`      | Show or switch your active role on a stack       |
 | `version`   | Print the version, as `quilt --version` does     |
@@ -286,6 +287,13 @@ Package files are stored under `~/QuiltSync` by default. Run
 `quilt home <dir>` first when you want a different package directory. The
 namespace defaults to the one in the URI, so `install` needs no `--namespace`
 here.
+
+`quilt catalog set open.quiltdata.com` makes a stack the default, so `login`
+and `role` can leave out `--host`; `quilt catalog` shows it and
+`quilt catalog clear` forgets it. With none set, `quilt catalog` takes the
+host of `navigator_url` from quilt3's `config.yml`, once, and keeps it in
+`settings.json` in the shared folder (`QUILT_AUTH_DIR`). The default is never
+used for a package, which keeps the catalog it came from, or none.
 
 URIs follow the [Quilt+ URI format](https://docs.quilt.bio/quilt-platform-catalog-user/uri).
 With `&catalog=<host>`, S3 requests use the stack credentials from

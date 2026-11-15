@@ -455,6 +455,26 @@ async fn the_first_quilt3_config_that_exists_is_the_one_read() -> Res {
     Ok(())
 }
 
+#[tokio::test]
+async fn a_first_quilt3_config_without_a_catalog_is_not_skipped_for_the_next() -> Res {
+    let (settings, storage, _) = settings();
+    let first = quilt3_config(storage.temp_dir.path(), "a");
+    let second = quilt3_config(storage.temp_dir.path(), "b");
+    put(&storage, &first, b"registryUrl: https://r.quilt.test\n").await?;
+    put(
+        &storage,
+        &second,
+        b"navigator_url: https://second.quilt.test\n",
+    )
+    .await?;
+
+    assert_eq!(
+        settings.default_catalog_or_adopt(&[first, second]).await?,
+        None
+    );
+    Ok(())
+}
+
 #[test]
 fn quilt3_keeps_its_config_where_platformdirs_does() {
     let data = || Some(PathBuf::from("/data"));

@@ -113,8 +113,8 @@ guard. Logging in writes `tokens.json` without the lock.
 
 ## Shared settings (`$QUILT_AUTH_DIR/settings.json`)
 
-*Library API only; no client reads it yet.* Non-secret settings every Quilt
-client may share, designed in
+*The `quilt` CLI only, so far.* Non-secret settings every Quilt client may
+share, designed in
 [quilt-specs#46](https://github.com/quiltdata/quilt-specs/pull/46). The folder
 is `QUILT_AUTH_DIR` when set, else `com.quiltdata.auth` under the platform's
 local data directory; it is not `$DATA_DIR`. On Unix a change sets the folder
@@ -126,12 +126,15 @@ included.
 | Settings | `<folder>/settings.json` | One JSON object; `default_catalog` is a bare catalog host, as in `.auth/<host>` |
 | Settings lock | `<folder>/settings.json.lock` | Held by every writer; created by its first holder |
 
-A missing file or key means there is no default catalog. A writer takes the
-lock, rereads the file and writes it whole through a temp file and a rename,
-changing only its own key, so keys it does not know survive. A file that is
-not a JSON object is reported and never replaced. The default is only a
-fallback for an operation with no package: a package's own catalog wins, and
-a package with no catalog stays on this computer's AWS credentials.
+A missing file or key means there is no default catalog, unless quilt3 has
+one: the first read takes the host of `navigator_url` from quilt3's
+`config.yml`, which is only read, and stores it. Clearing the default stores
+`null`, which stops that. A writer takes the lock, rereads the file and writes
+it whole through a temp file and a rename, changing only its own key, so keys
+it does not know survive. A file that is not a JSON object is reported and
+never replaced. The default is only a fallback for a command with no package
+and no host: a package's own catalog wins, and a package with no catalog stays
+on this computer's AWS credentials.
 
 ## Logs (`$DATA_DIR/logs/`)
 

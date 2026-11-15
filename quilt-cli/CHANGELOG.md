@@ -23,6 +23,7 @@
 
 ### Added
 
+- `quilt catalog` shows, sets (`set HOST`) and clears the default catalog, which `quilt login` and `quilt role` use when `--host` is left out; a default is taken from quilt3's `config.yml` the first time, and never applies to a package (<https://github.com/quiltdata/quilt-rs/pull/1384>)
 - `quilt version` prints what `quilt --version` prints, and `quilt version --details` adds what a bug report needs: the library versions, the OS, and the folders quilt uses (<https://github.com/quiltdata/quilt-rs/pull/1371>)
 
 ### Changed
