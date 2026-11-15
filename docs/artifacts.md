@@ -130,8 +130,8 @@ A missing file or key means there is no default catalog. A writer takes the
 lock, rereads the file and writes it whole through a temp file and a rename,
 changing only its own key, so keys it does not know survive. A file that is
 not a JSON object is reported and never replaced. The default is only a
-fallback for an operation with no package: a package's own catalog wins, and a package with no catalog
-stays on this computer's AWS credentials.
+fallback for an operation with no package: a package's own catalog wins, and
+a package with no catalog stays on this computer's AWS credentials.
 
 ## Logs (`$DATA_DIR/logs/`)
 
