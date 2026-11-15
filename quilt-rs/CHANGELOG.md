@@ -24,6 +24,7 @@
 ### Added
 
 - `settings` module: `SharedSettings` reads, sets and clears a default catalog (`default_catalog`, a bare host) in the shared `settings.json`, taking it from quilt3's `config.yml` when none is stored, and `effective_catalog` keeps a package's own catalog ahead of it (<https://github.com/quiltdata/quilt-rs/pull/1384>)
+- **Breaking:** `ManifestRow` and `ManifestHeader` have a new field each, `meta_numbers` and `user_meta_numbers`, a new `RawNumbers`: the whole numbers beyond 64 bits that metadata read from a manifest holds, as the text they were written with. A literal with every field needs them (<https://github.com/quiltdata/quilt-rs/pull/1389>)
 - `VERSION` holds the crate's version, and `LocalDomain::stored_home` reads the home without setting one, `None` when the domain has none yet (<https://github.com/quiltdata/quilt-rs/pull/1371>)
 
 ### Changed
@@ -39,6 +40,7 @@
 
 - On Windows, the top hash matches quilt3's for logical keys holding `\`, merging onto `latest` keeps keys such as `a/b` and `a\b` apart, and installing a package whose keys name one local file there (`a/b` and `a\b`, or `data` and `data\x.csv`) is refused before any file is written (<https://github.com/quiltdata/quilt-rs/pull/1377>)
 - The top hash matches quilt3's for metadata holding floats such as `1e-7` or `1e16`, and for an entry `meta` that is not an object, so quilt3 opens such packages (<https://github.com/quiltdata/quilt-rs/pull/1372>)
+- The top hash and the written manifest match quilt3's for metadata holding whole numbers beyond 64 bits, which are kept as written, and for `-0`, which is `0`; floats are written as Python writes them, such as `1e+16` (<https://github.com/quiltdata/quilt-rs/pull/1389>)
 - A manifest row with no `meta` key still reads as empty metadata, and writing a manifest always emits `"meta":{}` so quilt3 can load the row (<https://github.com/quiltdata/quilt-rs/pull/1385>)
 - A manifest that lists one logical key twice, or a key that is also the folder of another (`data` and `data/x.csv`), is refused when read, as quilt3 refuses it (<https://github.com/quiltdata/quilt-rs/pull/1372>)
 - A manifest header with no `message` key keeps its quilt3 top hash, and saving it again leaves the key out (<https://github.com/quiltdata/quilt-rs/pull/1375>)
