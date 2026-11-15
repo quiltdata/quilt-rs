@@ -23,6 +23,7 @@
 
 ### Added
 
+- `flow::push_files` publishes a manifest from files or bytes the caller supplies, and `flow::install_to` installs a manifest's files into any folder, both without a package home or lineage. A push whose parent is no longer `latest` still saves its revision, leaves `latest` alone, and returns `PackageOpError::PushedNotLatest` with the pushed top hash (<https://github.com/quiltdata/quilt-rs/pull/1386>)
 - `settings` module: `SharedSettings` reads, sets and clears a default catalog (`default_catalog`, a bare host) in the shared `settings.json`, taking it from quilt3's `config.yml` when none is stored, and `effective_catalog` keeps a package's own catalog ahead of it (<https://github.com/quiltdata/quilt-rs/pull/1384>)
 - `VERSION` holds the crate's version, and `LocalDomain::stored_home` reads the home without setting one, `None` when the domain has none yet (<https://github.com/quiltdata/quilt-rs/pull/1371>)
 
