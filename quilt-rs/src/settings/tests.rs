@@ -146,6 +146,28 @@ async fn a_file_that_is_not_a_json_object_is_an_error_and_is_kept() -> Res {
     Ok(())
 }
 
+#[cfg(unix)]
+#[test(tokio::test)]
+async fn a_settings_file_that_cannot_be_read_is_an_error_and_is_kept() -> Res {
+    let (settings, storage, dir) = settings();
+    storage.create_private_dir(&dir).await?;
+    let path = dir.join(SETTINGS_FILE);
+    // A link to itself: its metadata cannot be read, which is not an absent file.
+    std::os::unix::fs::symlink(&path, &path)?;
+
+    assert!(settings.default_catalog().await.is_err());
+    assert!(
+        settings
+            .set_default_catalog(&fixtures::host())
+            .await
+            .is_err()
+    );
+    assert!(settings.clear_default_catalog().await.is_err());
+    assert!(settings.default_catalog_or_adopt(&[]).await.is_err());
+    assert!(std::fs::symlink_metadata(&path)?.is_symlink());
+    Ok(())
+}
+
 #[test(tokio::test)]
 async fn a_bad_default_is_an_error_to_read_and_a_set_repairs_it() -> Res {
     for content in [

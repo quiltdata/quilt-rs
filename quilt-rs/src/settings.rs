@@ -254,10 +254,11 @@ impl<S: Storage + Sync> SharedSettings<S> {
 
     async fn read(&self) -> Res<Map<String, Value>> {
         let path = self.file();
-        if !self.storage.exists(&path).await {
-            return Ok(Map::new());
-        }
-        let bytes = self.storage.read_bytes(&path).await?;
+        let bytes = match self.storage.read_bytes(&path).await {
+            Ok(bytes) => bytes,
+            Err(err) if is_absent(&err) => return Ok(Map::new()),
+            Err(err) => return Err(err),
+        };
         match serde_json::from_slice(&bytes) {
             Ok(Value::Object(map)) => Ok(map),
             Ok(_) => Err(unreadable(&path, "not a JSON object")),
@@ -271,6 +272,18 @@ impl<S: Storage + Sync> SharedSettings<S> {
             .write_byte_stream(self.file(), bytes.into())
             .await
     }
+}
+
+/// Whether a read failed because there is no file, and not for any other reason.
+fn is_absent(err: &crate::Error) -> bool {
+    let mut cause: Option<&(dyn std::error::Error + 'static)> = Some(err);
+    err.is_not_found()
+        || std::iter::from_fn(|| {
+            let current = cause?;
+            cause = current.source();
+            Some(current)
+        })
+        .any(|e| matches!(e.downcast_ref::<std::io::Error>(), Some(io) if io.kind() == ErrorKind::NotFound))
 }
 
 fn host_in(map: &Map<String, Value>, path: &Path) -> Res<Option<Host>> {
