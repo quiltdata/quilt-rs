@@ -17,6 +17,7 @@ use crate::io::manifest::tag_timestamp;
 use crate::io::manifest::upload_manifest;
 use crate::io::manifest::upload_row;
 use crate::io::manifest::upload_row_content;
+use crate::io::remote::HostConfig;
 use crate::io::remote::Remote;
 use crate::io::remote::entry_view;
 use crate::io::remote::validate_workflow_against_current_config;
@@ -46,30 +47,61 @@ pub struct PushTarget {
 /// Where each row's bytes come from, in order:
 ///
 /// 1. `files`, keyed by logical key: a file anywhere on disk, or the bytes
-///    themselves ([`RowContent`]). The row's own `physical_key`, `size` and
-///    `hash` are ignored; S3's checksum becomes the row's hash.
+///    themselves ([`RowContent`]). The row's own `physical_key` is ignored and
+///    its `size` is measured from the content. Its `hash` decides the checksum:
+///    a row with no hash ([`ObjectHash::default`](crate::object_hash::ObjectHash))
+///    gets S3's checksum of the host's configured type; a row that already
+///    carries a real hash, such as one quilt3 computed in memory, keeps it with
+///    its labeled type, and the upload is an error unless the bytes hash to it.
 /// 2. A `file://` `physical_key`, uploaded as `push` does.
 /// 3. An `s3://` `physical_key`, kept where it is: the bytes are already on the
-///    remote, and nothing is copied.
+///    remote, and nothing is copied. Its `hash` and `size` are trusted as the
+///    caller gives them; nothing re-reads the object to check them.
 ///
 /// Any other row is refused before anything is uploaded, and so is a key in
-/// `files` that the manifest has no row for. The revision is checked against its
-/// workflow before the first upload, as in [`push_onto`](super::push_onto).
+/// `files` that the manifest has no row for. The sizes of supplied content are
+/// measured first, so the revision's workflow, including its entries schema, is
+/// checked against real sizes before the first upload, as in
+/// [`push_onto`](super::push_onto). A file whose size or modified time changes
+/// while it is uploading, or between that measurement and its upload, is an
+/// error.
 ///
 /// Then the manifest is written and tagged with its timestamp, and `latest` is
-/// moved to it only if `latest` still names `target.parent` (or names nothing,
-/// or already names this revision). When `latest` has moved on, the push still
-/// succeeds in the sense that the revision is stored and reachable by its hash,
-/// but `latest` is left alone and the call returns
-/// [`PackageOpError::PushedNotLatest`], which carries the pushed top hash.
+/// moved to it only if `latest` still names `target.parent` when read just
+/// before the tag write. `latest` also moves when it names nothing, even if the
+/// push has a parent: there is no revision for the push to conflict with. The
+/// read of `latest` and the write of the tag are two requests, not one atomic
+/// step, so a push that lands between them can still be overwritten.
+///
+/// When `latest` names another revision, the push still succeeds in the sense
+/// that the revision is stored and reachable by its hash, but `latest` is left
+/// alone and the call returns [`PackageOpError::PushedNotLatest`], which carries
+/// the pushed top hash. If instead writing the timestamp tag, or reading or
+/// writing `latest`, fails after the manifest is stored, the call returns
+/// [`PackageOpError::PushTagFailed`], which carries the top hash and the
+/// failure: the revision is stored, and `latest` may or may not have moved. A
+/// failure before the manifest is stored has no top hash to report, and leaves
+/// the rows already uploaded as unreferenced objects.
 pub async fn push_files(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
     target: &PushTarget,
-    manifest: Manifest,
+    mut manifest: Manifest,
     files: &BTreeMap<LogicalKey, RowContent>,
 ) -> Res<PushOutcome> {
     refuse_unplaceable_rows(&manifest, files)?;
+
+    // Measured before validation, so the entries schema sees what will be
+    // uploaded rather than the placeholder size of a row the caller never sized.
+    let mut measured: BTreeMap<&LogicalKey, u64> = BTreeMap::new();
+    for (key, content) in files {
+        measured.insert(key, content.size(storage).await?);
+    }
+    for row in &mut manifest.rows {
+        if let Some(size) = measured.get(&row.logical_key) {
+            row.size = *size;
+        }
+    }
 
     let mut sorted: Vec<&ManifestRow> = manifest.rows.iter().collect();
     sorted.sort_by(|a, b| a.logical_key.cmp(&b.logical_key));
@@ -87,25 +119,7 @@ pub async fn push_files(
     .await?;
 
     let host_config = remote.host_config(target.origin.as_ref()).await?;
-    let mut rows = Vec::with_capacity(manifest.rows.len());
-    for row in manifest.rows {
-        let uploaded = if let Some(content) = files.get(&row.logical_key) {
-            upload_row_content(
-                storage,
-                remote,
-                &host_config,
-                target.handle.clone(),
-                row,
-                content,
-            )
-            .await?
-        } else if row.physical_key.starts_with("s3://") {
-            row
-        } else {
-            upload_row(remote, &host_config, target.handle.clone(), row).await?
-        };
-        rows.push(uploaded);
-    }
+    let rows = upload_rows(storage, remote, target, &host_config, manifest.rows, files).await?;
     let manifest = Manifest {
         header: manifest.header,
         rows,
@@ -127,7 +141,17 @@ pub async fn push_files(
         origin: target.origin.clone(),
     };
     upload_manifest(storage, remote, &manifest_uri, &cache_path).await?;
-    tag_timestamp(remote, &manifest_uri, chrono::Utc::now()).await?;
+
+    // From here the revision is stored, so a failure names its hash.
+    let tag_failed = |err: Error| {
+        Error::from(PackageOpError::PushTagFailed {
+            top_hash: manifest_uri.hash.clone(),
+            reason: err.to_string(),
+        })
+    };
+    tag_timestamp(remote, &manifest_uri, chrono::Utc::now())
+        .await
+        .map_err(tag_failed)?;
 
     let latest = match resolve_tag(
         remote,
@@ -139,7 +163,7 @@ pub async fn push_files(
     {
         Ok(latest) => Some(latest.hash),
         Err(err) if err.is_not_found() => None,
-        Err(err) => return Err(err),
+        Err(err) => return Err(tag_failed(err)),
     };
     match latest {
         Some(latest) if latest != manifest_uri.hash && Some(&latest) != target.parent.as_ref() => {
@@ -158,7 +182,9 @@ pub async fn push_files(
             .into())
         }
         _ => {
-            tag_latest(remote, &manifest_uri).await?;
+            tag_latest(remote, &manifest_uri)
+                .await
+                .map_err(tag_failed)?;
             info!("✔️ Certified {} as latest", manifest_uri.display());
             Ok(PushOutcome {
                 manifest_uri,
@@ -166,6 +192,46 @@ pub async fn push_files(
             })
         }
     }
+}
+
+/// Uploads every row that is not already on the remote, and returns the rows
+/// as the published manifest will hold them.
+async fn upload_rows(
+    storage: &(impl Storage + Sync),
+    remote: &impl Remote,
+    target: &PushTarget,
+    host_config: &HostConfig,
+    rows: Vec<ManifestRow>,
+    files: &BTreeMap<LogicalKey, RowContent>,
+) -> Res<Vec<ManifestRow>> {
+    let mut uploaded_rows = Vec::with_capacity(rows.len());
+    for row in rows {
+        let uploaded = if let Some(content) = files.get(&row.logical_key) {
+            let measured_size = row.size;
+            let uploaded = upload_row_content(
+                storage,
+                remote,
+                host_config,
+                target.handle.clone(),
+                row,
+                content,
+            )
+            .await?;
+            if uploaded.size != measured_size {
+                return Err(Error::PackageOp(PackageOpError::Push(format!(
+                    "{} changed after its size was read: it was {measured_size} bytes, then {}",
+                    uploaded.logical_key, uploaded.size
+                ))));
+            }
+            uploaded
+        } else if row.physical_key.starts_with("s3://") {
+            row
+        } else {
+            upload_row(remote, host_config, target.handle.clone(), row).await?
+        };
+        uploaded_rows.push(uploaded);
+    }
+    Ok(uploaded_rows)
 }
 
 /// Refuses, before any upload, a file the manifest has no row for and a row
@@ -199,11 +265,13 @@ mod tests {
     use super::*;
 
     use aws_sdk_s3::primitives::ByteStream;
+    use bytes::Bytes;
     use test_log::test;
 
     use crate::io::remote::mocks::MockRemote;
     use crate::manifest::HeaderMessage;
     use crate::manifest::ManifestHeader;
+    use quilt_uri::Host;
     use quilt_uri::S3Uri;
 
     const LATEST: &str = "s3://bkt/.quilt/named_packages/test/survey/latest";
@@ -276,7 +344,10 @@ mod tests {
             .write_byte_stream(&elsewhere, ByteStream::from_static(b"x,y\n1,2\n"))
             .await?;
         let files = BTreeMap::from([
-            (key("a.txt"), RowContent::Bytes(b"hello".to_vec())),
+            (
+                key("a.txt"),
+                RowContent::Bytes(Bytes::from_static(b"hello")),
+            ),
             (key("data/b.csv"), RowContent::Path(elsewhere)),
         ]);
         let manifest = manifest(vec![bare_row("a.txt"), bare_row("data/b.csv")]);
@@ -311,7 +382,7 @@ mod tests {
     async fn a_revision_onto_the_latest_it_was_built_on_becomes_latest() -> Res {
         let remote = MockRemote::default();
         seed_latest(&remote, PARENT).await?;
-        let files = BTreeMap::from([(key("a.txt"), RowContent::Bytes(b"hi".to_vec()))]);
+        let files = BTreeMap::from([(key("a.txt"), RowContent::Bytes(Bytes::from_static(b"hi")))]);
 
         let pushed = push_files(
             &remote.storage,
@@ -334,7 +405,7 @@ mod tests {
     async fn a_latest_that_moved_keeps_the_revision_but_not_latest() -> Res {
         let remote = MockRemote::default();
         seed_latest(&remote, SOMEONE_ELSE).await?;
-        let files = BTreeMap::from([(key("a.txt"), RowContent::Bytes(b"hi".to_vec()))]);
+        let files = BTreeMap::from([(key("a.txt"), RowContent::Bytes(Bytes::from_static(b"hi")))]);
 
         let pushed = push_files(
             &remote.storage,
@@ -366,7 +437,7 @@ mod tests {
     async fn a_first_revision_over_an_existing_latest_does_not_take_latest() -> Res {
         let remote = MockRemote::default();
         seed_latest(&remote, SOMEONE_ELSE).await?;
-        let files = BTreeMap::from([(key("a.txt"), RowContent::Bytes(b"hi".to_vec()))]);
+        let files = BTreeMap::from([(key("a.txt"), RowContent::Bytes(Bytes::from_static(b"hi")))]);
 
         let pushed = push_files(
             &remote.storage,
@@ -412,7 +483,10 @@ mod tests {
     #[test(tokio::test)]
     async fn a_file_with_no_row_publishes_nothing() -> Res {
         let remote = MockRemote::default();
-        let files = BTreeMap::from([(key("ghost.txt"), RowContent::Bytes(b"?".to_vec()))]);
+        let files = BTreeMap::from([(
+            key("ghost.txt"),
+            RowContent::Bytes(Bytes::from_static(b"?")),
+        )]);
 
         let pushed = push_files(
             &remote.storage,
@@ -434,7 +508,7 @@ mod tests {
     #[test(tokio::test)]
     async fn a_row_with_no_way_to_get_its_bytes_publishes_nothing() -> Res {
         let remote = MockRemote::default();
-        let files = BTreeMap::from([(key("a.txt"), RowContent::Bytes(b"ok".to_vec()))]);
+        let files = BTreeMap::from([(key("a.txt"), RowContent::Bytes(Bytes::from_static(b"ok")))]);
 
         // `bare_row` has an empty physical key and no bytes are supplied for it.
         let pushed = push_files(
@@ -451,6 +525,443 @@ mod tests {
             "{pushed:?}"
         );
         assert_eq!(revisions(&remote).await?, Vec::<String>::new());
+        Ok(())
+    }
+
+    /// A remote that acts like the mock but can break the publish step or change
+    /// a file mid-push, so a test can land a failure or an edit where it wants.
+    struct Meddling {
+        inner: MockRemote,
+        /// Fails writes to anything under `.quilt/named_packages/`: the tags.
+        fail_tags: bool,
+        /// A file to append to when the push asks for the host's config (after
+        /// its size was measured, before it is uploaded).
+        grow_on_host_config: Option<std::path::PathBuf>,
+        /// A file to append to during its upload.
+        grow_on_upload: Option<std::path::PathBuf>,
+    }
+
+    impl Meddling {
+        fn new() -> Self {
+            Self {
+                inner: MockRemote::default(),
+                fail_tags: false,
+                grow_on_host_config: None,
+                grow_on_upload: None,
+            }
+        }
+
+        async fn append(&self, path: &std::path::Path) -> Res {
+            let mut contents = self
+                .inner
+                .storage
+                .read_byte_stream(path)
+                .await?
+                .collect()
+                .await?
+                .to_vec();
+            contents.extend_from_slice(b" and more");
+            self.inner
+                .storage
+                .write_byte_stream(path, ByteStream::from(contents))
+                .await
+        }
+    }
+
+    impl Remote for Meddling {
+        async fn exists(&self, host: Option<&Host>, uri: &S3Uri) -> Res<bool> {
+            self.inner.exists(host, uri).await
+        }
+
+        async fn get_object_stream(
+            &self,
+            host: Option<&Host>,
+            uri: &S3Uri,
+        ) -> Res<crate::io::remote::RemoteObjectStream> {
+            self.inner.get_object_stream(host, uri).await
+        }
+
+        async fn resolve_url(&self, host: Option<&Host>, uri: &S3Uri) -> Res<S3Uri> {
+            self.inner.resolve_url(host, uri).await
+        }
+
+        async fn put_object(
+            &self,
+            host: Option<&Host>,
+            uri: &S3Uri,
+            contents: impl Into<ByteStream>,
+        ) -> Res {
+            if self.fail_tags && uri.key.contains(".quilt/named_packages/") {
+                return Err(Error::PackageOp(PackageOpError::Package(
+                    "tag write refused".to_string(),
+                )));
+            }
+            self.inner.put_object(host, uri, contents).await
+        }
+
+        async fn upload_file(
+            &self,
+            host_config: &crate::io::remote::HostConfig,
+            source_path: impl AsRef<std::path::Path>,
+            dest_uri: &S3Uri,
+            size: u64,
+        ) -> Res<(S3Uri, crate::object_hash::ObjectHash)> {
+            if let Some(path) = &self.grow_on_upload {
+                self.append(path).await?;
+            }
+            self.inner
+                .upload_file(host_config, source_path, dest_uri, size)
+                .await
+        }
+
+        async fn host_config(&self, host: Option<&Host>) -> Res<crate::io::remote::HostConfig> {
+            if let Some(path) = &self.grow_on_host_config {
+                self.append(path).await?;
+            }
+            self.inner.host_config(host).await
+        }
+
+        async fn verify_bucket(&self, bucket: &str) -> Res {
+            self.inner.verify_bucket(bucket).await
+        }
+
+        async fn published_revisions(
+            &self,
+            host: Option<&Host>,
+            bucket: &str,
+            namespace: &quilt_uri::Namespace,
+        ) -> Res<Vec<String>> {
+            self.inner
+                .published_revisions(host, bucket, namespace)
+                .await
+        }
+    }
+
+    const ENTRIES_CONFIG: &[u8] = b"version: \"1\"\nworkflows:\n  gate:\n    name: Gate\n    entries_schema: entries\nschemas:\n  entries:\n    url: s3://bkt/schemas/entries.json\n";
+
+    fn gated(row: ManifestRow) -> Manifest {
+        let mut manifest = manifest(vec![row]);
+        manifest.header.workflow = Some(crate::manifest::Workflow {
+            config: "s3://bkt/.quilt/workflows/config.yml".parse().expect("uri"),
+            id: Some(crate::manifest::WorkflowId {
+                id: "gate".to_string(),
+                schemas: BTreeMap::new(),
+            }),
+        });
+        manifest
+    }
+
+    async fn with_entries_schema(remote: &MockRemote, schema: &str) -> Res {
+        remote
+            .put_object(
+                None,
+                &S3Uri::try_from("s3://bkt/.quilt/workflows/config.yml")?,
+                ENTRIES_CONFIG.to_vec(),
+            )
+            .await?;
+        remote
+            .put_object(
+                None,
+                &S3Uri::try_from("s3://bkt/schemas/entries.json")?,
+                schema.as_bytes().to_vec(),
+            )
+            .await
+    }
+
+    /// The entries schema judges the size of what will be uploaded, not the
+    /// placeholder size of a row the caller never sized.
+    #[test(tokio::test)]
+    async fn the_entries_schema_sees_the_real_size_of_supplied_content() -> Res {
+        let files = BTreeMap::from([(
+            key("a.txt"),
+            RowContent::Bytes(Bytes::from_static(b"hello")),
+        )]);
+        // Five bytes satisfy "at least four"; the placeholder size, zero, would not.
+        let remote = MockRemote::default();
+        with_entries_schema(
+            &remote,
+            r#"{"type": "array", "items": {"properties": {"size": {"minimum": 4}}}}"#,
+        )
+        .await?;
+        let pushed = push_files(
+            &remote.storage,
+            &remote,
+            &target(None),
+            gated(bare_row("a.txt")),
+            &files,
+        )
+        .await;
+        assert!(pushed.is_ok(), "{pushed:?}");
+
+        // And five bytes break "at most three", which the placeholder would meet.
+        let remote = MockRemote::default();
+        with_entries_schema(
+            &remote,
+            r#"{"type": "array", "items": {"properties": {"size": {"maximum": 3}}}}"#,
+        )
+        .await?;
+        let pushed = push_files(
+            &remote.storage,
+            &remote,
+            &target(None),
+            gated(bare_row("a.txt")),
+            &files,
+        )
+        .await;
+        assert!(
+            matches!(pushed, Err(Error::WorkflowValidation(_))),
+            "{pushed:?}"
+        );
+        assert_eq!(revisions(&remote).await?, Vec::<String>::new());
+        Ok(())
+    }
+
+    /// A row with no hash is hashed with the host's configured type, and a row
+    /// that carries a real hash keeps it, whatever the host's type is, so long
+    /// as the bytes hash to it.
+    #[test(tokio::test)]
+    async fn supplied_content_keeps_a_real_hash_and_otherwise_takes_the_hosts_type() -> Res {
+        use crate::object_hash::MULTIHASH_CRC64_NVME;
+        use crate::object_hash::MULTIHASH_SHA256_CHUNKED;
+        let remote = MockRemote::default();
+        let files = BTreeMap::from([
+            (
+                key("bare.txt"),
+                RowContent::Bytes(Bytes::from_static(b"hi")),
+            ),
+            (
+                key("hashed.txt"),
+                RowContent::Bytes(Bytes::from_static(b"yo")),
+            ),
+        ]);
+        // quilt3 hashed `yo` with CRC64 while the host is configured for
+        // sha2-256-chunked, which is what a row with no hash gets here.
+        let crc64 = crate::io::manifest::hash_bytes(b"yo", MULTIHASH_CRC64_NVME).await?;
+        let hashed = ManifestRow {
+            hash: crc64.clone(),
+            ..bare_row("hashed.txt")
+        };
+
+        let pushed = push_files(
+            &remote.storage,
+            &remote,
+            &target(None),
+            manifest(vec![bare_row("bare.txt"), hashed]),
+            &files,
+        )
+        .await?;
+
+        let stored = pushed_manifest(&remote, &pushed.manifest_uri.hash).await?;
+        let bare = stored
+            .get_record(std::path::Path::new("bare.txt"))
+            .expect("bare");
+        assert_eq!(bare.hash.algorithm(), MULTIHASH_SHA256_CHUNKED);
+        let kept = stored
+            .get_record(std::path::Path::new("hashed.txt"))
+            .expect("hashed");
+        assert_eq!(kept.hash, crc64);
+        Ok(())
+    }
+
+    /// Bytes that do not hash to the hash the row carries are an error, and
+    /// nothing is published.
+    #[test(tokio::test)]
+    async fn supplied_content_that_does_not_match_its_hash_is_an_error() -> Res {
+        use crate::object_hash::MULTIHASH_CRC64_NVME;
+        use crate::object_hash::MULTIHASH_SHA256;
+        use crate::object_hash::MULTIHASH_SHA256_CHUNKED;
+        for algorithm in [
+            MULTIHASH_CRC64_NVME,
+            MULTIHASH_SHA256_CHUNKED,
+            MULTIHASH_SHA256,
+        ] {
+            let remote = MockRemote::default();
+            let claimed = crate::io::manifest::hash_bytes(b"what was hashed", algorithm).await?;
+            let row = ManifestRow {
+                hash: claimed,
+                ..bare_row("a.txt")
+            };
+            let files = BTreeMap::from([(
+                key("a.txt"),
+                RowContent::Bytes(Bytes::from_static(b"what was supplied")),
+            )]);
+
+            let pushed = push_files(
+                &remote.storage,
+                &remote,
+                &target(None),
+                manifest(vec![row]),
+                &files,
+            )
+            .await;
+
+            assert!(
+                matches!(&pushed, Err(Error::PackageOp(PackageOpError::Push(message))) if message.contains("do not hash")),
+                "algorithm {algorithm:#x}: {pushed:?}"
+            );
+            assert_eq!(revisions(&remote).await?, Vec::<String>::new());
+        }
+        Ok(())
+    }
+
+    /// A legacy SHA-256 hash, which S3 cannot compute, is verified here and kept.
+    #[test(tokio::test)]
+    async fn a_legacy_sha256_hash_is_verified_locally_and_kept() -> Res {
+        use crate::object_hash::MULTIHASH_SHA256;
+        let remote = MockRemote::default();
+        let claimed = crate::io::manifest::hash_bytes(b"yo", MULTIHASH_SHA256).await?;
+        let row = ManifestRow {
+            hash: claimed.clone(),
+            ..bare_row("a.txt")
+        };
+        let files = BTreeMap::from([(key("a.txt"), RowContent::Bytes(Bytes::from_static(b"yo")))]);
+
+        let pushed = push_files(
+            &remote.storage,
+            &remote,
+            &target(None),
+            manifest(vec![row]),
+            &files,
+        )
+        .await?;
+
+        let stored = pushed_manifest(&remote, &pushed.manifest_uri.hash).await?;
+        assert_eq!(stored.rows[0].hash, claimed);
+        Ok(())
+    }
+
+    /// The type of a row with no hash is the host's: CRC64 when the host asks for it.
+    #[test(tokio::test)]
+    async fn a_row_with_no_hash_follows_the_hosts_type() -> Res {
+        use crate::io::remote::HostConfig;
+        use crate::object_hash::MULTIHASH_CRC64_NVME;
+        use crate::object_hash::MULTIHASH_SHA256_CHUNKED;
+        let remote = MockRemote::default();
+        let handle = target(None).handle;
+        let content = RowContent::Bytes(Bytes::from_static(b"hi"));
+        for (host, expected) in [
+            (HostConfig::default_crc64(), MULTIHASH_CRC64_NVME),
+            (HostConfig::default(), MULTIHASH_SHA256_CHUNKED),
+        ] {
+            let uploaded = crate::io::manifest::upload_row_content(
+                &remote.storage,
+                &remote,
+                &host,
+                handle.clone(),
+                bare_row("a.txt"),
+                &content,
+            )
+            .await?;
+            assert_eq!(uploaded.hash.algorithm(), expected);
+        }
+        Ok(())
+    }
+
+    /// With a parent but no `latest` there is nothing to conflict with.
+    #[test(tokio::test)]
+    async fn a_push_with_a_parent_takes_latest_when_there_is_none() -> Res {
+        let remote = MockRemote::default();
+        let files = BTreeMap::from([(key("a.txt"), RowContent::Bytes(Bytes::from_static(b"hi")))]);
+
+        let pushed = push_files(
+            &remote.storage,
+            &remote,
+            &target(Some(PARENT)),
+            manifest(vec![bare_row("a.txt")]),
+            &files,
+        )
+        .await?;
+
+        assert!(pushed.certified_latest);
+        assert_eq!(read(&remote, LATEST).await?, pushed.manifest_uri.hash);
+        Ok(())
+    }
+
+    /// Once the manifest is stored, a failing tag write still names its hash.
+    #[test(tokio::test)]
+    async fn a_failed_tag_write_names_the_stored_revision() -> Res {
+        let mut remote = Meddling::new();
+        remote.fail_tags = true;
+        let files = BTreeMap::from([(key("a.txt"), RowContent::Bytes(Bytes::from_static(b"hi")))]);
+
+        let pushed = push_files(
+            &remote.inner.storage,
+            &remote,
+            &target(None),
+            manifest(vec![bare_row("a.txt")]),
+            &files,
+        )
+        .await;
+
+        let Err(Error::PackageOp(PackageOpError::PushTagFailed { top_hash, reason })) = pushed
+        else {
+            panic!("expected PushTagFailed, got {pushed:?}");
+        };
+        assert!(reason.contains("tag write refused"), "{reason}");
+        assert!(
+            pushed_manifest(&remote.inner, &top_hash).await.is_ok(),
+            "the manifest named in the error is stored"
+        );
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn a_file_that_changes_during_its_upload_is_an_error() -> Res {
+        let mut remote = Meddling::new();
+        let elsewhere = std::path::absolute("/not/a/package/home/c.txt")?;
+        remote
+            .inner
+            .storage
+            .write_byte_stream(&elsewhere, ByteStream::from_static(b"original"))
+            .await?;
+        remote.grow_on_upload = Some(elsewhere.clone());
+        let files = BTreeMap::from([(key("c.txt"), RowContent::Path(elsewhere))]);
+
+        let pushed = push_files(
+            &remote.inner.storage,
+            &remote,
+            &target(None),
+            manifest(vec![bare_row("c.txt")]),
+            &files,
+        )
+        .await;
+
+        assert!(
+            matches!(&pushed, Err(Error::PackageOp(PackageOpError::Push(message))) if message.contains("changed while")),
+            "{pushed:?}"
+        );
+        assert_eq!(revisions(&remote.inner).await?, Vec::<String>::new());
+        Ok(())
+    }
+
+    /// The size the workflow was validated against is the size uploaded: a file
+    /// that grows between the two is refused.
+    #[test(tokio::test)]
+    async fn a_file_that_changes_after_its_size_was_read_is_an_error() -> Res {
+        let mut remote = Meddling::new();
+        let elsewhere = std::path::absolute("/not/a/package/home/c.txt")?;
+        remote
+            .inner
+            .storage
+            .write_byte_stream(&elsewhere, ByteStream::from_static(b"original"))
+            .await?;
+        remote.grow_on_host_config = Some(elsewhere.clone());
+        let files = BTreeMap::from([(key("c.txt"), RowContent::Path(elsewhere))]);
+
+        let pushed = push_files(
+            &remote.inner.storage,
+            &remote,
+            &target(None),
+            manifest(vec![bare_row("c.txt")]),
+            &files,
+        )
+        .await;
+
+        assert!(
+            matches!(&pushed, Err(Error::PackageOp(PackageOpError::Push(message))) if message.contains("changed after its size")),
+            "{pushed:?}"
+        );
+        assert_eq!(revisions(&remote.inner).await?, Vec::<String>::new());
         Ok(())
     }
 }

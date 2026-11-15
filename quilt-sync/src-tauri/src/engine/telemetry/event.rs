@@ -327,6 +327,7 @@ impl From<&crate::engine::quilt::Error> for Failure {
                 PackageOpError::Commit(_)
                 | PackageOpError::Push(_)
                 | PackageOpError::PushedNotLatest { .. }
+                | PackageOpError::PushTagFailed { .. }
                 | PackageOpError::Publish(_)
                 | PackageOpError::Undo(_)
                 | PackageOpError::Package(_),

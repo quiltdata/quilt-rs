@@ -45,11 +45,19 @@ Two calls work from a manifest alone, with no `InstalledPackage`, lineage or
 managed working folder:
 
 - `flow::push_files` uploads rows from files or bytes the caller supplies, and
-  publishes the manifest. If `latest` has moved past the revision the push was
-  built on, the revision is still saved, `latest` is left alone, and the error
-  (`PackageOpError::PushedNotLatest`) carries the pushed top hash.
+  publishes the manifest. A row with no hash gets S3's checksum of the host's
+  configured type; a row that already carries a real hash keeps it, and the
+  upload is an error unless the bytes hash to it. `latest` moves to the new
+  revision only if it still names the revision the push was built on when read
+  just before the tag write, or names nothing. That read and the write are two
+  requests, not one atomic step, so a push that lands between them can still be
+  overwritten. If `latest` has moved past the parent, the revision is still
+  saved, `latest` is left alone, and the error (`PackageOpError::PushedNotLatest`)
+  carries the pushed top hash. If writing a tag fails after the manifest is
+  stored, `PackageOpError::PushTagFailed` carries the top hash too.
 - `flow::install_to` places a manifest's files in any folder, checking each
-  against its row's hash first.
+  against its row's hash first. Fetching is all-or-nothing, but the renames
+  into place are not: a failure partway leaves the files already placed.
 
 ## Hash Algorithms
 

@@ -22,7 +22,9 @@ use quilt_uri::Tag;
 
 /// Publish `manifest`, whose rows are already on the remote, as the revision
 /// after `parent`, and tag it `latest` only if `latest` still names `parent`
-/// when read just before the tag write.
+/// when read just before the tag write. That read and the write are two
+/// requests, not one atomic step, so a push that lands between them can still
+/// be overwritten.
 pub async fn push_onto(
     paths: &DomainPaths,
     storage: &(impl Storage + Sync),

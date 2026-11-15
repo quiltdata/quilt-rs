@@ -8,6 +8,7 @@ use crate::Error;
 use crate::InstallPathError;
 use crate::LogicalKey;
 use crate::Res;
+use crate::error::PackageOpError;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::manifest::Manifest;
@@ -17,6 +18,7 @@ use quilt_uri::Host;
 use super::install_paths::Mismatch;
 use super::install_paths::cache_immutable_object;
 use super::install_paths::refuse_clashing_local_paths;
+use super::install_paths::refuse_if_present;
 
 /// What [`install_to`] did, by logical key.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -35,19 +37,34 @@ pub struct InstallToReport {
 ///
 /// There is no package home, no `InstalledPackage` and no lineage: nothing is
 /// recorded about the folder, and nothing outside it is written. Each file is
-/// fetched and checked against its row's hash before it is placed, by the same
-/// check [`install_paths`](super::install_paths) makes before a file enters the
-/// object store. A file that fails the check is left out and reported, as
+/// fetched and checked against its row's hash first, by the same check
+/// [`install_paths`](super::install_paths) makes before a file enters the object
+/// store. A file that fails the check is left out and reported, as
 /// `install_paths` does.
 ///
-/// `only` picks rows by logical key; `None` installs every row. A key with no
-/// row is refused, as is any file already in the destination, and so are two keys
-/// that name one local file. Every refusal comes before the first fetch. The
-/// fetched files are staged in a hidden folder inside `dest`, which is removed
-/// on every exit, and renamed into place only once all of them are fetched, so a
-/// failed fetch places nothing.
+/// `only` picks rows by logical key; `None` installs every row. These are
+/// refused before the first fetch:
 ///
-/// Every selected row must have an `s3://` `physical_key`.
+/// - a key with no row;
+/// - a row whose `physical_key` is not an `s3://` location, which this call
+///   cannot fetch;
+/// - two keys that name one local file;
+/// - a file already at a target, or a file where a target's folder would go
+///   (in the destination itself or any folder between it and the target).
+///
+/// **Fetching is all-or-nothing; placing is not.** The fetched files are staged
+/// in a hidden folder inside `dest`, removed on every exit, so a failed fetch
+/// places nothing. Once every fetch has succeeded the staged files are renamed
+/// into place one at a time. Just before the first rename every target is
+/// checked to be absent again, as [`install_paths`](super::install_paths) does,
+/// so a file that appeared during the fetch is not overwritten. A rename that
+/// fails partway (a full disk, a permission change) leaves the files already
+/// placed where they are: they are not rolled back. A file created at a target
+/// during the renames themselves, a window of milliseconds, is not caught, since
+/// a rename replaces what it finds.
+///
+/// A `dest` that did not exist is created for the install and removed again if
+/// the install fails before placing anything.
 ///
 /// `dest_registry`, which quilt3's `install` offers to put the package in
 /// another registry, is not here: it depends on how local registries are
@@ -61,25 +78,25 @@ pub async fn install_to(
     only: Option<&[PathBuf]>,
 ) -> Res<InstallToReport> {
     let rows = select_rows(manifest, only)?;
+    refuse_unfetchable_rows(&rows)?;
     refuse_clashing_local_paths(&rows)?;
-    let mut existing = Vec::new();
-    for row in &rows {
-        if storage.exists(row.logical_key.join_to(dest)).await {
-            existing.push(row.logical_key.to_path_buf());
-        }
-    }
-    if !existing.is_empty() {
-        return Err(Error::InstallPath(InstallPathError::LocalFileExists(
-            existing,
-        )));
-    }
+    refuse_blocked_targets(storage, &rows, dest).await?;
 
+    let created_dest = !storage.exists(dest).await;
     storage.create_dir_all(dest).await?;
     let staging = dest.join(format!(".quilt-install-{}", uuid::Uuid::new_v4()));
     storage.create_dir_all(&staging).await?;
     let installed = fetch_and_place(storage, remote, host, &rows, dest, &staging).await;
     let _ = storage.remove_dir_all(&staging).await;
-    let report = installed?;
+    let report = match installed {
+        Ok(report) => report,
+        Err(err) => {
+            if created_dest {
+                remove_if_empty(storage, dest).await;
+            }
+            return Err(err);
+        }
+    };
     info!(
         "✔️ Installed {} files to {}, skipped {}, hash mismatch {}",
         report.placed.len(),
@@ -88,6 +105,17 @@ pub async fn install_to(
         report.hash_mismatch.len()
     );
     Ok(report)
+}
+
+/// Removes `dir` if nothing is in it, for a folder this install made. A folder
+/// with anything in it (files placed before a failure) is kept.
+async fn remove_if_empty(storage: &(impl Storage + Sync), dir: &Path) {
+    let Ok(mut entries) = storage.read_dir(dir).await else {
+        return;
+    };
+    if matches!(entries.next_entry().await, Ok(None)) {
+        let _ = storage.remove_dir_all(dir).await;
+    }
 }
 
 fn select_rows(manifest: &Manifest, only: Option<&[PathBuf]>) -> Res<Vec<ManifestRow>> {
@@ -102,6 +130,68 @@ fn select_rows(manifest: &Manifest, only: Option<&[PathBuf]>) -> Res<Vec<Manifes
                 .ok_or_else(|| Error::InstallPath(InstallPathError::NotInRevision(path.clone())))
         })
         .collect()
+}
+
+/// A row with no `s3://` key has nowhere to be fetched from.
+fn refuse_unfetchable_rows(rows: &[ManifestRow]) -> Res {
+    match rows
+        .iter()
+        .find(|row| !row.physical_key.starts_with("s3://"))
+    {
+        Some(row) => Err(Error::PackageOp(PackageOpError::Package(format!(
+            "{} cannot be installed: its physical key {:?} is not an s3:// location",
+            row.logical_key, row.physical_key
+        )))),
+        None => Ok(()),
+    }
+}
+
+/// Whether `path` holds something other than a folder this install can put files
+/// in: a file, or anything else that cannot be listed.
+async fn blocks_a_folder(storage: &(impl Storage + Sync), path: &Path) -> bool {
+    storage.exists(path).await
+        && (storage.is_file(path).await || storage.read_dir(path).await.is_err())
+}
+
+/// Refuses a target that already holds a file, and a target whose folder, or
+/// any folder above it inside `dest`, is held by a file.
+async fn refuse_blocked_targets(
+    storage: &(impl Storage + Sync),
+    rows: &[ManifestRow],
+    dest: &Path,
+) -> Res {
+    let mut blocked = Vec::new();
+    for row in rows {
+        let target = row.logical_key.join_to(dest);
+        for ancestor in target
+            .ancestors()
+            .skip(1)
+            .take_while(|ancestor| ancestor.starts_with(dest))
+        {
+            if blocks_a_folder(storage, ancestor).await {
+                let shown = ancestor.strip_prefix(dest).unwrap_or(ancestor);
+                let shown = if shown.as_os_str().is_empty() {
+                    dest
+                } else {
+                    shown
+                };
+                blocked.push(shown.to_path_buf());
+            }
+        }
+    }
+    if !blocked.is_empty() {
+        blocked.sort();
+        blocked.dedup();
+        return Err(Error::InstallPath(InstallPathError::LocalFileExists(
+            blocked,
+        )));
+    }
+    refuse_if_present(
+        storage,
+        rows.iter()
+            .map(|row| (row.logical_key.join_to(dest), &row.logical_key)),
+    )
+    .await
 }
 
 async fn fetch_and_place(
@@ -119,13 +209,21 @@ async fn fetch_and_place(
         let fetching = staging.join(uuid::Uuid::new_v4().to_string());
         storage.create_dir_all(&fetching).await?;
         match cache_immutable_object(storage, remote, host, &held, row, &fetching).await? {
-            None => staged.push((held, row)),
+            None => staged.push((held, row.logical_key.join_to(dest), row)),
             Some(Mismatch::Replaced) => report.skipped.push(row.logical_key.to_path_buf()),
             Some(Mismatch::WrongHash) => report.hash_mismatch.push(row.logical_key.to_path_buf()),
         }
     }
-    for (held, row) in staged {
-        let target = row.logical_key.join_to(dest);
+    // A file may have appeared during the fetches: check again, as
+    // `install_paths` does, before the first rename.
+    refuse_if_present(
+        storage,
+        staged
+            .iter()
+            .map(|(_, target, row)| (target.as_path(), &row.logical_key)),
+    )
+    .await?;
+    for (held, target, row) in staged {
         if let Some(parent) = target.parent() {
             storage.create_dir_all(parent).await?;
         }
@@ -332,8 +430,150 @@ mod tests {
 
         assert!(installed.is_err());
         assert!(!storage.exists(dest.join("a.txt")).await);
+        assert!(
+            !storage.exists(&dest).await,
+            "a destination the install made is removed when it fails"
+        );
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn a_failed_fetch_keeps_a_destination_that_was_already_there() -> Res {
+        let remote = MockRemote::default();
+        let storage = MockStorage::default();
+        let manifest = manifest(vec![row(
+            "gone.txt",
+            b"x",
+            "s3://b/p/gone.txt?versionId=v1",
+        )]);
+        let dest = std::path::absolute("/dest")?;
+        storage.create_dir_all(&dest).await?;
+
+        let installed = install_to(&storage, &remote, None, &manifest, &dest, None).await;
+
+        assert!(installed.is_err());
         let mut entries = storage.read_dir(&dest).await?;
         assert!(entries.next_entry().await?.is_none(), "staging was removed");
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn a_file_where_a_folder_would_go_is_refused_before_any_fetch() -> Res {
+        let remote = MockRemote::default();
+        let storage = MockStorage::default();
+        put(&remote, "s3://b/p/a.txt?versionId=v1", b"alpha").await?;
+        put(&remote, "s3://b/p/sub/deep/b.txt?versionId=v1", b"beta").await?;
+        let manifest = manifest(vec![
+            row("a.txt", b"alpha", "s3://b/p/a.txt?versionId=v1"),
+            row(
+                "sub/deep/b.txt",
+                b"beta",
+                "s3://b/p/sub/deep/b.txt?versionId=v1",
+            ),
+        ]);
+        let dest = std::path::absolute("/dest")?;
+        storage
+            .write_byte_stream(dest.join("sub"), ByteStream::from_static(b"a file"))
+            .await?;
+
+        let installed = install_to(&storage, &remote, None, &manifest, &dest, None).await;
+
+        assert!(
+            matches!(
+                &installed,
+                Err(Error::InstallPath(InstallPathError::LocalFileExists(paths)))
+                    if paths == &vec![PathBuf::from("sub")]
+            ),
+            "{installed:?}"
+        );
+        assert_eq!(remote.get_object_count("s3://b/p/a.txt?versionId=v1"), 0);
+        assert!(!storage.exists(dest.join("a.txt")).await);
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn a_destination_that_is_a_file_is_refused() -> Res {
+        let remote = MockRemote::default();
+        let storage = MockStorage::default();
+        put(&remote, "s3://b/p/a.txt?versionId=v1", b"alpha").await?;
+        let manifest = manifest(vec![row("a.txt", b"alpha", "s3://b/p/a.txt?versionId=v1")]);
+        let dest = std::path::absolute("/dest")?;
+        storage
+            .write_byte_stream(&dest, ByteStream::from_static(b"a file"))
+            .await?;
+
+        let installed = install_to(&storage, &remote, None, &manifest, &dest, None).await;
+
+        assert!(
+            matches!(
+                &installed,
+                Err(Error::InstallPath(InstallPathError::LocalFileExists(_)))
+            ),
+            "{installed:?}"
+        );
+        assert_eq!(remote.get_object_count("s3://b/p/a.txt?versionId=v1"), 0);
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn a_row_that_is_not_on_s3_is_refused_before_any_fetch() -> Res {
+        let remote = MockRemote::default();
+        let storage = MockStorage::default();
+        put(&remote, "s3://b/p/a.txt?versionId=v1", b"alpha").await?;
+        let manifest = manifest(vec![
+            row("a.txt", b"alpha", "s3://b/p/a.txt?versionId=v1"),
+            row("local.txt", b"x", "file:///somewhere/local.txt"),
+        ]);
+        let dest = std::path::absolute("/dest")?;
+
+        let installed = install_to(&storage, &remote, None, &manifest, &dest, None).await;
+
+        assert!(
+            matches!(&installed, Err(Error::PackageOp(PackageOpError::Package(message))) if message.contains("local.txt")),
+            "{installed:?}"
+        );
+        assert_eq!(remote.get_object_count("s3://b/p/a.txt?versionId=v1"), 0);
+        assert!(!storage.exists(&dest).await);
+        Ok(())
+    }
+
+    /// A file that appears while the fetches run is the user's own: the check
+    /// just before the first rename refuses, and nothing is placed.
+    #[test(tokio::test)]
+    async fn a_file_that_appears_during_the_fetch_is_not_overwritten() -> Res {
+        let remote = MockRemote::default();
+        let storage = MockStorage::default();
+        put(&remote, "s3://b/p/a.txt?versionId=v1", b"alpha").await?;
+        put(&remote, "s3://b/p/b.txt?versionId=v1", b"beta").await?;
+        let manifest = manifest(vec![
+            row("a.txt", b"alpha", "s3://b/p/a.txt?versionId=v1"),
+            row("b.txt", b"beta", "s3://b/p/b.txt?versionId=v1"),
+        ]);
+        let dest = std::path::absolute("/dest")?;
+        let gate = remote.park("s3://b/p/b.txt?versionId=v1");
+
+        let install = install_to(&storage, &remote, None, &manifest, &dest, None);
+        let meddle = async {
+            gate.arrived().await;
+            storage
+                .write_byte_stream(dest.join("a.txt"), ByteStream::from_static(b"mine"))
+                .await?;
+            gate.release();
+            Ok::<(), Error>(())
+        };
+        let (installed, meddled) = tokio::join!(install, meddle);
+        meddled?;
+
+        assert!(
+            matches!(
+                &installed,
+                Err(Error::InstallPath(InstallPathError::LocalFileExists(paths)))
+                    if paths == &vec![PathBuf::from("a.txt")]
+            ),
+            "{installed:?}"
+        );
+        assert_eq!(read(&storage, &dest.join("a.txt")).await?, "mine");
+        assert!(!storage.exists(dest.join("b.txt")).await);
         Ok(())
     }
 }

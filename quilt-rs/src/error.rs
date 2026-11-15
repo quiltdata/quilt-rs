@@ -340,6 +340,19 @@ pub enum PackageOpError {
     #[error("Push error: {0}")]
     Push(String),
 
+    /// The revision's manifest was stored, but writing its timestamp tag, or
+    /// reading or writing `latest`, failed. The revision is reachable by
+    /// `top_hash`; whether `latest` moved is unknown. `reason` is the failure.
+    #[error(
+        "Pushed revision {top_hash}, but could not finish publishing it: {reason}. The revision manifest is saved; latest may not have been updated."
+    )]
+    PushTagFailed {
+        /// The top hash of the revision whose manifest was stored.
+        top_hash: String,
+        /// What failed, as the failing call reported it.
+        reason: String,
+    },
+
     /// A push whose parent is no longer `latest`: the revision was written,
     /// and `latest` was left alone.
     #[error(

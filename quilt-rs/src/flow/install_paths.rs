@@ -145,6 +145,29 @@ async fn commit_staged(
     storage.modified_timestamp(&mutable_target).await
 }
 
+/// Refuses, naming each logical key, when any of the destinations already holds
+/// a file: it is not one this install placed, so it is the user's own, and a
+/// rename would replace it. The check [`place_where_absent`] makes before its
+/// first rename, and [`install_to`](super::install_to) makes before its own.
+pub(super) async fn refuse_if_present<'a, P: AsRef<Path>>(
+    storage: &(impl Storage + Sync),
+    destinations: impl Iterator<Item = (P, &'a LogicalKey)>,
+) -> Res {
+    let mut existing = Vec::new();
+    for (working_dest, key) in destinations {
+        if storage.exists(working_dest.as_ref()).await {
+            existing.push(key.to_path_buf());
+        }
+    }
+    if !existing.is_empty() {
+        debug!("❌ Local files appeared while the paths were being staged");
+        return Err(Error::InstallPath(InstallPathError::LocalFileExists(
+            existing,
+        )));
+    }
+    Ok(())
+}
+
 /// Places every staged file where nothing is, or none of them: anything already
 /// at a destination is a file this copy does not track, the user's own, and it
 /// must survive.
@@ -157,18 +180,13 @@ async fn place_where_absent(
     staged: &[(PathBuf, PathBuf, ManifestRow)],
     lineage: &mut PackageLineage,
 ) -> Res {
-    let mut existing = Vec::new();
-    for (_, working_dest, row) in staged {
-        if storage.exists(working_dest).await {
-            existing.push(row.logical_key.to_path_buf());
-        }
-    }
-    if !existing.is_empty() {
-        debug!("❌ Local files appeared while the paths were being staged");
-        return Err(Error::InstallPath(InstallPathError::LocalFileExists(
-            existing,
-        )));
-    }
+    refuse_if_present(
+        storage,
+        staged
+            .iter()
+            .map(|(_, working_dest, row)| (working_dest.as_path(), &row.logical_key)),
+    )
+    .await?;
     for (staged_path, working_dest, row) in staged {
         let last_modified = commit_staged(storage, staged_path, working_dest).await?;
         lineage.paths.insert(
