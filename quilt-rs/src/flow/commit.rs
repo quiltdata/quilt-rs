@@ -350,8 +350,14 @@ pub async fn commit_package(
 
     let stream = tokio_stream::iter(vec![Ok(all_rows)]);
     let dest_dir = paths.installed_manifests_dir(&namespace);
-    let (manifest_path, new_top_hash) =
-        build_manifest_from_rows_stream(storage, dest_dir, header, stream).await?;
+    let (manifest_path, new_top_hash) = build_manifest_from_rows_stream(
+        storage,
+        dest_dir,
+        header,
+        manifest.dir_meta.clone(),
+        stream,
+    )
+    .await?;
     info!(
         "✔️New manifest with {} was built in {}",
         manifest_path.display(),
@@ -1118,6 +1124,48 @@ mod tests {
             empty_remote.get_object_count(config_uri.to_string().as_str()),
             0
         );
+        Ok(())
+    }
+
+    /// A commit keeps the folders' metadata of the manifest it builds on, and
+    /// leaves it out of the top hash, so the hash is the one of the same
+    /// package without it.
+    #[test(tokio::test)]
+    async fn a_commit_keeps_the_folder_metadata() -> Res {
+        let dir_meta = vec![crate::manifest::DirMeta {
+            logical_key: crate::LogicalKey::new("data")?,
+            meta: serde_json::json!({"owner": "team"}),
+        }];
+        let paths = DomainPaths::new(std::path::absolute("/foo")?);
+        let namespace: Namespace = ("foo", "bar").into();
+        let mut hashes = Vec::new();
+        for dir_meta in [dir_meta.clone(), Vec::new()] {
+            let storage = MockStorage::default();
+            let (_, committed) = commit_package(
+                PackageLineage::default(),
+                &mut Manifest {
+                    dir_meta,
+                    ..Manifest::default()
+                },
+                &paths,
+                &storage,
+                &MockRemote::default(),
+                None,
+                PathBuf::default(),
+                InstalledPackageStatus::default(),
+                namespace.clone(),
+                "Lorem ipsum".to_string(),
+                UserMeta::Keep,
+                None,
+            )
+            .await?;
+            let hash = committed.hash().expect("a commit").to_string();
+            let written =
+                Manifest::from_path(&storage, &paths.installed_manifest(&namespace, &hash)).await?;
+            hashes.push((hash, written.dir_meta));
+        }
+        assert_eq!(hashes[0], (hashes[1].0.clone(), dir_meta));
+        assert_eq!(hashes[1].1, []);
         Ok(())
     }
 }

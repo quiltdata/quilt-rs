@@ -222,7 +222,7 @@ pub async fn create_package(
     let stream = tokio_stream::iter(vec![Ok(rows)]);
     let dest_dir = paths.installed_manifests_dir(&namespace);
     let (_manifest_path, top_hash) =
-        build_manifest_from_rows_stream(storage, dest_dir, header, stream).await?;
+        build_manifest_from_rows_stream(storage, dest_dir, header, Vec::new(), stream).await?;
 
     info!("✔️ Initial manifest built with hash: {}", top_hash);
 

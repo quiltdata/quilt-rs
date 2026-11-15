@@ -10,6 +10,7 @@ pub use crate::workflow::Workflow;
 pub use crate::workflow::WorkflowId;
 
 use std::path::Path;
+use std::path::PathBuf;
 
 use serde::Deserialize;
 use serde::Deserializer;
@@ -122,6 +123,77 @@ fn number_to_u64<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u64, D::E
     f64::deserialize(deserializer).map(|n| n as u64)
 }
 
+/// A manifest line after the header, before it is known to be a file's row or
+/// a folder's. quilt3 tells them apart by `physical_keys`: a row without any
+/// is folder metadata.
+#[derive(Deserialize)]
+struct Quilt3Line {
+    logical_key: PathBuf,
+    #[serde(default)]
+    physical_keys: Option<Vec<String>>,
+    #[serde(default)]
+    hash: Option<object_hash::ObjectHash>,
+    #[serde(default, deserialize_with = "optional_number_to_u64")]
+    size: Option<u64>,
+    #[serde(default)]
+    meta: Option<serde_json::Value>,
+}
+
+fn optional_number_to_u64<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<u64>, D::Error> {
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    Option::<f64>::deserialize(deserializer).map(|n| n.map(|n| n as u64))
+}
+
+enum Line {
+    File(Box<ManifestRow>),
+    Dir(DirMeta),
+}
+
+impl TryFrom<Quilt3Line> for Line {
+    type Error = Error;
+
+    fn try_from(line: Quilt3Line) -> Result<Self, Self::Error> {
+        let Quilt3Line {
+            logical_key,
+            physical_keys,
+            hash,
+            size,
+            meta,
+        } = line;
+        let physical_keys = physical_keys.unwrap_or_default();
+        if physical_keys.is_empty() {
+            let Some(folder) = logical_key
+                .to_str()
+                .and_then(|key| key.strip_suffix('/'))
+                .map(str::to_owned)
+            else {
+                return Err(ManifestError::Header("Physical key is missing".to_string()).into());
+            };
+            return Ok(Line::Dir(DirMeta {
+                logical_key: LogicalKey::new(folder)?,
+                meta: meta.unwrap_or(serde_json::Value::Null),
+            }));
+        }
+        let missing = |field| {
+            Error::Json(<serde_json::Error as serde::de::Error>::missing_field(
+                field,
+            ))
+        };
+        Ok(Line::File(Box::new(
+            Quilt3ManifestRow {
+                logical_key: LogicalKey::new(logical_key)?,
+                physical_keys,
+                hash: hash.ok_or_else(|| missing("hash"))?,
+                size: size.ok_or_else(|| missing("size"))?,
+                meta,
+            }
+            .try_into()?,
+        )))
+    }
+}
+
 impl From<ManifestRow> for Quilt3ManifestRow {
     fn from(row: ManifestRow) -> Self {
         Self {
@@ -177,22 +249,74 @@ impl TryFrom<Quilt3ManifestRow> for ManifestRow {
     }
 }
 
-/// A package is a tree: no key twice, and no key that is also a folder.
+/// The metadata of a folder: a `{"logical_key": "dir/", "meta": …}` row, which
+/// has no physical key.
+///
+/// Like quilt3, a manifest keeps it where it is read, writes only metadata that
+/// says something (not `null`, `{}`, `0`, `""` or `false`), and leaves it out of
+/// the top hash.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct DirMeta {
+    /// The folder, without the trailing `/` its manifest row has.
+    pub logical_key: LogicalKey,
+    pub meta: serde_json::Value,
+}
+
+impl DirMeta {
+    /// Whether the metadata says anything, as Python's `bool` sees it: quilt3
+    /// writes a folder row only when it does.
+    #[must_use]
+    pub fn holds_meta(&self) -> bool {
+        match &self.meta {
+            serde_json::Value::Null => false,
+            serde_json::Value::Bool(flag) => *flag,
+            serde_json::Value::Number(number) => number.as_f64() != Some(0.0),
+            serde_json::Value::String(text) => !text.is_empty(),
+            serde_json::Value::Array(items) => !items.is_empty(),
+            serde_json::Value::Object(fields) => !fields.is_empty(),
+        }
+    }
+}
+
+/// The row quilt3 writes for a folder's metadata: its key, as a folder, and `meta`.
+#[derive(Serialize)]
+struct Quilt3DirRow<'a> {
+    logical_key: String,
+    meta: &'a serde_json::Value,
+}
+
+/// A package is a tree: no key twice, and no key that is also a folder. A
+/// folder's metadata row is a folder, so it can't share a name with a file or
+/// sit under one, and a folder has one such row at most.
 ///
 /// In key order (see [`LogicalKey`]), a key that is also a folder comes right
 /// before one of the keys inside it, and a repeated key right before its twin,
 /// so comparing neighbours is enough.
-fn check_tree(rows: &[ManifestRow]) -> Res {
-    let mut keys: Vec<&LogicalKey> = rows.iter().map(|row| &row.logical_key).collect();
+pub(crate) fn check_tree(rows: &[ManifestRow], dir_meta: &[DirMeta]) -> Res {
+    let mut keys: Vec<(&LogicalKey, bool)> = rows
+        .iter()
+        .map(|row| (&row.logical_key, false))
+        .chain(dir_meta.iter().map(|dir| (&dir.logical_key, true)))
+        .collect();
     keys.sort_unstable();
     for pair in keys.windows(2) {
-        let (first, next) = (pair[0], pair[1]);
+        let ((first, first_is_dir), (next, next_is_dir)) = (pair[0], pair[1]);
+        let named = |key: &LogicalKey, is_dir| {
+            if is_dir {
+                format!("{key}/")
+            } else {
+                key.to_string()
+            }
+        };
         if first == next {
-            return Err(Error::Manifest(ManifestError::DuplicateLogicalKey(
-                first.to_string(),
-            )));
+            let error = if first_is_dir == next_is_dir {
+                ManifestError::DuplicateLogicalKey(named(first, first_is_dir))
+            } else {
+                ManifestError::FileAndFolder(first.to_string())
+            };
+            return Err(Error::Manifest(error));
         }
-        if first.is_folder_of(next) {
+        if !first_is_dir && first.is_folder_of(next) {
             return Err(Error::Manifest(ManifestError::FileAndFolder(
                 first.to_string(),
             )));
@@ -206,6 +330,9 @@ fn check_tree(rows: &[ManifestRow]) -> Res {
 pub struct Manifest {
     pub header: ManifestHeader,
     pub rows: Vec<ManifestRow>,
+    /// The metadata of folders, which quilt3 keeps beside the rows; see [`DirMeta`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dir_meta: Vec<DirMeta>,
     // XXX: iterators?
 }
 
@@ -247,13 +374,20 @@ impl Manifest {
         }
 
         let mut rows = Vec::new();
+        let mut dir_meta = Vec::new();
         while let Some(line) = lines.next_line().await? {
-            let row: Quilt3ManifestRow = serde_json::from_str(&line)?;
-            rows.push(ManifestRow::try_from(row)?);
+            match Line::try_from(serde_json::from_str::<Quilt3Line>(&line)?)? {
+                Line::File(row) => rows.push(*row),
+                Line::Dir(dir) => dir_meta.push(dir),
+            }
         }
 
-        check_tree(&rows)?;
-        Ok(Manifest { header, rows })
+        check_tree(&rows, &dir_meta)?;
+        Ok(Manifest {
+            header,
+            rows,
+            dir_meta,
+        })
     }
 
     /// Serialize the manifest to JSONL: the header line followed by one line
@@ -274,6 +408,26 @@ impl Manifest {
                 .as_str(),
         );
         buf.push('\n');
+
+        // In quilt3's order: the folders by name, before the files.
+        let mut dirs: Vec<&DirMeta> = self
+            .dir_meta
+            .iter()
+            .filter(|dir| dir.holds_meta())
+            .collect();
+        dirs.sort_by(|a, b| a.logical_key.cmp(&b.logical_key));
+        for dir in dirs {
+            let row = Quilt3DirRow {
+                logical_key: format!("{}/", dir.logical_key),
+                meta: &dir.meta,
+            };
+            buf.push_str(
+                serde_json::to_string(&row)
+                    .expect("Could not serialize manifest folder row")
+                    .as_str(),
+            );
+            buf.push('\n');
+        }
 
         for row in &self.rows {
             let q3row = Quilt3ManifestRow::from(row.to_owned());

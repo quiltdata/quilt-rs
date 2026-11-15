@@ -1,0 +1,10 @@
+{"version": "v0", "message": "", "user_meta": {}}
+{"logical_key": "z/", "meta": {"z": 1}}
+{"logical_key": "b/", "meta": "text"}
+{"logical_key": "a/", "meta": {}}
+{"logical_key": "c/", "meta": null}
+{"logical_key": "d/", "meta": 0}
+{"logical_key": "e/", "meta": [1]}
+{"logical_key": "a/sub/", "meta": {"x": true}}
+{"logical_key": "a/x.txt", "physical_keys": ["s3://bucket/a/x.txt"], "hash": {"type": "SHA256", "value": "0000000000000000000000000000000000000000000000000000000000000000"}, "size": 1, "meta": {}}
+{"logical_key": "b/y.txt", "physical_keys": ["s3://bucket/b/y.txt"], "hash": {"type": "SHA256", "value": "0000000000000000000000000000000000000000000000000000000000000000"}, "size": 1, "meta": {}}

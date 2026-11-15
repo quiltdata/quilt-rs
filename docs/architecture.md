@@ -123,6 +123,10 @@ hash (`top_hash`). Two properties worth knowing beyond the format itself:
   content-addressed naming.
 - Package-level and per-row user metadata are part of the hashed content —
   a metadata change is a new revision.
+- A folder can carry metadata too, as quilt3 does: a row whose `logical_key`
+  ends in `/` and which has no physical key. Unlike the other metadata it is
+  **not** hashed, so changing it does not make a new revision; every flow that
+  rewrites a manifest keeps it.
 
 A **workflow** is a package-level configuration stored as a YAML file in
 the remote registry and referenced from the package's manifest header. It

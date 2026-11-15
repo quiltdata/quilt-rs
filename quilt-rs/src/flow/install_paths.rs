@@ -282,6 +282,27 @@ async fn swap_staged_into_place(
     Ok(())
 }
 
+/// Writes `manifest` as the installed one, its rows replaced by the installed
+/// ones in `local_entries`.
+async fn write_installed_manifest(
+    storage: &impl Storage,
+    paths: &DomainPaths,
+    namespace: &Namespace,
+    manifest: &Manifest,
+    local_entries: BTreeMap<PathBuf, ManifestRow>,
+) -> Res {
+    let stream = stream_remote_with_installed_rows(manifest, local_entries).await;
+    build_manifest_from_rows_stream(
+        storage,
+        paths.installed_manifests_dir(namespace),
+        manifest.header.clone(),
+        manifest.dir_meta.clone(),
+        stream,
+    )
+    .await?;
+    Ok(())
+}
+
 async fn stream_remote_with_installed_rows(
     remote_manifest: &Manifest,
     local_entries: BTreeMap<PathBuf, ManifestRow>,
@@ -679,9 +700,7 @@ pub(crate) async fn install_paths_over(
     swapped?;
 
     debug!("⏳ Building manifest with installed rows");
-    let stream = stream_remote_with_installed_rows(manifest, entries).await;
-    let dest_dir = paths.installed_manifests_dir(&namespace);
-    build_manifest_from_rows_stream(storage, dest_dir, manifest.header.clone(), stream).await?;
+    write_installed_manifest(storage, paths, &namespace, manifest, entries).await?;
 
     info!(
         "✔️ Installed {} paths, skipped {}, hash mismatch {}",
@@ -1485,6 +1504,7 @@ mod keys_holding_a_backslash {
 
         let remote = MockRemote::default();
         let mut jsonl = String::from("{\"version\":\"v0\",\"message\":\"\"}\n");
+        jsonl.push_str("{\"logical_key\":\"folder-meta/\",\"meta\":{\"owner\":\"team\"}}\n");
         for (i, key) in keys.iter().enumerate() {
             let body = format!("body of {key}");
             let physical_key = format!("s3://bucket/{i}");
@@ -1521,7 +1541,18 @@ mod keys_holding_a_backslash {
             &keys.iter().collect::<Vec<_>>(),
         )
         .await;
+        let installed_dir = domain_paths.installed_manifests_dir(&Namespace::from(("foo", "bar")));
         let result = result.map(|(lineage, _)| {
+            // The installed manifest still holds the folders' metadata.
+            let installed: Vec<_> = std::fs::read_dir(&installed_dir).unwrap().collect();
+            let [installed] = installed.as_slice() else {
+                panic!("expected one installed manifest, got {installed:?}");
+            };
+            let installed = std::fs::read_to_string(installed.as_ref().unwrap().path()).unwrap();
+            assert!(
+                installed.contains(r#""logical_key":"folder-meta/""#),
+                "{installed}"
+            );
             assert_eq!(lineage.paths.len(), manifest.rows.len());
             for row in &manifest.rows {
                 let body = std::fs::read(row.logical_key.join_to(&package_home)).unwrap();

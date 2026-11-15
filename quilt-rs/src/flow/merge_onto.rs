@@ -5,11 +5,15 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
+use crate::Error;
 use crate::LogicalKey;
+use crate::error::ManifestError;
 use crate::flow::list_revisions::holds_user_meta;
+use crate::manifest::DirMeta;
 use crate::manifest::Manifest;
 use crate::manifest::ManifestHeader;
 use crate::manifest::ManifestRow;
+use crate::manifest::check_tree;
 use crate::manifest::normalized_entry_meta;
 
 /// Why a merge onto `latest` refused; nothing of it may be published.
@@ -31,6 +35,11 @@ pub fn merge_onto(
     theirs: Manifest,
 ) -> Result<Manifest, MergeRefusal> {
     let rows = merge_rows_onto(&base.rows, &ours.rows, theirs.rows).map_err(MergeRefusal::Paths)?;
+    let dir_meta = merge_dir_meta(&base.dir_meta, &ours.dir_meta, &theirs.dir_meta)
+        .map_err(MergeRefusal::Paths)?;
+    if let Err(Error::Manifest(ManifestError::FileAndFolder(key))) = check_tree(&rows, &dir_meta) {
+        return Err(MergeRefusal::Paths(vec![PathBuf::from(key)]));
+    }
     let [base_meta, ours_meta, theirs_meta] =
         [&base.header, &ours.header, &theirs.header].map(|header| {
             header
@@ -52,7 +61,51 @@ pub fn merge_onto(
             ..theirs.header
         },
         rows,
+        dir_meta,
     })
+}
+
+/// `theirs` with the folders' metadata that `ours` changed from `base`, as
+/// [`merge_onto`] does for `user_meta`: a folder both sides changed to
+/// different metadata refuses, with the folder's key. Metadata that says
+/// nothing counts as none.
+fn merge_dir_meta(
+    base: &[DirMeta],
+    ours: &[DirMeta],
+    theirs: &[DirMeta],
+) -> Result<Vec<DirMeta>, Vec<PathBuf>> {
+    let meta_of = |dirs: &'_ [DirMeta]| -> BTreeMap<LogicalKey, serde_json::Value> {
+        dirs.iter()
+            .filter(|dir| dir.holds_meta())
+            .map(|dir| (dir.logical_key.clone(), dir.meta.clone()))
+            .collect()
+    };
+    let (base, ours) = (meta_of(base), meta_of(ours));
+    let mut merged = meta_of(theirs);
+    let keys: BTreeSet<&LogicalKey> = base.keys().chain(ours.keys()).collect();
+    let mut collisions = Vec::new();
+    for key in keys {
+        let (was, now) = (base.get(key), ours.get(key));
+        let current = merged.get(key);
+        if was == now || current == now {
+            continue;
+        }
+        if current != was {
+            collisions.push(key.to_path_buf());
+            continue;
+        }
+        match now {
+            Some(meta) => merged.insert(key.clone(), meta.clone()),
+            None => merged.remove(key),
+        };
+    }
+    if !collisions.is_empty() {
+        return Err(collisions);
+    }
+    Ok(merged
+        .into_iter()
+        .map(|(logical_key, meta)| DirMeta { logical_key, meta })
+        .collect())
 }
 
 /// `theirs` changed only at the keys whose row differs from `base` to `ours`,
@@ -392,5 +445,84 @@ mod tests {
 
         assert_eq!(merged.header.message(), Some("Mine"));
         assert_eq!(merged.header.workflow, Some(workflow));
+    }
+
+    fn dir(key: &str, meta: serde_json::Value) -> Res<DirMeta> {
+        Ok(DirMeta {
+            logical_key: LogicalKey::new(key)?,
+            meta,
+        })
+    }
+
+    fn dirs(dirs: Vec<DirMeta>) -> Manifest {
+        Manifest {
+            dir_meta: dirs,
+            ..Manifest::default()
+        }
+    }
+
+    #[test]
+    fn folder_metadata_changed_on_one_side_lands() -> Res {
+        let base = dirs(vec![
+            dir("a", json!({"v": 1}))?,
+            dir("gone", json!({"v": 1}))?,
+        ]);
+        let ours = dirs(vec![
+            dir("a", json!({"v": 2}))?,
+            dir("new", json!({"v": 1}))?,
+        ]);
+        let theirs = dirs(vec![
+            dir("a", json!({"v": 1}))?,
+            dir("b", json!({"v": 3}))?,
+            dir("gone", json!({"v": 1}))?,
+        ]);
+
+        let merged = merge_onto(&base, &ours, theirs).expect("merged");
+
+        assert_eq!(
+            merged.dir_meta,
+            [
+                dir("a", json!({"v": 2}))?,
+                dir("b", json!({"v": 3}))?,
+                dir("new", json!({"v": 1}))?,
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn folder_metadata_changed_on_both_sides_refuses_with_the_folder() -> Res {
+        let base = dirs(vec![dir("a", json!({"v": 1}))?]);
+        let ours = dirs(vec![dir("a", json!({"v": 2}))?]);
+        let theirs = dirs(vec![dir("a", json!({"v": 3}))?]);
+
+        assert_eq!(merge_onto(&base, &ours, theirs), Err(paths(&["a"])));
+        Ok(())
+    }
+
+    #[test]
+    fn folder_metadata_that_says_nothing_is_none() -> Res {
+        let base = dirs(vec![dir("a", json!({}))?]);
+        let ours = dirs(vec![dir("a", json!({"v": 2}))?]);
+        let theirs = Manifest::default();
+
+        let merged = merge_onto(&base, &ours, theirs).expect("merged");
+
+        assert_eq!(merged.dir_meta, [dir("a", json!({"v": 2}))?]);
+        Ok(())
+    }
+
+    /// A file of one side where the other has folder metadata would make a
+    /// manifest no reader accepts.
+    #[test]
+    fn a_file_where_the_other_side_has_folder_metadata_refuses() -> Res {
+        let ours = rows(vec![row("a", b"mine")?]);
+        let theirs = dirs(vec![dir("a", json!({"v": 1}))?]);
+
+        assert_eq!(
+            merge_onto(&Manifest::default(), &ours, theirs),
+            Err(paths(&["a"]))
+        );
+        Ok(())
     }
 }
