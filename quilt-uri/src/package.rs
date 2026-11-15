@@ -365,7 +365,7 @@ impl TryFrom<&str> for S3PackageUri {
 
         let path = params
             .remove("path")
-            .and_then(|value| tidy_package_path(&value, trailing_padding_was_on_path(input)));
+            .and_then(|value| tidy_package_path(&value, raw_path_had_padding(input)));
 
         let catalog = match params.remove("catalog") {
             Some(c) => Some(c.parse()?),
@@ -426,30 +426,45 @@ fn is_uri_padding(c: char) -> bool {
     c.is_ascii_whitespace() || (c.is_ascii_control() && c != '\0')
 }
 
-/// The URL parser already drops trailing padding on the last fragment value.
-fn trailing_padding_was_on_path(input: &str) -> bool {
-    let stripped = input.trim_end_matches(is_uri_padding);
-    if stripped == input {
+/// Padding on a `path=` value in the raw URI, including forms the URL parser
+/// has already dropped by the time the fragment is read.
+fn raw_path_had_padding(input: &str) -> bool {
+    let Some((_, fragment)) = input.split_once('#') else {
         return false;
-    }
-    stripped
-        .rsplit_once('#')
-        .and_then(|(_, fragment)| fragment.rsplit('&').next())
-        .is_some_and(|pair| pair.split('=').next() == Some("path"))
+    };
+    fragment
+        .split('&')
+        .filter(|piece| !piece.is_empty())
+        .any(|piece| {
+            let (key, value) = piece.split_once('=').unwrap_or((piece, ""));
+            let Ok(key) = percent_encoding::percent_decode_str(key).decode_utf8() else {
+                return false;
+            };
+            if key != "path" {
+                return false;
+            }
+            if value != value.trim_matches(is_uri_padding) {
+                return true;
+            }
+            let Ok(decoded) = percent_encoding::percent_decode_str(value).decode_utf8() else {
+                return false;
+            };
+            decoded.as_ref() != decoded.trim_matches(is_uri_padding)
+        })
 }
 
 /// Accept a path quilt3 would accept, but never silently name a different entry.
 ///
 /// Leading or trailing padding is trimmed and warned about. An empty `path=`
 /// is no path, matching quilt3.
-fn tidy_package_path(value: &str, raw_path_had_trailing_padding: bool) -> Option<PathBuf> {
+fn tidy_package_path(value: &str, raw_path_had_padding: bool) -> Option<PathBuf> {
     let trimmed = value.trim_matches(is_uri_padding);
     if trimmed != value {
         log::warn!(
             "trimmed leading or trailing whitespace from package URI path {value:?} to {trimmed:?}"
         );
-    } else if raw_path_had_trailing_padding {
-        log::warn!("removed trailing whitespace from path={trimmed}");
+    } else if raw_path_had_padding {
+        log::warn!("removed leading or trailing whitespace from path={trimmed}");
     }
     if trimmed.is_empty() {
         None
