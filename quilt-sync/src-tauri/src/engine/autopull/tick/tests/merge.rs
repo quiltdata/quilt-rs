@@ -28,6 +28,7 @@ fn revision(message: &str, rows: Vec<quilt::manifest::ManifestRow>) -> quilt::ma
             ..quilt::manifest::ManifestHeader::default()
         },
         rows,
+        dir_meta: Vec::new(),
     }
 }
 

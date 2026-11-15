@@ -35,11 +35,8 @@ pub fn merge_onto(
     theirs: Manifest,
 ) -> Result<Manifest, MergeRefusal> {
     let rows = merge_rows_onto(&base.rows, &ours.rows, theirs.rows).map_err(MergeRefusal::Paths)?;
-    let dir_meta = merge_dir_meta(&base.dir_meta, &ours.dir_meta, &theirs.dir_meta)
+    let dir_meta = merge_dir_meta(&base.dir_meta, &ours.dir_meta, &theirs.dir_meta, &rows)
         .map_err(MergeRefusal::Paths)?;
-    if let Err(Error::Manifest(ManifestError::FileAndFolder(key))) = check_tree(&rows, &dir_meta) {
-        return Err(MergeRefusal::Paths(vec![PathBuf::from(key)]));
-    }
     let [base_meta, ours_meta, theirs_meta] =
         [&base.header, &ours.header, &theirs.header].map(|header| {
             header
@@ -68,11 +65,18 @@ pub fn merge_onto(
 /// `theirs` with the folders' metadata that `ours` changed from `base`, as
 /// [`merge_onto`] does for `user_meta`: a folder both sides changed to
 /// different metadata refuses, with the folder's key. Metadata that says
-/// nothing counts as none.
-fn merge_dir_meta(
+/// nothing counts as none. Sorted by key. `rows` are the merged rows, which no
+/// folder's name may be the file of, or sit under one.
+///
+/// # Errors
+///
+/// The keys of the folders both sides changed differently, or else of the
+/// file and folder that share a name.
+pub fn merge_dir_meta(
     base: &[DirMeta],
     ours: &[DirMeta],
     theirs: &[DirMeta],
+    rows: &[ManifestRow],
 ) -> Result<Vec<DirMeta>, Vec<PathBuf>> {
     let meta_of = |dirs: &'_ [DirMeta]| -> BTreeMap<LogicalKey, serde_json::Value> {
         dirs.iter()
@@ -102,10 +106,14 @@ fn merge_dir_meta(
     if !collisions.is_empty() {
         return Err(collisions);
     }
-    Ok(merged
+    let merged: Vec<DirMeta> = merged
         .into_iter()
         .map(|(logical_key, meta)| DirMeta { logical_key, meta })
-        .collect())
+        .collect();
+    if let Err(Error::Manifest(ManifestError::FileAndFolder(key))) = check_tree(rows, &merged) {
+        return Err(vec![PathBuf::from(key)]);
+    }
+    Ok(merged)
 }
 
 /// `theirs` changed only at the keys whose row differs from `base` to `ours`,

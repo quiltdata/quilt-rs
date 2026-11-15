@@ -61,6 +61,7 @@ pub use list_revisions::Revision;
 pub use list_revisions::count_revisions;
 pub use list_revisions::list_revisions;
 pub use merge_onto::MergeRefusal;
+pub use merge_onto::merge_dir_meta;
 pub use merge_onto::merge_onto;
 pub use merge_onto::merge_rows_onto;
 pub use publish::CommitOptions;

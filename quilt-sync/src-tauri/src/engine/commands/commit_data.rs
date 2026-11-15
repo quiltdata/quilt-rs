@@ -1415,6 +1415,7 @@ mod tests {
                     }),
                 },
                 rows: Vec::new(),
+                dir_meta: Vec::new(),
             })
         });
 
@@ -1481,6 +1482,7 @@ mod tests {
                     }),
                 },
                 rows: Vec::new(),
+                dir_meta: Vec::new(),
             })
         });
 
@@ -1545,6 +1547,7 @@ mod tests {
                     workflow: None,
                 },
                 rows: Vec::new(),
+                dir_meta: Vec::new(),
             })
         });
 
@@ -1606,6 +1609,7 @@ mod tests {
                     workflow: None,
                 },
                 rows: Vec::new(),
+                dir_meta: Vec::new(),
             })
         });
         model

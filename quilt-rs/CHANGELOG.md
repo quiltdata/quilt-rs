@@ -25,6 +25,7 @@
 
 - `settings` module: `SharedSettings` reads, sets and clears a default catalog (`default_catalog`, a bare host) in the shared `settings.json`, taking it from quilt3's `config.yml` when none is stored, and `effective_catalog` keeps a package's own catalog ahead of it (<https://github.com/quiltdata/quilt-rs/pull/1384>)
 - **Breaking:** a manifest's folder metadata, which quilt3 writes as a row ending in `/` with no physical key, is read into `Manifest::dir_meta` (a list of `DirMeta`) instead of failing the manifest, and commit, re-commit, push, merging onto `latest` and installing paths keep it; like quilt3, it stays out of the top hash. A `Manifest` literal needs the new field, and `io::manifest::build_manifest_from_rows_stream` takes the folder metadata as a new fourth argument (<https://github.com/quiltdata/quilt-rs/pull/1387>)
+- `flow::merge_dir_meta` merges two sides' folder metadata onto a third, as `merge_onto` does, for a caller that rebases rows itself (<https://github.com/quiltdata/quilt-rs/pull/1387>)
 - `VERSION` holds the crate's version, and `LocalDomain::stored_home` reads the home without setting one, `None` when the domain has none yet (<https://github.com/quiltdata/quilt-rs/pull/1371>)
 
 ### Changed

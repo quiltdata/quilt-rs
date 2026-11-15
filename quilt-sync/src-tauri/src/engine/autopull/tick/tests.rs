@@ -2470,6 +2470,7 @@ fn stale_claim_model(
                     ..quilt::manifest::ManifestHeader::default()
                 },
                 rows: Vec::new(),
+                dir_meta: Vec::new(),
             })
         });
     model
