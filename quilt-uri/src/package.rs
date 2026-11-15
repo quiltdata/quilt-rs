@@ -363,7 +363,9 @@ impl TryFrom<&str> for S3PackageUri {
             (pkg_spec, RevisionPointer::Tag(Tag::Latest))
         };
 
-        let path = params.remove("path").map(PathBuf::from);
+        let path = params
+            .remove("path")
+            .and_then(|value| tidy_package_path(&value, raw_path_had_padding(input)));
 
         let catalog = match params.remove("catalog") {
             Some(c) => Some(c.parse()?),
@@ -415,6 +417,59 @@ fn check_top_hash(hash: &str) -> Result<(), UriError> {
         Err(UriError::Package(format!(
             "hash must be 64 lowercase hex characters, got {hash:?}"
         )))
+    }
+}
+
+/// ASCII whitespace or a C0 control other than NUL, which a pasted URI may
+/// carry around a fragment value.
+fn is_uri_padding(c: char) -> bool {
+    c.is_ascii_whitespace() || (c.is_ascii_control() && c != '\0')
+}
+
+/// Padding on a `path=` value in the raw URI, including forms the URL parser
+/// has already dropped by the time the fragment is read.
+fn raw_path_had_padding(input: &str) -> bool {
+    let Some((_, fragment)) = input.split_once('#') else {
+        return false;
+    };
+    fragment
+        .split('&')
+        .filter(|piece| !piece.is_empty())
+        .any(|piece| {
+            let (key, value) = piece.split_once('=').unwrap_or((piece, ""));
+            let Ok(key) = percent_encoding::percent_decode_str(key).decode_utf8() else {
+                return false;
+            };
+            if key != "path" {
+                return false;
+            }
+            if value != value.trim_matches(is_uri_padding) {
+                return true;
+            }
+            let Ok(decoded) = percent_encoding::percent_decode_str(value).decode_utf8() else {
+                return false;
+            };
+            decoded.as_ref() != decoded.trim_matches(is_uri_padding)
+        })
+}
+
+/// Accept a path quilt3 would accept, but never silently name a different entry.
+///
+/// Leading or trailing padding is trimmed and warned about. An empty `path=`
+/// is no path, matching quilt3.
+fn tidy_package_path(value: &str, raw_path_had_padding: bool) -> Option<PathBuf> {
+    let trimmed = value.trim_matches(is_uri_padding);
+    if trimmed != value {
+        log::warn!(
+            "trimmed leading or trailing whitespace from package URI path {value:?} to {trimmed:?}"
+        );
+    } else if raw_path_had_padding {
+        log::warn!("removed leading or trailing whitespace from path={trimmed}");
+    }
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(trimmed))
     }
 }
 
@@ -786,6 +841,32 @@ mod tests {
                 .unwrap_or_else(|e| panic!("{fragment}: {e}"));
             assert_eq!(uri.namespace.to_string(), namespace, "{fragment}");
             assert_eq!(uri.path, path.map(PathBuf::from), "{fragment}");
+        }
+    }
+
+    /// quilt3 accepts these; padding is trimmed so the URI cannot silently
+    /// name a different entry, and an empty `path=` is no path.
+    #[test]
+    fn a_padded_or_empty_path_is_trimmed_to_the_real_entry() {
+        for (input, path) in [
+            ("quilt+s3://bucket#package=a/b&path=a.csv", Some("a.csv")),
+            ("quilt+s3://bucket#package=a/b&path=a.csv ", Some("a.csv")),
+            ("quilt+s3://bucket#package=a/b&path=a.csv\t", Some("a.csv")),
+            ("quilt+s3://bucket#package=a/b&path= a.csv", Some("a.csv")),
+            ("quilt+s3://bucket#package=a/b&path=", None),
+            (
+                "quilt+s3://bucket#package=a/b&path=&catalog=quilt.test",
+                None,
+            ),
+            ("quilt+s3://bucket#package=a/b&path=%20", None),
+            ("quilt+s3://bucket#package=a/b&path=a.csv%20", Some("a.csv")),
+            (
+                "quilt+s3://bucket#package=a/b&path=a.csv\u{1}",
+                Some("a.csv"),
+            ),
+        ] {
+            let uri = S3PackageUri::try_from(input).unwrap_or_else(|e| panic!("{input:?}: {e}"));
+            assert_eq!(uri.path, path.map(PathBuf::from), "{input:?}");
         }
     }
 

@@ -129,7 +129,7 @@ impl From<ManifestRow> for Quilt3ManifestRow {
             physical_keys: vec![row.physical_key],
             hash: row.hash,
             size: row.size,
-            meta: row.meta,
+            meta: Some(row.meta.unwrap_or_else(|| serde_json::json!({}))),
         }
     }
 }
@@ -602,6 +602,25 @@ mod tests {
             assert_eq!(manifest.header.message, message, "{line}");
             assert_eq!(manifest.to_jsonlines(), format!("{line}\n"));
         }
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn a_row_with_no_meta_reads_as_empty_and_is_written_with_meta() -> Res {
+        let header = r#"{"version":"v0"}"#;
+        let row = concat!(
+            r#"{"logical_key":"test1.txt","physical_keys":["s3://bucket/test1.txt"],"#,
+            r#""size":0,"hash":{"type":"sha2-256-chunked","value":"47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="}}"#,
+        );
+        let manifest = Manifest::from_reader(format!("{header}\n{row}\n").as_bytes()).await?;
+        assert_eq!(manifest.rows[0].meta, None);
+        let written = manifest.to_jsonlines();
+        assert!(
+            written.contains(r#""meta":{}"#),
+            "written row must include meta: {written}"
+        );
+        let again = Manifest::from_reader(written.as_bytes()).await?;
+        assert_eq!(again.rows[0].meta, Some(serde_json::json!({})));
         Ok(())
     }
 

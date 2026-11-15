@@ -5892,10 +5892,12 @@ dependencies = [
 name = "quilt-uri"
 version = "0.5.1-dev"
 dependencies = [
+ "log",
  "percent-encoding",
  "serde",
  "serde_json",
  "test-log",
+ "testing_logger",
  "thiserror 2.0.21",
  "url",
 ]
@@ -8107,6 +8109,15 @@ checksum = "944ad38adcbb71eaa682c56bceeb079e4ca82b4b3edc2a0fde5cb297b77dac8d"
 dependencies = [
  "syn 2.0.119",
  "test-log-core",
+]
+
+[[package]]
+name = "testing_logger"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6d92b727cb45d33ae956f7f46b966b25f1bc712092aeef9dba5ac798fc89f720"
+dependencies = [
+ "log",
 ]
 
 [[package]]
