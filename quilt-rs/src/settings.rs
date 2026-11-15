@@ -6,8 +6,10 @@
 //! `settings.json.lock` first and keeps the keys it does not know. A file that
 //! is not a JSON object is an error and is never replaced.
 //!
-//! A missing file or key means no default catalog. Nothing here consults the
-//! default on its own; [`effective_catalog`] keeps a package's catalog first.
+//! A missing file or key means no default catalog, until
+//! [`SharedSettings::default_catalog_or_adopt`] finds quilt3's. A cleared
+//! default is stored as `null`, which stops that. [`effective_catalog`] keeps
+//! a package's catalog ahead of the default.
 
 use std::io::ErrorKind;
 use std::path::Path;
@@ -35,6 +37,10 @@ pub const SETTINGS_LOCK: &str = "settings.json.lock";
 /// The key that holds the default catalog, as a bare DNS host.
 pub const DEFAULT_CATALOG_KEY: &str = "default_catalog";
 
+const QUILT3_APP_NAME: &str = "Quilt";
+const QUILT3_APP_AUTHOR: &str = "QuiltData";
+const QUILT3_CONFIG_FILE: &str = "config.yml";
+
 /// The shared folder: `override_dir` if it is set and not empty, else
 /// `com.quiltdata.auth` under `data_local_dir`. `None` when neither exists.
 ///
@@ -56,6 +62,62 @@ pub fn shared_dir() -> Option<PathBuf> {
         std::env::var_os(SHARED_DIR_ENV).map(PathBuf::from),
         dirs::data_local_dir(),
     )
+}
+
+/// Where quilt3 keeps its `config.yml`, best match first: its
+/// `platformdirs.user_data_dir("Quilt", "QuiltData")`.
+///
+/// That is `%LOCALAPPDATA%\QuiltData\Quilt` on Windows and `Quilt` under the
+/// local data directory elsewhere. Newer platformdirs also honors an absolute
+/// `XDG_DATA_HOME` on macOS, so it is tried first.
+#[must_use]
+pub fn quilt3_config_files() -> Vec<PathBuf> {
+    quilt3_config_files_from(
+        cfg!(windows),
+        std::env::var_os("XDG_DATA_HOME").map(PathBuf::from),
+        dirs::data_local_dir(),
+    )
+}
+
+/// The pure half of [`quilt3_config_files`].
+#[must_use]
+pub fn quilt3_config_files_from(
+    windows: bool,
+    xdg_data_home: Option<PathBuf>,
+    data_local_dir: Option<PathBuf>,
+) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if windows {
+        dirs.extend(data_local_dir.map(|dir| dir.join(QUILT3_APP_AUTHOR).join(QUILT3_APP_NAME)));
+    } else {
+        dirs.extend(
+            xdg_data_home
+                .filter(|dir| dir.is_absolute())
+                .map(|dir| dir.join(QUILT3_APP_NAME)),
+        );
+        dirs.extend(data_local_dir.map(|dir| dir.join(QUILT3_APP_NAME)));
+    }
+    let mut files: Vec<PathBuf> = dirs
+        .into_iter()
+        .map(|dir| dir.join(QUILT3_CONFIG_FILE))
+        .collect();
+    files.dedup();
+    files
+}
+
+#[derive(serde::Deserialize)]
+struct Quilt3Config {
+    navigator_url: Option<String>,
+}
+
+/// The catalog host in quilt3's `config.yml`: the host of its `navigator_url`.
+/// `None` for a file that is not YAML, has no `navigator_url`, or has one that
+/// is empty or holds no host.
+#[must_use]
+pub fn catalog_in_quilt3_config(config: &[u8]) -> Option<Host> {
+    let config: Quilt3Config = serde_saphyr::from_str(std::str::from_utf8(config).ok()?).ok()?;
+    let url = url::Url::parse(config.navigator_url?.trim()).ok()?;
+    Host::from_str(url.host_str()?).ok()
 }
 
 /// What a caller knows about the package an operation is for.
@@ -133,20 +195,56 @@ impl<S: Storage + Sync> SharedSettings<S> {
         self.write(&map).await
     }
 
-    /// Removes the default catalog, keeping every other key. Returns whether
-    /// there was one to remove. With no file, creates nothing.
-    pub async fn clear_default_catalog(&self) -> Res<bool> {
-        // Unlocked: this only decides the no-op. The file is read again under the lock.
-        if !self.storage.exists(self.file()).await {
-            return Ok(false);
+    /// The stored default catalog, or, when the file has no `default_catalog`
+    /// key at all, the one in quilt3's `config.yml` (the first of
+    /// `quilt3_config_files` that exists), which is then stored under the lock
+    /// so this file is the one source. `config.yml` is only read. A missing,
+    /// unreadable or hostless `config.yml` is no default, not an error.
+    pub async fn default_catalog_or_adopt(
+        &self,
+        quilt3_config_files: &[PathBuf],
+    ) -> Res<Option<Host>> {
+        let map = self.read().await?;
+        if map.contains_key(DEFAULT_CATALOG_KEY) {
+            return host_in(&map, &self.file());
         }
+        let Some(host) = self.quilt3_catalog(quilt3_config_files).await else {
+            return Ok(None);
+        };
         let _lock = self.lock().await?;
         let mut map = self.read().await?;
-        if map.remove(DEFAULT_CATALOG_KEY).is_none() {
-            return Ok(false);
+        if map.contains_key(DEFAULT_CATALOG_KEY) {
+            return host_in(&map, &self.file());
         }
+        map.insert(
+            DEFAULT_CATALOG_KEY.to_string(),
+            Value::String(host.to_string()),
+        );
         self.write(&map).await?;
-        Ok(true)
+        Ok(Some(host))
+    }
+
+    async fn quilt3_catalog(&self, files: &[PathBuf]) -> Option<Host> {
+        for file in files {
+            if self.storage.exists(file).await {
+                let bytes = self.storage.read_bytes(file).await.ok()?;
+                return catalog_in_quilt3_config(&bytes);
+            }
+        }
+        None
+    }
+
+    /// Clears the default catalog, keeping every other key, by storing `null`
+    /// so quilt3's is not adopted again. Returns whether a host was stored.
+    pub async fn clear_default_catalog(&self) -> Res<bool> {
+        let _lock = self.lock().await?;
+        let mut map = self.read().await?;
+        let had_host = matches!(map.get(DEFAULT_CATALOG_KEY), Some(value) if !value.is_null());
+        if !matches!(map.get(DEFAULT_CATALOG_KEY), Some(Value::Null)) {
+            map.insert(DEFAULT_CATALOG_KEY.to_string(), Value::Null);
+            self.write(&map).await?;
+        }
+        Ok(had_host)
     }
 
     async fn lock(&self) -> Res<LockGuard> {
