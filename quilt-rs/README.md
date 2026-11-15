@@ -39,6 +39,14 @@ let installed_package = local_domain.install_package(&manifest_uri).await?;
 5. **Commit** — create a local package version (`flow::commit_package`)
 6. **Push** — upload changes to remote (`flow::push_package`)
 
+## Reading an object
+
+`flow::read_object` streams one object's bytes, and checks them against the
+row's hash as they arrive. A mismatch ends the stream with an error, after the
+last chunk. The check is on by default; `ReadOptions::unverified()` turns it off.
+An object already in the object store is read from there, unchecked, because
+install verified it on the way in.
+
 ## Hash Algorithms
 
 Supports multiple algorithms via `checksum::ObjectHash`:

@@ -7,6 +7,8 @@
 
 use std::path::Path;
 
+use tokio::io::AsyncRead;
+
 use crate::LogicalKey;
 use crate::Res;
 use crate::io::remote::HostConfig;
@@ -20,6 +22,25 @@ use crate::object_hash::ObjectHash;
 use crate::object_hash::Sha256ChunkedHash;
 use crate::object_hash::Sha256Hash;
 
+/// Hash the bytes `reader` yields, `size` of them, with the multihash
+/// `algorithm`. An algorithm this crate doesn't know hashes as SHA-256
+/// chunked, the default.
+///
+/// The one place an algorithm code picks a hasher, shared by a file on disk
+/// ([`hash_file`]) and by bytes still streaming in (`flow::read_object`), so
+/// both always agree on a row's hash.
+pub async fn hash_reader<R: AsyncRead + Unpin + Send>(
+    reader: R,
+    size: u64,
+    algorithm: u64,
+) -> Res<ObjectHash> {
+    Ok(match algorithm {
+        MULTIHASH_CRC64_NVME => Crc64Hash::from_reader(reader, size).await?.into(),
+        MULTIHASH_SHA256 => Sha256Hash::from_reader(reader, size).await?.into(),
+        _ => Sha256ChunkedHash::from_reader(reader, size).await?.into(),
+    })
+}
+
 /// Hash the file at `path` with the multihash `algorithm`, and return the hash
 /// with the size read. An algorithm this crate doesn't know hashes as
 /// SHA-256 chunked, the default.
@@ -30,11 +51,7 @@ pub async fn hash_file(
 ) -> Res<(ObjectHash, u64)> {
     let file = storage.open_file(path).await?;
     let size = file.metadata().await?.len();
-    let hash = match algorithm {
-        MULTIHASH_CRC64_NVME => Crc64Hash::from_reader(file, size).await?.into(),
-        MULTIHASH_SHA256 => Sha256Hash::from_reader(file, size).await?.into(),
-        _ => Sha256ChunkedHash::from_reader(file, size).await?.into(),
-    };
+    let hash = hash_reader(file, size, algorithm).await?;
     Ok((hash, size))
 }
 
