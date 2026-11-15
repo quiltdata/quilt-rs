@@ -348,6 +348,7 @@ mod tests {
                 .unwrap(),
             size: body.len() as u64,
             meta: None,
+            meta_numbers: crate::manifest::RawNumbers::default(),
         })
     }
 

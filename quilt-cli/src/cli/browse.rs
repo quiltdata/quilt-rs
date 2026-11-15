@@ -193,6 +193,7 @@ mod tests {
                     message: quilt_rs::manifest::HeaderMessage::Text("initial".to_string()),
                     user_meta: Some(serde_json::json!({"owner": "team"})),
                     workflow: None,
+                    user_meta_numbers: quilt_rs::manifest::RawNumbers::default(),
                 },
                 rows: vec![quilt_rs::manifest::ManifestRow {
                     logical_key: quilt_rs::LogicalKey::new("data/one.csv")?,
@@ -200,6 +201,7 @@ mod tests {
                     hash: quilt_rs::object_hash::ObjectHash::default(),
                     size: 42,
                     meta: None,
+                    meta_numbers: quilt_rs::manifest::RawNumbers::default(),
                 }],
             },
         };
@@ -222,6 +224,7 @@ mod tests {
                     message: quilt_rs::manifest::HeaderMessage::Null,
                     user_meta: None,
                     workflow: None,
+                    user_meta_numbers: quilt_rs::manifest::RawNumbers::default(),
                 },
                 rows: Vec::new(),
             },

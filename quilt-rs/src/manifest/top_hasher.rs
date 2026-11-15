@@ -6,69 +6,34 @@
 use std::fmt;
 
 use aws_smithy_checksums::ChecksumAlgorithm;
-use serde::Serialize;
 
 use crate::Res;
 use crate::manifest::HeaderMessage;
 use crate::manifest::ManifestHeader;
 use crate::manifest::ManifestRow;
+use crate::manifest::RawNumbers;
 #[cfg(test)]
 use crate::manifest::Workflow;
 #[cfg(test)]
 use crate::manifest::WorkflowId;
+use crate::manifest::meta_json::Style;
+use crate::manifest::meta_json::write_json;
 
 /// The text of one part of the top hash, in quilt3's top-hash encoding:
 /// keys sorted at every level, no spaces, non-ASCII escaped, and floats in
-/// the form [`hash_float_text`] gives. quilt3's `Package._calculate_top_hash`
-/// is the reference.
-fn encode_hash_part<T: Serialize>(value: &T) -> Res<String> {
+/// the form [`hash_float_text`] gives. `exact` holds the integers in the part
+/// that `serde_json` cannot hold, which are written as they were read.
+/// quilt3's `Package._calculate_top_hash` is the reference.
+fn encode_hash_part(value: &serde_json::Value, exact: &RawNumbers) -> String {
     let mut out = String::new();
-    write_hash_json(&mut out, &serde_json::to_value(value)?);
-    Ok(out)
-}
-
-fn write_hash_json(out: &mut String, value: &serde_json::Value) {
-    use serde_json::Value;
-    match value {
-        Value::Null => out.push_str("null"),
-        Value::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
-        Value::Number(n) => match n.as_f64() {
-            Some(f) if n.is_f64() => out.push_str(&hash_float_text(f)),
-            _ => out.push_str(&n.to_string()),
-        },
-        Value::String(s) => write_hash_string(out, s),
-        Value::Array(items) => {
-            out.push('[');
-            for (i, item) in items.iter().enumerate() {
-                if i > 0 {
-                    out.push(',');
-                }
-                write_hash_json(out, item);
-            }
-            out.push(']');
-        }
-        Value::Object(map) => {
-            // Keys sort by code point, which is the byte order of UTF-8.
-            let mut entries: Vec<_> = map.iter().collect();
-            entries.sort_by(|a, b| a.0.cmp(b.0));
-            out.push('{');
-            for (i, (key, item)) in entries.into_iter().enumerate() {
-                if i > 0 {
-                    out.push(',');
-                }
-                write_hash_string(out, key);
-                out.push(':');
-                write_hash_json(out, item);
-            }
-            out.push('}');
-        }
-    }
+    write_json(&mut out, value, exact, Style::Hash);
+    out
 }
 
 /// A JSON string with everything outside `' '..='~'` escaped: the short forms
 /// for quote, backslash and five controls, else `\uXXXX` in lowercase hex,
 /// as a UTF-16 surrogate pair above U+FFFF.
-fn write_hash_string(out: &mut String, s: &str) {
+pub(super) fn write_hash_string(out: &mut String, s: &str) {
     use std::fmt::Write;
     out.push('"');
     for c in s.chars() {
@@ -96,7 +61,7 @@ fn write_hash_string(out: &mut String, s: &str) {
 /// the same float, the nearer one on a tie. Plain when the exponent is in
 /// `-4..16` (`0.0001`, `1.0`), else with a signed exponent of at least two
 /// digits (`1e-07`, `1.5e+300`).
-fn hash_float_text(f: f64) -> String {
+pub(super) fn hash_float_text(f: f64) -> String {
     // ryu breaks ties toward the nearer value; Rust's `{:e}` does not always.
     // Its text mixes plain and exponent forms, so read digits and exponent.
     let mut buffer = ryu::Buffer::new();
@@ -209,6 +174,27 @@ pub(crate) fn normalized_entry_meta(meta: Option<&serde_json::Value>) -> serde_j
     value
 }
 
+/// Whether two rows' `meta` are one to the top hash: the same value, and the
+/// same integers beyond 64 bits, as [`normalized_entry_meta`] reads them.
+pub(crate) fn same_entry_meta(a: &ManifestRow, b: &ManifestRow) -> bool {
+    let (meta_a, meta_b) = (
+        normalized_entry_meta(a.meta.as_ref()),
+        normalized_entry_meta(b.meta.as_ref()),
+    );
+    if meta_a != meta_b {
+        return false;
+    }
+    if a.meta_numbers.is_empty() && b.meta_numbers.is_empty() {
+        return true;
+    }
+    let text = |meta: &serde_json::Value, row: &ManifestRow| {
+        let mut out = String::new();
+        write_json(&mut out, meta, &row.meta_numbers, Style::Hash);
+        out
+    };
+    text(&meta_a, a) == text(&meta_b, b)
+}
+
 pub fn serialize_manifest_row_entry(
     manifest_row: &ManifestRow,
 ) -> Res<serde_json::Map<String, serde_json::Value>> {
@@ -260,16 +246,18 @@ impl TopHasher {
 
     /// Append `ManifestHeader` to the hasher
     pub fn append_header(&mut self, manifest_header: &ManifestHeader) -> Res {
-        let value = serialize_manifest_header(manifest_header)?;
-        let value_str = encode_hash_part(&value)?;
+        let value = serde_json::Value::Object(serialize_manifest_header(manifest_header)?);
+        let exact = manifest_header.user_meta_numbers.under("/user_meta");
+        let value_str = encode_hash_part(&value, &exact);
         self.hasher.update(value_str.as_bytes());
         Ok(())
     }
 
     /// Append `ManifestRow` to the hasher
     pub fn append(&mut self, manifest_row: &ManifestRow) -> Res {
-        let value = serialize_manifest_row_entry(manifest_row)?;
-        let value_str = encode_hash_part(&value)?;
+        let value = serde_json::Value::Object(serialize_manifest_row_entry(manifest_row)?);
+        let exact = manifest_row.meta_numbers.under("/meta");
+        let value_str = encode_hash_part(&value, &exact);
         self.hasher.update(value_str.as_bytes());
         Ok(())
     }
@@ -294,6 +282,29 @@ mod tests {
     use crate::object_hash::Crc64Hash;
     use crate::object_hash::Sha256ChunkedHash;
     use crate::object_hash::Sha256Hash;
+
+    #[test]
+    fn same_entry_meta_tells_big_integers_apart() -> Res {
+        let row = |text: &str| -> Res<ManifestRow> {
+            let (meta, meta_numbers) = RawNumbers::parse(text)?;
+            Ok(ManifestRow {
+                meta: Some(meta),
+                meta_numbers,
+                ..ManifestRow::default()
+            })
+        };
+        let a = row(r#"{"n": 18446744073709551616}"#)?;
+        let b = row(r#"{"n": 18446744073709551617}"#)?;
+        assert_eq!(a.meta, b.meta, "one float");
+        assert!(!same_entry_meta(&a, &b));
+        assert!(same_entry_meta(&a, &row(r#"{"n": 18446744073709551616}"#)?));
+        // Where quilt3 reads an int, a float is a different value.
+        assert!(!same_entry_meta(
+            &a,
+            &row(r#"{"n": 1.8446744073709552e19}"#)?
+        ));
+        Ok(())
+    }
 
     /// Expected text is what quilt3's top-hash encoder writes for the float.
     #[test]
@@ -855,6 +866,7 @@ mod tests {
                     .into(),
                 size: 29,
                 meta: Some(serde_json::Value::Null),
+                meta_numbers: crate::manifest::RawNumbers::default(),
             };
             top_hasher.append(&manifest_row)?;
         }
@@ -879,6 +891,7 @@ mod tests {
             hash: Sha256ChunkedHash::try_from(objects::LESS_THAN_8MB_HASH_B64)?.into(),
             size: 16,
             meta: Some(serde_json::json!({"type": "text"})),
+            meta_numbers: crate::manifest::RawNumbers::default(),
         };
         top_hasher.append(&manifest_row)?;
 
@@ -907,6 +920,7 @@ mod tests {
             .into(),
             size: 8,
             meta: None,
+            meta_numbers: crate::manifest::RawNumbers::default(),
         };
         top_hasher.append(&row1)?;
 
@@ -917,6 +931,7 @@ mod tests {
             hash: Sha256ChunkedHash::try_from(objects::LESS_THAN_8MB_HASH_B64)?.into(),
             size: 16,
             meta: None,
+            meta_numbers: crate::manifest::RawNumbers::default(),
         };
         top_hasher.append(&row2)?;
 
@@ -927,6 +942,7 @@ mod tests {
             hash: Crc64Hash::try_from("dGVzdGRhdGEAAAAAAAAAAAAAAAAAAAAA")?.into(),
             size: 32,
             meta: None,
+            meta_numbers: crate::manifest::RawNumbers::default(),
         };
         top_hasher.append(&row3)?;
 
@@ -952,7 +968,8 @@ mod tests {
             physical_key: "s3://bucket/test1.txt".to_string(),
             hash: Sha256ChunkedHash::try_from(objects::ZERO_HASH_B64)?.into(),
             size: 0,
-            meta: Some(serde_json::json!({})), // Empty object
+            meta: Some(serde_json::json!({})), // Empty object,
+            meta_numbers: crate::manifest::RawNumbers::default(),
         };
 
         let sorted_keys_meta_row = ManifestRow {
@@ -960,7 +977,8 @@ mod tests {
             physical_key: "s3://bucket/test2.txt".to_string(),
             hash: Sha256ChunkedHash::try_from(objects::LESS_THAN_8MB_HASH_B64)?.into(),
             size: 16,
-            meta: Some(serde_json::json!({"alpha": "first", "beta": "second"})), // Keys in alphabetical order
+            meta: Some(serde_json::json!({"alpha": "first", "beta": "second"})), // Keys in alphabetical order,
+            meta_numbers: crate::manifest::RawNumbers::default(),
         };
 
         top_hasher1.append(&empty_obj_meta_row)?;
@@ -977,7 +995,8 @@ mod tests {
             physical_key: "s3://bucket/test1.txt".to_string(),
             hash: Sha256ChunkedHash::try_from(objects::ZERO_HASH_B64)?.into(),
             size: 0,
-            meta: Some(serde_json::Value::Null), // Null becomes {}
+            meta: Some(serde_json::Value::Null), // Null becomes {},
+            meta_numbers: crate::manifest::RawNumbers::default(),
         };
 
         let unsorted_keys_meta_row = ManifestRow {
@@ -985,7 +1004,8 @@ mod tests {
             physical_key: "s3://bucket/test2.txt".to_string(),
             hash: Sha256ChunkedHash::try_from(objects::LESS_THAN_8MB_HASH_B64)?.into(),
             size: 16,
-            meta: Some(serde_json::json!({"beta": "second", "alpha": "first"})), // Keys in different order
+            meta: Some(serde_json::json!({"beta": "second", "alpha": "first"})), // Keys in different order,
+            meta_numbers: crate::manifest::RawNumbers::default(),
         };
 
         top_hasher2.append(&null_meta_row)?;
@@ -1002,7 +1022,8 @@ mod tests {
             physical_key: "s3://bucket/test1.txt".to_string(),
             hash: Sha256ChunkedHash::try_from(objects::ZERO_HASH_B64)?.into(),
             size: 0,
-            meta: None, // None becomes {}
+            meta: None, // None becomes {},
+            meta_numbers: crate::manifest::RawNumbers::default(),
         };
 
         let reordered_keys_meta_row = ManifestRow {
@@ -1010,7 +1031,8 @@ mod tests {
             physical_key: "s3://bucket/test2.txt".to_string(),
             hash: Sha256ChunkedHash::try_from(objects::LESS_THAN_8MB_HASH_B64)?.into(),
             size: 16,
-            meta: Some(serde_json::json!({"beta": "second", "alpha": "first"})), // Same as above after normalization
+            meta: Some(serde_json::json!({"beta": "second", "alpha": "first"})), // Same as above after normalization,
+            meta_numbers: crate::manifest::RawNumbers::default(),
         };
 
         top_hasher3.append(&missing_meta_row)?;
@@ -1052,6 +1074,7 @@ mod tests {
             hash: Sha256ChunkedHash::try_from(objects::ZERO_HASH_B64)?.into(),
             size: 0,
             meta: Some(serde_json::json!({"format": "json"})),
+            meta_numbers: crate::manifest::RawNumbers::default(),
         };
         top_hasher.append(&row1)?;
 
@@ -1062,6 +1085,7 @@ mod tests {
             hash: Sha256ChunkedHash::try_from(objects::EQUAL_TO_8MB_HASH_B64)?.into(),
             size: 8_388_608,
             meta: Some(serde_json::Value::Null),
+            meta_numbers: crate::manifest::RawNumbers::default(),
         };
         top_hasher.append(&row2)?;
 
@@ -1072,6 +1096,7 @@ mod tests {
             hash: Sha256ChunkedHash::try_from(objects::MORE_THAN_8MB_HASH_B64)?.into(),
             size: 18_874_368,
             meta: Some(serde_json::json!({"width": 1920, "height": 1080})),
+            meta_numbers: crate::manifest::RawNumbers::default(),
         };
         top_hasher.append(&row3)?;
 

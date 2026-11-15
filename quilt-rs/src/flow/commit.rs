@@ -27,6 +27,7 @@ use crate::manifest::HeaderMessage;
 use crate::manifest::Manifest;
 use crate::manifest::ManifestHeader;
 use crate::manifest::ManifestRow;
+use crate::manifest::RawNumbers;
 use crate::manifest::TopHasher;
 use crate::manifest::Workflow;
 use crate::paths::DomainPaths;
@@ -296,20 +297,24 @@ pub async fn commit_package(
         }
     }
 
-    let user_meta = match user_meta {
-        UserMeta::Keep => manifest.header.user_meta.clone(),
-        UserMeta::Clear => None,
+    let (user_meta, user_meta_numbers) = match user_meta {
+        UserMeta::Keep => (
+            manifest.header.user_meta.clone(),
+            manifest.header.user_meta_numbers.clone(),
+        ),
+        UserMeta::Clear => (None, RawNumbers::default()),
         UserMeta::Set(serde_json::Value::Object(mut m)) => {
             m.sort_keys();
-            Some(m.into())
+            (Some(m.into()), RawNumbers::default())
         }
-        UserMeta::Set(other) => Some(other),
+        UserMeta::Set(other) => (Some(other), RawNumbers::default()),
     };
 
     let header = ManifestHeader {
         message: HeaderMessage::Text(message.clone()),
         workflow,
         user_meta,
+        user_meta_numbers,
         ..ManifestHeader::default()
     };
 
@@ -399,6 +404,7 @@ mod tests {
 
     use crate::fixtures;
     use crate::io::remote::mocks::MockRemote;
+    use crate::io::storage::LocalStorage;
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::Change;
     use crate::manifest::WorkflowId;
@@ -585,6 +591,39 @@ mod tests {
             commit_hash(Some(meta.clone()), UserMeta::Set(meta)).await?,
             "Keep must inherit the previous header's user_meta"
         );
+        Ok(())
+    }
+
+    /// `Keep` carries integers beyond 64 bits as quilt3 hashes them: committing
+    /// quilt3's own manifest unchanged gives quilt3's top hash.
+    #[test(tokio::test)]
+    async fn test_commit_keep_hashes_big_integers_as_quilt3_does() -> Res {
+        let name =
+            "c73246b3eecc0d9da9fb691d2e18a1dc241ed5c6cfa5433955667497ef178701-big-integers.jsonl";
+        let path = std::env::current_dir()?
+            .join("fixtures/quilt3-packages")
+            .join(name);
+        let mut manifest = Manifest::from_path(&LocalStorage::default(), &path).await?;
+        assert!(!manifest.header.user_meta_numbers.is_empty());
+
+        let storage = MockStorage::default();
+        let paths = DomainPaths::new(std::path::absolute("/foo")?);
+        let (_lineage, commit) = commit_package(
+            PackageLineage::default(),
+            &mut manifest,
+            &paths,
+            &storage,
+            &MockRemote::default(),
+            None,
+            PathBuf::default(),
+            InstalledPackageStatus::default(),
+            ("foo", "bar").into(),
+            String::default(),
+            UserMeta::Keep,
+            None,
+        )
+        .await?;
+        assert_eq!(commit.hash(), name.split_once('-').map(|(hash, _)| hash));
         Ok(())
     }
 

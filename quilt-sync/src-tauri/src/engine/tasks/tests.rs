@@ -1585,6 +1585,7 @@ fn file(key: &str, content: &str) -> Result<quilt::manifest::ManifestRow, Error>
             .into(),
         size: content.len() as u64,
         meta: None,
+        meta_numbers: quilt::manifest::RawNumbers::default(),
     })
 }
 

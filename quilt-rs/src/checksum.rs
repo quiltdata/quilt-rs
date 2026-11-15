@@ -69,6 +69,7 @@ pub async fn calculate_hash(
         size,
         hash,
         meta: None,
+        meta_numbers: crate::manifest::RawNumbers::default(),
     })
 }
 

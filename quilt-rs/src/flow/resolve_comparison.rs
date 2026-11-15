@@ -17,7 +17,8 @@ use crate::flow::list_revisions::holds_user_meta;
 use crate::flow::remote_delta;
 use crate::lineage::CommitState;
 use crate::manifest::Manifest;
-use crate::manifest::normalized_entry_meta;
+use crate::manifest::RawNumbers;
+use crate::manifest::same_entry_meta;
 
 /// What each resolve choice costs: this copy's revision against the
 /// published `latest`. Paths are logical keys, sorted.
@@ -66,12 +67,8 @@ pub fn compare_for_resolve<S: BuildHasher>(
         .rows
         .iter()
         .filter(|theirs| {
-            mine.get(&theirs.logical_key).is_none_or(|row| {
-                row.hash != theirs.hash
-                    || (row.meta != theirs.meta
-                        && normalized_entry_meta(row.meta.as_ref())
-                            != normalized_entry_meta(theirs.meta.as_ref()))
-            })
+            mine.get(&theirs.logical_key)
+                .is_none_or(|row| row.hash != theirs.hash || !same_entry_meta(row, theirs))
         })
         .count();
     ResolveComparison {
@@ -83,12 +80,13 @@ pub fn compare_for_resolve<S: BuildHasher>(
     }
 }
 
-fn user_meta(manifest: &Manifest) -> Option<&serde_json::Value> {
+fn user_meta(manifest: &Manifest) -> Option<(&serde_json::Value, &RawNumbers)> {
     manifest
         .header
         .user_meta
         .as_ref()
         .filter(|v| holds_user_meta(v))
+        .map(|v| (v, &manifest.header.user_meta_numbers))
 }
 
 #[cfg(test)]
@@ -112,6 +110,7 @@ mod tests {
                 .unwrap(),
             size: hash_seed.len() as u64,
             meta: None,
+            meta_numbers: crate::manifest::RawNumbers::default(),
         })
     }
 

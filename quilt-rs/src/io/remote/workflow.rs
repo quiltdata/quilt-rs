@@ -1203,6 +1203,7 @@ workflows:
             hash: ObjectHash::default(),
             size: 1,
             meta: None,
+            meta_numbers: crate::manifest::RawNumbers::default(),
         };
         let view = entry_view(&row);
         assert_eq!(view.logical_key, "bad-\u{FFFD}.txt");

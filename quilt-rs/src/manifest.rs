@@ -1,10 +1,12 @@
 //!
 //! Namespace contains helpers to work with manifest and its content (rows).
 
+mod meta_json;
 mod top_hasher;
 
+pub use meta_json::RawNumbers;
 pub use top_hasher::TopHasher;
-pub(crate) use top_hasher::normalized_entry_meta;
+pub(crate) use top_hasher::same_entry_meta;
 
 pub use crate::workflow::Workflow;
 pub use crate::workflow::WorkflowId;
@@ -25,6 +27,8 @@ use crate::error::ManifestError;
 use crate::io::manifest::RowsStream;
 use crate::io::manifest::StreamRowsChunk;
 use crate::io::storage::ByteStream;
+use crate::manifest::meta_json::Style;
+use crate::manifest::meta_json::write_json;
 use crate::object_hash;
 
 /// Header (or first row) in JSONL manifest
@@ -35,6 +39,9 @@ pub struct ManifestHeader {
     pub message: HeaderMessage,
     #[serde(skip_serializing_if = "Option::is_none")] // Attempt to be quilt3-compatible.
     pub user_meta: Option<serde_json::Value>,
+    /// The integers in `user_meta` beyond 64 bits, as read; see [`RawNumbers`].
+    #[serde(skip)]
+    pub user_meta_numbers: RawNumbers,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workflow: Option<Workflow>,
 }
@@ -96,6 +103,7 @@ impl Default for ManifestHeader {
             version: "v0".to_string(),
             message: HeaderMessage::Text(String::new()),
             user_meta: Some(serde_json::Value::Object(serde_json::Map::new())),
+            user_meta_numbers: RawNumbers::default(),
             workflow: None,
         }
     }
@@ -144,6 +152,9 @@ pub struct ManifestRow {
     pub hash: object_hash::ObjectHash,
     pub size: u64,
     pub meta: Option<serde_json::Value>,
+    /// The integers in `meta` beyond 64 bits, as read; see [`RawNumbers`].
+    #[serde(skip)]
+    pub meta_numbers: RawNumbers,
 }
 
 impl ManifestRow {
@@ -173,6 +184,7 @@ impl TryFrom<Quilt3ManifestRow> for ManifestRow {
             hash: row.hash,
             size: row.size,
             meta: row.meta,
+            meta_numbers: RawNumbers::default(),
         })
     }
 }
@@ -199,6 +211,26 @@ fn check_tree(rows: &[ManifestRow]) -> Res {
         }
     }
     Ok(())
+}
+
+/// One row as a manifest line, in quilt3's form, field for field as
+/// [`Quilt3ManifestRow`] writes it, with the metadata as quilt3 writes it.
+fn write_row(buf: &mut String, row: &ManifestRow) {
+    fn json<T: Serialize + ?Sized>(value: &T) -> String {
+        serde_json::to_string(value).expect("Could not serialize manifest row")
+    }
+    buf.push_str("{\"logical_key\":");
+    buf.push_str(&json(&row.logical_key));
+    buf.push_str(",\"physical_keys\":[");
+    buf.push_str(&json(&row.physical_key));
+    buf.push_str("],\"hash\":");
+    buf.push_str(&json(&row.hash));
+    buf.push_str(",\"size\":");
+    buf.push_str(&row.size.to_string());
+    buf.push_str(",\"meta\":");
+    let meta = row.meta.clone().unwrap_or_else(|| serde_json::json!({}));
+    write_json(buf, &meta, &row.meta_numbers, Style::Manifest);
+    buf.push('}');
 }
 
 /// Legacy JSONL in-memory manifest
@@ -238,6 +270,9 @@ impl Manifest {
         {
             header.user_meta = Some(serde_json::Value::Null);
         }
+        if let Some(user_meta) = header.user_meta.as_mut() {
+            header.user_meta_numbers = RawNumbers::read(user_meta, &header_str, "user_meta");
+        }
 
         if header.version != "v0" {
             return Err(Error::Manifest(ManifestError::Header(format!(
@@ -249,7 +284,11 @@ impl Manifest {
         let mut rows = Vec::new();
         while let Some(line) = lines.next_line().await? {
             let row: Quilt3ManifestRow = serde_json::from_str(&line)?;
-            rows.push(ManifestRow::try_from(row)?);
+            let mut row = ManifestRow::try_from(row)?;
+            if let Some(meta) = row.meta.as_mut() {
+                row.meta_numbers = RawNumbers::read(meta, &line, "meta");
+            }
+            rows.push(row);
         }
 
         check_tree(&rows)?;
@@ -268,20 +307,18 @@ impl Manifest {
         // TODO: This is slightly inefficient.
         // We could use some kind of async iterator / stream idk
         let mut buf = String::new();
-        buf.push_str(
-            serde_json::to_string(&self.header)
-                .expect("Could not serialize manifest header")
-                .as_str(),
+        let header =
+            serde_json::to_value(&self.header).expect("Could not serialize manifest header");
+        write_json(
+            &mut buf,
+            &header,
+            &self.header.user_meta_numbers.under("/user_meta"),
+            Style::Manifest,
         );
         buf.push('\n');
 
         for row in &self.rows {
-            let q3row = Quilt3ManifestRow::from(row.to_owned());
-            buf.push_str(
-                serde_json::to_string(&q3row)
-                    .expect("Could not serialize manifest row")
-                    .as_str(),
-            );
+            write_row(&mut buf, row);
             buf.push('\n');
         }
         buf
@@ -400,6 +437,7 @@ mod tests {
             hash: object_hash::Sha256Hash::try_from("deadbeef")?.into(),
             size: 1,
             meta: None,
+            meta_numbers: crate::manifest::RawNumbers::default(),
         };
         let right = ManifestRow {
             logical_key: crate::LogicalKey::new("A")?,
@@ -407,6 +445,7 @@ mod tests {
             hash: object_hash::Sha256Hash::try_from("deadbeef")?.into(),
             size: 1,
             meta: None,
+            meta_numbers: crate::manifest::RawNumbers::default(),
         };
         assert!(left.matches_content(&right));
         Ok(())
@@ -422,6 +461,7 @@ mod tests {
             hash: object_hash::Sha256Hash::try_from("deadbeef")?.into(),
             size: 1,
             meta: Some(serde_json::Value::Object(meta)),
+            meta_numbers: crate::manifest::RawNumbers::default(),
         };
         let right = ManifestRow {
             logical_key: crate::LogicalKey::new("A")?,
@@ -429,6 +469,7 @@ mod tests {
             hash: object_hash::Sha256Hash::try_from("deadbeef")?.into(),
             size: 1,
             meta: None,
+            meta_numbers: crate::manifest::RawNumbers::default(),
         };
         assert!(left.matches_content(&right));
         Ok(())
@@ -577,6 +618,7 @@ mod tests {
                         size: 29,
                         hash: object_hash::Sha256ChunkedHash::try_from("/UMjH1bsbrMLBKdd9cqGGvtjhWzawhz1BfrxgngUhVI=")?.into(),
                         meta: Some(serde_json::json!({})),
+                        meta_numbers: crate::manifest::RawNumbers::default(),
                     }
         );
         assert_eq!(
@@ -587,6 +629,7 @@ mod tests {
                         size: 29,
                         hash: object_hash::Sha256ChunkedHash::try_from("/UMjH1bsbrMLBKdd9cqGGvtjhWzawhz1BfrxgngUhVI=")?.into(),
                         meta: Some(serde_json::json!({})),
+                        meta_numbers: crate::manifest::RawNumbers::default(),
                     }
         );
         Ok(())

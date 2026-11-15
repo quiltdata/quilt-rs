@@ -273,6 +273,7 @@ impl<S: Storage + Sync> Hasher<'_, S> {
             size,
             hash,
             meta: None,
+            meta_numbers: crate::manifest::RawNumbers::default(),
         })
     }
 
@@ -744,6 +745,7 @@ mod tests {
                     .into(),
                 meta: None,
                 physical_key: crate::paths::file_url(&physical_key)?,
+                meta_numbers: crate::manifest::RawNumbers::default(),
             };
             assert!(added_row.matches_content(&reference_row));
             Ok(())

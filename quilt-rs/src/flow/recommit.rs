@@ -105,6 +105,7 @@ pub async fn recommit_for_remote(
     let header = ManifestHeader {
         message: manifest.header.message.clone(),
         user_meta: manifest.header.user_meta.clone(),
+        user_meta_numbers: manifest.header.user_meta_numbers.clone(),
         workflow,
         ..ManifestHeader::default()
     };
@@ -197,6 +198,7 @@ mod tests {
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::PathState;
     use crate::manifest::HeaderMessage;
+    use crate::manifest::RawNumbers;
 
     /// Helper: create a local package with a single file using the given `host_config`,
     /// returning (lineage, manifest, storage, paths, namespace).
@@ -414,6 +416,44 @@ mod tests {
             "User meta should be preserved"
         );
 
+        Ok(())
+    }
+
+    /// Integers beyond 64 bits in the package metadata survive the new header.
+    #[test(tokio::test)]
+    async fn test_recommit_keeps_big_integers_in_meta() -> Res {
+        let sha256_config = HostConfig::default_sha256_chunked();
+        let crc64_config = HostConfig::default_crc64();
+
+        let (lineage, mut manifest, storage, paths, namespace) =
+            create_test_package(&sha256_config).await?;
+        let (meta, numbers) = RawNumbers::parse(r#"{"n": 18446744073709551616}"#)?;
+        manifest.header.user_meta = Some(meta);
+        manifest.header.user_meta_numbers = numbers.clone();
+
+        let lineage = recommit_for_remote(
+            lineage,
+            &manifest,
+            &paths,
+            &storage,
+            &MockRemote::default(),
+            None,
+            namespace.clone(),
+            crc64_config,
+            None,
+            None,
+        )
+        .await?;
+
+        let commit = lineage.commit.as_ref().unwrap();
+        let manifest_path = paths.installed_manifest(&namespace, &commit.hash);
+        let new_manifest = Manifest::from_path(&storage, &manifest_path).await?;
+        assert_eq!(new_manifest.header.user_meta_numbers, numbers);
+        assert!(
+            new_manifest
+                .to_jsonlines()
+                .contains(r#""user_meta":{"n":18446744073709551616}"#)
+        );
         Ok(())
     }
 

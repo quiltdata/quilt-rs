@@ -27,6 +27,7 @@ async fn test_single_row_manifest() -> Res {
         hash: Sha256ChunkedHash::try_from(objects::LESS_THAN_8MB_HASH_B64)?.into(),
         size: 16,
         meta: Some(serde_json::json!({"type": "text"})),
+        meta_numbers: crate::manifest::RawNumbers::default(),
     };
 
     let rows_stream = tokio_stream::iter(vec![Ok(vec![Ok(manifest_row)])]);
@@ -69,6 +70,7 @@ async fn test_mixed_hash_types_manifest() -> Res {
         .into(),
         size: 8,
         meta: None,
+        meta_numbers: crate::manifest::RawNumbers::default(),
     };
 
     let row2 = ManifestRow {
@@ -77,6 +79,7 @@ async fn test_mixed_hash_types_manifest() -> Res {
         hash: Sha256ChunkedHash::try_from(objects::LESS_THAN_8MB_HASH_B64)?.into(),
         size: 16,
         meta: None,
+        meta_numbers: crate::manifest::RawNumbers::default(),
     };
 
     let row3 = ManifestRow {
@@ -85,6 +88,7 @@ async fn test_mixed_hash_types_manifest() -> Res {
         hash: Crc64Hash::try_from("dGVzdGRhdGEAAAAAAAAAAAAAAAAAAAAA")?.into(),
         size: 32,
         meta: None,
+        meta_numbers: crate::manifest::RawNumbers::default(),
     };
 
     let rows_stream = tokio_stream::iter(vec![Ok(vec![Ok(row1), Ok(row2), Ok(row3)])]);
@@ -130,6 +134,7 @@ async fn test_multiple_rows_manifest() -> Res {
         hash: Sha256ChunkedHash::try_from(objects::ZERO_HASH_B64)?.into(),
         size: 0,
         meta: Some(serde_json::json!({"format": "json"})),
+        meta_numbers: crate::manifest::RawNumbers::default(),
     };
 
     let row2 = ManifestRow {
@@ -138,6 +143,7 @@ async fn test_multiple_rows_manifest() -> Res {
         hash: Sha256ChunkedHash::try_from(objects::EQUAL_TO_8MB_HASH_B64)?.into(),
         size: 8_388_608,
         meta: Some(serde_json::Value::Null),
+        meta_numbers: crate::manifest::RawNumbers::default(),
     };
 
     let row3 = ManifestRow {
@@ -146,6 +152,7 @@ async fn test_multiple_rows_manifest() -> Res {
         hash: Sha256ChunkedHash::try_from(objects::MORE_THAN_8MB_HASH_B64)?.into(),
         size: 18_874_368,
         meta: Some(serde_json::json!({"width": 1920, "height": 1080})),
+        meta_numbers: crate::manifest::RawNumbers::default(),
     };
 
     let rows_stream = tokio_stream::iter(vec![Ok(vec![Ok(row1), Ok(row2), Ok(row3)])]);
