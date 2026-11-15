@@ -28,6 +28,7 @@ url.workspace = true
 [dev-dependencies]
 serde_json.workspace = true
 test-log.workspace = true
+testing_logger = "0.1"
 
 [lints]
 workspace = true

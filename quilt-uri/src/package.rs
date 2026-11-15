@@ -444,10 +444,12 @@ fn trailing_padding_was_on_path(input: &str) -> bool {
 /// is no path, matching quilt3.
 fn tidy_package_path(value: &str, raw_path_had_trailing_padding: bool) -> Option<PathBuf> {
     let trimmed = value.trim_matches(is_uri_padding);
-    if trimmed != value || raw_path_had_trailing_padding {
+    if trimmed != value {
         log::warn!(
             "trimmed leading or trailing whitespace from package URI path {value:?} to {trimmed:?}"
         );
+    } else if raw_path_had_trailing_padding {
+        log::warn!("removed trailing whitespace from path={trimmed}");
     }
     if trimmed.is_empty() {
         None
