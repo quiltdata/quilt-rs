@@ -40,6 +40,7 @@
 ### Changed
 
 - **Breaking:** `UserMeta::Set` carries the value and a `RawNumbers`, so every `Set` literal and every exhaustive match needs the numbers (use `UserMeta::parse` or `UserMeta::set`). `flow::create_package` and `LocalDomain::create_package` take a `UserMeta`; `Keep` and `Clear` write no `user_meta` key, where create previously wrote `"user_meta": {}` (<https://github.com/quiltdata/quilt-rs/pull/1394>)
+- **Breaking:** `DirMeta` is `#[non_exhaustive]`, so a struct literal no longer compiles outside this crate; use `DirMeta::new`, then set `meta_numbers` when the folder was read from a line (<https://github.com/quiltdata/quilt-rs/pull/1396>)
 - **Breaking:** `Remote` has a new required method, `manifest_hashes_with_prefix`, and `Error` a new variant, `HashPrefix`, so an outside `Remote` implementation or exhaustive match on `Error` needs updating (<https://github.com/quiltdata/quilt-rs/pull/1390>)
 - **Breaking:** `io::manifest::build_manifest_from_rows_stream` takes the folder metadata as a new fourth argument, and a `Manifest` literal needs the new `dir_meta` field (<https://github.com/quiltdata/quilt-rs/pull/1387>)
 - **Breaking:** `MergeRefusal` has a new `Invalid` variant for a merged tree that is invalid for a reason other than a file/folder clash (<https://github.com/quiltdata/quilt-rs/pull/1387>)

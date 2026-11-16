@@ -373,12 +373,11 @@ mod tests {
 
     fn with_dir_meta(text: &str) -> Manifest {
         let (meta, meta_numbers) = quilt::manifest::RawNumbers::parse(text).expect("json");
+        let mut dir =
+            quilt::manifest::DirMeta::new(quilt::LogicalKey::new("data").expect("key"), meta);
+        dir.meta_numbers = meta_numbers;
         let mut manifest = Manifest::default();
-        manifest.dir_meta.push(quilt::manifest::DirMeta {
-            logical_key: quilt::LogicalKey::new("data").expect("key"),
-            meta,
-            meta_numbers,
-        });
+        manifest.dir_meta.push(dir);
         manifest
     }
 
