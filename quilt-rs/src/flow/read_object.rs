@@ -59,13 +59,8 @@ impl ReadOptions {
 /// [`string`](Self::string) or [`json`](Self::json) when you want the whole
 /// object and would rather get nothing than bytes that failed the check.
 ///
-/// **Bytes read from the object store are not hash-checked.** When
-/// [`read_object`] finds the row's object in the store it streams that file
-/// as it is, so the check above applies only to bytes fetched from the remote.
-/// The store holds what [`install_paths`](super::install_paths) verified, and
-/// also the copy of a working file that a commit files, hashed when it was
-/// committed but not checked again; `read_object` checks only that a stored
-/// file is the size its row records.
+/// **Bytes read from the object store are not hash-checked**; see
+/// [`read_object`].
 ///
 /// Dropping the stream early stops the fetch, and the check never completes.
 pub struct ObjectBody {
@@ -104,25 +99,18 @@ impl ObjectBody {
 /// Opens the object `row` describes for reading, checking its hash as the
 /// bytes stream.
 ///
-/// The bytes come from the object store when `store` is given and already holds
-/// a file for the row's hash that is the size the row records. That read is
-/// **not hash-checked**: the store is content-addressed and trusted on every
-/// read, and its files are filed either by
-/// [`install_paths`](super::install_paths), after they hashed to the row, or by
-/// a commit, as a copy of a working file that was hashed when it was committed
-/// and is not hashed again. So a stored file whose length does not match the
-/// row is not read from the store at all: the read falls through to the remote
-/// and is verified, as if the store had no file. A stored file of the right
-/// length with wrong bytes is not caught here.
+/// A file in `store` for the row's hash is read from there **without a hash
+/// check**: install filed it after verifying it, but a commit also files a copy
+/// of a working file it hashed earlier and does not hash again. Only the file's
+/// length is compared to the row's `size`; if it differs the store is ignored
+/// and the remote is read and verified. The right length with wrong bytes is
+/// not caught.
 ///
-/// Otherwise the bytes come from the row's `s3://` `physical_key`, and are
-/// verified unless `options` turns that off. Reading never writes to the store.
-///
-/// The check uses the algorithm of the row's hash, through the same hashing
-/// [`refresh_hash`](crate::checksum::refresh_hash) applies to an installed
-/// file, fed from the stream in a second task rather than from a finished file.
-/// The object is read once. What the check adds is CPU for the hash, while
-/// chunks keep flowing, and a pause at the end for the hasher to finish.
+/// Otherwise the bytes come from the row's `s3://` `physical_key` and are
+/// verified unless `options` turns that off. Nothing is written to the store.
+/// The hash uses the row's algorithm, as
+/// [`refresh_hash`](crate::checksum::refresh_hash) does for a file, fed from the
+/// stream in a second task, so the object is read once.
 ///
 /// What the stream's last item can be:
 ///
@@ -130,7 +118,8 @@ impl ObjectBody {
 ///   no `versionId` on the `physical_key` the object may have been replaced by a
 ///   later revision, and the message says so, as `install_paths` does; with a
 ///   pinned version the recorded hash is wrong.
-/// - [`ChecksumError::SizeMismatch`]: the stream is not the row's size.
+/// - [`ChecksumError::SizeMismatch`]: the stream is not the row's size. With no
+///   `versionId` it also says the object may have been replaced.
 /// - Any other error, such as a failed read or a hasher that could not run, is
 ///   not a verdict on the bytes.
 pub async fn read_object(
@@ -246,6 +235,7 @@ fn pump(mut body: ByteStream, check: Option<Check>) -> ObjectBody {
                     key: check.key,
                     expected: check.size,
                     actual: streamed,
+                    replaced: check.replaced,
                 }))
             };
             if let Some(verdict) = verdict {
@@ -467,8 +457,10 @@ mod tests {
                         key,
                         expected,
                         actual,
+                        replaced,
                     })) => {
                         assert_eq!(key, "k.bin");
+                        assert!(!replaced, "KEY pins a version");
                         assert_eq!(expected, contents.len() as u64);
                         assert_eq!(actual, served.len() as u64, "algorithm {algorithm:#x}");
                     }
@@ -479,6 +471,45 @@ mod tests {
                     ),
                 }
             }
+        }
+        Ok(())
+    }
+
+    /// As for a hash mismatch, a key that names no version says the object may
+    /// have been replaced since, and one that names a version does not.
+    #[test(tokio::test)]
+    async fn a_size_mismatch_is_worded_by_whether_the_key_names_a_version() -> Res {
+        for (physical_key, replaced) in [
+            (KEY, false),
+            ("s3://b/p/k.bin", true),
+            ("s3://b/p/k.bin?versionId=null", true),
+        ] {
+            let remote = MockRemote::default();
+            let mut row = row_of(&remote.storage, b"what the row says", MULTIHASH_SHA256).await?;
+            row.physical_key = physical_key.to_string();
+            remote
+                .put_object(None, &S3Uri::try_from(physical_key)?, b"too short".to_vec())
+                .await?;
+
+            let outcome = read(&remote, None, &row, ReadOptions::default())
+                .await?
+                .bytes()
+                .await;
+
+            let Err(Error::Checksum(error @ ChecksumError::SizeMismatch { .. })) = outcome else {
+                panic!("{physical_key}: expected a size mismatch, got {outcome:?}");
+            };
+            let ChecksumError::SizeMismatch { replaced: got, .. } = &error else {
+                unreachable!()
+            };
+            assert_eq!(*got, replaced, "{physical_key}");
+            let message = error.to_string();
+            assert!(message.contains("k.bin is 9 bytes"), "{message}");
+            assert_eq!(
+                message.contains("may have been replaced"),
+                replaced,
+                "{message}"
+            );
         }
         Ok(())
     }

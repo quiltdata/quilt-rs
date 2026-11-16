@@ -50,7 +50,8 @@ The stream's last item says how a read that fails did so:
 - `ChecksumError::HashMismatch`: the bytes do not hash to the row. For a
   `physical_key` with no `versionId` it says the object may have been replaced
   since, as install does; for a pinned version, that the package may be corrupt.
-- `ChecksumError::SizeMismatch`: the object is not the size the row records.
+- `ChecksumError::SizeMismatch`: the object is not the size the row records;
+  with no `versionId` it also says the object may have been replaced.
 - Any other error (a failed read, a hasher that could not run) is not a verdict
   on the bytes.
 

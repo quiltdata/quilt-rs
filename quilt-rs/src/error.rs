@@ -206,6 +206,16 @@ fn hash_mismatch_message(key: &str, replaced: bool, expected: &str, computed: &s
     }
 }
 
+/// The message of a size mismatch on read.
+fn size_mismatch_message(key: &str, replaced: bool, expected: u64, actual: u64) -> String {
+    let message = format!("{key} is {actual} bytes, but its row says {expected}");
+    if replaced {
+        format!("{message}: the object it points to may have been replaced")
+    } else {
+        message
+    }
+}
+
 #[derive(Error, Debug)]
 pub enum ChecksumError {
     #[error("Checksum error: {0}")]
@@ -228,8 +238,9 @@ pub enum ChecksumError {
         replaced: bool,
     },
 
-    /// A read object is not the size its row records.
-    #[error("{key} is {actual} bytes, but its row says {expected}")]
+    /// A read object is not the size its row records. `replaced` is as for
+    /// [`HashMismatch`](Self::HashMismatch).
+    #[error("{}", size_mismatch_message(.key, *.replaced, *.expected, *.actual))]
     SizeMismatch {
         /// The row's logical key.
         key: String,
@@ -237,6 +248,8 @@ pub enum ChecksumError {
         expected: u64,
         /// How many bytes were read.
         actual: u64,
+        /// Whether the object may have been replaced since the row was made.
+        replaced: bool,
     },
 
     #[error("Missing checksum: {0:?}")]
