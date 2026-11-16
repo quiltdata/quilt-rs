@@ -99,8 +99,7 @@ pub(super) fn accounts_skeleton() -> AnyView {
 
 /// The card's live region, written once — when the last row that had something
 /// to ask has answered. One utterance rather than one per row: a polite region
-/// rewritten twice inside a tick loses the first message. The shape
-/// `recent_files.rs`'s copy confirmation uses.
+/// rewritten twice inside a tick loses the first message.
 #[derive(Clone, Copy)]
 struct RoleWatch {
     said: RwSignal<String>,

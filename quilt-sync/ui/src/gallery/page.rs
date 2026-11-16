@@ -99,7 +99,7 @@ pub fn BusyDayScene() -> impl IntoView {
                     <pages::QueueBand>
                         <QueueRegion />
                     </pages::QueueBand>
-                    <PackagesRegion view_name="busy-day-view" />
+                    <PackagesRegion />
                 </PageLayout>
             </div>
         </Scene>
@@ -128,7 +128,7 @@ pub fn PageScene() -> impl IntoView {
                     <pages::QueueBand>
                         <ZeroLine text="All packages are up to date" />
                     </pages::QueueBand>
-                    <PackagesRegion view_name="normal-day-view" />
+                    <PackagesRegion />
                 </PageLayout>
             </div>
         </Scene>
@@ -180,7 +180,7 @@ pub fn PageScene() -> impl IntoView {
                         <pages::QueueBand>
                             <ZeroLine text="All packages are up to date" />
                         </pages::QueueBand>
-                        <PackagesRegion view_name="long-activity-view" />
+                        <PackagesRegion />
                     </PageLayout>
                 </Provider>
             </div>
@@ -236,7 +236,7 @@ fn CheckingScene() -> impl IntoView {
                         <pages::QueueBand>
                             <ZeroLineSkeleton />
                         </pages::QueueBand>
-                        <PackagesRegion view_name="checking-view" provisional=true />
+                        <PackagesRegion provisional=true />
                     </PageLayout>
                 </div>
                 <div class="g-window">
@@ -245,7 +245,7 @@ fn CheckingScene() -> impl IntoView {
                         <pages::QueueBand>
                             <ZeroLine text="All packages are up to date" />
                         </pages::QueueBand>
-                        <PackagesRegion view_name="checked-view" />
+                        <PackagesRegion />
                     </PageLayout>
                 </div>
             </div>
@@ -278,7 +278,7 @@ fn NarrowScene() -> impl IntoView {
                     <pages::QueueBand>
                         <QueueRegion />
                     </pages::QueueBand>
-                    <PackagesRegion view_name="narrow-640-view" />
+                    <PackagesRegion />
                 </PageLayout>
             </div>
             <div id="main-1024" class="g-window" style="width:1024px; max-width:100%">
@@ -287,7 +287,7 @@ fn NarrowScene() -> impl IntoView {
                     <pages::QueueBand>
                         <QueueRegion />
                     </pages::QueueBand>
-                    <PackagesRegion view_name="narrow-1024-view" />
+                    <PackagesRegion />
                 </PageLayout>
             </div>
         </Scene>

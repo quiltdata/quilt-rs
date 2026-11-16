@@ -51,8 +51,8 @@ pub fn package_uri(
     }
 }
 
-/// The same handle, pointed at one file inside the package — the form the feed's
-/// Copy action puts on the clipboard.
+/// The same handle, pointed at one file inside the package — the form a file
+/// row's *Copy URI* puts on the clipboard.
 #[must_use]
 pub fn file_uri(package: &S3PackageUri, path: &str) -> S3PackageUri {
     S3PackageUri {

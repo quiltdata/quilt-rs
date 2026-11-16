@@ -335,10 +335,16 @@ fn row<'a>(packages: &'a [MainPagePackage], namespace: &str) -> &'a MainPagePack
 /// paused set into `paused_reasons` is **not** exercised here; these tests
 /// enter one level below it.
 async fn roster(model: &MockQuiltModel, roles: &RoleCache) -> Vec<MainPagePackage> {
-    get_main_page_packages_from_model(model, roles, &Telemetry::default(), &HashMap::new())
-        .await
-        .expect("roster")
-        .packages
+    get_main_page_packages_from_model(
+        model,
+        roles,
+        &Telemetry::default(),
+        &HashMap::new(),
+        &HashMap::new(),
+    )
+    .await
+    .expect("roster")
+    .packages
 }
 
 /// Whether a row, or a refresh, says the active role cannot reach its bucket.

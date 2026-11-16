@@ -11,8 +11,7 @@ stylance::import_crate_style!(pub style, "src/card.module.css");
 // Each bool is its own optional prop, set by name at the call site.
 #[allow(clippy::fn_params_excessive_bools)]
 pub fn Card(
-    /// Optional, because the list card has none: its `SegmentedControl` names the view, and a
-    /// card titled `Packages` above a Packages / Recent files switch says it twice.
+    /// Optional: the main page's list card has none.
     #[prop(optional, into)]
     title: Option<String>,
     /// How many rows the card holds, beside the title. Must be **derived** from the
@@ -149,8 +148,8 @@ mod tests {
         assert_eq!(heading.text_content().as_deref(), Some("Autosync"));
     }
 
-    /// The list card has no visible title — the view toggle names it — so the name
-    /// is a heading only a screen reader reaches.
+    /// The list card has no visible title, so its name is a heading only a screen
+    /// reader reaches.
     #[wasm_bindgen_test]
     fn a_card_with_no_visible_title_still_has_a_heading() {
         let el = mount(|| view! { <Card label="Packages">"rows"</Card> });

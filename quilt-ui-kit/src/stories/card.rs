@@ -64,7 +64,7 @@ pub fn CardStories() -> impl IntoView {
                         <ToggleRow label="Get new revisions" sublabel="Every 30s" checked=a />
                     </Card>
                 </Cell>
-                <Cell wide=true label="no title — the list card, named by its own SegmentedControl">
+                <Cell wide=true label="no title — the main page's list card">
                     <Card>
                         <ToggleRow label="Get new revisions" sublabel="Every 30s" checked=a />
                     </Card>
