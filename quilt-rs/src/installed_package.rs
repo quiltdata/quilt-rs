@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use tracing::log;
 
 use crate::Error;
+use crate::InstallPackageError;
 use crate::Res;
 use crate::error::LoginError;
 use crate::error::PackageOpError;
@@ -196,9 +197,12 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
     /// and a missing one made empty would read as every file deleted.
     pub async fn scaffold_paths(&self) -> Res {
         let home = self.lineage.domain_home(&self.storage).await?;
-        if let Ok((_, lineage)) = self.lineage.read(&self.storage).await
-            && !lineage.paths.is_empty()
-        {
+        let tracks_files = match self.lineage.read(&self.storage).await {
+            Ok((_, lineage)) => !lineage.paths.is_empty(),
+            Err(Error::InstallPackage(InstallPackageError::NotInstalled(_))) => false,
+            Err(err) => return Err(err),
+        };
+        if tracks_files {
             return self
                 .paths
                 .scaffold_for_installing_without_package_home(&self.storage, &home, &self.namespace)
