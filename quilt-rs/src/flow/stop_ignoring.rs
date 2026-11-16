@@ -73,7 +73,7 @@ pub async fn preview_stop_ignoring(
     let after = rules.with_lines(scope, &lines)?;
     let home = package_home.to_path_buf();
     let (files, bytes) = tokio::task::spawn_blocking(move || -> Res<(u64, u64)> {
-        let walked = walk_package_home(&home, &after, &tracked)?;
+        let walked = walk_package_home(&home, &after, &tracked, false)?;
         let mut moved = (0, 0);
         for (key, _, kind, stamp) in walked.entries {
             if kind == EntryKind::File && was_ignored(&rules, &tracked, &key) {
@@ -119,7 +119,12 @@ pub fn stop_ignoring(
     if let Some(lines) = &lines
         && !lines.is_empty()
     {
-        crate::quiltignore::append_lines(&rules.file(scope), lines)?;
+        match scope {
+            Scope::Package => {
+                crate::quiltignore::append_package_lines(lineage, package_home, lines)?;
+            }
+            Scope::AllPackages => crate::quiltignore::append_lines(&rules.file(scope), lines)?,
+        }
     }
     Ok(lines)
 }

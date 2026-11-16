@@ -482,6 +482,15 @@ pub enum PackageOpError {
 
     #[error("Pull blocked by conflicting local changes: {0:?}")]
     PullConflict(Vec<PathBuf>),
+
+    /// The package tracks files, but its working folder is missing or cannot be
+    /// read, so what the files hold, or whether they were deleted, is unknown.
+    /// Restore the folder, or uninstall the package.
+    #[error(
+        "The working folder {} is missing or cannot be read, so the package's files cannot be checked; restore it, or uninstall the package",
+        .0.display()
+    )]
+    WorkingCopyUnavailable(PathBuf),
 }
 
 /// The error type for this library

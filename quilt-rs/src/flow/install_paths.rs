@@ -236,6 +236,28 @@ async fn edited(storage: &impl Storage, working_dest: &Path, row: &ManifestRow) 
     Ok(changed || modified().await? != Some(before))
 }
 
+/// Refuses when this apply would recreate a missing package folder that still
+/// tracks files. A rename would leave it holding only the files being placed,
+/// so the tracked rest would read as removed. [`Protect::Nothing`] is exempt:
+/// an explicit reset may recreate the folder. A package that tracks nothing
+/// loses nothing to a recreated folder, so it passes.
+async fn refuse_if_working_copy_unavailable(
+    storage: &impl Storage,
+    working_dir: &Path,
+    protect: &Protect<'_>,
+    lineage: &PackageLineage,
+) -> Res {
+    if matches!(protect, Protect::Nothing) || lineage.paths.is_empty() {
+        return Ok(());
+    }
+    if storage.read_dir(working_dir).await.is_err() {
+        return Err(Error::PackageOp(PackageOpError::WorkingCopyUnavailable(
+            working_dir.to_path_buf(),
+        )));
+    }
+    Ok(())
+}
+
 /// Renames each staged file onto its destination, refusing to overwrite one a
 /// caller asked to protect that no longer holds the content it was verified at.
 /// [`Protect::Absent`] places files by [`place_where_absent`] instead.
@@ -256,6 +278,8 @@ async fn swap_staged_into_place(
     protect: &Protect<'_>,
     lineage: &mut PackageLineage,
 ) -> Res {
+    // Before removals: a missing folder is unavailable, not a set of edits.
+    refuse_if_working_copy_unavailable(storage, working_dir, protect, lineage).await?;
     protect.check_removals(storage, working_dir).await?;
     if let Protect::Absent = protect {
         return place_where_absent(storage, staged, lineage).await;
@@ -588,6 +612,7 @@ pub(crate) async fn install_paths_over(
     refuse_clashing_local_paths(&manifest.rows)?;
     if entries_paths.is_empty() {
         info!("No paths to install");
+        refuse_if_working_copy_unavailable(storage, &working_dir, protect, &lineage).await?;
         protect.check_removals(storage, &working_dir).await?;
         let report = InstallPathsReport {
             paths: lineage.paths.clone(),
@@ -762,6 +787,160 @@ mod tests {
     // Verify installing the path that is already fetched to the `.quilt/objects`
     // Practically it is useful when we try to install identical files. Then we can re-use cache (because files are located by hash).
     // In other cases, it tests implementation details.
+    /// A folder that vanished while the files were fetched is not recreated
+    /// holding only them: the tracked files it lost would read as removed.
+    async fn swap_refuses_a_missing_folder(protect: &Protect<'_>) -> Res {
+        let storage = MockStorage::default();
+        let working_dir = storage.temp_dir.as_ref().join("gone");
+        let mut lineage = PackageLineage::default();
+        lineage
+            .paths
+            .insert(PathBuf::from("tracked.txt"), PathState::default());
+
+        let staged_path = PathBuf::from("staging/new");
+        storage
+            .write_byte_stream(&staged_path, ByteStream::from_static(b"new"))
+            .await?;
+        let staged = vec![(staged_path, working_dir.join("new.txt"), row("new.txt")?)];
+
+        let error =
+            swap_staged_into_place(&storage, &staged, &working_dir, protect, &mut lineage).await;
+
+        assert!(matches!(
+            error,
+            Err(Error::PackageOp(PackageOpError::WorkingCopyUnavailable(named)))
+                if named == working_dir
+        ));
+        assert!(!working_dir.exists());
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_swap_refuses_a_folder_that_went_missing_during_the_fetch() -> Res {
+        swap_refuses_a_missing_folder(&Protect::Absent).await
+    }
+
+    /// A pull uses [`Protect::BaseContent`], so the same late check must refuse
+    /// there too: otherwise a new file would recreate the folder without the
+    /// unchanged tracked files, and the next status would report them removed.
+    #[test(tokio::test)]
+    async fn test_swap_refuses_a_folder_that_went_missing_during_a_pull() -> Res {
+        let rows = std::collections::BTreeMap::new();
+        let removing: [PathBuf; 0] = [];
+        swap_refuses_a_missing_folder(&Protect::BaseContent {
+            rows: &rows,
+            removing: &removing,
+        })
+        .await
+    }
+
+    /// An explicit reset may recreate a missing folder: discarding local work
+    /// is the operation, and there is nothing to protect.
+    #[test(tokio::test)]
+    async fn test_swap_reset_recreates_a_folder_that_went_missing() -> Res {
+        let storage = MockStorage::default();
+        let working_dir = storage.temp_dir.as_ref().join("gone");
+        let mut lineage = PackageLineage::default();
+        lineage
+            .paths
+            .insert(PathBuf::from("tracked.txt"), PathState::default());
+
+        let staged_path = PathBuf::from("staging/new");
+        storage
+            .write_byte_stream(&staged_path, ByteStream::from_static(b"new"))
+            .await?;
+        let dest = working_dir.join("new.txt");
+        let staged = vec![(staged_path, dest.clone(), row("new.txt")?)];
+
+        swap_staged_into_place(
+            &storage,
+            &staged,
+            &working_dir,
+            &Protect::Nothing,
+            &mut lineage,
+        )
+        .await?;
+
+        assert_eq!(storage.read_bytes(&dest).await?, b"new");
+        assert!(working_dir.exists());
+        Ok(())
+    }
+
+    async fn empty_install(
+        protect: &Protect<'_>,
+        working_dir: PathBuf,
+        storage: &MockStorage,
+        lineage: PackageLineage,
+    ) -> Res<(PackageLineage, InstallPathsReport)> {
+        let (paths, _tmp) = DomainPaths::from_temp_dir()?;
+        let mut manifest = Manifest::default();
+        install_paths_over(
+            lineage,
+            &mut manifest,
+            &paths,
+            working_dir,
+            Namespace::default(),
+            storage,
+            &MockRemote::default(),
+            &[],
+            protect,
+            OnMismatch::Refuse,
+        )
+        .await
+    }
+
+    /// The no-install path must make the same check: it never reaches
+    /// [`swap_staged_into_place`], and a pull or download with nothing to write
+    /// would otherwise succeed as if the folder were still there.
+    async fn empty_install_refuses_a_missing_folder(protect: &Protect<'_>) -> Res {
+        let storage = MockStorage::default();
+        let working_dir = storage.temp_dir.as_ref().join("gone");
+        let mut lineage = PackageLineage::default();
+        lineage
+            .paths
+            .insert(PathBuf::from("tracked.txt"), PathState::default());
+
+        let error = empty_install(protect, working_dir.clone(), &storage, lineage).await;
+
+        assert!(matches!(
+            error,
+            Err(Error::PackageOp(PackageOpError::WorkingCopyUnavailable(named)))
+                if named == working_dir
+        ));
+        assert!(!working_dir.exists());
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_empty_install_refuses_a_folder_that_went_missing() -> Res {
+        let rows = std::collections::BTreeMap::new();
+        let removing: [PathBuf; 0] = [];
+        empty_install_refuses_a_missing_folder(&Protect::BaseContent {
+            rows: &rows,
+            removing: &removing,
+        })
+        .await
+    }
+
+    #[test(tokio::test)]
+    async fn test_empty_install_download_refuses_a_folder_that_went_missing() -> Res {
+        empty_install_refuses_a_missing_folder(&Protect::Absent).await
+    }
+
+    #[test(tokio::test)]
+    async fn test_empty_install_reset_allows_a_folder_that_went_missing() -> Res {
+        let storage = MockStorage::default();
+        let working_dir = storage.temp_dir.as_ref().join("gone");
+        let mut lineage = PackageLineage::default();
+        lineage
+            .paths
+            .insert(PathBuf::from("tracked.txt"), PathState::default());
+
+        empty_install(&Protect::Nothing, working_dir.clone(), &storage, lineage).await?;
+        assert!(!working_dir.exists());
+        Ok(())
+    }
+
     #[test(tokio::test)]
     async fn test_installing_one_cached_path() -> Res {
         let (home, _temp_dir1) = Home::from_temp_dir()?;
@@ -1268,6 +1447,9 @@ mod tests {
             ..PackageLineage::default()
         };
         lineage.paths.insert(tracked.clone(), PathState::default());
+        // The folder must be there: with nothing to fetch, install still
+        // checks that a tracked working copy has not vanished.
+        storage.create_dir_all("work").await?;
 
         // The manifest has no row for the path, so a fetch would fail
         let (lineage, report) = install_paths(

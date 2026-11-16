@@ -235,6 +235,7 @@ pub async fn commit_package(
     user_meta: UserMeta,
     workflow: Option<Workflow>,
 ) -> Res<(PackageLineage, Committed)> {
+    status.require_working_copy()?;
     info!(
         r#"⏳ Starting commit with message "{}" and user_meta `{:?}`"#,
         message, user_meta
@@ -583,6 +584,45 @@ mod tests {
                 .await
         );
         assert_eq!(commit.hash(), Some(hash));
+        Ok(())
+    }
+
+    /// A status that could not read the working folder lists no change, so a
+    /// commit would record an empty revision, as it did for a deleted folder.
+    #[test(tokio::test)]
+    async fn test_commit_refuses_an_unavailable_working_copy() -> Res {
+        let storage = MockStorage::default();
+        let paths = DomainPaths::new(std::path::absolute("/foo")?);
+        let status = InstalledPackageStatus {
+            working_copy: crate::lineage::WorkingCopy::Unavailable(PathBuf::from("/gone/pkg")),
+            ..InstalledPackageStatus::default()
+        };
+        let error = commit_package(
+            PackageLineage::default(),
+            &mut Manifest::default(),
+            &paths,
+            &storage,
+            &MockRemote::default(),
+            None,
+            PathBuf::from("/gone/pkg"),
+            status,
+            ("foo", "bar").into(),
+            String::default(),
+            UserMeta::Clear,
+            None,
+        )
+        .await;
+        assert!(matches!(
+            error,
+            Err(Error::PackageOp(PackageOpError::WorkingCopyUnavailable(home)))
+                if home.as_path() == Path::new("/gone/pkg")
+        ));
+        let hash = fixtures::top_hash::EMPTY_NONE_TOP_HASH;
+        assert!(
+            !storage
+                .exists(&paths.installed_manifest(&("foo", "bar").into(), hash))
+                .await
+        );
         Ok(())
     }
 
