@@ -953,7 +953,7 @@ mod tests {
         let domain = Domain::new()?;
         domain.install(&lineage("x", BASE, BASE)).await?;
         let path = domain.paths.package_ref(&package("x"));
-        let newer = br#"{"format": 2, "tracked": ["a.csv"]}"#;
+        let newer = br#"{"format": 2}"#;
         std::fs::write(&path, newer)?;
 
         let held = domain.lock(&package("x")).await?;
