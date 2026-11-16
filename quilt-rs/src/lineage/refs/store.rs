@@ -328,10 +328,7 @@ impl RefStore {
         tip: Option<TipCache>,
         lineage: &PackageLineage,
     ) -> Res<Option<PackageLineage>> {
-        let extra = stored
-            .as_ref()
-            .map_or_default(|stored| stored.extra.clone());
-        let new_ref = PackageRef::from_lineage(lineage, extra)?;
+        let new_ref = PackageRef::from_lineage(lineage, stored.as_ref())?;
         let had_tip = tip.is_some();
         let (mut tip, fresh) = wanted_tip(&new_ref, lineage, tip);
         let tip_first = match &stored {
@@ -704,20 +701,37 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn a_ref_that_does_not_parse_costs_only_its_package() -> Res {
+    async fn a_ref_that_cannot_be_read_costs_only_its_package() -> Res {
         let domain = Domain::new()?;
         domain.install(&lineage("good", BASE, BASE)).await?;
         domain.install(&lineage("bad", BASE, BASE)).await?;
+        domain.install(&lineage("copies", BASE, BASE)).await?;
         let bad = domain.paths.package_ref(&package("bad"));
         std::fs::write(&bad, b"{")?;
+        let copies = domain.paths.package_ref(&package("copies"));
+        let copy = serde_json::json!({"sync_scope": "entire_package", "tracked": []});
+        let two_copies = serde_json::json!({"format": 1, "copies": [copy, copy]});
+        std::fs::write(&copies, serde_json::to_vec(&two_copies)?)?;
 
         let all = domain.store.read_all(&domain.storage).await;
         assert!(all.is_ok(), "{all:?}");
         let all = all?;
         assert_eq!(
             all.keys().collect::<Vec<_>>(),
-            [&package("bad"), &package("good")]
+            [&package("bad"), &package("copies"), &package("good")]
         );
+        assert!(
+            matches!(
+                &all[&package("copies")],
+                Err(Error::Lineage(LineageError::UnsupportedCopies { path, .. })) if *path == copies
+            ),
+            "{:?}",
+            all[&package("copies")]
+        );
+        let held = domain.lock(&package("copies")).await?;
+        let removed = domain.store.remove(&domain.storage, &held).await;
+        assert!(removed.is_err(), "a state this build does not support");
+        assert!(copies.exists());
         assert_eq!(
             all[&package("good")].as_ref().ok(),
             Some(&lineage("good", BASE, BASE))

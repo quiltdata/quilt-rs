@@ -25,9 +25,10 @@ use crate::lineage::SyncScope;
 use crate::logical_key::LogicalKey;
 use quilt_uri::ManifestUri;
 
-/// Top-level keys this version does not know, kept so a rewrite carries
-/// them. Keys nested inside a known one are not kept, and an integer beyond
-/// 64 bits comes back as a float, so a field needing either bumps `format`.
+/// Keys this version does not know, at the top level or in a working copy,
+/// kept so a rewrite carries them. Keys nested deeper are not kept, and an
+/// integer beyond 64 bits comes back as a float, so a field needing either
+/// bumps `format`.
 pub(crate) type Extra = Map<String, Value>;
 
 /// What only the user and the remote can tell about one package:
@@ -41,9 +42,24 @@ pub(crate) struct PackageRef {
     pub base_hash: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub commit: Option<CommitState>,
+    /// Exactly one in a ref [`Self::from_slice`] reads.
+    pub copies: Vec<RefCopy>,
+    #[serde(flatten)]
+    pub extra: Extra,
+}
+
+/// A folder holding the package's files.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) struct RefCopy {
     #[serde(default)]
     pub sync_scope: SyncScope,
     pub tracked: BTreeSet<LogicalKey>,
+    /// Absent for the package's folder under the home.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder: Option<PathBuf>,
+    /// Absent when the copy is at the package's `base_hash`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base: Option<String>,
     #[serde(flatten)]
     pub extra: Extra,
 }
@@ -51,30 +67,54 @@ pub(crate) struct PackageRef {
 impl PackageRef {
     pub(crate) const FORMAT: u32 = 1;
 
+    /// Refuses, as [`LineageError::UnsupportedCopies`], a ref whose copies
+    /// this version cannot keep, so none is misread.
     pub(crate) fn from_slice(path: &Path, bytes: &[u8]) -> Res<Self> {
-        decode(path, bytes, Self::FORMAT)
+        let package_ref: Self = decode(path, bytes, Self::FORMAT)?;
+        let head = &package_ref.base_hash;
+        let found = match package_ref.copies.as_slice() {
+            [copy] if copy.folder.is_some() => "a working copy in another folder",
+            [copy] if copy.base.as_ref().is_some_and(|base| base != head) => {
+                "a working copy at another base"
+            }
+            [_] => return Ok(package_ref),
+            [] => "no working copy",
+            _ => "more than one working copy",
+        };
+        Err(LineageError::UnsupportedCopies {
+            path: path.to_path_buf(),
+            found,
+        }
+        .into())
     }
 
     pub(crate) fn to_vec(&self) -> Res<Vec<u8>> {
         Ok(serde_json::to_vec_pretty(self)?)
     }
 
-    /// The ref of `lineage`, carrying `extra` from the ref it replaces.
-    /// Per-path hashes and times are not kept, nor `latest_hash`, which
-    /// belongs in a [`TipCache`].
-    pub(crate) fn from_lineage(lineage: &PackageLineage, extra: Extra) -> Res<Self> {
-        Ok(Self {
-            format: Self::FORMAT,
-            remote: lineage.remote_uri.clone(),
-            base_hash: lineage.base_hash.clone(),
-            commit: lineage.commit.clone(),
+    /// The ref of `lineage`, carrying the unknown keys of the ref it
+    /// replaces. Per-path hashes and times are not kept, nor `latest_hash`,
+    /// which belongs in a [`TipCache`].
+    pub(crate) fn from_lineage(lineage: &PackageLineage, replaces: Option<&Self>) -> Res<Self> {
+        let copy = RefCopy {
             sync_scope: lineage.sync_scope.clone(),
             tracked: lineage
                 .paths
                 .keys()
                 .map(|path| LogicalKey::new(path.clone()))
                 .collect::<Result<_, _>>()?,
-            extra,
+            extra: replaces
+                .and_then(|replaced| replaced.copies.first())
+                .map_or_default(|copy| copy.extra.clone()),
+            ..RefCopy::default()
+        };
+        Ok(Self {
+            format: Self::FORMAT,
+            remote: lineage.remote_uri.clone(),
+            base_hash: lineage.base_hash.clone(),
+            commit: lineage.commit.clone(),
+            copies: vec![copy],
+            extra: replaces.map_or_default(|replaced| replaced.extra.clone()),
         })
     }
 
@@ -87,17 +127,18 @@ impl PackageRef {
             (Some(remote), _) if !remote.hash.is_empty() => self.base_hash.clone(),
             _ => String::new(),
         };
+        let copy = self.copies.into_iter().next().unwrap_or_default();
         PackageLineage {
             commit: self.commit,
             remote_uri: self.remote,
             base_hash: self.base_hash,
             latest_hash,
-            paths: self
+            paths: copy
                 .tracked
                 .into_iter()
                 .map(|key| (PathBuf::from(key), PathState::default()))
                 .collect(),
-            sync_scope: self.sync_scope,
+            sync_scope: copy.sync_scope,
         }
     }
 }
@@ -231,19 +272,28 @@ mod tests {
         }
     }
 
-    /// The example ref in quilt-specs' `changes/per-package-lineage-ref`.
-    fn spec_example() -> Value {
+    /// A pushed package with a commit pending and its one working copy.
+    fn example() -> Value {
         json!({
             "format": 1,
             "remote": {"origin": "catalog.example.com", "bucket": "b", "namespace": "owner/name", "hash": REMOTE},
             "base_hash": BASE,
             "commit": {"hash": COMMIT, "prev_hashes": [BASE], "timestamp": "2026-11-12T20:00:00Z"},
-            "sync_scope": "entire_package",
-            "tracked": ["a.csv", "data/b.csv"]
+            "copies": [
+                {"sync_scope": "entire_package", "tracked": ["a.csv", "data/b.csv"]}
+            ]
         })
     }
 
-    fn spec_ref() -> PackageRef {
+    fn copy(sync_scope: SyncScope) -> RefCopy {
+        RefCopy {
+            sync_scope,
+            tracked: keys(&["a.csv", "data/b.csv"]),
+            ..RefCopy::default()
+        }
+    }
+
+    fn example_ref() -> PackageRef {
         PackageRef {
             format: 1,
             remote: Some(remote(REMOTE)),
@@ -253,16 +303,15 @@ mod tests {
                 hash: COMMIT.to_string(),
                 prev_hashes: vec![BASE.to_string()],
             }),
-            sync_scope: SyncScope::EntirePackage,
-            tracked: keys(&["a.csv", "data/b.csv"]),
+            copies: vec![copy(SyncScope::EntirePackage)],
             extra: Extra::new(),
         }
     }
 
     #[test]
-    fn the_spec_example_reads_and_writes_as_itself() -> Res {
-        assert_eq!(read(&spec_example())?, spec_ref());
-        assert_eq!(written(&spec_ref())?, spec_example());
+    fn the_example_reads_and_writes_as_itself() -> Res {
+        assert_eq!(read(&example())?, example_ref());
+        assert_eq!(written(&example_ref())?, example());
         Ok(())
     }
 
@@ -272,13 +321,14 @@ mod tests {
             remote: None,
             base_hash: String::new(),
             commit: None,
-            sync_scope: SyncScope::IndividualFiles,
-            ..spec_ref()
+            copies: vec![copy(SyncScope::IndividualFiles)],
+            ..example_ref()
         };
         let expected = json!({
             "format": 1,
-            "sync_scope": "individual_files",
-            "tracked": ["a.csv", "data/b.csv"]
+            "copies": [
+                {"sync_scope": "individual_files", "tracked": ["a.csv", "data/b.csv"]}
+            ]
         });
         assert_eq!(written(&package_ref)?, expected);
         assert_eq!(read(&expected)?, package_ref);
@@ -286,31 +336,22 @@ mod tests {
     }
 
     #[test]
-    fn a_scope_this_version_does_not_know_reads_as_individual_files() {
-        let mut value = spec_example();
-        value["sync_scope"] = json!({"globs": ["*.csv"]});
-        let read = read(&value);
-        assert!(
-            matches!(
-                read,
-                Ok(PackageRef {
-                    sync_scope: SyncScope::IndividualFiles,
-                    ..
-                })
-            ),
-            "{read:?}"
-        );
+    fn a_scope_this_version_does_not_know_reads_as_individual_files() -> Res {
+        let mut value = example();
+        value["copies"][0]["sync_scope"] = json!({"globs": ["*.csv"]});
+        assert_eq!(read(&value)?.copies, [copy(SyncScope::IndividualFiles)]);
+        Ok(())
     }
 
     #[test]
     fn a_folder_list_scope_round_trips() -> Res {
         let package_ref = PackageRef {
-            sync_scope: SyncScope::folders(["data/raw", "results"])?,
-            ..spec_ref()
+            copies: vec![copy(SyncScope::folders(["data/raw", "results"])?)],
+            ..example_ref()
         };
         let value = written(&package_ref)?;
         assert_eq!(
-            value["sync_scope"],
+            value["copies"][0]["sync_scope"],
             json!({"folders": ["data/raw", "results"]})
         );
         assert_eq!(read(&value)?, package_ref);
@@ -318,21 +359,77 @@ mod tests {
     }
 
     #[test]
-    fn unknown_top_level_keys_survive_a_rewrite() -> Res {
-        let mut value = spec_example();
+    fn unknown_keys_survive_a_rewrite_at_the_top_level_and_in_the_copy() -> Res {
+        let mut value = example();
         value["future"] = json!({"nested": [1, 2]});
+        value["copies"][0]["future_copy"] = json!(true);
         let read = read(&value)?;
         let lineage = read.clone().into_lineage(None);
-        let rewritten = PackageRef::from_lineage(&lineage, read.extra)?;
+        let rewritten = PackageRef::from_lineage(&lineage, Some(&read))?;
         assert_eq!(written(&rewritten)?, value);
         Ok(())
     }
 
     #[test]
+    fn copies_this_version_cannot_keep_are_refused_naming_the_file() {
+        let the_copy = example()["copies"][0].clone();
+        let with = |key: &str, value: Value| {
+            let mut copy = the_copy.clone();
+            copy[key] = value;
+            json!([copy])
+        };
+        let cases = [
+            ("no copy", json!([])),
+            ("two copies", json!([the_copy, the_copy])),
+            ("a folder", with("folder", json!("/elsewhere/name"))),
+            ("another base", with("base", json!(REMOTE))),
+        ];
+        for (case, copies) in cases {
+            let mut value = example();
+            value["copies"] = copies;
+            let read = read(&value);
+            assert!(
+                matches!(
+                    &read,
+                    Err(Error::Lineage(LineageError::UnsupportedCopies { path: named, .. }))
+                        if *named == path()
+                ),
+                "{case}: {read:?}"
+            );
+            let message = read.unwrap_err().to_string();
+            assert!(message.contains(&*path().to_string_lossy()), "{message}");
+        }
+    }
+
+    #[test]
+    fn a_copy_at_the_package_base_is_read() {
+        let mut value = example();
+        value["copies"][0]["base"] = json!(BASE);
+        let read = read(&value);
+        assert!(read.is_ok(), "{read:?}");
+    }
+
+    #[test]
+    fn a_ref_tracking_at_its_top_level_is_refused_not_read_as_tracking_nothing() {
+        let mut value = example();
+        let copies = value.as_object_mut().unwrap().remove("copies").unwrap();
+        value["sync_scope"] = copies[0]["sync_scope"].clone();
+        value["tracked"] = copies[0]["tracked"].clone();
+        let read = read(&value);
+        assert!(
+            matches!(
+                &read,
+                Err(Error::Lineage(LineageError::FileParse { path: named, .. })) if *named == path()
+            ),
+            "{read:?}"
+        );
+    }
+
+    #[test]
     fn a_ref_in_another_format_is_refused_naming_the_one_supported() {
-        let mut value = spec_example();
+        let mut value = example();
         value["format"] = json!(2);
-        value["tracked"] = json!("a shape format 1 never had");
+        value["copies"] = json!("a shape format 1 never had");
         let err = read(&value).unwrap_err();
         assert!(
             matches!(
@@ -359,10 +456,13 @@ mod tests {
 
     #[test]
     fn tracked_is_written_sorted_by_slash_separated_names() -> Res {
-        let mut value = spec_example();
-        value["tracked"] = json!(["a-b", "a/c", "a-b", "a.csv"]);
+        let mut value = example();
+        value["copies"][0]["tracked"] = json!(["a-b", "a/c", "a-b", "a.csv"]);
         let read = read(&value)?;
-        assert_eq!(written(&read)?["tracked"], json!(["a/c", "a-b", "a.csv"]));
+        assert_eq!(
+            written(&read)?["copies"][0]["tracked"],
+            json!(["a/c", "a-b", "a.csv"])
+        );
         Ok(())
     }
 
@@ -372,7 +472,7 @@ mod tests {
             ..PathState::default()
         };
         PackageLineage {
-            commit: spec_ref().commit,
+            commit: example_ref().commit,
             remote_uri: Some(remote(REMOTE)),
             base_hash: BASE.to_string(),
             latest_hash: TIP.to_string(),
@@ -396,7 +496,7 @@ mod tests {
     #[test]
     fn a_lineage_survives_the_ref_and_its_tip_but_for_per_path_state() -> Res {
         let lineage = lineage();
-        let stored = PackageRef::from_lineage(&lineage, Extra::new())?;
+        let stored = PackageRef::from_lineage(&lineage, None)?;
         let stored = PackageRef::from_slice(&path(), &stored.to_vec()?)?;
         let tip = TipCache::from_slice(&tip("b").to_vec()?);
         assert_eq!(
@@ -415,7 +515,7 @@ mod tests {
 
     #[test]
     fn without_a_tip_for_its_bucket_a_package_reads_at_its_base() -> Res {
-        let stored = PackageRef::from_lineage(&lineage(), Extra::new())?;
+        let stored = PackageRef::from_lineage(&lineage(), None)?;
         for tip in [None, Some(tip("another-bucket"))] {
             let lineage = stored.clone().into_lineage(tip.as_ref());
             assert_eq!(lineage.latest_hash, BASE, "{tip:?}");
@@ -429,7 +529,7 @@ mod tests {
             remote_uri: Some(remote("")),
             ..lineage()
         };
-        let stored = PackageRef::from_lineage(&never_pushed, Extra::new())?;
+        let stored = PackageRef::from_lineage(&never_pushed, None)?;
         assert_eq!(stored.clone().into_lineage(None).latest_hash, "");
         assert_eq!(
             stored.into_lineage(Some(&tip("b"))).latest_hash,
@@ -440,7 +540,7 @@ mod tests {
             remote_uri: None,
             ..lineage()
         };
-        let stored = PackageRef::from_lineage(&local, Extra::new())?;
+        let stored = PackageRef::from_lineage(&local, None)?;
         assert_eq!(stored.into_lineage(Some(&tip("b"))).latest_hash, "");
         Ok(())
     }
