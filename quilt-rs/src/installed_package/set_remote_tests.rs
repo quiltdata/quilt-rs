@@ -11,6 +11,7 @@ use crate::io::remote::WorkflowIntent;
 use crate::io::remote::mocks::MockRemote;
 use crate::lineage::DomainLineageIo;
 use crate::lineage::Home;
+use crate::lineage::PackageLineage;
 use crate::lineage::PackageLineageIo;
 use crate::manifest::ManifestHeader;
 use crate::object_hash::ObjectHash;
@@ -31,23 +32,14 @@ async fn test_set_remote_on_local_package() -> Res {
         .scaffold_for_installing(&storage, &home, &namespace)
         .await?;
 
-    let lineage_json = r#"{
-        "packages": {
-            "test/local": {
-                "commit": null,
-                "remote": null,
-                "base_hash": "",
-                "latest_hash": "",
-                "paths": {}
-            }
-        },
-        "home": "/tmp/working_dir"
-    }"#;
-    storage
-        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-        .await?;
+    let domain_lineage_io = DomainLineageIo::write_fixture(
+        &storage,
+        &paths,
+        "/tmp/working_dir",
+        [(namespace.clone(), PackageLineage::default())],
+    )
+    .await?;
 
-    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
@@ -93,23 +85,14 @@ async fn test_set_remote_empty_bucket_error() -> Res {
         .scaffold_for_installing(&storage, &home, &namespace)
         .await?;
 
-    let lineage_json = r#"{
-        "packages": {
-            "test/local": {
-                "commit": null,
-                "remote": null,
-                "base_hash": "",
-                "latest_hash": "",
-                "paths": {}
-            }
-        },
-        "home": "/tmp/working_dir"
-    }"#;
-    storage
-        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-        .await?;
+    let domain_lineage_io = DomainLineageIo::write_fixture(
+        &storage,
+        &paths,
+        "/tmp/working_dir",
+        [(namespace.clone(), PackageLineage::default())],
+    )
+    .await?;
 
-    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
@@ -214,23 +197,14 @@ async fn test_set_remote_rejects_unreachable_bucket() -> Res {
         .scaffold_for_installing(&storage, &home, &namespace)
         .await?;
 
-    let lineage_json = r#"{
-        "packages": {
-            "test/badbucket": {
-                "commit": null,
-                "remote": null,
-                "base_hash": "",
-                "latest_hash": "",
-                "paths": {}
-            }
-        },
-        "home": "/tmp/working_dir"
-    }"#;
-    storage
-        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-        .await?;
+    let domain_lineage_io = DomainLineageIo::write_fixture(
+        &storage,
+        &paths,
+        "/tmp/working_dir",
+        [(namespace.clone(), PackageLineage::default())],
+    )
+    .await?;
 
-    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
@@ -277,23 +251,15 @@ async fn set_remote_refuses_a_bucket_name_s3_does_not_allow() -> Res {
     paths
         .scaffold_for_installing(&storage, &home, &namespace)
         .await?;
-    let lineage_json = r#"{
-        "packages": {
-            "test/badname": {
-                "commit": null,
-                "remote": null,
-                "base_hash": "",
-                "latest_hash": "",
-                "paths": {}
-            }
-        },
-        "home": "/tmp/working_dir"
-    }"#;
-    storage
-        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-        .await?;
+    let domain_lineage_io = DomainLineageIo::write_fixture(
+        &storage,
+        &paths,
+        "/tmp/working_dir",
+        [(namespace.clone(), PackageLineage::default())],
+    )
+    .await?;
     let package = InstalledPackage {
-        lineage: PackageLineageIo::new(DomainLineageIo::new(paths.lineage()), namespace.clone()),
+        lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
         // Any call to it would fail as unreachable, so a bucket error here
         // shows the name was refused first.
@@ -334,28 +300,23 @@ async fn test_set_remote_rejects_change_on_pushed_package() -> Res {
         .scaffold_for_installing(&storage, &home, &namespace)
         .await?;
 
-    let lineage_json = r#"{
-        "packages": {
-            "test/overwrite": {
-                "commit": null,
-                "remote": {
-                    "bucket": "old-bucket",
-                    "namespace": "test/overwrite",
-                    "hash": "abcdef0000000000000000000000000000000000000000000000000000000000",
-                    "origin": "one.quilt.test"
-                },
-                "base_hash": "abcdef0000000000000000000000000000000000000000000000000000000000",
-                "latest_hash": "abcdef0000000000000000000000000000000000000000000000000000000000",
-                "paths": {}
-            }
-        },
-        "home": "/tmp/working_dir"
-    }"#;
-    storage
-        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-        .await?;
+    let hash = "abcdef0000000000000000000000000000000000000000000000000000000000";
+    let domain_lineage_io = DomainLineageIo::write_fixture(
+        &storage,
+        &paths,
+        "/tmp/working_dir",
+        [(
+            namespace.clone(),
+            PackageLineage::from(ManifestUri {
+                bucket: "old-bucket".to_string(),
+                namespace: namespace.clone(),
+                hash: hash.to_string(),
+                origin: Some(fixtures::one_host()),
+            }),
+        )],
+    )
+    .await?;
 
-    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
@@ -398,28 +359,23 @@ async fn test_set_remote_is_idempotent_on_pushed_package() -> Res {
         .scaffold_for_installing(&storage, &home, &namespace)
         .await?;
 
-    let lineage_json = r#"{
-        "packages": {
-            "test/idempotent": {
-                "commit": null,
-                "remote": {
-                    "bucket": "my-bucket",
-                    "namespace": "test/idempotent",
-                    "hash": "abcdef0000000000000000000000000000000000000000000000000000000000",
-                    "origin": "quilt.test"
-                },
-                "base_hash": "abcdef0000000000000000000000000000000000000000000000000000000000",
-                "latest_hash": "abcdef0000000000000000000000000000000000000000000000000000000000",
-                "paths": {}
-            }
-        },
-        "home": "/tmp/working_dir"
-    }"#;
-    storage
-        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-        .await?;
+    let hash = "abcdef0000000000000000000000000000000000000000000000000000000000";
+    let domain_lineage_io = DomainLineageIo::write_fixture(
+        &storage,
+        &paths,
+        "/tmp/working_dir",
+        [(
+            namespace.clone(),
+            PackageLineage::from(ManifestUri {
+                bucket: "my-bucket".to_string(),
+                namespace: namespace.clone(),
+                hash: hash.to_string(),
+                origin: Some(fixtures::host()),
+            }),
+        )],
+    )
+    .await?;
 
-    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
@@ -464,28 +420,22 @@ async fn test_set_remote_overwrites_unpushed_remote() -> Res {
         .scaffold_for_installing(&storage, &home, &namespace)
         .await?;
 
-    let lineage_json = r#"{
-        "packages": {
-            "test/unpushed": {
-                "commit": null,
-                "remote": {
-                    "bucket": "old-bucket",
-                    "namespace": "test/unpushed",
-                    "hash": "",
-                    "origin": "one.quilt.test"
-                },
-                "base_hash": "",
-                "latest_hash": "",
-                "paths": {}
-            }
-        },
-        "home": "/tmp/working_dir"
-    }"#;
-    storage
-        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-        .await?;
+    let domain_lineage_io = DomainLineageIo::write_fixture(
+        &storage,
+        &paths,
+        "/tmp/working_dir",
+        [(
+            namespace.clone(),
+            PackageLineage::from(ManifestUri {
+                bucket: "old-bucket".to_string(),
+                namespace: namespace.clone(),
+                hash: String::new(),
+                origin: Some(fixtures::one_host()),
+            }),
+        )],
+    )
+    .await?;
 
-    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
@@ -532,21 +482,13 @@ async fn test_set_remote_recommits_existing_commit() -> Res {
         .await?;
 
     // Start with no remote and no commit
-    let lineage_json = r#"{
-        "packages": {
-            "test/recommit": {
-                "commit": null,
-                "remote": null,
-                "base_hash": "",
-                "latest_hash": "",
-                "paths": {}
-            }
-        },
-        "home": "/tmp/working_dir"
-    }"#;
-    storage
-        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-        .await?;
+    let domain_lineage_io = DomainLineageIo::write_fixture(
+        &storage,
+        &paths,
+        "/tmp/working_dir",
+        [(namespace.clone(), PackageLineage::default())],
+    )
+    .await?;
 
     // Write a file to package home so commit has something to pick up
     let package_home = home.join(namespace.to_string());
@@ -558,7 +500,6 @@ async fn test_set_remote_recommits_existing_commit() -> Res {
         )
         .await?;
 
-    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
@@ -649,23 +590,14 @@ async fn test_resolve_workflow_without_remote_is_none_for_every_intent() -> Res 
         .scaffold_for_installing(&storage, &home, &namespace)
         .await?;
 
-    let lineage_json = r#"{
-        "packages": {
-            "test/noremote": {
-                "commit": null,
-                "remote": null,
-                "base_hash": "",
-                "latest_hash": "",
-                "paths": {}
-            }
-        },
-        "home": "/tmp/working_dir"
-    }"#;
-    storage
-        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-        .await?;
+    let domain_lineage_io = DomainLineageIo::write_fixture(
+        &storage,
+        &paths,
+        "/tmp/working_dir",
+        [(namespace.clone(), PackageLineage::default())],
+    )
+    .await?;
 
-    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
@@ -722,21 +654,13 @@ schemas:
     remote.put_object(None, &schema_uri, b"{}".to_vec()).await?;
 
     // Start with no remote and no commit
-    let lineage_json = r#"{
-        "packages": {
-            "test/bucketdefault": {
-                "commit": null,
-                "remote": null,
-                "base_hash": "",
-                "latest_hash": "",
-                "paths": {}
-            }
-        },
-        "home": "/tmp/working_dir"
-    }"#;
-    storage
-        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-        .await?;
+    let domain_lineage_io = DomainLineageIo::write_fixture(
+        &storage,
+        &paths,
+        "/tmp/working_dir",
+        [(namespace.clone(), PackageLineage::default())],
+    )
+    .await?;
 
     // Write a file to package home so commit has something to pick up
     let package_home = home.join(namespace.to_string());
@@ -748,7 +672,6 @@ schemas:
         )
         .await?;
 
-    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
@@ -839,21 +762,13 @@ schemas:
         .await?;
     remote.put_object(None, &schema_uri, b"{}".to_vec()).await?;
 
-    let lineage_json = r#"{
-        "packages": {
-            "test/fetchonce": {
-                "commit": null,
-                "remote": null,
-                "base_hash": "",
-                "latest_hash": "",
-                "paths": {}
-            }
-        },
-        "home": "/tmp/working_dir"
-    }"#;
-    storage
-        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-        .await?;
+    let domain_lineage_io = DomainLineageIo::write_fixture(
+        &storage,
+        &paths,
+        "/tmp/working_dir",
+        [(namespace.clone(), PackageLineage::default())],
+    )
+    .await?;
 
     let package_home = home.join(namespace.to_string());
     storage.create_dir_all(&package_home).await?;
@@ -864,7 +779,6 @@ schemas:
         )
         .await?;
 
-    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
@@ -945,23 +859,13 @@ schemas:
         .await?;
     remote.put_object(None, &schema_uri, b"{}".to_vec()).await?;
 
-    let lineage_json = format!(
-        r#"{{
-        "packages": {{
-            "test/{slug}": {{
-                "commit": null,
-                "remote": null,
-                "base_hash": "",
-                "latest_hash": "",
-                "paths": {{}}
-            }}
-        }},
-        "home": "/tmp/working_dir"
-    }}"#
-    );
-    storage
-        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-        .await?;
+    let domain_lineage_io = DomainLineageIo::write_fixture(
+        &storage,
+        &paths,
+        "/tmp/working_dir",
+        [(namespace.clone(), PackageLineage::default())],
+    )
+    .await?;
 
     let package_home = home.join(namespace.to_string());
     storage.create_dir_all(&package_home).await?;
@@ -972,7 +876,6 @@ schemas:
         )
         .await?;
 
-    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
@@ -1052,23 +955,13 @@ async fn package_with_config(
         .put_object(None, &schema_uri, schema.to_vec())
         .await?;
 
-    let lineage_json = format!(
-        r#"{{
-        "packages": {{
-            "test/{slug}": {{
-                "commit": null,
-                "remote": null,
-                "base_hash": "",
-                "latest_hash": "",
-                "paths": {{}}
-            }}
-        }},
-        "home": "/tmp/working_dir"
-    }}"#
-    );
-    storage
-        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-        .await?;
+    let domain_lineage_io = DomainLineageIo::write_fixture(
+        &storage,
+        &paths,
+        "/tmp/working_dir",
+        [(namespace.clone(), PackageLineage::default())],
+    )
+    .await?;
 
     let package_home = home.join(namespace.to_string());
     storage.create_dir_all(&package_home).await?;
@@ -1079,7 +972,6 @@ async fn package_with_config(
         )
         .await?;
 
-    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,

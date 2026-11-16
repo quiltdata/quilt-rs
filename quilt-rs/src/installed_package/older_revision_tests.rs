@@ -194,10 +194,12 @@ impl Rev1Installed {
         Ok(())
     }
 
-    /// A domain on this package's directory, sharing its storage and remote.
+    /// A domain on this package's directory, sharing its lineage, storage and
+    /// remote.
     pub(super) fn domain(&self) -> crate::LocalDomain<LocalStorage, MockRemote> {
         crate::LocalDomain::with_parts(
             self.package.paths.clone(),
+            self.package.lineage.domain().clone(),
             self.package.storage.clone(),
             Arc::clone(&self.package.remote),
         )
