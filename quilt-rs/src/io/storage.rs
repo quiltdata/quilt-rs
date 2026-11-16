@@ -158,6 +158,14 @@ impl<S: Storage + Send + Sync> Storage for Arc<S> {
         (**self).create_dir_all(path).await
     }
 
+    async fn remove_dir(&self, path: impl AsRef<Path> + Send) -> Res {
+        (**self).remove_dir(path).await
+    }
+
+    async fn is_symlink(&self, path: impl AsRef<Path> + Send) -> bool {
+        (**self).is_symlink(path).await
+    }
+
     async fn create_file(&self, path: impl AsRef<Path>) -> Res<File> {
         (**self).create_file(path).await
     }

@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -52,7 +53,7 @@ pub struct InstallToReport {
 /// - two keys that name one local file;
 /// - a folder between `dest` and a target that is a symbolic link, which would
 ///   put the file outside `dest`;
-/// - a file already at a target, or a file where a target's folder would go
+/// - a file or symbolic link already at a target, or a file where a target's folder would go
 ///   (in the destination itself or any folder between it and the target).
 ///
 /// **Fetching is all-or-nothing; placing is not.** The fetched files are staged
@@ -88,7 +89,7 @@ pub async fn install_to(
     refuse_clashing_local_paths(&rows)?;
     refuse_blocked_targets(storage, &rows, dest).await?;
 
-    let created = missing_folders(storage, dest).await;
+    let created = missing_folders(storage, &rows, dest).await;
     let staging = dest.join(format!(".quilt-install-{}", uuid::Uuid::new_v4()));
     let installed = async {
         storage.create_dir_all(dest).await?;
@@ -118,17 +119,54 @@ pub async fn install_to(
     Ok(report)
 }
 
-/// `dest` and the folders above it that do not exist yet, deepest first: the ones
-/// this install will make.
-async fn missing_folders(storage: &(impl Storage + Sync), dest: &Path) -> Vec<PathBuf> {
-    let mut missing = Vec::new();
-    for dir in dest.ancestors() {
-        if storage.exists(dir).await {
-            break;
-        }
-        missing.push(dir.to_path_buf());
+/// The folders this install will make, deepest first: `dest` and the folders
+/// above it, and the folders between `dest` and each target, that do not exist
+/// yet.
+async fn missing_folders(
+    storage: &(impl Storage + Sync),
+    rows: &[ManifestRow],
+    dest: &Path,
+) -> Vec<PathBuf> {
+    let mut candidates: BTreeSet<PathBuf> = dest.ancestors().map(Path::to_path_buf).collect();
+    for row in rows {
+        candidates.extend(
+            row.logical_key
+                .join_to(dest)
+                .ancestors()
+                .skip(1)
+                .take_while(|ancestor| ancestor.starts_with(dest))
+                .map(Path::to_path_buf),
+        );
     }
+    let mut missing = Vec::new();
+    for dir in candidates {
+        if !dir.as_os_str().is_empty() && !storage.exists(&dir).await {
+            missing.push(dir);
+        }
+    }
+    missing.sort_by_key(|dir| std::cmp::Reverse(dir.components().count()));
     missing
+}
+
+/// Refuses a target that is a symbolic link, dangling or not: a rename would
+/// replace it, and `exists` follows links so it cannot see one that dangles.
+async fn refuse_linked_targets<'a>(
+    storage: &(impl Storage + Sync),
+    targets: impl Iterator<Item = (PathBuf, &'a LogicalKey)>,
+) -> Res {
+    let mut linked = Vec::new();
+    for (target, key) in targets {
+        if storage.is_symlink(&target).await {
+            linked.push(key.to_path_buf());
+        }
+    }
+    if linked.is_empty() {
+        return Ok(());
+    }
+    linked.sort();
+    Err(Error::InstallPath(InstallPathError::LocalFileExists(
+        linked,
+    )))
 }
 
 fn select_rows(manifest: &Manifest, only: Option<&[PathBuf]>) -> Res<Vec<ManifestRow>> {
@@ -206,6 +244,12 @@ async fn refuse_blocked_targets(
             blocked,
         )));
     }
+    refuse_linked_targets(
+        storage,
+        rows.iter()
+            .map(|row| (row.logical_key.join_to(dest), &row.logical_key)),
+    )
+    .await?;
     refuse_if_present(
         storage,
         rows.iter()
@@ -236,6 +280,13 @@ async fn fetch_and_place(
     }
     // A file may have appeared during the fetches: check again, as
     // `install_paths` does, before the first rename.
+    refuse_linked_targets(
+        storage,
+        staged
+            .iter()
+            .map(|(_, target, row)| (target.clone(), &row.logical_key)),
+    )
+    .await?;
     refuse_if_present(
         storage,
         staged
@@ -546,6 +597,82 @@ mod tests {
             remote.get_object_count("s3://b/p/sub/b.txt?versionId=v1"),
             0
         );
+        Ok(())
+    }
+
+    /// The same refusal holds when the storage is shared through an `Arc`.
+    #[cfg(unix)]
+    #[test(tokio::test)]
+    async fn a_symlinked_folder_is_refused_through_an_arc_storage() -> Res {
+        let remote = MockRemote::default();
+        let storage = std::sync::Arc::new(MockStorage::default());
+        let manifest = manifest(vec![row(
+            "sub/b.txt",
+            b"beta",
+            "s3://b/p/sub/b.txt?versionId=v1",
+        )]);
+        let dest = std::path::absolute("/dest")?;
+        storage.create_dir_all(&dest).await?;
+        storage
+            .create_dir_all(std::path::absolute("/outside")?)
+            .await?;
+        let root = storage.temp_dir.path();
+        std::os::unix::fs::symlink(root.join("outside"), root.join("dest/sub"))?;
+
+        let installed = install_to(&storage, &remote, None, &manifest, &dest, None).await;
+
+        assert!(installed.is_err_and(|err| err.to_string().contains("symbolic link")));
+        Ok(())
+    }
+
+    /// A link already at a target, even one that points nowhere, is not
+    /// replaced: `exists` cannot see a dangling one.
+    #[cfg(unix)]
+    #[test(tokio::test)]
+    async fn a_dangling_symlink_at_a_target_is_refused_before_any_fetch() -> Res {
+        let remote = MockRemote::default();
+        let storage = MockStorage::default();
+        put(&remote, "s3://b/p/a.txt?versionId=v1", b"alpha").await?;
+        let manifest = manifest(vec![row("a.txt", b"alpha", "s3://b/p/a.txt?versionId=v1")]);
+        let dest = std::path::absolute("/dest")?;
+        storage.create_dir_all(&dest).await?;
+        let root = storage.temp_dir.path();
+        std::os::unix::fs::symlink(root.join("nowhere"), root.join("dest/a.txt"))?;
+
+        let installed = install_to(&storage, &remote, None, &manifest, &dest, None).await;
+
+        assert!(matches!(
+            installed,
+            Err(Error::InstallPath(InstallPathError::LocalFileExists(_)))
+        ));
+        assert!(storage.is_symlink(dest.join("a.txt")).await);
+        assert_eq!(remote.get_object_count("s3://b/p/a.txt?versionId=v1"), 0);
+        Ok(())
+    }
+
+    /// The folders to remove after a failure include those between the
+    /// destination and a target, and leave out any that already exist.
+    #[test(tokio::test)]
+    async fn the_folders_an_install_will_make_include_each_targets_parents() -> Res {
+        let storage = MockStorage::default();
+        let kept = std::path::absolute("/kept")?;
+        storage.create_dir_all(kept.join("dest/there")).await?;
+        let rows = vec![
+            row("a.txt", b"a", "s3://b/p/a.txt?versionId=v1"),
+            row("sub/deep/b.txt", b"b", "s3://b/p/b.txt?versionId=v1"),
+            row("there/c.txt", b"c", "s3://b/p/c.txt?versionId=v1"),
+        ];
+
+        let made = missing_folders(&storage, &rows, &kept.join("dest")).await;
+
+        assert_eq!(
+            made,
+            vec![kept.join("dest/sub/deep"), kept.join("dest/sub")]
+        );
+        let nested = missing_folders(&storage, &rows, &kept.join("new/dest")).await;
+        assert_eq!(nested[0], kept.join("new/dest/sub/deep"));
+        assert_eq!(nested.last(), Some(&kept.join("new")));
+        assert!(!nested.contains(&kept));
         Ok(())
     }
 
