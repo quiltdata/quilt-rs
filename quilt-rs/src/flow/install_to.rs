@@ -249,7 +249,8 @@ async fn refuse_linked_ancestors<'a>(
     dest: &Path,
     keys: impl Iterator<Item = &'a LogicalKey>,
 ) -> Res {
-    // Shallowest first, so the link named is the one nearest `dest`.
+    // Shallowest first within one key's chain of folders; across keys the
+    // order is alphabetical, so the link named is the first in that order.
     for (ancestor, key) in folders_above(dest, keys) {
         if ancestor != dest && storage.is_symlink(&ancestor).await {
             return Err(Error::PackageOp(PackageOpError::Package(format!(
@@ -283,7 +284,6 @@ async fn refuse_blocked_targets(
         }
     }
     if !blocked.is_empty() {
-        blocked.sort();
         return Err(Error::InstallPath(InstallPathError::LocalFileExists(
             blocked,
         )));
