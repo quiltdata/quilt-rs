@@ -4,7 +4,7 @@
 
 #![cfg_attr(
     not(test),
-    expect(dead_code, reason = "the ref store that uses them is not built yet")
+    expect(dead_code, reason = "nothing outside tests uses the ref store yet")
 )]
 
 use std::ffi::OsStr;
@@ -12,6 +12,7 @@ use std::ffi::OsStr;
 use uuid::Uuid;
 
 mod format;
+mod store;
 
 /// What a file in `refs/<owner>/` is, read from its name.
 #[derive(Debug, PartialEq, Eq)]

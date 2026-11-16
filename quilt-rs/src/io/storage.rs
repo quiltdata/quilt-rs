@@ -15,7 +15,7 @@ use tokio::fs::ReadDir;
 use crate::Res;
 
 pub mod auth;
-mod local;
+pub(crate) mod local;
 pub(crate) mod lock;
 
 pub use local::LocalStorage;

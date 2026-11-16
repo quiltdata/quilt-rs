@@ -379,7 +379,7 @@ impl LocalStorage {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     use test_log::test;
@@ -652,12 +652,12 @@ mod tests {
     /// Records the level of each event logged while it is the default subscriber.
     #[cfg(unix)]
     #[derive(Clone, Default)]
-    struct Logged(std::sync::Arc<std::sync::Mutex<Vec<tracing::Level>>>);
+    pub(crate) struct Logged(std::sync::Arc<std::sync::Mutex<Vec<tracing::Level>>>);
 
     #[cfg(unix)]
     impl Logged {
         /// Awaits `body`, returning its output and the levels it logged.
-        async fn during<T>(body: impl Future<Output = T>) -> (T, Vec<tracing::Level>) {
+        pub(crate) async fn during<T>(body: impl Future<Output = T>) -> (T, Vec<tracing::Level>) {
             let logged = Logged::default();
             let guard = tracing::subscriber::set_default(logged.clone());
             let output = body.await;

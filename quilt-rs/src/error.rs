@@ -337,6 +337,14 @@ pub enum LineageError {
         home.display()
     )]
     HomeChanged { placed: PathBuf, home: PathBuf },
+
+    /// The domain config, at `path`, does not say the domain's lineage has
+    /// moved to refs, so no ref is written.
+    #[error(
+        "Lineage cannot be written while the move to per-package refs {state} ({})",
+        path.display()
+    )]
+    RefsNotWritable { path: PathBuf, state: &'static str },
 }
 
 #[derive(Error, Debug, PartialEq)]

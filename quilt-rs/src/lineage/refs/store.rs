@@ -1,0 +1,1152 @@
+//!
+//! Reads and writes the files of per-package lineage. A ref is written only
+//! under its package's lock, which the caller holds and proves with a
+//! [`PackageLock`]: the lock is not reentrant, so the store never takes one
+//! to write. Creating or removing a ref and changing the home also take the
+//! domain file lock, always after any package lock.
+
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
+use std::path::Path;
+use std::path::PathBuf;
+
+use chrono::Utc;
+use tracing::warn;
+use uuid::Uuid;
+
+use super::RefEntry;
+use super::format::DomainConfig;
+use super::format::MigrationState;
+use super::format::PackageRef;
+use super::format::TipCache;
+use crate::Error;
+use crate::InstallPackageError;
+use crate::Res;
+use crate::error::LineageError;
+use crate::io::storage::ByteStream;
+use crate::io::storage::Storage;
+use crate::io::storage::StorageExt;
+use crate::lineage::Home;
+use crate::lineage::LineageHook;
+use crate::lineage::PackageLineage;
+use crate::package_lock::PackageLock;
+use crate::paths::DomainPaths;
+use quilt_uri::Namespace;
+
+/// The refs, tip caches and domain config of one domain.
+pub(crate) struct RefStore {
+    paths: DomainPaths,
+    hook: Option<LineageHook>,
+}
+
+/// A file in `refs/<owner>/` whose name parses as a package's.
+struct RefFile {
+    path: PathBuf,
+    namespace: Namespace,
+    entry: RefEntry,
+}
+
+impl RefStore {
+    pub(crate) fn new(paths: DomainPaths) -> Self {
+        Self { paths, hook: None }
+    }
+
+    /// Tell `hook` of every ref this store's writes change. It runs under
+    /// the package's lock, after the write landed, so it must return at once.
+    pub(crate) fn with_hook(mut self, hook: LineageHook) -> Self {
+        self.hook = Some(hook);
+        self
+    }
+
+    /// The home in the domain config, empty when the config has none.
+    pub(crate) async fn home(&self, storage: &(impl Storage + Sync)) -> Res<Home> {
+        match self.read_config(storage).await? {
+            Some(config) => Ok(config.home),
+            None => Err(LineageError::Missing.into()),
+        }
+    }
+
+    /// Every package with a ref, whether or not it parses. Leftover temps,
+    /// tip caches and names that are no namespace are skipped, as
+    /// `lock_every_package` skips lock files.
+    pub(crate) async fn namespaces(
+        &self,
+        storage: &(impl Storage + Sync),
+    ) -> Res<BTreeSet<Namespace>> {
+        Ok(self
+            .files(storage)
+            .await?
+            .into_iter()
+            .filter(|file| matches!(file.entry, RefEntry::Ref(_)))
+            .map(|file| file.namespace)
+            .collect())
+    }
+
+    pub(crate) async fn contains(&self, storage: &impl Storage, namespace: &Namespace) -> bool {
+        storage.is_file(self.paths.package_ref(namespace)).await
+    }
+
+    /// A package with no ref is not installed. A ref that does not parse is
+    /// an error naming its file, for that package alone.
+    pub(crate) async fn read(
+        &self,
+        storage: &(impl Storage + Sync),
+        namespace: &Namespace,
+    ) -> Res<PackageLineage> {
+        let (stored, tip) = self.read_ref(storage, namespace).await?;
+        Ok(stored.into_lineage(tip.as_ref()))
+    }
+
+    /// Each installed package's lineage, read on its own.
+    pub(crate) async fn read_all(
+        &self,
+        storage: &(impl Storage + Sync),
+    ) -> Res<BTreeMap<Namespace, Res<PackageLineage>>> {
+        let mut all = BTreeMap::new();
+        for namespace in self.namespaces(storage).await? {
+            let lineage = self.read(storage, &namespace).await;
+            all.insert(namespace, lineage);
+        }
+        Ok(all)
+    }
+
+    /// Re-reads the locked package's ref, lets `step` change its lineage,
+    /// and stores the change before returning: the tip cache, then the ref,
+    /// then the hook, which is not told of a change to the tip alone. An
+    /// error from `step` writes nothing.
+    pub(crate) async fn update<T>(
+        &self,
+        storage: &(impl Storage + Sync),
+        held: &PackageLock,
+        step: impl FnOnce(&mut PackageLineage) -> Res<T>,
+    ) -> Res<T> {
+        let namespace = held.namespace();
+        self.writable_config(storage).await?;
+        let (stored, tip) = self.read_ref(storage, namespace).await?;
+        let before = stored.clone().into_lineage(tip.as_ref());
+        let mut lineage = before.clone();
+        let out = step(&mut lineage)?;
+        if let Some(after) = self
+            .write(storage, namespace, Some(stored), tip, &lineage)
+            .await?
+        {
+            self.tell(namespace, Some(&before), Some(&after));
+        }
+        Ok(out)
+    }
+
+    /// Records the locked package, whose files were placed under `placed`.
+    /// Under the domain file lock, so no home change lands in between, it
+    /// reads the home again and refuses with [`LineageError::HomeChanged`],
+    /// writing nothing, if it is no longer `placed`.
+    pub(crate) async fn create(
+        &self,
+        storage: &(impl Storage + Sync),
+        held: &PackageLock,
+        lineage: &PackageLineage,
+        placed: &Home,
+    ) -> Res {
+        let namespace = held.namespace();
+        let _domain = storage
+            .lock_exclusive(self.paths.domain_file_lock())
+            .await?;
+        let config = self.writable_config(storage).await?;
+        if config.home != *placed {
+            return Err(LineageError::HomeChanged {
+                placed: placed.as_ref().clone(),
+                home: config.home.as_ref().clone(),
+            }
+            .into());
+        }
+        if self.contains(storage, namespace).await {
+            return Err(Error::InstallPackage(
+                InstallPackageError::AlreadyInstalled(namespace.clone()),
+            ));
+        }
+        self.create_folders(storage, namespace).await?;
+        // A tip a killed removal left behind is replaced or removed.
+        let tip = self.read_tip(storage, namespace).await;
+        if let Some(after) = self.write(storage, namespace, None, tip, lineage).await? {
+            self.tell(namespace, None, Some(&after));
+        }
+        Ok(())
+    }
+
+    /// Removes the locked package's ref, which need not parse, then its tip.
+    pub(crate) async fn remove(&self, storage: &(impl Storage + Sync), held: &PackageLock) -> Res {
+        let namespace = held.namespace();
+        let _domain = storage
+            .lock_exclusive(self.paths.domain_file_lock())
+            .await?;
+        self.writable_config(storage).await?;
+        let was = self.read(storage, namespace).await.ok();
+        let path = self.paths.package_ref(namespace);
+        match storage.remove_file(&path).await {
+            Ok(()) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                return Err(Error::InstallPackage(InstallPackageError::NotInstalled(
+                    namespace.clone(),
+                )));
+            }
+            Err(err) => return Err(err.into()),
+        }
+        crate::failpoint::hit("ref.remove.after-unlink");
+        storage.sync_dir(folder_of(&path)).await;
+        self.remove_tip(storage, namespace).await;
+        self.tell(namespace, was.as_ref(), None);
+        Ok(())
+    }
+
+    /// Points the domain at `home`, creating its folder first. Refuses with
+    /// [`LineageError::HomeInUse`] while any ref exists, since each package's
+    /// files are under the current home, unless the config has no home.
+    pub(crate) async fn set_home(&self, storage: &(impl Storage + Sync), home: &Home) -> Res {
+        self.change_home(storage, home, false).await
+    }
+
+    /// [`Self::set_home`] without the check for installed packages, whose
+    /// refs then point at folders under the new home.
+    pub(crate) async fn overwrite_home(&self, storage: &(impl Storage + Sync), home: &Home) -> Res {
+        self.change_home(storage, home, true).await
+    }
+
+    /// Deletes the temps that killed writes left. A package's go only while
+    /// its lock is free, since a writer makes them only under it, and the
+    /// domain config's only while the domain file lock is free; a busy one
+    /// waits for the next sweep. It takes package locks, so a caller holding
+    /// one would see its own package busy.
+    pub(crate) async fn sweep(&self, storage: &(impl Storage + Sync)) -> Res {
+        let mut temps: BTreeMap<Namespace, Vec<PathBuf>> = BTreeMap::new();
+        for file in self.files(storage).await? {
+            if matches!(file.entry, RefEntry::RefTemp(_) | RefEntry::TipTemp(_)) {
+                temps.entry(file.namespace).or_default().push(file.path);
+            }
+        }
+        for (namespace, paths) in temps {
+            if let Some(_held) = PackageLock::try_take(storage, &self.paths, &namespace).await? {
+                remove_leftovers(storage, &paths).await?;
+            }
+        }
+
+        let config_temps: Vec<PathBuf> = entries(storage, &self.paths.dot_quilt_dir())
+            .await?
+            .into_iter()
+            .filter(|(path, is_dir)| {
+                !is_dir
+                    && path.file_name().is_some_and(|name| {
+                        RefEntry::classify(name) == RefEntry::RefTemp("domain".to_string())
+                    })
+            })
+            .map(|(path, _)| path)
+            .collect();
+        if !config_temps.is_empty()
+            && let Some(_domain) = storage
+                .try_lock_exclusive(self.paths.domain_file_lock())
+                .await?
+        {
+            remove_leftovers(storage, &config_temps).await?;
+        }
+        Ok(())
+    }
+
+    fn tell(
+        &self,
+        namespace: &Namespace,
+        was: Option<&PackageLineage>,
+        is: Option<&PackageLineage>,
+    ) {
+        if let Some(LineageHook(hook)) = &self.hook {
+            hook(namespace, was, is);
+        }
+    }
+
+    async fn read_config(&self, storage: &(impl Storage + Sync)) -> Res<Option<DomainConfig>> {
+        let path = self.paths.domain_config();
+        read_if_exists(storage, &path)
+            .await?
+            .map(|bytes| DomainConfig::from_slice(&path, &bytes))
+            .transpose()
+    }
+
+    /// The domain config, if it lets lineage be written: only once the
+    /// domain's lineage has moved to refs, so neither that move nor its
+    /// rollback meets a ref or the home changing under it. Each writer reads
+    /// it again under the lock its write is made under.
+    async fn writable_config(&self, storage: &(impl Storage + Sync)) -> Res<DomainConfig> {
+        let state = match self.read_config(storage).await? {
+            Some(
+                config @ DomainConfig {
+                    migration: Some(MigrationState::Done),
+                    ..
+                },
+            ) => return Ok(config),
+            Some(DomainConfig {
+                migration: Some(MigrationState::InProgress),
+                ..
+            }) => "is in progress",
+            Some(DomainConfig {
+                migration: Some(MigrationState::RollingBack { .. }),
+                ..
+            }) => "is being rolled back",
+            Some(DomainConfig {
+                migration: None, ..
+            })
+            | None => "has not started",
+        };
+        Err(LineageError::RefsNotWritable {
+            path: self.paths.domain_config(),
+            state,
+        }
+        .into())
+    }
+
+    async fn read_ref(
+        &self,
+        storage: &(impl Storage + Sync),
+        namespace: &Namespace,
+    ) -> Res<(PackageRef, Option<TipCache>)> {
+        let path = self.paths.package_ref(namespace);
+        let Some(bytes) = read_if_exists(storage, &path).await? else {
+            return Err(Error::InstallPackage(InstallPackageError::NotInstalled(
+                namespace.clone(),
+            )));
+        };
+        let stored = PackageRef::from_slice(&path, &bytes)?;
+        Ok((stored, self.read_tip(storage, namespace).await))
+    }
+
+    /// `None` when the cache is missing or unreadable: the tip is unknown.
+    async fn read_tip(
+        &self,
+        storage: &(impl Storage + Sync),
+        namespace: &Namespace,
+    ) -> Option<TipCache> {
+        let bytes = storage
+            .read_bytes(self.paths.package_tip(namespace))
+            .await
+            .ok()?;
+        TipCache::from_slice(&bytes)
+    }
+
+    /// Stores `lineage` over `stored` and its `tip`: the tip cache first, so
+    /// a kill before the ref lands leaves the package reading as behind, not
+    /// as up to date, then the ref. Returns the lineage as it now reads when
+    /// the ref changed.
+    async fn write(
+        &self,
+        storage: &(impl Storage + Sync),
+        namespace: &Namespace,
+        stored: Option<PackageRef>,
+        tip: Option<TipCache>,
+        lineage: &PackageLineage,
+    ) -> Res<Option<PackageLineage>> {
+        let extra = stored
+            .as_ref()
+            .map_or_default(|stored| stored.extra.clone());
+        let new_ref = PackageRef::from_lineage(lineage, extra)?;
+        let tip = self
+            .write_tip(storage, namespace, &new_ref, tip, lineage)
+            .await?;
+        if stored.as_ref() == Some(&new_ref) {
+            return Ok(None);
+        }
+        put(
+            storage,
+            &self.paths.package_ref(namespace),
+            new_ref.to_vec()?,
+            Some("ref"),
+        )
+        .await?;
+        Ok(Some(new_ref.into_lineage(tip.as_ref())))
+    }
+
+    /// Makes the cache hold `lineage`'s tip, and returns the cache as left.
+    /// A tip the ref already implies is not cached, and a cache left from
+    /// another bucket is removed, so a fallback is never kept as a tip.
+    async fn write_tip(
+        &self,
+        storage: &(impl Storage + Sync),
+        namespace: &Namespace,
+        new_ref: &PackageRef,
+        tip: Option<TipCache>,
+        lineage: &PackageLineage,
+    ) -> Res<Option<TipCache>> {
+        let implied = new_ref.clone().into_lineage(None).latest_hash;
+        let wanted = match &lineage.remote_uri {
+            Some(remote) if lineage.latest_hash != implied => Some(&remote.bucket),
+            _ => None,
+        };
+        match (wanted, tip) {
+            (Some(bucket), Some(tip))
+                if tip.bucket == *bucket && tip.latest_hash == lineage.latest_hash =>
+            {
+                Ok(Some(tip))
+            }
+            (Some(bucket), _) => {
+                let tip = TipCache {
+                    format: TipCache::FORMAT,
+                    latest_hash: lineage.latest_hash.clone(),
+                    bucket: bucket.clone(),
+                    checked_at: Utc::now(),
+                };
+                put(
+                    storage,
+                    &self.paths.package_tip(namespace),
+                    tip.to_vec()?,
+                    None,
+                )
+                .await?;
+                Ok(Some(tip))
+            }
+            (None, Some(_)) => {
+                self.remove_tip(storage, namespace).await;
+                Ok(None)
+            }
+            (None, None) => Ok(None),
+        }
+    }
+
+    /// A tip left behind costs nothing: it is replaced or removed when the
+    /// package is next written.
+    async fn remove_tip(&self, storage: &impl Storage, namespace: &Namespace) {
+        let path = self.paths.package_tip(namespace);
+        if let Err(err) = storage.remove_file(&path).await
+            && err.kind() != std::io::ErrorKind::NotFound
+        {
+            warn!("❌ Could not remove {}: {}", path.display(), err);
+        }
+    }
+
+    /// Creates `refs/` and the owner's folder where missing, syncing the
+    /// parent of each so the new folder survives a power loss.
+    async fn create_folders(&self, storage: &(impl Storage + Sync), namespace: &Namespace) -> Res {
+        let refs = self.paths.refs_dir();
+        let owner = self.paths.package_ref(namespace);
+        let owner = folder_of(&owner);
+        for folder in [refs.as_path(), owner] {
+            if storage.exists(folder).await {
+                continue;
+            }
+            storage.create_dir_all(folder).await?;
+            if folder == owner {
+                crate::failpoint::hit("ref.create.after-owner-dir");
+            }
+            storage.sync_dir(folder_of(folder)).await;
+        }
+        Ok(())
+    }
+
+    async fn change_home(
+        &self,
+        storage: &(impl Storage + Sync),
+        home: &Home,
+        overwrite: bool,
+    ) -> Res {
+        let _domain = storage
+            .lock_exclusive(self.paths.domain_file_lock())
+            .await?;
+        let mut config = self.writable_config(storage).await?;
+        if config.home == *home {
+            return storage.create_dir_all(home.as_ref()).await;
+        }
+        if !overwrite && !config.home.as_ref().as_os_str().is_empty() {
+            let installed = self.namespaces(storage).await?.len();
+            if installed > 0 {
+                return Err(LineageError::HomeInUse {
+                    home: config.home.as_ref().clone(),
+                    installed,
+                }
+                .into());
+            }
+        }
+        storage.create_dir_all(home.as_ref()).await?;
+        config.home = home.clone();
+        put(storage, &self.paths.domain_config(), config.to_vec()?, None).await
+    }
+
+    /// Each file in `refs/<owner>/` whose owner and name make a namespace.
+    async fn files(&self, storage: &(impl Storage + Sync)) -> Res<Vec<RefFile>> {
+        let mut files = Vec::new();
+        for (owner_dir, is_dir) in entries(storage, &self.paths.refs_dir()).await? {
+            let Some(owner) = owner_dir.file_name().filter(|_| is_dir) else {
+                continue;
+            };
+            let owner = owner.to_string_lossy();
+            for (path, is_dir) in entries(storage, &owner_dir).await? {
+                let Some(file_name) = path.file_name().filter(|_| !is_dir) else {
+                    continue;
+                };
+                let entry = RefEntry::classify(file_name);
+                let (RefEntry::Ref(name)
+                | RefEntry::Tip(name)
+                | RefEntry::RefTemp(name)
+                | RefEntry::TipTemp(name)) = &entry
+                else {
+                    continue;
+                };
+                if let Ok(namespace) = Namespace::try_from(format!("{owner}/{name}")) {
+                    files.push(RefFile {
+                        path,
+                        namespace,
+                        entry,
+                    });
+                }
+            }
+        }
+        Ok(files)
+    }
+}
+
+/// The bytes of `path`, or `None` when there is no such file.
+async fn read_if_exists(storage: &(impl Storage + Sync), path: &Path) -> Res<Option<Vec<u8>>> {
+    match storage.read_bytes(path).await {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(_) if !storage.exists(path).await => Ok(None),
+        Err(err) => Err(err),
+    }
+}
+
+/// Writes `bytes` over `path` through a temp named after it,
+/// `<file name>.tmp-<uuid>`, so a sweep can tell whose leftover it is.
+async fn put(
+    storage: &impl Storage,
+    path: &Path,
+    bytes: Vec<u8>,
+    tag: Option<&'static str>,
+) -> Res {
+    let mut temp_name = path.file_name().unwrap_or_default().to_os_string();
+    temp_name.push(format!(".tmp-{}", Uuid::new_v4()));
+    storage
+        .write_byte_stream_via(path, PathBuf::from(temp_name), ByteStream::from(bytes), tag)
+        .await
+}
+
+fn folder_of(path: &Path) -> &Path {
+    path.parent().unwrap_or(Path::new(""))
+}
+
+/// The entries of `dir` with whether each is a folder, none if it is missing.
+async fn entries(storage: &(impl Storage + Sync), dir: &Path) -> Res<Vec<(PathBuf, bool)>> {
+    let mut read_dir = match storage.read_dir(dir).await {
+        Ok(read_dir) => read_dir,
+        Err(_) if !storage.exists(dir).await => return Ok(Vec::new()),
+        Err(err) => return Err(err),
+    };
+    let mut entries = Vec::new();
+    while let Some(entry) = read_dir.next_entry().await? {
+        entries.push((entry.path(), entry.file_type().await?.is_dir()));
+    }
+    Ok(entries)
+}
+
+async fn remove_leftovers(storage: &impl Storage, paths: &[PathBuf]) -> Res {
+    for path in paths {
+        match storage.remove_file(path).await {
+            Err(err) if err.kind() != std::io::ErrorKind::NotFound => return Err(err.into()),
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::Mutex;
+    use std::time::Duration;
+
+    use test_log::test;
+
+    use super::*;
+    use crate::io::storage::LocalStorage;
+    use crate::io::storage::lock::tests::OtherProcess;
+    use crate::lineage::PathState;
+    use crate::lineage::refs::format::Extra;
+    use quilt_uri::ManifestUri;
+
+    const BASE: &str = "1111111111111111111111111111111111111111111111111111111111111111";
+    const NEXT: &str = "2222222222222222222222222222222222222222222222222222222222222222";
+    const TIP: &str = "3333333333333333333333333333333333333333333333333333333333333333";
+
+    /// The base hash the hook was told the package went from and to, and
+    /// the one its ref held on disk as the hook ran.
+    type Told = (Option<String>, Option<String>, Option<String>);
+
+    /// A domain whose lineage has moved to refs, its home `<root>/home`.
+    struct Domain {
+        root: tempfile::TempDir,
+        paths: DomainPaths,
+        store: RefStore,
+        storage: LocalStorage,
+        home: Home,
+    }
+
+    impl Domain {
+        fn new() -> Res<Self> {
+            let root = tempfile::TempDir::new()?;
+            let paths = DomainPaths::new(root.path().to_path_buf());
+            std::fs::create_dir_all(paths.dot_quilt_dir())?;
+            let domain = Self {
+                home: Home::from(root.path().join("home")),
+                store: RefStore::new(paths.clone()),
+                storage: LocalStorage::new(),
+                paths,
+                root,
+            };
+            domain.write_config(&domain.home, Some(MigrationState::Done))?;
+            Ok(domain)
+        }
+
+        /// A domain whose hook notes each change it is told of.
+        fn hooked() -> Res<(Self, Arc<Mutex<Vec<Told>>>)> {
+            let mut domain = Self::new()?;
+            let told = Arc::new(Mutex::new(Vec::new()));
+            let (paths, notes) = (domain.paths.clone(), Arc::clone(&told));
+            let hook = LineageHook::new(move |namespace, was, is| {
+                let on_disk = std::fs::read(paths.package_ref(namespace))
+                    .ok()
+                    .and_then(|bytes| PackageRef::from_slice(Path::new(""), &bytes).ok())
+                    .map(|stored| stored.base_hash);
+                let base = |lineage: Option<&PackageLineage>| lineage.map(|l| l.base_hash.clone());
+                notes.lock().unwrap().push((base(was), base(is), on_disk));
+            });
+            domain.store = RefStore::new(domain.paths.clone()).with_hook(hook);
+            Ok((domain, told))
+        }
+
+        fn write_config(&self, home: &Home, migration: Option<MigrationState>) -> Res {
+            let config = DomainConfig {
+                format: DomainConfig::FORMAT,
+                home: home.clone(),
+                migration,
+                extra: Extra::new(),
+            };
+            Ok(std::fs::write(
+                self.paths.domain_config(),
+                config.to_vec()?,
+            )?)
+        }
+
+        async fn lock(&self, namespace: &Namespace) -> Res<PackageLock> {
+            PackageLock::take(&self.storage, &self.paths, namespace).await
+        }
+
+        async fn install(&self, lineage: &PackageLineage) -> Res {
+            let namespace = &lineage.remote_uri.as_ref().unwrap().namespace;
+            let held = self.lock(namespace).await?;
+            self.store
+                .create(&self.storage, &held, lineage, &self.home)
+                .await
+        }
+
+        async fn base_hash(&self, namespace: &Namespace) -> Res<String> {
+            Ok(self.store.read(&self.storage, namespace).await?.base_hash)
+        }
+    }
+
+    fn package(name: &str) -> Namespace {
+        ("acme", name).into()
+    }
+
+    /// `name`'s lineage, pushed at `base`, with `latest` its remote's tip.
+    fn lineage(name: &str, base: &str, latest: &str) -> PackageLineage {
+        PackageLineage {
+            remote_uri: Some(ManifestUri {
+                origin: None,
+                bucket: "b".to_string(),
+                namespace: package(name),
+                hash: base.to_string(),
+            }),
+            base_hash: base.to_string(),
+            latest_hash: latest.to_string(),
+            paths: BTreeMap::from([(PathBuf::from("a.csv"), PathState::default())]),
+            ..PackageLineage::default()
+        }
+    }
+
+    /// The name a killed write of `file_name` leaves its temp under.
+    fn leftover(file_name: &str) -> String {
+        format!("{file_name}.tmp-{}", Uuid::new_v4())
+    }
+
+    #[test(tokio::test)]
+    async fn a_ref_that_does_not_parse_costs_only_its_package() -> Res {
+        let domain = Domain::new()?;
+        domain.install(&lineage("good", BASE, BASE)).await?;
+        domain.install(&lineage("bad", BASE, BASE)).await?;
+        let bad = domain.paths.package_ref(&package("bad"));
+        std::fs::write(&bad, b"{")?;
+
+        let all = domain.store.read_all(&domain.storage).await;
+        assert!(all.is_ok(), "{all:?}");
+        let all = all?;
+        assert_eq!(
+            all.keys().collect::<Vec<_>>(),
+            [&package("bad"), &package("good")]
+        );
+        assert_eq!(
+            all[&package("good")].as_ref().ok(),
+            Some(&lineage("good", BASE, BASE))
+        );
+        assert!(
+            matches!(
+                &all[&package("bad")],
+                Err(Error::Lineage(LineageError::FileParse { path, .. })) if *path == bad
+            ),
+            "{:?}",
+            all[&package("bad")]
+        );
+        assert!(
+            domain
+                .store
+                .contains(&domain.storage, &package("bad"))
+                .await
+        );
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn a_package_without_a_ref_is_not_installed() -> Res {
+        let domain = Domain::new()?;
+        let missing = package("missing");
+        let not_installed = |result: &Res| {
+            matches!(
+                result,
+                Err(Error::InstallPackage(InstallPackageError::NotInstalled(namespace)))
+                    if *namespace == missing
+            )
+        };
+
+        assert!(!domain.store.contains(&domain.storage, &missing).await);
+        let read = domain.store.read(&domain.storage, &missing).await.map(drop);
+        assert!(not_installed(&read), "{read:?}");
+        let held = domain.lock(&missing).await?;
+        let updated = domain
+            .store
+            .update(&domain.storage, &held, |_| Ok(()))
+            .await;
+        assert!(not_installed(&updated), "{updated:?}");
+        let removed = domain.store.remove(&domain.storage, &held).await;
+        assert!(not_installed(&removed), "{removed:?}");
+        Ok(())
+    }
+
+    /// Package `a` is mid-create: it holds its own lock and the domain file
+    /// lock. An update of `b` waits on neither.
+    #[test(tokio::test)]
+    async fn an_update_does_not_wait_on_another_package_being_created() -> Res {
+        let domain = Domain::new()?;
+        domain.install(&lineage("b", BASE, BASE)).await?;
+        let _creating_a = domain.lock(&package("a")).await?;
+        let _domain_file_lock = domain
+            .storage
+            .lock_exclusive(domain.paths.domain_file_lock())
+            .await?;
+
+        let held = domain.lock(&package("b")).await?;
+        let update = domain.store.update(&domain.storage, &held, |lineage| {
+            lineage.base_hash = NEXT.to_string();
+            Ok(())
+        });
+        tokio::time::timeout(Duration::from_secs(5), update)
+            .await
+            .expect("the update does not wait")?;
+        assert_eq!(domain.base_hash(&package("b")).await?, NEXT);
+        Ok(())
+    }
+
+    /// The other order, a create before the home change, is refused by the
+    /// home change: see the test below.
+    #[test(tokio::test)]
+    async fn a_create_after_the_home_moved_records_nothing() -> Res {
+        let domain = Domain::new()?;
+        let placed = domain.store.home(&domain.storage).await?;
+        let moved = Home::from(domain.root.path().join("moved"));
+        domain.store.set_home(&domain.storage, &moved).await?;
+
+        let created = domain.install(&lineage("x", BASE, BASE)).await;
+        assert!(
+            matches!(
+                &created,
+                Err(Error::Lineage(LineageError::HomeChanged { placed: was, home }))
+                    if was == placed.as_ref() && home == moved.as_ref()
+            ),
+            "{created:?}"
+        );
+        assert!(!domain.store.contains(&domain.storage, &package("x")).await);
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn the_home_moves_while_a_ref_needs_it_only_when_forced_or_missing() -> Res {
+        let domain = Domain::new()?;
+        domain.install(&lineage("x", BASE, BASE)).await?;
+        let moved = Home::from(domain.root.path().join("moved"));
+
+        let refused = domain.store.set_home(&domain.storage, &moved).await;
+        assert!(
+            matches!(
+                refused,
+                Err(Error::Lineage(LineageError::HomeInUse { installed: 1, .. }))
+            ),
+            "{refused:?}"
+        );
+        assert_eq!(domain.store.home(&domain.storage).await?, domain.home);
+
+        domain.store.overwrite_home(&domain.storage, &moved).await?;
+        assert_eq!(domain.store.home(&domain.storage).await?, moved);
+        assert!(moved.as_ref().is_dir());
+
+        domain.write_config(&Home::default(), Some(MigrationState::Done))?;
+        let repaired = domain.store.set_home(&domain.storage, &domain.home).await;
+        assert!(repaired.is_ok(), "{repaired:?}");
+        assert_eq!(domain.store.home(&domain.storage).await?, domain.home);
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn leftover_temps_are_skipped_and_swept_only_while_their_lock_is_free() -> Res {
+        let domain = Domain::new()?;
+        domain.install(&lineage("a", BASE, BASE)).await?;
+        domain.install(&lineage("b", BASE, BASE)).await?;
+        let owner = domain.paths.refs_dir().join("acme");
+        let free_temps = [
+            owner.join(leftover("a.json")),
+            owner.join(leftover("a.json.latest")),
+            // A killed create's: `c` has no ref.
+            owner.join(leftover("c.json")),
+        ];
+        let b_temp = owner.join(leftover("b.json"));
+        let config_temp = domain.paths.dot_quilt_dir().join(leftover("domain.json"));
+        for path in free_temps.iter().chain([&b_temp, &config_temp]) {
+            std::fs::write(path, b"{")?;
+        }
+
+        assert_eq!(
+            domain.store.namespaces(&domain.storage).await?,
+            BTreeSet::from([package("a"), package("b")])
+        );
+
+        let held_b = domain.lock(&package("b")).await?;
+        let held_domain = domain
+            .storage
+            .lock_exclusive(domain.paths.domain_file_lock())
+            .await?;
+        domain.store.sweep(&domain.storage).await?;
+        assert!(
+            free_temps.iter().all(|path| !path.exists()),
+            "a's and c's locks are free"
+        );
+        assert!(b_temp.exists(), "b's lock is held");
+        assert!(config_temp.exists(), "the domain file lock is held");
+
+        drop((held_b, held_domain));
+        domain.store.sweep(&domain.storage).await?;
+        assert!(!b_temp.exists());
+        assert!(!config_temp.exists());
+        assert_eq!(
+            domain.store.namespaces(&domain.storage).await?,
+            BTreeSet::from([package("a"), package("b")])
+        );
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn the_hook_is_told_once_of_each_ref_change_after_it_lands() -> Res {
+        let (domain, told) = Domain::hooked()?;
+        domain.install(&lineage("x", BASE, BASE)).await?;
+        let held = domain.lock(&package("x")).await?;
+        let update = |step: fn(&mut PackageLineage)| {
+            domain.store.update(&domain.storage, &held, move |lineage| {
+                step(lineage);
+                Ok(())
+            })
+        };
+        update(|lineage| lineage.base_hash = NEXT.to_string()).await?;
+        update(|lineage| lineage.latest_hash = TIP.to_string()).await?;
+        update(|_| {}).await?;
+        assert_eq!(
+            domain
+                .store
+                .read(&domain.storage, &package("x"))
+                .await?
+                .latest_hash,
+            TIP,
+            "the tip alone was stored, untold"
+        );
+        domain.store.remove(&domain.storage, &held).await?;
+
+        let some = |hash: &str| Some(hash.to_string());
+        assert_eq!(
+            *told.lock().unwrap(),
+            [
+                (None, some(BASE), some(BASE)),
+                (some(BASE), some(NEXT), some(NEXT)),
+                (some(NEXT), None, None),
+            ]
+        );
+        Ok(())
+    }
+
+    /// A folder that cannot be synced is made unreadable, before each write
+    /// that syncs it: `.quilt` as `refs/` is created, `refs/` as an owner's
+    /// folder is, and the owner's folder as a ref is removed from it.
+    #[cfg(unix)]
+    #[test(tokio::test)]
+    async fn a_folder_sync_that_fails_is_logged_and_the_write_stands() -> Res {
+        use std::os::unix::fs::PermissionsExt;
+
+        use crate::io::storage::local::tests::Logged;
+
+        let set_mode = |path: &Path, mode| {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+        };
+        let domain = Domain::new()?;
+        let dot_quilt = domain.paths.dot_quilt_dir();
+        let held_x = domain.lock(&package("x")).await?;
+        let held_y = domain.lock(&("other", "y").into()).await?;
+        set_mode(&dot_quilt, 0o300)?;
+        if std::fs::File::open(&dot_quilt).is_ok() {
+            // Root ignores the mode, so the sync would not fail.
+            return Ok(set_mode(&dot_quilt, 0o700)?);
+        }
+
+        let (created, logged) = Logged::during(domain.store.create(
+            &domain.storage,
+            &held_x,
+            &lineage("x", BASE, BASE),
+            &domain.home,
+        ))
+        .await;
+        set_mode(&dot_quilt, 0o700)?;
+        created?;
+        assert_eq!(logged, [tracing::Level::WARN], "creating refs/");
+
+        let refs = domain.paths.refs_dir();
+        set_mode(&refs, 0o300)?;
+        let (created, logged) = Logged::during(domain.store.create(
+            &domain.storage,
+            &held_y,
+            &lineage("y", BASE, BASE),
+            &domain.home,
+        ))
+        .await;
+        set_mode(&refs, 0o700)?;
+        created?;
+        assert_eq!(logged, [tracing::Level::WARN], "creating refs/other/");
+
+        let owner = refs.join("acme");
+        set_mode(&owner, 0o300)?;
+        let (removed, logged) = Logged::during(domain.store.remove(&domain.storage, &held_x)).await;
+        set_mode(&owner, 0o700)?;
+        removed?;
+        assert_eq!(logged, [tracing::Level::WARN], "removing acme/x.json");
+
+        assert_eq!(
+            domain.store.namespaces(&domain.storage).await?,
+            BTreeSet::from([("other", "y").into()])
+        );
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn a_ref_in_a_newer_format_is_not_rewritten() -> Res {
+        let domain = Domain::new()?;
+        domain.install(&lineage("x", BASE, BASE)).await?;
+        let path = domain.paths.package_ref(&package("x"));
+        let newer = br#"{"format": 2, "tracked": ["a.csv"]}"#;
+        std::fs::write(&path, newer)?;
+
+        let held = domain.lock(&package("x")).await?;
+        let updated = domain
+            .store
+            .update(&domain.storage, &held, |lineage| {
+                lineage.base_hash = NEXT.to_string();
+                Ok(())
+            })
+            .await;
+        assert!(
+            matches!(
+                updated,
+                Err(Error::Lineage(LineageError::UnsupportedFormat {
+                    found: 2,
+                    ..
+                }))
+            ),
+            "{updated:?}"
+        );
+        assert_eq!(std::fs::read(&path)?, newer);
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn nothing_is_written_unless_the_move_to_refs_is_done() -> Res {
+        for (migration, state) in [
+            (None, "has not started"),
+            (Some(None), "has not started"),
+            (Some(Some(MigrationState::InProgress)), "is in progress"),
+            (
+                Some(Some(MigrationState::RollingBack {
+                    archive: "refs.rolled-back-x".to_string(),
+                })),
+                "is being rolled back",
+            ),
+        ] {
+            let domain = Domain::new()?;
+            domain.install(&lineage("x", BASE, BASE)).await?;
+            let x_ref = std::fs::read(domain.paths.package_ref(&package("x")))?;
+            match migration {
+                Some(migration) => domain.write_config(&domain.home, migration)?,
+                None => std::fs::remove_file(domain.paths.domain_config())?,
+            }
+            let config = std::fs::read(domain.paths.domain_config()).ok();
+            let refused = |result: Res| {
+                matches!(
+                    result,
+                    Err(Error::Lineage(LineageError::RefsNotWritable { state: found, .. }))
+                        if found == state
+                )
+            };
+
+            let (held_x, held_y) = (
+                domain.lock(&package("x")).await?,
+                domain.lock(&package("y")).await?,
+            );
+            let moved = Home::from(domain.root.path().join("moved"));
+            let store = &domain.store;
+            let storage = &domain.storage;
+            let updated = store.update(storage, &held_x, |lineage| {
+                lineage.base_hash = NEXT.to_string();
+                Ok(())
+            });
+            assert!(refused(updated.await), "update, {state}");
+            let y = lineage("y", BASE, BASE);
+            let created = store.create(storage, &held_y, &y, &domain.home);
+            assert!(refused(created.await), "create, {state}");
+            assert!(
+                refused(store.remove(storage, &held_x).await),
+                "remove, {state}"
+            );
+            assert!(
+                refused(store.set_home(storage, &moved).await),
+                "set_home, {state}"
+            );
+            assert!(
+                refused(store.overwrite_home(storage, &moved).await),
+                "overwrite_home, {state}"
+            );
+
+            assert_eq!(
+                std::fs::read(domain.paths.package_ref(&package("x")))?,
+                x_ref
+            );
+            assert!(!store.contains(storage, &package("y")).await);
+            assert_eq!(std::fs::read(domain.paths.domain_config()).ok(), config);
+            assert!(!moved.as_ref().exists());
+        }
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn a_ref_that_does_not_parse_can_be_removed() -> Res {
+        let (domain, told) = Domain::hooked()?;
+        domain.install(&lineage("x", BASE, TIP)).await?;
+        let tip = domain.paths.package_tip(&package("x"));
+        assert!(tip.exists());
+        std::fs::write(domain.paths.package_ref(&package("x")), b"{")?;
+
+        let held = domain.lock(&package("x")).await?;
+        let removed = domain.store.remove(&domain.storage, &held).await;
+        assert!(removed.is_ok(), "{removed:?}");
+        assert!(!domain.store.contains(&domain.storage, &package("x")).await);
+        assert!(!tip.exists());
+        assert_eq!(told.lock().unwrap().last(), Some(&(None, None, None)));
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn writers_wait_for_another_process_holding_the_domain_file_lock() -> Res {
+        let domain = Domain::new()?;
+        domain.install(&lineage("y", BASE, BASE)).await?;
+        let (held_x, held_y) = (
+            domain.lock(&package("x")).await?,
+            domain.lock(&package("y")).await?,
+        );
+        let moved = Home::from(domain.root.path().join("moved"));
+        let x = lineage("x", BASE, BASE);
+        let other = OtherProcess::holding(&domain.paths.domain_file_lock()).await?;
+
+        let waits = Duration::from_millis(300);
+        let storage = &domain.storage;
+        let create = domain.store.create(storage, &held_x, &x, &domain.home);
+        assert!(tokio::time::timeout(waits, create).await.is_err(), "create");
+        let remove = domain.store.remove(storage, &held_y);
+        assert!(tokio::time::timeout(waits, remove).await.is_err(), "remove");
+        let set_home = domain.store.set_home(storage, &moved);
+        assert!(
+            tokio::time::timeout(waits, set_home).await.is_err(),
+            "set_home"
+        );
+
+        other.release()?;
+        let create = domain.store.create(storage, &held_x, &x, &domain.home);
+        tokio::time::timeout(Duration::from_secs(30), create)
+            .await
+            .expect("the lock is free once the other process lets go")?;
+        assert!(domain.store.contains(storage, &package("x")).await);
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn a_tip_read_from_another_bucket_is_never_taken_for_this_one() -> Res {
+        let domain = Domain::new()?;
+        domain.install(&lineage("x", BASE, TIP)).await?;
+        assert_eq!(
+            domain
+                .store
+                .read(&domain.storage, &package("x"))
+                .await?
+                .latest_hash,
+            TIP
+        );
+        let held = domain.lock(&package("x")).await?;
+        let to_bucket = |bucket: &'static str| {
+            domain.store.update(&domain.storage, &held, move |lineage| {
+                lineage.remote_uri.as_mut().unwrap().bucket = bucket.to_string();
+                lineage.latest_hash = BASE.to_string();
+                Ok(())
+            })
+        };
+
+        to_bucket("c").await?;
+        to_bucket("b").await?;
+        assert_eq!(
+            domain
+                .store
+                .read(&domain.storage, &package("x"))
+                .await?
+                .latest_hash,
+            BASE
+        );
+        assert!(!domain.paths.package_tip(&package("x")).exists());
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn a_package_already_recorded_is_not_created_again() -> Res {
+        let domain = Domain::new()?;
+        domain.install(&lineage("x", BASE, BASE)).await?;
+        let again = domain.install(&lineage("x", NEXT, NEXT)).await;
+        assert!(
+            matches!(
+                again,
+                Err(Error::InstallPackage(
+                    InstallPackageError::AlreadyInstalled(_)
+                ))
+            ),
+            "{again:?}"
+        );
+        assert_eq!(domain.base_hash(&package("x")).await?, BASE);
+        Ok(())
+    }
+}

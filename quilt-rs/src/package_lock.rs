@@ -72,6 +72,55 @@ pub(crate) async fn try_lock(
         .await
 }
 
+/// A package's lock, held until this drops. Only [`Self::take`] and
+/// [`Self::try_take`] make one, so a function given one knows the lock is
+/// held, and need not take it again, which would wait on itself.
+#[derive(Debug)]
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the ref store that takes it is not used yet")
+)]
+pub(crate) struct PackageLock {
+    namespace: Namespace,
+    _guard: LockGuard,
+}
+
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the ref store that takes it is not used yet")
+)]
+impl PackageLock {
+    /// [`lock`], kept as proof.
+    pub(crate) async fn take(
+        storage: &impl Storage,
+        paths: &DomainPaths,
+        namespace: &Namespace,
+    ) -> Res<Self> {
+        Ok(Self {
+            namespace: namespace.clone(),
+            _guard: lock(storage, paths, namespace).await?,
+        })
+    }
+
+    /// [`try_lock`], kept as proof.
+    pub(crate) async fn try_take(
+        storage: &impl Storage,
+        paths: &DomainPaths,
+        namespace: &Namespace,
+    ) -> Res<Option<Self>> {
+        Ok(try_lock(storage, paths, namespace)
+            .await?
+            .map(|guard| Self {
+                namespace: namespace.clone(),
+                _guard: guard,
+            }))
+    }
+
+    pub(crate) fn namespace(&self) -> &Namespace {
+        &self.namespace
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
