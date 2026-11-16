@@ -30,7 +30,6 @@ pub mod package_row;
 pub mod pane_section;
 pub mod queue_parts;
 pub mod quit_confirm;
-pub mod recent_files_parts;
 pub mod revision_row;
 pub mod search_input;
 pub mod segmented_control;

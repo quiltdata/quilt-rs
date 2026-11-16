@@ -1,8 +1,7 @@
 //! The main page.
 //!
 //! Three regions: the state strip — Autosync beside Accounts — the attention
-//! queue, and the list. The list region is two views of one roster, Packages and
-//! Recent files, behind the toggle in its toolbar. `Transition`, never
+//! queue, and the list of packages under its toolbar. `Transition`, never
 //! `Suspense` (§6): the Autosync card refetches on every autosync change,
 //! publish and pause, and a `Suspense` boundary re-shows its fallback each time,
 //! so the page would strobe.
@@ -25,7 +24,6 @@ mod create_package;
 mod grouping;
 pub mod package_autosync;
 pub mod queue;
-mod recent_files;
 mod toolbar_memory;
 
 use std::collections::HashMap;
@@ -35,7 +33,6 @@ use leptos::reactive::owner::WeakOwner;
 use leptos::tachys::reactive_graph::OwnedView;
 
 use quilt_uri::Namespace;
-use quilt_uri::S3PackageUri;
 
 use super::status_watch::StatusWatch;
 use crate::commands;
@@ -45,7 +42,6 @@ use crate::commands::MainPageDownloadsData;
 use crate::commands::MainPagePackageData;
 use crate::commands::MainPagePackageRefreshData;
 use crate::commands::MainPagePackagesData;
-use crate::commands::MainPageRecentFilesData;
 use crate::commands::MainPageWatcherData;
 use crate::components::appbar::appbar_actions;
 use crate::error_handler::{current_path, follow_redirect};
@@ -54,7 +50,6 @@ use crate::util;
 use crate::util::Held;
 use grouping::ListRowData;
 use grouping::PackageGroup;
-use toolbar_memory::FILES_GROUP;
 use toolbar_memory::PACKAGES_GROUP;
 use toolbar_memory::PACKAGES_SORT;
 use toolbar_memory::remember_choice;
@@ -68,7 +63,6 @@ use quilt_ui_kit::Blankslate;
 use quilt_ui_kit::Button;
 use quilt_ui_kit::ButtonVariant;
 use quilt_ui_kit::Card;
-use quilt_ui_kit::FileRowSkeleton;
 use quilt_ui_kit::GroupHeading;
 use quilt_ui_kit::ListToolbar;
 use quilt_ui_kit::LoadFailure;
@@ -79,7 +73,6 @@ use quilt_ui_kit::PackageState;
 use quilt_ui_kit::PageLayout;
 use quilt_ui_kit::RowDownloads;
 use quilt_ui_kit::SearchInput;
-use quilt_ui_kit::SegmentedControl;
 use quilt_ui_kit::Select;
 use quilt_ui_kit::Site;
 use quilt_ui_kit::TwoColumns;
@@ -93,34 +86,15 @@ use quilt_ui_kit::render;
 /// a word from the vocabulary.
 const FETCH_ERROR_WORDS: &str = "Could not load your packages.";
 
-/// The same, for the recent-files read. A separate sentence and not the one above
-/// because the two arms fail over different reads: `Could not load your packages.`
-/// under the Recent files toggle is a wrong statement about which read failed, and
-/// a page that misreports that is worse than one that says less. The blankslate is
-/// not the alternative either — `No files yet` over a read that never answered
-/// manufactures a state the page does not know.
-const FILES_FETCH_ERROR_WORDS: &str = "Could not load your files.";
-
 /// An undrawn card is indistinguishable from no autosync and no sessions — the blank
 /// R1 forbids.
 const AUTOSYNC_ERROR_WORDS: &str = "Could not load autosync.";
 const ACCOUNTS_ERROR_WORDS: &str = "Could not load your accounts.";
 
-/// The list region's two views, as the toggle names them. Consts because each
-/// string is the toggle's option, the value the selection signal holds, and the
-/// condition the region switches on — three uses that must not drift apart.
-const PACKAGES_VIEW: &str = "Packages";
-const FILES_VIEW: &str = "Recent files";
-
-/// The packages view's `Group` axis and the feed's, which are different
-/// controls behind different signals (see `list_toolbar`'s own doc): a shared
-/// signal holding `Bucket` would render the feed's select blank the moment the
-/// reader switched to it, since `Bucket` is not one of its options.
 const GROUP_BUCKET: &str = "Bucket";
 const GROUP_CATALOG: &str = "Catalog";
 const GROUP_PREFIX: &str = "Prefix";
 const GROUP_NONE: &str = "None";
-const GROUP_PACKAGE: &str = "Package";
 const SORT_CHANGED: &str = "Changed";
 const SORT_NAME: &str = "Name";
 
@@ -151,15 +125,6 @@ pub(super) fn fetch_error_card(
     view! { <Card title=title>{fetch_error_body(words, retry)}</Card> }.into_any()
 }
 
-/// The feed's failure branch. Same shape and same reasoning as
-/// [`render_fetch_error`]: only the fixed sentence reaches the user, and the
-/// backend's error text is logged once where the fetch result is handled — not
-/// here, because a view function can re-run on every re-render and would re-log
-/// the same failure each time.
-fn render_files_fetch_error(retry: Trigger) -> impl IntoView {
-    fetch_error_body(FILES_FETCH_ERROR_WORDS, retry)
-}
-
 /// A row's live state: the light phase's guess, replaced in place by the heavy
 /// phase's answer.
 #[derive(Clone, Copy)]
@@ -169,8 +134,6 @@ struct RowSignals {
     role_switch_host: RwSignal<Option<String>>,
     /// What the status check counted on disk; `None` until a check answers.
     downloads: RwSignal<Option<MainPageDownloadsData>>,
-    /// Files the status check counted as changed; `None` until a check answers.
-    changed_files: RwSignal<Option<usize>>,
 }
 
 /// How much the page knows about a row's state.
@@ -208,7 +171,6 @@ impl RowSignals {
             }),
             role_switch_host: RwSignal::new(role_switch_host),
             downloads: RwSignal::new(None),
-            changed_files: RwSignal::new(None),
         }
     }
 
@@ -239,7 +201,6 @@ impl RowSignals {
         self.state.set(refreshed.state);
         self.role_switch_host.set(refreshed.role_switch_host);
         self.downloads.set(refreshed.downloads);
-        self.changed_files.set(refreshed.changed_files);
         self.confidence.set(Confidence::Settled);
     }
 }
@@ -359,8 +320,8 @@ impl PackageStore {
 /// The counter is decremented on **every** path, success or failure: `outstanding`
 /// counts calls, and a call that failed has answered (R3).
 ///
-/// A row whose owner has since been disposed — by a refetch, or by the view
-/// toggle — absorbs the write silently, because `reactive_graph` routes a signal
+/// A row whose owner a refetch has since disposed absorbs the write silently,
+/// because `reactive_graph` routes a signal
 /// write through `try_update` and drops the `None`. That is why nothing here
 /// guards against a stale answer.
 fn record_refresh(
@@ -454,8 +415,7 @@ fn PackageListRow(
 /// chrome's `.g-rows` is not shipped to the app at all (`index.html` does
 /// not link it). Split out from `MainPage` so it can be tested without an
 /// engine.
-/// The class a run of rows carries, for the feed's list as well as this one — it has
-/// no stylesheet of its own and the rule is the page's.
+/// The class a run of rows carries, whose rule is the page's.
 ///
 /// Public, with [`StateStrip`] and [`list_region_class`], for the gallery's
 /// whole-page scenes: they draw fixture rows rather than this page, but in the
@@ -660,8 +620,8 @@ fn group_annotation(group: &PackageGroup, store: PackageStore, group_by: &str) -
     cause
 }
 
-/// The list region's controls: which view is on, the search, both `Group`
-/// axes, the sort, and whether *Create package* is open.
+/// The list region's controls: the search, the `Group` axis, the sort, and
+/// whether *Create package* is open.
 ///
 /// Held by [`MainPageRegions`]' body, not inside the `Suspend` below it. A
 /// refetch rebuilds that subtree, so a signal created inside it would clear the
@@ -672,14 +632,12 @@ fn group_annotation(group: &PackageGroup, store: PackageStore, group_by: &str) -
 /// One constructor, so [`MainPageSkeleton`]'s inert set opens on exactly the
 /// values the page does: a toolbar that drew `Group: Bucket` and then
 /// `Group: None` would move under the cursor at the handover. Both read the
-/// reader's stored `Group:` and `Sort:` choices; the view and the search
-/// always start fresh.
+/// reader's stored `Group:` and `Sort:` choices; the search always starts
+/// fresh.
 #[derive(Clone, Copy)]
 struct ListControls {
-    view_selected: RwSignal<String>,
     query: RwSignal<String>,
     group_packages_by: RwSignal<String>,
-    group_files_by: RwSignal<String>,
     sort_by: RwSignal<String>,
     create_open: RwSignal<bool>,
 }
@@ -687,10 +645,8 @@ struct ListControls {
 impl ListControls {
     fn new() -> Self {
         Self {
-            view_selected: RwSignal::new(PACKAGES_VIEW.to_string()),
             query: RwSignal::new(String::new()),
             group_packages_by: RwSignal::new(remembered_choice(&PACKAGES_GROUP)),
-            group_files_by: RwSignal::new(remembered_choice(&FILES_GROUP)),
             sort_by: RwSignal::new(remembered_choice(&PACKAGES_SORT)),
             create_open: RwSignal::new(false),
         }
@@ -700,7 +656,6 @@ impl ListControls {
     fn remember(self) {
         for (signal, choice) in [
             (self.group_packages_by, &PACKAGES_GROUP),
-            (self.group_files_by, &FILES_GROUP),
             (self.sort_by, &PACKAGES_SORT),
         ] {
             Effect::watch(
@@ -731,8 +686,6 @@ fn regions_skeleton(toolbar: AnyView, inert: bool) -> AnyView {
         </QueueBand>
         // The toolbar, from the same helper the resolved arm calls: it is on
         // screen with the appbar and the strip, and is never itself a skeleton.
-        // The skeletons below it are the packages view's, because that is the
-        // view the page opens on (R4).
         <div class=style::list_region inert=inert>
             {toolbar}
             <Card label="Packages" bare=true busy=true>
@@ -778,8 +731,7 @@ pub fn MainPageSkeleton(actions: AnyView) -> impl IntoView {
     }
 }
 
-/// The list region's chrome: the toolbar, and the toggle that names which of the
-/// region's two views is on screen.
+/// The list region's chrome: the toolbar.
 ///
 /// A free function rather than a component so that the *same* helper can be
 /// called from both arms of the queue/list boundary — its fallback and its
@@ -789,146 +741,28 @@ pub fn MainPageSkeleton(actions: AnyView) -> impl IntoView {
 /// anything.
 fn list_toolbar(controls: ListControls) -> AnyView {
     let ListControls {
-        view_selected,
         query,
         group_packages_by,
-        group_files_by,
         sort_by,
         create_open,
     } = controls;
-    let on_packages = move || view_selected.get() == PACKAGES_VIEW;
     view! {
         <ToolbarBand>
             <ListToolbar>
-                <SegmentedControl
-                    aria_label="List view"
-                    name="main-page-view"
-                    options=vec![PACKAGES_VIEW.into(), FILES_VIEW.into()]
-                    selected=view_selected
+                <SearchInput value=query aria_label="Search packages" placeholder="Search…" />
+                <Select
+                    naming=Naming::Prefix("Group".to_string())
+                    options=PACKAGES_GROUP.labels()
+                    selected=group_packages_by
                 />
-                // Two selects, not one with reactive options: `Select`'s `options` is
-                // built once, and a shared `selected` holding a value the other axis
-                // does not offer renders the control blank. The `SearchInput` is split
-                // the same way, one instance per view guard, both bound to the same
-                // `query` signal: its `aria_label` is a plain `String` (kit, read-only),
-                // so it cannot say "packages" on one view and "files" on the other
-                // without two instances.
-                {move || {
-                    on_packages()
-                        .then(|| {
-                            view! {
-                                <SearchInput
-                                    value=query
-                                    aria_label="Search packages"
-                                    placeholder="Search…"
-                                />
-                                <Select
-                                    naming=Naming::Prefix("Group".to_string())
-                                    options=PACKAGES_GROUP.labels()
-                                    selected=group_packages_by
-                                />
-                                <Select
-                                    naming=Naming::Prefix("Sort".to_string())
-                                    options=PACKAGES_SORT.labels()
-                                    selected=sort_by
-                                />
-                                <Button on_click=move |_| create_open.set(true)>
-                                    "Create package"
-                                </Button>
-                            }
-                        })
-                }}
-                {move || {
-                    (!on_packages())
-                        .then(|| {
-                            view! {
-                                <SearchInput value=query aria_label="Search files" placeholder="Search…" />
-                                <Select
-                                    naming=Naming::Prefix("Group".to_string())
-                                    options=FILES_GROUP.labels()
-                                    selected=group_files_by
-                                />
-                            }
-                        })
-                }}
+                <Select
+                    naming=Naming::Prefix("Sort".to_string())
+                    options=PACKAGES_SORT.labels()
+                    selected=sort_by
+                />
+                <Button on_click=move |_| create_open.set(true)>"Create package"</Button>
             </ListToolbar>
         </ToolbarBand>
-    }
-    .into_any()
-}
-
-/// The Recent files view, and the inner boundary its own read needs.
-///
-/// A `Suspend` registers with the nearest suspense context, so without this
-/// `Transition` an unresolved feed puts the queue/list boundary back into pending
-/// — which re-renders its fallback and leaves two radio groups sharing one `name`
-/// on the page, silently clearing the reader's selection. An inner boundary for a
-/// third payload is not a split of the boundary the queue and the list share (R6).
-///
-/// Called from both arms of the packages read: the feed is an independent payload
-/// (§5's decision 3), so a failed packages read must not take it off the page.
-fn files_view(
-    recent_files: LocalResource<Result<MainPageRecentFilesData, String>>,
-    query: RwSignal<String>,
-    group_files_by: RwSignal<String>,
-    retry: Trigger,
-    // Each package's `quilt+s3` handle, by namespace — see
-    // `recent_files::RecentFilesRegion`'s own prop. Empty when the packages read
-    // failed, which is why it is passed rather than read here: the feed is a
-    // payload of its own and stands whatever the other one did, but with no
-    // packages there are no addresses and so no Copy buttons.
-    addresses: HashMap<Namespace, S3PackageUri>,
-    // Whether each package's status check counted no changed files — see the
-    // region's own prop. Empty, like `addresses`, when the packages read failed.
-    unchanged: HashMap<Namespace, Signal<bool>>,
-    first_load: FirstLoad,
-) -> AnyView {
-    view! {
-        // Three skeleton rows, as the packages view shows in the same position.
-        // Without a fallback the region is empty while the feed is read, and
-        // again on a Refresh during a read: the rebuilt `Transition` has no
-        // previous body to keep, so it behaves like a `Suspense`.
-        <Transition fallback=|| {
-            view! {
-                <Card label="Recent files" bare=true busy=true>
-                    <FileRowSkeleton />
-                    <FileRowSkeleton />
-                    <FileRowSkeleton />
-                </Card>
-            }
-        }>
-            {move || {
-                // Cloned per run, not moved: the closure a `Transition` takes is
-                // `FnMut`, and a resolve happens again on every refetch.
-                let addresses = addresses.clone();
-                let unchanged = unchanged.clone();
-                Suspend::new(async move {
-                match recent_files.await {
-                    Ok(data) => {
-                        first_load.answered();
-                        view! {
-                            <recent_files::RecentFilesRegion
-                                files=data.files
-                                query=query.into()
-                                group_by=group_files_by.into()
-                                addresses=addresses.clone()
-                                unchanged=unchanged.clone()
-                            />
-                        }
-                            .into_any()
-                    }
-                    // A missing session or setup goes to sign-in or setup.
-                    Err(err) if first_load.redirect(&err) => ().into_any(),
-                    Err(err) => {
-                        web_sys::console::error_1(
-                            &format!("get_main_page_recent_files failed: {err}").into(),
-                        );
-                        view! { <Card>{render_files_fetch_error(retry)}</Card> }.into_any()
-                    }
-                    }
-                })
-            }}
-        </Transition>
     }
     .into_any()
 }
@@ -985,7 +819,7 @@ type WatcherRead = fn() -> std::pin::Pin<
 /// `LocalResource::new(|| async { Ok(fixture()) })` resolves with no engine —
 /// which is what makes all three regions visible to an assertion at once.
 ///
-/// # Three boundaries, and where the lines fall
+/// # Two boundaries, and where the line falls
 ///
 /// The strip's Accounts card gets its own small `Transition`, so the strip does
 /// not wait for the package rows and each card holds its previous body through a
@@ -1000,14 +834,6 @@ type WatcherRead = fn() -> std::pin::Pin<
 /// rows the new payload no longer holds. Whether the queue's `packages` input is
 /// reactive is orthogonal to that: R6 asks that the region be *constructed*
 /// again, not that what it reads sit still.
-///
-/// The third is the recent-files feed's own, nested inside the list region's
-/// `Show`. A `Suspend` registers with the nearest suspense context, so without a
-/// boundary of its own the feed's unresolved read would put the queue/list
-/// `Transition` back into pending — which re-renders its fallback and so puts a
-/// second view toggle on the page, sharing the first one's radio `name` and
-/// silently clearing the reader's selection. An inner boundary for a third
-/// payload is not a split of the boundary the queue and the list must share.
 #[component]
 fn MainPageRegions(
     /// The page's package read. Awaited once, by the boundary the queue and the
@@ -1034,18 +860,7 @@ fn MainPageRegions(
     /// here already holds an `Option`.
     #[prop(optional_no_strip)]
     on_store: Option<Callback<PackageStore>>,
-    /// Stands in for `commands::get_main_page_recent_files`. The app passes
-    /// nothing and the feed's own resource calls the command; a test passes a
-    /// closure, because there is no engine to answer that call and because
-    /// counting the calls is the only way to pin R3's "fetched on the first
-    /// switch, and kept thereafter".
-    ///
-    /// A seam for the *answer* only. Which read happens and when — the gate this
-    /// component owns — stays on this side of it, so a test drives the same gate
-    /// the app runs.
-    #[prop(optional_no_strip)]
-    fetch_files: Option<Callback<(), Result<MainPageRecentFilesData, String>>>,
-    /// Stands in for `commands::get_main_page_watcher`, the same kind of seam:
+    /// Stands in for `commands::get_main_page_watcher`. The app passes nothing;
     /// with no engine the real read fails at once, so a test that wants the
     /// Autosync card still loading has to supply a read that has not answered.
     #[prop(optional_no_strip)]
@@ -1061,10 +876,6 @@ fn MainPageRegions(
             .downgrade(),
     );
     let shown: StoredValue<Option<Owner>> = StoredValue::new(None);
-    // In the component body, NOT inside the `Suspend` closure below. A refetch
-    // rebuilds that subtree deliberately — it is what re-collapses the queue's
-    // expanders (R6) — so a view signal created inside it would reset on every
-    // Refresh and throw a reader of the feed back to Packages.
     // Held here rather than inside the Autosync card, for the reason the accounts
     // read is: the queue joins against this payload for a paused package's message.
     let watcher_reload = Trigger::new();
@@ -1091,42 +902,11 @@ fn MainPageRegions(
     let controls = ListControls::new();
     controls.remember();
     let ListControls {
-        view_selected,
         query,
         group_packages_by,
-        group_files_by,
         sort_by,
         create_open,
     } = controls;
-    // A one-way latch, not `view_selected` itself. The resource's source closure
-    // is reactive, so gating it on the view directly would refetch on *every*
-    // toggle and resolve the feed back to nothing on the way to Packages —
-    // discarding what R3 says must be kept. A `Memo` latches without an effect:
-    // it recomputes when the view changes, but only notifies its subscriber when
-    // its own value does, which happens exactly once.
-    let files_wanted = Memo::new(move |prev: Option<&bool>| {
-        prev.copied().unwrap_or(false) || view_selected.get() == FILES_VIEW
-    });
-    // §5's decision 3: separate commands exist so the page pays only for the view
-    // it shows. A `LocalResource` runs its future eagerly on construction, so it
-    // is the guard *inside* the future, not the resource's laziness, that keeps
-    // the command from being invoked on a page that never leaves Packages.
-    // `reload` is tracked too, or Refresh would leave a stale feed on screen.
-    let files_retry = Trigger::new();
-    let recent_files = LocalResource::new(move || {
-        reload.track();
-        files_retry.track();
-        let wanted = files_wanted.get();
-        async move {
-            if !wanted {
-                return Ok(MainPageRecentFilesData { files: Vec::new() });
-            }
-            match fetch_files {
-                Some(fetch) => fetch.run(()),
-                None => commands::get_main_page_recent_files().await,
-            }
-        }
-    });
 
     view! {
         // Outside every boundary, so both cards are constructed once and each one
@@ -1212,10 +992,7 @@ fn MainPageRegions(
                             // the resolve that seeded the store. `seed` sets
                             // `outstanding` to the roster's size, so the number of
                             // calls has to be a property of the payload and not of
-                            // whichever subtree happens to be mounted: a resolve taken
-                            // while the reader is on Recent files builds no rows at
-                            // all, and a row that fired its own call left every one of
-                            // them unmade.
+                            // whichever subtree happens to be mounted.
                             //
                             // Concurrent, not serial. The two shared resources behind
                             // the call — credential vending and the `/me` role query —
@@ -1248,29 +1025,6 @@ fn MainPageRegions(
                                     host: p.host.clone(),
                                 })
                                 .collect();
-                            // The feed's Copy action addresses a package, and only
-                            // this payload carries the bucket. A package without one
-                            // is absent here, and its rows draw no Copy button.
-                            let addresses: HashMap<Namespace, S3PackageUri> = light
-                                .iter()
-                                .filter_map(|p| {
-                                    let uri = util::package_uri(
-                                        p.bucket.as_deref()?,
-                                        &p.namespace,
-                                        p.host.as_deref(),
-                                    );
-                                    Some((p.namespace.clone(), uri))
-                                })
-                                .collect();
-                            let unchanged: HashMap<Namespace, Signal<bool>> = light
-                                .iter()
-                                .filter_map(|p| {
-                                    let row = store.row(&p.namespace)?;
-                                    let clean =
-                                        Signal::derive(move || row.changed_files.get() == Some(0));
-                                    Some((p.namespace.clone(), clean))
-                                })
-                                .collect();
                             // How many packages the page holds, confirmed or not. The
                             // zero line speaks for all of them, and `settled` drops
                             // the ones no answer confirmed (R2) — including the ones
@@ -1291,15 +1045,44 @@ fn MainPageRegions(
                                 Callback::new(move |namespaces: Vec<Namespace>| {
                                     recheck(store, &namespaces);
                                 });
+                            // The empty roster is a property of the payload, not of
+                            // what a search left standing.
+                            let roster_empty = rows.is_empty();
+                            // Filter, then group, then sort within each group, in one
+                            // place. Reads `query`, `group_packages_by` and `sort_by`
+                            // and no store signal, so a settle never re-runs it.
+                            //
+                            // A `Memo`: the lists below read a value that is diffed
+                            // rather than a subtree that is rebuilt (see [`ListShape`]).
+                            let arranged = Memo::new(move |_| {
+                                let text = query.get();
+                                let filtered = grouping::filter_packages(rows.clone(), &text);
+                                let group_by = group_packages_by.get();
+                                let sort_by = sort_by.get();
+                                let mut groups = grouping::group_packages(filtered, &group_by);
+                                for group in &mut groups {
+                                    grouping::sort_within(&mut group.rows, &sort_by);
+                                }
+                                groups
+                            });
+                            // `group_packages` answers the `None` axis with one empty
+                            // group, so "nothing matched" is every group empty rather
+                            // than no group.
+                            let shape = Memo::new(move |_| {
+                                if roster_empty && query.with(|text| text.trim().is_empty()) {
+                                    ListShape::EmptyRoster
+                                } else if arranged
+                                    .with(|groups| groups.iter().all(|group| group.rows.is_empty()))
+                                {
+                                    ListShape::NoMatch
+                                } else {
+                                    ListShape::Groups
+                                }
+                            });
                             view! {
                                 // No wrapper and no margin: `PageLayout`'s column owns
                                 // the gap between regions, and the queue is a direct
                                 // child of it like the other two.
-                                //
-                                // The queue sits above both views and is untouched by
-                                // the toggle below it: a queue that vanished when you
-                                // looked at your files would be the opposite of an
-                                // attention queue.
                                 <queue::QueueRegion
                                     packages=settled
                                     in_flight=in_flight
@@ -1309,148 +1092,82 @@ fn MainPageRegions(
                                     pause_messages=pause_messages
                                 />
                                 <div class=style::list_region>
-                                {list_toolbar(controls)}
-                                // Neither card carries a title: the toggle immediately
-                                // above names the view, and a card titled `Packages`
-                                // over a Packages / Recent files switch says it twice
-                                // (`Card::title`'s own doc).
-                                <Show
-                                    when=move || view_selected.get() == FILES_VIEW
-                                    fallback=move || {
-                                        // Cloned in the fallback's own body, not inside
-                                        // the `view!`: `Card`'s children are a `move`
-                                        // closure, so a clone written in there would
-                                        // take `rows` out of this one and leave it
-                                        // `FnOnce`, and this fallback is rebuilt every
-                                        // time the reader comes back to the view.
-                                        let rows = rows.clone();
-                                        // The empty roster is a property of the
-                                        // payload, not of what a search left standing.
-                                        let roster_empty = rows.is_empty();
-                                        // Filter, then group, then sort within each
-                                        // group, in one place. Reads `query`,
-                                        // `group_packages_by` and `sort_by` and no
-                                        // store signal, so a settle never re-runs it.
-                                        //
-                                        // A `Memo`: the lists below read a value that
-                                        // is diffed rather than a subtree that is
-                                        // rebuilt (see [`ListShape`]).
-                                        let arranged = Memo::new(move |_| {
-                                            let text = query.get();
-                                            let filtered = grouping::filter_packages(
-                                                rows.clone(),
-                                                &text,
-                                            );
-                                            let group_by = group_packages_by.get();
-                                            let sort_by = sort_by.get();
-                                            let mut groups = grouping::group_packages(
-                                                filtered,
-                                                &group_by,
-                                            );
-                                            for group in &mut groups {
-                                                grouping::sort_within(&mut group.rows, &sort_by);
+                                    {list_toolbar(controls)}
+                                    <Card label="Packages" bare=true>
+                                        // A heading and its rows are flat siblings
+                                        // here, never wrapped in a `div` per group
+                                        // — `Card`'s own `.body > * + *` rule
+                                        // (`quilt-ui-kit/src/card.module.css`) spaces any two
+                                        // direct children, and a wrapper would
+                                        // defeat that.
+                                        {move || match shape.get() {
+                                            ListShape::EmptyRoster => {
+                                                // The empty roster, not the empty search
+                                                // below — different words, and the only
+                                                // one of the two with an action. A reader
+                                                // who has typed something is answered
+                                                // about what they typed, which is why
+                                                // this wants an empty query and not
+                                                // merely no rows.
+                                                view! {
+                                                    <Blankslate
+                                                        heading="No packages yet"
+                                                        description="A package is a folder of files that QuiltSync keeps in step with an S3 bucket. Create one from a folder you already have, or install an existing package from the catalog."
+                                                        primary_action=view! {
+                                                            <Button
+                                                                variant=ButtonVariant::Primary
+                                                                on_click=move |_| create_open.set(true)
+                                                            >
+                                                                "Create package"
+                                                            </Button>
+                                                        }
+                                                            .into_any()
+                                                    />
+                                                }
+                                                    .into_any()
                                             }
-                                            groups
-                                        });
-                                        // `group_packages` answers the `None` axis
-                                        // with one empty group, so "nothing matched"
-                                        // is every group empty rather than no group.
-                                        let shape = Memo::new(move |_| {
-                                            if roster_empty
-                                                && query.with(|text| text.trim().is_empty())
-                                            {
-                                                ListShape::EmptyRoster
-                                            } else if arranged
-                                                .with(|groups| {
-                                                    groups.iter().all(|group| group.rows.is_empty())
-                                                })
-                                            {
-                                                ListShape::NoMatch
-                                            } else {
-                                                ListShape::Groups
-                                            }
-                                        });
-                                        view! {
-                                            <Card label="Packages" bare=true>
-                                                // A heading and its rows are flat siblings
-                                                // here, never wrapped in a `div` per group
-                                                // — `Card`'s own `.body > * + *` rule
-                                                // (`quilt-ui-kit/src/card.module.css`) spaces any two
-                                                // direct children, and a wrapper would
-                                                // defeat that.
-                                                {move || match shape.get() {
-                                                    ListShape::EmptyRoster => {
-                                                        // The empty roster, not the empty search
-                                                        // below — different words, and the only
-                                                        // one of the two with an action. A reader
-                                                        // who has typed something is answered
-                                                        // about what they typed, which is why
-                                                        // this wants an empty query and not
-                                                        // merely no rows.
+                                            ListShape::NoMatch => {
+                                                // Its own closure: the words carry the
+                                                // query, so they follow every keystroke
+                                                // while the shape stands still.
+                                                view! {
+                                                    {move || {
+                                                        let text = query.get();
                                                         view! {
                                                             <Blankslate
-                                                                heading="No packages yet"
-                                                                description="A package is a folder of files that QuiltSync keeps in step with an S3 bucket. Create one from a folder you already have, or install an existing package from the catalog."
-                                                                primary_action=view! {
-                                                                    <Button
-                                                                        variant=ButtonVariant::Primary
-                                                                        on_click=move |_| create_open.set(true)
-                                                                    >
-                                                                        "Create package"
-                                                                    </Button>
-                                                                }
-                                                                    .into_any()
+                                                                heading=format!(
+                                                                    "No packages match \u{201c}{}\u{201d}",
+                                                                    text.trim(),
+                                                                )
+                                                                description="Search covers the names of packages installed on this machine."
                                                             />
                                                         }
-                                                            .into_any()
-                                                    }
-                                                    ListShape::NoMatch => {
-                                                        // Its own closure: the words carry the
-                                                        // query, so they follow every keystroke
-                                                        // while the shape stands still.
-                                                        view! {
-                                                            {move || {
-                                                                let text = query.get();
-                                                                view! {
-                                                                    <Blankslate
-                                                                        heading=format!(
-                                                                            "No packages match \u{201c}{}\u{201d}",
-                                                                            text.trim(),
-                                                                        )
-                                                                        description="Search covers the names of packages installed on this machine."
-                                                                    />
-                                                                }
-                                                            }}
+                                                    }}
+                                                }
+                                                    .into_any()
+                                            }
+                                            ListShape::Groups => {
+                                                // Keyed on the title: a re-arrangement
+                                                // reorders the groups, and a search
+                                                // empties some out of existence.
+                                                view! {
+                                                    <For
+                                                        each=move || arranged.get()
+                                                        key=|group: &PackageGroup| group.title.clone()
+                                                        children=move |group| {
+                                                            package_group(
+                                                                group.title,
+                                                                arranged,
+                                                                group_packages_by.into(),
+                                                                store,
+                                                            )
                                                         }
-                                                            .into_any()
-                                                    }
-                                                    ListShape::Groups => {
-                                                        // Keyed on the title: a re-arrangement
-                                                        // reorders the groups, and a search
-                                                        // empties some out of existence.
-                                                        view! {
-                                                            <For
-                                                                each=move || arranged.get()
-                                                                key=|group: &PackageGroup| group.title.clone()
-                                                                children=move |group| {
-                                                                    package_group(
-                                                                        group.title,
-                                                                        arranged,
-                                                                        group_packages_by.into(),
-                                                                        store,
-                                                                    )
-                                                                }
-                                                            />
-                                                        }
-                                                            .into_any()
-                                                    }
-                                                }}
-                                            </Card>
-                                        }
-                                    }
-                                >
-                                    {files_view(recent_files, query, group_files_by, files_retry, addresses.clone(), unchanged.clone(), first_load)}
-                                </Show>
+                                                    />
+                                                }
+                                                    .into_any()
+                                            }
+                                        }}
+                                    </Card>
                                 </div>
                             }
                                 .into_any()
@@ -1465,25 +1182,12 @@ fn MainPageRegions(
                         );
                         // No queue at all, rather than a zero line: `Everything is
                         // Latest — 0 packages` over a read that never answered is a
-                        // manufactured all-clear.
-                        //
-                        // The chrome and both views stand, though. The toolbar is
-                        // chrome (R2), and the feed is a payload of its own that
-                        // this failure says nothing about (§5's decision 3), so a
-                        // reader on Recent files keeps the view they were reading
-                        // and only the Packages arm carries the sentence. No title,
-                        // as in the arm above.
+                        // manufactured all-clear. The toolbar is chrome (R2), so
+                        // it stands.
                         view! {
                             <div class=style::list_region>
                                 {list_toolbar(controls)}
-                                <Show
-                                    when=move || view_selected.get() == FILES_VIEW
-                                    fallback=move || {
-                                        view! { <Card>{render_fetch_error(packages_retry)}</Card> }
-                                    }
-                                >
-                                    {files_view(recent_files, query, group_files_by, files_retry, HashMap::new(), HashMap::new(), first_load)}
-                                </Show>
+                                <Card>{render_fetch_error(packages_retry)}</Card>
                             </div>
                         }
                             .into_any()
@@ -1494,58 +1198,9 @@ fn MainPageRegions(
     }
 }
 
-/// What a *Recent files* row's failed command said, for the page's band.
-/// [`MainPage`] provides it as context; the feed's rows set it.
-#[derive(Clone, Copy)]
-pub(super) struct RowFailure {
-    said: RwSignal<Option<String>>,
-    /// The number of the latest row command. Only its failure is said: an
-    /// earlier one landing late would follow a newer command's success.
-    latest: StoredValue<u64>,
-}
-
-impl RowFailure {
-    pub(super) fn new() -> Self {
-        Self {
-            said: RwSignal::new(None),
-            latest: StoredValue::new(0),
-        }
-    }
-
-    /// A row command starts: the band clears, and it gets its number.
-    pub(super) fn start(self) -> u64 {
-        self.said.set(None);
-        self.latest.update_value(|n| *n += 1);
-        self.latest.get_value()
-    }
-
-    /// Say command `number`'s failure, while it is the latest.
-    pub(super) fn fail(self, number: u64, said: String) {
-        if self.latest.try_get_value() == Some(number) {
-            self.said.try_set(Some(said));
-        }
-    }
-}
-
-/// The band's report of a row command that failed. Dismissed by hand, or
-/// replaced by the next row command.
-fn row_failure_banner(failure: RowFailure) -> impl IntoView {
-    move || {
-        failure.said.get().map(|said| {
-            view! {
-                <Banner variant=BannerVariant::Critical on_dismiss=move |_| failure.said.set(None)>
-                    {said}
-                </Banner>
-            }
-        })
-    }
-}
-
 #[component]
 pub fn MainPage() -> impl IntoView {
     let reload = Trigger::new();
-    let failure = RowFailure::new();
-    provide_context(failure);
     // Events were lost while the socket was down.
     crate::engine::reread_on_reconnect(reload);
     // Light-phase reads still out, counted as the heavy phase counts its own
@@ -1598,7 +1253,6 @@ pub fn MainPage() -> impl IntoView {
             banner=view! {
                 <crate::components::UpdateNotice />
                 {move || link_handlers.get().and_then(Result::ok).map(|handlers| link_handler_banner(&handlers))}
-                {row_failure_banner(failure)}
             }
                 .into_any()
         >
@@ -1683,16 +1337,12 @@ fn ReloadOn(event: &'static str, reload: Trigger) -> impl IntoView {
 mod tests {
     use super::*;
     use crate::commands::AccountHostData;
-    use crate::commands::MainPageFileData;
     use crate::commands::MainPagePackageData;
     use quilt_ui_kit::StateTone;
     use quilt_ui_kit::test_support::mount;
     use quilt_ui_kit::test_support::sleep_ms;
     use std::cell::Cell;
     use std::rc::Rc;
-    use std::sync::Arc;
-    use std::sync::atomic::AtomicUsize;
-    use std::sync::atomic::Ordering;
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
@@ -1853,7 +1503,6 @@ mod tests {
                 state: PackageState::PendingChanges { files: 1 },
                 role_switch_host: None,
                 downloads: None,
-                changed_files: None,
             });
 
         let settled = store.settled(&light);
@@ -1913,7 +1562,6 @@ mod tests {
                 state: PackageState::Behind,
                 role_switch_host: None,
                 downloads: None,
-                changed_files: None,
             });
         leptos::task::tick().await;
 
@@ -1982,7 +1630,6 @@ mod tests {
                     }),
                     ..picked(340, 328)
                 }),
-                changed_files: None,
             });
         leptos::task::tick().await;
 
@@ -2009,7 +1656,6 @@ mod tests {
             state: PackageState::Latest,
             role_switch_host: None,
             downloads: Some(picked(340, 0)),
-            changed_files: None,
         });
         leptos::task::tick().await;
         assert_eq!(tooltip_lines(&el).len(), 2, "the scope and the size");
@@ -2043,7 +1689,6 @@ mod tests {
                 state: PackageState::Latest,
                 role_switch_host: None,
                 downloads: Some(picked(340, 328)),
-                changed_files: None,
             });
         leptos::task::tick().await;
 
@@ -2066,7 +1711,6 @@ mod tests {
             state: PackageState::Latest,
             role_switch_host: None,
             downloads: Some(picked(340, 0)),
-            changed_files: None,
         });
         leptos::task::tick().await;
         assert!(marked(), "a full pick still shows its count");
@@ -2080,7 +1724,6 @@ mod tests {
             state: PackageState::NoSession { host: None },
             role_switch_host: None,
             downloads: None,
-            changed_files: None,
         });
         leptos::task::tick().await;
         assert!(!marked(), "a check that did not run counts nothing");
@@ -2116,11 +1759,10 @@ mod tests {
 
     #[wasm_bindgen_test]
     async fn the_list_asks_the_backend_for_nothing_of_its_own() {
-        // What re-entering the Packages view costs: nothing. `Show` rebuilds its
-        // branch on every flip, so while each row fired its own heavy-phase call
-        // every toggle back to Packages meant one network call per package —
-        // credential vending, a `/me` role query and a hash walk apiece, silently.
-        // The calls belong to the resolve now, so building the list is free.
+        // A row that fired its own heavy-phase call would cost one network call
+        // each time it was built — credential vending, a `/me` role query and a
+        // hash walk apiece, silently. The calls belong to the resolve, so building
+        // the list is free.
         let light = vec![
             pkg("user/plate-07", PackageState::Latest),
             pkg("user/plate-08", PackageState::Latest),
@@ -2221,36 +1863,17 @@ mod tests {
         reload: Trigger,
         on_store: Option<Callback<PackageStore>>,
     ) -> web_sys::Element {
-        mount_regions_with_feed(packages, accounts, reload, on_store, Ok(no_files()), None)
-    }
-
-    /// [`mount_regions_reloading`] with the feed's answer, and a counter for how
-    /// many times the page asked for it.
-    ///
-    /// The seam is the *answer* only: the resource, the latch and the `if wanted`
-    /// guard are all the page's own, so what the counter counts is the page's gate
-    /// (R3) and not the fixture's.
-    fn mount_regions_with_feed(
-        packages: Result<MainPagePackagesData, String>,
-        accounts: Result<MainPageAccountsData, String>,
-        reload: Trigger,
-        on_store: Option<Callback<PackageStore>>,
-        files: Result<MainPageRecentFilesData, String>,
-        feed_calls: Option<Arc<AtomicUsize>>,
-    ) -> web_sys::Element {
         forget_toolbar();
-        mount_regions_keeping_toolbar(packages, accounts, reload, on_store, files, feed_calls)
+        mount_regions_keeping_toolbar(packages, accounts, reload, on_store)
     }
 
-    /// [`mount_regions_with_feed`] over whatever toolbar choices are stored, for
+    /// [`mount_regions_reloading`] over whatever toolbar choices are stored, for
     /// the tests that remount the page.
     fn mount_regions_keeping_toolbar(
         packages: Result<MainPagePackagesData, String>,
         accounts: Result<MainPageAccountsData, String>,
         reload: Trigger,
         on_store: Option<Callback<PackageStore>>,
-        files: Result<MainPageRecentFilesData, String>,
-        feed_calls: Option<Arc<AtomicUsize>>,
     ) -> web_sys::Element {
         mount(move || {
             let packages = LocalResource::new(move || {
@@ -2263,12 +1886,6 @@ mod tests {
                 let accounts = accounts.clone();
                 async move { accounts }
             });
-            let fetch_files = Callback::new(move |()| {
-                if let Some(calls) = feed_calls.as_ref() {
-                    calls.fetch_add(1, Ordering::Relaxed);
-                }
-                files.clone()
-            });
             view! {
                 <leptos_router::components::Router>
                     <MainPageRegions
@@ -2276,26 +1893,10 @@ mod tests {
                         accounts=accounts
                         reload=reload
                         on_store=on_store
-                        fetch_files=Some(fetch_files)
                     />
                 </leptos_router::components::Router>
             }
         })
-    }
-
-    /// [`mount_regions_with_feed`]'s shape with the feed's answer fixed to the
-    /// given files, for a test whose subject is the feed's own search. The
-    /// packages fixture is a plain two-package roster: this helper's tests care
-    /// about what the feed draws, not about the packages view.
-    fn mount_regions_with_files(files: Vec<MainPageFileData>) -> web_sys::Element {
-        mount_regions_with_feed(
-            Ok(two_packages_all_latest()),
-            Ok(one_signed_out_host()),
-            Trigger::new(),
-            None,
-            Ok(MainPageRecentFilesData { files }),
-            None,
-        )
     }
 
     /// The page on reads that never answer, so the queue/list boundary stays on
@@ -2427,47 +2028,6 @@ mod tests {
             1,
             "one card, not a second one: {text}"
         );
-    }
-
-    /// The page whose packages read answers only after `delay_ms`, so a test can
-    /// act on the chrome while the queue/list boundary is still on its fallback.
-    /// The toolbar is on screen there (R2), so the toggle is reachable before the
-    /// first resolve lands — which is the cold-load half of the case
-    /// [`a_refetch_taken_on_the_feed_still_answers_for_every_package`] covers on
-    /// the Refresh path.
-    fn mount_regions_slow_packages(
-        packages: MainPagePackagesData,
-        accounts: MainPageAccountsData,
-        on_store: Callback<PackageStore>,
-        delay_ms: i32,
-    ) -> web_sys::Element {
-        forget_toolbar();
-        mount(move || {
-            let reload = Trigger::new();
-            let packages = LocalResource::new(move || {
-                let packages = packages.clone();
-                async move {
-                    sleep_ms(delay_ms).await;
-                    Ok(packages)
-                }
-            });
-            let accounts = LocalResource::new(move || {
-                let accounts = accounts.clone();
-                async move { Ok(accounts) }
-            });
-            let fetch_files = Callback::new(move |()| Ok(no_files()));
-            view! {
-                <leptos_router::components::Router>
-                    <MainPageRegions
-                        packages=packages
-                        accounts=accounts
-                        reload=reload
-                        on_store=Some(on_store)
-                        fetch_files=Some(fetch_files)
-                    />
-                </leptos_router::components::Router>
-            }
-        })
     }
 
     /// Two packages the heavy phase will agree with, so the queue's only remaining
@@ -2617,49 +2177,6 @@ mod tests {
         }
     }
 
-    /// The feed's empty answer — what the page gets before anyone has installed
-    /// anything, and the default for every test whose subject is not the feed.
-    fn no_files() -> MainPageRecentFilesData {
-        MainPageRecentFilesData { files: Vec::new() }
-    }
-
-    /// One file in the feed, in a package the packages fixture also holds.
-    fn one_recent_file() -> MainPageRecentFilesData {
-        MainPageRecentFilesData {
-            files: vec![MainPageFileData {
-                path: "readings/plate-07.csv".to_string(),
-                namespace: ns("user/plate-07"),
-                changed_at: 1_700_000_000_000.0,
-                published_hash: Some("abc123".to_string()),
-            }],
-        }
-    }
-
-    /// One feed row, named after `recent_files.rs`'s own `file` test helper.
-    fn file_data(path: &str, namespace: &str, changed_at: f64) -> MainPageFileData {
-        MainPageFileData {
-            path: path.to_string(),
-            namespace: ns(namespace),
-            changed_at,
-            published_hash: Some("abc123".to_string()),
-        }
-    }
-
-    /// One option of the list toolbar's view toggle.
-    ///
-    /// `SegmentedControl` renders a `radiogroup` of `label`s, each wrapping a radio
-    /// `input` beside a `span`, with the option's own text as the input's `value` —
-    /// so the value identifies an option and the input carries the selection.
-    /// Not matched on a class: `stylance` emits the module's own identifiers
-    /// (`root`, `option`, `input`, `text`), none of which name this control.
-    fn toggle_option(el: &web_sys::Element, label: &str) -> web_sys::HtmlInputElement {
-        el.query_selector(&format!("[role=radiogroup] input[value=\"{label}\"]"))
-            .unwrap()
-            .unwrap_or_else(|| panic!("the list toolbar's `{label}` option"))
-            .dyn_into()
-            .unwrap()
-    }
-
     /// The toolbar's search field.
     fn search_field(el: &web_sys::Element) -> web_sys::HtmlInputElement {
         el.query_selector("input[type=search]")
@@ -2734,12 +2251,11 @@ mod tests {
     /// Whether a `<button>` reading this text exists anywhere in `el`.
     ///
     /// Narrower than `el.text_content().contains(label)`: `CreatePackageDialog`'s
-    /// own `<h2>` title reads "Create package" too, and — unlike the toolbar's
-    /// button — it is in the DOM regardless of which view is on screen, since
-    /// `kit::Dialog` keeps one persistent element and only toggles whether it is
-    /// showing (`dialog.rs`'s `show_modal`/`close`). A button is the toolbar's own
-    /// affordance, so this is what "the toolbar carries/drops Create package"
-    /// actually means.
+    /// own `<h2>` title reads "Create package" too, and it is in the DOM even
+    /// while the dialog is closed, since `kit::Dialog` keeps one persistent
+    /// element and only toggles whether it is showing (`dialog.rs`'s
+    /// `show_modal`/`close`). A button is the toolbar's own affordance, so this
+    /// is what "the toolbar carries Create package" actually means.
     fn has_button_labelled(el: &web_sys::Element, label: &str) -> bool {
         let buttons = el.query_selector_all("button").unwrap();
         (0..buttons.length())
@@ -2749,9 +2265,10 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    async fn the_packages_view_toolbar_carries_every_control() {
-        // §2's region 4: "The toolbar carries the view toggle, search, a `Group:`
-        // select, and a `Sort:` select. `Create package` sits at its right end."
+    async fn the_toolbar_carries_every_control() {
+        // §2's region 4: the toolbar carries search, a `Group:` select and a
+        // `Sort:` select, with `Create package` at its right end, and no view
+        // toggle: the list is the packages.
         let (slot, on_store) = store_slot();
         let el = mount_regions_reloading(
             Ok(a_package_needing_attention()),
@@ -2779,69 +2296,9 @@ mod tests {
             has_button_labelled(&el, "Create package"),
             "missing the toolbar's Create package button: {text}"
         );
-    }
-
-    #[wasm_bindgen_test]
-    async fn the_feed_toolbar_drops_sort_and_create_and_keeps_its_own_group() {
-        // `quilt-ui-kit/src/list_toolbar.rs`'s own doc: "the packages view adds Sort and Create
-        // package, the files view drops both, and Group's options differ between
-        // them." Search and the view toggle are on both.
-        let (slot, on_store) = store_slot();
-        let el = mount_regions_reloading(
-            Ok(a_package_needing_attention()),
-            Ok(one_signed_out_host()),
-            Trigger::new(),
-            Some(on_store),
-        );
-        sleep_ms(50).await;
-        settle_all(seeded_store(slot), &a_package_needing_attention());
-        leptos::task::tick().await;
-
-        toggle_option(&el, FILES_VIEW).click();
-        sleep_ms(50).await;
-
-        let text = el.text_content().unwrap();
         assert!(
-            text.contains("Group:"),
-            "the feed groups too (§3.2): {text}"
-        );
-        assert!(
-            !text.contains("Sort:"),
-            "sort is the packages view's: {text}"
-        );
-        assert!(
-            !has_button_labelled(&el, "Create package"),
-            "create is the packages view's: {text}"
-        );
-        assert!(
-            el.query_selector("input[type=search]").unwrap().is_some(),
-            "search is on both views"
-        );
-    }
-
-    #[wasm_bindgen_test]
-    async fn the_feed_group_select_is_not_blank_after_a_view_switch() {
-        // A native `<select>` whose value is not among its options renders blank.
-        // One shared signal holding "Bucket" would do exactly that here, and the
-        // control would look broken rather than throw.
-        let (slot, on_store) = store_slot();
-        let el = mount_regions_reloading(
-            Ok(a_package_needing_attention()),
-            Ok(one_signed_out_host()),
-            Trigger::new(),
-            Some(on_store),
-        );
-        sleep_ms(50).await;
-        settle_all(seeded_store(slot), &a_package_needing_attention());
-        leptos::task::tick().await;
-
-        toggle_option(&el, FILES_VIEW).click();
-        sleep_ms(50).await;
-
-        assert_eq!(
-            group_select(&el).value(),
-            GROUP_NONE,
-            "the feed's own axis defaults to None (§3.2), not to the packages axis's Bucket"
+            el.query_selector("[role=radiogroup]").unwrap().is_none(),
+            "no view toggle: {text}"
         );
     }
 
@@ -2856,7 +2313,6 @@ mod tests {
         for choice in [
             &toolbar_memory::PACKAGES_GROUP,
             &toolbar_memory::PACKAGES_SORT,
-            &toolbar_memory::FILES_GROUP,
         ] {
             drop(storage.remove_item(choice.key));
         }
@@ -2881,8 +2337,6 @@ mod tests {
             Ok(one_signed_out_host()),
             Trigger::new(),
             None,
-            Ok(no_files()),
-            None,
         )
     }
 
@@ -2892,31 +2346,17 @@ mod tests {
         sleep_ms(50).await;
         select_option(&group_select(&el), GROUP_PREFIX);
         select_option(&sort_select(&el), SORT_NAME);
-        toggle_option(&el, FILES_VIEW).click();
-        sleep_ms(50).await;
-        select_option(&group_select(&el), GROUP_PACKAGE);
         sleep_ms(20).await;
 
         let el = remount_regions();
         sleep_ms(50).await;
 
-        assert!(
-            toggle_option(&el, PACKAGES_VIEW).checked(),
-            "the page opens on Packages"
-        );
         assert_eq!(
             group_select(&el).value(),
             GROUP_PREFIX,
             "the group was kept"
         );
         assert_eq!(sort_select(&el).value(), SORT_NAME, "the sort was kept");
-        toggle_option(&el, FILES_VIEW).click();
-        sleep_ms(50).await;
-        assert_eq!(
-            group_select(&el).value(),
-            GROUP_PACKAGE,
-            "the Recent files group was kept"
-        );
         forget_toolbar();
     }
 
@@ -2940,15 +2380,11 @@ mod tests {
         // A label is not a stored name, and garbage is not either.
         store_toolbar(&toolbar_memory::PACKAGES_GROUP, GROUP_PREFIX);
         store_toolbar(&toolbar_memory::PACKAGES_SORT, "{not json");
-        store_toolbar(&toolbar_memory::FILES_GROUP, "");
         let el = remount_regions();
         sleep_ms(50).await;
 
         assert_eq!(group_select(&el).value(), GROUP_BUCKET);
         assert_eq!(sort_select(&el).value(), SORT_CHANGED);
-        toggle_option(&el, FILES_VIEW).click();
-        sleep_ms(50).await;
-        assert_eq!(group_select(&el).value(), GROUP_NONE);
         forget_toolbar();
     }
 
@@ -3033,9 +2469,8 @@ mod tests {
     #[wasm_bindgen_test]
     async fn a_refetch_leaves_the_toolbar_exactly_as_the_reader_left_it() {
         // R2. The signals live in `MainPageRegions`' body, outside the boundary a
-        // refetch rebuilds — the same placement rule `view_selected` follows. Inside
-        // it, pressing Refresh would clear the search box and reset the axes while
-        // the reader was reading the result.
+        // refetch rebuilds. Inside it, pressing Refresh would clear the search
+        // box and reset the axes while the reader was reading the result.
         let reload = Trigger::new();
         let (slot, on_store) = store_slot();
         let el = mount_regions_reloading(
@@ -3379,7 +2814,6 @@ mod tests {
                 state,
                 role_switch_host: None,
                 downloads: None,
-                changed_files: None,
             });
     }
 
@@ -3396,7 +2830,6 @@ mod tests {
                     state: package.state.clone(),
                     role_switch_host: package.role_switch_host.clone(),
                     downloads: None,
-                    changed_files: None,
                 });
         }
     }
@@ -4211,64 +3644,6 @@ mod tests {
         );
     }
 
-    #[wasm_bindgen_test]
-    async fn the_page_opens_on_packages_and_the_toggle_switches_to_files() {
-        // R4: no persistence, so every load opens on Packages — and the toggle
-        // really swaps the view rather than stacking a second one under it.
-        let el = mount_regions(Ok(a_package_needing_attention()), Ok(one_signed_out_host()));
-        sleep_ms(50).await;
-        // Scoped to the row's own link, not the page's whole text:
-        // `CreatePackageDialog` is mounted permanently (Task 7) and its first
-        // `FormControl` caption reads "…user/plate-07." unconditionally, so an
-        // unscoped `contains` here would pass even if the page opened on the
-        // feed.
-        assert!(
-            el.query_selector("a[href*='namespace=user%2Fplate-07']")
-                .unwrap()
-                .is_some(),
-            "the packages view is the default (R4)"
-        );
-
-        toggle_option(&el, FILES_VIEW).click();
-        sleep_ms(50).await;
-
-        let text = el.text_content().unwrap();
-        assert!(text.contains("No files yet"), "got: {text}");
-        assert!(
-            !text.contains("Latest"),
-            "the packages view's rows are gone, not merely hidden: {text}"
-        );
-    }
-
-    #[wasm_bindgen_test]
-    async fn the_queue_survives_a_view_switch() {
-        // The toggle is region 4's. A queue that vanished when you looked at your
-        // files would be the opposite of an attention queue.
-        //
-        // Settled first, because the queue draws only what the heavy phase
-        // confirmed (R2) and there is no engine here to confirm anything.
-        let (slot, on_store) = store_slot();
-        let el = mount_regions_reloading(
-            Ok(a_package_needing_attention()),
-            Ok(one_signed_out_host()),
-            Trigger::new(),
-            Some(on_store),
-        );
-        sleep_ms(50).await;
-        settle_all(seeded_store(slot), &a_package_needing_attention());
-        leptos::task::tick().await;
-        let before = queue_text(&el).expect("the queue has something to say");
-
-        toggle_option(&el, FILES_VIEW).click();
-        sleep_ms(50).await;
-
-        assert_eq!(
-            queue_text(&el).as_deref(),
-            Some(before.as_str()),
-            "the queue is untouched by the list's own toggle"
-        );
-    }
-
     /// `MainPageSkeleton` is the page's own first paint: under the appbar, the
     /// same column children in the same boxes as the page draws before its
     /// reads answer.
@@ -4355,55 +3730,14 @@ mod tests {
         // is on screen from here on is the fallback's.
         leptos::task::tick().await;
         let text = el.text_content().unwrap();
-        assert!(text.contains(FILES_VIEW), "the toggle is chrome: {text}");
+        assert!(text.contains("Group:"), "the toolbar is chrome: {text}");
         assert!(
             el.query_selector("[class*=skeleton]").unwrap().is_some(),
             "and the read really is still pending, so the claim above is not vacuous"
         );
         assert!(
-            toggle_option(&el, PACKAGES_VIEW).checked(),
-            "a live control and not a skeleton of one, opened on Packages (R4)"
-        );
-    }
-
-    #[wasm_bindgen_test]
-    async fn a_refetch_leaves_the_reader_where_they_were() {
-        // The view signal lives in `MainPageRegions`' body, outside the subtree a
-        // refetch rebuilds — the same placement rule the queue's expander map
-        // follows, for the opposite reason. A signal created inside the resolved
-        // subtree would send a reader of the feed back to Packages every time they
-        // pressed Refresh.
-        //
-        // `prop:checked`, not an attribute: `SegmentedControl` sets the DOM
-        // property, so the property is what the assertion reads.
-        let reload = Trigger::new();
-        let el = mount_regions_reloading(
-            Ok(a_package_needing_attention()),
-            Ok(one_signed_out_host()),
-            reload,
-            None,
-        );
-        sleep_ms(50).await;
-        toggle_option(&el, FILES_VIEW).click();
-        sleep_ms(50).await;
-        assert!(toggle_option(&el, FILES_VIEW).checked(), "on the feed");
-        assert_eq!(
-            el.query_selector_all("[role=radiogroup]").unwrap().length(),
-            1,
-            "one toolbar on the page: two radio groups sharing a `name` are one \
-             group, and the second would clear the reader's selection"
-        );
-
-        reload.notify();
-        sleep_ms(50).await;
-
-        assert!(
-            toggle_option(&el, FILES_VIEW).checked(),
-            "still on the feed after a Refresh"
-        );
-        assert!(
-            el.text_content().unwrap().contains("No files yet"),
-            "and it is the feed that is drawn, not the packages view"
+            search_field(&el).closest("[inert]").unwrap().is_none(),
+            "a live control and not a skeleton of one"
         );
     }
 
@@ -4489,359 +3823,6 @@ mod tests {
         );
         released.set(3);
         sleep_ms(50).await;
-    }
-
-    #[wasm_bindgen_test]
-    async fn the_toggle_works_while_a_refetch_is_out() {
-        // The `Transition` keeps the old view on screen while a read is out, so
-        // the store that view reads must live until the next answer replaces
-        // it. A store that died with the `Suspend` made this click read a
-        // disposed signal, and the panic froze the page on Recent files.
-        //
-        // Each read waits until the test releases it, so the click lands in
-        // that window by construction, not by timing.
-        forget_toolbar();
-        let reload = Trigger::new();
-        let started = Rc::new(Cell::new(0usize));
-        let released = Rc::new(Cell::new(0usize));
-        let el = mount({
-            let (started, released) = (started.clone(), released.clone());
-            move || {
-                let packages = LocalResource::new(move || {
-                    reload.track();
-                    started.set(started.get() + 1);
-                    let (read, released) = (started.get(), released.clone());
-                    async move {
-                        while released.get() < read {
-                            sleep_ms(5).await;
-                        }
-                        // In a bucket: a bucket's group heading reads the store.
-                        let in_bucket = |namespace| MainPagePackageData {
-                            bucket: Some("a-bucket".to_string()),
-                            ..pkg(namespace, PackageState::Latest)
-                        };
-                        Ok(MainPagePackagesData {
-                            packages: vec![in_bucket("user/plate-07"), in_bucket("user/plate-08")],
-                        })
-                    }
-                });
-                let accounts = LocalResource::new(move || {
-                    reload.track();
-                    async move { Ok(one_signed_out_host()) }
-                });
-                let fetch_files = Callback::new(|()| Ok(one_recent_file()));
-                view! {
-                    <leptos_router::components::Router>
-                        <MainPageRegions
-                            packages=packages
-                            accounts=accounts
-                            reload=reload
-                            fetch_files=Some(fetch_files)
-                        />
-                    </leptos_router::components::Router>
-                }
-            }
-        });
-        let reads_started = |n: usize| {
-            let started = started.clone();
-            async move {
-                for _ in 0..200 {
-                    if started.get() >= n {
-                        return;
-                    }
-                    sleep_ms(5).await;
-                }
-                panic!("read {n} never started; {} did", started.get());
-            }
-        };
-        released.set(1);
-        sleep_ms(50).await;
-        toggle_option(&el, FILES_VIEW).click();
-        sleep_ms(50).await;
-
-        // A second reload while the first refetch is out queues a third read.
-        // When the refetch answers, its resolve is cleaned up and the third
-        // read starts, with the old view still on screen.
-        reload.notify();
-        reads_started(2).await;
-        reload.notify();
-        released.set(2);
-        reads_started(3).await;
-        sleep_ms(20).await;
-        assert_eq!(released.get(), 2, "the third read is still out");
-        toggle_option(&el, PACKAGES_VIEW).click();
-        sleep_ms(20).await;
-        assert!(
-            el.text_content().unwrap().contains("plate-08"),
-            "the packages view, drawn during the refetch: {}",
-            el.text_content().unwrap()
-        );
-
-        released.set(3);
-        sleep_ms(50).await;
-        toggle_option(&el, FILES_VIEW).click();
-        sleep_ms(50).await;
-        assert!(
-            el.text_content().unwrap().contains("plate-07.csv"),
-            "and the page still answers once the read is back: {}",
-            el.text_content().unwrap()
-        );
-    }
-
-    #[wasm_bindgen_test]
-    async fn the_feed_is_read_when_it_is_first_asked_for_and_then_kept() {
-        // R3, both halves. §5's decision 3 gives the feed a command of its own so
-        // the page pays only for the view it shows — a `LocalResource` runs its
-        // future eagerly, so what defers the read is the guard inside that future,
-        // not the resource. And the read is *kept*: gating on the view itself
-        // would refetch on every toggle and resolve the feed back to empty on the
-        // way to Packages, which is the opposite of "a second switch is instant".
-        let calls = Arc::new(AtomicUsize::new(0));
-        let reload = Trigger::new();
-        let el = mount_regions_with_feed(
-            Ok(a_package_needing_attention()),
-            Ok(one_signed_out_host()),
-            reload,
-            None,
-            Ok(one_recent_file()),
-            Some(calls.clone()),
-        );
-        sleep_ms(50).await;
-        assert_eq!(
-            calls.load(Ordering::Relaxed),
-            0,
-            "the page opened on Packages and paid nothing for the feed"
-        );
-
-        toggle_option(&el, FILES_VIEW).click();
-        sleep_ms(50).await;
-        assert_eq!(calls.load(Ordering::Relaxed), 1, "asked for, so read once");
-        assert!(
-            el.text_content().unwrap().contains("plate-07.csv"),
-            "got: {}",
-            el.text_content().unwrap()
-        );
-
-        toggle_option(&el, PACKAGES_VIEW).click();
-        sleep_ms(50).await;
-        toggle_option(&el, FILES_VIEW).click();
-        sleep_ms(50).await;
-        assert_eq!(
-            calls.load(Ordering::Relaxed),
-            1,
-            "kept, so a second switch is instant"
-        );
-        assert!(
-            el.text_content().unwrap().contains("plate-07.csv"),
-            "and the feed still holds what it read"
-        );
-
-        reload.notify();
-        sleep_ms(50).await;
-        assert_eq!(
-            calls.load(Ordering::Relaxed),
-            2,
-            "Refresh reads it again, or the feed on screen would be stale"
-        );
-    }
-
-    #[wasm_bindgen_test]
-    async fn a_failed_files_read_says_which_read_failed() {
-        // The two views fail over two different reads, so they cannot share one
-        // sentence: `Could not load your packages.` under the Recent files toggle
-        // is a wrong statement about what went wrong. The negative half is the
-        // point — it is what catches a later refactor collapsing the two arms back
-        // onto one helper.
-        //
-        // The packages read answers here, so the only failure on the page is the
-        // feed's, and the packages sentence has no honest way to appear.
-        let el = mount_regions_with_feed(
-            Ok(a_package_needing_attention()),
-            Ok(one_signed_out_host()),
-            Trigger::new(),
-            None,
-            Err("connection reset by peer".to_string()),
-            None,
-        );
-        sleep_ms(50).await;
-        toggle_option(&el, FILES_VIEW).click();
-        sleep_ms(50).await;
-
-        let text = el.text_content().unwrap();
-        assert!(
-            text.contains(FILES_FETCH_ERROR_WORDS),
-            "the feed says its own read failed: {text}"
-        );
-        assert!(
-            !text.contains(FETCH_ERROR_WORDS),
-            "and not the packages sentence, over a packages read that answered: {text}"
-        );
-        assert!(
-            !text.contains("connection reset by peer"),
-            "the raw backend error must not reach the page: {text}"
-        );
-        assert!(
-            !text.contains("No files yet"),
-            "a read that never answered is not an empty feed: {text}"
-        );
-    }
-
-    #[wasm_bindgen_test]
-    async fn a_refetch_taken_on_the_feed_still_answers_for_every_package() {
-        // The heavy phase is fired by the resolve that seeded the store, not by
-        // the rows that draw it. `Show` builds exactly one branch, so a Refresh
-        // taken on Recent files builds no rows at all: while each row fired its own
-        // call, that resolve made none, `outstanding` stayed at the roster's size
-        // for as long as the reader stayed on the feed, and the queue — which sits
-        // above both views — went silent until they switched back.
-        //
-        // Read through the zero line, because that is the sentence R3 makes
-        // conditional on the count: with every row confirmed and nothing to
-        // report, an outstanding call is the only thing left that can withhold it.
-        let payload = two_packages_all_latest();
-        let (slot, on_store) = store_slot();
-        let reload = Trigger::new();
-        let el = mount_regions_reloading(
-            Ok(payload.clone()),
-            Ok(one_signed_out_host()),
-            reload,
-            Some(on_store),
-        );
-        sleep_ms(50).await;
-        settle_all(seeded_store(slot), &payload);
-        leptos::task::tick().await;
-        assert!(
-            el.text_content()
-                .unwrap()
-                .contains("All packages are up to date"),
-            "the queue speaks before the switch: {}",
-            el.text_content().unwrap()
-        );
-
-        toggle_option(&el, FILES_VIEW).click();
-        sleep_ms(50).await;
-        reload.notify();
-        // Long enough for the new resolve's calls to be fired and to fail: there
-        // is no engine, so each one drives `record_refresh`'s `Err` arm.
-        sleep_ms(50).await;
-        // The heavy phase's part, which a test has to play for the new store the
-        // refetch seeded exactly as it does for the first one.
-        settle_all(seeded_store(slot), &payload);
-        leptos::task::tick().await;
-
-        let text = el.text_content().unwrap();
-        assert!(
-            text.contains("All packages are up to date"),
-            "and it is still on the page after a Refresh taken on the feed: {text}"
-        );
-        assert!(
-            toggle_option(&el, FILES_VIEW).checked(),
-            "with the reader still on the feed, which is where they were"
-        );
-    }
-
-    #[wasm_bindgen_test]
-    async fn picking_the_feed_before_the_first_resolve_still_answers_for_every_package() {
-        // The same defect on the cold-load path. The toolbar is chrome and is on
-        // screen while the packages read is still pending (R2), so the reader can
-        // already be on Recent files by the time the resolve lands and seeds the
-        // store — and a store whose calls are fired by its rows is then seeded
-        // with a count nothing will ever give back.
-        let payload = two_packages_all_latest();
-        let (slot, on_store) = store_slot();
-        let el = mount_regions_slow_packages(payload.clone(), one_signed_out_host(), on_store, 100);
-        leptos::task::tick().await;
-        assert!(
-            el.query_selector("[class*=skeleton]").unwrap().is_some(),
-            "the packages read really has not answered yet"
-        );
-
-        toggle_option(&el, FILES_VIEW).click();
-        // Past the read's own delay, and past its calls answering.
-        sleep_ms(250).await;
-        settle_all(seeded_store(slot), &payload);
-        leptos::task::tick().await;
-
-        let text = el.text_content().unwrap();
-        assert!(
-            text.contains("All packages are up to date"),
-            "the queue arrives even though the list never drew a row: {text}"
-        );
-    }
-
-    #[wasm_bindgen_test]
-    async fn a_failed_packages_read_leaves_the_feed_reachable() {
-        // The two views are two payloads (§5's decision 3), so one read failing
-        // must not take the other view off the page. A reader on Recent files who
-        // presses Refresh into a failed packages read would otherwise lose both
-        // their feed and the toggle back to it, and be shown a sentence about
-        // packages they were not looking at.
-        let el = mount_regions_with_feed(
-            Err("connection reset by peer".to_string()),
-            Ok(one_signed_out_host()),
-            Trigger::new(),
-            None,
-            Ok(one_recent_file()),
-            None,
-        );
-        sleep_ms(50).await;
-        assert!(
-            el.text_content().unwrap().contains(FETCH_ERROR_WORDS),
-            "the packages arm carries the failure"
-        );
-
-        // Panics if the toolbar is not there, which is the other half of this.
-        toggle_option(&el, FILES_VIEW).click();
-        sleep_ms(50).await;
-
-        let text = el.text_content().unwrap();
-        assert!(
-            text.contains("plate-07.csv"),
-            "and the feed, whose own read answered, is still reachable: {text}"
-        );
-        assert!(
-            !text.contains(FETCH_ERROR_WORDS),
-            "without the packages sentence left standing over it: {text}"
-        );
-    }
-
-    #[wasm_bindgen_test]
-    async fn coming_back_to_packages_keeps_what_the_heavy_phase_confirmed() {
-        // A view switch rebuilds the rows — `Show` reconstructs its children — but
-        // it must not re-seed the store: `PackageStore::seed` runs in the `Suspend`
-        // arm above the `Show`, so what the heavy phase confirmed survives. A
-        // re-seed would put every row back to provisional and the queue back into
-        // its waiting state on nothing more than a look at the files view.
-        let (slot, on_store) = store_slot();
-        let el = mount_regions_reloading(
-            Ok(a_package_needing_attention()),
-            Ok(one_signed_out_host()),
-            Trigger::new(),
-            Some(on_store),
-        );
-        sleep_ms(50).await;
-        settle_all(seeded_store(slot), &a_package_needing_attention());
-        leptos::task::tick().await;
-        assert!(
-            el.query_selector("[class*=provisional]").unwrap().is_none(),
-            "every row is confirmed before the switch"
-        );
-        let queue_before = queue_text(&el).expect("the queue has something to say");
-
-        toggle_option(&el, FILES_VIEW).click();
-        sleep_ms(50).await;
-        toggle_option(&el, PACKAGES_VIEW).click();
-        sleep_ms(50).await;
-
-        assert!(
-            el.query_selector("[class*=provisional]").unwrap().is_none(),
-            "and still confirmed after the round trip: the store was not re-seeded"
-        );
-        assert_eq!(
-            queue_text(&el).as_deref(),
-            Some(queue_before.as_str()),
-            "so the queue never went back to waiting"
-        );
     }
 
     #[wasm_bindgen_test]
@@ -4934,7 +3915,6 @@ mod tests {
                 state: PackageState::Behind,
                 role_switch_host: None,
                 downloads: None,
-                changed_files: None,
             }),
         );
 
@@ -4959,7 +3939,6 @@ mod tests {
                 state: PackageState::Behind,
                 role_switch_host: None,
                 downloads: None,
-                changed_files: None,
             }),
         );
 
@@ -5005,7 +3984,6 @@ mod tests {
             state: PackageState::PendingChanges { files: 3 },
             role_switch_host: None,
             downloads: None,
-            changed_files: None,
         });
 
         assert_eq!(
@@ -5036,7 +4014,6 @@ mod tests {
             state: PackageState::Latest,
             role_switch_host: None,
             downloads: None,
-            changed_files: None,
         });
 
         assert_eq!(row.state.get_untracked(), PackageState::Latest);
@@ -5054,7 +4031,6 @@ mod tests {
             },
             role_switch_host: Some("quilt.test".to_string()),
             downloads: None,
-            changed_files: None,
         });
 
         assert_eq!(
@@ -5232,34 +4208,6 @@ mod tests {
             queue_text(&el).as_deref(),
             Some(before.as_str()),
             "the queue is untouched by the list's own search"
-        );
-    }
-
-    #[wasm_bindgen_test]
-    async fn searching_the_feed_matches_paths_and_says_so_when_nothing_matches() {
-        // R5's other half, and the feed's own words (`gallery/recent_files.rs:263`).
-        let el = mount_regions_with_files(vec![file_data("runs/a/one.csv", "user/alpha", 1_000.0)]);
-        sleep_ms(50).await;
-        toggle_option(&el, FILES_VIEW).click();
-        sleep_ms(50).await;
-
-        type_search(&el, "runs/a");
-        sleep_ms(20).await;
-        assert!(
-            el.text_content().unwrap().contains("one.csv"),
-            "a path match"
-        );
-
-        type_search(&el, "plate-99");
-        sleep_ms(20).await;
-        let text = el.text_content().unwrap();
-        assert!(
-            text.contains("No files match \u{201c}plate-99\u{201d}"),
-            "got: {text}"
-        );
-        assert!(
-            text.contains("Files that exist only in a bucket are not included."),
-            "got: {text}"
         );
     }
 
@@ -5452,7 +4400,6 @@ mod tests {
                 state: PackageState::Latest,
                 role_switch_host: None,
                 downloads: None,
-                changed_files: None,
             });
         record_refresh(
             store.row(&ns("a/failed")).unwrap(),
@@ -5596,37 +4543,6 @@ mod tests {
         );
     }
     #[wasm_bindgen_test]
-    async fn the_feed_shows_its_shape_while_it_is_being_read() {
-        // With `fallback=|| ()`, Recent files shows an empty region until the
-        // read answers, and again on a Refresh during a read, because the rebuilt
-        // `Transition` has no previous body to keep. The packages view shows
-        // three skeletons in the same position, and the feed must do the same.
-        //
-        // The read never answers, as in `mount_regions_pending`, so the fallback
-        // stays on screen for the whole assertion.
-        let el = mount(|| {
-            let recent_files = LocalResource::new(|| {
-                std::future::pending::<Result<MainPageRecentFilesData, String>>()
-            });
-            files_view(
-                recent_files,
-                RwSignal::new(String::new()),
-                RwSignal::new(GROUP_NONE.to_string()),
-                Trigger::new(),
-                HashMap::new(),
-                HashMap::new(),
-                FirstLoad::new(),
-            )
-        });
-        leptos::task::tick().await;
-
-        let boxes = el.query_selector_all("[class*=skeleton]").unwrap();
-        assert!(
-            boxes.length() > 0,
-            "a region being read must show its shape, not nothing"
-        );
-    }
-    #[wasm_bindgen_test]
     async fn the_queue_reserves_its_line_while_the_page_is_read() {
         // The shared fallback must reserve the queue's line as well as the
         // toolbar and row skeletons. Without it, the list starts high and jumps
@@ -5634,7 +4550,7 @@ mod tests {
         // when everything is Latest, so its space can always be reserved.
         //
         // `[class*=placeholder]` matches only the zero line's skeleton:
-        // `skeleton` is also used by `PackageRow` and `FileRow`, so a selector on
+        // `skeleton` is also used by `PackageRow`, so a selector on
         // it would pass without the queue's placeholder.
         let el = mount_regions_pending();
         leptos::task::tick().await;
@@ -5819,7 +4735,7 @@ mod tests {
     }
 
     /// The `li` drawn for one row, found by the text it carries. Hands back the
-    /// element, since node identity is what the two tests below assert.
+    /// element, since node identity is what the test below asserts.
     fn row_li(el: &web_sys::Element, needle: &str) -> web_sys::Element {
         let items = el.query_selector_all("li").unwrap();
         for i in 0..items.length() {
@@ -5860,28 +4776,6 @@ mod tests {
             el.query_selector_all("li").unwrap().length(),
             1,
             "and the row that stopped matching is gone"
-        );
-    }
-
-    #[wasm_bindgen_test]
-    async fn a_narrowing_feed_search_moves_the_row_it_leaves_standing_too() {
-        // The feed's half, keyed on namespace and path together.
-        let el = mount_regions_with_files(vec![
-            file_data("runs/a/one.csv", "user/alpha", 1_000.0),
-            file_data("runs/b/two.csv", "user/alpha", 2_000.0),
-        ]);
-        sleep_ms(50).await;
-        toggle_option(&el, FILES_VIEW).click();
-        sleep_ms(50).await;
-
-        let before = row_li(&el, "two.csv");
-        type_search(&el, "two.csv");
-        sleep_ms(20).await;
-
-        let after = row_li(&el, "two.csv");
-        assert!(
-            before.is_same_node(Some(&after)),
-            "the surviving row keeps its node"
         );
     }
 }

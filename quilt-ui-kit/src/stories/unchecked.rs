@@ -17,8 +17,8 @@
 //!
 //! 1. **The row cannot hold the retry.** It is one real `<a>` with no controls, which
 //!    is what buys middle-click, open-in-new-tab and one tab stop per row. An anchor
-//!    may hold no interactive descendant — the same rule that makes `FileRow` pay for
-//!    its children with `role="button"`. So the row could carry words, never a button.
+//!    may hold no interactive descendant, so the row could carry words, never a
+//!    button.
 //! 2. **Words on the row cost the state.** Spending the state label on the failure
 //!    drops the cached state, which is the informative half — the light phase is right
 //!    most of the time. And on a page where every check failed it becomes forty-three

@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::str::FromStr;
 use std::time::Duration;
+use std::time::SystemTime;
 
 use chrono::DateTime;
 use chrono::Utc;
@@ -27,6 +28,7 @@ use crate::engine::commands::RoleCache;
 use crate::engine::error::Error;
 use crate::engine::model;
 use crate::engine::quilt;
+use crate::engine::quilt::io::storage::Storage;
 use crate::engine::quilt::lineage::PackageState;
 use crate::engine::services::Services;
 
@@ -169,13 +171,8 @@ pub struct PausedPackage {
 pub struct MainPagePackage {
     pub namespace: quilt_uri::Namespace,
     pub state: PackageStateDto,
-    /// Epoch milliseconds. The backend being generous with a format the UI can use
-    /// directly, rather than the UI carrying date arithmetic.
-    ///
-    /// Epoch milliseconds: the most recent thing that happened to this copy.
-    ///
-    /// `None` only when nothing has, which is genuine rather than a gap — see
-    /// [`last_changed`].
+    /// Epoch milliseconds, a format the UI can use without date arithmetic: when
+    /// this copy last changed — see [`last_changed`].
     pub changed_at: Option<f64>,
     pub bucket: Option<String>,
     /// The catalog this package points at, as the queue's join key.
@@ -592,11 +589,14 @@ async fn load_rows(
     m: &impl model::QuiltModel,
     tracing: &crate::engine::telemetry::Telemetry,
     paused_reasons: &HashMap<quilt_uri::Namespace, PausedReason>,
+    last_changes: Option<&HashMap<quilt_uri::Namespace, SystemTime>>,
 ) -> Result<Vec<Row>, Error> {
     let list = m.get_installed_packages_list().await?;
     let mut rows = Vec::new();
     for installed_package in list {
-        match load_main_page_package(m, tracing, &installed_package, paused_reasons).await {
+        match load_main_page_package(m, tracing, &installed_package, paused_reasons, last_changes)
+            .await
+        {
             Ok(row) => rows.push(row),
             Err(err) => {
                 tracing::warn!(
@@ -614,6 +614,7 @@ pub(super) async fn get_main_page_packages_from_model(
     roles: &RoleCache,
     tracing: &crate::engine::telemetry::Telemetry,
     paused_reasons: &HashMap<quilt_uri::Namespace, PausedReason>,
+    last_changes: &HashMap<quilt_uri::Namespace, SystemTime>,
 ) -> Result<MainPagePackages, Error> {
     // Clear the role cache on every load. A role switch is server-side and
     // global, so it can happen in the web catalog without the app knowing. If
@@ -624,37 +625,45 @@ pub(super) async fn get_main_page_packages_from_model(
     // after `load_rows` below, and a cache entry is only a name.
     roles.invalidate(None).await;
 
-    let mut rows = load_rows(m, tracing, paused_reasons).await?;
+    let mut rows = load_rows(m, tracing, paused_reasons, Some(last_changes)).await?;
     mark_unreadable_buckets(m, roles, &mut rows).await;
     Ok(MainPagePackages {
         packages: rows.into_iter().map(|row| row.package).collect(),
     })
 }
 
-/// When this copy last changed: the last local commit, or the last file we installed
-/// or committed, whichever is later. Epoch milliseconds.
+/// When this copy last changed, in epoch milliseconds: the latest of its local
+/// commit, the package's last-change time in `state.db`, and when its current
+/// revision was installed. `None` when it has none of the three.
 ///
-/// Not a filesystem mtime, and no directory walk happens here. Both values come
-/// from `data.json`, which the light phase has already read, so this does no I/O.
-///
-/// `PathState`'s doc explains the difference: *"We don't track files
-/// modifications in real time. We calculate hash when we commit or install file."*
-/// So this is the last time `QuiltSync` wrote to the copy, not the last time
-/// anything on disk changed. A later edit in the working directory does not move
-/// it; the heavy phase's hashing finds those edits.
-///
-/// `None` means we have never written to this package: no commit, and no installed
-/// paths. That is a real answer, not a missing one, which is why the row says
-/// `not recorded` rather than leaving the cell blank.
-fn last_changed(lineage: &quilt::lineage::PackageLineage) -> Option<f64> {
-    let newest = lineage
-        .commit
-        .as_ref()
+/// The last-change time is the one autopublish waits from, deleted once the
+/// package is published or found clean, so a clean package falls back to the
+/// install time.
+fn last_changed(
+    commit: Option<&quilt::lineage::CommitState>,
+    seen: Option<SystemTime>,
+    installed: Option<DateTime<Utc>>,
+) -> Option<f64> {
+    let newest = commit
         .map(|commit| commit.timestamp)
         .into_iter()
-        .chain(lineage.paths.values().map(|path| path.timestamp).max())
+        .chain(seen.map(DateTime::<Utc>::from))
+        .chain(installed)
         .max()?;
     Some(epoch_millis(newest))
+}
+
+/// The modified time of the copy's installed manifest, which install, pull,
+/// downloading more of its files and commit each write. Never a working file's
+/// time, which a user's edit moves.
+async fn installed_at(
+    package: &quilt::InstalledPackage,
+    lineage: &quilt::lineage::PackageLineage,
+) -> Option<DateTime<Utc>> {
+    let manifest = package
+        .paths
+        .installed_manifest(&package.namespace, lineage.current_hash()?);
+    package.storage.modified_timestamp(&manifest).await.ok()
 }
 
 async fn load_main_page_package(
@@ -662,6 +671,8 @@ async fn load_main_page_package(
     tracing: &crate::engine::telemetry::Telemetry,
     installed_package: &quilt::InstalledPackage,
     paused_reasons: &HashMap<quilt_uri::Namespace, PausedReason>,
+    // `None` leaves `changed_at` out, and its read of the disk with it.
+    last_changes: Option<&HashMap<quilt_uri::Namespace, SystemTime>>,
 ) -> Result<Row, Error> {
     let namespace = installed_package.namespace.clone();
 
@@ -670,7 +681,14 @@ async fn load_main_page_package(
     let has_local_commit = lineage.commit.is_some();
     let has_remote = lineage.remote_uri.is_some();
     let bucket = lineage.remote_uri.as_ref().map(|uri| uri.bucket.clone());
-    let changed_at = last_changed(&lineage);
+    let changed_at = match last_changes {
+        Some(times) => last_changed(
+            lineage.commit.as_ref(),
+            times.get(&namespace).copied(),
+            installed_at(installed_package, &lineage).await,
+        ),
+        None => None,
+    };
     let typed_uri = lineage
         .remote_uri
         .as_ref()
@@ -735,11 +753,15 @@ pub async fn get_main_page_packages(s: &Services) -> Result<MainPagePackages, St
     // reaches this map.
     // Keyed by the type the watcher already hands over: this map used to flatten
     // each key to a string, and every lookup below then had one too.
+    let facts = watcher.main_page_facts().await;
     let paused_reasons: HashMap<quilt_uri::Namespace, PausedReason> =
-        watcher.main_page_facts().await.paused.into_iter().collect();
+        facts.paused.into_iter().collect();
+    let last_changes: HashMap<quilt_uri::Namespace, SystemTime> =
+        facts.last_changes.into_iter().collect();
 
     let started = std::time::Instant::now();
-    let result = get_main_page_packages_from_model(m, roles, tracing, &paused_reasons).await;
+    let result =
+        get_main_page_packages_from_model(m, roles, tracing, &paused_reasons, &last_changes).await;
     tracing::debug!(
         elapsed_ms = started.elapsed().as_millis(),
         packages = result.as_ref().map_or(0, |r| r.packages.len()),
@@ -753,7 +775,8 @@ pub async fn get_main_page_packages(s: &Services) -> Result<MainPagePackages, St
 /// No network. The role costs a `/me` per host and arrives via
 /// `refresh_main_page_account`, one invocation per row. The roster walk is
 /// [`load_rows`] — the same one `get_main_page_packages` uses — with an empty
-/// paused-reasons map: the Accounts card has no use for package state.
+/// paused-reasons map and no last-change times: the Accounts card has no use
+/// for package state.
 pub async fn get_main_page_accounts(s: &Services) -> Result<MainPageAccounts, String> {
     accounts_from_model(&*s.model, &s.telemetry, &s.data_dir).await
 }
@@ -764,7 +787,7 @@ async fn accounts_from_model(
     data_dir: &std::path::Path,
 ) -> Result<MainPageAccounts, String> {
     let auth_hosts = quilt::paths::list_auth_hosts(data_dir);
-    let rows = load_rows(m, tracing, &HashMap::new())
+    let rows = load_rows(m, tracing, &HashMap::new(), None)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -871,7 +894,7 @@ pub async fn refresh_main_page_account(s: &Services, host: String) -> Result<Acc
 /// What the per-package refresh corrects on a row.
 ///
 /// Deliberately not the whole `MainPagePackage`: `namespace`, `bucket`, `host`
-/// and `changed_at` are facts the light phase read from `data.json` and the
+/// and `changed_at` are facts the light phase already read and the
 /// network has nothing to say about them. Sending them again would be a
 /// second source for a value that already arrived.
 #[derive(Serialize, Clone, Debug)]
@@ -886,10 +909,6 @@ pub struct MainPagePackageRefresh {
     /// What this copy holds of its current revision. `None` when the status
     /// check did not run or failed: the state already names why.
     pub downloads: Option<MainPageDownloads>,
-    /// Files changed here since the last commit, as the status check counted
-    /// them; `None` when it did not run or failed. Apart from `state`, which
-    /// shows `Behind` or a pause instead of the count.
-    pub changed_files: Option<usize>,
 }
 
 /// How much of its current revision a copy holds, counted from the manifest
@@ -971,7 +990,6 @@ pub(super) async fn refresh_main_page_package_from_model(
             state: PackageState::resolve(lineage.into(), has_local_commit, false, None).into(),
             role_switch_host: None,
             downloads: None,
-            changed_files: None,
         });
     }
 
@@ -1013,7 +1031,6 @@ pub(super) async fn refresh_main_page_package_from_model(
                 // The refresh did not deny, so any pre-filter mark is cleared.
                 role_switch_host: None,
                 downloads: Some(counts.into()),
-                changed_files: Some(status.changes.len()),
             })
         }
         Err(err) if err.is_access_denied() => {
@@ -1027,7 +1044,6 @@ pub(super) async fn refresh_main_page_package_from_model(
                 state: mark.state(),
                 role_switch_host: mark.role_switch_host,
                 downloads: None,
-                changed_files: None,
             })
         }
         Err(err) => {
@@ -1042,7 +1058,6 @@ pub(super) async fn refresh_main_page_package_from_model(
                     state: pause_or(paused, || state),
                     role_switch_host: None,
                     downloads: None,
-                    changed_files: None,
                 });
             }
             // A failure to reach the remote is not evidence about the package —
@@ -1250,101 +1265,6 @@ pub async fn get_main_page_watcher(s: &Services) -> Result<MainPageWatcher, Stri
     Ok(MainPageWatcher::from(watcher.main_page_facts().await))
 }
 
-// ── The recent files feed ──
-
-/// One installed or published file, flat across every package. §3.2: the
-/// owning package travels with the row rather than grouping it, so the list
-/// component never has to flatten what the backend already flattened.
-#[derive(Serialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct MainPageFile {
-    pub path: String,
-    pub namespace: quilt_uri::Namespace,
-    /// Epoch milliseconds — see [`MainPagePackage::changed_at`]. Never `None`
-    /// here: a path only exists in `lineage.paths` because it was installed or
-    /// committed, and both of those write a timestamp.
-    pub changed_at: f64,
-    /// The revision the package holds, when the remote has it and the package
-    /// has nothing unpublished: see [`published_hash`]. The same for every
-    /// file of one package.
-    pub published_hash: Option<String>,
-}
-
-#[derive(Serialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct MainPageRecentFiles {
-    pub files: Vec<MainPageFile>,
-}
-
-/// §4.5: "bounded and pre-selected by the backend — newest first, ~50."
-/// Applied after the global sort, so the cap keeps the newest rather than an
-/// arbitrary fifty.
-const RECENT_FILES_LIMIT: usize = 50;
-
-/// Flatten every installed package's `paths` into one list, newest first.
-///
-/// No network and no hashing: `PathState.timestamp` is already in `data.json`
-/// and this is the same lineage read the light phase does. A package whose
-/// lineage cannot be read is warned-and-skipped, matching [`load_rows`] — one
-/// bad lineage must not blank the whole feed.
-async fn recent_files(m: &impl model::QuiltModel) -> Result<Vec<MainPageFile>, Error> {
-    let list = m.get_installed_packages_list().await?;
-    let mut files = Vec::new();
-    for installed_package in list {
-        let mut lineage = match m.get_installed_package_lineage(&installed_package).await {
-            Ok(lineage) => lineage,
-            Err(err) => {
-                tracing::warn!(
-                    "Failed to load lineage for {}: {err}",
-                    installed_package.namespace,
-                );
-                continue;
-            }
-        };
-        let namespace = installed_package.namespace.clone();
-        let paths = std::mem::take(&mut lineage.paths);
-        let published = published_hash(lineage);
-        for (path, state) in &paths {
-            files.push(MainPageFile {
-                path: path.to_string_lossy().into_owned(),
-                namespace: namespace.clone(),
-                changed_at: epoch_millis(state.timestamp),
-                published_hash: published.clone(),
-            });
-        }
-    }
-    // Newest first, then bound. `total_cmp` because `f64` has no `Ord` — the
-    // same comparison `last_changed`'s callers would need if they ever sorted.
-    files.sort_by(|a, b| b.changed_at.total_cmp(&a.changed_at));
-    files.truncate(RECENT_FILES_LIMIT);
-    Ok(files)
-}
-
-/// The remote's hash for the revision the package holds, when the remote
-/// holds every revision the package has: a remote with a hash, and no local
-/// commit past it. `UpstreamState` makes this comparison; `Behind` counts,
-/// since the remote holds what the package has. The package page pins its
-/// catalog links to the same hash. Reads the lineage only: an edit not yet
-/// committed does not count.
-fn published_hash(lineage: quilt::lineage::PackageLineage) -> Option<String> {
-    let hash = lineage.remote_uri.as_ref()?.hash.clone();
-    matches!(
-        quilt::lineage::UpstreamState::from(lineage),
-        quilt::lineage::UpstreamState::UpToDate | quilt::lineage::UpstreamState::Behind
-    )
-    .then_some(hash)
-}
-
-/// The recent files feed. Single-phase and final on arrival: a path and an
-/// mtime are facts on disk, so there is no heavy phase and no `provisional`.
-pub async fn get_main_page_recent_files(s: &Services) -> Result<MainPageRecentFiles, String> {
-    let m = &*s.model;
-    recent_files(m)
-        .await
-        .map(|files| MainPageRecentFiles { files })
-        .map_err(|e| e.to_string())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1511,6 +1431,7 @@ mod tests {
                 &crate::engine::telemetry::Telemetry::default(),
                 &installed,
                 &HashMap::new(),
+                Some(&HashMap::new()),
             ))
             .expect("load_main_page_package should succeed")
     }
@@ -1732,51 +1653,117 @@ mod tests {
         );
     }
 
-    /// A lineage carrying only the timestamps `last_changed` reads.
-    fn lineage_with(commit_ms: Option<i64>, path_ms: &[i64]) -> quilt::lineage::PackageLineage {
-        let mut lineage = quilt::lineage::PackageLineage::default();
-        lineage.commit = commit_ms.map(|ms| quilt::lineage::CommitState {
+    fn commit_at(ms: i64) -> quilt::lineage::CommitState {
+        quilt::lineage::CommitState {
             timestamp: chrono::DateTime::from_timestamp_millis(ms).unwrap(),
             hash: String::new(),
             prev_hashes: Vec::new(),
-        });
-        for (i, ms) in path_ms.iter().enumerate() {
-            lineage.paths.insert(
-                std::path::PathBuf::from(format!("f{i}.csv")),
-                quilt::lineage::PathState {
-                    timestamp: chrono::DateTime::from_timestamp_millis(*ms).unwrap(),
-                    // `Multihash` by name would mean taking the `multihash` crate as a
-                    // direct dependency of this one — it is not, and `quilt-rs` does not
-                    // re-export it — purely to spell a test fixture's zero value.
-                    #[allow(
-                        clippy::default_trait_access,
-                        reason = "the type is not nameable here without a new dependency"
-                    )]
-                    hash: Default::default(),
-                },
-            );
         }
-        lineage
+    }
+
+    fn at_ms(ms: u64) -> SystemTime {
+        SystemTime::UNIX_EPOCH + Duration::from_millis(ms)
+    }
+
+    fn installed_ms(ms: i64) -> Option<DateTime<Utc>> {
+        DateTime::from_timestamp_millis(ms)
     }
 
     #[test]
-    fn last_changed_takes_the_newest_path_when_it_beats_the_commit() {
-        let l = lineage_with(Some(1_000), &[5_000, 3_000]);
-        assert_eq!(last_changed(&l), Some(5_000.0));
+    fn last_changed_takes_the_seen_change_when_it_is_the_latest() {
+        assert_eq!(
+            last_changed(
+                Some(&commit_at(1_000)),
+                Some(at_ms(5_000)),
+                installed_ms(2_000)
+            ),
+            Some(5_000.0)
+        );
     }
 
     #[test]
-    fn last_changed_takes_the_commit_when_it_beats_every_path() {
-        let l = lineage_with(Some(9_000), &[5_000, 3_000]);
-        assert_eq!(last_changed(&l), Some(9_000.0));
+    fn last_changed_takes_the_commit_when_it_is_the_latest() {
+        assert_eq!(
+            last_changed(
+                Some(&commit_at(9_000)),
+                Some(at_ms(5_000)),
+                installed_ms(2_000)
+            ),
+            Some(9_000.0)
+        );
     }
 
     #[test]
-    fn last_changed_is_none_only_when_nothing_has_ever_been_written() {
-        // No commit and no installed paths — a real answer, not a gap.
-        assert_eq!(last_changed(&lineage_with(None, &[])), None);
-        // Paths but no commit still has an answer.
-        assert_eq!(last_changed(&lineage_with(None, &[7_000])), Some(7_000.0));
+    fn a_clean_package_falls_back_to_when_its_revision_was_installed() {
+        assert_eq!(last_changed(None, None, installed_ms(2_000)), Some(2_000.0));
+    }
+
+    #[test]
+    fn last_changed_is_none_only_when_none_of_the_three_exists() {
+        assert_eq!(last_changed(None, None, None), None);
+        assert_eq!(last_changed(None, Some(at_ms(7_000)), None), Some(7_000.0));
+        assert_eq!(
+            last_changed(Some(&commit_at(3_000)), None, None),
+            Some(3_000.0)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_published_clean_package_shows_when_its_manifest_was_installed() {
+        let dir = tempfile::tempdir().unwrap();
+        let installed =
+            quilt::LocalDomain::new(dir.path()).create_installed_package(("team", "one").into());
+        let manifest = installed
+            .paths
+            .installed_manifest(&installed.namespace, "abcdef");
+        std::fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+        std::fs::File::create(&manifest)
+            .unwrap()
+            .set_modified(at_ms(1_700_000_000_000))
+            .unwrap();
+        let mut model = crate::engine::model::mocks::create();
+        model
+            .expect_get_installed_package_lineage()
+            .return_once(|_| {
+                Ok(quilt::lineage::PackageLineage::from_remote(
+                    make_manifest_uri("team/one"),
+                    "abcdef".to_string(),
+                ))
+            });
+
+        let row = load_main_page_package(
+            &model,
+            &crate::engine::telemetry::Telemetry::default(),
+            &installed,
+            &HashMap::new(),
+            Some(&HashMap::new()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(row.package.changed_at, Some(1_700_000_000_000.0));
+    }
+
+    #[tokio::test]
+    async fn a_row_carries_the_last_change_the_watcher_holds_for_its_package() {
+        let model = mock_clean_roster();
+        let last_changes = HashMap::from([(
+            quilt_uri::Namespace::try_from("team/one").expect("a valid fixture namespace"),
+            at_ms(4_000),
+        )]);
+
+        let packages = get_main_page_packages_from_model(
+            &model,
+            &RoleCache::default(),
+            &crate::engine::telemetry::Telemetry::default(),
+            &HashMap::new(),
+            &last_changes,
+        )
+        .await
+        .expect("list")
+        .packages;
+
+        assert_eq!(row(&packages, "team/one").changed_at, Some(4_000.0));
     }
 
     #[test]
@@ -1860,6 +1847,7 @@ mod tests {
             &RoleCache::default(),
             &crate::engine::telemetry::Telemetry::default(),
             &paused_reasons,
+            &HashMap::new(),
         )
         .await
         .expect("one bad lineage must not fail the whole list");
@@ -1931,6 +1919,7 @@ mod tests {
             &RoleCache::default(),
             &crate::engine::telemetry::Telemetry::default(),
             &paused_reasons,
+            &HashMap::new(),
         )
         .await
         .expect("list")
@@ -1954,6 +1943,7 @@ mod tests {
             &RoleCache::default(),
             &crate::engine::telemetry::Telemetry::default(),
             &paused_reasons,
+            &HashMap::new(),
         )
         .await
         .expect("list")
@@ -2118,6 +2108,7 @@ mod tests {
             &RoleCache::default(),
             &crate::engine::telemetry::Telemetry::default(),
             &paused_reasons,
+            &HashMap::new(),
         )
         .await
         .expect("list");
@@ -2210,6 +2201,7 @@ mod tests {
             m,
             roles,
             &crate::engine::telemetry::Telemetry::default(),
+            &HashMap::new(),
             &HashMap::new(),
         )
         .await
@@ -2707,16 +2699,6 @@ mod tests {
         );
     }
 
-    /// `Behind` outranks the count in the state, so the count travels on its
-    /// own: the recent files feed reads it.
-    #[tokio::test]
-    async fn the_count_travels_when_the_state_hides_it() {
-        let m = mock_one_package(Ok(status_with(UpstreamState::Behind, 2)), None);
-        let refreshed = refresh(&m, &RoleCache::default()).await;
-        assert_eq!(refreshed.state, PackageStateDto::Behind);
-        assert_eq!(refreshed.changed_files, Some(2));
-    }
-
     #[tokio::test]
     async fn a_clean_tree_that_is_up_to_date_is_latest() {
         let m = mock_one_package(Ok(status_with(UpstreamState::UpToDate, 0)), None);
@@ -2841,11 +2823,10 @@ mod tests {
                     backlog: 0,
                 }),
             }),
-            changed_files: Some(0),
         };
         assert_eq!(
             serde_json::to_string(&refreshed).unwrap(),
-            r#"{"state":{"kind":"latest"},"roleSwitchHost":null,"downloads":{"scope":"individualFiles","folders":0,"total":340,"outstanding":328,"backlog":0,"deletedHere":1,"size":{"total":3400000,"downloaded":1900000,"backlog":0}},"changedFiles":0}"#,
+            r#"{"state":{"kind":"latest"},"roleSwitchHost":null,"downloads":{"scope":"individualFiles","folders":0,"total":340,"outstanding":328,"backlog":0,"deletedHere":1,"size":{"total":3400000,"downloaded":1900000,"backlog":0}}}"#,
         );
     }
 
@@ -3209,7 +3190,6 @@ mod tests {
 
         let refreshed = refresh(&model, &RoleCache::default()).await;
         assert_eq!(refreshed.state, PackageStateDto::Behind);
-        assert_eq!(refreshed.changed_files, Some(0));
     }
 
     #[tokio::test]
@@ -3302,6 +3282,7 @@ mod tests {
             pull_enabled: true,
             publish_enabled: true,
             paused: Vec::new(),
+            last_changes: std::collections::BTreeMap::new(),
             next_pull_at: None,
             packages,
             pull_interval: Duration::from_secs(30),
@@ -3426,315 +3407,5 @@ mod tests {
         .unwrap();
         assert!(json["pull"]["deadline"].is_f64());
         assert!(json["publish"]["packages"][0]["state"]["publishAt"].is_f64());
-    }
-
-    // ── The recent files feed ──
-
-    /// A lineage carrying named paths at explicit epoch-second timestamps —
-    /// the variant [`lineage_with`] cannot express, because it names every
-    /// path `f{i}.csv` and these tests need to assert on which name is
-    /// newest. Seconds rather than `lineage_with`'s milliseconds: these values
-    /// only ever round-trip through this fixture and `recent_files`'s own
-    /// `epoch_millis` conversion, so the smaller unit keeps the test numbers
-    /// readable.
-    fn lineage_with_named_paths(paths: &[(&str, u64)]) -> quilt::lineage::PackageLineage {
-        let mut lineage = quilt::lineage::PackageLineage::default();
-        for (name, secs) in paths {
-            lineage.paths.insert(
-                std::path::PathBuf::from(name),
-                quilt::lineage::PathState {
-                    timestamp: chrono::DateTime::from_timestamp(
-                        i64::try_from(*secs).expect("test timestamp fits in i64 seconds"),
-                        0,
-                    )
-                    .expect("test timestamp is a valid instant"),
-                    // `Multihash` by name would mean taking the `multihash` crate as a
-                    // direct dependency of this one — see `lineage_with`'s identical note.
-                    #[allow(
-                        clippy::default_trait_access,
-                        reason = "the type is not nameable here without a new dependency"
-                    )]
-                    hash: Default::default(),
-                },
-            );
-        }
-        lineage
-    }
-
-    /// A roster of installed packages, each with a lineage whose `paths` are
-    /// exactly the given names at the given epoch-second timestamps. The
-    /// companion to [`lineage_with_named_paths`] that also wires up
-    /// `get_installed_packages_list`, matching the mock-building pattern
-    /// `mock_clean_roster` and `mock_two_bucket_roster` use above.
-    fn mock_with_lineages(
-        packages: &[(&str, Vec<(&str, u64)>)],
-    ) -> crate::engine::model::MockQuiltModel {
-        let mut model = crate::engine::model::mocks::create();
-
-        let installed: Vec<quilt::InstalledPackage> = packages
-            .iter()
-            .map(|(namespace, _)| {
-                let (prefix, name) = namespace
-                    .split_once('/')
-                    .expect("test namespace must be `prefix/name`");
-                make_installed_package((prefix, name))
-            })
-            .collect();
-
-        let lineages: HashMap<String, quilt::lineage::PackageLineage> = packages
-            .iter()
-            .map(|(namespace, paths)| ((*namespace).to_string(), lineage_with_named_paths(paths)))
-            .collect();
-
-        model
-            .expect_get_installed_packages_list()
-            .return_once(move || Ok(installed));
-        model
-            .expect_get_installed_package_lineage()
-            .returning(move |pkg| {
-                Ok(lineages
-                    .get(&pkg.namespace.to_string())
-                    .cloned()
-                    .expect("lineage requested for a namespace the fixture did not set up"))
-            });
-
-        model
-    }
-
-    /// The same shape as [`mock_with_lineages`] for two packages, except
-    /// `failing_namespace`'s lineage read errors — the rule [`recent_files`]
-    /// shares with `load_rows`: warn and skip, don't fail the whole walk.
-    fn mock_with_one_failing_lineage(
-        failing_namespace: &str,
-        good_namespace: &str,
-        good_path: &str,
-        good_secs: u64,
-    ) -> crate::engine::model::MockQuiltModel {
-        let mut model = crate::engine::model::mocks::create();
-
-        let (failing_prefix, failing_name) = failing_namespace
-            .split_once('/')
-            .expect("test namespace must be `prefix/name`");
-        let (good_prefix, good_name) = good_namespace
-            .split_once('/')
-            .expect("test namespace must be `prefix/name`");
-        let installed = vec![
-            make_installed_package((failing_prefix, failing_name)),
-            make_installed_package((good_prefix, good_name)),
-        ];
-
-        let good_namespace = good_namespace.to_string();
-        let good_lineage = lineage_with_named_paths(&[(good_path, good_secs)]);
-
-        model
-            .expect_get_installed_packages_list()
-            .return_once(move || Ok(installed));
-        model
-            .expect_get_installed_package_lineage()
-            .returning(move |pkg| {
-                if pkg.namespace.to_string() == good_namespace {
-                    Ok(good_lineage.clone())
-                } else {
-                    Err(access_denied_error())
-                }
-            });
-
-        model
-    }
-
-    #[tokio::test]
-    async fn recent_files_are_flat_and_newest_first_across_packages() {
-        // §3.2's "Why flat": one recent file in the third package must outrank
-        // three older files in the first. A per-package grouping would fail
-        // exactly here.
-        let m = mock_with_lineages(&[
-            ("user/alpha", vec![("old.csv", 1_000), ("older.csv", 500)]),
-            ("user/beta", vec![("newest.csv", 9_000)]),
-        ]);
-
-        let files = recent_files(&m).await.unwrap();
-
-        let names: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
-        assert_eq!(names, vec!["newest.csv", "old.csv", "older.csv"]);
-        assert_eq!(
-            files[0].namespace.to_string(),
-            "user/beta",
-            "the owning package travels"
-        );
-    }
-
-    #[tokio::test]
-    #[allow(
-        clippy::cast_precision_loss,
-        reason = "RECENT_FILES_LIMIT + 9 is 59, which is exact in f64"
-    )]
-    async fn recent_files_are_capped_at_the_limit_and_the_cap_keeps_the_newest() {
-        // "Bounded and pre-selected by the backend" (§4.5). The cap must be
-        // applied AFTER the global sort, or it would keep an arbitrary 50.
-        let names: Vec<String> = (0..RECENT_FILES_LIMIT + 10)
-            .map(|i| format!("f{i}.csv"))
-            .collect();
-        let many: Vec<(&str, u64)> = names
-            .iter()
-            .enumerate()
-            .map(|(i, name)| (name.as_str(), i as u64))
-            .collect();
-        let m = mock_with_lineages(&[("user/alpha", many)]);
-
-        let files = recent_files(&m).await.unwrap();
-
-        assert_eq!(files.len(), RECENT_FILES_LIMIT);
-        assert!(
-            (files[0].changed_at - (RECENT_FILES_LIMIT + 9) as f64 * 1000.0).abs() < f64::EPSILON,
-            "the cap kept the newest, not the first fifty walked"
-        );
-    }
-
-    #[tokio::test]
-    async fn a_package_with_no_installed_paths_contributes_nothing_and_does_not_fail() {
-        // A package installed with no paths yet is a real shape, not an error.
-        let m = mock_with_lineages(&[
-            ("user/empty", vec![]),
-            ("user/alpha", vec![("one.csv", 1_000)]),
-        ]);
-
-        let files = recent_files(&m).await.unwrap();
-
-        assert_eq!(files.len(), 1);
-        assert_eq!(files[0].namespace.to_string(), "user/alpha");
-    }
-
-    #[tokio::test]
-    async fn one_unreadable_lineage_does_not_blank_the_whole_feed() {
-        // The same rule `load_rows` follows (`main_page.rs:467-471`): warn and
-        // skip. One bad lineage must not cost the user every other file.
-        let m = mock_with_one_failing_lineage("user/broken", "user/alpha", "one.csv", 1_000);
-
-        let files = recent_files(&m).await.unwrap();
-
-        assert_eq!(files.len(), 1, "the readable package still arrives");
-        assert_eq!(files[0].namespace.to_string(), "user/alpha");
-    }
-
-    /// A package installed at `make_manifest_uri`'s hash, whose remote's
-    /// latest is `latest`, with a local commit `commit` if given.
-    fn installed_from(latest: &str, commit: Option<&str>) -> quilt::lineage::PackageLineage {
-        let mut lineage = quilt::lineage::PackageLineage::from_remote(
-            make_manifest_uri("user/alpha"),
-            latest.to_string(),
-        );
-        lineage.commit = commit.map(|hash| quilt::lineage::CommitState {
-            hash: hash.to_string(),
-            ..Default::default()
-        });
-        lineage
-    }
-
-    #[test]
-    fn a_package_whose_remote_holds_its_revision_is_published() {
-        assert_eq!(
-            published_hash(installed_from("abcdef", None)).as_deref(),
-            Some("abcdef")
-        );
-        assert_eq!(
-            published_hash(installed_from("newer", None)).as_deref(),
-            Some("abcdef"),
-            "behind: the held revision, not the remote's latest"
-        );
-    }
-
-    #[test]
-    fn a_package_with_a_local_commit_past_its_remote_is_not_published() {
-        assert_eq!(
-            published_hash(installed_from("abcdef", Some("local1"))),
-            None
-        );
-        assert_eq!(
-            published_hash(installed_from("newer", Some("local1"))),
-            None,
-            "diverged"
-        );
-    }
-
-    #[test]
-    fn a_local_only_package_is_not_published() {
-        assert_eq!(
-            published_hash(quilt::lineage::PackageLineage::default()),
-            None
-        );
-    }
-
-    #[test]
-    fn a_remote_with_no_hash_is_not_published() {
-        let mut uri = make_manifest_uri("user/alpha");
-        uri.hash = String::new();
-        assert_eq!(
-            published_hash(quilt::lineage::PackageLineage::from_remote(
-                uri.clone(),
-                String::new()
-            )),
-            None
-        );
-        assert_eq!(
-            published_hash(quilt::lineage::PackageLineage::from_remote(
-                uri,
-                "theirs".to_string()
-            )),
-            None,
-            "someone else published under this name first"
-        );
-    }
-
-    #[tokio::test]
-    async fn every_file_carries_the_hash_its_package_published() {
-        let mut model = crate::engine::model::mocks::create();
-        model.expect_get_installed_packages_list().return_once(|| {
-            Ok(vec![
-                make_installed_package(("user", "alpha")),
-                make_installed_package(("user", "beta")),
-            ])
-        });
-        model
-            .expect_get_installed_package_lineage()
-            .returning(|pkg| {
-                let mut lineage = if pkg.namespace.to_string() == "user/alpha" {
-                    installed_from("abcdef", None)
-                } else {
-                    installed_from("abcdef", Some("local1"))
-                };
-                lineage.paths =
-                    lineage_with_named_paths(&[("one.csv", 1_000), ("two.csv", 2_000)]).paths;
-                Ok(lineage)
-            });
-
-        let files = recent_files(&model).await.unwrap();
-
-        let published: Vec<(String, &str, Option<&str>)> = files
-            .iter()
-            .map(|f| {
-                (
-                    f.namespace.to_string(),
-                    f.path.as_str(),
-                    f.published_hash.as_deref(),
-                )
-            })
-            .collect();
-        assert_eq!(
-            published,
-            [
-                ("user/alpha".to_string(), "two.csv", Some("abcdef")),
-                ("user/beta".to_string(), "two.csv", None),
-                ("user/alpha".to_string(), "one.csv", Some("abcdef")),
-                ("user/beta".to_string(), "one.csv", None),
-            ]
-        );
-        assert_eq!(
-            serde_json::to_value(&files[0]).unwrap()["publishedHash"],
-            "abcdef"
-        );
-        assert_eq!(
-            serde_json::to_value(&files[1]).unwrap()["publishedHash"],
-            serde_json::Value::Null
-        );
     }
 }

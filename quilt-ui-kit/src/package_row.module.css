@@ -1,11 +1,5 @@
 /*
  * Package row. Namespace, time, state — and nothing you can click except the row.
- *
- * Its own stylesheet rather than a layout class shared with `FileRow`. The two
- * agree on the frame (flex, gap, 5px rhythm, bottom rule) and disagree on
- * everything the frame contains: truncation direction, typeface, and whether the
- * row is an anchor or a div. A shared class would carry the three lines they
- * actually share, so it is not worth the indirection until a third row exists.
  */
 
 .root {
@@ -49,8 +43,7 @@
   white-space: nowrap;
 }
 
-/* The same column as `FileRow`'s, duplicated so one can move without the other:
- * a 104px floor that holds `RelativeTime`'s widest phrase, never a cap. */
+/* A 104px floor that holds `RelativeTime`'s widest phrase, never a cap. */
 .time {
   flex: none;
   min-width: 104px;

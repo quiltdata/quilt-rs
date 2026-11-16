@@ -82,8 +82,7 @@ needs a decision, and says so in one line instead.
 |    user/pkg-b  has 2 changed files            Publish → |
 |  ------------------------------------------------------ |
 +--[toolbar]----------------------------------------------+
-| [Packages|Recent files]  [Search…] [Group:Bucket]        |
-|                          [Sort:Changed] [Create package] |
+| [Search…] [Group:Bucket] [Sort:Changed] [Create package] |
 +---------------------------------------------------------+
 |  +---------------------------------------------------+  |
 |  | user/package-a          Latest       2 hours ago   |  |
@@ -105,10 +104,7 @@ needs a decision, and says so in one line instead.
   list.
 - **List** — your packages with each one's state and when it last changed,
   searchable, groupable by Bucket / Prefix / None and sortable by Changed /
-  Name; or switched to a feed of recently changed files.
-
-Grouping options differ per view: packages group by Bucket, Prefix or None;
-recent files group by Package or None.
+  Name.
 
 Resting the pointer anywhere on a package row, or reaching it with Tab, opens
 its tooltip; the pointer passes through it to the rows below. It gives:
