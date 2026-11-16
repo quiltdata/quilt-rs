@@ -38,22 +38,18 @@ fn keep_head_task_with_numbers(
     head_numbers: &RawNumbers,
 ) -> (serde_json::Value, RawNumbers) {
     let task = head.and_then(|head| head.get("agent_exec"));
-    let mut meta = match default {
-        serde_json::Value::Object(meta) => meta,
-        default if task.is_none() => return (default, default_numbers),
-        _ => serde_json::Map::new(),
+    let numbers = match (&default, task) {
+        (serde_json::Value::Object(_), Some(_)) => default_numbers
+            .without("/agent_exec")
+            .union(&head_numbers.only("/agent_exec")),
+        (serde_json::Value::Object(_), None) => default_numbers.without("/agent_exec"),
+        (_, None) => default_numbers,
+        (_, Some(_)) => head_numbers.only("/agent_exec"),
     };
-    let mut numbers = default_numbers.without("/agent_exec");
-    match task {
-        Some(task) => {
-            meta.insert("agent_exec".to_string(), task.clone());
-            numbers = numbers.union(&head_numbers.only("/agent_exec"));
-        }
-        None => {
-            meta.remove("agent_exec");
-        }
-    }
-    (serde_json::Value::Object(meta), numbers)
+    (
+        crate::engine::tasks::agent_exec::keep_head_task(default, head),
+        numbers,
+    )
 }
 
 pub async fn package_commit(
@@ -627,12 +623,6 @@ mod tests {
         set_remote(&model, &namespace, origin, "my-bucket".to_string(), intent).await?;
         Ok(())
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use quilt_rs::manifest::RawNumbers;
 
     #[test]
     fn parse_metadata_keeps_big_integers() {
@@ -642,7 +632,7 @@ mod tests {
             panic!("expected Set");
         };
         assert!(!numbers.is_empty());
-        assert!(value["n"].as_f64().is_some());
+        assert!(value["n"].is_number());
         assert!(matches!(parse_metadata("").unwrap(), UserMeta::Keep));
         assert!(matches!(parse_metadata("   ").unwrap(), UserMeta::Keep));
         assert!(parse_metadata("{").is_err());
