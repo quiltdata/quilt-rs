@@ -495,16 +495,22 @@ async fn put(
 
 /// The tip cache `lineage` wants beside `new_ref`, and whether it differs
 /// from `tip`, the cache there now. A tip the ref already implies is not
-/// wanted, so a fallback is never kept as a tip.
+/// cached afresh, so a fallback is not made a tip; but a cache of the same
+/// bucket is overwritten rather than removed, so no kill leaves its old tip
+/// beside the new ref.
 fn wanted_tip(
     new_ref: &PackageRef,
     lineage: &PackageLineage,
     tip: Option<TipCache>,
 ) -> (Option<TipCache>, bool) {
-    let bucket = match &lineage.remote_uri {
-        Some(remote) if lineage.latest_hash != untipped_latest(new_ref) => &remote.bucket,
-        _ => return (None, false),
+    let Some(remote) = &lineage.remote_uri else {
+        return (None, false);
     };
+    let bucket = &remote.bucket;
+    let cached = tip.as_ref().is_some_and(|tip| tip.bucket == *bucket);
+    if !cached && lineage.latest_hash == untipped_latest(new_ref) {
+        return (None, false);
+    }
     match tip {
         Some(tip) if tip.bucket == *bucket && tip.latest_hash == lineage.latest_hash => {
             (Some(tip), false)
@@ -1254,7 +1260,8 @@ mod tests {
         /// Not a test on its own: the child half of the tests below. It
         /// updates `x` as `QUILT_RS_TEST_REF_STORE_UPDATE` says: `pull` moves
         /// its base to the tip it had cached, `pull-behind` does too but finds
-        /// the tip moved on to `NEXT`, `move` points it at another bucket
+        /// the tip moved on to `NEXT`, `push` makes `NEXT` its base and its
+        /// remote's latest, `move` points it at another bucket
         /// whose tip is `NEXT`, `rename` points it at another package in its
         /// bucket, at `TIP` with tip `BASE`, and `create` records it afresh at
         /// `NEXT`.
@@ -1279,6 +1286,11 @@ mod tests {
                     .update(&storage, &held, |lineage| {
                         let remote = lineage.remote_uri.as_mut().unwrap();
                         match update.as_str() {
+                            "push" => {
+                                remote.hash = NEXT.to_string();
+                                lineage.base_hash = NEXT.to_string();
+                                lineage.latest_hash = NEXT.to_string();
+                            }
                             "rename" => {
                                 remote.namespace = package("renamed");
                                 remote.hash = TIP.to_string();
@@ -1358,6 +1370,18 @@ mod tests {
             assert_eq!(
                 (lineage.base_hash.as_str(), lineage.latest_hash.as_str()),
                 (BASE, TIP)
+            );
+            Ok(())
+        }
+
+        /// The cached tip is overwritten before the ref lands, not removed
+        /// after, so the new ref never reads the old tip.
+        #[test(tokio::test)]
+        async fn a_push_killed_after_its_ref_lands_reads_up_to_date() -> Res {
+            let lineage = killed_at("push", "ref.after-rename").await?;
+            assert_eq!(
+                (lineage.base_hash.as_str(), lineage.latest_hash.as_str()),
+                (NEXT, NEXT)
             );
             Ok(())
         }
