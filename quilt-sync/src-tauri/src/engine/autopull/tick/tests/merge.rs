@@ -879,10 +879,10 @@ async fn a_copy_whose_change_latest_already_holds_moves_to_it_without_publishing
 #[tokio::test]
 async fn a_copy_whose_only_change_is_folder_metadata_is_published_onto_latest() -> Result<(), Error>
 {
-    let dir_meta = vec![quilt::manifest::DirMeta {
-        logical_key: quilt::LogicalKey::new("data")?,
-        meta: json!({"owner": "team"}),
-    }];
+    let dir_meta = vec![quilt::manifest::DirMeta::new(
+        quilt::LogicalKey::new("data")?,
+        json!({"owner": "team"}),
+    )];
     let (model, remote) = model_of(Copy {
         ours: quilt::manifest::Manifest {
             dir_meta: dir_meta.clone(),

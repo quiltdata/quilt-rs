@@ -195,6 +195,20 @@ fn compact(s: &str) -> String {
     out
 }
 
+fn is_folder_line(line: &str) -> bool {
+    line.contains(r#""logical_key":"#)
+        && !line.contains(r#""physical_keys":"#)
+        && logical_key_of(line).is_some_and(|key| key.ends_with('/'))
+}
+
+fn logical_key_of(line: &str) -> Option<&str> {
+    let (_, rest) = line.split_once(r#""logical_key":"#)?;
+    let rest = rest.trim_start();
+    let rest = rest.strip_prefix('"')?;
+    let end = rest.find('"')?;
+    Some(&rest[..end])
+}
+
 /// What a row line holds under `meta`, the last key, without the closing brace.
 fn meta_text(line: &str) -> &str {
     let (_, meta) = line.split_once(r#""meta":"#).expect("a meta key");
@@ -210,6 +224,7 @@ fn meta_text(line: &str) -> &str {
 async fn quilt3s_numbers_are_written_back_as_quilt3_writes_them() -> Res {
     let written = std::env::current_dir()?.join("fixtures/quilt3-written");
     let mut checked = 0;
+    let mut folder_rows = 0;
     for entry in std::fs::read_dir(&written)? {
         let name = file_name(&entry?.path());
         let (expected_hash, _) = name.split_once('-').expect("named <top_hash>-<case>");
@@ -232,6 +247,14 @@ async fn quilt3s_numbers_are_written_back_as_quilt3_writes_them() -> Res {
             if meta_text(&quilt3) != "{}" {
                 assert_eq!(meta_text(ours), meta_text(&quilt3), "{name}: {ours}");
             }
+            if is_folder_line(&quilt3) {
+                folder_rows += 1;
+                assert_eq!(
+                    compact(meta_text(ours)),
+                    compact(meta_text(&quilt3)),
+                    "{name}: folder {ours}"
+                );
+            }
         }
 
         let reread = Manifest::from_reader(ours.as_bytes()).await?;
@@ -250,6 +273,7 @@ async fn quilt3s_numbers_are_written_back_as_quilt3_writes_them() -> Res {
         checked += 1;
     }
     assert!(checked > 0, "no quilt3 written manifests found");
+    assert!(folder_rows > 0, "no folder rows in quilt3-written fixtures");
     Ok(())
 }
 
@@ -285,11 +309,24 @@ async fn quilt_rs_writes_the_folder_rows_quilt3_writes() -> Res {
         let mut ours = manifest.clone();
         // `records_stream` writes the files in key order; so does quilt3.
         ours.rows.sort_by(|a, b| a.logical_key.cmp(&b.logical_key));
+        let quilt3 = std::fs::read_to_string(&dump)?;
         assert_eq!(
             json_lines(&ours.to_jsonlines())?,
-            json_lines(&std::fs::read_to_string(&dump)?)?,
+            json_lines(&quilt3)?,
             "{name}"
         );
+        let ours_text = ours.to_jsonlines();
+        let ours_folders: Vec<_> = ours_text
+            .lines()
+            .filter(|line| is_folder_line(line))
+            .map(|line| compact(meta_text(line).trim()))
+            .collect();
+        let quilt3_folders: Vec<_> = quilt3
+            .lines()
+            .filter(|line| is_folder_line(line))
+            .map(|line| compact(meta_text(line).trim()))
+            .collect();
+        assert_eq!(ours_folders, quilt3_folders, "{name}: folder text");
         checked += 1;
     }
     assert!(checked > 0, "no quilt3 dumps found");
@@ -324,10 +361,10 @@ async fn a_folder_row_is_a_row_without_physical_keys() -> Res {
         assert_eq!(manifest.rows.len(), 1, "{row}");
         assert_eq!(
             manifest.dir_meta,
-            [DirMeta {
-                logical_key: LogicalKey::new("data")?,
-                meta: serde_json::json!({"a": 1}),
-            }],
+            [DirMeta::new(
+                LogicalKey::new("data")?,
+                serde_json::json!({"a": 1}),
+            )],
             "{row}"
         );
     }
@@ -348,10 +385,10 @@ async fn a_folder_row_with_a_malformed_hash_is_still_loaded() -> Res {
     let manifest = Manifest::from_reader(folder_manifest(&[row, A_FILE]).as_bytes()).await?;
     assert_eq!(
         manifest.dir_meta,
-        [DirMeta {
-            logical_key: LogicalKey::new("data")?,
-            meta: serde_json::json!({"a": 1}),
-        }]
+        [DirMeta::new(
+            LogicalKey::new("data")?,
+            serde_json::json!({"a": 1}),
+        )]
     );
     assert_eq!(manifest.rows.len(), 1);
     Ok(())
@@ -410,10 +447,10 @@ async fn a_folder_and_a_file_of_the_same_name_are_named_in_the_error() -> Res {
 #[test]
 fn a_folder_that_says_nothing_still_clashes_with_a_file_and_with_itself() -> Res {
     let silent = || -> Res<DirMeta> {
-        Ok(DirMeta {
-            logical_key: LogicalKey::new("data")?,
-            meta: serde_json::json!({}),
-        })
+        Ok(DirMeta::new(
+            LogicalKey::new("data")?,
+            serde_json::json!({}),
+        ))
     };
     let file = ManifestRow {
         logical_key: LogicalKey::new("data")?,
@@ -468,13 +505,7 @@ async fn file_rows_beside_folder_rows_keep_the_text_of_big_integers() -> Res {
 /// sees it.
 #[test]
 fn only_folder_metadata_that_says_something_is_written() -> Res {
-    let says = |meta| {
-        DirMeta {
-            logical_key: LogicalKey::new("data").unwrap(),
-            meta,
-        }
-        .holds_meta()
-    };
+    let says = |meta| DirMeta::new(LogicalKey::new("data").unwrap(), meta).holds_meta();
     for silent in [
         serde_json::json!(null),
         serde_json::json!({}),
@@ -496,5 +527,55 @@ fn only_folder_metadata_that_says_something_is_written() -> Res {
     ] {
         assert!(says(loud.clone()), "{loud}");
     }
+    Ok(())
+}
+
+/// A folder row's 30-digit integer, `-0` and `1e-7` read and write as quilt3
+/// writes them, and the top hash is the one without the folder row.
+#[test(tokio::test)]
+async fn folder_numbers_round_trip_and_leave_the_top_hash_alone() -> Res {
+    let name =
+        "3c7a803603e24249b0f7e0e55d35ec353c9572537f4817e0ffd525acddd0b2d0-dir-meta-numbers.jsonl";
+    let (expected_hash, _) = name.split_once('-').expect("named <top_hash>-<case>");
+    let source = std::env::current_dir()?
+        .join("fixtures/quilt3-packages")
+        .join(name);
+    let manifest = Manifest::from_path(&LocalStorage::default(), &source).await?;
+
+    assert_eq!(manifest.dir_meta.len(), 1);
+    assert!(!manifest.dir_meta[0].meta_numbers.is_empty());
+    assert_eq!(manifest.dir_meta[0].meta["neg0"], serde_json::json!(0));
+    let written = manifest.to_jsonlines();
+    assert!(
+        written.contains("123456789012345678901234567890"),
+        "{written}"
+    );
+    assert!(written.contains(r#""neg0":0"#), "{written}");
+    assert!(written.contains(r#""small":1e-07"#), "{written}");
+    assert!(written.contains("café"), "{written}");
+
+    let reread = Manifest::from_reader(written.as_bytes()).await?;
+    assert_eq!(reread, manifest);
+    assert!(reread.dir_meta[0].same_meta(&manifest.dir_meta[0]));
+    assert_eq!(reread.to_jsonlines(), written);
+
+    let storage = MockStorage::default();
+    let hash_of = async |manifest: Manifest| -> Res<String> {
+        let (_, hash) = build_manifest_from_rows_stream(
+            &storage,
+            storage.temp_dir.path().to_path_buf(),
+            manifest.header.clone(),
+            manifest.dir_meta.clone(),
+            manifest.records_stream().await,
+        )
+        .await?;
+        Ok(hash)
+    };
+    let with = hash_of(manifest.clone()).await?;
+    let mut without = manifest.clone();
+    without.dir_meta.clear();
+    let missing = hash_of(without).await?;
+    assert_eq!(with, expected_hash);
+    assert_eq!(missing, expected_hash);
     Ok(())
 }

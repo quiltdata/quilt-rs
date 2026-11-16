@@ -1246,14 +1246,17 @@ mod tests {
         Ok(())
     }
 
-    /// A commit keeps the folders' metadata of the manifest it builds on, and
-    /// leaves it out of the top hash, so the hash is the one of the same
-    /// package without it.
+    /// A commit keeps the folders' metadata of the manifest it builds on,
+    /// including the text of a whole number beyond 64 bits, and leaves it out
+    /// of the top hash, so the hash is the one of the same package without it.
     #[test(tokio::test)]
     async fn a_commit_keeps_the_folder_metadata() -> Res {
+        let (meta, meta_numbers) =
+            crate::manifest::RawNumbers::parse(r#"{"n": 123456789012345678901234567890}"#)?;
         let dir_meta = vec![crate::manifest::DirMeta {
             logical_key: crate::LogicalKey::new("data")?,
-            meta: serde_json::json!({"owner": "team"}),
+            meta,
+            meta_numbers,
         }];
         let paths = DomainPaths::new(std::path::absolute("/foo")?);
         let namespace: Namespace = ("foo", "bar").into();
@@ -1285,6 +1288,7 @@ mod tests {
         }
         assert_eq!(hashes[0], (hashes[1].0.clone(), dir_meta));
         assert_eq!(hashes[1].1, []);
+        assert!(!hashes[0].1[0].meta_numbers.is_empty());
         Ok(())
     }
 
@@ -1310,10 +1314,10 @@ mod tests {
             ..InstalledPackageStatus::default()
         };
         let mut manifest = Manifest {
-            dir_meta: vec![crate::manifest::DirMeta {
-                logical_key: crate::LogicalKey::new("a")?,
-                meta: serde_json::json!({"owner": "team"}),
-            }],
+            dir_meta: vec![crate::manifest::DirMeta::new(
+                crate::LogicalKey::new("a")?,
+                serde_json::json!({"owner": "team"}),
+            )],
             ..Manifest::default()
         };
         let paths = DomainPaths::new(std::path::absolute("/foo")?);

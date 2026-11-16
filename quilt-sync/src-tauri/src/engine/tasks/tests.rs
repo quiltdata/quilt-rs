@@ -2041,10 +2041,10 @@ async fn the_rebased_outcome_keeps_latests_workflow_under_its_own_message() -> R
 async fn the_rebased_outcome_keeps_latests_folder_metadata() -> Result<(), Error> {
     let fixture = Fixture::new();
     let task = file("TASK.md", "do it")?;
-    let folder_meta = vec![quilt::manifest::DirMeta {
-        logical_key: quilt::LogicalKey::new("data")?,
-        meta: serde_json::json!({"owner": "team"}),
-    }];
+    let folder_meta = vec![quilt::manifest::DirMeta::new(
+        quilt::LogicalKey::new("data")?,
+        serde_json::json!({"owner": "team"}),
+    )];
     let mut latest = revision(edited_head(), vec![task.clone()]);
     latest.dir_meta.clone_from(&folder_meta);
     let revisions = Revisions {

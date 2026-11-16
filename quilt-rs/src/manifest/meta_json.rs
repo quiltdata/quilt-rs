@@ -28,12 +28,12 @@ use super::top_hasher::write_hash_string;
 /// neighbouring integer, or `1.8446744073709552e19` for `18446744073709551616`)
 /// keeps the old text.
 ///
-/// `ManifestRow` and `ManifestHeader` compare their `RawNumbers` in
-/// `PartialEq`, so two rows whose values are the same float but whose kept
-/// text differs are different rows. They are not serialized: a `Manifest`
-/// written through serde, such as the CLI's JSON output, has those numbers as
-/// floats. [`Manifest::to_jsonlines`](super::Manifest::to_jsonlines) is the
-/// writer that keeps them.
+/// `ManifestRow`, `ManifestHeader` and `DirMeta` compare their `RawNumbers` in
+/// `PartialEq`, so two values that are the same float but whose kept text
+/// differs are different. They are not serialized: a `Manifest` written
+/// through serde, such as the CLI's JSON output, has those numbers as floats.
+/// [`Manifest::to_jsonlines`](super::Manifest::to_jsonlines) is the writer
+/// that keeps them.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RawNumbers(BTreeMap<String, String>);
 
