@@ -759,7 +759,7 @@ mod tests {
             paths: BTreeMap::from([(
                 logical_key.clone(),
                 PathState {
-                    hash: manifest_record.hash.clone().into(),
+                    hash: Some(manifest_record.hash.clone().into()),
                     ..PathState::default()
                 },
             )]),
@@ -1681,7 +1681,7 @@ mod tests {
         package.lineage.paths.insert(
             PathBuf::from("tracked.txt"),
             PathState {
-                hash: row.hash.clone().into(),
+                hash: Some(row.hash.clone().into()),
                 ..PathState::default()
             },
         );

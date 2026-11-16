@@ -2307,7 +2307,12 @@ async fn committed_data_txt() -> Res<(
     let domain = crate::local_domain::LocalDomain::new(temp_dir.path());
     domain.set_home(temp_dir.path()).await?;
     let (package, _) = domain
-        .create_package(("demo", "tracked").into(), None, Some("empty".to_string()))
+        .create_package(
+            ("demo", "tracked").into(),
+            None,
+            Some("empty".to_string()),
+            UserMeta::Clear,
+        )
         .await?;
     std::fs::write(package.package_home().await?.join("data.txt"), b"content")?;
     package
