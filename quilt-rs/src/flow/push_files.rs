@@ -495,7 +495,6 @@ mod tests {
         )
         .await?;
         let stored = pushed_manifest(&remote, &pushed.manifest_uri.hash).await?;
-        let before = stored.clone();
         // The mock's upload keeps nothing, so put the bytes where the rows say.
         for row in &stored.rows {
             let contents = metadata_files();
@@ -519,10 +518,18 @@ mod tests {
         assert_eq!(stored.dir_meta.len(), 1);
         let placed = remote.storage.read_byte_stream(dest.join("a.txt")).await?;
         assert_eq!(placed.collect().await?.to_vec(), b"hello");
-        assert_eq!(stored.dir_meta, before.dir_meta);
-        assert!(stored.header.same_user_meta(&before.header));
-        for (row, original) in stored.rows.iter().zip(&before.rows) {
-            assert!(row.same_meta(original));
+        // Installing only reads the manifest, so the one the remote holds is
+        // still what was pushed. Compare it with a manifest built on its own,
+        // not with a copy of the one that was read, so a push that loses
+        // metadata fails here.
+        let after = pushed_manifest(&remote, &pushed.manifest_uri.hash).await?;
+        let expected = manifest_with_metadata()?;
+        assert_eq!(after.dir_meta, expected.dir_meta);
+        assert!(after.header.same_user_meta(&expected.header));
+        assert_eq!(after.rows.len(), expected.rows.len());
+        for want in &expected.rows {
+            let got = after.get_record(want.logical_key.as_path()).expect("row");
+            assert!(got.same_meta(want), "{:?}", want.logical_key);
         }
         let text = read(
             &remote,
