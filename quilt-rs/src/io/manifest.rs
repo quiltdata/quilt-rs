@@ -291,9 +291,9 @@ async fn file_stat(
 ///
 /// A [`RowContent::Path`] uploads straight from that file, which is read by
 /// path and so cannot be read once for both its size and its content. Instead
-/// its size and modified time are read before the upload and again after, and a
-/// file that changed in between is an error rather than a manifest whose size
-/// and hash disagree with the bytes.
+/// its size and modified time are read before the upload and again after the
+/// upload and any local hash check, and a file that changed in between is an
+/// error rather than a manifest whose size and hash disagree with the bytes.
 ///
 /// The multipart upload and the checksum S3 computes both read a file, so
 /// [`RowContent::Bytes`] is staged to a private temporary file for the length
@@ -321,13 +321,19 @@ pub async fn upload_row_content(
             };
             let uploaded =
                 upload_row_from_path(remote, &host_config, package_handle, row, path).await?;
+            // Verified inside the window the stat check covers, so the bytes
+            // hashed here are the ones that were uploaded.
+            let verdict = match claimed {
+                Some(claimed) => verify_claimed_hash(storage, content, &uploaded, claimed).await,
+                None => Ok(uploaded),
+            };
             if file_stat(storage, path).await? != before {
                 return Err(Error::PackageOp(PackageOpError::Push(format!(
                     "{} changed while it was being uploaded",
                     path.display()
                 ))));
             }
-            uploaded
+            return verdict;
         }
         RowContent::Bytes(bytes) => {
             let staging = tempfile::tempdir()?;

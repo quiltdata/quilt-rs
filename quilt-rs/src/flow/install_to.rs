@@ -50,12 +50,16 @@ pub struct InstallToReport {
 /// - a row whose `physical_key` is not an `s3://` location, which this call
 ///   cannot fetch;
 /// - two keys that name one local file;
+/// - a folder between `dest` and a target that is a symbolic link, which would
+///   put the file outside `dest`;
 /// - a file already at a target, or a file where a target's folder would go
 ///   (in the destination itself or any folder between it and the target).
 ///
 /// **Fetching is all-or-nothing; placing is not.** The fetched files are staged
-/// in a hidden folder inside `dest`, removed on every exit, so a failed fetch
-/// places nothing. Once every fetch has succeeded the staged files are renamed
+/// in a hidden folder inside `dest`, removed when the call returns, so a failed
+/// fetch places nothing. A call that is dropped before it returns, such as a
+/// cancelled task, cannot clean up and leaves that `.quilt-install-*` folder
+/// behind; it is safe to delete. Once every fetch has succeeded the staged files are renamed
 /// into place one at a time. Just before the first rename every target is
 /// checked to be absent again, as [`install_paths`](super::install_paths) does,
 /// so a file that appeared during the fetch is not overwritten. A rename that
@@ -85,16 +89,21 @@ pub async fn install_to(
     refuse_blocked_targets(storage, &rows, dest).await?;
 
     let created = missing_folders(storage, dest).await;
-    storage.create_dir_all(dest).await?;
     let staging = dest.join(format!(".quilt-install-{}", uuid::Uuid::new_v4()));
-    storage.create_dir_all(&staging).await?;
-    let installed = fetch_and_place(storage, remote, host, &rows, dest, &staging).await;
+    let installed = async {
+        storage.create_dir_all(dest).await?;
+        storage.create_dir_all(&staging).await?;
+        fetch_and_place(storage, remote, host, &rows, dest, &staging).await
+    }
+    .await;
+    // The staging folder is this call's own, so removing it whole is safe.
     let _ = storage.remove_dir_all(&staging).await;
     let report = match installed {
         Ok(report) => report,
         Err(err) => {
             for dir in &created {
-                remove_if_empty(storage, dir).await;
+                // Fails, and keeps the folder, if anything is in it.
+                let _ = storage.remove_dir(dir).await;
             }
             return Err(err);
         }
@@ -120,17 +129,6 @@ async fn missing_folders(storage: &(impl Storage + Sync), dest: &Path) -> Vec<Pa
         missing.push(dir.to_path_buf());
     }
     missing
-}
-
-/// Removes `dir` if nothing is in it, for a folder this install made. A folder
-/// with anything in it (files placed before a failure) is kept.
-async fn remove_if_empty(storage: &(impl Storage + Sync), dir: &Path) {
-    let Ok(mut entries) = storage.read_dir(dir).await else {
-        return;
-    };
-    if matches!(entries.next_entry().await, Ok(None)) {
-        let _ = storage.remove_dir_all(dir).await;
-    }
 }
 
 fn select_rows(manifest: &Manifest, only: Option<&[PathBuf]>) -> Res<Vec<ManifestRow>> {
@@ -183,6 +181,13 @@ async fn refuse_blocked_targets(
             .skip(1)
             .take_while(|ancestor| ancestor.starts_with(dest))
         {
+            if ancestor != dest && storage.is_symlink(ancestor).await {
+                return Err(Error::PackageOp(PackageOpError::Package(format!(
+                    "{} cannot be installed: {} is a symbolic link, which would put it outside the destination",
+                    row.logical_key,
+                    ancestor.strip_prefix(dest).unwrap_or(ancestor).display()
+                ))));
+            }
             if blocks_a_folder(storage, ancestor).await {
                 let shown = ancestor.strip_prefix(dest).unwrap_or(ancestor);
                 let shown = if shown.as_os_str().is_empty() {
@@ -475,6 +480,23 @@ mod tests {
         Ok(())
     }
 
+    /// Cleanup removes a folder only if it is empty, so a file that arrived in it
+    /// is never deleted along with it.
+    #[test(tokio::test)]
+    async fn removing_a_folder_that_holds_a_file_fails_and_keeps_the_file() -> Res {
+        let storage = MockStorage::default();
+        let dir = std::path::absolute("/made")?;
+        storage.create_dir_all(&dir).await?;
+        storage
+            .write_byte_stream(dir.join("late.txt"), ByteStream::from_static(b"late"))
+            .await?;
+
+        assert!(storage.remove_dir(&dir).await.is_err());
+
+        assert!(storage.exists(dir.join("late.txt")).await);
+        Ok(())
+    }
+
     #[test(tokio::test)]
     async fn a_failed_fetch_keeps_a_destination_that_was_already_there() -> Res {
         let remote = MockRemote::default();
@@ -492,6 +514,59 @@ mod tests {
         assert!(installed.is_err());
         let mut entries = storage.read_dir(&dest).await?;
         assert!(entries.next_entry().await?.is_none(), "staging was removed");
+        Ok(())
+    }
+
+    /// A link between the destination and a target would put the file somewhere
+    /// else, past the checks made on the paths as written.
+    #[cfg(unix)]
+    #[test(tokio::test)]
+    async fn a_symlinked_folder_is_refused_before_any_fetch() -> Res {
+        let remote = MockRemote::default();
+        let storage = MockStorage::default();
+        put(&remote, "s3://b/p/sub/b.txt?versionId=v1", b"beta").await?;
+        let manifest = manifest(vec![row(
+            "sub/b.txt",
+            b"beta",
+            "s3://b/p/sub/b.txt?versionId=v1",
+        )]);
+        let dest = std::path::absolute("/dest")?;
+        let outside = std::path::absolute("/outside")?;
+        storage.create_dir_all(&dest).await?;
+        storage.create_dir_all(&outside).await?;
+        let root = storage.temp_dir.path();
+        std::os::unix::fs::symlink(root.join("outside"), root.join("dest/sub"))?;
+
+        let installed = install_to(&storage, &remote, None, &manifest, &dest, None).await;
+
+        let message = installed.expect_err("a link is refused").to_string();
+        assert!(message.contains("symbolic link"), "{message}");
+        assert!(!storage.exists(outside.join("b.txt")).await);
+        assert_eq!(
+            remote.get_object_count("s3://b/p/sub/b.txt?versionId=v1"),
+            0
+        );
+        Ok(())
+    }
+
+    /// The destination itself is the caller's choice, a link or not.
+    #[cfg(unix)]
+    #[test(tokio::test)]
+    async fn a_destination_that_is_a_symlink_is_allowed() -> Res {
+        let remote = MockRemote::default();
+        let storage = MockStorage::default();
+        put(&remote, "s3://b/p/a.txt?versionId=v1", b"alpha").await?;
+        let manifest = manifest(vec![row("a.txt", b"alpha", "s3://b/p/a.txt?versionId=v1")]);
+        let real = std::path::absolute("/real")?;
+        storage.create_dir_all(&real).await?;
+        let root = storage.temp_dir.path();
+        std::os::unix::fs::symlink(root.join("real"), root.join("linked"))?;
+        let dest = std::path::absolute("/linked")?;
+
+        let report = install_to(&storage, &remote, None, &manifest, &dest, None).await?;
+
+        assert_eq!(report.placed.len(), 1);
+        assert!(storage.exists(real.join("a.txt")).await);
         Ok(())
     }
 

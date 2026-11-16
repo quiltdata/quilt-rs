@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::collections::HashSet;
 
 use tracing::info;
 use tracing::warn;
@@ -244,10 +245,8 @@ async fn upload_rows(
 /// Refuses, before any upload, a file the manifest has no row for and a row
 /// with no way to get its bytes to the remote.
 fn refuse_unplaceable_rows(manifest: &Manifest, files: &BTreeMap<LogicalKey, RowContent>) -> Res {
-    if let Some(key) = files
-        .keys()
-        .find(|key| !manifest.contains_record(key.as_path()))
-    {
+    let known: HashSet<&LogicalKey> = manifest.rows.iter().map(|row| &row.logical_key).collect();
+    if let Some(key) = files.keys().find(|key| !known.contains(key)) {
         return Err(Error::PackageOp(PackageOpError::Push(format!(
             "{key} was supplied, but the manifest has no row for it"
         ))));
