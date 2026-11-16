@@ -329,6 +329,40 @@ impl DomainPaths {
     }
 }
 
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the ref store that uses them is not built yet")
+)]
+impl DomainPaths {
+    /// Directory holding every package's ref, `refs/<owner>/<name>.json`.
+    #[must_use]
+    pub(crate) fn refs_dir(&self) -> PathBuf {
+        self.dot_quilt_dir().join("refs")
+    }
+
+    /// `RefEntry::classify` reads these names back.
+    #[must_use]
+    pub(crate) fn package_ref(&self, namespace: &Namespace) -> PathBuf {
+        self.refs_dir().join(format!("{namespace}.json"))
+    }
+
+    /// The package's cache of the remote's tip, beside its ref.
+    #[must_use]
+    pub(crate) fn package_tip(&self, namespace: &Namespace) -> PathBuf {
+        self.refs_dir().join(format!("{namespace}.json.latest"))
+    }
+
+    #[must_use]
+    pub(crate) fn domain_config(&self) -> PathBuf {
+        self.dot_quilt_dir().join("domain.json")
+    }
+
+    #[must_use]
+    pub(crate) fn domain_lock(&self) -> PathBuf {
+        self.dot_quilt_dir().join("domain.lock")
+    }
+}
+
 pub async fn copy_cached_to_installed(
     paths: &DomainPaths,
     storage: &impl Storage,
@@ -427,6 +461,23 @@ mod tests {
             PathBuf::from("foo/bar/.quilt/installed")
         );
         assert_eq!(paths.locks_dir(), PathBuf::from("foo/bar/.quilt/locks"));
+        assert_eq!(paths.refs_dir(), PathBuf::from("foo/bar/.quilt/refs"));
+        assert_eq!(
+            paths.package_ref(&("acme", "demo").into()),
+            PathBuf::from("foo/bar/.quilt/refs/acme/demo.json")
+        );
+        assert_eq!(
+            paths.package_tip(&("acme", "demo").into()),
+            PathBuf::from("foo/bar/.quilt/refs/acme/demo.json.latest")
+        );
+        assert_eq!(
+            paths.domain_config(),
+            PathBuf::from("foo/bar/.quilt/domain.json")
+        );
+        assert_eq!(
+            paths.domain_lock(),
+            PathBuf::from("foo/bar/.quilt/domain.lock")
+        );
         assert_eq!(
             paths.cached_manifests_root(),
             PathBuf::from("foo/bar/.quilt/packages")
