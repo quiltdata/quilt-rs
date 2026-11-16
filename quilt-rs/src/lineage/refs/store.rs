@@ -315,11 +315,12 @@ impl RefStore {
         TipCache::from_slice(&bytes)
     }
 
-    /// Stores `lineage` over `stored` and its `tip`, writing the ref and the
-    /// tip cache in the order that keeps a tip the ref on disk can read: a
-    /// new tip for the stored ref's bucket before the ref, and a tip for
-    /// another bucket, or the removal of one no longer wanted, after it.
-    /// Returns the lineage as it now reads when the ref changed.
+    /// Stores `lineage` over `stored` and its `tip`. The tip cache changes
+    /// before the ref only where the ref on disk cannot lose a tip by it: when
+    /// there is no ref yet, or for a new tip of the stored ref's own bucket.
+    /// Otherwise it changes after, and a failure then is logged, since the
+    /// ref has landed. Returns the lineage as it now reads when the ref
+    /// changed.
     async fn write(
         &self,
         storage: &(impl Storage + Sync),
@@ -333,15 +334,17 @@ impl RefStore {
             .map_or_default(|stored| stored.extra.clone());
         let new_ref = PackageRef::from_lineage(lineage, extra)?;
         let had_tip = tip.is_some();
-        let (tip, fresh) = wanted_tip(&new_ref, lineage, tip);
+        let (mut tip, fresh) = wanted_tip(&new_ref, lineage, tip);
         let bucket = |stored: Option<&PackageRef>| {
             stored
                 .and_then(|stored| stored.remote.as_ref())
                 .map(|remote| remote.bucket.clone())
         };
-        let tip_first = fresh && bucket(stored.as_ref()) == bucket(Some(&new_ref));
-        if tip_first && let Some(tip) = &tip {
-            self.put_tip(storage, namespace, tip).await?;
+        let tip_first =
+            stored.is_none() || fresh && bucket(stored.as_ref()) == bucket(Some(&new_ref));
+        if tip_first {
+            self.change_tip(storage, namespace, tip.as_ref(), fresh, had_tip)
+                .await?;
         }
         let changed = stored.as_ref() != Some(&new_ref);
         if changed {
@@ -353,17 +356,39 @@ impl RefStore {
             )
             .await?;
         }
-        match &tip {
-            Some(tip) if fresh && !tip_first => self.put_tip(storage, namespace, tip).await?,
-            None if had_tip => self.remove_tip(storage, namespace).await,
-            _ => {}
+        if !tip_first
+            && let Err(err) = self
+                .change_tip(storage, namespace, tip.as_ref(), fresh, had_tip)
+                .await
+        {
+            // The tip left is one for another bucket, which the new ref ignores.
+            warn!("❌ Could not cache the tip of {namespace}: {err}");
+            tip = None;
         }
         Ok(changed.then(|| new_ref.into_lineage(tip.as_ref())))
     }
 
-    async fn put_tip(&self, storage: &impl Storage, namespace: &Namespace, tip: &TipCache) -> Res {
-        let path = self.paths.package_tip(namespace);
-        put(storage, &path, tip.to_vec()?, None).await
+    /// Writes `tip` where it is `fresh`, and removes the cache where none is
+    /// wanted and there `had` been one.
+    async fn change_tip(
+        &self,
+        storage: &impl Storage,
+        namespace: &Namespace,
+        tip: Option<&TipCache>,
+        fresh: bool,
+        had: bool,
+    ) -> Res {
+        match tip {
+            Some(tip) if fresh => {
+                let path = self.paths.package_tip(namespace);
+                put(storage, &path, tip.to_vec()?, None).await
+            }
+            None if had => {
+                self.remove_tip(storage, namespace).await;
+                Ok(())
+            }
+            _ => Ok(()),
+        }
     }
 
     /// A tip left behind costs nothing: it is replaced or removed when the
@@ -534,7 +559,12 @@ async fn entries(storage: &(impl Storage + Sync), dir: &Path) -> Res<Vec<(PathBu
     };
     let mut entries = Vec::new();
     while let Some(entry) = read_dir.next_entry().await? {
-        entries.push((entry.path(), entry.file_type().await?.is_dir()));
+        match entry.file_type().await {
+            Ok(file_type) => entries.push((entry.path(), file_type.is_dir())),
+            // Renamed or removed since the folder was read.
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => return Err(err.into()),
+        }
     }
     Ok(entries)
 }
@@ -1130,6 +1160,33 @@ mod tests {
         Ok(())
     }
 
+    /// A move to another bucket writes its ref before the new bucket's tip,
+    /// so a tip that then cannot be cached fails nothing.
+    #[test(tokio::test)]
+    async fn a_tip_that_cannot_be_cached_after_the_ref_lands_fails_nothing() -> Res {
+        let (domain, told) = Domain::hooked()?;
+        domain.install(&lineage("x", BASE, BASE)).await?;
+        let tip = domain.paths.package_tip(&package("x"));
+        std::fs::create_dir(&tip)?;
+        std::fs::write(tip.join("in-the-way"), b"")?;
+
+        let held = domain.lock(&package("x")).await?;
+        let moved = domain
+            .store
+            .update(&domain.storage, &held, |lineage| {
+                lineage.remote_uri.as_mut().unwrap().bucket = "c".to_string();
+                lineage.latest_hash = NEXT.to_string();
+                Ok(())
+            })
+            .await;
+        assert!(moved.is_ok(), "{moved:?}");
+        let x = domain.store.read(&domain.storage, &package("x")).await?;
+        assert_eq!(x.remote_uri.unwrap().bucket, "c");
+        assert_eq!(x.latest_hash, BASE, "the tip is unknown");
+        assert_eq!(told.lock().unwrap().len(), 2, "the install and the move");
+        Ok(())
+    }
+
     #[test(tokio::test)]
     async fn a_package_already_recorded_is_not_created_again() -> Res {
         let domain = Domain::new()?;
@@ -1161,8 +1218,8 @@ mod tests {
         /// Not a test on its own: the child half of the tests below. It
         /// updates `x` as `QUILT_RS_TEST_REF_STORE_UPDATE` says: `pull` moves
         /// its base to the tip it had cached, `pull-behind` does too but finds
-        /// the tip moved on to `NEXT`, and `move` points it at another bucket
-        /// whose tip is `NEXT`.
+        /// the tip moved on to `NEXT`, `move` points it at another bucket
+        /// whose tip is `NEXT`, and `create` records it afresh at `NEXT`.
         #[test]
         #[ignore = "run only as the child of killed_before_the_ref_lands"]
         fn child_updates() -> Res {
@@ -1174,7 +1231,13 @@ mod tests {
                 let paths = DomainPaths::new(PathBuf::from(root));
                 let storage = LocalStorage::new();
                 let held = PackageLock::take(&storage, &paths, &package("x")).await?;
-                RefStore::new(paths)
+                let store = RefStore::new(paths);
+                if update == "create" {
+                    let home = store.home(&storage).await?;
+                    let x = lineage("x", NEXT, NEXT);
+                    return store.create(&storage, &held, &x, &home).await;
+                }
+                store
                     .update(&storage, &held, |lineage| {
                         let remote = lineage.remote_uri.as_mut().unwrap();
                         match update.as_str() {
@@ -1201,6 +1264,10 @@ mod tests {
         async fn killed_at(update: &str, name: &str) -> Res<PackageLineage> {
             let domain = Domain::new()?;
             domain.install(&lineage("x", BASE, TIP)).await?;
+            if update == "create" {
+                // A removal killed after the unlink leaves the tip behind.
+                std::fs::remove_file(domain.paths.package_ref(&package("x")))?;
+            }
             let signals = tempfile::TempDir::new()?;
             let mut child = std::process::Command::new(std::env::current_exe()?)
                 .args([
@@ -1247,6 +1314,17 @@ mod tests {
             assert_eq!(
                 (lineage.base_hash.as_str(), lineage.latest_hash.as_str()),
                 (BASE, TIP)
+            );
+            Ok(())
+        }
+
+        /// A tip an earlier install left is gone before the new ref lands.
+        #[test(tokio::test)]
+        async fn a_create_killed_after_its_ref_lands_reads_no_earlier_tip() -> Res {
+            let lineage = killed_at("create", "ref.after-rename").await?;
+            assert_eq!(
+                (lineage.base_hash.as_str(), lineage.latest_hash.as_str()),
+                (NEXT, NEXT)
             );
             Ok(())
         }
