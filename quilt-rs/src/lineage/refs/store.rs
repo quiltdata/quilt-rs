@@ -10,10 +10,6 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::path::PathBuf;
 
-use chrono::Utc;
-use tracing::warn;
-use uuid::Uuid;
-
 use super::RefEntry;
 use super::format::DomainConfig;
 use super::format::MigrationState;
@@ -24,6 +20,7 @@ use crate::InstallPackageError;
 use crate::Res;
 use crate::error::LineageError;
 use crate::io::storage::ByteStream;
+use crate::io::storage::LockGuard;
 use crate::io::storage::Storage;
 use crate::io::storage::StorageExt;
 use crate::lineage::Home;
@@ -31,7 +28,9 @@ use crate::lineage::LineageHook;
 use crate::lineage::PackageLineage;
 use crate::package_lock::PackageLock;
 use crate::paths::DomainPaths;
+use chrono::Utc;
 use quilt_uri::Namespace;
+use tracing::warn;
 
 /// The refs, tip caches and domain config of one domain.
 pub(crate) struct RefStore {
@@ -147,10 +146,7 @@ impl RefStore {
         placed: &Home,
     ) -> Res {
         let namespace = held.namespace();
-        let _domain = storage
-            .lock_exclusive(self.paths.domain_file_lock())
-            .await?;
-        let config = self.writable_config(storage).await?;
+        let (_domain, config) = self.lock_domain(storage).await?;
         if config.home != *placed {
             return Err(LineageError::HomeChanged {
                 placed: placed.as_ref().clone(),
@@ -175,20 +171,16 @@ impl RefStore {
     /// Removes the locked package's ref, which need not parse, then its tip.
     pub(crate) async fn remove(&self, storage: &(impl Storage + Sync), held: &PackageLock) -> Res {
         let namespace = held.namespace();
-        let _domain = storage
-            .lock_exclusive(self.paths.domain_file_lock())
-            .await?;
-        self.writable_config(storage).await?;
-        let was = self.read(storage, namespace).await.ok();
+        let _domain = self.lock_domain(storage).await?;
+        let was = match self.hook {
+            Some(_) => self.read(storage, namespace).await.ok(),
+            None => None,
+        };
         let path = self.paths.package_ref(namespace);
-        match storage.remove_file(&path).await {
-            Ok(()) => {}
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-                return Err(Error::InstallPackage(InstallPackageError::NotInstalled(
-                    namespace.clone(),
-                )));
-            }
-            Err(err) => return Err(err.into()),
+        if !remove_if_present(storage, &path).await? {
+            return Err(Error::InstallPackage(InstallPackageError::NotInstalled(
+                namespace.clone(),
+            )));
         }
         crate::failpoint::hit("ref.remove.after-unlink");
         storage.sync_dir(folder_of(&path)).await;
@@ -234,7 +226,7 @@ impl RefStore {
             .filter(|(path, is_dir)| {
                 !is_dir
                     && path.file_name().is_some_and(|name| {
-                        RefEntry::classify(name) == RefEntry::RefTemp("domain".to_string())
+                        matches!(RefEntry::classify(name), RefEntry::RefTemp(name) if name == "domain")
                     })
             })
             .map(|(path, _)| path)
@@ -273,31 +265,28 @@ impl RefStore {
     /// rollback meets a ref or the home changing under it. Each writer reads
     /// it again under the lock its write is made under.
     async fn writable_config(&self, storage: &(impl Storage + Sync)) -> Res<DomainConfig> {
-        let state = match self.read_config(storage).await? {
-            Some(
-                config @ DomainConfig {
-                    migration: Some(MigrationState::Done),
-                    ..
-                },
-            ) => return Ok(config),
-            Some(DomainConfig {
-                migration: Some(MigrationState::InProgress),
-                ..
-            }) => "is in progress",
-            Some(DomainConfig {
-                migration: Some(MigrationState::RollingBack { .. }),
-                ..
-            }) => "is being rolled back",
-            Some(DomainConfig {
-                migration: None, ..
-            })
-            | None => "has not started",
+        let migration = match self.read_config(storage).await? {
+            Some(config) if config.migration == Some(MigrationState::Done) => return Ok(config),
+            config => config.and_then(|config| config.migration),
+        };
+        let state = match migration {
+            Some(MigrationState::InProgress) => "is in progress",
+            Some(MigrationState::RollingBack { .. }) => "is being rolled back",
+            None | Some(MigrationState::Done) => "has not started",
         };
         Err(LineageError::RefsNotWritable {
             path: self.paths.domain_config(),
             state,
         }
         .into())
+    }
+
+    /// Takes the domain file lock, then reads the config under it.
+    async fn lock_domain(&self, storage: &(impl Storage + Sync)) -> Res<(LockGuard, DomainConfig)> {
+        let held = storage
+            .lock_exclusive(self.paths.domain_file_lock())
+            .await?;
+        Ok((held, self.writable_config(storage).await?))
     }
 
     async fn read_ref(
@@ -371,9 +360,10 @@ impl RefStore {
         tip: Option<TipCache>,
         lineage: &PackageLineage,
     ) -> Res<Option<TipCache>> {
-        let implied = new_ref.clone().into_lineage(None).latest_hash;
         let wanted = match &lineage.remote_uri {
-            Some(remote) if lineage.latest_hash != implied => Some(&remote.bucket),
+            Some(remote) if lineage.latest_hash != new_ref.untipped_latest() => {
+                Some(&remote.bucket)
+            }
             _ => None,
         };
         match (wanted, tip) {
@@ -410,9 +400,7 @@ impl RefStore {
     /// package is next written.
     async fn remove_tip(&self, storage: &impl Storage, namespace: &Namespace) {
         let path = self.paths.package_tip(namespace);
-        if let Err(err) = storage.remove_file(&path).await
-            && err.kind() != std::io::ErrorKind::NotFound
-        {
+        if let Err(err) = remove_if_present(storage, &path).await {
             warn!("❌ Could not remove {}: {}", path.display(), err);
         }
     }
@@ -442,10 +430,7 @@ impl RefStore {
         home: &Home,
         overwrite: bool,
     ) -> Res {
-        let _domain = storage
-            .lock_exclusive(self.paths.domain_file_lock())
-            .await?;
-        let mut config = self.writable_config(storage).await?;
+        let (_domain, mut config) = self.lock_domain(storage).await?;
         if config.home == *home {
             return storage.create_dir_all(home.as_ref()).await;
         }
@@ -506,19 +491,27 @@ async fn read_if_exists(storage: &(impl Storage + Sync), path: &Path) -> Res<Opt
     }
 }
 
-/// Writes `bytes` over `path` through a temp named after it,
-/// `<file name>.tmp-<uuid>`, so a sweep can tell whose leftover it is.
+/// Writes `bytes` over `path` through a temp named after it, so a sweep can
+/// tell whose leftover it is.
 async fn put(
     storage: &impl Storage,
     path: &Path,
     bytes: Vec<u8>,
     tag: Option<&'static str>,
 ) -> Res {
-    let mut temp_name = path.file_name().unwrap_or_default().to_os_string();
-    temp_name.push(format!(".tmp-{}", Uuid::new_v4()));
+    let temp_name = RefEntry::temp_name(path.file_name().unwrap_or_default());
     storage
         .write_byte_stream_via(path, PathBuf::from(temp_name), ByteStream::from(bytes), tag)
         .await
+}
+
+/// `false` when there was no such file.
+async fn remove_if_present(storage: &impl Storage, path: &Path) -> std::io::Result<bool> {
+    match storage.remove_file(path).await {
+        Ok(()) => Ok(true),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(err) => Err(err),
+    }
 }
 
 fn folder_of(path: &Path) -> &Path {
@@ -541,10 +534,7 @@ async fn entries(storage: &(impl Storage + Sync), dir: &Path) -> Res<Vec<(PathBu
 
 async fn remove_leftovers(storage: &impl Storage, paths: &[PathBuf]) -> Res {
     for path in paths {
-        match storage.remove_file(path).await {
-            Err(err) if err.kind() != std::io::ErrorKind::NotFound => return Err(err.into()),
-            _ => {}
-        }
+        remove_if_present(storage, path).await?;
     }
     Ok(())
 }
@@ -556,6 +546,7 @@ mod tests {
     use std::time::Duration;
 
     use test_log::test;
+    use uuid::Uuid;
 
     use super::*;
     use crate::io::storage::LocalStorage;
@@ -896,7 +887,7 @@ mod tests {
     async fn a_folder_sync_that_fails_is_logged_and_the_write_stands() -> Res {
         use std::os::unix::fs::PermissionsExt;
 
-        use crate::io::storage::local::tests::Logged;
+        use crate::io::storage::Logged;
 
         let set_mode = |path: &Path, mode| {
             std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
