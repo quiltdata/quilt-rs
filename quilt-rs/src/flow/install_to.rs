@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::path::Path;
@@ -39,11 +40,11 @@ pub struct InstallToReport {
 ///
 /// There is no package home, no `InstalledPackage` and no lineage: nothing is
 /// recorded about the folder, and nothing outside it is written. That includes
-/// the manifest's metadata, rows' and folders' alike: only the files are placed. Each file is
-/// fetched and checked against its row's hash first, by the same check
-/// [`install_paths`](super::install_paths) makes before a file enters the object
-/// store. A file that fails the check is left out and reported, as
-/// `install_paths` does.
+/// the manifest's metadata, rows' and folders' alike: only the files are
+/// placed. Each file is fetched and checked against its row's hash first, by
+/// the same check [`install_paths`](super::install_paths) makes before a file
+/// enters the object store. A file that fails the check is left out and
+/// reported, as `install_paths` does.
 ///
 /// `only` picks rows by logical key; `None` installs every row. These are
 /// refused before the first fetch:
@@ -54,22 +55,28 @@ pub struct InstallToReport {
 /// - two keys that name one local file;
 /// - a folder between `dest` and a target that is a symbolic link, which would
 ///   put the file outside `dest`;
-/// - a file or symbolic link already at a target, or a file where a target's folder would go
-///   (in the destination itself or any folder between it and the target).
+/// - a file or symbolic link already at a target, or a file where a target's
+///   folder would go (in the destination itself or any folder between it and
+///   the target).
+///
+/// Symbolic links between `dest` and a target are refused on purpose, though
+/// quilt3 follows them: a link could put a file outside `dest`.
 ///
 /// **Fetching is all-or-nothing; placing is not.** The fetched files are staged
 /// in a hidden folder inside `dest`, removed when the call returns, so a failed
 /// fetch places nothing. A call that is dropped before it returns, such as a
 /// cancelled task, cannot clean up and leaves that `.quilt-install-*` folder
-/// behind; it is safe to delete. Once every fetch has succeeded the staged files are renamed
-/// into place one at a time. Just before the first rename every target is
-/// checked to be absent again, as [`install_paths`](super::install_paths) does,
-/// so a file that appeared during the fetch is not overwritten. A rename that
-/// fails partway (a full disk, a permission change) leaves the files already
-/// placed where they are: they are not rolled back. Each target is
-/// checked once more right before its own rename, which also stops a key that
-/// names a file placed earlier in the call (two keys can name one file on a
-/// case-insensitive disk). A file created at a target in the instant between
+/// behind; it is safe to delete. Once every fetch has succeeded the staged
+/// files are renamed into place one at a time. Just before the first rename
+/// every target is checked to be absent again, as
+/// [`install_paths`](super::install_paths) does, so a file that appeared during
+/// the fetch is not overwritten, and no folder between `dest` and a target may
+/// have become a symbolic link meanwhile. A rename that fails partway (a full
+/// disk, a permission change) leaves the files already placed where they are:
+/// they are not rolled back. Each target is checked once more right before its
+/// own rename, which also stops a key that names a file placed earlier in the
+/// call (two keys can name one file on a case-insensitive disk). A file
+/// created at a target, or a folder swapped for a link, in the instant between
 /// that check and its rename is not caught, since a rename replaces what it
 /// finds.
 ///
@@ -213,6 +220,47 @@ async fn blocks_a_folder(storage: &(impl Storage + Sync), path: &Path) -> bool {
         && (storage.is_file(path).await || storage.read_dir(path).await.is_err())
 }
 
+/// The folders between `dest` and the targets of `keys`, each once, with the
+/// first key it holds. `dest` itself is included; it may be a link or a
+/// folder that does not exist yet, which the checks below allow.
+fn folders_above<'a>(
+    dest: &Path,
+    keys: impl Iterator<Item = &'a LogicalKey>,
+) -> BTreeMap<PathBuf, &'a LogicalKey> {
+    let mut folders = BTreeMap::new();
+    for key in keys {
+        for ancestor in key
+            .join_to(dest)
+            .ancestors()
+            .skip(1)
+            .take_while(|ancestor| ancestor.starts_with(dest))
+        {
+            folders.entry(ancestor.to_path_buf()).or_insert(key);
+        }
+    }
+    folders
+}
+
+/// Refuses a key whose folder between `dest` and its target is a symbolic
+/// link, which would put the file outside `dest`. `dest` itself may be a link:
+/// that is the caller's choice.
+async fn refuse_linked_ancestors<'a>(
+    storage: &(impl Storage + Sync),
+    dest: &Path,
+    keys: impl Iterator<Item = &'a LogicalKey>,
+) -> Res {
+    // Shallowest first, so the link named is the one nearest `dest`.
+    for (ancestor, key) in folders_above(dest, keys) {
+        if ancestor != dest && storage.is_symlink(&ancestor).await {
+            return Err(Error::PackageOp(PackageOpError::Package(format!(
+                "{key} cannot be installed: {} is a symbolic link, which would put it outside the destination",
+                ancestor.strip_prefix(dest).unwrap_or(&ancestor).display()
+            ))));
+        }
+    }
+    Ok(())
+}
+
 /// Refuses a target that already holds a file, and a target whose folder, or
 /// any folder above it inside `dest`, is held by a file.
 async fn refuse_blocked_targets(
@@ -220,35 +268,22 @@ async fn refuse_blocked_targets(
     rows: &[ManifestRow],
     dest: &Path,
 ) -> Res {
+    refuse_linked_ancestors(storage, dest, rows.iter().map(|row| &row.logical_key)).await?;
+    // Each folder is looked at once, however many targets are in it.
     let mut blocked = Vec::new();
-    for row in rows {
-        let target = row.logical_key.join_to(dest);
-        for ancestor in target
-            .ancestors()
-            .skip(1)
-            .take_while(|ancestor| ancestor.starts_with(dest))
-        {
-            if ancestor != dest && storage.is_symlink(ancestor).await {
-                return Err(Error::PackageOp(PackageOpError::Package(format!(
-                    "{} cannot be installed: {} is a symbolic link, which would put it outside the destination",
-                    row.logical_key,
-                    ancestor.strip_prefix(dest).unwrap_or(ancestor).display()
-                ))));
-            }
-            if blocks_a_folder(storage, ancestor).await {
-                let shown = ancestor.strip_prefix(dest).unwrap_or(ancestor);
-                let shown = if shown.as_os_str().is_empty() {
-                    dest
-                } else {
-                    shown
-                };
-                blocked.push(shown.to_path_buf());
-            }
+    for ancestor in folders_above(dest, rows.iter().map(|row| &row.logical_key)).into_keys() {
+        if blocks_a_folder(storage, &ancestor).await {
+            let shown = ancestor.strip_prefix(dest).unwrap_or(&ancestor);
+            let shown = if shown.as_os_str().is_empty() {
+                dest
+            } else {
+                shown
+            };
+            blocked.push(shown.to_path_buf());
         }
     }
     if !blocked.is_empty() {
         blocked.sort();
-        blocked.dedup();
         return Err(Error::InstallPath(InstallPathError::LocalFileExists(
             blocked,
         )));
@@ -287,8 +322,14 @@ async fn fetch_and_place(
             Some(Mismatch::WrongHash) => report.hash_mismatch.push(row.logical_key.to_path_buf()),
         }
     }
-    // A file may have appeared during the fetches: check again, as
-    // `install_paths` does, before the first rename.
+    // A file may have appeared, or a folder become a link, during the fetches:
+    // check again, as `install_paths` does, before the first rename.
+    refuse_linked_ancestors(
+        storage,
+        dest,
+        staged.iter().map(|(_, _, row)| &row.logical_key),
+    )
+    .await?;
     refuse_linked_targets(
         storage,
         staged
@@ -828,5 +869,174 @@ mod tests {
         assert_eq!(read(&storage, &dest.join("a.txt")).await?, "mine");
         assert!(!storage.exists(dest.join("b.txt")).await);
         Ok(())
+    }
+
+    /// A folder that becomes a link while the fetches run is not followed: the
+    /// check just before the first rename refuses, and nothing is written
+    /// through the link.
+    #[cfg(unix)]
+    #[test(tokio::test)]
+    async fn a_folder_swapped_for_a_link_during_the_fetch_is_not_followed() -> Res {
+        let remote = MockRemote::default();
+        let storage = MockStorage::default();
+        put(&remote, "s3://b/p/sub/a.txt?versionId=v1", b"alpha").await?;
+        let manifest = manifest(vec![row(
+            "sub/a.txt",
+            b"alpha",
+            "s3://b/p/sub/a.txt?versionId=v1",
+        )]);
+        let dest = std::path::absolute("/dest")?;
+        let outside = std::path::absolute("/outside")?;
+        storage.create_dir_all(&outside).await?;
+        let gate = remote.park("s3://b/p/sub/a.txt?versionId=v1");
+
+        let install = install_to(&storage, &remote, None, &manifest, &dest, None);
+        let meddle = async {
+            gate.arrived().await;
+            let root = storage.temp_dir.path();
+            std::os::unix::fs::symlink(root.join("outside"), root.join("dest/sub"))?;
+            gate.release();
+            Ok::<(), Error>(())
+        };
+        let (installed, meddled) = tokio::join!(install, meddle);
+        meddled?;
+
+        let message = installed.expect_err("a link is refused").to_string();
+        assert!(message.contains("symbolic link"), "{message}");
+        assert!(!storage.exists(outside.join("a.txt")).await);
+        Ok(())
+    }
+
+    /// Each target is checked again right before its own rename. Placing the
+    /// first file makes the second target appear, as a case-insensitive disk
+    /// does for two keys that differ only in case; the second is refused, not
+    /// replaced, and the first stays where it was placed.
+    #[test(tokio::test)]
+    async fn a_target_made_by_an_earlier_rename_is_not_overwritten() -> Res {
+        let remote = MockRemote::default();
+        let mock = MockStorage::default();
+        put(&remote, "s3://b/p/a.txt?versionId=v1", b"alpha").await?;
+        put(&remote, "s3://b/p/b.txt?versionId=v1", b"beta").await?;
+        let manifest = manifest(vec![
+            row("a.txt", b"alpha", "s3://b/p/a.txt?versionId=v1"),
+            row("b.txt", b"beta", "s3://b/p/b.txt?versionId=v1"),
+        ]);
+        let dest = std::path::absolute("/dest")?;
+        let storage = PlantAfterRename {
+            inner: &mock,
+            after: dest.join("a.txt"),
+            plant: dest.join("b.txt"),
+        };
+
+        let installed = install_to(&storage, &remote, None, &manifest, &dest, None).await;
+
+        assert!(
+            matches!(
+                &installed,
+                Err(Error::InstallPath(InstallPathError::LocalFileExists(paths)))
+                    if paths == &vec![PathBuf::from("b.txt")]
+            ),
+            "{installed:?}"
+        );
+        assert_eq!(read(&mock, &dest.join("b.txt")).await?, "planted");
+        assert_eq!(read(&mock, &dest.join("a.txt")).await?, "alpha");
+        Ok(())
+    }
+
+    /// [`MockStorage`] that writes a file at `plant` once a file is renamed
+    /// onto `after`: a rename whose effect shows up at another path, which an
+    /// in-process test cannot otherwise stage between two renames.
+    struct PlantAfterRename<'a> {
+        inner: &'a MockStorage,
+        after: PathBuf,
+        plant: PathBuf,
+    }
+
+    impl Storage for PlantAfterRename<'_> {
+        async fn copy(
+            &self,
+            from: impl AsRef<Path> + Send,
+            to: impl AsRef<Path> + Send,
+        ) -> Res<u64> {
+            self.inner.copy(from, to).await
+        }
+        async fn create_dir_all(&self, path: impl AsRef<Path> + Send) -> Res {
+            self.inner.create_dir_all(path).await
+        }
+        async fn remove_dir(&self, path: impl AsRef<Path> + Send) -> Res {
+            self.inner.remove_dir(path).await
+        }
+        async fn is_symlink(&self, path: impl AsRef<Path> + Send) -> bool {
+            self.inner.is_symlink(path).await
+        }
+        async fn create_file(&self, path: impl AsRef<Path>) -> Res<tokio::fs::File> {
+            self.inner.create_file(path).await
+        }
+        async fn exists(&self, path: impl AsRef<Path>) -> bool {
+            self.inner.exists(path).await
+        }
+        async fn is_file(&self, path: impl AsRef<Path>) -> bool {
+            self.inner.is_file(path).await
+        }
+        async fn modified_timestamp(
+            &self,
+            path: impl AsRef<Path>,
+        ) -> Res<chrono::DateTime<chrono::Utc>> {
+            self.inner.modified_timestamp(path).await
+        }
+        async fn open_file(&self, path: impl AsRef<Path> + Send) -> Res<tokio::fs::File> {
+            self.inner.open_file(path).await
+        }
+        async fn read_byte_stream(&self, path: impl AsRef<Path> + Send + Sync) -> Res<ByteStream> {
+            self.inner.read_byte_stream(path).await
+        }
+        async fn read_dir(&self, path: impl AsRef<Path> + Send + Sync) -> Res<tokio::fs::ReadDir> {
+            self.inner.read_dir(path).await
+        }
+        async fn remove_dir_all(&self, path: impl AsRef<Path> + Send) -> Res {
+            self.inner.remove_dir_all(path).await
+        }
+        async fn remove_file(&self, path: impl AsRef<Path> + Send) -> Result<(), std::io::Error> {
+            self.inner.remove_file(path).await
+        }
+        async fn rename(&self, from: impl AsRef<Path> + Send, to: impl AsRef<Path> + Send) -> Res {
+            let onto = to.as_ref() == self.after;
+            self.inner.rename(from, to).await?;
+            if onto {
+                self.inner
+                    .write_byte_stream(&self.plant, ByteStream::from_static(b"planted"))
+                    .await?;
+            }
+            Ok(())
+        }
+        async fn write_byte_stream(
+            &self,
+            path: impl AsRef<Path> + Send + Sync,
+            body: ByteStream,
+        ) -> Res {
+            self.inner.write_byte_stream(path, body).await
+        }
+        async fn create_private_dir(&self, path: impl AsRef<Path> + Send) -> Res {
+            self.inner.create_private_dir(path).await
+        }
+        async fn write_private_byte_stream(
+            &self,
+            path: impl AsRef<Path> + Send + Sync,
+            body: ByteStream,
+        ) -> Res {
+            self.inner.write_private_byte_stream(path, body).await
+        }
+        async fn lock_exclusive(
+            &self,
+            path: impl AsRef<Path> + Send,
+        ) -> Res<crate::io::storage::LockGuard> {
+            self.inner.lock_exclusive(path).await
+        }
+        async fn try_lock_exclusive(
+            &self,
+            path: impl AsRef<Path> + Send,
+        ) -> Res<Option<crate::io::storage::LockGuard>> {
+            self.inner.try_lock_exclusive(path).await
+        }
     }
 }

@@ -519,9 +519,14 @@ mod tests {
         assert_eq!(stored.dir_meta.len(), 1);
         let placed = remote.storage.read_byte_stream(dest.join("a.txt")).await?;
         assert_eq!(placed.collect().await?.to_vec(), b"hello");
-        assert_eq!(stored.dir_meta, before.dir_meta);
-        assert!(stored.header.same_user_meta(&before.header));
-        for (row, original) in stored.rows.iter().zip(&before.rows) {
+        // Installing only reads the manifest, so the one the remote holds is
+        // still what was pushed: read it again and compare it to the copy
+        // taken before the install.
+        let after = pushed_manifest(&remote, &pushed.manifest_uri.hash).await?;
+        assert_eq!(after.dir_meta, before.dir_meta);
+        assert!(after.header.same_user_meta(&before.header));
+        assert_eq!(after.rows.len(), before.rows.len());
+        for (row, original) in after.rows.iter().zip(&before.rows) {
             assert!(row.same_meta(original));
         }
         let text = read(
