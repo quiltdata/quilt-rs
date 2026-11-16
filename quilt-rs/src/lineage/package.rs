@@ -15,20 +15,28 @@ use crate::error::PackageOpError;
 use crate::lineage::status::UpstreamState;
 use quilt_uri::ManifestUri;
 
+#[allow(
+    clippy::ref_option,
+    reason = "serde's `serialize_with` passes the field by reference"
+)]
 fn multihash_to_str<S: ser::Serializer>(
-    hash: &Multihash<256>,
+    hash: &Option<Multihash<256>>,
     serializer: S,
 ) -> Result<S::Ok, S::Error> {
-    let s = hex::encode(hash.to_bytes());
-    serializer.serialize_str(&s)
+    hash.as_ref()
+        .map(|hash| hex::encode(hash.to_bytes()))
+        .serialize(serializer)
 }
 
 fn str_to_multihash<'de, D: de::Deserializer<'de>>(
     deserializer: D,
-) -> Result<Multihash<256>, D::Error> {
-    let s = String::deserialize(deserializer)?;
-    let bytes = hex::decode(s).map_err(de::Error::custom)?;
-    Multihash::from_bytes(&bytes).map_err(de::Error::custom)
+) -> Result<Option<Multihash<256>>, D::Error> {
+    Option::<String>::deserialize(deserializer)?
+        .map(|s| {
+            let bytes = hex::decode(s).map_err(de::Error::custom)?;
+            Multihash::from_bytes(&bytes).map_err(de::Error::custom)
+        })
+        .transpose()
 }
 
 /// State of the file tracked in lineage
@@ -40,11 +48,16 @@ pub struct PathState {
     /// Last tracked hash.
     /// We don't track files modifications in real time.
     /// We calculate hash when we commit or install file.
+    ///
+    /// `None` when the entry has no hash, absent or `null`; written back without
+    /// one, since `Multihash::default()` would store a hash of no file.
     #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
         serialize_with = "multihash_to_str",
         deserialize_with = "str_to_multihash"
     )]
-    pub hash: Multihash<256>,
+    pub hash: Option<Multihash<256>>,
 }
 
 /// A map of paths to their state
