@@ -71,6 +71,20 @@ The workspace splits along an I/O boundary:
 - **Native consumers**: `quilt-cli`, `quilt-sync/src-tauri`.
 - **WASM consumer**: `quilt-sync/ui` depends on the leaf crates only.
 
+### Consumers hold no package logic
+
+`quilt-cli` and QuiltSync are presentation layers. They call quilt-rs's
+`flow` operations and show the result; QuiltSync adds the watcher, the tray
+and the commands that bridge its UI to those operations. Package logic —
+reading, merging, comparing or rebuilding manifests, hashing, deciding what
+to publish — belongs in quilt-rs, as one operation that every consumer can
+call, so the CLI gets it too.
+
+A consumer that needs a new package behavior asks quilt-rs for that whole
+operation instead of composing it from quilt-rs's parts. Keep such parts
+(row merges, a manifest's internal fields) `pub(crate)` when only quilt-rs
+needs them, so the public API offers operations, not pieces.
+
 ### Why separate crates, not feature flags
 
 The serious alternative is one crate with target-gated deps and

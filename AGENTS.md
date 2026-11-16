@@ -4,6 +4,13 @@
 This file adds what costs an agent more than a person, who rebuilds far less
 often in one session.
 
+## Put package logic in quilt-rs
+
+`quilt-cli` and QuiltSync only present what quilt-rs's `flow` operations do.
+Never merge, compare or rebuild manifests in them: add the whole operation to
+quilt-rs, where the CLI can call it too. See
+[Consumers hold no package logic](docs/architecture.md#consumers-hold-no-package-logic).
+
 ## Don't multiply `target/`
 
 Cargo keeps a separate copy of a dependency in `target/` for each way it is
