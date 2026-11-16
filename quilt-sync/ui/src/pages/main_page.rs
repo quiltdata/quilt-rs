@@ -3846,8 +3846,10 @@ mod tests {
 
         let text = el.text_content().unwrap();
         assert!(
-            text.contains("Packages"),
-            "expected a Packages card, got: {text}"
+            el.query_selector("input[aria-label='Search packages']")
+                .unwrap()
+                .is_some(),
+            "expected the packages list's toolbar, got: {text}"
         );
         assert!(
             text.contains(FETCH_ERROR_WORDS),
