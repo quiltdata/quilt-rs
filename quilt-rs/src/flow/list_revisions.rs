@@ -54,16 +54,13 @@ pub(crate) fn holds_user_meta(meta: &serde_json::Value) -> bool {
     }
 }
 
-/// The `user_meta` of `header` as written, when it says anything: the value
-/// and the integers beyond 64 bits that still apply to it.
-pub(crate) fn written_user_meta(
-    header: &ManifestHeader,
-) -> Option<(&serde_json::Value, crate::manifest::RawNumbers)> {
+/// The `user_meta` of `header` as written, when it says anything.
+pub(crate) fn written_user_meta(header: &ManifestHeader) -> Option<String> {
     header
         .user_meta
         .as_ref()
         .filter(|meta| holds_user_meta(meta))
-        .map(|meta| (meta, header.user_meta_numbers.applying_to(meta)))
+        .and(header.user_meta_text())
 }
 
 impl Revision {

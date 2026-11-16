@@ -50,18 +50,20 @@ pub struct ManifestHeader {
 }
 
 impl ManifestHeader {
-    /// Whether two headers have the same `user_meta` as written: the same
-    /// value and the same integers beyond 64 bits, ignoring kept numbers the
-    /// value has since left behind.
+    /// Whether two headers write the same `user_meta`: the text the top hash
+    /// reads, so integers beyond 64 bits count by their digits, `-0.0` is not
+    /// `0.0`, and a kept number the value has left behind counts for nothing.
     #[must_use]
     pub fn same_user_meta(&self, other: &Self) -> bool {
-        let numbers = |header: &Self| {
-            header
-                .user_meta
-                .as_ref()
-                .map(|meta| header.user_meta_numbers.applying_to(meta))
-        };
-        self.user_meta == other.user_meta && numbers(self) == numbers(other)
+        self.user_meta_text() == other.user_meta_text()
+    }
+
+    pub(crate) fn user_meta_text(&self) -> Option<String> {
+        self.user_meta.as_ref().map(|meta| {
+            let mut text = String::new();
+            write_json(&mut text, meta, &self.user_meta_numbers, Style::Hash);
+            text
+        })
     }
 }
 
@@ -870,11 +872,11 @@ mod tests {
         Ok(())
     }
 
-    /// The same value with other integers beyond 64 bits writes other text, so
-    /// it is a different `user_meta`; a number the value has left behind
-    /// writes nothing, so it is not.
+    /// The same value with other integers beyond 64 bits, or a `-0.0` for a
+    /// `0.0`, writes other text, so it is a different `user_meta`; a number the
+    /// value has left behind writes nothing, so it is not.
     #[test]
-    fn same_user_meta_compares_the_numbers_that_apply() -> Res {
+    fn same_user_meta_compares_what_is_written() -> Res {
         let header = |meta: serde_json::Value, numbers: RawNumbers| ManifestHeader {
             user_meta: Some(meta),
             user_meta_numbers: numbers,
@@ -890,6 +892,14 @@ mod tests {
         let three = serde_json::json!({"n": 3});
         assert!(
             header(three.clone(), a_numbers).same_user_meta(&header(three, RawNumbers::default()))
+        );
+
+        let (zero, _) = RawNumbers::parse(r#"{"z": 0.0}"#)?;
+        let (negative, _) = RawNumbers::parse(r#"{"z": -0.0}"#)?;
+        assert_eq!(zero, negative, "serde_json cannot tell them apart");
+        assert!(
+            !header(zero, RawNumbers::default())
+                .same_user_meta(&header(negative, RawNumbers::default()))
         );
         Ok(())
     }
