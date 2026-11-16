@@ -157,6 +157,7 @@ mod tests {
 
     use test_log::test;
 
+    use crate::flow::UserMeta;
     use crate::flow::create;
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::DomainLineage;
@@ -180,6 +181,7 @@ mod tests {
             namespace.clone(),
             None,
             Some("initial import".to_string()),
+            UserMeta::Clear,
         )
         .await?;
 

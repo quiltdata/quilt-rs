@@ -11,7 +11,7 @@ use tracing::error;
 use crate::Res;
 use crate::io::storage::Storage;
 use crate::lineage::Home;
-use crate::lineage::WorkingCopy;
+use crate::lineage::WorkingCopyLocation;
 use quilt_uri::Host;
 use quilt_uri::ManifestUri;
 use quilt_uri::Namespace;
@@ -271,13 +271,18 @@ impl DomainPaths {
     }
 
     /// What directories are essential when we initiate `InstalledPackage`
-    fn required_for_installing(&self, home: &Home, namespace: &Namespace) -> Vec<PathBuf> {
+    fn required_for_installing(
+        &self,
+        home: &Home,
+        namespace: &Namespace,
+        with_package_home: bool,
+    ) -> Vec<PathBuf> {
         let mut paths = vec![];
         paths.extend(self.required());
-        paths.extend(vec![
-            package_home(home, namespace),
-            self.installed_manifests_dir(namespace),
-        ]);
+        if with_package_home {
+            paths.push(package_home(home, namespace));
+        }
+        paths.push(self.installed_manifests_dir(namespace));
         paths
     }
 
@@ -287,7 +292,23 @@ impl DomainPaths {
         home: &Home,
         namespace: &Namespace,
     ) -> Res {
-        scaffold_paths(storage, self.required_for_installing(home, namespace)).await
+        scaffold_paths(storage, self.required_for_installing(home, namespace, true)).await
+    }
+
+    /// [`Self::scaffold_for_installing`] without the package's working folder,
+    /// for a package whose folder went missing: creating it empty would make
+    /// every tracked file look deleted.
+    pub async fn scaffold_for_installing_without_package_home(
+        &self,
+        storage: &impl Storage,
+        home: &Home,
+        namespace: &Namespace,
+    ) -> Res {
+        scaffold_paths(
+            storage,
+            self.required_for_installing(home, namespace, false),
+        )
+        .await
     }
 
     /// [`Self::scaffold_for_installing`], leaving out the working copy's
@@ -297,14 +318,13 @@ impl DomainPaths {
         storage: &impl Storage,
         home: &Home,
         namespace: &Namespace,
-        working_copy: &WorkingCopy,
+        working_copy: &WorkingCopyLocation,
     ) -> Res {
         if working_copy.is_home() {
             return self.scaffold_for_installing(storage, home, namespace).await;
         }
-        let mut paths = self.required();
-        paths.push(self.installed_manifests_dir(namespace));
-        scaffold_paths(storage, paths).await
+        self.scaffold_for_installing_without_package_home(storage, home, namespace)
+            .await
     }
 
     /// What directories are essential when we work with cached manifests

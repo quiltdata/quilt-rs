@@ -85,6 +85,8 @@ pub fn merge_onto(
 /// `theirs` with the folders' metadata that `ours` changed from `base`, as
 /// [`merge_onto`] does for `user_meta`: a folder both sides changed to
 /// different metadata refuses, with the folder's key (and a trailing `/`).
+/// Metadata is compared by [`DirMeta::same_meta`], so two whole numbers that
+/// are one float are a change, and the merged folders keep their number text.
 /// Metadata that says nothing counts as none. Sorted by key. `rows` are the
 /// merged rows, which no folder's name may be the file of, or sit under one.
 ///
@@ -100,11 +102,16 @@ pub fn merge_dir_meta(
     theirs: &[DirMeta],
     rows: &[ManifestRow],
 ) -> Result<Vec<DirMeta>, MergeDirMetaError> {
-    let meta_of = |dirs: &'_ [DirMeta]| -> BTreeMap<LogicalKey, serde_json::Value> {
+    let meta_of = |dirs: &'_ [DirMeta]| -> BTreeMap<LogicalKey, DirMeta> {
         dirs.iter()
             .filter(|dir| dir.holds_meta())
-            .map(|dir| (dir.logical_key.clone(), dir.meta.clone()))
+            .map(|dir| (dir.logical_key.clone(), dir.clone()))
             .collect()
+    };
+    let same = |a: Option<&DirMeta>, b: Option<&DirMeta>| match (a, b) {
+        (None, None) => true,
+        (Some(a), Some(b)) => a.same_meta(b),
+        _ => false,
     };
     let (base, ours) = (meta_of(base), meta_of(ours));
     let mut merged = meta_of(theirs);
@@ -113,25 +120,22 @@ pub fn merge_dir_meta(
     for key in keys {
         let (was, now) = (base.get(key), ours.get(key));
         let current = merged.get(key);
-        if was == now || current == now {
+        if same(was, now) || same(current, now) {
             continue;
         }
-        if current != was {
+        if !same(current, was) {
             collisions.push(dir_path(key));
             continue;
         }
         match now {
-            Some(meta) => merged.insert(key.clone(), meta.clone()),
+            Some(dir) => merged.insert(key.clone(), dir.clone()),
             None => merged.remove(key),
         };
     }
     if !collisions.is_empty() {
         return Err(MergeDirMetaError::Paths(collisions));
     }
-    let merged: Vec<DirMeta> = merged
-        .into_iter()
-        .map(|(logical_key, meta)| DirMeta { logical_key, meta })
-        .collect();
+    let merged: Vec<DirMeta> = merged.into_values().collect();
     match check_tree(rows, &merged) {
         Ok(()) => Ok(merged),
         Err(Error::Manifest(ManifestError::FileAndFolder(key))) => Err(MergeDirMetaError::Paths(
@@ -597,10 +601,14 @@ mod tests {
     }
 
     fn dir(key: &str, meta: serde_json::Value) -> Res<DirMeta> {
-        Ok(DirMeta {
-            logical_key: LogicalKey::new(key)?,
-            meta,
-        })
+        Ok(DirMeta::new(LogicalKey::new(key)?, meta))
+    }
+
+    fn dir_text(key: &str, text: &str) -> Res<DirMeta> {
+        let (meta, meta_numbers) = crate::manifest::RawNumbers::parse(text)?;
+        let mut dir = DirMeta::new(LogicalKey::new(key)?, meta);
+        dir.meta_numbers = meta_numbers;
+        Ok(dir)
     }
 
     fn dirs(dirs: Vec<DirMeta>) -> Manifest {
@@ -703,6 +711,73 @@ mod tests {
             merge_onto(&Manifest::default(), &ours, theirs),
             Err(paths(&["a", "a/sub/"]))
         );
+        Ok(())
+    }
+
+    /// Two folder values that are one float, but differ past 64 bits, are a
+    /// change: comparing `meta` as a `Value` would treat ours as unchanged
+    /// and keep theirs.
+    #[test]
+    fn folder_values_that_differ_only_beyond_f64_precision_are_a_change() -> Res {
+        let base = dirs(vec![dir_text("data", r#"{"n": 18446744073709551616}"#)?]);
+        let ours = dirs(vec![dir_text("data", r#"{"n": 18446744073709551617}"#)?]);
+        let theirs = dirs(vec![dir_text("data", r#"{"n": 18446744073709551616}"#)?]);
+
+        assert_eq!(ours.dir_meta[0].meta, base.dir_meta[0].meta, "one float");
+        assert!(!ours.dir_meta[0].same_meta(&base.dir_meta[0]));
+        let merged = merge_onto(&base, &ours, theirs).expect("ours is a change");
+        assert_eq!(merged.dir_meta, ours.dir_meta);
+        Ok(())
+    }
+
+    /// A one-sided change of a big integer keeps that side's number text.
+    #[test]
+    fn a_one_sided_folder_number_change_merges_and_keeps_the_text() -> Res {
+        let base = dirs(vec![dir_text("data", r#"{"n": 18446744073709551616}"#)?]);
+        let ours = dirs(vec![dir_text("data", r#"{"n": 18446744073709551617}"#)?]);
+        let theirs = dirs(vec![dir_text("data", r#"{"n": 18446744073709551616}"#)?]);
+
+        let merged = merge_onto(&base, &ours, theirs).expect("merged");
+
+        assert_eq!(merged.dir_meta, ours.dir_meta);
+        assert!(!merged.dir_meta[0].meta_numbers.is_empty());
+        Ok(())
+    }
+
+    /// The only difference is a beyond-64-bit integer nested below the top
+    /// level. Comparing `meta` as a `Value` would miss it.
+    #[test]
+    fn a_nested_beyond_64_bit_integer_is_a_folder_change() -> Res {
+        let base = dirs(vec![dir_text(
+            "data",
+            r#"{"nested": {"n": 18446744073709551616}}"#,
+        )?]);
+        let ours = dirs(vec![dir_text(
+            "data",
+            r#"{"nested": {"n": 18446744073709551617}}"#,
+        )?]);
+        let theirs = dirs(vec![dir_text(
+            "data",
+            r#"{"nested": {"n": 18446744073709551616}}"#,
+        )?]);
+
+        assert_eq!(ours.dir_meta[0].meta, base.dir_meta[0].meta, "one float");
+        assert!(!ours.dir_meta[0].same_meta(&base.dir_meta[0]));
+        let merged = merge_onto(&base, &ours, theirs).expect("ours is a change");
+        assert_eq!(merged.dir_meta, ours.dir_meta);
+        assert!(!merged.dir_meta[0].meta_numbers.is_empty());
+        Ok(())
+    }
+
+    /// Two sides that each change the folder's number still collide.
+    #[test]
+    fn two_sided_folder_number_changes_still_collide() -> Res {
+        let base = dirs(vec![dir_text("data", r#"{"n": 18446744073709551616}"#)?]);
+        let ours = dirs(vec![dir_text("data", r#"{"n": 18446744073709551617}"#)?]);
+        let theirs = dirs(vec![dir_text("data", r#"{"n": 18446744073709551618}"#)?]);
+
+        assert_eq!(ours.dir_meta[0].meta, theirs.dir_meta[0].meta, "one float");
+        assert_eq!(merge_onto(&base, &ours, theirs), Err(paths(&["data/"])));
         Ok(())
     }
 }

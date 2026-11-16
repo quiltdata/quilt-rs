@@ -50,6 +50,21 @@ pub struct ManifestHeader {
 }
 
 impl ManifestHeader {
+    /// Replace `user_meta` and its kept number text together, so a previous
+    /// value's numbers are not left behind. Object keys are sorted at the top
+    /// level, as `UserMeta::Set` does.
+    pub fn set_meta(&mut self, value: serde_json::Value, numbers: RawNumbers) {
+        let value = match value {
+            serde_json::Value::Object(mut keys) => {
+                keys.sort_keys();
+                keys.into()
+            }
+            other => other,
+        };
+        self.user_meta = Some(value);
+        self.user_meta_numbers = numbers;
+    }
+
     /// Whether two headers write the same `user_meta`: the text the top hash
     /// reads, so integers beyond 64 bits count by their digits, `-0.0` is not
     /// `0.0`, and a kept number the value has left behind counts for nothing.
@@ -180,7 +195,7 @@ enum Line {
     Dir(DirMeta),
 }
 
-fn folder_line(logical_key: &Path, meta: Option<serde_json::Value>) -> Res<Line> {
+fn folder_line(logical_key: &Path, meta: Option<serde_json::Value>, line: &str) -> Res<Line> {
     let Some(folder) = logical_key
         .to_str()
         .and_then(|key| key.strip_suffix('/'))
@@ -188,9 +203,12 @@ fn folder_line(logical_key: &Path, meta: Option<serde_json::Value>) -> Res<Line>
     else {
         return Err(ManifestError::Header("Physical key is missing".to_string()).into());
     };
-    Ok(Line::Dir(DirMeta {
-        logical_key: LogicalKey::new(folder)?,
-        meta: meta.unwrap_or(serde_json::Value::Null),
+    let mut meta = meta.unwrap_or(serde_json::Value::Null);
+    let meta_numbers = RawNumbers::read(&mut meta, line, "meta");
+    Ok(Line::Dir({
+        let mut dir = DirMeta::new(LogicalKey::new(folder)?, meta);
+        dir.meta_numbers = meta_numbers;
+        dir
     }))
 }
 
@@ -215,7 +233,7 @@ impl Line {
                 }
                 Ok(Self::File(Box::new(row)))
             }
-            Ok(file) => folder_line(&file.logical_key, file.meta),
+            Ok(file) => folder_line(&file.logical_key, file.meta, line),
             Err(file_err) => {
                 let folder: Quilt3FolderLine = match serde_json::from_str(line) {
                     Ok(folder) => folder,
@@ -228,7 +246,7 @@ impl Line {
                 {
                     return Err(file_err.into());
                 }
-                folder_line(&folder.logical_key, folder.meta)
+                folder_line(&folder.logical_key, folder.meta, line)
             }
         }
     }
@@ -310,15 +328,53 @@ impl TryFrom<Quilt3ManifestRow> for ManifestRow {
 ///
 /// Like quilt3, a manifest keeps it where it is read, writes only metadata that
 /// says something (not `null`, `{}`, `0`, `""` or `false`), and leaves it out of
-/// the top hash.
+/// the top hash. Whole numbers beyond 64 bits are kept as the text they were
+/// read with, and `-0` is `0`, the same as row `meta` and header `user_meta`.
+///
+/// The struct is `#[non_exhaustive]`; construct one with [`DirMeta::new`],
+/// then set [`Self::meta_numbers`] when the folder was read from a line.
 #[derive(Clone, Debug, Deserialize, Eq, Serialize, PartialEq)]
+#[non_exhaustive]
 pub struct DirMeta {
     /// The folder, without the trailing `/` its manifest row has.
     pub logical_key: LogicalKey,
     pub meta: serde_json::Value,
+    /// The integers in `meta` beyond 64 bits, as read; see [`RawNumbers`].
+    /// Not serialized, so serde output such as the CLI's JSON has them as
+    /// floats; compared by `PartialEq`.
+    #[serde(skip)]
+    pub meta_numbers: RawNumbers,
 }
 
 impl DirMeta {
+    /// A folder's metadata built by hand, with no kept number text. This is
+    /// the public constructor: the struct is `#[non_exhaustive]`. A manifest
+    /// that is read fills [`Self::meta_numbers`] from the line; set that field
+    /// after `new` when a test or caller already has the numbers.
+    #[must_use]
+    pub fn new(logical_key: LogicalKey, meta: serde_json::Value) -> Self {
+        Self {
+            logical_key,
+            meta,
+            meta_numbers: RawNumbers::default(),
+        }
+    }
+
+    /// Whether two folders write the same `meta`: the text
+    /// [`ManifestRow::same_meta`] uses, so integers beyond 64 bits count by
+    /// their digits and a kept number the value has left behind counts for
+    /// nothing.
+    #[must_use]
+    pub fn same_meta(&self, other: &Self) -> bool {
+        self.meta_text() == other.meta_text()
+    }
+
+    fn meta_text(&self) -> String {
+        let mut text = String::new();
+        write_json(&mut text, &self.meta, &self.meta_numbers, Style::Hash);
+        text
+    }
+
     /// Whether the metadata says anything, as Python's `bool` sees it: quilt3
     /// writes a folder row only when it does.
     #[must_use]
@@ -332,13 +388,6 @@ impl DirMeta {
             serde_json::Value::Object(fields) => !fields.is_empty(),
         }
     }
-}
-
-/// The row quilt3 writes for a folder's metadata: its key, as a folder, and `meta`.
-#[derive(Serialize)]
-struct Quilt3DirRow<'a> {
-    logical_key: String,
-    meta: &'a serde_json::Value,
 }
 
 /// A package is a tree: no key twice, and no key that is also a folder. A
@@ -382,7 +431,8 @@ pub(crate) fn check_tree(rows: &[ManifestRow], dir_meta: &[DirMeta]) -> Res {
 }
 
 /// One row as a manifest line, in quilt3's form, field for field as
-/// [`Quilt3ManifestRow`] writes it, with the metadata as quilt3 writes it.
+/// [`Quilt3ManifestRow`] writes it, with the metadata as quilt3 writes it
+/// (compact separators).
 fn write_row(buf: &mut String, row: &ManifestRow) -> Res {
     buf.push_str("{\"logical_key\":");
     buf.push_str(&serde_json::to_string(&row.logical_key)?);
@@ -395,6 +445,17 @@ fn write_row(buf: &mut String, row: &ManifestRow) -> Res {
     buf.push_str(",\"meta\":");
     let meta = row.meta.clone().unwrap_or_else(|| serde_json::json!({}));
     write_json(buf, &meta, &row.meta_numbers, Style::Manifest);
+    buf.push('}');
+    Ok(())
+}
+
+/// One folder-metadata row as a manifest line, with the metadata as quilt3 writes it
+/// (compact separators).
+fn write_dir_row(buf: &mut String, dir: &DirMeta) -> Res {
+    buf.push_str("{\"logical_key\":");
+    buf.push_str(&serde_json::to_string(&format!("{}/", dir.logical_key))?);
+    buf.push_str(",\"meta\":");
+    write_json(buf, &dir.meta, &dir.meta_numbers, Style::Manifest);
     buf.push('}');
     Ok(())
 }
@@ -512,11 +573,7 @@ impl Manifest {
         );
         buf.push('\n');
         for dir in dirs {
-            let row = Quilt3DirRow {
-                logical_key: format!("{}/", dir.logical_key),
-                meta: &dir.meta,
-            };
-            buf.push_str(serde_json::to_string(&row)?.as_str());
+            write_dir_row(&mut buf, dir)?;
             buf.push('\n');
         }
 

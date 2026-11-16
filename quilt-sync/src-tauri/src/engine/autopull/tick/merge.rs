@@ -200,11 +200,10 @@ async fn read<M: QuiltModel>(
 
 /// Whether the merge left `theirs` as it was, so there is nothing to publish.
 /// The merge always carries the copy's message, so the message is no sign of
-/// new work. `user_meta` and each row's `meta` count as the top hash reads
-/// them: integers beyond 64 bits by their digits, and `-0.0` apart from `0.0`.
-/// Folder metadata is not hashed, so it is compared by value: the merged side is
-/// sorted and holds only metadata that says something, and `theirs` is brought
-/// to that form first.
+/// new work. `user_meta`, each row's `meta` and each folder's `meta` count as
+/// they are written: integers beyond 64 bits by their digits, and `-0.0` apart
+/// from `0.0`. The merged side is sorted and holds only folder metadata that
+/// says something, and `theirs` is brought to that form first.
 fn is_unchanged(merged: &Manifest, theirs: &Manifest) -> bool {
     let mut rows = theirs.rows.clone();
     rows.sort_by(|a, b| a.logical_key.cmp(&b.logical_key));
@@ -222,7 +221,14 @@ fn is_unchanged(merged: &Manifest, theirs: &Manifest) -> bool {
                 && merged.physical_key == theirs.physical_key
                 && merged.same_meta(theirs)
         })
-        && merged.dir_meta == dir_meta
+        && merged.dir_meta.len() == dir_meta.len()
+        && merged
+            .dir_meta
+            .iter()
+            .zip(&dir_meta)
+            .all(|(merged, theirs)| {
+                merged.logical_key == theirs.logical_key && merged.same_meta(theirs)
+            })
 }
 
 /// The package the merge runs over, under its held lock.
@@ -361,6 +367,27 @@ mod tests {
         let merged = with_user_meta(r#"{"n": 18446744073709551617}"#);
         let theirs = with_user_meta(r#"{"n": 18446744073709551616}"#);
 
+        assert!(!is_unchanged(&merged, &theirs));
+        assert!(is_unchanged(&theirs, &theirs.clone()));
+    }
+
+    fn with_dir_meta(text: &str) -> Manifest {
+        let (meta, meta_numbers) = quilt::manifest::RawNumbers::parse(text).expect("json");
+        let mut dir =
+            quilt::manifest::DirMeta::new(quilt::LogicalKey::new("data").expect("key"), meta);
+        dir.meta_numbers = meta_numbers;
+        let mut manifest = Manifest::default();
+        manifest.dir_meta.push(dir);
+        manifest
+    }
+
+    /// `-0.0` and `0.0` are equal as values, but they write differently.
+    #[test]
+    fn a_signed_zero_changed_in_folder_metadata_is_not_unchanged() {
+        let merged = with_dir_meta(r#"{"z": -0.0}"#);
+        let theirs = with_dir_meta(r#"{"z": 0.0}"#);
+
+        assert_eq!(merged.dir_meta[0].meta, theirs.dir_meta[0].meta);
         assert!(!is_unchanged(&merged, &theirs));
         assert!(is_unchanged(&theirs, &theirs.clone()));
     }

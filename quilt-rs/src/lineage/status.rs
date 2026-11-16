@@ -1,10 +1,13 @@
 use std::collections::BTreeMap;
 use std::fmt;
+use std::path::Path;
 use std::path::PathBuf;
 
 use serde::Serialize;
 
-use crate::lineage::WorkingCopy;
+use crate::Error;
+use crate::PackageOpError;
+use crate::Res;
 use crate::manifest::ManifestRow;
 use crate::quiltignore;
 
@@ -51,6 +54,20 @@ impl fmt::Display for UpstreamState {
     }
 }
 
+/// Whether a status could read the package's working folder.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum WorkingCopy {
+    #[default]
+    Available,
+    /// The folder is missing or cannot be read, though the package tracks
+    /// files in it. Nothing can be said about those files, so a status in
+    /// this state lists no changes.
+    Unavailable(PathBuf),
+    /// The package is tracked with no working copy, so no folder was read
+    /// and the status lists no changes.
+    Absent,
+}
+
 /// Status of the package and working directory of the package
 #[derive(Clone, Debug, Default)]
 pub struct InstalledPackageStatus {
@@ -77,11 +94,35 @@ pub struct InstalledPackageStatus {
     /// Empty when none is known. Carried with the verdict so a caller never
     /// pairs it with another read's tip.
     pub latest_hash: String,
-    /// Anything but [`WorkingCopy::Home`] was not walked, and has no changes.
+    /// [`WorkingCopy::Unavailable`] when the working folder could not be read,
+    /// and [`WorkingCopy::Absent`] when the package has none. Either way
+    /// [`Self::changes`] is empty because nothing was checked, not because
+    /// nothing changed.
     pub working_copy: WorkingCopy,
 }
 
 impl InstalledPackageStatus {
+    /// The working folder when it could not be read.
+    #[must_use]
+    pub fn unavailable_home(&self) -> Option<&Path> {
+        match &self.working_copy {
+            WorkingCopy::Available | WorkingCopy::Absent => None,
+            WorkingCopy::Unavailable(home) => Some(home),
+        }
+    }
+
+    /// Refuses with [`PackageOpError::WorkingCopyUnavailable`] when the
+    /// working folder could not be read, for an operation that acts on what
+    /// the folder holds.
+    pub fn require_working_copy(&self) -> Res {
+        match self.unavailable_home() {
+            None => Ok(()),
+            Some(home) => Err(Error::PackageOp(PackageOpError::WorkingCopyUnavailable(
+                home.to_path_buf(),
+            ))),
+        }
+    }
+
     #[must_use]
     pub fn new(upstream_state: UpstreamState, changes: ChangeSet) -> Self {
         Self {
@@ -92,7 +133,7 @@ impl InstalledPackageStatus {
             junky_changes: Vec::new(),
             latest_refreshed: false,
             latest_hash: String::new(),
-            working_copy: WorkingCopy::Home,
+            working_copy: WorkingCopy::Available,
         }
     }
 

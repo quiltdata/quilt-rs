@@ -79,7 +79,10 @@ async fn a_tracked_package_is_listed_with_no_folder() -> Res {
     let listed = t.domain.list_installed_packages().await?;
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].namespace, t.package.namespace);
-    assert_eq!(t.package.lineage().await?.working_copy, WorkingCopy::None);
+    assert_eq!(
+        t.package.lineage().await?.working_copy,
+        WorkingCopyLocation::None
+    );
     assert!(!t.folder().exists());
     Ok(())
 }
@@ -99,7 +102,7 @@ async fn status_of_a_tracked_package_reads_no_folder() -> Res {
     let t = Tracked::new().await?;
 
     let status = t.package.status(Some(HostConfig::default())).await?;
-    assert_eq!(status.working_copy, WorkingCopy::None);
+    assert_eq!(status.working_copy, WorkingCopy::Absent);
     assert!(status.changes.is_empty());
     assert_eq!(status.upstream_state, UpstreamState::UpToDate);
     assert!(!t.folder().exists());
@@ -131,7 +134,7 @@ async fn opening_places_every_file_in_a_working_copy() -> Res {
     assert_eq!(read("a.txt").as_deref(), Some(&b"alpha"[..]));
     assert_eq!(read("b.txt").as_deref(), Some(&b"beta"[..]));
     let status = t.package.status(Some(HostConfig::default())).await?;
-    assert_eq!(status.working_copy, WorkingCopy::Home);
+    assert_eq!(status.working_copy, WorkingCopy::Available);
     assert!(status.changes.is_empty(), "{:?}", status.changes);
     // Now an ordinary working copy, which an older build reads as one.
     assert!(t.data_json()?.packages.contains_key(&t.package.namespace));
@@ -165,7 +168,10 @@ async fn an_open_into_a_folder_holding_files_is_refused() -> Res {
         matches!(opened, Err(Error::Lineage(LineageError::FolderNotEmpty(_)))),
         "{opened:?}"
     );
-    assert_eq!(t.package.lineage().await?.working_copy, WorkingCopy::None);
+    assert_eq!(
+        t.package.lineage().await?.working_copy,
+        WorkingCopyLocation::None
+    );
     assert!(t.folder().join("mine.txt").exists());
     Ok(())
 }
@@ -180,7 +186,10 @@ async fn an_open_into_a_folder_holding_only_os_metadata_proceeds() -> Res {
     let opened = t.package.open_working_copy(None).await;
 
     assert!(opened.is_ok(), "{opened:?}");
-    assert_eq!(t.package.lineage().await?.working_copy, WorkingCopy::Home);
+    assert_eq!(
+        t.package.lineage().await?.working_copy,
+        WorkingCopyLocation::Home
+    );
     Ok(())
 }
 
@@ -225,7 +234,10 @@ async fn an_open_that_fails_leaves_no_folder_and_no_working_copy() -> Res {
         .await;
 
     assert!(opened.is_err());
-    assert_eq!(t.package.lineage().await?.working_copy, WorkingCopy::None);
+    assert_eq!(
+        t.package.lineage().await?.working_copy,
+        WorkingCopyLocation::None
+    );
     assert!(!t.folder().exists());
     Ok(())
 }

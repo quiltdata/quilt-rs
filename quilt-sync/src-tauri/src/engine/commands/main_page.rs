@@ -2125,7 +2125,7 @@ mod tests {
             .expect_get_installed_package_lineage()
             .returning(|pkg| {
                 Ok(quilt::lineage::PackageLineage {
-                    working_copy: quilt::lineage::WorkingCopy::None,
+                    working_copy: quilt::lineage::WorkingCopyLocation::None,
                     ..quilt::lineage::PackageLineage::from_remote(
                         make_manifest_uri(&pkg.namespace.to_string()),
                         "abcdef".to_string(),

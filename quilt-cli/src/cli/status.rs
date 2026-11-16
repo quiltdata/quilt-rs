@@ -2,6 +2,7 @@ use quilt_rs::io::remote::HostConfig;
 use quilt_rs::lineage::Change;
 use quilt_rs::lineage::InstalledPackageStatus;
 use quilt_rs::lineage::UpstreamState;
+use quilt_rs::lineage::WorkingCopy;
 use quilt_rs::quiltignore::IgnoredBy;
 use quilt_rs::quiltignore::RuleSource;
 use quilt_uri::Namespace;
@@ -139,8 +140,13 @@ impl std::fmt::Display for Output {
 
         output.push(discrete_state.to_string());
 
-        if !self.status.working_copy.is_home() {
+        if self.status.working_copy == WorkingCopy::Absent {
             output.push(NO_WORKING_COPY.to_string());
+        } else if let Some(home) = self.status.unavailable_home() {
+            output.push(format!(
+                "Working copy unavailable: {} is missing or cannot be read, so no file changes are listed",
+                home.display()
+            ));
         } else if self.status.changes.is_empty() {
             output.push("No changes".to_string());
         } else {
@@ -213,8 +219,11 @@ impl Render for Output {
                 "folders": self.status.ignored_dirs.len(),
             },
         });
-        if !self.status.working_copy.is_home() {
+        if self.status.working_copy == WorkingCopy::Absent {
             json["working_copy"] = false.into();
+        }
+        if let Some(home) = self.status.unavailable_home() {
+            json["working_copy_unavailable"] = serde_json::json!(home.display().to_string());
         }
         if self.list_ignored {
             let paths: Vec<JsonIgnored> = self
@@ -293,7 +302,7 @@ mod tests {
     fn a_package_with_no_working_copy_says_how_to_open_one() {
         let output = Output {
             status: InstalledPackageStatus {
-                working_copy: quilt_rs::lineage::WorkingCopy::None,
+                working_copy: WorkingCopy::Absent,
                 ..InstalledPackageStatus::new(
                     UpstreamState::UpToDate,
                     std::collections::BTreeMap::new(),
@@ -321,6 +330,28 @@ mod tests {
         assert_eq!(
             output.to_json().to_string(),
             r#"{"upstream_state":"up_to_date","changes":[],"ignored":{"files":0,"folders":0}}"#
+        );
+    }
+
+    #[test]
+    fn test_unavailable_working_copy_lists_no_changes() {
+        let mut status =
+            InstalledPackageStatus::new(UpstreamState::UpToDate, std::collections::BTreeMap::new());
+        status.working_copy =
+            quilt_rs::lineage::WorkingCopy::Unavailable(PathBuf::from("/home/test/pkg"));
+        let output = Output {
+            status,
+            list_ignored: false,
+        };
+
+        assert_eq!(
+            output.to_string(),
+            "Installed package is up to date\n\
+             Working copy unavailable: /home/test/pkg is missing or cannot be read, so no file changes are listed"
+        );
+        assert_eq!(
+            output.to_json().to_string(),
+            r#"{"upstream_state":"up_to_date","changes":[],"ignored":{"files":0,"folders":0},"working_copy_unavailable":"/home/test/pkg"}"#
         );
     }
 

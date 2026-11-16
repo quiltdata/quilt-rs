@@ -28,6 +28,7 @@ pub use status::Change;
 pub use status::ChangeSet;
 pub use status::InstalledPackageStatus;
 pub use status::UpstreamState;
+pub use status::WorkingCopy;
 
 mod state;
 pub use state::PackageState;
@@ -39,7 +40,7 @@ pub use package::LineagePaths;
 pub use package::PackageLineage;
 pub use package::PathState;
 pub use package::SyncScope;
-pub use package::WorkingCopy;
+pub use package::WorkingCopyLocation;
 
 mod downloads;
 pub use downloads::DownloadCounts;
@@ -108,7 +109,7 @@ impl DomainLineage {
 }
 
 /// The records `data.json` can't hold: packages whose working copy is not at
-/// the home. A build that predates [`WorkingCopy`] never opens this file, so
+/// the home. A build that predates [`WorkingCopyLocation`] never opens this file, so
 /// it lists none of them, and its rewrites of `data.json` leave them be.
 const EXT_FILE: &str = "data-ext.json";
 
@@ -1380,7 +1381,7 @@ mod tests {
         Ok(())
     }
 
-    fn with_working_copy(working_copy: WorkingCopy) -> PackageLineage {
+    fn with_working_copy(working_copy: WorkingCopyLocation) -> PackageLineage {
         PackageLineage {
             working_copy,
             ..PackageLineage::default()
@@ -1399,12 +1400,14 @@ mod tests {
             Namespace::from(("a", "none")),
         );
         let mut lineage = DomainLineage::new("/home");
-        lineage
-            .packages
-            .insert(at_home.clone(), with_working_copy(WorkingCopy::Home));
-        lineage
-            .packages
-            .insert(tracked.clone(), with_working_copy(WorkingCopy::None));
+        lineage.packages.insert(
+            at_home.clone(),
+            with_working_copy(WorkingCopyLocation::Home),
+        );
+        lineage.packages.insert(
+            tracked.clone(),
+            with_working_copy(WorkingCopyLocation::None),
+        );
         io.write(&storage, lineage).await?;
 
         let mut old = DomainLineage::from_slice(&storage.read_bytes(&path).await?)?;
@@ -1417,7 +1420,10 @@ mod tests {
 
         let read = io.read(&storage).await?;
         assert_eq!(read.packages[&at_home].latest_hash, "new");
-        assert_eq!(read.packages[&tracked].working_copy, WorkingCopy::None);
+        assert_eq!(
+            read.packages[&tracked].working_copy,
+            WorkingCopyLocation::None
+        );
         Ok(())
     }
 
@@ -1431,16 +1437,16 @@ mod tests {
         let mut lineage = DomainLineage::new("/home");
         lineage
             .packages
-            .insert(both.clone(), with_working_copy(WorkingCopy::None));
+            .insert(both.clone(), with_working_copy(WorkingCopyLocation::None));
         io.write(&storage, lineage.clone()).await?;
         lineage
             .packages
-            .insert(both.clone(), with_working_copy(WorkingCopy::Home));
+            .insert(both.clone(), with_working_copy(WorkingCopyLocation::Home));
         io.write_data_json(&storage, &lineage).await?;
 
         assert_eq!(
             io.read(&storage).await?.packages[&both].working_copy,
-            WorkingCopy::Home
+            WorkingCopyLocation::Home
         );
         io.update(&storage, |lineage| {
             lineage.home = Home::from("/elsewhere");
@@ -1461,7 +1467,7 @@ mod tests {
         let mut lineage = DomainLineage::new("/home");
         lineage.packages.insert(
             later.clone(),
-            with_working_copy(WorkingCopy::Unrecognized(recorded.clone())),
+            with_working_copy(WorkingCopyLocation::Unrecognized(recorded.clone())),
         );
         io.write(&storage, lineage).await?;
 
@@ -1487,7 +1493,7 @@ mod tests {
     fn a_record_without_a_working_copy_is_one_at_the_home() -> Res {
         let lineage: PackageLineage =
             serde_json::from_str(r#"{"commit":null,"base_hash":"","latest_hash":"","paths":{}}"#)?;
-        assert_eq!(lineage.working_copy, WorkingCopy::Home);
+        assert_eq!(lineage.working_copy, WorkingCopyLocation::Home);
         assert!(!serde_json::to_string(&lineage)?.contains("working_copy"));
         Ok(())
     }

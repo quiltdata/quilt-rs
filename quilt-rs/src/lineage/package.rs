@@ -11,6 +11,7 @@ use serde::ser;
 use crate::Error;
 use crate::Res;
 use crate::error::LineageError;
+use crate::error::PackageOpError;
 use crate::lineage::status::UpstreamState;
 use quilt_uri::ManifestUri;
 use quilt_uri::Namespace;
@@ -214,7 +215,7 @@ fn holds(outer: &str, inner: &str) -> bool {
 /// `data.json`, where a build that predates this field would read it as one
 /// whose files are all gone; see [`DomainLineageIo`](crate::lineage::DomainLineageIo).
 #[derive(Clone, Debug, PartialEq, Default)]
-pub enum WorkingCopy {
+pub enum WorkingCopyLocation {
     /// The folder `<home>/<namespace>`.
     #[default]
     Home,
@@ -225,7 +226,7 @@ pub enum WorkingCopy {
     Unrecognized(serde_json::Value),
 }
 
-impl WorkingCopy {
+impl WorkingCopyLocation {
     /// Whether the package has files a flow may read or place.
     #[must_use]
     pub fn is_home(&self) -> bool {
@@ -233,7 +234,7 @@ impl WorkingCopy {
     }
 }
 
-impl Serialize for WorkingCopy {
+impl Serialize for WorkingCopyLocation {
     fn serialize<S: ser::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match self {
             Self::Home => serializer.serialize_str("home"),
@@ -243,7 +244,7 @@ impl Serialize for WorkingCopy {
     }
 }
 
-impl<'de> Deserialize<'de> for WorkingCopy {
+impl<'de> Deserialize<'de> for WorkingCopyLocation {
     fn deserialize<D: de::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let value = serde_json::Value::deserialize(deserializer)?;
         Ok(match value.as_str() {
@@ -281,8 +282,8 @@ pub struct PackageLineage {
     pub sync_scope: SyncScope,
     /// Absent for a working copy at the home, so `data.json` keeps the shape
     /// every build reads.
-    #[serde(default, skip_serializing_if = "WorkingCopy::is_home")]
-    pub working_copy: WorkingCopy,
+    #[serde(default, skip_serializing_if = "WorkingCopyLocation::is_home")]
+    pub working_copy: WorkingCopyLocation,
 }
 
 impl From<PackageLineage> for UpstreamState {
@@ -338,6 +339,19 @@ impl PackageLineage {
             .ok_or(Error::Lineage(LineageError::NoRemote))
     }
 
+    /// Refuses with [`PackageOpError::WorkingCopyUnavailable`] when this package
+    /// tracks files and `package_home` cannot be listed, for an operation that
+    /// would otherwise create the folder holding only what it writes. A package
+    /// that tracks no files loses nothing to a recreated folder, so it passes.
+    pub fn require_package_folder(&self, package_home: &Path) -> Res {
+        if self.paths.is_empty() || std::fs::read_dir(package_home).is_ok() {
+            return Ok(());
+        }
+        Err(Error::PackageOp(PackageOpError::WorkingCopyUnavailable(
+            package_home.to_path_buf(),
+        )))
+    }
+
     /// Returns a mutable reference to the remote `ManifestUri`,
     /// or an error if this is a local-only package.
     pub fn remote_mut(&mut self) -> Res<&mut ManifestUri> {
@@ -375,9 +389,9 @@ impl PackageLineage {
     /// reads or places.
     pub fn require_working_copy(&self, namespace: &Namespace) -> Res {
         match self.working_copy {
-            WorkingCopy::Home => Ok(()),
-            WorkingCopy::None => Err(LineageError::NoWorkingCopy(namespace.clone()).into()),
-            WorkingCopy::Unrecognized(_) => {
+            WorkingCopyLocation::Home => Ok(()),
+            WorkingCopyLocation::None => Err(LineageError::NoWorkingCopy(namespace.clone()).into()),
+            WorkingCopyLocation::Unrecognized(_) => {
                 Err(LineageError::UnrecognizedWorkingCopy(namespace.clone()).into())
             }
         }

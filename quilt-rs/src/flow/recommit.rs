@@ -326,10 +326,10 @@ mod tests {
     async fn test_recommit_keeps_the_folder_metadata() -> Res {
         let (lineage, mut manifest, storage, paths, namespace) =
             create_test_package(&HostConfig::default_sha256_chunked()).await?;
-        manifest.dir_meta = vec![crate::manifest::DirMeta {
-            logical_key: crate::LogicalKey::new("data")?,
-            meta: serde_json::json!({"owner": "team"}),
-        }];
+        manifest.dir_meta = vec![crate::manifest::DirMeta::new(
+            crate::LogicalKey::new("data")?,
+            serde_json::json!({"owner": "team"}),
+        )];
 
         let lineage = recommit_for_remote(
             lineage,

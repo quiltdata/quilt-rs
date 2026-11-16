@@ -1029,10 +1029,15 @@ async fn add_to_quiltignore_command(
     pattern: &str,
 ) -> Result<(), Error> {
     let namespace = quilt_uri::Namespace::try_from(namespace)?;
-    let package_home = m.package_home(&namespace).await?;
+    // Refuses when the folder is missing, as every other open of it does.
+    m.package_home(&namespace).await?;
+    let installed = installed_package(m, &namespace).await?;
     // Take only the first line to prevent injecting multiple rules
     let pattern = pattern.lines().next().unwrap_or(pattern);
-    quilt::quiltignore::append_lines(&package_home.join(".quiltignore"), &[pattern.to_string()])?;
+    // Not `append_lines` on the folder's path: that creates the folder when it
+    // went missing after the check above, and a folder holding only the rules
+    // file reads as every tracked file removed.
+    installed.add_to_quiltignore(&[pattern.to_string()]).await?;
     Ok(())
 }
 

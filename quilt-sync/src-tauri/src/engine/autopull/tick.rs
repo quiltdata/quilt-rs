@@ -197,6 +197,14 @@ pub(crate) fn classify_sync_err(err: Error) -> Result<(), WatchError> {
         Error::Quilt(quilt::Error::PackageOp(quilt::PackageOpError::PullConflict(conflicts))) => {
             Err(WatchError::Conflict(PausedReason::pull_conflict(conflicts)))
         }
+        // The package's working folder is gone (a drive unplugged, a folder
+        // moved or deleted). Nothing is wrong with the package, and nothing
+        // the user must clear: back off and retry, so syncing resumes by itself
+        // once the folder is back. It must not fall to the default arm, which
+        // would pause the package until the user clears it by hand.
+        Error::Quilt(quilt::Error::PackageOp(quilt::PackageOpError::WorkingCopyUnavailable(_))) => {
+            Err(WatchError::Transient(err))
+        }
         // Workflow rejection (commit- or push-side): user-actionable, so
         // pause rather than retry. Bind the inner `WorkflowValidationError`
         // so the reason text is the validator's own message (which names the

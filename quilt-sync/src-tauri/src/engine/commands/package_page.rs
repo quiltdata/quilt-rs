@@ -755,7 +755,7 @@ async fn get_package_page_data_from_model(
                 state
             } else if let Some(files) = conflict_files(paused) {
                 PackageStateDto::PullConflict { files }
-            } else if !status.working_copy.is_home() {
+            } else if status.working_copy == quilt::lineage::WorkingCopy::Absent {
                 PackageStateDto::NoWorkingCopy
             } else {
                 quilt::lineage::PackageState::resolve(
@@ -1331,11 +1331,11 @@ mod tests {
     #[tokio::test]
     async fn a_package_with_no_working_copy_offers_to_open_one() -> Result<(), Error> {
         let lineage = quilt::lineage::PackageLineage {
-            working_copy: quilt::lineage::WorkingCopy::None,
+            working_copy: quilt::lineage::WorkingCopyLocation::None,
             ..quilt::lineage::PackageLineage::from_remote(make_manifest_uri(NS), "abcdef".into())
         };
         let status = quilt::lineage::InstalledPackageStatus {
-            working_copy: quilt::lineage::WorkingCopy::None,
+            working_copy: quilt::lineage::WorkingCopy::Absent,
             ..settled()
         };
 

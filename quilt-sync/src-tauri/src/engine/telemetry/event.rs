@@ -310,8 +310,11 @@ impl From<&crate::engine::quilt::Error> for Failure {
             // revision the user meant is no longer there to remove. The same
             // goes for a link whose short hash names no revision, or no single
             // one.
+            // A working folder that is gone is the same: the files the user meant
+            // are not there to read, and restoring the folder is theirs to do.
             E::RevisionNotRemovable { .. }
-            | E::HashPrefix(HashPrefixError::NoMatch(_) | HashPrefixError::Ambiguous { .. }) => {
+            | E::HashPrefix(HashPrefixError::NoMatch(_) | HashPrefixError::Ambiguous { .. })
+            | E::PackageOp(PackageOpError::WorkingCopyUnavailable(_)) => {
                 Self::Refusal(RefusalKind::Missing)
             }
 
@@ -657,6 +660,17 @@ mod tests {
 
             assert_eq!(refusal(&err), Some(RefusalKind::Missing));
         }
+    }
+
+    /// A package whose working folder is gone is not a fault of ours: the user
+    /// restores the folder or uninstalls the package.
+    #[test]
+    fn a_missing_working_folder_is_a_refusal() {
+        let err = Error::Quilt(quilt::Error::PackageOp(
+            quilt::PackageOpError::WorkingCopyUnavailable("/gone/demo".into()),
+        ));
+
+        assert_eq!(refusal(&err), Some(RefusalKind::Missing));
     }
 
     /// The property that makes the refusal series comparable: `action` is exactly

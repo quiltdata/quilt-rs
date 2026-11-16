@@ -28,12 +28,12 @@ use super::top_hasher::write_hash_string;
 /// neighbouring integer, or `1.8446744073709552e19` for `18446744073709551616`)
 /// keeps the old text.
 ///
-/// `ManifestRow` and `ManifestHeader` compare their `RawNumbers` in
-/// `PartialEq`, so two rows whose values are the same float but whose kept
-/// text differs are different rows. They are not serialized: a `Manifest`
-/// written through serde, such as the CLI's JSON output, has those numbers as
-/// floats. [`Manifest::to_jsonlines`](super::Manifest::to_jsonlines) is the
-/// writer that keeps them.
+/// `ManifestRow`, `ManifestHeader` and `DirMeta` compare their `RawNumbers` in
+/// `PartialEq`, so two values that are the same float but whose kept text
+/// differs are different. They are not serialized: a `Manifest` written
+/// through serde, such as the CLI's JSON output, has those numbers as floats.
+/// [`Manifest::to_jsonlines`](super::Manifest::to_jsonlines) is the writer
+/// that keeps them.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RawNumbers(BTreeMap<String, String>);
 
@@ -42,6 +42,61 @@ impl RawNumbers {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
+    }
+
+    /// Whether `pointer` is `prefix` or a value under it.
+    fn at_or_under(pointer: &str, prefix: &str) -> bool {
+        pointer == prefix || pointer.starts_with(&format!("{prefix}/"))
+    }
+
+    /// The numbers at or under `prefix`.
+    #[must_use]
+    pub fn only(&self, prefix: &str) -> Self {
+        Self(
+            self.0
+                .iter()
+                .filter(|(pointer, _)| Self::at_or_under(pointer, prefix))
+                .map(|(pointer, text)| (pointer.clone(), text.clone()))
+                .collect(),
+        )
+    }
+
+    /// The numbers not at or under `prefix`.
+    #[must_use]
+    pub fn without(&self, prefix: &str) -> Self {
+        Self(
+            self.0
+                .iter()
+                .filter(|(pointer, _)| !Self::at_or_under(pointer, prefix))
+                .map(|(pointer, text)| (pointer.clone(), text.clone()))
+                .collect(),
+        )
+    }
+
+    /// The numbers `value` still holds as the same float, so a replaced
+    /// subtree's text is dropped and a field that was kept is not.
+    #[must_use]
+    pub fn still_in(&self, value: &Value) -> Self {
+        Self(
+            self.0
+                .iter()
+                .filter(|(pointer, _)| {
+                    value
+                        .pointer(pointer)
+                        .and_then(Value::as_number)
+                        .is_some_and(|number| self.text_for(pointer, number).is_some())
+                })
+                .map(|(pointer, text)| (pointer.clone(), text.clone()))
+                .collect(),
+        )
+    }
+
+    /// All of `self`'s numbers and `other`'s; `other` wins at the same place.
+    #[must_use]
+    pub fn union(&self, other: &Self) -> Self {
+        let mut numbers = self.0.clone();
+        numbers.extend(other.0.iter().map(|(k, v)| (k.clone(), v.clone())));
+        Self(numbers)
     }
 
     /// Parse JSON text as quilt3 reads it: the value, and the integers it
@@ -624,5 +679,47 @@ mod tests {
             BTreeMap::from([("/n".to_string(), "18446744073709551616".to_string())])
         );
         assert_eq!(meta["z"], serde_json::json!(0));
+    }
+
+    #[test]
+    fn only_without_and_union_split_and_join_by_pointer() {
+        let (_, numbers) = RawNumbers::parse(
+            r#"{"n": 18446744073709551616, "agent_exec": {"m": 36893488147419103232}, "ok": 1}"#,
+        )
+        .unwrap();
+        let task = numbers.only("/agent_exec");
+        let rest = numbers.without("/agent_exec");
+        assert_eq!(
+            task.0,
+            BTreeMap::from([(
+                "/agent_exec/m".to_string(),
+                "36893488147419103232".to_string()
+            )])
+        );
+        assert_eq!(
+            rest.0,
+            BTreeMap::from([("/n".to_string(), "18446744073709551616".to_string())])
+        );
+        assert_eq!(rest.union(&task), numbers);
+        assert!(numbers.only("/missing").is_empty());
+    }
+
+    #[test]
+    fn still_in_keeps_matching_numbers_and_drops_replaced_ones() {
+        let (mut value, numbers) = RawNumbers::parse(
+            r#"{"n": 18446744073709551616, "agent_exec": {"claim": {"seq": 36893488147419103232}}}"#,
+        )
+        .unwrap();
+        assert!(!numbers.still_in(&value).only("/n").is_empty());
+        assert!(
+            !numbers
+                .still_in(&value)
+                .only("/agent_exec/claim")
+                .is_empty()
+        );
+        value["agent_exec"]["claim"] = serde_json::json!({"status": "claimed"});
+        let kept = numbers.still_in(&value);
+        assert!(!kept.only("/n").is_empty());
+        assert!(kept.only("/agent_exec/claim").is_empty());
     }
 }

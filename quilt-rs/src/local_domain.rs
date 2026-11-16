@@ -20,7 +20,7 @@ use crate::io::storage::Storage;
 use crate::lineage;
 use crate::lineage::DomainLineage;
 use crate::lineage::Home;
-use crate::lineage::WorkingCopy;
+use crate::lineage::WorkingCopyLocation;
 use crate::manifest::Manifest;
 use crate::manifest::ManifestHeader;
 use crate::package_lock;
@@ -253,20 +253,20 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
     /// Track `manifest_uri`'s package with its working copy at
     /// `<home>/<namespace>`, an empty folder until files are installed in it.
     pub async fn install_package(&self, manifest_uri: &ManifestUri) -> Res<InstalledPackage<S, R>> {
-        self.install(manifest_uri, WorkingCopy::Home).await
+        self.install(manifest_uri, WorkingCopyLocation::Home).await
     }
 
     /// Track `manifest_uri`'s package with no working copy: its manifest is
     /// installed and no folder is made. See
     /// [`InstalledPackage::open_working_copy`].
     pub async fn track_package(&self, manifest_uri: &ManifestUri) -> Res<InstalledPackage<S, R>> {
-        self.install(manifest_uri, WorkingCopy::None).await
+        self.install(manifest_uri, WorkingCopyLocation::None).await
     }
 
     async fn install(
         &self,
         manifest_uri: &ManifestUri,
-        working_copy: WorkingCopy,
+        working_copy: WorkingCopyLocation,
     ) -> Res<InstalledPackage<S, R>> {
         info!("Installing package: {}", manifest_uri.namespace);
         debug!("Installing from manifest: {}", manifest_uri.display());
@@ -303,6 +303,7 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
         namespace: Namespace,
         source: Option<PathBuf>,
         message: Option<String>,
+        user_meta: flow::UserMeta,
     ) -> Res<(InstalledPackage<S, R>, flow::LeftOut)> {
         info!("Creating package: {}", namespace);
         let _held = package_lock::lock(&self.storage, &self.paths, &namespace).await?;
@@ -316,6 +317,7 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
             namespace.clone(),
             source,
             message,
+            user_meta,
         )
         .await?;
 

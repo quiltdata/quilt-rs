@@ -10,6 +10,7 @@ use tracing::warn;
 
 use crate::Error;
 use crate::LogicalKey;
+use crate::PackageOpError;
 use crate::Res;
 use crate::checksum::calculate_hash;
 use crate::checksum::hash_file;
@@ -26,6 +27,7 @@ use crate::lineage::Change;
 use crate::lineage::ChangeSet;
 use crate::lineage::InstalledPackageStatus;
 use crate::lineage::PackageLineage;
+use crate::lineage::WorkingCopy;
 use crate::manifest::Manifest;
 use crate::manifest::ManifestRow;
 use crate::object_hash::ObjectHash;
@@ -98,10 +100,15 @@ impl Tracked {
 }
 
 /// The whole walk, one folder call at a time. Blocking.
+///
+/// With `root_required`, a package home that cannot be read is
+/// [`PackageOpError::WorkingCopyUnavailable`], not an empty walk: the files
+/// the package tracks there would read as removed.
 pub(crate) fn walk_package_home(
     package_home: &Path,
     rules: &quiltignore::Rules,
     tracked: &Tracked,
+    root_required: bool,
 ) -> Res<Walked> {
     let mut walked = Walked::default();
     let mut queue = VecDeque::new();
@@ -110,6 +117,11 @@ pub(crate) fn walk_package_home(
     while let Some(dir) = queue.pop_front() {
         let entries = match read_dir_stamps(&dir) {
             Ok(entries) => entries,
+            Err(_) if root_required && dir == package_home && std::fs::read_dir(&dir).is_err() => {
+                return Err(Error::PackageOp(PackageOpError::WorkingCopyUnavailable(
+                    dir,
+                )));
+            }
             // A folder that lists but can't be stamped holds files the walk
             // can't see; skipping it would report them removed.
             Err(err) if std::fs::read_dir(&dir).is_ok() => return Err(err.into()),
@@ -473,9 +485,27 @@ pub async fn create_status_cached(
     );
     let home = package_home.as_ref().to_path_buf();
     let walked_at = SystemTime::now();
-    let walk = tokio::task::spawn_blocking(move || walk_package_home(&home, &rules, &tracked))
-        .await
-        .map_err(std::io::Error::other)??;
+    // A package that tracks no file loses nothing to a missing folder, as with
+    // one installed and not yet downloaded.
+    let root_required = !orig_paths.is_empty();
+    let walk = tokio::task::spawn_blocking(move || {
+        walk_package_home(&home, &rules, &tracked, root_required)
+    })
+    .await
+    .map_err(std::io::Error::other)?;
+    let walk = match walk {
+        Err(Error::PackageOp(PackageOpError::WorkingCopyUnavailable(unreadable))) => {
+            trace!("❌ Working folder {} is unavailable", unreadable.display());
+            if let Some(cache) = cache {
+                cache.keep_all();
+            }
+            let mut status = InstalledPackageStatus::new(lineage.clone().into(), ChangeSet::new());
+            status.latest_hash.clone_from(&lineage.latest_hash);
+            status.working_copy = WorkingCopy::Unavailable(unreadable);
+            return Ok((lineage, status));
+        }
+        walked => walked?,
+    };
     let files = locate_files(walk.entries, manifest, orig_paths);
     // Captured before the vector is consumed; reported once, on the outcome line.
     let walked = files.len();
@@ -714,6 +744,103 @@ mod tests {
         let removed_file = status.changes.get(&logical_key).unwrap();
         assert!(matches!(removed_file, Change::Removed(_)));
         assert!(!storage.exists(&logical_key).await);
+        Ok(())
+    }
+
+    /// A folder that is gone says nothing about its files: they are neither
+    /// `Removed` nor changed, and the status lists no change at all.
+    #[test(tokio::test)]
+    async fn test_missing_working_dir_is_unavailable_not_removed() -> Res {
+        let manifest = fixtures::manifest_with_objects_all_sizes::manifest().await?;
+        let logical_key = PathBuf::from("less-then-8mb.txt");
+        let manifest_record = manifest.get_record(&logical_key).unwrap();
+        let storage = MockStorage::default();
+        let lineage = PackageLineage {
+            paths: BTreeMap::from([(
+                logical_key.clone(),
+                PathState {
+                    hash: manifest_record.hash.clone().into(),
+                    ..PathState::default()
+                },
+            )]),
+            ..PackageLineage::default()
+        };
+        let working_dir = storage.temp_dir.as_ref().join("foo/bar");
+        assert!(!working_dir.exists());
+
+        let (_, status) = create_status(
+            lineage.clone(),
+            &storage,
+            &domain_paths(&storage),
+            &manifest,
+            &working_dir,
+            HostConfig::default(),
+        )
+        .await?;
+        assert_eq!(
+            status.working_copy,
+            WorkingCopy::Unavailable(working_dir.clone())
+        );
+        assert!(status.changes.is_empty(), "{:?}", status.changes);
+
+        // Restored, the file is read again and found unchanged.
+        storage
+            .write_byte_stream(
+                working_dir.join(&logical_key),
+                ByteStream::from_static(fixtures::objects::less_than_8mb()),
+            )
+            .await?;
+        let (_, status) = create_status(
+            lineage,
+            &storage,
+            &domain_paths(&storage),
+            &manifest,
+            &working_dir,
+            HostConfig::default(),
+        )
+        .await?;
+        assert_eq!(status.working_copy, WorkingCopy::Available);
+        assert!(status.changes.is_empty(), "{:?}", status.changes);
+        Ok(())
+    }
+
+    /// A folder that goes missing after the status was started is read by the
+    /// walk, so the walk itself says it is unavailable rather than empty.
+    #[test]
+    fn test_walk_of_an_unreadable_root_is_unavailable_only_when_required() -> Res {
+        let home = tempfile::TempDir::new()?;
+        let root = home.path().join("gone");
+        let rules = quiltignore::Rules::load(&root, &home.path().join("domain"))?;
+
+        let error = walk_package_home(&root, &rules, &Tracked::default(), true)
+            .err()
+            .expect("an unreadable root is refused");
+        assert!(matches!(
+            error,
+            Error::PackageOp(PackageOpError::WorkingCopyUnavailable(named)) if named == root
+        ));
+        let walked = walk_package_home(&root, &rules, &Tracked::default(), false)?;
+        assert_eq!(walked.entries.len(), 0);
+        Ok(())
+    }
+
+    /// Nothing is tracked in the folder, as for a package installed and not
+    /// yet downloaded, so its absence loses nothing.
+    #[test(tokio::test)]
+    async fn test_missing_working_dir_of_a_package_tracking_nothing_is_available() -> Res {
+        let manifest = fixtures::manifest_with_objects_all_sizes::manifest().await?;
+        let storage = MockStorage::default();
+        let (_, status) = create_status(
+            lineage_with_remote(PackageLineage::default()),
+            &storage,
+            &domain_paths(&storage),
+            &manifest,
+            storage.temp_dir.as_ref().join("never/created"),
+            HostConfig::default(),
+        )
+        .await?;
+        assert_eq!(status.working_copy, WorkingCopy::Available);
+        assert!(status.changes.is_empty());
         Ok(())
     }
 
@@ -1858,7 +1985,7 @@ mod keys_the_walk_leaves_out {
         std::fs::write(home.path().join("..\\escape.txt"), b"x")?;
         let rules =
             quiltignore::Rules::load(home.path(), &home.path().join("no-user-quiltignore"))?;
-        let walked = walk_package_home(home.path(), &rules, &Tracked::default())?;
+        let walked = walk_package_home(home.path(), &rules, &Tracked::default(), false)?;
         let keys: Vec<_> = walked.entries.iter().map(|entry| entry.0.clone()).collect();
         assert_eq!(keys, vec![PathBuf::from("kept.txt")]);
         Ok(())

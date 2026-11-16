@@ -401,6 +401,24 @@ enum CatalogAction {
     Clear,
 }
 
+/// Parse `--meta` / `--user-meta` / `-u`. `default` is [`UserMeta::Keep`] on
+/// `commit` and [`UserMeta::Clear`] on `create`. Only a JSON object is
+/// accepted; any other JSON value is [`Error::CommitMetaInvalid`].
+fn parse_meta_flag(text: Option<&str>, default: UserMeta) -> Result<UserMeta, Error> {
+    let Some(text) = text else {
+        return Ok(default);
+    };
+    // `UserMeta::parse` always returns `Set`; Keep and Clear are not reachable.
+    let UserMeta::Set(value, numbers) = UserMeta::parse(text)? else {
+        unreachable!("UserMeta::parse always returns Set");
+    };
+    if value.is_object() {
+        Ok(UserMeta::Set(value, numbers))
+    } else {
+        Err(Error::CommitMetaInvalid(text.to_string()))
+    }
+}
+
 #[derive(Subcommand, Debug)]
 enum Commands {
     /// Browse remote manifest
@@ -430,14 +448,32 @@ enum Commands {
         /// Commit message for the initial revision
         #[arg(short, long)]
         message: Option<String>,
+        /// Package metadata as a JSON object (quilt3's `--meta`). No flag
+        /// writes no `user_meta` key. `--user-meta` is the same flag. Only an
+        /// object is accepted.
+        #[arg(
+            short = 'u',
+            long = "meta",
+            visible_alias = "user-meta",
+            value_name = "JSON"
+        )]
+        user_meta: Option<String>,
     },
     /// Commit new package revision
     Commit {
         /// Commit message
         #[arg(short, long)]
         message: String,
-        /// JSON string for user meta
-        #[arg(short, long)]
+        /// Package metadata as a JSON object (quilt3's `--meta`). No flag
+        /// keeps the previous revision's metadata. `--user-meta` is the same
+        /// flag. Only an object is accepted (`--meta null` is an error). There
+        /// is no flag for removing the `user_meta` key (`Clear`).
+        #[arg(
+            short = 'u',
+            long = "meta",
+            visible_alias = "user-meta",
+            value_name = "JSON"
+        )]
         user_meta: Option<String>,
         #[command(flatten)]
         pkg: PackageRef,
@@ -796,11 +832,13 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             namespace,
             source,
             message,
+            user_meta,
         } => {
             let args = create::Input {
                 namespace: namespace.try_into()?,
                 source,
                 message,
+                user_meta: parse_meta_flag(user_meta.as_deref(), UserMeta::Clear)?,
             };
 
             log::debug!("Creating {args:?}");
@@ -814,17 +852,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             no_workflow,
         } => {
             let namespace = pkg.resolve(&m).await?;
-            let user_meta = match &user_meta {
-                Some(object) => match serde_json::from_str(object)? {
-                    serde_json::Value::Object(object) => {
-                        UserMeta::Set(serde_json::Value::Object(object))
-                    }
-                    _ => {
-                        return Err(Error::CommitMetaInvalid(object.clone()));
-                    }
-                },
-                None => UserMeta::Keep,
-            };
+            let user_meta = parse_meta_flag(user_meta.as_deref(), UserMeta::Keep)?;
             let workflow = commit_workflow_intent(workflow.as_deref(), no_workflow)?;
             let args = commit::Input {
                 message,
@@ -1053,7 +1081,7 @@ Then run:
     )]
     NamespaceRequired,
 
-    #[error("Invalid JSON for user_meta object. Object is required")]
+    #[error("Invalid --meta: a JSON object is required, got {0}")]
     CommitMetaInvalid(String),
 
     #[error("workflow id cannot be empty; omit --workflow to use the bucket's default workflow")]
@@ -1190,6 +1218,7 @@ mod tests {
                 namespace: namespace.clone(),
                 source: None,
                 message: None,
+                user_meta: UserMeta::Clear,
             })
             .await?;
         let held = created.installed_package.lock().await?;
@@ -2452,6 +2481,76 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn meta_and_user_meta_flags_agree_on_commit_and_create() {
+        let json = r#"{"n": 1}"#;
+        let commit_flags = [
+            ["quilt", "commit", "-m", "x", "--meta", json],
+            ["quilt", "commit", "-m", "x", "-u", json],
+            ["quilt", "commit", "-m", "x", "--user-meta", json],
+        ];
+        let metas: Vec<_> = commit_flags
+            .iter()
+            .map(|argv| {
+                let args = Args::try_parse_from(*argv).expect("parses");
+                let Commands::Commit { user_meta, .. } = args.command else {
+                    panic!("expected commit: {args:?}");
+                };
+                user_meta
+            })
+            .collect();
+        assert!(metas.iter().all(|m| m.as_deref() == Some(json)));
+
+        let create_flags = [
+            ["quilt", "create", "-n", "a/b", "--meta", json],
+            ["quilt", "create", "-n", "a/b", "-u", json],
+            ["quilt", "create", "-n", "a/b", "--user-meta", json],
+        ];
+        let metas: Vec<_> = create_flags
+            .iter()
+            .map(|argv| {
+                let args = Args::try_parse_from(*argv).expect("parses");
+                let Commands::Create { user_meta, .. } = args.command else {
+                    panic!("expected create: {args:?}");
+                };
+                user_meta
+            })
+            .collect();
+        assert!(metas.iter().all(|m| m.as_deref() == Some(json)));
+    }
+
+    #[test]
+    fn parse_meta_flag_accepts_an_object_and_refuses_other_json() {
+        let object = r#"{"n": 18446744073709551616}"#;
+        let UserMeta::Set(value, numbers) =
+            parse_meta_flag(Some(object), UserMeta::Keep).expect("object")
+        else {
+            panic!("expected Set");
+        };
+        assert!(value["n"].is_number());
+        assert!(!numbers.is_empty());
+
+        assert!(matches!(
+            parse_meta_flag(None, UserMeta::Keep).unwrap(),
+            UserMeta::Keep
+        ));
+        assert!(matches!(
+            parse_meta_flag(None, UserMeta::Clear).unwrap(),
+            UserMeta::Clear
+        ));
+
+        for rejected in ["null", "[]", "1", "\"s\"", "true"] {
+            let err = parse_meta_flag(Some(rejected), UserMeta::Keep).unwrap_err();
+            assert!(
+                matches!(err, Error::CommitMetaInvalid(ref got) if got == rejected),
+                "rejected {rejected}: {err:?}"
+            );
+        }
+
+        let err = parse_meta_flag(Some("{"), UserMeta::Keep).unwrap_err();
+        assert!(matches!(err, Error::Json(_)), "bad JSON: {err:?}");
+    }
+
     /// The workflow flags are first-push-only: without `--bucket` there is no
     /// remote to set, so `--workflow` is rejected at the dispatch boundary.
     #[test(tokio::test)]
@@ -3405,6 +3504,7 @@ mod tests {
                     namespace: "test/pkg".to_string(),
                     source: Some(source.clone()),
                     message: Some("first".to_string()),
+                    user_meta: None,
                 },
             ),
             ("list", Commands::List { fetch: false }),

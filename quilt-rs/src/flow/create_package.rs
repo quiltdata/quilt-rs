@@ -8,6 +8,7 @@ use tracing::warn;
 
 use url::Url;
 
+use super::UserMeta;
 use crate::Error;
 use crate::InstallPackageError;
 use crate::Res;
@@ -130,7 +131,9 @@ async fn walk_source_dir(
 /// and creates an initial manifest with all the rows.
 ///
 /// An initial commit is created so that `status` shows a clean state
-/// (like `git init` + initial commit).
+/// (like `git init` + initial commit). `user_meta` is applied as on a later
+/// commit, except `Keep` is treated as `Clear`: there is no previous revision,
+/// so the header has no `user_meta` key unless `Set` provides one.
 ///
 /// Also returns what the ignore rules left out of `source`: those files stay
 /// there, and the new package never sees them.
@@ -141,6 +144,7 @@ pub async fn create_package(
     namespace: Namespace,
     source: Option<PathBuf>,
     message: Option<String>,
+    user_meta: UserMeta,
 ) -> Res<(DomainLineage, LeftOut)> {
     if lineage.packages.contains_key(&namespace) {
         return Err(Error::InstallPackage(
@@ -214,10 +218,16 @@ pub async fn create_package(
     }
 
     // Build initial manifest
-    let header = ManifestHeader {
+    let mut header = ManifestHeader {
         message: HeaderMessage::Text(message.unwrap_or_else(|| "Created package".to_string())),
+        user_meta: None,
+        user_meta_numbers: crate::manifest::RawNumbers::default(),
         ..ManifestHeader::default()
     };
+    match user_meta {
+        UserMeta::Keep | UserMeta::Clear => {}
+        UserMeta::Set(value, numbers) => header.set_meta(value, numbers),
+    }
 
     let stream = tokio_stream::iter(vec![Ok(rows)]);
     let dest_dir = paths.installed_manifests_dir(&namespace);
@@ -267,8 +277,16 @@ mod tests {
         let storage = MockStorage::default();
         let namespace: Namespace = ("test", "pkg").into();
 
-        let (lineage, _) =
-            create_package(lineage, &paths, &storage, namespace.clone(), None, None).await?;
+        let (lineage, _) = create_package(
+            lineage,
+            &paths,
+            &storage,
+            namespace.clone(),
+            None,
+            None,
+            UserMeta::Clear,
+        )
+        .await?;
 
         assert!(lineage.packages.contains_key(&namespace));
         let pkg = lineage.packages.get(&namespace).unwrap();
@@ -287,10 +305,27 @@ mod tests {
         let storage = MockStorage::default();
         let namespace: Namespace = ("test", "pkg").into();
 
-        let (lineage, _) =
-            create_package(lineage, &paths, &storage, namespace.clone(), None, None).await?;
+        let (lineage, _) = create_package(
+            lineage,
+            &paths,
+            &storage,
+            namespace.clone(),
+            None,
+            None,
+            UserMeta::Clear,
+        )
+        .await?;
 
-        let result = create_package(lineage, &paths, &storage, namespace.clone(), None, None).await;
+        let result = create_package(
+            lineage,
+            &paths,
+            &storage,
+            namespace.clone(),
+            None,
+            None,
+            UserMeta::Clear,
+        )
+        .await;
         assert!(matches!(
             result.unwrap_err(),
             Error::InstallPackage(InstallPackageError::AlreadyInstalled(ns)) if ns == namespace
@@ -329,6 +364,7 @@ mod tests {
             namespace.clone(),
             Some(source_dir),
             Some("Import from source".to_string()),
+            UserMeta::Clear,
         )
         .await?;
 
@@ -365,6 +401,7 @@ mod tests {
             namespace.clone(),
             Some(source_dir),
             None,
+            UserMeta::Clear,
         )
         .await?;
 
@@ -424,6 +461,7 @@ mod tests {
             namespace.clone(),
             Some(source_dir),
             None,
+            UserMeta::Clear,
         )
         .await?;
 
@@ -477,6 +515,7 @@ mod tests {
             namespace.clone(),
             Some(source_dir),
             None,
+            UserMeta::Clear,
         )
         .await?;
 
@@ -541,6 +580,7 @@ mod tests {
             namespace.clone(),
             None,
             Some("My custom message".to_string()),
+            UserMeta::Clear,
         )
         .await?;
 
@@ -549,6 +589,100 @@ mod tests {
         let manifest_path = paths.installed_manifest(&namespace, &commit.hash);
         let manifest = Manifest::from_path(&storage, &manifest_path).await?;
         assert_eq!(manifest.header.message(), Some("My custom message"));
+        assert_eq!(
+            manifest.header.user_meta, None,
+            "no --meta writes no user_meta key"
+        );
+        Ok(())
+    }
+
+    /// `create` with no `--meta` and the default message matches the top hash
+    /// quilt3 8.1.0 gives an empty package with message "Created package" and
+    /// no `user_meta` key.
+    #[test(tokio::test)]
+    async fn test_create_with_no_meta_matches_quilt3_hash() -> Res {
+        const QUILT3_CREATE_NO_META: &str =
+            "a8f353aa77baa68e9c15e50e26ab8894b319acd0a1e1289280aea98f391d3e8d";
+
+        let (lineage, _temp_dir) = DomainLineage::from_temp_dir()?;
+        let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
+        let storage = MockStorage::default();
+        let namespace: Namespace = ("test", "no-meta").into();
+
+        let (lineage, _) = create_package(
+            lineage,
+            &paths,
+            &storage,
+            namespace.clone(),
+            None,
+            None,
+            UserMeta::Clear,
+        )
+        .await?;
+
+        let pkg = lineage.packages.get(&namespace).unwrap();
+        assert_eq!(
+            pkg.commit.as_ref().unwrap().hash,
+            QUILT3_CREATE_NO_META,
+            "create with no --meta should match quilt3 8.1.0"
+        );
+        Ok(())
+    }
+
+    /// `--meta` on create sets the first revision's metadata, including the
+    /// exact number text, and `Keep` is treated as no key, like `Clear`.
+    #[test(tokio::test)]
+    async fn test_create_set_meta_keeps_exact_numbers() -> Res {
+        let (lineage, _temp_dir) = DomainLineage::from_temp_dir()?;
+        let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
+        let storage = MockStorage::default();
+        let namespace: Namespace = ("test", "meta").into();
+        let user_meta = UserMeta::parse(r#"{"n": 123456789012345678901234567890}"#)?;
+
+        let (lineage, _) = create_package(
+            lineage,
+            &paths,
+            &storage,
+            namespace.clone(),
+            None,
+            Some("with meta".to_string()),
+            user_meta,
+        )
+        .await?;
+
+        let pkg = lineage.packages.get(&namespace).unwrap();
+        let manifest = Manifest::from_path(
+            &storage,
+            &paths.installed_manifest(&namespace, &pkg.commit.as_ref().unwrap().hash),
+        )
+        .await?;
+        assert!(!manifest.header.user_meta_numbers.is_empty());
+        assert!(
+            manifest
+                .to_jsonlines()
+                .contains("123456789012345678901234567890")
+        );
+
+        let (lineage, _temp_dir) = DomainLineage::from_temp_dir()?;
+        let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
+        let namespace: Namespace = ("test", "keep").into();
+        let (lineage, _) = create_package(
+            lineage,
+            &paths,
+            &storage,
+            namespace.clone(),
+            None,
+            None,
+            UserMeta::Keep,
+        )
+        .await?;
+        let pkg = lineage.packages.get(&namespace).unwrap();
+        let manifest = Manifest::from_path(
+            &storage,
+            &paths.installed_manifest(&namespace, &pkg.commit.as_ref().unwrap().hash),
+        )
+        .await?;
+        assert_eq!(manifest.header.user_meta, None);
         Ok(())
     }
 }

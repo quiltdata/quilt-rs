@@ -306,7 +306,7 @@ mod tests {
                 Input {
                     message: pkg::MESSAGE.to_string(),
                     namespace: pkg::NAMESPACE.into(),
-                    user_meta: UserMeta::Set(serde_json::json!({
+                    user_meta: UserMeta::set(serde_json::json!({
                         "Date": "2025-12-31",
                         "Name": "Foo",
                         "Owner": "Kevin",
@@ -399,7 +399,7 @@ mod tests {
                 Input {
                     message: "Initial".to_string(),
                     namespace: pkg::NAMESPACE.into(),
-                    user_meta: UserMeta::Set(serde_json::json!({
+                    user_meta: UserMeta::set(serde_json::json!({
                         // NOTE: will be sorted
                         "C": "D",
                         "c": "d",
@@ -434,6 +434,7 @@ mod tests {
                 namespace: namespace.clone(),
                 source: None,
                 message: None,
+                user_meta: UserMeta::Clear,
             })
             .await?;
 
@@ -513,7 +514,7 @@ mod tests {
                 Input {
                     message: "New commit message".to_string(),
                     namespace: ("spec", "quilt-rs").into(),
-                    user_meta: UserMeta::Set(serde_json::json!({"key": "value"})),
+                    user_meta: UserMeta::set(serde_json::json!({"key": "value"})),
                     workflow: WorkflowIntent::NoWorkflow,
                     host_config: None,
                 },

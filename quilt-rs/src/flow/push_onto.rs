@@ -245,10 +245,10 @@ mod tests {
         let remote = remote_with_latest(PARENT).await?;
         let physical_key = "s3://b/a/c/out.md?versionId=v1";
         let mut with_dirs = manifest(physical_key)?;
-        with_dirs.dir_meta = vec![DirMeta {
-            logical_key: crate::LogicalKey::new("data")?,
-            meta: serde_json::json!({"owner": "team"}),
-        }];
+        with_dirs.dir_meta = vec![DirMeta::new(
+            crate::LogicalKey::new("data")?,
+            serde_json::json!({"owner": "team"}),
+        )];
 
         let plain = push(&remote, manifest(physical_key)?).await?;
         let pushed = push(&remote, with_dirs.clone()).await?;

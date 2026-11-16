@@ -10,7 +10,7 @@ use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::lineage::DomainLineage;
 use crate::lineage::PackageLineage;
-use crate::lineage::WorkingCopy;
+use crate::lineage::WorkingCopyLocation;
 use crate::paths::DomainPaths;
 use crate::paths::copy_cached_to_installed;
 use quilt_uri::ManifestUri;
@@ -33,7 +33,7 @@ pub async fn install_package(
         storage,
         remote,
         manifest_uri,
-        WorkingCopy::Home,
+        WorkingCopyLocation::Home,
     )
     .await
 }
@@ -45,7 +45,7 @@ pub async fn install_package_as(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
     manifest_uri: &ManifestUri,
-    working_copy: WorkingCopy,
+    working_copy: WorkingCopyLocation,
 ) -> Res<DomainLineage> {
     info!("⏳ Installing package: {}", manifest_uri.display());
 

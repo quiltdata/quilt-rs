@@ -72,6 +72,20 @@ The workspace splits along an I/O boundary:
 - **Native consumers**: `quilt-cli`, `quilt-sync/src-tauri`.
 - **WASM consumer**: `quilt-sync/ui` depends on the leaf crates only.
 
+### Consumers hold no package logic
+
+`quilt-cli` and QuiltSync are presentation layers. They call quilt-rs's
+`flow` operations and show the result; QuiltSync adds the watcher, the tray
+and the commands that bridge its UI to those operations. Package logic —
+reading, merging, comparing or rebuilding manifests, hashing, deciding what
+to publish — belongs in quilt-rs, as one operation that every consumer can
+call, so the CLI gets it too.
+
+A consumer that needs a new package behavior asks quilt-rs for that whole
+operation instead of composing it from quilt-rs's parts. Keep such parts
+(row merges, a manifest's internal fields) `pub(crate)` when only quilt-rs
+needs them, so the public API offers operations, not pieces.
+
 ### Why separate crates, not feature flags
 
 The serious alternative is one crate with target-gated deps and
@@ -127,11 +141,13 @@ hash (`top_hash`). Two properties worth knowing beyond the format itself:
 - A folder can carry metadata too, as quilt3 does: a row whose `logical_key`
   ends in `/` and which has no physical key. Unlike the other metadata it is
   **not** hashed, so changing it does not make a new revision; every flow that
-  rewrites a manifest keeps it. Revisions that differ only in folder metadata
-  therefore share a top hash, and a push of such a change overwrites the
-  stored manifest without moving `latest`. That follows quilt3 until quilt3
-  settles whether folder metadata should affect the top hash (it has a TODO
-  saying it should).
+  rewrites a manifest keeps it, including the exact text of whole numbers
+  beyond 64 bits and `-0` as `0`. Revisions that differ only in folder
+  metadata therefore share a top hash, and a push of such a change overwrites
+  the stored manifest without moving `latest`. That follows quilt3 until
+  quilt3 settles whether folder metadata should affect the top hash (it has a
+  TODO saying it should). This crate does not hash folder metadata until
+  quilt3 does.
 
 A **workflow** is a package-level configuration stored as a YAML file in
 the remote registry and referenced from the package's manifest header. It
@@ -163,6 +179,19 @@ intentional — `.quiltignore` controls which files belong in the package —
 but it means adding a pattern can delete a file from the next published
 revision, where `.gitignore` would have left it tracked.
 
+### A missing working folder
+
+When a package tracks files and its working folder is missing or cannot be read
+(deleted by hand, or on a disk that is not mounted), nothing can be said about
+those files: `status` reports the working copy as unavailable
+(`InstalledPackageStatus::working_copy`) and lists no changes, where it once
+listed every file `Removed`. `commit`, `publish`, `install_paths`, `undo_commit`,
+writing a rule to the package's own `.quiltignore`, and a `pull` that would
+apply a revision refuse with `PackageOpError::WorkingCopyUnavailable`, which
+names the folder. None of them creates the folder empty. The copy works again
+once the folder is restored, or once the package is uninstalled. Files deleted
+inside an existing folder are still `Removed`.
+
 ### Set Remote (recommit)
 
 Which checksum algorithm an upload is written with is not a client-side
@@ -180,9 +209,14 @@ never been pushed).
 
 Package-level metadata is durable across commits: the caller passes an
 explicit intent (`UserMeta`) — `Keep` inherits the previous revision's
-metadata, `Clear` drops it, `Set` replaces it — and callers with no
-opinion pass `Keep`, so a background commit can never strip metadata by
-omission.
+metadata (the value and the exact number text it kept), `Clear` drops
+it, `Set` replaces both — and callers with no opinion pass `Keep`, so a
+background commit can never strip metadata by omission. `UserMeta::parse`
+reads JSON text as quilt3's `set_meta` does. `ManifestHeader::set_meta`
+sets the value and its numbers together. The CLI's `--meta` (and its
+`-u` / `--user-meta` aliases) on `commit` and `create` is that `Set`;
+no flag on `commit` is `Keep`, and no flag on `create` writes no
+`user_meta` key.
 
 ### Undo Commit
 

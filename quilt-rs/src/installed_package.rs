@@ -35,11 +35,13 @@ use crate::lineage::LineagePaths;
 use crate::lineage::SyncScope;
 use crate::lineage::UpstreamState;
 use crate::lineage::WorkingCopy;
+use crate::lineage::WorkingCopyLocation;
 use crate::manifest::Manifest;
 use crate::manifest::Workflow;
 use crate::package_lock;
 use crate::paths;
 use crate::paths::copy_cached_to_installed;
+use crate::quiltignore;
 use crate::quiltignore::Scope;
 use crate::state_store::PackageStateStore;
 use crate::workflow::WorkflowRules;
@@ -208,17 +210,29 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         }))
     }
 
-    /// The store's folders for this package, and its working copy's folder
-    /// when it has one at the home.
+    /// Creates the folders the package's writers need, and its working folder
+    /// only for a working copy at the home that tracks no files yet: an
+    /// existing one needs no creating, and a missing one made empty would read
+    /// as every file deleted.
     pub async fn scaffold_paths(&self) -> Res {
         let domain = self.lineage.read_domain(&self.storage).await?;
-        let working_copy = domain
+        let make_folder = domain
             .packages
             .get(&self.namespace)
-            .map_or_default(|package| package.working_copy.clone());
-        self.paths
-            .scaffold_for(&self.storage, &domain.home, &self.namespace, &working_copy)
-            .await
+            .is_none_or(|package| package.working_copy.is_home() && package.paths.is_empty());
+        if make_folder {
+            self.paths
+                .scaffold_for_installing(&self.storage, &domain.home, &self.namespace)
+                .await
+        } else {
+            self.paths
+                .scaffold_for_installing_without_package_home(
+                    &self.storage,
+                    &domain.home,
+                    &self.namespace,
+                )
+                .await
+        }
     }
 
     pub async fn scaffold_paths_for_caching(&self, bucket: &str) -> Res {
@@ -470,6 +484,19 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         Box::pin(self.lock().await?.stop_ignoring(path, is_dir, scope)).await
     }
 
+    /// Adds `lines` to the package's own `.quiltignore`. Like every writer here
+    /// it holds the package's lock. It never recreates a missing package folder:
+    /// a package that tracks files refuses with
+    /// [`PackageOpError::WorkingCopyUnavailable`].
+    pub async fn add_to_quiltignore(&self, lines: &[String]) -> Res {
+        Box::pin(self.lock().await?.add_to_quiltignore(lines)).await
+    }
+
+    async fn add_to_quiltignore_unlocked(&self, lines: &[String]) -> Res {
+        let (package_home, lineage) = self.lineage.read(&self.storage).await?;
+        quiltignore::append_package_lines(&lineage, &package_home, lines)
+    }
+
     async fn stop_ignoring_unlocked(
         &self,
         path: &Path,
@@ -578,7 +605,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
             let status = InstalledPackageStatus {
                 upstream_state: lineage.clone().into(),
                 latest_hash: lineage.latest_hash.clone(),
-                working_copy: lineage.working_copy.clone(),
+                working_copy: WorkingCopy::Absent,
                 ..InstalledPackageStatus::default()
             };
             return Ok((lineage, status));
@@ -804,6 +831,9 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         self.scaffold_paths().await?;
 
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
+        // Installing into a recreated, empty folder would leave the tracked
+        // files it lost to read as removed.
+        lineage.require_package_folder(&package_home)?;
         let remote_uri = lineage.remote()?;
 
         self.scaffold_paths_for_caching(&remote_uri.bucket).await?;
@@ -844,13 +874,13 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
     ) -> Res<flow::InstallPathsReport> {
         let (home, lineage) = self.lineage.read_home_and_entry(&self.storage).await?;
         match lineage.working_copy {
-            WorkingCopy::None => {}
-            WorkingCopy::Home => {
+            WorkingCopyLocation::None => {}
+            WorkingCopyLocation::Home => {
                 return Err(Error::InstallPackage(
                     crate::InstallPackageError::AlreadyInstalled(self.namespace.clone()),
                 ));
             }
-            WorkingCopy::Unrecognized(_) => {
+            WorkingCopyLocation::Unrecognized(_) => {
                 return Err(
                     crate::LineageError::UnrecognizedWorkingCopy(self.namespace.clone()).into(),
                 );
@@ -876,7 +906,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         self.storage.create_dir_all(&folder).await?;
         self.lineage
             .edit(&self.storage, |entry| {
-                entry.working_copy = WorkingCopy::Home;
+                entry.working_copy = WorkingCopyLocation::Home;
             })
             .await?;
         let placed = if keys.is_empty() {
@@ -893,7 +923,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         match self
             .lineage
             .edit(&self.storage, |entry| {
-                entry.working_copy = WorkingCopy::None;
+                entry.working_copy = WorkingCopyLocation::None;
             })
             .await
         {
@@ -1527,6 +1557,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         if snapshot.status.upstream_state != UpstreamState::Behind {
             return Ok(nothing_to_pull());
         }
+        snapshot.status.require_working_copy()?;
         // Same reconciling pass the pull itself runs: a preview that called a
         // byte-identical edit a conflict would send the user to resolve one the
         // pull would not raise.
@@ -1637,6 +1668,9 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         self.scaffold_paths().await?;
 
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
+        // Undoing restores the files the commit holds, which is not what a
+        // folder that went missing is: say so, not that they cannot be overwritten.
+        lineage.require_package_folder(&package_home)?;
         if lineage.remote_uri.is_some() {
             return Err(Error::PackageOp(crate::PackageOpError::Undo(
                 "this package has a remote, so its commit chain has been consumed by pushing; \
@@ -2009,6 +2043,10 @@ impl<S: Storage + Clone + Sync, R: Remote> LockedPackage<S, R> {
         self.package.kept_unlocked().await
     }
 
+    pub async fn add_to_quiltignore(&self, lines: &[String]) -> Res {
+        self.package.add_to_quiltignore_unlocked(lines).await
+    }
+
     pub async fn stop_ignoring(
         &self,
         path: &Path,
@@ -2069,6 +2107,8 @@ impl<S: Storage + Clone + Sync, R: Remote> LockedPackage<S, R> {
 mod change_catalog_tests;
 #[cfg(test)]
 mod current_revision_tests;
+#[cfg(test)]
+mod missing_folder_tests;
 #[cfg(test)]
 mod move_to_tests;
 #[cfg(test)]
