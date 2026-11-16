@@ -119,7 +119,7 @@ impl RefStore {
         held: &PackageLock,
         step: impl FnOnce(&mut PackageLineage) -> Res<T>,
     ) -> Res<T> {
-        let namespace = self.locked(held)?;
+        let namespace = held.namespace();
         self.writable_config(storage).await?;
         let (stored, tip) = self.read_ref(storage, namespace).await?;
         let before = stored.clone().into_lineage(tip.as_ref());
@@ -145,7 +145,7 @@ impl RefStore {
         lineage: &PackageLineage,
         placed: &Home,
     ) -> Res {
-        let namespace = self.locked(held)?;
+        let namespace = held.namespace();
         let (_domain, config) = self.lock_domain(storage).await?;
         if config.home != *placed {
             return Err(LineageError::HomeChanged {
@@ -170,7 +170,7 @@ impl RefStore {
 
     /// Removes the locked package's ref, which need not parse, then its tip.
     pub(crate) async fn remove(&self, storage: &(impl Storage + Sync), held: &PackageLock) -> Res {
-        let namespace = self.locked(held)?;
+        let namespace = held.namespace();
         let _domain = self.lock_domain(storage).await?;
         let was = match self.hook {
             Some(_) => self.read(storage, namespace).await.ok(),
@@ -277,17 +277,6 @@ impl RefStore {
             state,
         }
         .into())
-    }
-
-    /// The package `held` locks, refused if it was locked in another domain.
-    fn locked<'a>(&self, held: &'a PackageLock) -> Res<&'a Namespace> {
-        held.namespace_in(&self.paths).ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "the package lock was taken in another domain",
-            )
-            .into()
-        })
     }
 
     /// Takes the domain file lock, then reads the config under it.
@@ -1182,26 +1171,6 @@ mod tests {
             BASE
         );
         assert!(!domain.paths.package_tip(&package("x")).exists());
-        Ok(())
-    }
-
-    #[test(tokio::test)]
-    async fn a_package_lock_from_another_domain_writes_nothing() -> Res {
-        let (here, there) = (Domain::new()?, Domain::new()?);
-        here.install(&lineage("x", BASE, BASE)).await?;
-        let held_there = there.lock(&package("x")).await?;
-
-        let updated = here
-            .store
-            .update(&here.storage, &held_there, |lineage| {
-                lineage.base_hash = NEXT.to_string();
-                Ok(())
-            })
-            .await;
-        assert!(updated.is_err(), "{updated:?}");
-        let removed = here.store.remove(&here.storage, &held_there).await;
-        assert!(removed.is_err(), "{removed:?}");
-        assert_eq!(here.base_hash(&package("x")).await?, BASE);
         Ok(())
     }
 
