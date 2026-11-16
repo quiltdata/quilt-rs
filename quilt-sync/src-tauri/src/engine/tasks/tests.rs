@@ -351,7 +351,7 @@ impl Fixture {
         model
             .expect_locked_package_publish()
             .returning(move |_, message, meta, _, _, status| {
-                let UserMeta::Set(meta) = meta else {
+                let UserMeta::Set(meta, _) = meta else {
                     panic!("a task revision sets its metadata");
                 };
                 // The mock is synchronous, so the file is read without the runtime.
@@ -1317,7 +1317,7 @@ fn finishing_model(
     model
         .expect_locked_package_publish()
         .returning(move |_, message, meta, _, _, status| {
-            let UserMeta::Set(meta) = meta else {
+            let UserMeta::Set(meta, _) = meta else {
                 panic!("a task revision sets its metadata");
             };
             events.lock().unwrap().push("publish".to_string());

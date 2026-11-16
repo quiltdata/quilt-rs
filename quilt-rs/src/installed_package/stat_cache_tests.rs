@@ -22,7 +22,12 @@ async fn a_commit_hashes_what_it_commits_whatever_the_cache_says() -> Res {
     domain.set_home(temp_dir.path()).await?;
     let namespace: Namespace = ("demo", "cached").into();
     let (package, _) = domain
-        .create_package(namespace.clone(), None, Some("empty".to_string()))
+        .create_package(
+            namespace.clone(),
+            None,
+            Some("empty".to_string()),
+            UserMeta::Clear,
+        )
         .await?;
 
     let path = package.package_home().await?.join("data.txt");

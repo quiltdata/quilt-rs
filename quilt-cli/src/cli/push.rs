@@ -484,7 +484,7 @@ mod tests {
         m.commit(commit::Input {
             message: "Unbounded Defy 2 Landmine".to_string(),
             namespace: namespace.clone(),
-            user_meta: UserMeta::Set(serde_json::json!({"Naturist": "Conjure"})),
+            user_meta: UserMeta::set(serde_json::json!({"Naturist": "Conjure"})),
             workflow: WorkflowIntent::NoWorkflow,
             host_config: None,
         })
@@ -518,7 +518,7 @@ mod tests {
         m.commit(commit::Input {
             message: "Equate 1 Fragment Grimace".to_string(),
             namespace: namespace.clone(),
-            user_meta: UserMeta::Set(serde_json::json!({"Antitoxic": "Mankind"})),
+            user_meta: UserMeta::set(serde_json::json!({"Antitoxic": "Mankind"})),
             workflow: WorkflowIntent::NoWorkflow,
             host_config: None,
         })
@@ -563,6 +563,7 @@ mod tests {
                 namespace: namespace.clone(),
                 source: None,
                 message: None,
+                user_meta: UserMeta::Clear,
             })
             .await?;
 
@@ -686,7 +687,7 @@ mod tests {
         m.commit(commit::Input {
             message: "Unbounded Defy 2 Landmine".to_string(),
             namespace: namespace.clone(),
-            user_meta: UserMeta::Set(serde_json::json!({"Naturist": "Conjure"})),
+            user_meta: UserMeta::set(serde_json::json!({"Naturist": "Conjure"})),
             workflow: WorkflowIntent::NoWorkflow,
             host_config: host_config.clone(),
         })

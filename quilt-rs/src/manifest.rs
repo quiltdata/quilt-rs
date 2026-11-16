@@ -50,6 +50,21 @@ pub struct ManifestHeader {
 }
 
 impl ManifestHeader {
+    /// Replace `user_meta` and its kept number text together, so a previous
+    /// value's numbers are not left behind. Object keys are sorted at the top
+    /// level, as `UserMeta::Set` does.
+    pub fn set_meta(&mut self, value: serde_json::Value, numbers: RawNumbers) {
+        let value = match value {
+            serde_json::Value::Object(mut keys) => {
+                keys.sort_keys();
+                keys.into()
+            }
+            other => other,
+        };
+        self.user_meta = Some(value);
+        self.user_meta_numbers = numbers;
+    }
+
     /// Whether two headers write the same `user_meta`: the text the top hash
     /// reads, so integers beyond 64 bits count by their digits, `-0.0` is not
     /// `0.0`, and a kept number the value has left behind counts for nothing.

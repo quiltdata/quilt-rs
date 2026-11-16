@@ -704,7 +704,7 @@ async fn publish<M: QuiltModel>(
         .locked_package_publish(
             locked,
             message,
-            UserMeta::Set(meta),
+            UserMeta::set(meta),
             workflow,
             None,
             Some(status),

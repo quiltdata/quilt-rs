@@ -93,7 +93,12 @@ async fn unreachable_package(
     domain.set_home(temp_dir.path()).await?;
     let namespace: Namespace = ("demo", "offline").into();
     let (package, _) = domain
-        .create_package(namespace.clone(), None, Some("empty".to_string()))
+        .create_package(
+            namespace.clone(),
+            None,
+            Some("empty".to_string()),
+            UserMeta::Clear,
+        )
         .await?;
     let home = package.package_home().await?;
     std::fs::write(home.join("kept.txt"), b"kept")?;

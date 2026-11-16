@@ -318,9 +318,19 @@ echo "a,b,c" > data.csv
 
 quilt status
 quilt commit --message "Add data.csv"
+# Or with package metadata (a JSON object): quilt commit -m "Add data.csv" --meta '{"owner":"me"}'
 
 quilt list
 ```
+
+`commit` and `create` take `--meta '<json>'` (quilt3's name; `-u` and
+`--user-meta` are the same flag). The value must be a JSON object; bad
+JSON or a non-object (`--meta null`, an array, a string) is an error.
+No flag on `commit` keeps the previous revision's metadata, including
+the exact text of integers beyond 64 bits. No flag on `create` writes
+no `user_meta` key. There is no flag for removing the key (`Clear` in
+the library), which quilt3 does not have, and `push` has no `--meta`:
+it publishes an existing commit.
 
 Add `--source <dir>` to `create` to populate the package from an existing
 directory instead of starting empty. The package stays local-only — usable

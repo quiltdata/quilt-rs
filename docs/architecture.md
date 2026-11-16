@@ -179,9 +179,14 @@ never been pushed).
 
 Package-level metadata is durable across commits: the caller passes an
 explicit intent (`UserMeta`) — `Keep` inherits the previous revision's
-metadata, `Clear` drops it, `Set` replaces it — and callers with no
-opinion pass `Keep`, so a background commit can never strip metadata by
-omission.
+metadata (the value and the exact number text it kept), `Clear` drops
+it, `Set` replaces both — and callers with no opinion pass `Keep`, so a
+background commit can never strip metadata by omission. `UserMeta::parse`
+reads JSON text as quilt3's `set_meta` does. `ManifestHeader::set_meta`
+sets the value and its numbers together. The CLI's `--meta` (and its
+`-u` / `--user-meta` aliases) on `commit` and `create` is that `Set`;
+no flag on `commit` is `Keep`, and no flag on `create` writes no
+`user_meta` key.
 
 ### Undo Commit
 

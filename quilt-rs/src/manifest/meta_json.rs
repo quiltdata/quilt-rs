@@ -44,6 +44,43 @@ impl RawNumbers {
         self.0.is_empty()
     }
 
+    /// Whether `pointer` is `prefix` or a value under it.
+    fn at_or_under(pointer: &str, prefix: &str) -> bool {
+        pointer == prefix || pointer.starts_with(&format!("{prefix}/"))
+    }
+
+    /// The numbers at or under `prefix`.
+    #[must_use]
+    pub fn only(&self, prefix: &str) -> Self {
+        Self(
+            self.0
+                .iter()
+                .filter(|(pointer, _)| Self::at_or_under(pointer, prefix))
+                .map(|(pointer, text)| (pointer.clone(), text.clone()))
+                .collect(),
+        )
+    }
+
+    /// The numbers not at or under `prefix`.
+    #[must_use]
+    pub fn without(&self, prefix: &str) -> Self {
+        Self(
+            self.0
+                .iter()
+                .filter(|(pointer, _)| !Self::at_or_under(pointer, prefix))
+                .map(|(pointer, text)| (pointer.clone(), text.clone()))
+                .collect(),
+        )
+    }
+
+    /// All of `self`'s numbers and `other`'s; `other` wins at the same place.
+    #[must_use]
+    pub fn union(&self, other: &Self) -> Self {
+        let mut numbers = self.0.clone();
+        numbers.extend(other.0.iter().map(|(k, v)| (k.clone(), v.clone())));
+        Self(numbers)
+    }
+
     /// Parse JSON text as quilt3 reads it: the value, and the integers it
     /// cannot hold.
     ///
@@ -624,5 +661,28 @@ mod tests {
             BTreeMap::from([("/n".to_string(), "18446744073709551616".to_string())])
         );
         assert_eq!(meta["z"], serde_json::json!(0));
+    }
+
+    #[test]
+    fn only_without_and_union_split_and_join_by_pointer() {
+        let (_, numbers) = RawNumbers::parse(
+            r#"{"n": 18446744073709551616, "agent_exec": {"m": 36893488147419103232}, "ok": 1}"#,
+        )
+        .unwrap();
+        let task = numbers.only("/agent_exec");
+        let rest = numbers.without("/agent_exec");
+        assert_eq!(
+            task.0,
+            BTreeMap::from([(
+                "/agent_exec/m".to_string(),
+                "36893488147419103232".to_string()
+            )])
+        );
+        assert_eq!(
+            rest.0,
+            BTreeMap::from([("/n".to_string(), "18446744073709551616".to_string())])
+        );
+        assert_eq!(rest.union(&task), numbers);
+        assert!(numbers.only("/missing").is_empty());
     }
 }

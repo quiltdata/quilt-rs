@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use quilt_rs::flow::UserMeta;
 use quilt_uri::Namespace;
 
 use crate::cli::Error;
@@ -12,6 +13,8 @@ pub struct Input {
     pub namespace: Namespace,
     pub source: Option<PathBuf>,
     pub message: Option<String>,
+    /// `Clear` (no `user_meta` key) when `--meta` is omitted; `Set` when it is given.
+    pub user_meta: UserMeta,
 }
 
 #[derive(Debug)]
@@ -57,10 +60,11 @@ pub async fn model(
         namespace,
         source,
         message,
+        user_meta,
     }: Input,
 ) -> Result<Output, Error> {
     let (installed_package, left_out) = local_domain
-        .create_package(namespace, source, message)
+        .create_package(namespace, source, message, user_meta)
         .await?;
     Ok(Output {
         installed_package,
@@ -87,6 +91,7 @@ mod tests {
                 namespace: ("test", "pkg").into(),
                 source: None,
                 message: None,
+                user_meta: UserMeta::Clear,
             })
             .await?;
 
@@ -102,6 +107,7 @@ mod tests {
             namespace: ("test", "clean").into(),
             source: None,
             message: None,
+            user_meta: UserMeta::Clear,
         })
         .await?;
 
@@ -128,6 +134,7 @@ mod tests {
             namespace: ("test", "dup").into(),
             source: None,
             message: None,
+            user_meta: UserMeta::Clear,
         })
         .await?;
 
@@ -136,6 +143,7 @@ mod tests {
                 namespace: ("test", "dup").into(),
                 source: None,
                 message: None,
+                user_meta: UserMeta::Clear,
             })
             .await;
 
@@ -157,6 +165,7 @@ mod tests {
                 namespace: ("test", "src").into(),
                 source: Some(source_dir),
                 message: Some("Import data".to_string()),
+                user_meta: UserMeta::Clear,
             })
             .await?;
 
@@ -193,6 +202,7 @@ mod tests {
                 namespace: ("test", "left").into(),
                 source: Some(source_dir),
                 message: None,
+                user_meta: UserMeta::Clear,
             })
             .await?;
 
@@ -216,6 +226,7 @@ mod tests {
                 namespace: ("test", "pkg").into(),
                 source: None,
                 message: None,
+                user_meta: UserMeta::Clear,
             })
             .await?;
 

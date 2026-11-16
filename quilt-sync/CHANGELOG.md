@@ -23,6 +23,7 @@
 
 ### Added
 
+- Publish and commit metadata parsed from JSON keeps the exact text of integers beyond 64 bits, and an autosync publish that keeps the head's `agent_exec` task also keeps that task's numbers (<https://github.com/quiltdata/quilt-rs/pull/XXXX>)
 - A `quilt+s3://` link can name a revision by a short hash (6 to 63 characters) after `@`, as in quilt3; QuiltSync looks it up in the package's bucket, and a hash that matches nothing, or several revisions, is reported as a revision that is not there (<https://github.com/quiltdata/quilt-rs/pull/1392>)
 
 ### Changed

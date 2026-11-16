@@ -68,6 +68,7 @@ pub async fn model(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quilt_rs::flow::UserMeta;
 
     use test_log::test;
 
@@ -130,6 +131,7 @@ mod tests {
             namespace: namespace.clone(),
             source: Some(source.path().to_path_buf()),
             message: None,
+            user_meta: UserMeta::Clear,
         })
         .await?;
         Ok(())
