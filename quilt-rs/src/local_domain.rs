@@ -25,6 +25,7 @@ use crate::manifest::ManifestHeader;
 use crate::package_lock;
 use crate::paths;
 use crate::state_store::PackageStateStore;
+use quilt_uri::Host;
 use quilt_uri::ManifestUri;
 use quilt_uri::Namespace;
 
@@ -208,6 +209,17 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
             .await
             .inspect(|_| debug!("Successfully browsed manifest {}", uri.hash))
             .inspect_err(|e| warn!("Failed to browse manifest {}: {}", uri.hash, e))
+    }
+
+    /// [`flow::resolve_hash`] on this domain's remote: the whole top hash of
+    /// the one revision in `bucket`'s registry that starts with `prefix`.
+    pub async fn resolve_hash(
+        &self,
+        host: Option<&Host>,
+        bucket: &str,
+        prefix: &str,
+    ) -> Res<String> {
+        flow::resolve_hash(&*self.remote, host, bucket, prefix).await
     }
 
     /// [`flow::push_onto`] on this domain's remote.

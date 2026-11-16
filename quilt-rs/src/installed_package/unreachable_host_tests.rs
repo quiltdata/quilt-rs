@@ -74,6 +74,14 @@ impl crate::io::remote::Remote for UnreachableRemote {
     ) -> impl Future<Output = Res<Vec<String>>> {
         std::future::ready(Err(no_network()))
     }
+    fn manifest_hashes_with_prefix(
+        &self,
+        _host: Option<&Host>,
+        _bucket: &str,
+        _prefix: &str,
+    ) -> impl Future<Output = Res<Vec<String>>> {
+        std::future::ready(Err(no_network()))
+    }
 }
 
 /// A package committed with CRC64 hashes, installed from a catalog host that

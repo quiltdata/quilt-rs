@@ -334,6 +334,11 @@ impl From<&crate::engine::quilt::Error> for Failure {
             | E::S3(_)
             | E::Checksum(_)
             | E::Fs(_)
+            // Every short-hash failure is the user's to fix, like an undo
+            // refusal (see `Undo` above), and unreachable from this surface
+            // today: nothing in QuiltSync takes a short hash yet. Giving them
+            // a refusal kind waits for the surface that does.
+            | E::HashPrefix(_)
             | E::InstallPath(_)
             | E::Io(_)
             | E::Json(_)

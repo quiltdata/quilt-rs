@@ -23,6 +23,7 @@
 
 ### Added
 
+- `flow::resolve_hash` and `LocalDomain::resolve_hash` turn a short top hash (6 to 64 characters) into the whole one, with quilt3's rules: a whole hash comes back as given, a shorter prefix is matched case-sensitively against the bucket's `.quilt/packages/`, and a prefix that is not lowercase hex, matches nothing or matches several is a `HashPrefixError` (<https://github.com/quiltdata/quilt-rs/pull/1390>)
 - `flow::read_object` streams an object's bytes and checks them against the row's hash as they arrive, ending the stream with `ChecksumError::HashMismatch` or `ChecksumError::SizeMismatch` after the last chunk when they do not match (a read or hashing failure is a different error). On by default (`ReadOptions::unverified()` turns it off). Objects already in the object store are not hash-checked, only compared to the row's size, and read from the remote when that differs (<https://github.com/quiltdata/quilt-rs/pull/1388>)
 - `checksum::hash_reader` hashes any async reader with the algorithm a row's hash uses, the same hashing `hash_file` applies to a file on disk (<https://github.com/quiltdata/quilt-rs/pull/1388>)
 - `settings` module: `SharedSettings` reads, sets and clears a default catalog (`default_catalog`, a bare host) in the shared `settings.json`, taking it from quilt3's `config.yml` when none is stored, and `effective_catalog` keeps a package's own catalog ahead of it (<https://github.com/quiltdata/quilt-rs/pull/1384>)
@@ -35,6 +36,7 @@
 
 ### Changed
 
+- **Breaking:** `Remote` has a new required method, `manifest_hashes_with_prefix`, and `Error` a new variant, `HashPrefix`, so an outside `Remote` implementation or exhaustive match on `Error` needs updating (<https://github.com/quiltdata/quilt-rs/pull/1390>)
 - **Breaking:** `io::manifest::build_manifest_from_rows_stream` takes the folder metadata as a new fourth argument, and a `Manifest` literal needs the new `dir_meta` field (<https://github.com/quiltdata/quilt-rs/pull/1387>)
 - **Breaking:** `MergeRefusal` has a new `Invalid` variant for a merged tree that is invalid for a reason other than a file/folder clash (<https://github.com/quiltdata/quilt-rs/pull/1387>)
 - Building from source now requires Rust 1.99 or newer (<https://github.com/quiltdata/quilt-rs/pull/1370>)
