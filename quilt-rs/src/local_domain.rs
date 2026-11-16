@@ -248,15 +248,17 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
         debug!("Installing from manifest: {}", manifest_uri.display());
         let _held = package_lock::lock(&self.storage, &self.paths, &manifest_uri.namespace).await?;
 
+        // Read before anything is created: a record that does not parse
+        // stops it here.
+        let installed = self
+            .lineage
+            .contains(&self.storage, &manifest_uri.namespace)
+            .await?;
         debug!("Preparing paths for installation");
         self.scaffold_paths_for_caching(&manifest_uri.bucket)
             .await?;
         let home = self
             .scaffold_paths_for_installing(&manifest_uri.namespace)
-            .await?;
-        let installed = self
-            .lineage
-            .contains(&self.storage, &manifest_uri.namespace)
             .await?;
 
         debug!("Executing package installation flow");
@@ -364,9 +366,9 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
 
     /// Uninstall `namespace`, whose lock the caller holds.
     async fn uninstall_locked(&self, namespace: &Namespace) -> Res<()> {
+        let installed = self.lineage.contains(&self.storage, namespace).await?;
         debug!("Preparing paths for uninstallation");
         let home = self.scaffold_paths_for_installing(namespace).await?;
-        let installed = self.lineage.contains(&self.storage, namespace).await?;
 
         debug!("Executing package uninstallation flow");
         flow::uninstall_package(
@@ -578,6 +580,36 @@ mod tests {
             "{again:?}"
         );
         assert_eq!(package.lineage().await?, first);
+        Ok(())
+    }
+
+    /// An install over a record that does not parse fails before it creates
+    /// the package's folder.
+    #[test(tokio::test)]
+    async fn an_install_over_an_unreadable_record_creates_no_folder() -> Res<()> {
+        let temp_dir = TempDir::new()?;
+        let domain = LocalDomain::new(temp_dir.path());
+        domain.set_home(temp_dir.path()).await?;
+        domain
+            .create_package(("foo", "other").into(), None, None, flow::UserMeta::Clear)
+            .await?;
+        domain
+            .lineage
+            .damage_fixture(&domain.storage, &("foo", "other").into())
+            .await?;
+
+        let result = domain
+            .install_package(&ManifestUri {
+                bucket: "bucket".to_string(),
+                namespace: ("foo", "bar").into(),
+                hash: "abcdef0000000000000000000000000000000000000000000000000000000000"
+                    .to_string(),
+                origin: None,
+            })
+            .await;
+
+        assert!(result.is_err(), "{result:?}");
+        assert!(!temp_dir.path().join("foo").join("bar").exists());
         Ok(())
     }
 
