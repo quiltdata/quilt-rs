@@ -331,6 +331,13 @@ pub enum LineageError {
         supported: u32,
     },
 
+    /// A package's ref records working copies a later version may write.
+    #[error(
+        "{} records {found}, and this version of quilt supports only one working copy, in the package's folder, at its base",
+        path.display()
+    )]
+    UnsupportedCopies { path: PathBuf, found: &'static str },
+
     #[error(
         "The home changed from {} to {} while the package was being placed, so it was not recorded",
         placed.display(),
