@@ -292,8 +292,15 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
                 why,
             });
         }
-        let domain = self.lineage.read_domain(&self.storage).await?;
-        flow::remove_revisions(&self.paths, &self.storage, &domain, &self.namespace, hashes).await
+        let installed = self.lineage.domain().namespaces(&self.storage).await?;
+        flow::remove_revisions(
+            &self.paths,
+            &self.storage,
+            &installed,
+            &self.namespace,
+            hashes,
+        )
+        .await
     }
 
     /// The revisions `lineage`'s remote lists: its catalog's registry, or

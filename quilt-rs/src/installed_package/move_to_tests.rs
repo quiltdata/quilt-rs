@@ -13,8 +13,8 @@ use super::older_revision_tests::arrives;
 use super::older_revision_tests::publish_manifest;
 use super::older_revision_tests::publish_row;
 use crate::io::remote::mocks::MockRemote;
-use crate::lineage::DomainLineage;
 use crate::lineage::DomainLineageIo;
+use crate::lineage::Home;
 use crate::lineage::PackageLineageIo;
 use crate::paths::DomainPaths;
 
@@ -60,10 +60,11 @@ impl Diverged {
             .await?;
 
         let storage = LocalStorage::new();
-        let (domain_lineage, home_dir) = DomainLineage::from_temp_dir()?;
+        let (home, home_dir) = Home::from_temp_dir()?;
         let (paths, paths_dir) = DomainPaths::from_temp_dir()?;
-        let domain_lineage = flow::install_package(
-            domain_lineage,
+        let installed = flow::install_package(
+            &home,
+            false,
             &paths,
             &storage,
             &remote,
@@ -75,8 +76,13 @@ impl Diverged {
             },
         )
         .await?;
-        let domain_io = DomainLineageIo::new(paths.lineage());
-        domain_io.write(&storage, domain_lineage).await?;
+        let domain_io = DomainLineageIo::write_fixture(
+            &storage,
+            &paths,
+            home.as_ref(),
+            [(namespace.clone(), installed)],
+        )
+        .await?;
         let package = InstalledPackage {
             lineage: PackageLineageIo::new(domain_io, namespace.clone()),
             paths,

@@ -22,7 +22,6 @@ use super::gc::row_objects;
 use crate::Error;
 use crate::Res;
 use crate::io::storage::Storage;
-use crate::lineage::DomainLineage;
 use crate::lineage::PackageLineage;
 use crate::manifest::Manifest;
 use crate::paths::DomainPaths;
@@ -197,10 +196,11 @@ impl std::fmt::Display for RemovalReport {
 /// they used.
 ///
 /// The caller holds `namespace`'s lock and has checked that none of `hashes`
-/// is protected. This try-locks every other package; if one is busy, the
-/// manifests still go, every object they alone used is kept, and the report
-/// names the package. A package created or first installed after those
-/// locks are taken is not protected, as in gc: only the user starts one.
+/// is protected. This try-locks every other package, each of `installed` and
+/// each with a lock file; if one is busy, the manifests still go, every
+/// object they alone used is kept, and the report names the package. A
+/// package created or first installed after those locks are taken is not
+/// protected, as in gc: only the user starts one.
 ///
 /// A manifest that can't be read while some object might still be free stops
 /// it before anything is deleted, as in gc. The read stops early only once
@@ -214,18 +214,18 @@ impl std::fmt::Display for RemovalReport {
 pub async fn remove_revisions(
     paths: &DomainPaths,
     storage: &(impl Storage + Sync),
-    lineage: &DomainLineage,
+    installed: &BTreeSet<Namespace>,
     namespace: &Namespace,
     hashes: &BTreeSet<String>,
 ) -> Res<RemovalReport> {
     info!("⏳ Removing {} revisions of {namespace}", hashes.len());
     // Held to the end, so no other package files an object meanwhile.
-    let (_held, kept_for) = match lock_every_package(paths, storage, lineage, Some(namespace)).await
-    {
-        Ok(held) => (held, None),
-        Err(Error::PackageBusy(busy)) => (Vec::new(), Some(busy)),
-        Err(err) => return Err(err),
-    };
+    let (_held, kept_for) =
+        match lock_every_package(paths, storage, installed, Some(namespace)).await {
+            Ok(held) => (held, None),
+            Err(Error::PackageBusy(busy)) => (Vec::new(), Some(busy)),
+            Err(err) => return Err(err),
+        };
 
     let usage = RevisionUsage::read(paths, storage, namespace).await?;
     let freed: Vec<(String, u64)> = usage
@@ -373,7 +373,7 @@ mod tests {
         let report = remove_revisions(
             &paths,
             &LocalStorage::new(),
-            &DomainLineage::default(),
+            &BTreeSet::new(),
             &PLATE.into(),
             &set(&["r2", "r3"]),
         )
@@ -410,7 +410,7 @@ mod tests {
         let report = remove_revisions(
             &paths,
             &storage,
-            &DomainLineage::default(),
+            &BTreeSet::new(),
             &PLATE.into(),
             &set(&["r2", "r3"]),
         )
@@ -434,7 +434,7 @@ mod tests {
         let report = remove_revisions(
             &paths,
             &storage,
-            &DomainLineage::default(),
+            &BTreeSet::new(),
             &PLATE.into(),
             &set(&["r3"]),
         )
@@ -463,7 +463,7 @@ mod tests {
         let result = remove_revisions(
             &paths,
             &LocalStorage::new(),
-            &DomainLineage::default(),
+            &BTreeSet::new(),
             &PLATE.into(),
             &set(&["r2", "r3"]),
         )
@@ -486,7 +486,7 @@ mod tests {
         let result = remove_revisions(
             &paths,
             &LocalStorage::new(),
-            &DomainLineage::default(),
+            &BTreeSet::new(),
             &PLATE.into(),
             &set(&["r2", "r3"]),
         )

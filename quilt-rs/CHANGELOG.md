@@ -23,6 +23,8 @@
 
 ### Added
 
+- `LocalDomain::read_packages` lists every installed package's lineage, an entry that can't be read being an error for that package alone
+- `LocalDomain::lineage_io` hands out the domain's `DomainLineageIo`, which gains `home`, `stored_home`, `namespaces`, `contains`, `read_packages`, `create_package`, `remove_package` and `check_each`; with the `testing` feature, `write_fixture` and `damage_fixture` set up a test's domain
 - `Storage::write_staged_byte_stream`, for a file renamed elsewhere right after it lands: unlike `write_byte_stream`, it does not sync the folder (<https://github.com/quiltdata/quilt-rs/pull/1379>)
 - `UserMeta::parse` reads package metadata from JSON text as quilt3's `set_meta` does, keeping integers beyond 64 bits and turning `-0` into `0`, and `UserMeta::set` builds a `Set` with no kept number text. `ManifestHeader::set_meta` replaces `user_meta` and its numbers together. `RawNumbers` has `only`, `without` and `union` for splitting and joining kept numbers by JSON pointer (<https://github.com/quiltdata/quilt-rs/pull/1394>)
 - `io::manifest::resolve_manifest_uri` resolves a package URI's short hash to the whole one through `flow::resolve_hash`, so the `ManifestUri` it returns carries all 64 characters; no match, several matches, and a hand-built prefix that is the wrong length or not hex are a `HashPrefixError` (<https://github.com/quiltdata/quilt-rs/pull/1392>)
@@ -40,6 +42,8 @@
 
 ### Changed
 
+- **Breaking:** `flow::install_package`, `flow::create` and `flow::uninstall_package` take the home and whether the package is installed instead of a `DomainLineage`, and the first two return the package's `PackageLineage` for the caller to store; `flow::gc` and `flow::remove_revisions` take the installed packages' namespaces
+- **Breaking:** `DomainLineageIo::new`, `read`, `update`, `write` and `read_locked`, which handle the whole `data.json`, are no longer public, `DomainLineageIo::set_home` and `overwrite_home` return the `Home`, and `LocalDomain::get_lineage` is gone: use `read_packages`
 - **Breaking:** `InstalledPackageStatus` has a new field, `working_copy`, and `PackageOpError` a new variant, `WorkingCopyUnavailable`, so a literal naming every field, or an exhaustive match, needs updating (<https://github.com/quiltdata/quilt-rs/pull/1397>)
 - **Breaking:** `UserMeta::Set` carries the value and a `RawNumbers`, so every `Set` literal and every exhaustive match needs the numbers (use `UserMeta::parse` or `UserMeta::set`). `flow::create` and `LocalDomain::create_package` take a `UserMeta`; `Keep` and `Clear` write no `user_meta` key, where create previously wrote `"user_meta": {}` (<https://github.com/quiltdata/quilt-rs/pull/1394>)
 - **Breaking:** `DirMeta` is `#[non_exhaustive]`, so a struct literal no longer compiles outside this crate; use `DirMeta::new`, then set `meta_numbers` when the folder was read from a line (<https://github.com/quiltdata/quilt-rs/pull/1396>)

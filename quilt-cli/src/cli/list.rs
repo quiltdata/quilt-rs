@@ -55,6 +55,20 @@ pub struct PackageEntry {
     pub status: UpstreamState,
     /// `Some` on every row of a `--fetch` listing, `None` on a plain one.
     pub fetched: Option<Fetched>,
+    /// Why the package's lineage could not be read; its row says only that.
+    pub unreadable: Option<String>,
+}
+
+impl PackageEntry {
+    fn unreadable(namespace: Namespace, err: &quilt_rs::Error) -> Self {
+        Self {
+            bucket: None,
+            namespace,
+            status: UpstreamState::Error,
+            fetched: None,
+            unreadable: Some(err.to_string()),
+        }
+    }
 }
 
 /// What `--fetch` learned about a package beyond its [`UpstreamState`].
@@ -196,6 +210,9 @@ fn fetched_state(fetched: &Fetched) -> Cow<'static, str> {
 }
 
 fn state(entry: &PackageEntry) -> Cow<'static, str> {
+    if let Some(err) = &entry.unreadable {
+        return format!("unreadable: {err}").into();
+    }
     match &entry.fetched {
         // A file count means the status call answered; without the remote, it
         // answered from the last-known tip, so the word is qualified rather
@@ -272,6 +289,9 @@ impl Render for Output {
                         row["credentials_unusable"] = true.into();
                     }
                 }
+                if let Some(err) = &package.unreadable {
+                    row["error"] = err.as_str().into();
+                }
                 row
             })
             .collect();
@@ -295,24 +315,32 @@ fn bucket(lineage: &PackageLineage) -> Option<String> {
         .filter(|bucket| !bucket.is_empty())
 }
 
-/// Lists installed packages from the local domain, one read of the lineage
-/// record for the whole listing.
+/// Lists installed packages from the local domain. A package whose lineage
+/// can't be read is a row saying so, and the others are listed as usual.
 ///
 /// Plain, it never touches the network: `status` is the [`UpstreamState`]
 /// cascade over the lineage's four hashes, read against the *last-known* remote
 /// tip. With `fetch`, each package is checked the way `QuiltSync`'s main page
 /// checks it, all at once; see [`fetch_entry`].
 pub async fn model(local_domain: &quilt_rs::LocalDomain, args: Input) -> Result<Output, Error> {
-    let domain_lineage = local_domain.get_lineage().await?;
-    let mut installed_packages_list = Vec::with_capacity(domain_lineage.packages.len());
+    let packages = local_domain.read_packages().await?;
+    let mut installed_packages_list = Vec::with_capacity(packages.len());
+    let mut readable = Vec::with_capacity(packages.len());
+    for (namespace, lineage) in packages {
+        match lineage {
+            Ok(lineage) => readable.push((namespace, lineage)),
+            Err(err) => installed_packages_list.push(PackageEntry::unreadable(namespace, &err)),
+        }
+    }
 
     if !args.fetch {
-        for (namespace, lineage) in domain_lineage.packages {
+        for (namespace, lineage) in readable {
             installed_packages_list.push(PackageEntry {
                 bucket: bucket(&lineage),
                 status: UpstreamState::from(lineage),
                 namespace,
                 fetched: None,
+                unreadable: None,
             });
         }
         return Ok(Output::new(installed_packages_list, false));
@@ -325,7 +353,7 @@ pub async fn model(local_domain: &quilt_rs::LocalDomain, args: Input) -> Result<
     let limit = std::sync::Arc::new(tokio::sync::Semaphore::new(FETCH_CONCURRENCY));
     let mut tasks = tokio::task::JoinSet::new();
     let mut spawned = std::collections::HashMap::new();
-    for (namespace, lineage) in domain_lineage.packages {
+    for (namespace, lineage) in readable {
         let installed_package = local_domain.create_installed_package(namespace.clone());
         let bucket = bucket(&lineage);
         let fallback = PackageEntry {
@@ -333,6 +361,7 @@ pub async fn model(local_domain: &quilt_rs::LocalDomain, args: Input) -> Result<
             namespace: namespace.clone(),
             status: UpstreamState::Error,
             fetched: Some(Fetched::failed()),
+            unreadable: None,
         };
         let limit = limit.clone();
         let task = tasks.spawn(async move {
@@ -409,6 +438,7 @@ where
         namespace,
         status,
         fetched: Some(fetched),
+        unreadable: None,
     }
 }
 
@@ -430,6 +460,7 @@ mod tests {
             namespace: ("example", name).into(),
             status,
             fetched: None,
+            unreadable: None,
         }
     }
 
@@ -892,6 +923,51 @@ mod tests {
         assert!(output.contains("example/local"));
         assert!(output.contains(NO_BUCKET));
 
+        Ok(())
+    }
+
+    /// A package whose lineage can't be read is a row naming the error, and
+    /// the other packages are listed as usual.
+    #[test(tokio::test)]
+    async fn test_model_lists_a_package_it_cannot_read() -> Result<(), Error> {
+        let (m, _temp_dir) = create_model_in_temp_dir().await?;
+        for name in ["damaged", "local"] {
+            m.create(crate::cli::create::Input {
+                namespace: ("example", name).into(),
+                source: None,
+                message: None,
+                user_meta: UserMeta::Clear,
+            })
+            .await?;
+        }
+        let local_domain = m.get_local_domain();
+        local_domain
+            .lineage_io()
+            .damage_fixture(
+                &quilt_rs::io::storage::LocalStorage::new(),
+                &("example", "damaged").into(),
+            )
+            .await?;
+
+        let output = model(local_domain, Input::default()).await?;
+
+        let rows = output.to_json()["packages"].clone();
+        assert_eq!(rows[0]["namespace"], "example/damaged");
+        assert_eq!(rows[0]["status"], "error");
+        assert!(
+            rows[0]["error"]
+                .as_str()
+                .is_some_and(|err| err.starts_with("Failed to parse lineage file")),
+            "{rows}"
+        );
+        assert_eq!(rows[1]["namespace"], "example/local");
+        assert_eq!(rows[1]["status"], "local");
+        assert_eq!(rows[1].get("error"), None);
+        let rendered = format!("{output}");
+        assert!(
+            rendered.contains("| unreadable: Failed to parse lineage file"),
+            "{rendered}"
+        );
         Ok(())
     }
 

@@ -24,7 +24,7 @@ use crate::io::remote::Remote;
 use crate::io::remote::mocks::MockRemote;
 use crate::io::storage::LocalStorage;
 use crate::io::storage::Storage;
-use crate::lineage::DomainLineage;
+use crate::lineage::Home;
 use crate::lineage::InstalledPackageStatus;
 use crate::lineage::PackageLineage;
 use crate::lineage::UpstreamState;
@@ -146,8 +146,7 @@ impl Rev1Installed {
             .await?;
 
         let storage = LocalStorage::new();
-        let (domain_lineage, home_dir) = DomainLineage::from_temp_dir()?;
-        let home = domain_lineage.home.clone();
+        let (home, home_dir) = Home::from_temp_dir()?;
         let (domain_paths, paths_dir) = DomainPaths::from_temp_dir()?;
 
         // Revision 1 explicitly — not latest.
@@ -157,9 +156,8 @@ impl Rev1Installed {
             hash: "REV1".to_string(),
             origin: None,
         };
-        let domain_lineage =
-            flow::install_package(domain_lineage, &domain_paths, &storage, &remote, &rev1).await?;
-        let lineage = domain_lineage.packages[&namespace].clone();
+        let lineage =
+            flow::install_package(&home, false, &domain_paths, &storage, &remote, &rev1).await?;
         assert_eq!(lineage.latest_hash, REV2);
 
         Ok(Self {
