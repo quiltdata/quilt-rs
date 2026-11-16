@@ -82,7 +82,8 @@ pub struct InstallToReport {
 ///
 /// A `dest` that did not exist, with any folders above it that did not, is
 /// created for the install and removed again if the install fails before
-/// placing anything.
+/// placing anything. A folder that has become a symbolic link meanwhile is left
+/// alone, with whatever it leads to.
 ///
 /// `dest_registry`, which quilt3's `install` offers to put the package in
 /// another registry, is not here: it depends on how local registries are
@@ -114,6 +115,11 @@ pub async fn install_to(
         Ok(report) => report,
         Err(err) => {
             for dir in &created {
+                // A folder swapped for a link during the call is not this
+                // call's to remove, nor is anything the link leads through.
+                if under_a_link(storage, dir, dest).await {
+                    continue;
+                }
                 // Fails, and keeps the folder, if anything is in it.
                 let _ = storage.remove_dir(dir).await;
             }
@@ -128,6 +134,20 @@ pub async fn install_to(
         report.hash_mismatch.len()
     );
     Ok(report)
+}
+
+/// Whether `dir`, or a folder above it below `dest`, is a symbolic link. `dest`
+/// and what is above it are not asked: a link there is the caller's choice.
+async fn under_a_link(storage: &(impl Storage + Sync), dir: &Path, dest: &Path) -> bool {
+    for folder in dir
+        .ancestors()
+        .take_while(|folder| folder.starts_with(dest))
+    {
+        if folder != dest && storage.is_symlink(folder).await {
+            return true;
+        }
+    }
+    false
 }
 
 /// The folders this install will make, deepest first: `dest` and the folders
@@ -872,23 +892,23 @@ mod tests {
     }
 
     /// A folder that becomes a link while the fetches run is not followed: the
-    /// check just before the first rename refuses, and nothing is written
-    /// through the link.
+    /// check just before the first rename refuses, nothing is written through
+    /// the link, and the cleanup after the refusal removes nothing through it.
     #[cfg(unix)]
     #[test(tokio::test)]
     async fn a_folder_swapped_for_a_link_during_the_fetch_is_not_followed() -> Res {
         let remote = MockRemote::default();
         let storage = MockStorage::default();
-        put(&remote, "s3://b/p/sub/a.txt?versionId=v1", b"alpha").await?;
+        put(&remote, "s3://b/p/sub/deep/a.txt?versionId=v1", b"alpha").await?;
         let manifest = manifest(vec![row(
-            "sub/a.txt",
+            "sub/deep/a.txt",
             b"alpha",
-            "s3://b/p/sub/a.txt?versionId=v1",
+            "s3://b/p/sub/deep/a.txt?versionId=v1",
         )]);
         let dest = std::path::absolute("/dest")?;
         let outside = std::path::absolute("/outside")?;
-        storage.create_dir_all(&outside).await?;
-        let gate = remote.park("s3://b/p/sub/a.txt?versionId=v1");
+        storage.create_dir_all(outside.join("deep")).await?;
+        let gate = remote.park("s3://b/p/sub/deep/a.txt?versionId=v1");
 
         let install = install_to(&storage, &remote, None, &manifest, &dest, None);
         let meddle = async {
@@ -903,7 +923,9 @@ mod tests {
 
         let message = installed.expect_err("a link is refused").to_string();
         assert!(message.contains("symbolic link"), "{message}");
-        assert!(!storage.exists(outside.join("a.txt")).await);
+        assert!(!storage.exists(outside.join("deep/a.txt")).await);
+        // Cleanup after the refusal did not follow the link either.
+        assert!(storage.exists(outside.join("deep")).await);
         Ok(())
     }
 
