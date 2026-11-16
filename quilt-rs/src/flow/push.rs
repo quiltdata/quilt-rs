@@ -1216,9 +1216,12 @@ mod tests {
             .await?;
         let mut manifest = Manifest::default();
         manifest.header.user_meta = Some(serde_json::Value::Null);
+        let (meta, meta_numbers) =
+            crate::manifest::RawNumbers::parse(r#"{"n": 123456789012345678901234567890}"#)?;
         manifest.dir_meta = vec![crate::manifest::DirMeta {
             logical_key: crate::LogicalKey::new("data")?,
-            meta: serde_json::json!({"owner": "team"}),
+            meta,
+            meta_numbers,
         }];
 
         let result = push_package(
@@ -1238,6 +1241,9 @@ mod tests {
             .join(fixtures::top_hash::EMPTY_NULL_TOP_HASH);
         let pushed = Manifest::from_path(&storage, &cached).await?;
         assert_eq!(pushed.dir_meta, manifest.dir_meta);
+        assert!(!pushed.dir_meta[0].meta_numbers.is_empty());
+        let text = pushed.try_to_jsonlines()?;
+        assert!(text.contains("123456789012345678901234567890"), "{text}");
         Ok(())
     }
 }

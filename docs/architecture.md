@@ -126,11 +126,13 @@ hash (`top_hash`). Two properties worth knowing beyond the format itself:
 - A folder can carry metadata too, as quilt3 does: a row whose `logical_key`
   ends in `/` and which has no physical key. Unlike the other metadata it is
   **not** hashed, so changing it does not make a new revision; every flow that
-  rewrites a manifest keeps it. Revisions that differ only in folder metadata
-  therefore share a top hash, and a push of such a change overwrites the
-  stored manifest without moving `latest`. That follows quilt3 until quilt3
-  settles whether folder metadata should affect the top hash (it has a TODO
-  saying it should).
+  rewrites a manifest keeps it, including the exact text of whole numbers
+  beyond 64 bits and `-0` as `0`. Revisions that differ only in folder
+  metadata therefore share a top hash, and a push of such a change overwrites
+  the stored manifest without moving `latest`. That follows quilt3 until
+  quilt3 settles whether folder metadata should affect the top hash (it has a
+  TODO saying it should). This crate does not hash folder metadata until
+  quilt3 does.
 
 A **workflow** is a package-level configuration stored as a YAML file in
 the remote registry and referenced from the package's manifest header. It

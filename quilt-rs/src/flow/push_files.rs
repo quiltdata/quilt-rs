@@ -402,9 +402,12 @@ mod tests {
         ]);
         manifest.header.user_meta = Some(user_meta);
         manifest.header.user_meta_numbers = user_meta_numbers;
+        let (dir_meta, dir_meta_numbers) =
+            RawNumbers::parse(r#"{"n": 123456789012345678901234567890}"#)?;
         manifest.dir_meta = vec![DirMeta {
             logical_key: key("data"),
-            meta: serde_json::json!({"owner": "lab"}),
+            meta: dir_meta,
+            meta_numbers: dir_meta_numbers,
         }];
         Ok(manifest)
     }
@@ -445,6 +448,7 @@ mod tests {
         .await?;
         assert!(text.contains("18446744073709551616"), "{text}");
         assert!(text.contains("18446744073709551617"), "{text}");
+        assert!(text.contains("123456789012345678901234567890"), "{text}");
         let stored = pushed_manifest(&remote, &pushed.manifest_uri.hash).await?;
         assert_eq!(stored.dir_meta, sent.dir_meta);
         assert!(stored.header.same_user_meta(&sent.header));
