@@ -311,6 +311,32 @@ pub enum LineageError {
         "Folder {0:?} is not inside the package: name it from the package root, without \"..\""
     )]
     FolderOutsidePackage(String),
+
+    /// A package's ref or the domain config does not parse.
+    #[error("Failed to parse {}: {source}", path.display())]
+    FileParse {
+        path: PathBuf,
+        source: serde_json::Error,
+    },
+
+    /// A file written in a format this version does not read, most likely by
+    /// a newer one, which may have added fields this version would drop.
+    #[error(
+        "{} is in format {found}, and this version of quilt reads format {supported}",
+        path.display()
+    )]
+    UnsupportedFormat {
+        path: PathBuf,
+        found: u32,
+        supported: u32,
+    },
+
+    #[error(
+        "The home changed from {} to {} while the package was being placed, so it was not recorded",
+        placed.display(),
+        home.display()
+    )]
+    HomeChanged { placed: PathBuf, home: PathBuf },
 }
 
 #[derive(Error, Debug, PartialEq)]
@@ -753,6 +779,18 @@ mod tests {
         assert!(
             !Error::S3(S3Error::new(S3ErrorKind::AccessDenied("no".to_string())))
                 .is_ambient_session_absent()
+        );
+    }
+
+    #[test]
+    fn a_changed_home_names_both_folders() {
+        let err = LineageError::HomeChanged {
+            placed: PathBuf::from("/old/home"),
+            home: PathBuf::from("/new/home"),
+        };
+        assert_eq!(
+            err.to_string(),
+            "The home changed from /old/home to /new/home while the package was being placed, so it was not recorded"
         );
     }
 }
