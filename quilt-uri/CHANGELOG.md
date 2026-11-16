@@ -20,10 +20,12 @@
 
 ### Added
 
+- A package URI's `@` may be a short hash of 6 to 63 lowercase hex characters, as in quilt3. It parses to the new `RevisionPointer::HashPrefix` and displays as written, `ManifestUri::try_from` refuses it, and a hash of any other length, or not lowercase hex, is an error that says which; `MIN_HASH_PREFIX_LEN` and `TOP_HASH_LEN` are exported (<https://github.com/quiltdata/quilt-rs/pull/1392>)
 - `VERSION` holds the crate's version (<https://github.com/quiltdata/quilt-rs/pull/1371>)
 
 ### Changed
 
+- **Breaking:** `RevisionPointer` has a new variant, `HashPrefix`, so an exhaustive match on it needs an arm, and its JSON form has a new `_tag` (<https://github.com/quiltdata/quilt-rs/pull/1392>)
 - Building from source now requires Rust 1.99 or newer (<https://github.com/quiltdata/quilt-rs/pull/1370>)
 
 ### Fixed

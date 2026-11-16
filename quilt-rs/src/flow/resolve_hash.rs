@@ -35,17 +35,13 @@
 //!   lists the whole directory and filters.
 
 use quilt_uri::Host;
+pub use quilt_uri::MIN_HASH_PREFIX_LEN;
+pub use quilt_uri::TOP_HASH_LEN;
 use quilt_uri::is_top_hash;
 
 use crate::Res;
 use crate::error::HashPrefixError;
 use crate::io::remote::Remote;
-
-/// The shortest prefix that resolves, as in quilt3 (`6 <= len(hash_prefix)`).
-pub const MIN_HASH_PREFIX_LEN: usize = 6;
-
-/// The length of a whole top hash: the hex of a SHA-256.
-pub const TOP_HASH_LEN: usize = 64;
 
 /// How many matches [`HashPrefixError::Ambiguous`] lists.
 pub const MAX_LISTED_MATCHES: usize = 20;

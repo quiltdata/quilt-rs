@@ -21,6 +21,10 @@
 
 ## [v0.28.1-dev]
 
+### Added
+
+- A `quilt+s3://` link can name a revision by a short hash (6 to 63 characters) after `@`, as in quilt3; QuiltSync looks it up in the package's bucket, and a hash that matches nothing, or several revisions, is reported as a revision that is not there (<https://github.com/quiltdata/quilt-rs/pull/1392>)
+
 ### Changed
 
 - QuiltSync starts faster with many packages: at launch it checks up to eight packages at once instead of one after another (<https://github.com/quiltdata/quilt-rs/pull/1376>)

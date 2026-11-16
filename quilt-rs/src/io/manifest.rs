@@ -173,9 +173,10 @@ pub async fn resolve_tag(
     })
 }
 
-/// `ManifestUri` should always have `hash`.
-/// But `S3PackageUri` can be tagged (e.g. "latest" or timestamp).
-/// So, we need to download the tag and find out what the `hash` is
+/// `ManifestUri` should always have a whole `hash`.
+/// But `S3PackageUri` can be tagged (e.g. "latest" or timestamp), or name a
+/// short hash. So, we need to download the tag, or ask the registry which
+/// revision the prefix names, and find out what the `hash` is
 async fn resolve_top_hash(
     remote: &impl Remote,
     host: Option<&Host>,
@@ -183,14 +184,18 @@ async fn resolve_top_hash(
 ) -> Res<String> {
     match &uri.revision {
         RevisionPointer::Hash(top_hash) => Ok(top_hash.clone()),
+        RevisionPointer::HashPrefix(prefix) => {
+            crate::flow::resolve_hash(remote, host, &uri.bucket, prefix).await
+        }
         RevisionPointer::Tag(tag) => Ok(resolve_tag(remote, host, uri, tag.clone()).await?.hash),
     }
 }
 
 /// Converts `S3PackageUri` to `ManifestUri`
-/// `ManifestUri` should always have `hash`.
-/// But `S3PackageUri` can be tagged (e.g. "latest" or timestamp).
-/// So, we need to download the tag and find out what the `hash` is
+/// `ManifestUri` should always have a whole `hash`.
+/// But `S3PackageUri` can be tagged (e.g. "latest" or timestamp), or name a
+/// short hash. So, we need to download the tag, or ask the registry which
+/// revision the prefix names, and find out what the `hash` is
 pub async fn resolve_manifest_uri(
     remote: &impl Remote,
     host: Option<&Host>,
@@ -516,6 +521,7 @@ mod tests {
 
     use tokio_stream;
 
+    use crate::error::HashPrefixError;
     use crate::fixtures;
     use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::LocalStorage;
@@ -550,6 +556,89 @@ mod tests {
         assert_eq!(
             top_hash,
             "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
+        );
+        Ok(())
+    }
+
+    const ALPHA: &str = "abcdef01aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const BETA: &str = "abcdef01bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+    fn prefix_error(err: crate::Error) -> HashPrefixError {
+        match err {
+            crate::Error::HashPrefix(inner) => inner,
+            other => panic!("expected a hash prefix error, got {other:?}"),
+        }
+    }
+
+    async fn registry_with(hashes: &[&str]) -> Res<MockRemote> {
+        let remote = MockRemote::default();
+        for hash in hashes {
+            let manifest = S3Uri::try_from(format!("s3://b/.quilt/packages/{hash}").as_str())?;
+            remote.put_object(None, &manifest, b"{}".to_vec()).await?;
+        }
+        Ok(remote)
+    }
+
+    /// A short hash in the address resolves through the registry to the whole
+    /// one, so the manifest address, and what it displays, carry all 64.
+    #[test(tokio::test)]
+    async fn a_short_hash_in_a_package_uri_resolves_to_the_whole_hash() -> Res {
+        let remote = registry_with(&[ALPHA, BETA]).await?;
+        let uri = S3PackageUri::try_from("quilt+s3://b#package=foo/bar@abcdef01a")?;
+
+        let manifest = resolve_manifest_uri(&remote, None, &uri).await?;
+
+        assert_eq!(manifest.hash, ALPHA);
+        assert_eq!(
+            manifest.to_string(),
+            format!("quilt+s3://b#package=foo/bar@{ALPHA}")
+        );
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn a_short_hash_that_names_no_revision_or_several_is_an_error() -> Res {
+        let remote = registry_with(&[ALPHA, BETA]).await?;
+
+        let uri = S3PackageUri::try_from("quilt+s3://b#package=foo/bar@123456")?;
+        let err = resolve_manifest_uri(&remote, None, &uri).await.unwrap_err();
+        assert_eq!(
+            prefix_error(err),
+            HashPrefixError::NoMatch("123456".to_string())
+        );
+
+        let uri = S3PackageUri::try_from("quilt+s3://b#package=foo/bar@abcdef01")?;
+        let err = resolve_manifest_uri(&remote, None, &uri).await.unwrap_err();
+        assert_eq!(
+            prefix_error(err),
+            HashPrefixError::Ambiguous {
+                prefix: "abcdef01".to_string(),
+                matches: vec![ALPHA.to_string(), BETA.to_string()],
+                more: 0,
+            }
+        );
+        Ok(())
+    }
+
+    /// The parser refuses a bad hash, but a revision built by hand can hold
+    /// one, and resolving it says what is wrong with it.
+    #[test(tokio::test)]
+    async fn a_hash_prefix_built_by_hand_is_checked_when_resolved() -> Res {
+        let remote = registry_with(&[ALPHA]).await?;
+        let mut uri = S3PackageUri::try_from("quilt+s3://b#package=foo/bar")?;
+
+        uri.revision = RevisionPointer::HashPrefix("abc".to_string());
+        let err = resolve_manifest_uri(&remote, None, &uri).await.unwrap_err();
+        assert_eq!(
+            prefix_error(err),
+            HashPrefixError::InvalidLength("abc".to_string())
+        );
+
+        uri.revision = RevisionPointer::HashPrefix("ABCDEF".to_string());
+        let err = resolve_manifest_uri(&remote, None, &uri).await.unwrap_err();
+        assert_eq!(
+            prefix_error(err),
+            HashPrefixError::NotHex("ABCDEF".to_string())
         );
         Ok(())
     }
