@@ -86,6 +86,7 @@ pub async fn publish_package(
     host_config: HostConfig,
     commit_opts: CommitOptions,
 ) -> Res<PublishOutcome<PushResult>> {
+    status.require_working_copy()?;
     let has_changes = !status.changes.is_empty();
     let has_pending_commit = lineage.commit.is_some();
 
@@ -358,6 +359,43 @@ mod tests {
         assert!(push.certified_latest);
         assert_eq!(push.lineage.remote()?.hash, hash);
         Ok(())
+    }
+
+    /// With no change listed, a pending commit would be pushed as though the
+    /// working folder held nothing newer; it was never read.
+    #[test(tokio::test)]
+    async fn an_unavailable_working_copy_is_not_published() {
+        let lineage = PackageLineage {
+            commit: Some(crate::lineage::CommitState::default()),
+            ..PackageLineage::default()
+        };
+        let status = InstalledPackageStatus {
+            working_copy: crate::lineage::WorkingCopy::Unavailable(PathBuf::from("/gone/pkg")),
+            ..InstalledPackageStatus::default()
+        };
+        let error = publish_package(
+            lineage,
+            &mut Manifest::default(),
+            &DomainPaths::default(),
+            &MockStorage::default(),
+            &MockRemote::default(),
+            PathBuf::from("/gone/pkg"),
+            status,
+            ("foo", "bar").into(),
+            HostConfig::default(),
+            CommitOptions {
+                message: String::new(),
+                user_meta: UserMeta::Keep,
+                workflow: None,
+            },
+        )
+        .await;
+        assert!(matches!(
+            error,
+            Err(crate::Error::PackageOp(
+                crate::PackageOpError::WorkingCopyUnavailable(home)
+            )) if home.as_path() == std::path::Path::new("/gone/pkg")
+        ));
     }
 
     #[test(tokio::test)]

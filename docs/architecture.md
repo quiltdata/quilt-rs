@@ -164,6 +164,18 @@ intentional — `.quiltignore` controls which files belong in the package —
 but it means adding a pattern can delete a file from the next published
 revision, where `.gitignore` would have left it tracked.
 
+### A missing working folder
+
+When a package tracks files and its working folder is missing or cannot be read
+(deleted by hand, or on a disk that is not mounted), nothing can be said about
+those files: `status` reports the working copy as unavailable
+(`InstalledPackageStatus::working_copy`) and lists no changes, where it once
+listed every file `Removed`. `commit`, `publish` and a `pull` that would apply
+a revision refuse with `PackageOpError::WorkingCopyUnavailable`, which names the
+folder. None of them creates the folder empty. The copy works again once the
+folder is restored, or once the package is uninstalled. Files deleted inside an
+existing folder are still `Removed`.
+
 ### Set Remote (recommit)
 
 Which checksum algorithm an upload is written with is not a client-side

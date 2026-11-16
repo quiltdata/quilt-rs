@@ -26,6 +26,7 @@ use crate::lineage::Change;
 use crate::lineage::ChangeSet;
 use crate::lineage::InstalledPackageStatus;
 use crate::lineage::PackageLineage;
+use crate::lineage::WorkingCopy;
 use crate::manifest::Manifest;
 use crate::manifest::ManifestRow;
 use crate::object_hash::ObjectHash;
@@ -463,6 +464,26 @@ pub async fn create_status_cached(
     }
     trace!("✔️ Found {} paths in lineage", orig_paths.len());
 
+    // A folder that cannot be read says nothing about its files: walking it
+    // would report every tracked file `Removed`, and a commit would record
+    // that. A package that tracks no file loses nothing to a missing folder,
+    // as with a package installed and not yet downloaded.
+    if !orig_paths.is_empty()
+        && let Err(err) = tokio::fs::read_dir(package_home.as_ref()).await
+    {
+        trace!(
+            "❌ Working folder {} is unavailable: {err}",
+            package_home.as_ref().display()
+        );
+        if let Some(cache) = cache {
+            cache.keep_all();
+        }
+        let mut status = InstalledPackageStatus::new(lineage.clone().into(), ChangeSet::new());
+        status.latest_hash.clone_from(&lineage.latest_hash);
+        status.working_copy = WorkingCopy::Unavailable(package_home.as_ref().to_path_buf());
+        return Ok((lineage, status));
+    }
+
     let rules = quiltignore::Rules::load(package_home.as_ref(), &paths.user_quiltignore())?;
     let tracked = Tracked::new(
         manifest
@@ -714,6 +735,83 @@ mod tests {
         let removed_file = status.changes.get(&logical_key).unwrap();
         assert!(matches!(removed_file, Change::Removed(_)));
         assert!(!storage.exists(&logical_key).await);
+        Ok(())
+    }
+
+    /// A folder that is gone says nothing about its files: they are neither
+    /// `Removed` nor changed, and the status lists no change at all.
+    #[test(tokio::test)]
+    async fn test_missing_working_dir_is_unavailable_not_removed() -> Res {
+        let manifest = fixtures::manifest_with_objects_all_sizes::manifest().await?;
+        let logical_key = PathBuf::from("less-then-8mb.txt");
+        let manifest_record = manifest.get_record(&logical_key).unwrap();
+        let storage = MockStorage::default();
+        let lineage = PackageLineage {
+            paths: BTreeMap::from([(
+                logical_key.clone(),
+                PathState {
+                    hash: manifest_record.hash.clone().into(),
+                    ..PathState::default()
+                },
+            )]),
+            ..PackageLineage::default()
+        };
+        let working_dir = storage.temp_dir.as_ref().join("foo/bar");
+        assert!(!working_dir.exists());
+
+        let (_, status) = create_status(
+            lineage.clone(),
+            &storage,
+            &domain_paths(&storage),
+            &manifest,
+            &working_dir,
+            HostConfig::default(),
+        )
+        .await?;
+        assert_eq!(
+            status.working_copy,
+            WorkingCopy::Unavailable(working_dir.clone())
+        );
+        assert!(status.changes.is_empty(), "{:?}", status.changes);
+
+        // Restored, the file is read again and found unchanged.
+        storage
+            .write_byte_stream(
+                working_dir.join(&logical_key),
+                ByteStream::from_static(fixtures::objects::less_than_8mb()),
+            )
+            .await?;
+        let (_, status) = create_status(
+            lineage,
+            &storage,
+            &domain_paths(&storage),
+            &manifest,
+            &working_dir,
+            HostConfig::default(),
+        )
+        .await?;
+        assert_eq!(status.working_copy, WorkingCopy::Available);
+        assert!(status.changes.is_empty(), "{:?}", status.changes);
+        Ok(())
+    }
+
+    /// Nothing is tracked in the folder, as for a package installed and not
+    /// yet downloaded, so its absence loses nothing.
+    #[test(tokio::test)]
+    async fn test_missing_working_dir_of_a_package_tracking_nothing_is_available() -> Res {
+        let manifest = fixtures::manifest_with_objects_all_sizes::manifest().await?;
+        let storage = MockStorage::default();
+        let (_, status) = create_status(
+            lineage_with_remote(PackageLineage::default()),
+            &storage,
+            &domain_paths(&storage),
+            &manifest,
+            storage.temp_dir.as_ref().join("never/created"),
+            HostConfig::default(),
+        )
+        .await?;
+        assert_eq!(status.working_copy, WorkingCopy::Available);
+        assert!(status.changes.is_empty());
         Ok(())
     }
 

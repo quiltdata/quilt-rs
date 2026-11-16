@@ -87,6 +87,14 @@ impl StatCache {
         self.seen.insert(key.to_path_buf());
     }
 
+    /// The walk could not read the working folder, so it found nothing and
+    /// hashed nothing: keep every saved entry, and the daily full walk owed.
+    pub(crate) fn keep_all(&mut self) {
+        self.seen
+            .extend(self.saved.keys().map(|(path, _)| path.clone()));
+        self.full = false;
+    }
+
     /// The walk hashed `key`. Kept only when it differs from what is saved, or
     /// the saved entry was racy and this one isn't.
     pub(crate) fn record(&mut self, key: &Path, entry: CachedHash) {
@@ -191,6 +199,20 @@ mod tests {
             cache.lookup(Path::new("a"), &stamp(at(100, 0)), MULTIHASH_CRC64_NVME),
             Some(&hash())
         );
+    }
+
+    #[test]
+    fn a_walk_that_read_nothing_keeps_what_was_saved() {
+        let entry = CachedHash {
+            stamp: stamp(at(100, 0)),
+            hash: hash(),
+            saved_at: at(200, 0),
+        };
+        let mut cache = cache_with(entry, true);
+        assert_eq!(cache.gone(), [PathBuf::from("a")]);
+        cache.keep_all();
+        assert_eq!(cache.gone().len(), 0);
+        assert!(!cache.is_full());
     }
 
     #[test]

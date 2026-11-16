@@ -28,6 +28,7 @@ pub use status::Change;
 pub use status::ChangeSet;
 pub use status::InstalledPackageStatus;
 pub use status::UpstreamState;
+pub use status::WorkingCopy;
 
 mod state;
 pub use state::PackageState;

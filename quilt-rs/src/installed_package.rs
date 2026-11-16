@@ -190,8 +190,20 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         }))
     }
 
+    /// Creates the folders the package's writers need, but not its working
+    /// folder when that has gone missing from a package that tracks files: an
+    /// empty folder in its place would read as every file deleted.
     pub async fn scaffold_paths(&self) -> Res {
         let home = self.lineage.domain_home(&self.storage).await?;
+        if let Ok((package_home, lineage)) = self.lineage.read(&self.storage).await
+            && !lineage.paths.is_empty()
+            && !self.storage.exists(&package_home).await
+        {
+            return self
+                .paths
+                .scaffold_for_installing_without_package_home(&self.storage, &home, &self.namespace)
+                .await;
+        }
         self.paths
             .scaffold_for_installing(&self.storage, &home, &self.namespace)
             .await
@@ -1384,6 +1396,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         if snapshot.status.upstream_state != UpstreamState::Behind {
             return Ok(nothing_to_pull());
         }
+        snapshot.status.require_working_copy()?;
         // Same reconciling pass the pull itself runs: a preview that called a
         // byte-identical edit a conflict would send the user to resolve one the
         // pull would not raise.
@@ -1919,6 +1932,8 @@ impl<S: Storage + Clone + Sync, R: Remote> LockedPackage<S, R> {
 mod change_catalog_tests;
 #[cfg(test)]
 mod current_revision_tests;
+#[cfg(test)]
+mod missing_folder_tests;
 #[cfg(test)]
 mod move_to_tests;
 #[cfg(test)]
