@@ -73,6 +73,24 @@ impl RawNumbers {
         )
     }
 
+    /// The numbers `value` still holds as the same float, so a replaced
+    /// subtree's text is dropped and a field that was kept is not.
+    #[must_use]
+    pub fn still_in(&self, value: &Value) -> Self {
+        Self(
+            self.0
+                .iter()
+                .filter(|(pointer, _)| {
+                    value
+                        .pointer(pointer)
+                        .and_then(Value::as_number)
+                        .is_some_and(|number| self.text_for(pointer, number).is_some())
+                })
+                .map(|(pointer, text)| (pointer.clone(), text.clone()))
+                .collect(),
+        )
+    }
+
     /// All of `self`'s numbers and `other`'s; `other` wins at the same place.
     #[must_use]
     pub fn union(&self, other: &Self) -> Self {
@@ -684,5 +702,24 @@ mod tests {
         );
         assert_eq!(rest.union(&task), numbers);
         assert!(numbers.only("/missing").is_empty());
+    }
+
+    #[test]
+    fn still_in_keeps_matching_numbers_and_drops_replaced_ones() {
+        let (mut value, numbers) = RawNumbers::parse(
+            r#"{"n": 18446744073709551616, "agent_exec": {"claim": {"seq": 36893488147419103232}}}"#,
+        )
+        .unwrap();
+        assert!(!numbers.still_in(&value).only("/n").is_empty());
+        assert!(
+            !numbers
+                .still_in(&value)
+                .only("/agent_exec/claim")
+                .is_empty()
+        );
+        value["agent_exec"]["claim"] = serde_json::json!({"status": "claimed"});
+        let kept = numbers.still_in(&value);
+        assert!(!kept.only("/n").is_empty());
+        assert!(kept.only("/agent_exec/claim").is_empty());
     }
 }

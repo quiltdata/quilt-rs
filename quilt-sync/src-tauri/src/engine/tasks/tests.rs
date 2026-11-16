@@ -672,6 +672,36 @@ async fn our_own_interrupted_claim_is_published_failed_with_what_the_agent_left(
     Ok(())
 }
 
+#[tokio::test]
+async fn an_interrupted_claim_keeps_number_text_in_retained_claim_fields() -> Result<(), Error> {
+    let (meta, numbers) = quilt::manifest::RawNumbers::parse(
+        r#"{"title":"kept","n":18446744073709551616,"agent_exec":{"document":"TASK.md","agent":{"id":"kiro"},"claim":{"status":"claimed","invocation_id":"ours","claimed_at":"t","sequence":36893488147419103232}}}"#,
+    )
+    .unwrap();
+    let fixture = Fixture {
+        head_numbers: numbers,
+        ..Fixture::new()
+    };
+    settings::remember_invocation(fixture.dir.path(), "ours").await?;
+
+    fixture.check(meta, fresh(written()), true).await;
+
+    let published = fixture.published.lock().unwrap();
+    assert_eq!(published.len(), 1);
+    let Revision { numbers, meta, .. } = &published[0];
+    assert_eq!(meta["agent_exec"]["claim"]["status"], "failed");
+    assert_eq!(meta["agent_exec"]["claim"]["invocation_id"], "ours");
+    assert!(
+        !numbers.only("/n").is_empty(),
+        "numbers outside the claim are kept"
+    );
+    assert!(
+        !numbers.only("/agent_exec/claim/sequence").is_empty(),
+        "a claim field the interruption kept still has its number text"
+    );
+    Ok(())
+}
+
 /// The run saved its outcome, then its publish never landed, or landed outside
 /// `latest` and was reset onto a `latest` still holding the claim.
 #[tokio::test]

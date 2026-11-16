@@ -745,6 +745,7 @@ fn carried_workflow(workflow: Option<&quilt::manifest::Workflow>) -> WorkflowInt
     }
 }
 
+#[allow(clippy::too_many_arguments, reason = "one publish's inputs")]
 async fn publish<M: QuiltModel>(
     model: &M,
     locked: &M::Locked,
@@ -756,12 +757,13 @@ async fn publish<M: QuiltModel>(
     status: quilt::lineage::InstalledPackageStatus,
 ) -> Result<quilt::PublishOutcome, Error> {
     let workflow = model.resolve_workflow(pkg, workflow).await?;
-    // with_claim / unrunnable replace `agent_exec.claim`; drop stale numbers there.
+    // Keep numbers the new value still holds, including claim fields an
+    // interruption leaves in place, and drop ones a replaced claim left behind.
     model
         .locked_package_publish(
             locked,
             message,
-            UserMeta::Set(meta, numbers.without("/agent_exec/claim")),
+            UserMeta::Set(meta.clone(), numbers.still_in(&meta)),
             workflow,
             None,
             Some(status),
