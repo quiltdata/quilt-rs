@@ -497,7 +497,7 @@ pub async fn build_manifest_from_rows_stream(
     let jsonl = manifest.try_to_jsonlines()?;
 
     storage
-        .write_byte_stream(&temp_path, ByteStream::from(jsonl.into_bytes()))
+        .write_staged_byte_stream(&temp_path, ByteStream::from(jsonl.into_bytes()))
         .await?;
 
     let top_hash = top_hasher.finalize();

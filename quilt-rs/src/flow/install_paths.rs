@@ -89,7 +89,9 @@ pub(super) async fn cache_immutable_object(
     let uri: S3Uri = row.physical_key.parse()?;
     let stream = remote.get_object_stream(host, &uri).await?;
     let fetched = run_staging.join(uuid::Uuid::new_v4().to_string());
-    storage.write_byte_stream(&fetched, stream.body).await?;
+    storage
+        .write_staged_byte_stream(&fetched, stream.body)
+        .await?;
     if let Some(computed) = refresh_hash(storage, &fetched, row.clone()).await? {
         debug!(
             "❌ Fetched bytes for {} do not match its row: expected {}, computed {}",

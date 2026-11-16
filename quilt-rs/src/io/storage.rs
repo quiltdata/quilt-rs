@@ -115,6 +115,17 @@ pub trait Storage {
         body: ByteStream,
     ) -> impl Future<Output = Res> + Send + Sync;
 
+    /// [`Self::write_byte_stream`] for a file renamed elsewhere right after it
+    /// lands, such as a download staged until it is checked: the folder it
+    /// lands in is not synced, since nothing needs it there after a power loss.
+    fn write_staged_byte_stream(
+        &self,
+        path: impl AsRef<Path> + Send + Sync,
+        body: ByteStream,
+    ) -> impl Future<Output = Res> + Send + Sync {
+        self.write_byte_stream(path, body)
+    }
+
     /// Creates the directory `path` and any missing parent. On Unix `path` is
     /// created 0700, and one that already existed is set to 0700 where the
     /// file system allows. On Windows it is [`Self::create_dir_all`].
@@ -212,6 +223,14 @@ impl<S: Storage + Send + Sync> Storage for Arc<S> {
         body: ByteStream,
     ) -> Res {
         (**self).write_byte_stream(path, body).await
+    }
+
+    async fn write_staged_byte_stream(
+        &self,
+        path: impl AsRef<Path> + Send + Sync,
+        body: ByteStream,
+    ) -> Res {
+        (**self).write_staged_byte_stream(path, body).await
     }
 
     async fn create_private_dir(&self, path: impl AsRef<Path> + Send) -> Res {

@@ -7,6 +7,8 @@ use chrono::Utc;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 #[cfg(unix)]
+use tracing::debug;
+#[cfg(unix)]
 use tracing::warn;
 use uuid::Uuid;
 
@@ -46,11 +48,25 @@ async fn write_stream(path: &Path, mut body: ByteStream, private: bool) -> std::
     file.sync_all().await
 }
 
+/// The folder a write to `path` lands in. A bare file name's parent is the
+/// empty path, which cannot be opened to sync it.
+fn folder_of(path: &Path) -> &Path {
+    match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    }
+}
+
 /// Write `body` to a temp file, then atomically rename to `path`.
 ///
 /// On failure the temp file is cleaned up.
-async fn atomic_write(path: &Path, body: ByteStream, private: bool) -> std::io::Result<()> {
-    let parent = path.parent().unwrap_or(Path::new("."));
+async fn atomic_write(
+    path: &Path,
+    body: ByteStream,
+    private: bool,
+    sync_folder: bool,
+) -> std::io::Result<()> {
+    let parent = folder_of(path);
     fs::create_dir_all(parent).await?;
     let tmp = temp_path_in(parent);
     let cleanup = |_: &std::io::Error| {
@@ -59,16 +75,57 @@ async fn atomic_write(path: &Path, body: ByteStream, private: bool) -> std::io::
     write_stream(&tmp, body, private)
         .await
         .inspect_err(cleanup)?;
-    fs::rename(&tmp, path).await.inspect_err(cleanup)
+    fs::rename(&tmp, path).await.inspect_err(cleanup)?;
+    #[cfg(unix)]
+    if sync_folder {
+        sync_dir(parent).await;
+    }
+    #[cfg(not(unix))]
+    let _ = sync_folder;
+    Ok(())
 }
 
-pub(super) async fn write(path: &Path, body: ByteStream, private: bool) -> Res {
-    atomic_write(path, body, private).await.map_err(|source| {
-        Error::Fs(FsError::Write {
-            path: path.to_path_buf(),
-            source,
-        })
+/// Makes a rename into `dir` survive a power loss. Windows has no directory
+/// fsync. A failure is logged, not returned: the new file is already in place.
+#[cfg(unix)]
+async fn sync_dir(dir: &Path) {
+    let synced = async { fs::File::open(dir).await?.sync_all().await };
+    match synced.await {
+        Ok(()) => {}
+        // Network and FUSE mounts refuse every folder sync: a warning would
+        // repeat on each write.
+        Err(err) if sync_unsupported(&err) => {
+            debug!("Could not sync {}: {}", dir.display(), err);
+        }
+        Err(err) => warn!("❌ Could not sync {}: {}", dir.display(), err),
+    }
+}
+
+/// Whether `err` is a file system's refusal to sync a folder at all. Matched by
+/// code: the `ErrorKind` of `ENOTSUP` differs between Rust releases.
+#[cfg(unix)]
+fn sync_unsupported(err: &std::io::Error) -> bool {
+    err.raw_os_error().is_some_and(|code| {
+        [
+            libc::EINVAL,
+            libc::ENOTSUP,
+            libc::EOPNOTSUPP,
+            libc::ENOSYS,
+            libc::ENOTTY,
+        ]
+        .contains(&code)
     })
+}
+
+pub(super) async fn write(path: &Path, body: ByteStream, private: bool, sync_folder: bool) -> Res {
+    atomic_write(path, body, private, sync_folder)
+        .await
+        .map_err(|source| {
+            Error::Fs(FsError::Write {
+                path: path.to_path_buf(),
+                source,
+            })
+        })
 }
 
 /// Limits a directory made before it was private to its owner. Best effort: a
@@ -222,7 +279,15 @@ impl Storage for LocalStorage {
         path: impl AsRef<Path> + Send + Sync,
         body: ByteStream,
     ) -> Res {
-        write(path.as_ref(), body, false).await
+        write(path.as_ref(), body, false, true).await
+    }
+
+    async fn write_staged_byte_stream(
+        &self,
+        path: impl AsRef<Path> + Send + Sync,
+        body: ByteStream,
+    ) -> Res {
+        write(path.as_ref(), body, false, false).await
     }
 
     async fn create_private_dir(&self, path: impl AsRef<Path> + Send) -> Res {
@@ -234,7 +299,7 @@ impl Storage for LocalStorage {
         path: impl AsRef<Path> + Send + Sync,
         body: ByteStream,
     ) -> Res {
-        write(path.as_ref(), body, true).await
+        write(path.as_ref(), body, true, true).await
     }
 
     async fn lock_exclusive(&self, path: impl AsRef<Path> + Send) -> Res<super::LockGuard> {
@@ -529,6 +594,141 @@ mod tests {
 
         assert_eq!(fs::read(&dest).await?, b"updated");
         Ok(())
+    }
+
+    /// Records the level of each event logged while it is the default subscriber.
+    #[cfg(unix)]
+    #[derive(Clone, Default)]
+    struct Logged(std::sync::Arc<std::sync::Mutex<Vec<tracing::Level>>>);
+
+    #[cfg(unix)]
+    impl Logged {
+        /// Awaits `body`, returning its output and the levels it logged.
+        async fn during<T>(body: impl Future<Output = T>) -> (T, Vec<tracing::Level>) {
+            let logged = Logged::default();
+            let guard = tracing::subscriber::set_default(logged.clone());
+            let output = body.await;
+            drop(guard);
+            let levels = logged.0.lock().unwrap().clone();
+            (output, levels)
+        }
+    }
+
+    #[cfg(unix)]
+    impl tracing::Subscriber for Logged {
+        fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+            true
+        }
+        fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+            tracing::span::Id::from_u64(1)
+        }
+        fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+        fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+        fn event(&self, event: &tracing::Event<'_>) {
+            self.0.lock().unwrap().push(*event.metadata().level());
+        }
+        fn enter(&self, _: &tracing::span::Id) {}
+        fn exit(&self, _: &tracing::span::Id) {}
+    }
+
+    /// A folder its owner can write and search but not read, so it cannot be
+    /// opened to sync it.
+    #[cfg(unix)]
+    struct UnreadableFolder {
+        path: PathBuf,
+        _temp_dir: tempfile::TempDir,
+    }
+
+    #[cfg(unix)]
+    impl UnreadableFolder {
+        /// `None` as root, which ignores the mode: there the sync would not fail.
+        fn new() -> Res<Option<Self>> {
+            use std::os::unix::fs::PermissionsExt;
+
+            let temp_dir = tempdir()?;
+            let path = temp_dir.path().join("unreadable");
+            std::fs::create_dir(&path)?;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o300))?;
+            let folder = UnreadableFolder {
+                path,
+                _temp_dir: temp_dir,
+            };
+            Ok(std::fs::File::open(&folder.path).is_err().then_some(folder))
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for UnreadableFolder {
+        fn drop(&mut self) {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&self.path, std::fs::Permissions::from_mode(0o700));
+        }
+    }
+
+    /// A directory that cannot be opened to sync it still takes the write,
+    /// since the new file is in place by then, and the failed sync is logged.
+    #[test(tokio::test)]
+    #[cfg(unix)]
+    async fn a_write_whose_directory_cannot_be_synced_succeeds_and_warns() -> Res {
+        let Some(folder) = UnreadableFolder::new()? else {
+            return Ok(());
+        };
+        let dest = folder.path.join("data.json");
+
+        let (result, logged) = Logged::during(
+            LocalStorage::default().write_byte_stream(&dest, ByteStream::from_static(b"new")),
+        )
+        .await;
+
+        result?;
+        assert_eq!(fs::read(&dest).await?, b"new");
+        assert_eq!(logged, [tracing::Level::WARN]);
+        Ok(())
+    }
+
+    /// A staged file is renamed elsewhere right after, so its folder is not
+    /// synced: the same unreadable folder logs nothing.
+    #[test(tokio::test)]
+    #[cfg(unix)]
+    async fn a_staged_write_does_not_sync_its_folder() -> Res {
+        let Some(folder) = UnreadableFolder::new()? else {
+            return Ok(());
+        };
+        let dest = folder.path.join("staged");
+
+        let (result, logged) = Logged::during(
+            LocalStorage::default()
+                .write_staged_byte_stream(&dest, ByteStream::from_static(b"new")),
+        )
+        .await;
+
+        result?;
+        assert_eq!(fs::read(&dest).await?, b"new");
+        assert!(logged.is_empty(), "{logged:?}");
+        Ok(())
+    }
+
+    /// devfs on macOS and procfs on Linux refuse every folder sync, as network
+    /// and FUSE mounts do; that refusal is logged at debug, not as a warning.
+    #[test(tokio::test)]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    async fn a_folder_sync_the_file_system_refuses_is_logged_at_debug() {
+        let folder = if cfg!(target_os = "macos") {
+            "/dev"
+        } else {
+            "/proc"
+        };
+        let ((), logged) = Logged::during(sync_dir(Path::new(folder))).await;
+        assert_eq!(logged, [tracing::Level::DEBUG]);
+    }
+
+    #[test]
+    fn a_bare_file_name_is_written_into_the_current_folder() {
+        assert_eq!(folder_of(Path::new("data.json")), Path::new("."));
+        assert_eq!(
+            folder_of(Path::new(".quilt/data.json")),
+            Path::new(".quilt")
+        );
     }
 
     #[test(tokio::test)]
