@@ -7,6 +7,7 @@ use std::path::PathBuf;
 
 use crate::Error;
 use crate::LogicalKey;
+use crate::Res;
 use crate::error::ManifestError;
 use crate::flow::list_revisions::holds_user_meta;
 use crate::manifest::DirMeta;
@@ -21,6 +22,8 @@ use crate::manifest::normalized_entry_meta;
 pub enum MergeRefusal {
     /// Keys both sides changed to different rows, sorted; where there are
     /// none, each key the result would hold as a file and the first key under it.
+    /// Folder keys keep their trailing `/`, so a caller can tell a folder from
+    /// a file of the same name.
     Paths(Vec<PathBuf>),
     /// Both sides changed the package `user_meta`, to different values.
     UserMeta,
@@ -35,8 +38,21 @@ pub fn merge_onto(
     theirs: Manifest,
 ) -> Result<Manifest, MergeRefusal> {
     let rows = merge_rows_onto(&base.rows, &ours.rows, theirs.rows).map_err(MergeRefusal::Paths)?;
-    let dir_meta = merge_dir_meta(&base.dir_meta, &ours.dir_meta, &theirs.dir_meta, &rows)
-        .map_err(MergeRefusal::Paths)?;
+    let dir_meta = match merge_dir_meta(&base.dir_meta, &ours.dir_meta, &theirs.dir_meta, &rows) {
+        Ok(Ok(dirs)) => dirs,
+        Ok(Err(paths)) => return Err(MergeRefusal::Paths(paths)),
+        Err(err) => {
+            // A tree error other than a file/folder clash, for example a
+            // duplicate logical key. merge_dir_meta returns it instead of
+            // ignoring it; this merge cannot be published.
+            return Err(MergeRefusal::Paths(match &err {
+                Error::Manifest(ManifestError::DuplicateLogicalKey(key)) => {
+                    vec![PathBuf::from(key)]
+                }
+                _ => vec![PathBuf::from(err.to_string())],
+            }));
+        }
+    };
     let [base_meta, ours_meta, theirs_meta] =
         [&base.header, &ours.header, &theirs.header].map(|header| {
             header
@@ -64,20 +80,22 @@ pub fn merge_onto(
 
 /// `theirs` with the folders' metadata that `ours` changed from `base`, as
 /// [`merge_onto`] does for `user_meta`: a folder both sides changed to
-/// different metadata refuses, with the folder's key. Metadata that says
-/// nothing counts as none. Sorted by key. `rows` are the merged rows, which no
-/// folder's name may be the file of, or sit under one.
+/// different metadata refuses, with the folder's key (and a trailing `/`).
+/// Metadata that says nothing counts as none. Sorted by key. `rows` are the
+/// merged rows, which no folder's name may be the file of, or sit under one.
 ///
 /// # Errors
 ///
 /// The keys of the folders both sides changed differently, or else of the
-/// file and folder that share a name.
+/// file and folder that share a name (the file without a slash, the folder
+/// with one). Other tree errors, such as a duplicate logical key, are
+/// returned as `Err` too, not ignored.
 pub fn merge_dir_meta(
     base: &[DirMeta],
     ours: &[DirMeta],
     theirs: &[DirMeta],
     rows: &[ManifestRow],
-) -> Result<Vec<DirMeta>, Vec<PathBuf>> {
+) -> Res<Result<Vec<DirMeta>, Vec<PathBuf>>> {
     let meta_of = |dirs: &'_ [DirMeta]| -> BTreeMap<LogicalKey, serde_json::Value> {
         dirs.iter()
             .filter(|dir| dir.holds_meta())
@@ -95,7 +113,7 @@ pub fn merge_dir_meta(
             continue;
         }
         if current != was {
-            collisions.push(key.to_path_buf());
+            collisions.push(dir_path(key));
             continue;
         }
         match now {
@@ -104,16 +122,50 @@ pub fn merge_dir_meta(
         };
     }
     if !collisions.is_empty() {
-        return Err(collisions);
+        return Ok(Err(collisions));
     }
     let merged: Vec<DirMeta> = merged
         .into_iter()
         .map(|(logical_key, meta)| DirMeta { logical_key, meta })
         .collect();
-    if let Err(Error::Manifest(ManifestError::FileAndFolder(key))) = check_tree(rows, &merged) {
-        return Err(vec![PathBuf::from(key)]);
+    match check_tree(rows, &merged) {
+        Ok(()) => Ok(Ok(merged)),
+        Err(Error::Manifest(ManifestError::FileAndFolder(key))) => {
+            Ok(Err(file_and_folder_paths(&key, rows, &merged)))
+        }
+        Err(err) => Err(err),
     }
-    Ok(merged)
+}
+
+/// A folder's key as a path, with the trailing `/` its manifest row has.
+fn dir_path(key: &LogicalKey) -> PathBuf {
+    PathBuf::from(format!("{key}/"))
+}
+
+/// Paths for a file/folder clash: the file without a slash, the folder with
+/// one, so a caller can tell them apart.
+fn file_and_folder_paths(key: &str, rows: &[ManifestRow], dirs: &[DirMeta]) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if rows.iter().any(|row| row.logical_key.to_string() == key) {
+        paths.push(PathBuf::from(key));
+    }
+    if dirs.iter().any(|dir| dir.logical_key.to_string() == key) {
+        paths.push(PathBuf::from(format!("{key}/")));
+    }
+    if let Ok(file) = LogicalKey::new(key) {
+        for dir in dirs {
+            if file.is_folder_of(&dir.logical_key) {
+                if !paths.iter().any(|path| path.as_os_str() == key) {
+                    paths.push(PathBuf::from(key));
+                }
+                paths.push(dir_path(&dir.logical_key));
+            }
+        }
+    }
+    if paths.is_empty() {
+        paths.push(PathBuf::from(key));
+    }
+    paths
 }
 
 /// `theirs` changed only at the keys whose row differs from `base` to `ours`,
@@ -504,7 +556,7 @@ mod tests {
         let ours = dirs(vec![dir("a", json!({"v": 2}))?]);
         let theirs = dirs(vec![dir("a", json!({"v": 3}))?]);
 
-        assert_eq!(merge_onto(&base, &ours, theirs), Err(paths(&["a"])));
+        assert_eq!(merge_onto(&base, &ours, theirs), Err(paths(&["a/"])));
         Ok(())
     }
 
@@ -529,7 +581,37 @@ mod tests {
 
         assert_eq!(
             merge_onto(&Manifest::default(), &ours, theirs),
-            Err(paths(&["a"]))
+            Err(paths(&["a", "a/"]))
+        );
+        Ok(())
+    }
+
+    /// A tree error other than a file/folder clash must not be ignored.
+    #[test]
+    fn merge_dir_meta_returns_a_duplicate_row_as_an_error() -> Res {
+        let rows = vec![row("a.csv", b"1")?, row("a.csv", b"2")?];
+        let err = merge_dir_meta(&[], &[], &[], &rows)
+            .expect_err("a duplicate file key is a tree error, not a merge refusal");
+        assert!(
+            matches!(
+                err,
+                Error::Manifest(ManifestError::DuplicateLogicalKey(ref key)) if key == "a.csv"
+            ),
+            "{err}"
+        );
+        Ok(())
+    }
+
+    /// A file that is the folder of a metadata row is reported with the
+    /// folder's trailing `/`.
+    #[test]
+    fn a_file_that_is_the_folder_of_metadata_is_named_with_a_slash() -> Res {
+        let ours = rows(vec![row("a", b"mine")?]);
+        let theirs = dirs(vec![dir("a/sub", json!({"v": 1}))?]);
+
+        assert_eq!(
+            merge_onto(&Manifest::default(), &ours, theirs),
+            Err(paths(&["a", "a/sub/"]))
         );
         Ok(())
     }

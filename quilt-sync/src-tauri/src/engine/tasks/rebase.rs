@@ -58,7 +58,7 @@ pub(super) async fn onto_latest<M: QuiltModel>(
             warn!("tasks: {namespace}: latest changed what the run changed; left Diverged");
             return Ok(false);
         };
-        let Ok(dir_meta) =
+        let Ok(Ok(dir_meta)) =
             quilt::flow::merge_dir_meta(&base.dir_meta, &outcome.dir_meta, &latest_dir_meta, &rows)
         else {
             warn!("tasks: {namespace}: latest changed what the run changed; left Diverged");

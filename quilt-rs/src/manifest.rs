@@ -131,19 +131,27 @@ struct Quilt3Line {
     logical_key: PathBuf,
     #[serde(default)]
     physical_keys: Option<Vec<String>>,
+    /// Ignored on a folder row, as quilt3 ignores them. Parsed only once the
+    /// row is known to be a file's.
     #[serde(default)]
-    hash: Option<object_hash::ObjectHash>,
-    #[serde(default, deserialize_with = "optional_number_to_u64")]
-    size: Option<u64>,
+    hash: Option<serde_json::Value>,
+    /// Ignored on a folder row, as quilt3 ignores them.
+    #[serde(default)]
+    size: Option<serde_json::Value>,
     #[serde(default)]
     meta: Option<serde_json::Value>,
 }
 
-fn optional_number_to_u64<'de, D: Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Option<u64>, D::Error> {
+fn file_size(value: &serde_json::Value) -> Result<u64, Error> {
+    // See note on `Quilt3ManifestRow::size` — JSON numbers come through as f64;
+    // sizes within S3's 5TB cap fit losslessly in the f64 mantissa.
+    let Some(n) = value.as_f64() else {
+        return Err(Error::Json(
+            <serde_json::Error as serde::de::Error>::custom("size must be a number"),
+        ));
+    };
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    Option::<f64>::deserialize(deserializer).map(|n| n.map(|n| n as u64))
+    Ok(n as u64)
 }
 
 enum Line {
@@ -185,8 +193,8 @@ impl TryFrom<Quilt3Line> for Line {
             Quilt3ManifestRow {
                 logical_key: LogicalKey::new(logical_key)?,
                 physical_keys,
-                hash: hash.ok_or_else(|| missing("hash"))?,
-                size: size.ok_or_else(|| missing("size"))?,
+                hash: serde_json::from_value(hash.ok_or_else(|| missing("hash"))?)?,
+                size: file_size(&size.ok_or_else(|| missing("size"))?)?,
                 meta,
             }
             .try_into()?,
@@ -255,7 +263,7 @@ impl TryFrom<Quilt3ManifestRow> for ManifestRow {
 /// Like quilt3, a manifest keeps it where it is read, writes only metadata that
 /// says something (not `null`, `{}`, `0`, `""` or `false`), and leaves it out of
 /// the top hash.
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, Serialize, PartialEq)]
 pub struct DirMeta {
     /// The folder, without the trailing `/` its manifest row has.
     pub logical_key: LogicalKey,
@@ -396,18 +404,14 @@ impl Manifest {
     /// # Panics
     ///
     /// Panics if serializing the header or a row to JSON fails, which does not
-    /// happen for well-formed manifest values.
+    /// happen for well-formed manifest values, or if the rows and folder
+    /// metadata do not form a tree (a duplicate key, or a name that is both a
+    /// file and a folder). A hand-built [`Manifest`] can hold that; neither
+    /// this reader nor quilt3 would accept the file.
     #[must_use]
     pub fn to_jsonlines(&self) -> String {
         // TODO: This is slightly inefficient.
         // We could use some kind of async iterator / stream idk
-        let mut buf = String::new();
-        buf.push_str(
-            serde_json::to_string(&self.header)
-                .expect("Could not serialize manifest header")
-                .as_str(),
-        );
-        buf.push('\n');
 
         // In quilt3's order: the folders by name, before the files.
         let mut dirs: Vec<&DirMeta> = self
@@ -415,7 +419,21 @@ impl Manifest {
             .iter()
             .filter(|dir| dir.holds_meta())
             .collect();
+        // A hand-built Manifest can hold a clash or a duplicate the readers
+        // both refuse; don't write that file.
+        let written: Vec<DirMeta> = dirs.iter().map(|dir| (*dir).clone()).collect();
+        if let Err(err) = check_tree(&self.rows, &written) {
+            panic!("Could not serialize manifest: {err}");
+        }
         dirs.sort_by(|a, b| a.logical_key.cmp(&b.logical_key));
+
+        let mut buf = String::new();
+        buf.push_str(
+            serde_json::to_string(&self.header)
+                .expect("Could not serialize manifest header")
+                .as_str(),
+        );
+        buf.push('\n');
         for dir in dirs {
             let row = Quilt3DirRow {
                 logical_key: format!("{}/", dir.logical_key),
