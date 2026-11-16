@@ -750,13 +750,15 @@ async fn get_package_page_data_from_model(
         // page states it beside the header instead.
         //
         // Below the denial the `Err` side catches: a denial is rank 1.
+        // A package with no working copy says so above any remote state, as
+        // the main page does: opening it is what it needs.
         Ok(status) => {
-            let state = if let Some(state) = unreachable_state(&lineage, &status) {
+            let state = if status.working_copy == quilt::lineage::WorkingCopy::Absent {
+                PackageStateDto::NoWorkingCopy
+            } else if let Some(state) = unreachable_state(&lineage, &status) {
                 state
             } else if let Some(files) = conflict_files(paused) {
                 PackageStateDto::PullConflict { files }
-            } else if status.working_copy == quilt::lineage::WorkingCopy::Absent {
-                PackageStateDto::NoWorkingCopy
             } else {
                 quilt::lineage::PackageState::resolve(
                     status.upstream_state,
@@ -772,6 +774,7 @@ async fn get_package_page_data_from_model(
         }
         Err(err) => {
             let state = match blocked_state(&err) {
+                Some(_) if !lineage.working_copy.is_home() => PackageStateDto::NoWorkingCopy,
                 // The one state whose remedy is worth a round trip, and the
                 // only place this function goes back to the network.
                 Some(PackageStateDto::RoleDenied { .. }) => {
@@ -1334,8 +1337,10 @@ mod tests {
             working_copy: quilt::lineage::WorkingCopyLocation::None,
             ..quilt::lineage::PackageLineage::from_remote(make_manifest_uri(NS), "abcdef".into())
         };
+        // Unrefreshed, so the page would otherwise say the bucket is unreachable.
         let status = quilt::lineage::InstalledPackageStatus {
             working_copy: quilt::lineage::WorkingCopy::Absent,
+            latest_refreshed: false,
             ..settled()
         };
 

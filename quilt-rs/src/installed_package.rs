@@ -1213,6 +1213,8 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
     }
 
     async fn set_sync_scope_unlocked(&self, scope: SyncScope) -> Res<()> {
+        // A scope is the working copy's: refuse a package with none.
+        self.lineage.read(&self.storage).await?;
         self.lineage
             .edit(&self.storage, |l| l.sync_scope = scope)
             .await?;
@@ -1227,8 +1229,6 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
     }
 
     async fn keep_unlocked(&self, scope: SyncScope, download: bool) -> Res<KeepReport> {
-        // Refuses a package with no working copy before the scope is saved.
-        self.lineage.read(&self.storage).await?;
         self.set_sync_scope_unlocked(scope).await?;
         let kept = self.kept_unlocked().await?;
         if !download || kept.outstanding == 0 {

@@ -401,7 +401,8 @@ fn primary_action(
                 ns.clone(),
                 "Opened as a working copy.",
                 "Could not open as a working copy.",
-                Reread::OnSuccess(reload),
+                // A failure after files were placed still leaves a working copy.
+                Reread::Always(reload),
                 async move { commands::package_open_working_copy(ns).await },
             );
         }

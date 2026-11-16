@@ -213,8 +213,10 @@ async fn keep_refuses_a_tracked_package_and_saves_no_scope() -> Res {
     let t = Tracked::new().await?;
 
     let kept = t.package.keep(SyncScope::EntirePackage, false).await;
+    let set = t.package.set_sync_scope(SyncScope::EntirePackage).await;
 
     assert!(is_no_working_copy(&kept));
+    assert!(is_no_working_copy(&set));
     assert_eq!(
         t.package.lineage().await?.sync_scope,
         SyncScope::IndividualFiles
