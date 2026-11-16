@@ -351,7 +351,13 @@ mod tests {
     #[test(tokio::test)]
     async fn only_whole_hash_names_under_packages_are_revisions() -> Res {
         let remote = remote_with(&[ALPHA]).await?;
-        for stray in ["abcdef01-notes.txt", "abcdef01/nested", "abcdef.tmp"] {
+        // `{BETA}/nested` makes `BETA` itself a directory, not a manifest.
+        for stray in [
+            "abcdef01-notes.txt",
+            "abcdef01/nested",
+            "abcdef.tmp",
+            &format!("{BETA}/nested"),
+        ] {
             let uri = S3Uri::try_from(format!("s3://{BUCKET}/.quilt/packages/{stray}").as_str())?;
             remote.put_object(None, &uri, b"x".to_vec()).await?;
         }

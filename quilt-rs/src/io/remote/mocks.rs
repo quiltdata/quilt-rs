@@ -257,7 +257,10 @@ impl Remote for MockRemote {
         let mut hashes = Vec::new();
         while let Some(entry) = entries.next_entry().await? {
             let name = entry.file_name().to_string_lossy().into_owned();
-            if is_top_hash(&name) && name.starts_with(prefix) {
+            // A key nested under a hash-named name makes that name a directory,
+            // which S3 would not list as an object of its own.
+            if is_top_hash(&name) && name.starts_with(prefix) && entry.file_type().await?.is_file()
+            {
                 hashes.push(name);
             }
         }
