@@ -11,11 +11,13 @@ use super::older_revision_tests::BUCKET;
 use super::older_revision_tests::publish_manifest;
 use super::older_revision_tests::publish_row;
 use super::*;
+use crate::checksum::hash_reader;
 use crate::io::manifest::tag_latest;
 use crate::io::remote::mocks::MockRemote;
 use crate::lineage::DomainLineageIo;
 use crate::local_domain::LocalDomain;
 use crate::manifest::ManifestRow;
+use crate::object_hash::ObjectHash;
 use crate::paths::DomainPaths;
 
 /// The logical keys a sequence draws from; `d/` is the folder the folders
@@ -55,8 +57,6 @@ struct Model {
     disk: Rows,
     committed: bool,
     remote: bool,
-    /// Pulls that brought a newer revision, and undos that ran, so far.
-    moved: usize,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -113,9 +113,6 @@ impl Model {
                 self.tracked.remove(key);
                 self.disk.remove(key);
             }
-        }
-        if self.rows != self.latest {
-            self.moved += 1;
         }
         self.rows.clone_from(&self.latest);
         Some(true)
@@ -203,7 +200,6 @@ impl Model {
         }
         self.history.pop();
         self.rows = previous;
-        self.moved += 1;
         true
     }
 }
@@ -457,15 +453,20 @@ async fn take(copy: &mut Fixture, model: &mut Model, step: &Step) -> Res<Option<
         }
     };
     let tracked = copy.tracked().await?;
-    let rows: BTreeSet<String> = copy
+    let rows: BTreeMap<String, ObjectHash> = copy
         .package
         .manifest()
         .await?
         .rows
-        .iter()
-        .map(|row| row.logical_key.to_string())
+        .into_iter()
+        .map(|row| (row.logical_key.to_string(), row.hash))
         .collect();
-    let expected_rows: BTreeSet<String> = model.rows.keys().cloned().collect();
+    let algorithm = HostConfig::default().checksums.algorithm_code();
+    let mut expected_rows = BTreeMap::new();
+    for (key, body) in &model.rows {
+        let hash = hash_reader(body.as_slice(), body.len() as u64, algorithm).await?;
+        expected_rows.insert(key.clone(), hash);
+    }
     Ok(ran
         .or_else(|| {
             (tracked != model.tracked)
@@ -513,9 +514,11 @@ async fn sequence(seed: u64, scope: Scope, remote: bool, steps: usize) -> Res<us
     let mut random = Draw(seed);
     let mut made = 0;
     let mut taken = Vec::new();
+    let mut moved = 0;
     for taking in 0..steps {
         let step = draw(&model, &mut random, &mut made, taking >= steps * 2 / 3);
         taken.push(step.clone());
+        let before = copy.package.lineage().await?;
         let differs = match take(&mut copy, &mut model, &step).await {
             Ok(differs) => differs,
             Err(err) => Some(format!("{err}")),
@@ -523,8 +526,13 @@ async fn sequence(seed: u64, scope: Scope, remote: bool, steps: usize) -> Res<us
         if let Some(differs) = differs {
             panic!("seed {seed}, {scope:?}, remote {remote}: {differs} after {taken:#?}");
         }
+        let after = copy.package.lineage().await?;
+        if matches!(step, Step::Pull | Step::Undo) && after.current_hash() != before.current_hash()
+        {
+            moved += 1;
+        }
     }
-    Ok(model.moved)
+    Ok(moved)
 }
 
 /// Eight sequences of a remote copy under `scope`.
