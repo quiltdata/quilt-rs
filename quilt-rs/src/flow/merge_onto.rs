@@ -606,11 +606,9 @@ mod tests {
 
     fn dir_text(key: &str, text: &str) -> Res<DirMeta> {
         let (meta, meta_numbers) = crate::manifest::RawNumbers::parse(text)?;
-        Ok(DirMeta {
-            logical_key: LogicalKey::new(key)?,
-            meta,
-            meta_numbers,
-        })
+        let mut dir = DirMeta::new(LogicalKey::new(key)?, meta);
+        dir.meta_numbers = meta_numbers;
+        Ok(dir)
     }
 
     fn dirs(dirs: Vec<DirMeta>) -> Manifest {
@@ -741,6 +739,31 @@ mod tests {
 
         let merged = merge_onto(&base, &ours, theirs).expect("merged");
 
+        assert_eq!(merged.dir_meta, ours.dir_meta);
+        assert!(!merged.dir_meta[0].meta_numbers.is_empty());
+        Ok(())
+    }
+
+    /// The only difference is a beyond-64-bit integer nested below the top
+    /// level. Comparing `meta` as a `Value` would miss it.
+    #[test]
+    fn a_nested_beyond_64_bit_integer_is_a_folder_change() -> Res {
+        let base = dirs(vec![dir_text(
+            "data",
+            r#"{"nested": {"n": 18446744073709551616}}"#,
+        )?]);
+        let ours = dirs(vec![dir_text(
+            "data",
+            r#"{"nested": {"n": 18446744073709551617}}"#,
+        )?]);
+        let theirs = dirs(vec![dir_text(
+            "data",
+            r#"{"nested": {"n": 18446744073709551616}}"#,
+        )?]);
+
+        assert_eq!(ours.dir_meta[0].meta, base.dir_meta[0].meta, "one float");
+        assert!(!ours.dir_meta[0].same_meta(&base.dir_meta[0]));
+        let merged = merge_onto(&base, &ours, theirs).expect("ours is a change");
         assert_eq!(merged.dir_meta, ours.dir_meta);
         assert!(!merged.dir_meta[0].meta_numbers.is_empty());
         Ok(())

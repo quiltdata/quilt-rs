@@ -1218,11 +1218,9 @@ mod tests {
         manifest.header.user_meta = Some(serde_json::Value::Null);
         let (meta, meta_numbers) =
             crate::manifest::RawNumbers::parse(r#"{"n": 123456789012345678901234567890}"#)?;
-        manifest.dir_meta = vec![crate::manifest::DirMeta {
-            logical_key: crate::LogicalKey::new("data")?,
-            meta,
-            meta_numbers,
-        }];
+        let mut dir = crate::manifest::DirMeta::new(crate::LogicalKey::new("data")?, meta);
+        dir.meta_numbers = meta_numbers;
+        manifest.dir_meta = vec![dir];
 
         let result = push_package(
             lineage,
