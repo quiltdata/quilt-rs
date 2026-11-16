@@ -2351,6 +2351,7 @@ async fn a_package_tracked_without_path_hashes_has_a_status() -> Res {
         .await
         .expect("a package whose entries have no hash has a status");
 
+    assert_eq!(status.working_copy, crate::lineage::WorkingCopy::Available);
     assert!(status.changes.is_empty(), "{:?}", status.changes);
     Ok(())
 }
