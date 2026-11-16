@@ -92,26 +92,24 @@ impl AsRef<PathBuf> for DomainLineage {
 
 impl DomainLineage {
     pub fn from_slice(input: &[u8]) -> Res<Self> {
-        let result: Result<Self, serde_json::Error> = serde_json::from_slice(input);
-
-        match result {
-            Ok(lineage) => {
-                require_home(&lineage.home)?;
-                Ok(lineage)
-            }
-            Err(err) => {
-                log::error!("Failed to parse DomainLineage from `{input:?}`");
-                Err(Error::Lineage(LineageError::Parse(err)))
-            }
-        }
+        parse_record(input, |lineage: &Self| &lineage.home)
     }
 }
 
-fn require_home(home: &Home) -> Res {
-    if home.as_ref().as_os_str().is_empty() {
+/// `data.json` read as `T`, all or part of the record, refused without a
+/// home.
+fn parse_record<T: serde::de::DeserializeOwned>(
+    input: &[u8],
+    home: impl FnOnce(&T) -> &Home,
+) -> Res<T> {
+    let record: T = serde_json::from_slice(input).map_err(|err| {
+        log::error!("Failed to parse DomainLineage from `{input:?}`");
+        Error::Lineage(LineageError::Parse(err))
+    })?;
+    if home(&record).as_ref().as_os_str().is_empty() {
         return Err(Error::Lineage(LineageError::MissingHome));
     }
-    Ok(())
+    Ok(record)
 }
 
 type HookFn = dyn Fn(&Namespace, Option<&PackageLineage>, Option<&PackageLineage>) + Send + Sync;
@@ -197,9 +195,7 @@ impl DomainLineageIo {
             home: Home,
         }
 
-        let record: OnlyHome = serde_json::from_slice(&self.read_bytes(storage).await?)
-            .map_err(|err| Error::Lineage(LineageError::Parse(err)))?;
-        require_home(&record.home)?;
+        let record = parse_record(&self.read_bytes(storage).await?, |r: &OnlyHome| &r.home)?;
         Ok(record.home)
     }
 
@@ -247,9 +243,7 @@ impl DomainLineageIo {
             home: Home,
         }
 
-        let entries: Entries = serde_json::from_slice(&self.read_bytes(storage).await?)
-            .map_err(|err| Error::Lineage(LineageError::Parse(err)))?;
-        require_home(&entries.home)?;
+        let entries = parse_record(&self.read_bytes(storage).await?, |e: &Entries| &e.home)?;
         Ok(entries
             .packages
             .into_iter()
