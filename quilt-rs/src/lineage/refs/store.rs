@@ -168,20 +168,19 @@ impl RefStore {
         Ok(())
     }
 
-    /// Removes the locked package's ref, which need not parse, then its tip.
+    /// Removes the locked package's ref, then its tip. A ref that does not
+    /// parse is removed too; one in a format or state this build does not
+    /// support is refused, since it may be a newer build's to remove.
     pub(crate) async fn remove(&self, storage: &(impl Storage + Sync), held: &PackageLock) -> Res {
         let namespace = held.namespace();
         let _domain = self.lock_domain(storage).await?;
-        let was = match self.hook {
-            Some(_) => self.read(storage, namespace).await.ok(),
-            None => None,
+        let was = match self.read(storage, namespace).await {
+            Ok(lineage) => Some(lineage),
+            Err(Error::Lineage(LineageError::FileParse { .. })) => None,
+            Err(err) => return Err(err),
         };
         let path = self.paths.package_ref(namespace);
-        if !remove_if_present(storage, &path).await? {
-            return Err(Error::InstallPackage(InstallPackageError::NotInstalled(
-                namespace.clone(),
-            )));
-        }
+        storage.remove_file(&path).await?;
         crate::failpoint::hit("ref.remove.after-unlink");
         storage.sync_dir(folder_of(&path)).await;
         self.remove_tip(storage, namespace).await;
@@ -999,12 +998,21 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn a_ref_in_a_newer_format_is_not_rewritten() -> Res {
+    async fn a_ref_in_a_newer_format_is_neither_rewritten_nor_removed() -> Res {
         let domain = Domain::new()?;
         domain.install(&lineage("x", BASE, BASE)).await?;
         let path = domain.paths.package_ref(&package("x"));
         let newer = br#"{"format": 2}"#;
         std::fs::write(&path, newer)?;
+        let refused = |result: &Res| {
+            matches!(
+                result,
+                Err(Error::Lineage(LineageError::UnsupportedFormat {
+                    found: 2,
+                    ..
+                }))
+            )
+        };
 
         let held = domain.lock(&package("x")).await?;
         let updated = domain
@@ -1014,16 +1022,9 @@ mod tests {
                 Ok(())
             })
             .await;
-        assert!(
-            matches!(
-                updated,
-                Err(Error::Lineage(LineageError::UnsupportedFormat {
-                    found: 2,
-                    ..
-                }))
-            ),
-            "{updated:?}"
-        );
+        assert!(refused(&updated), "{updated:?}");
+        let removed = domain.store.remove(&domain.storage, &held).await;
+        assert!(refused(&removed), "{removed:?}");
         assert_eq!(std::fs::read(&path)?, newer);
         Ok(())
     }
