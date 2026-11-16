@@ -134,7 +134,8 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
         self
     }
 
-    /// The handle every lineage read and write of this domain goes through.
+    /// The handle this domain's lineage reads and writes go through, telling
+    /// the hook set so far.
     #[must_use]
     pub fn lineage_io(&self) -> &lineage::DomainLineageIo {
         &self.lineage

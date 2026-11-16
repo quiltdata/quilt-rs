@@ -329,7 +329,10 @@ pub async fn model(local_domain: &quilt_rs::LocalDomain, args: Input) -> Result<
     for (namespace, lineage) in packages {
         match lineage {
             Ok(lineage) => readable.push((namespace, lineage)),
-            Err(err) => installed_packages_list.push(PackageEntry::unreadable(namespace, &err)),
+            Err(err) => installed_packages_list.push(PackageEntry {
+                fetched: args.fetch.then(Fetched::failed),
+                ..PackageEntry::unreadable(namespace, &err)
+            }),
         }
     }
 
@@ -971,6 +974,13 @@ mod tests {
             rendered.contains("| unreadable: Failed to parse lineage file"),
             "{rendered}"
         );
+
+        // A `--fetch` row says whether it was checked, this one included.
+        let fetched = model(local_domain, Input { fetch: true }).await?.to_json();
+        let damaged = &fetched["packages"][0];
+        assert_eq!(damaged["namespace"], "example/damaged");
+        assert_eq!(damaged["fetched"], false);
+        assert!(damaged["error"].is_string(), "{damaged}");
         Ok(())
     }
 
