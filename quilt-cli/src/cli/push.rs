@@ -230,6 +230,7 @@ mod tests {
         // A brand-new local package: a commit will be stamped below, and only
         // then is the remote attached, mirroring `create → commit → set-remote`.
         let lineage = DomainLineageIo::write_fixture(
+            quilt_rs::lineage::LineageStore::DataJson,
             &storage,
             &paths,
             home_dir.path(),
@@ -354,6 +355,7 @@ mod tests {
             .scaffold_for_installing(&storage, &home, &namespace)
             .await?;
         let lineage = DomainLineageIo::write_fixture(
+            quilt_rs::lineage::LineageStore::DataJson,
             &storage,
             &paths,
             home_dir.path(),

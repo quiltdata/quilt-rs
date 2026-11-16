@@ -927,6 +927,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
             workflow,
         )
         .await?;
+        crate::failpoint::hit("flow.commit.before-lineage");
         self.lineage
             .write_locked(&self.storage, held, lineage)
             .await?;
@@ -1022,6 +1023,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
             flow::PublishOutcome::NothingToPublish => return Ok(PublishOutcome::NothingToPublish),
         };
         let certified_latest = push_result.certified_latest;
+        crate::failpoint::hit("flow.push.before-lineage");
         let lineage = self
             .lineage
             .write_locked(&self.storage, held, push_result.lineage)
@@ -1097,6 +1099,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         )
         .await?;
         let certified_latest = result.certified_latest;
+        crate::failpoint::hit("flow.push.before-lineage");
         let lineage = self
             .lineage
             .write_locked(&self.storage, held, result.lineage)
@@ -1291,6 +1294,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
             scope,
         )
         .await?;
+        crate::failpoint::hit("flow.pull.before-lineage");
         self.lineage
             .write_locked(&self.storage, held, lineage)
             .await?;
@@ -2048,27 +2052,49 @@ impl<S: Storage + Clone + Sync, R: Remote> LockedPackage<S, R> {
     }
 }
 
+// The package-flow suites, run once against each lineage store from the same
+// files in `installed_package/`. A suite names the store as `BACKEND`.
 #[cfg(test)]
-mod change_catalog_tests;
+#[path = "installed_package"]
+mod on_data_json {
+    use super::*;
+
+    const BACKEND: lineage::LineageStore = lineage::LineageStore::DataJson;
+
+    mod change_catalog_tests;
+    mod missing_folder_tests;
+    mod move_to_tests;
+    mod older_revision_tests;
+    mod ordered_writers_tests;
+    mod set_remote_tests;
+    pub(super) mod sync_flow_tests;
+}
+#[cfg(test)]
+#[path = "installed_package"]
+#[expect(clippy::duplicate_mod, reason = "the suites run once on each store")]
+mod on_refs {
+    use super::*;
+
+    const BACKEND: lineage::LineageStore = lineage::LineageStore::Refs;
+
+    mod change_catalog_tests;
+    mod missing_folder_tests;
+    mod move_to_tests;
+    mod older_revision_tests;
+    mod ordered_writers_tests;
+    mod set_remote_tests;
+    mod sync_flow_tests;
+}
+
 #[cfg(test)]
 mod current_revision_tests;
 #[cfg(test)]
-mod missing_folder_tests;
-#[cfg(test)]
-mod move_to_tests;
-#[cfg(test)]
-mod older_revision_tests;
-#[cfg(test)]
-mod ordered_writers_tests;
+mod data_json_tests;
 #[cfg(test)]
 mod resolve_comparison_tests;
 #[cfg(test)]
 mod revision_history_tests;
 #[cfg(test)]
-mod set_remote_tests;
-#[cfg(test)]
 mod stat_cache_tests;
-#[cfg(test)]
-mod sync_flow_tests;
 #[cfg(test)]
 mod unreachable_host_tests;

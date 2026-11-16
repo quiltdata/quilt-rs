@@ -50,6 +50,7 @@ mod home;
 pub use home::DEFAULT_HOME_DIR_NAME;
 pub use home::Home;
 
+#[cfg(any(test, feature = "ref-store-preview"))]
 mod refs;
 
 /// It's essentially just a map of `PackageLineage`.
@@ -113,6 +114,21 @@ fn parse_record<T: serde::de::DeserializeOwned>(
     Ok(record)
 }
 
+/// A step for one package's entry that applies `edit`, refusing a package
+/// that is not installed.
+fn edit_entry<'a>(
+    namespace: &'a Namespace,
+    edit: impl FnOnce(&mut PackageLineage) + 'a,
+) -> impl FnOnce(&mut Option<PackageLineage>) -> Res<PackageLineage> + 'a {
+    move |entry| {
+        let package = entry.as_mut().ok_or_else(|| {
+            Error::InstallPackage(InstallPackageError::NotInstalled(namespace.clone()))
+        })?;
+        edit(package);
+        Ok(package.clone())
+    }
+}
+
 type HookFn = dyn Fn(&Namespace, Option<&PackageLineage>, Option<&PackageLineage>) + Send + Sync;
 
 /// Told of each package entry a write of `data.json` changed: the entry as
@@ -149,23 +165,72 @@ impl PartialEq for LineageHook {
 
 impl Eq for LineageHook {}
 
-/// Wrapper for reading and writing `DomainLineage`
+/// Where a domain keeps its packages' lineage.
+#[cfg(any(test, feature = "testing"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LineageStore {
+    /// `.quilt/data.json`, every package's lineage in one file.
+    DataJson,
+    /// A ref per package under `.quilt/refs/`: a preview no default build
+    /// selects.
+    #[cfg(any(test, feature = "ref-store-preview"))]
+    Refs,
+}
+
+/// Reads and writes the lineage of a domain's packages: `data.json`, or
+/// with the `ref-store-preview` feature a ref per package.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DomainLineageIo {
     path: PathBuf,
     hook: Option<LineageHook>,
+    /// Set, `path` is not used.
+    #[cfg(any(test, feature = "ref-store-preview"))]
+    refs: Option<refs::RefStore>,
 }
 
 // TODO impl std::io::Write and std::io::Read for DomainLineageIo
 impl DomainLineageIo {
     #[must_use]
     pub(crate) fn new(path: PathBuf) -> Self {
-        DomainLineageIo { path, hook: None }
+        DomainLineageIo {
+            path,
+            hook: None,
+            #[cfg(any(test, feature = "ref-store-preview"))]
+            refs: None,
+        }
+    }
+
+    /// The domain at `paths` with a ref per package. It never reads or
+    /// writes `data.json`.
+    #[cfg(any(test, feature = "ref-store-preview"))]
+    #[must_use]
+    pub(crate) fn refs(paths: paths::DomainPaths) -> Self {
+        DomainLineageIo {
+            path: PathBuf::new(),
+            hook: None,
+            refs: Some(refs::RefStore::new(paths)),
+        }
+    }
+
+    /// This handle, with its hook, on the domain at `paths` with a ref per
+    /// package.
+    #[cfg(any(test, feature = "ref-store-preview"))]
+    #[must_use]
+    pub(crate) fn into_refs(self, paths: paths::DomainPaths) -> Self {
+        let refs = Self::refs(paths);
+        match self.hook {
+            Some(hook) => refs.with_hook(hook),
+            None => refs,
+        }
     }
 
     /// Tell `hook` of every package entry this handle's writes change.
     #[must_use]
     pub fn with_hook(mut self, hook: LineageHook) -> Self {
+        #[cfg(any(test, feature = "ref-store-preview"))]
+        {
+            self.refs = self.refs.map(|store| store.with_hook(hook.clone()));
+        }
         self.hook = Some(hook);
         self
     }
@@ -173,12 +238,20 @@ impl DomainLineageIo {
     /// Show `look` each installed package's entry under the lock its writes
     /// take, so none lands while `look` runs, then hand `finish` every
     /// installed package's namespace before that lock is released.
+    ///
+    /// With a ref per package, each package is read under its own lock and
+    /// `finish` runs after the last; a package whose lock is busy, or whose
+    /// ref can't be read, is not shown to `look` but is handed to `finish`.
     pub async fn check_each<T>(
         &self,
         storage: &(impl Storage + Sync),
         mut look: impl FnMut(&Namespace, &PackageLineage),
         finish: impl FnOnce(&BTreeSet<Namespace>) -> T,
     ) -> Res<T> {
+        #[cfg(any(test, feature = "ref-store-preview"))]
+        if let Some(store) = &self.refs {
+            return store.check_each(storage, look, finish).await;
+        }
         let _locked = storage.lock_exclusive(self.lock_path()).await?;
         let lineage = self.read(storage).await?;
         for (namespace, entry) in &lineage.packages {
@@ -196,6 +269,14 @@ impl DomainLineageIo {
             home: Home,
         }
 
+        #[cfg(any(test, feature = "ref-store-preview"))]
+        if let Some(store) = &self.refs {
+            let home = store.home(storage).await?;
+            if home.as_ref().as_os_str().is_empty() {
+                return Err(LineageError::MissingHome.into());
+            }
+            return Ok(home);
+        }
         let record = parse_record(&self.read_bytes(storage).await?, |r: &OnlyHome| &r.home)?;
         Ok(record.home)
     }
@@ -206,6 +287,9 @@ impl DomainLineageIo {
         match self.home(storage).await {
             Ok(home) => Ok(Some(home)),
             Err(Error::Lineage(LineageError::MissingHome)) => Ok(None),
+            // No domain config: the store tells it from one it can't read.
+            #[cfg(any(test, feature = "ref-store-preview"))]
+            Err(Error::Lineage(LineageError::Missing)) if self.refs.is_some() => Ok(None),
             // `Missing` also covers a record whose folder can't be looked into.
             Err(Error::Lineage(LineageError::Missing)) => {
                 match storage.open_file(&self.path).await {
@@ -219,15 +303,39 @@ impl DomainLineageIo {
     }
 
     pub async fn namespaces(&self, storage: &(impl Storage + Sync)) -> Res<BTreeSet<Namespace>> {
+        #[cfg(any(test, feature = "ref-store-preview"))]
+        if let Some(store) = &self.refs {
+            return store.namespaces(storage).await;
+        }
         Ok(self.read(storage).await?.packages.into_keys().collect())
     }
 
+    /// Whether `namespace` is installed. With a ref per package, a ref that
+    /// does not parse counts.
     pub async fn contains(
         &self,
         storage: &(impl Storage + Sync),
         namespace: &Namespace,
     ) -> Res<bool> {
+        #[cfg(any(test, feature = "ref-store-preview"))]
+        if let Some(store) = &self.refs {
+            return Ok(store.contains(storage, namespace).await);
+        }
         Ok(self.read(storage).await?.packages.contains_key(namespace))
+    }
+
+    /// [`Self::contains`], refusing a package this build can't remove: on
+    /// refs, one whose ref is in a format or state it does not support.
+    pub(crate) async fn removable(
+        &self,
+        storage: &(impl Storage + Sync),
+        namespace: &Namespace,
+    ) -> Res<bool> {
+        #[cfg(any(test, feature = "ref-store-preview"))]
+        if let Some(store) = &self.refs {
+            return store.removable(storage, namespace).await;
+        }
+        self.contains(storage, namespace).await
     }
 
     /// Every installed package's entry, each read on its own: an entry that
@@ -244,6 +352,10 @@ impl DomainLineageIo {
             home: Home,
         }
 
+        #[cfg(any(test, feature = "ref-store-preview"))]
+        if let Some(store) = &self.refs {
+            return store.read_all(storage).await;
+        }
         let entries = parse_record(&self.read_bytes(storage).await?, |e: &Entries| &e.home)?;
         Ok(entries
             .packages
@@ -257,14 +369,22 @@ impl DomainLineageIo {
     }
 
     /// Store the locked package's first entry, as an install or a create
-    /// made it.
+    /// made it, its files placed under `placed`. With a ref per package, a
+    /// home changed since is refused with [`LineageError::HomeChanged`] and
+    /// nothing is stored.
     pub(crate) async fn create_package(
         &self,
         storage: &(impl Storage + Sync),
         held: &PackageLock,
         lineage: PackageLineage,
+        placed: &Home,
     ) -> Res {
-        self.update_package_lineage(storage, held.namespace(), |entry| {
+        #[cfg(any(test, feature = "ref-store-preview"))]
+        if let Some(store) = &self.refs {
+            return store.create(storage, held, &lineage, placed).await;
+        }
+        let _ = placed;
+        self.update_locked(storage, held, |entry| {
             *entry = Some(lineage);
             Ok(())
         })
@@ -277,11 +397,71 @@ impl DomainLineageIo {
         storage: &(impl Storage + Sync),
         held: &PackageLock,
     ) -> Res {
-        self.update_package_lineage(storage, held.namespace(), |entry| {
+        #[cfg(any(test, feature = "ref-store-preview"))]
+        if let Some(store) = &self.refs {
+            return store.remove(storage, held).await;
+        }
+        self.update_locked(storage, held, |entry| {
             *entry = None;
             Ok(())
         })
         .await
+    }
+
+    /// [`Self::update_package_lineage`] for the locked package.
+    pub(crate) async fn update_locked<T>(
+        &self,
+        storage: &(impl Storage + Sync),
+        held: &PackageLock,
+        step: impl FnOnce(&mut Option<PackageLineage>) -> Res<T>,
+    ) -> Res<T> {
+        #[cfg(any(test, feature = "ref-store-preview"))]
+        if let Some(store) = &self.refs {
+            return store.update_entry(storage, held, step).await;
+        }
+        self.splice_entry(storage, held.namespace(), step).await
+    }
+
+    /// Delete the leftovers of writes a kill interrupted, on refs; `data.json`
+    /// leaves none to sweep.
+    #[cfg_attr(
+        not(any(test, feature = "ref-store-preview")),
+        expect(
+            clippy::unused_async,
+            clippy::unused_async_trait_impl,
+            reason = "only refs leave temps to sweep"
+        )
+    )]
+    pub(crate) async fn sweep(&self, storage: &(impl Storage + Sync)) -> Res {
+        #[cfg(any(test, feature = "ref-store-preview"))]
+        if let Some(store) = &self.refs {
+            return store.sweep(storage).await;
+        }
+        let _ = storage;
+        Ok(())
+    }
+
+    /// [`Self::sweep`] by a caller holding the locks in `held`, sweeping only
+    /// those packages'.
+    #[cfg_attr(
+        not(any(test, feature = "ref-store-preview")),
+        expect(
+            clippy::unused_async,
+            clippy::unused_async_trait_impl,
+            reason = "only refs leave temps to sweep"
+        )
+    )]
+    pub(crate) async fn sweep_held(
+        &self,
+        storage: &(impl Storage + Sync),
+        held: &[PackageLock],
+    ) -> Res {
+        #[cfg(any(test, feature = "ref-store-preview"))]
+        if let Some(store) = &self.refs {
+            return store.sweep_held(storage, held).await;
+        }
+        let _ = (storage, held);
+        Ok(())
     }
 
     /// Tell the hook of each package entry that differs from `before` to
@@ -324,6 +504,12 @@ impl DomainLineageIo {
         storage: &(impl Storage + Sync),
         namespace: &Namespace,
     ) -> Res<(PathBuf, PackageLineage)> {
+        #[cfg(any(test, feature = "ref-store-preview"))]
+        if let Some(store) = &self.refs {
+            let lineage = store.read(storage, namespace).await?;
+            let home = self.home(storage).await?;
+            return Ok((paths::package_home(&home, namespace), lineage));
+        }
         let domain_lineage = self.read(storage).await?;
 
         match domain_lineage.packages.get(namespace) {
@@ -373,7 +559,25 @@ impl DomainLineageIo {
 
     /// [`Self::update`] for one package's entry: `step` sees `None` when the
     /// package is not installed, and setting it to `None` removes the entry.
+    ///
+    /// With a ref per package it takes the package's lock, so a caller
+    /// holding that lock must not call it.
     pub async fn update_package_lineage<T>(
+        &self,
+        storage: &(impl Storage + Sync),
+        namespace: &Namespace,
+        step: impl FnOnce(&mut Option<PackageLineage>) -> Res<T>,
+    ) -> Res<T> {
+        #[cfg(any(test, feature = "ref-store-preview"))]
+        if let Some(store) = &self.refs {
+            let held = PackageLock::take(storage, store.paths(), namespace).await?;
+            return store.update_entry(storage, &held, step).await;
+        }
+        self.splice_entry(storage, namespace, step).await
+    }
+
+    /// [`Self::update_package_lineage`] on `data.json`.
+    async fn splice_entry<T>(
         &self,
         storage: &(impl Storage + Sync),
         namespace: &Namespace,
@@ -399,14 +603,8 @@ impl DomainLineageIo {
         namespace: &Namespace,
         edit: impl FnOnce(&mut PackageLineage),
     ) -> Res<PackageLineage> {
-        self.update_package_lineage(storage, namespace, |entry| {
-            let package = entry.as_mut().ok_or_else(|| {
-                Error::InstallPackage(InstallPackageError::NotInstalled(namespace.clone()))
-            })?;
-            edit(package);
-            Ok(package.clone())
-        })
-        .await
+        self.update_package_lineage(storage, namespace, edit_entry(namespace, edit))
+            .await
     }
 
     /// Point the domain at `home`, creating its folder.
@@ -446,6 +644,18 @@ impl DomainLineageIo {
         home: impl AsRef<Path>,
         overwrite: bool,
     ) -> Res<Home> {
+        #[cfg(any(test, feature = "ref-store-preview"))]
+        if let Some(store) = &self.refs {
+            let home = Home::from(home);
+            if !store.start(storage, &home).await? {
+                if overwrite {
+                    store.overwrite_home(storage, &home).await?;
+                } else {
+                    store.set_home(storage, &home).await?;
+                }
+            }
+            return Ok(home);
+        }
         let _locked = storage.lock_exclusive(self.lock_path()).await?;
         match storage.read_bytes(&self.path).await {
             Ok(bytes) => {
@@ -519,22 +729,39 @@ impl DomainLineageIo {
         PackageLineageIo::new(self.clone(), namespace)
     }
 
-    /// Store a test's domain: `home` and `packages` replace whatever the
-    /// domain at `paths` held. Returns the handle its packages read through.
+    /// Store a test's domain in `store`: `home` and `packages` replace
+    /// whatever the domain at `paths` held there. Returns the handle its
+    /// packages read through.
     #[cfg(any(test, feature = "testing"))]
     pub async fn write_fixture(
+        store: LineageStore,
         storage: &(impl Storage + Sync),
         paths: &paths::DomainPaths,
         home: impl AsRef<Path>,
         packages: impl IntoIterator<Item = (Namespace, PackageLineage)>,
     ) -> Res<Self> {
-        let io = Self::new(paths.lineage());
-        let lineage = DomainLineage {
-            packages: packages.into_iter().collect(),
-            home: Home::from(home),
-        };
-        io.write(storage, lineage).await?;
-        Ok(io)
+        let home = Home::from(home);
+        match store {
+            LineageStore::DataJson => {
+                let io = Self::new(paths.lineage());
+                let lineage = DomainLineage {
+                    packages: packages.into_iter().collect(),
+                    home,
+                };
+                io.write(storage, lineage).await?;
+                Ok(io)
+            }
+            #[cfg(any(test, feature = "ref-store-preview"))]
+            LineageStore::Refs => {
+                let refs = refs::RefStore::new(paths.clone());
+                refs.replace_fixture(storage, &home).await?;
+                for (namespace, lineage) in packages {
+                    let held = PackageLock::take(storage, paths, &namespace).await?;
+                    refs.create(storage, &held, &lineage, &home).await?;
+                }
+                Ok(Self::refs(paths.clone()))
+            }
+        }
     }
 
     /// Leave `namespace`'s stored entry one no reader can parse.
@@ -544,6 +771,10 @@ impl DomainLineageIo {
         storage: &(impl Storage + Sync),
         namespace: &Namespace,
     ) -> Res {
+        #[cfg(any(test, feature = "ref-store-preview"))]
+        if let Some(store) = &self.refs {
+            return store.damage_fixture(storage, namespace).await;
+        }
         let _locked = storage.lock_exclusive(self.lock_path()).await?;
         let mut record: serde_json::Value =
             serde_json::from_slice(&self.read_bytes(storage).await?)?;
@@ -628,7 +859,12 @@ impl PackageLineageIo {
         lineage: PackageLineage,
     ) -> Res<PackageLineage> {
         debug_assert_eq!(held.namespace(), &self.namespace);
-        self.write(storage, lineage).await
+        self.domain_lineage
+            .update_locked(storage, held, |entry| {
+                *entry = Some(lineage.clone());
+                Ok(lineage)
+            })
+            .await
     }
 
     /// [`Self::edit`] by a writer holding this package's lock.
@@ -639,7 +875,9 @@ impl PackageLineageIo {
         edit: impl FnOnce(&mut PackageLineage),
     ) -> Res<PackageLineage> {
         debug_assert_eq!(held.namespace(), &self.namespace);
-        self.edit(storage, edit).await
+        self.domain_lineage
+            .update_locked(storage, held, edit_entry(&self.namespace, edit))
+            .await
     }
 }
 

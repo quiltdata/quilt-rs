@@ -110,11 +110,22 @@ pub async fn gc(
     storage: &(impl Storage + Sync),
     installed: &BTreeSet<Namespace>,
 ) -> Res<GcReport> {
+    gc_under(paths, storage, installed, async |_| Ok(())).await
+}
+
+/// [`gc`], running `also` under the locks it takes before it deletes.
+pub(crate) async fn gc_under(
+    paths: &DomainPaths,
+    storage: &(impl Storage + Sync),
+    installed: &BTreeSet<Namespace>,
+    also: impl AsyncFnOnce(&[PackageLock]) -> Res,
+) -> Res<GcReport> {
     info!(
         "⏳ Collecting garbage in {}",
         paths.dot_quilt_dir().display()
     );
-    let _held = lock_every_package(paths, storage, installed, None).await?;
+    let held = lock_every_package(paths, storage, installed, None).await?;
+    also(&held).await?;
     let report = sweep(paths, storage, Sweep::Delete).await?;
     info!("✔️ Collected garbage: {report:?}");
     Ok(report)

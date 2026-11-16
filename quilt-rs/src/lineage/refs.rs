@@ -1,11 +1,7 @@
 //!
 //! Per-package lineage: one ref file per package under `.quilt/refs/`, a
 //! domain config for the home, and a disposable cache of each remote tip.
-
-#![cfg_attr(
-    not(test),
-    expect(dead_code, reason = "nothing outside tests uses the ref store yet")
-)]
+//! Only the `ref-store-preview` feature compiles it outside tests.
 
 use std::ffi::OsStr;
 use std::ffi::OsString;
@@ -14,6 +10,8 @@ use uuid::Uuid;
 
 mod format;
 mod store;
+
+pub(crate) use store::RefStore;
 
 /// What a file in `refs/<owner>/` is, read from its name.
 #[derive(Debug, PartialEq, Eq)]

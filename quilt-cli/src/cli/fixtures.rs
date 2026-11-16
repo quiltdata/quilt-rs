@@ -285,6 +285,7 @@ pub mod old_revisions {
             .await?;
         let current = top_hash("current-rev");
         let lineage = DomainLineageIo::write_fixture(
+            quilt_rs::lineage::LineageStore::DataJson,
             &storage,
             &paths,
             home_dir.path(),

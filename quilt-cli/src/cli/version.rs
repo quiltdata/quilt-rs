@@ -126,7 +126,7 @@ impl Render for Output {
 pub async fn command(args: Input) -> Std {
     let details = if args.details {
         let home = match &args.domain {
-            Some(domain) => quilt_rs::LocalDomain::new(domain)
+            Some(domain) => crate::cli::open_domain(domain)
                 .stored_home()
                 .await
                 .map(|home| home.map(|home| home.as_ref().clone()))

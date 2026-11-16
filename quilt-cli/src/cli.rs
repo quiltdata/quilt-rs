@@ -126,6 +126,20 @@ fn get_domain_dir(dir_arg: Option<PathBuf>) -> Result<PathBuf, Error> {
     }
 }
 
+/// Hidden: `refs` selects the ref-store preview, in a build that has it.
+#[cfg(any(test, feature = "ref-store-preview"))]
+const LINEAGE_ENV: &str = "QUILT_LINEAGE";
+
+/// The domain at `root`, its lineage where `QUILT_LINEAGE` says.
+pub(crate) fn open_domain(root: impl AsRef<Path>) -> quilt_rs::LocalDomain {
+    let domain = quilt_rs::LocalDomain::new(root);
+    #[cfg(any(test, feature = "ref-store-preview"))]
+    if std::env::var_os(LINEAGE_ENV).is_some_and(|value| value == "refs") {
+        return domain.with_ref_store();
+    }
+    domain
+}
+
 /// The domain used when neither `--domain` nor `QUILT_DOMAIN` names one.
 fn default_domain_dir() -> Option<PathBuf> {
     dirs::data_local_dir().map(|dir| dir.join(DOMAIN_DIR_NAMESPACE))
@@ -785,6 +799,9 @@ pub async fn init(args: Args) -> Result<Std, Error> {
     }
     let root_dir = get_domain_dir(args.domain)?;
     let m = Model::from(root_dir);
+    if let Err(err) = m.get_local_domain().sweep_leftovers().await {
+        log::warn!("Could not sweep what killed lineage writes left: {err}");
+    }
 
     // Preserve an existing home, honor the deprecated --home, and set the
     // default for a new domain on first use.
@@ -1778,6 +1795,49 @@ mod tests {
         })
     }
 
+    const LINEAGE_CHILD_DOMAIN: &str = "QUILT_TEST_LINEAGE_DOMAIN";
+
+    /// The child half of `quilt_lineage_refs_keeps_the_lineage_in_refs`; a
+    /// no-op when run directly. It creates `acme/x` in its domain.
+    #[test]
+    fn lineage_child() {
+        let Ok(domain) = std::env::var(LINEAGE_CHILD_DOMAIN) else {
+            return;
+        };
+        let args = Args::try_parse_from(["quilt", "--domain", &domain, "create", "-n", "acme/x"])
+            .expect("parses");
+        let runtime = tokio::runtime::Runtime::new().expect("a runtime");
+        runtime.block_on(init(args)).expect("the create runs");
+    }
+
+    /// Runs `lineage_child` with `QUILT_LINEAGE` as `lineage`, and returns
+    /// which of `data.json` and `domain.json` its domain then has.
+    fn create_under_lineage(lineage: Option<&str>) -> (bool, bool) {
+        let domain = tempfile::TempDir::new().expect("a temp domain");
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        child
+            .args(["cli::tests::lineage_child", "--exact", "--nocapture"])
+            .env(LINEAGE_CHILD_DOMAIN, domain.path());
+        match lineage {
+            Some(value) => child.env(LINEAGE_ENV, value),
+            None => child.env_remove(LINEAGE_ENV),
+        };
+        let output = child.output().expect("spawn the child");
+        assert!(output.status.success(), "{output:?}");
+        let dot_quilt = domain.path().join(".quilt");
+        (
+            dot_quilt.join("data.json").exists(),
+            dot_quilt.join("domain.json").exists(),
+        )
+    }
+
+    #[test]
+    fn quilt_lineage_refs_keeps_the_lineage_in_refs() {
+        assert_eq!(create_under_lineage(Some("refs")), (false, true));
+        assert_eq!(create_under_lineage(None), (true, false));
+        assert_eq!(create_under_lineage(Some("data.json")), (true, false));
+    }
+
     const ENV_CHILD_ARGV: &str = "QUILT_TEST_ENV_ARGV";
     const ENV_CHILD_MARKER: &str = "env-child-result:";
 
@@ -2284,6 +2344,7 @@ mod tests {
         let (model, domain_temp_dir) = Model::from_temp_dir()?;
         let paths = quilt_rs::paths::DomainPaths::new(domain_temp_dir.path().to_path_buf());
         quilt_rs::lineage::DomainLineageIo::write_fixture(
+            quilt_rs::lineage::LineageStore::DataJson,
             &quilt_rs::io::storage::LocalStorage::new(),
             &paths,
             "",

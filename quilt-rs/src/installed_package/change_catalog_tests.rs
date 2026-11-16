@@ -51,6 +51,7 @@ async fn published(
         })
     };
     let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
         &storage,
         &paths,
         home.as_ref(),
@@ -159,6 +160,7 @@ async fn a_package_without_a_remote_is_refused() -> Res {
         .scaffold_for_installing(&storage, &home, &namespace)
         .await?;
     let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
         &storage,
         &paths,
         "/tmp/working_dir",
