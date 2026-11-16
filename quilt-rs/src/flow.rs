@@ -24,6 +24,7 @@ mod recommit;
 mod remove_revisions;
 mod reset_to_latest;
 mod resolve_comparison;
+mod resolve_hash;
 mod status;
 mod stop_ignoring;
 mod undo_commit;
@@ -91,6 +92,9 @@ pub use remove_revisions::protection;
 pub use remove_revisions::remove_revisions;
 pub use reset_to_latest::reset_to_latest;
 pub use resolve_comparison::{ResolveComparison, compare_for_resolve};
+pub use resolve_hash::MIN_HASH_PREFIX_LEN;
+pub use resolve_hash::TOP_HASH_LEN;
+pub use resolve_hash::resolve_hash;
 
 pub use status::create_status as status;
 pub use status::create_status_cached as status_cached;

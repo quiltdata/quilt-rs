@@ -520,6 +520,14 @@ mod tests {
         ) -> Res<Vec<String>> {
             unreachable!("not part of the gate")
         }
+        async fn manifest_hashes_with_prefix(
+            &self,
+            _host: Option<&Host>,
+            _bucket: &str,
+            _prefix: &str,
+        ) -> Res<Vec<String>> {
+            unreachable!("not part of the gate")
+        }
     }
 
     /// The seam above the recovery: the gate makes the commit path's first S3

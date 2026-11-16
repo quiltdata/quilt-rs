@@ -192,6 +192,14 @@ impl Remote for BadBucketRemote {
     ) -> Res<Vec<String>> {
         unreachable!("test only exercises verify_bucket")
     }
+    async fn manifest_hashes_with_prefix(
+        &self,
+        _host: Option<&Host>,
+        _bucket: &str,
+        _prefix: &str,
+    ) -> Res<Vec<String>> {
+        unreachable!("test only exercises verify_bucket")
+    }
 }
 
 #[test(tokio::test)]

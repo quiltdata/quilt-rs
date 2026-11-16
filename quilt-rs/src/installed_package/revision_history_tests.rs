@@ -369,6 +369,14 @@ impl Remote for ListingRemote {
         self.asked.lock().unwrap().push(host.cloned());
         Ok(Vec::new())
     }
+    async fn manifest_hashes_with_prefix(
+        &self,
+        _host: Option<&Host>,
+        _bucket: &str,
+        _prefix: &str,
+    ) -> Res<Vec<String>> {
+        unreachable!("only the listing is asked")
+    }
 }
 
 /// Unusable AWS credentials on this computer fail a catalog-less listing

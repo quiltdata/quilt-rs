@@ -191,6 +191,19 @@ pub trait Remote {
         namespace: &Namespace,
     ) -> impl Future<Output = Res<Vec<String>>> + Send;
 
+    /// The hashes of the manifests in `bucket`'s registry whose names start
+    /// with `prefix`: the objects `.quilt/packages/<prefix>*`, whatever
+    /// package they belong to, as quilt3 reads its registry. Asked of S3 on
+    /// `host`'s credentials, or on this computer's AWS ones with no host.
+    /// Only names that are a whole top hash count; the list is not sorted, and
+    /// an error if the listing fails partway, never a short list.
+    fn manifest_hashes_with_prefix(
+        &self,
+        host: Option<&Host>,
+        bucket: &str,
+        prefix: &str,
+    ) -> impl Future<Output = Res<Vec<String>>> + Send;
+
     /// Drop any cached clients (and their in-memory credentials) for the
     /// given `host`, or for all hosts when `None`. Lets callers invalidate
     /// credentials immediately on logout instead of waiting for them to
