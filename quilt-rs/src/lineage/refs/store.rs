@@ -265,14 +265,12 @@ impl RefStore {
     /// rollback meets a ref or the home changing under it. Each writer reads
     /// it again under the lock its write is made under.
     async fn writable_config(&self, storage: &(impl Storage + Sync)) -> Res<DomainConfig> {
-        let migration = match self.read_config(storage).await? {
-            Some(config) if config.migration == Some(MigrationState::Done) => return Ok(config),
-            config => config.and_then(|config| config.migration),
-        };
-        let state = match migration {
+        let config = self.read_config(storage).await?;
+        let state = match config.as_ref().and_then(|config| config.migration.as_ref()) {
+            Some(MigrationState::Done) => return Ok(config.expect("a config says done")),
             Some(MigrationState::InProgress) => "is in progress",
             Some(MigrationState::RollingBack { .. }) => "is being rolled back",
-            None | Some(MigrationState::Done) => "has not started",
+            None => "has not started",
         };
         Err(LineageError::RefsNotWritable {
             path: self.paths.domain_config(),
@@ -317,11 +315,11 @@ impl RefStore {
         TipCache::from_slice(&bytes)
     }
 
-    /// Stores `lineage` over `stored` and its `tip`. A new tip is cached
-    /// before the ref is written and a stale one removed after, so a kill
-    /// between the two never leaves the package reading as up to date when
-    /// its remote has moved on. Returns the lineage as it now reads when the
-    /// ref changed.
+    /// Stores `lineage` over `stored` and its `tip`, writing the ref and the
+    /// tip cache in the order that keeps a tip the ref on disk can read: a
+    /// new tip for the stored ref's bucket before the ref, and a tip for
+    /// another bucket, or the removal of one no longer wanted, after it.
+    /// Returns the lineage as it now reads when the ref changed.
     async fn write(
         &self,
         storage: &(impl Storage + Sync),
@@ -335,9 +333,16 @@ impl RefStore {
             .map_or_default(|stored| stored.extra.clone());
         let new_ref = PackageRef::from_lineage(lineage, extra)?;
         let had_tip = tip.is_some();
-        let tip = self
-            .write_tip(storage, namespace, &new_ref, tip, lineage)
-            .await?;
+        let (tip, fresh) = wanted_tip(&new_ref, lineage, tip);
+        let bucket = |stored: Option<&PackageRef>| {
+            stored
+                .and_then(|stored| stored.remote.as_ref())
+                .map(|remote| remote.bucket.clone())
+        };
+        let tip_first = fresh && bucket(stored.as_ref()) == bucket(Some(&new_ref));
+        if tip_first && let Some(tip) = &tip {
+            self.put_tip(storage, namespace, tip).await?;
+        }
         let changed = stored.as_ref() != Some(&new_ref);
         if changed {
             put(
@@ -348,51 +353,17 @@ impl RefStore {
             )
             .await?;
         }
-        if had_tip && tip.is_none() {
-            self.remove_tip(storage, namespace).await;
+        match &tip {
+            Some(tip) if fresh && !tip_first => self.put_tip(storage, namespace, tip).await?,
+            None if had_tip => self.remove_tip(storage, namespace).await,
+            _ => {}
         }
         Ok(changed.then(|| new_ref.into_lineage(tip.as_ref())))
     }
 
-    /// Caches `lineage`'s tip where it differs from the cache, and returns
-    /// the cache it wants. A tip the ref already implies is not wanted, nor
-    /// one from another bucket, so a fallback is never kept as a tip.
-    async fn write_tip(
-        &self,
-        storage: &(impl Storage + Sync),
-        namespace: &Namespace,
-        new_ref: &PackageRef,
-        tip: Option<TipCache>,
-        lineage: &PackageLineage,
-    ) -> Res<Option<TipCache>> {
-        let wanted = match &lineage.remote_uri {
-            Some(remote) if lineage.latest_hash != untipped_latest(new_ref) => Some(&remote.bucket),
-            _ => None,
-        };
-        match (wanted, tip) {
-            (Some(bucket), Some(tip))
-                if tip.bucket == *bucket && tip.latest_hash == lineage.latest_hash =>
-            {
-                Ok(Some(tip))
-            }
-            (Some(bucket), _) => {
-                let tip = TipCache {
-                    format: TipCache::FORMAT,
-                    latest_hash: lineage.latest_hash.clone(),
-                    bucket: bucket.clone(),
-                    checked_at: Utc::now(),
-                };
-                put(
-                    storage,
-                    &self.paths.package_tip(namespace),
-                    tip.to_vec()?,
-                    None,
-                )
-                .await?;
-                Ok(Some(tip))
-            }
-            (None, _) => Ok(None),
-        }
+    async fn put_tip(&self, storage: &impl Storage, namespace: &Namespace, tip: &TipCache) -> Res {
+        let path = self.paths.package_tip(namespace);
+        put(storage, &path, tip.to_vec()?, None).await
     }
 
     /// A tip left behind costs nothing: it is replaced or removed when the
@@ -502,6 +473,34 @@ async fn put(
     storage
         .write_byte_stream_via(path, PathBuf::from(temp_name), ByteStream::from(bytes), tag)
         .await
+}
+
+/// The tip cache `lineage` wants beside `new_ref`, and whether it differs
+/// from `tip`, the cache there now. A tip the ref already implies is not
+/// wanted, so a fallback is never kept as a tip.
+fn wanted_tip(
+    new_ref: &PackageRef,
+    lineage: &PackageLineage,
+    tip: Option<TipCache>,
+) -> (Option<TipCache>, bool) {
+    let bucket = match &lineage.remote_uri {
+        Some(remote) if lineage.latest_hash != untipped_latest(new_ref) => &remote.bucket,
+        _ => return (None, false),
+    };
+    match tip {
+        Some(tip) if tip.bucket == *bucket && tip.latest_hash == lineage.latest_hash => {
+            (Some(tip), false)
+        }
+        _ => {
+            let tip = TipCache {
+                format: TipCache::FORMAT,
+                latest_hash: lineage.latest_hash.clone(),
+                bucket: bucket.clone(),
+                checked_at: Utc::now(),
+            };
+            (Some(tip), true)
+        }
+    }
 }
 
 /// The `latest_hash` a ref reads with no tip cached for its bucket, by
@@ -1149,7 +1148,7 @@ mod tests {
         Ok(())
     }
 
-    /// A pull killed with nothing unwinding, by a child process.
+    /// Updates killed with nothing unwinding, by a child process.
     #[cfg(unix)]
     mod killed {
         use super::*;
@@ -1157,13 +1156,18 @@ mod tests {
         use test_log::test;
 
         const CHILD_ROOT: &str = "QUILT_RS_TEST_REF_STORE_ROOT";
+        const CHILD_UPDATE: &str = "QUILT_RS_TEST_REF_STORE_UPDATE";
 
-        /// Not a test on its own: the child half of the test below. It pulls
-        /// `x` to `TIP`, which moves its base to the tip it had cached.
+        /// Not a test on its own: the child half of the tests below. It
+        /// updates `x` as `QUILT_RS_TEST_REF_STORE_UPDATE` says: `pull` moves
+        /// its base to the tip it had cached, `pull-behind` does too but finds
+        /// the tip moved on to `NEXT`, and `move` points it at another bucket
+        /// whose tip is `NEXT`.
         #[test]
-        #[ignore = "run only as the child of a_pull_killed_before_its_ref_lands_still_reads_as_behind"]
-        fn child_pulls() -> Res {
-            let Ok(root) = std::env::var(CHILD_ROOT) else {
+        #[ignore = "run only as the child of killed_before_the_ref_lands"]
+        fn child_updates() -> Res {
+            let (Ok(root), Ok(update)) = (std::env::var(CHILD_ROOT), std::env::var(CHILD_UPDATE))
+            else {
                 return Ok(());
             };
             tokio::runtime::Runtime::new()?.block_on(async {
@@ -1172,31 +1176,41 @@ mod tests {
                 let held = PackageLock::take(&storage, &paths, &package("x")).await?;
                 RefStore::new(paths)
                     .update(&storage, &held, |lineage| {
-                        lineage.remote_uri.as_mut().unwrap().hash = TIP.to_string();
-                        lineage.base_hash = TIP.to_string();
-                        lineage.latest_hash = TIP.to_string();
+                        let remote = lineage.remote_uri.as_mut().unwrap();
+                        match update.as_str() {
+                            "pull" | "pull-behind" => {
+                                remote.hash = TIP.to_string();
+                                lineage.base_hash = TIP.to_string();
+                                lineage.latest_hash =
+                                    if update == "pull" { TIP } else { NEXT }.to_string();
+                            }
+                            _ => {
+                                remote.bucket = "c".to_string();
+                                lineage.latest_hash = NEXT.to_string();
+                            }
+                        }
                         Ok(())
                     })
                     .await
             })
         }
 
-        /// The pull no longer needs the cached tip, but it is removed only
-        /// once the new ref is in place.
-        #[test(tokio::test)]
-        async fn a_pull_killed_before_its_ref_lands_still_reads_as_behind() -> Res {
+        /// Installs `x` behind its remote, has a child run `update` on it and
+        /// kills the child at the failpoint `name`, and returns `x` as it
+        /// then reads.
+        async fn killed_at(update: &str, name: &str) -> Res<PackageLineage> {
             let domain = Domain::new()?;
             domain.install(&lineage("x", BASE, TIP)).await?;
             let signals = tempfile::TempDir::new()?;
-            let name = "ref.before-temp";
             let mut child = std::process::Command::new(std::env::current_exe()?)
                 .args([
                     "--exact",
-                    "lineage::refs::store::tests::killed::child_pulls",
+                    "lineage::refs::store::tests::killed::child_updates",
                     "--ignored",
                     "--nocapture",
                 ])
                 .env(CHILD_ROOT, domain.root.path())
+                .env(CHILD_UPDATE, update)
                 .env(crate::failpoint::NAME_VAR, name)
                 .env(crate::failpoint::DIR_VAR, signals.path())
                 .spawn()?;
@@ -1211,11 +1225,39 @@ mod tests {
             let _ = child.kill();
             child.wait()?;
             assert!(reached.exists(), "the child exited with {exited:?}");
+            domain.store.read(&domain.storage, &package("x")).await
+        }
 
-            let lineage = domain.store.read(&domain.storage, &package("x")).await?;
+        /// The pull no longer needs the cached tip, which is removed only
+        /// once the new ref is in place.
+        #[test(tokio::test)]
+        async fn a_pull_killed_before_its_ref_lands_still_reads_as_behind() -> Res {
+            let lineage = killed_at("pull", "ref.before-temp").await?;
             assert_eq!(
                 (lineage.base_hash.as_str(), lineage.latest_hash.as_str()),
                 (BASE, TIP)
+            );
+            Ok(())
+        }
+
+        /// The new bucket's tip is cached only once the ref names that bucket.
+        #[test(tokio::test)]
+        async fn a_move_killed_before_its_ref_lands_still_reads_as_behind() -> Res {
+            let lineage = killed_at("move", "ref.before-temp").await?;
+            assert_eq!(
+                (lineage.base_hash.as_str(), lineage.latest_hash.as_str()),
+                (BASE, TIP)
+            );
+            Ok(())
+        }
+
+        /// A tip the new ref's bucket shares is cached before the ref lands.
+        #[test(tokio::test)]
+        async fn a_pull_that_finds_a_newer_tip_killed_after_its_ref_lands_reads_as_behind() -> Res {
+            let lineage = killed_at("pull-behind", "ref.after-rename").await?;
+            assert_eq!(
+                (lineage.base_hash.as_str(), lineage.latest_hash.as_str()),
+                (TIP, NEXT)
             );
             Ok(())
         }
