@@ -64,7 +64,6 @@ pub mod dialog;
 pub mod entry_group;
 pub mod entry_row;
 pub mod error_text;
-pub mod file_row;
 pub mod folder_list;
 pub mod form_control;
 pub mod form_dialog;
@@ -147,8 +146,6 @@ pub use entry_row::EntryRow;
 pub use entry_row::EntrySelection;
 pub use entry_row::differs_id;
 pub use error_text::readable;
-pub use file_row::FileRow;
-pub use file_row::FileRowSkeleton;
 pub use folder_list::FolderList;
 pub use form_control::ControlId;
 pub use form_control::FormControl;
@@ -305,18 +302,16 @@ mod tests {
     /// An ellipsis is a promise the box can end up narrower than its text, and a
     /// flex item does not get that for free: its automatic minimum size is its
     /// max-content width. Two ways to allow it — clear the minimum with
-    /// `min-width: 0`, or clamp it with a `max-width`, which is what a file row's
-    /// package tag does at 30%.
+    /// `min-width: 0`, or clamp it with a `max-width`.
     ///
     /// With neither, the text never ellipsises: the item holds its full width and
     /// the row overflows its card instead. Measured at a 700px window before this
     /// test existed — a queue row's name held 485px against a 414px line.
     #[test]
     fn a_column_that_ellipsises_can_end_up_narrower_than_its_text() {
-        const SHEETS: [(&str, &str); 4] = [
+        const SHEETS: [(&str, &str); 3] = [
             ("queue_row", include_str!("queue_row.module.css")),
             ("package_row", include_str!("package_row.module.css")),
-            ("file_row", include_str!("file_row.module.css")),
             ("cause_row", include_str!("cause_row.module.css")),
         ];
 

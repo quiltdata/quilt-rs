@@ -83,8 +83,8 @@
   border-bottom: 1px solid var(--q-borderColor-muted);
 }
 
-/* Its own class name rather than `skeleton`, which `PackageRow` and `FileRow`
- * already use, so a test can select this one alone.
+/* Its own class name rather than `skeleton`, which `PackageRow` already uses, so
+ * a test can select this one alone.
  *
  * The bar is a block and forms no line box, so the text's line height is set
  * explicitly to match `.root .text`. */

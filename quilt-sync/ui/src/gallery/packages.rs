@@ -20,7 +20,6 @@ use quilt_ui_kit::Naming;
 use quilt_ui_kit::PackageRow;
 use quilt_ui_kit::RowDownloads;
 use quilt_ui_kit::SearchInput;
-use quilt_ui_kit::SegmentedControl;
 use quilt_ui_kit::Select;
 use quilt_ui_kit::StateTone;
 
@@ -220,10 +219,6 @@ fn row(entry: Fixture, provisional: bool, with_downloads: bool) -> AnyView {
 /// The region itself, so the whole-page scene composes this code rather than a copy.
 #[component]
 pub fn PackagesRegion(
-    /// Radio-group name for the view toggle. Unique per mounted instance: the whole-page
-    /// scenes mount this region beside this file's own, and two instances sharing a
-    /// name become one group with one selection between them.
-    view_name: &'static str,
     /// Every row still waiting on its check, dimmed.
     #[prop(optional)]
     provisional: bool,
@@ -232,7 +227,6 @@ pub fn PackagesRegion(
     #[prop(optional)]
     downloads: bool,
 ) -> impl IntoView {
-    let view_mode = RwSignal::new("Packages".to_string());
     let query = RwSignal::new(String::new());
     let group = RwSignal::new("Bucket".to_string());
     let sort = RwSignal::new("Changed".to_string());
@@ -240,18 +234,10 @@ pub fn PackagesRegion(
     view! {
         // The page's region 4: the toolbar in its band, then the list that
         // scrolls the page under it, laid out by the page's own classes. The
-        // list is a bare card, as on the page. No title on it: the
-        // SegmentedControl names the view, and a card headed `Packages` above a
-        // Packages / Recent files switch says it twice.
+        // list is a bare card, as on the page.
         <div class=list_region_class()>
             <ToolbarBand>
                 <ListToolbar>
-                    <SegmentedControl
-                        aria_label="List view"
-                        name=view_name
-                        options=vec!["Packages".into(), "Recent files".into()]
-                        selected=view_mode
-                    />
                     <SearchInput value=query aria_label="Search packages" placeholder="Search…" />
                     <Select
                         naming=Naming::Prefix("Group".to_string())
@@ -359,7 +345,7 @@ pub fn PackagesScene() -> impl IntoView {
                   and Prefix and watch `user/shared-archive` move, or to Catalog to see \
                   the packages without a catalog grouped first."
         >
-            <PackagesRegion view_name="packages-view" />
+            <PackagesRegion />
         </Scene>
         <Scene
             title="Scene · packages, with download markers"
@@ -373,7 +359,7 @@ pub fn PackagesScene() -> impl IntoView {
                   (`user/package-a` beside its local changes, `user/package-b` beside a \
                   newer remote revision); the rest are complete and show nothing extra."
         >
-            <PackagesRegion view_name="packages-downloads-view" downloads=true />
+            <PackagesRegion downloads=true />
         </Scene>
         <Scene
             title="Scene · a fresh install"
