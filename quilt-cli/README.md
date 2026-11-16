@@ -318,7 +318,8 @@ echo "a,b,c" > data.csv
 
 quilt status
 quilt commit --message "Add data.csv"
-# Or with package metadata (a JSON object): quilt commit -m "Add data.csv" --meta '{"owner":"me"}'
+# Or with package metadata (a JSON object):
+# quilt commit -m "Add data.csv" --meta '{"owner":"me"}'
 
 quilt list
 ```
