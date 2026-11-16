@@ -317,7 +317,7 @@ impl RefStore {
 
     /// Stores `lineage` over `stored` and its `tip`. The tip cache changes
     /// before the ref only where the ref on disk cannot lose a tip by it: when
-    /// there is no ref yet, or for a new tip of the stored ref's own bucket.
+    /// there is no ref yet, or for a new tip of the stored ref's own remote.
     /// Otherwise it changes after, and a failure then is logged, since the
     /// ref has landed. Returns the lineage as it now reads when the ref
     /// changed.
@@ -335,13 +335,10 @@ impl RefStore {
         let new_ref = PackageRef::from_lineage(lineage, extra)?;
         let had_tip = tip.is_some();
         let (mut tip, fresh) = wanted_tip(&new_ref, lineage, tip);
-        let bucket = |stored: Option<&PackageRef>| {
-            stored
-                .and_then(|stored| stored.remote.as_ref())
-                .map(|remote| remote.bucket.clone())
+        let tip_first = match &stored {
+            None => true,
+            Some(stored) => fresh && same_package(stored, &new_ref),
         };
-        let tip_first =
-            stored.is_none() || fresh && bucket(stored.as_ref()) == bucket(Some(&new_ref));
         if tip_first {
             self.change_tip(storage, namespace, tip.as_ref(), fresh, had_tip)
                 .await?;
@@ -525,6 +522,16 @@ fn wanted_tip(
             };
             (Some(tip), true)
         }
+    }
+}
+
+/// Whether both refs' remotes name one package, at whatever revision.
+fn same_package(a: &PackageRef, b: &PackageRef) -> bool {
+    match (&a.remote, &b.remote) {
+        (Some(a), Some(b)) => {
+            a.origin == b.origin && a.bucket == b.bucket && a.namespace == b.namespace
+        }
+        (a, b) => a.is_none() && b.is_none(),
     }
 }
 
@@ -1233,7 +1240,9 @@ mod tests {
         /// updates `x` as `QUILT_RS_TEST_REF_STORE_UPDATE` says: `pull` moves
         /// its base to the tip it had cached, `pull-behind` does too but finds
         /// the tip moved on to `NEXT`, `move` points it at another bucket
-        /// whose tip is `NEXT`, and `create` records it afresh at `NEXT`.
+        /// whose tip is `NEXT`, `rename` points it at another package in its
+        /// bucket, at `TIP` with tip `BASE`, and `create` records it afresh at
+        /// `NEXT`.
         #[test]
         #[ignore = "run only as the child of killed_before_the_ref_lands"]
         fn child_updates() -> Res {
@@ -1255,6 +1264,12 @@ mod tests {
                     .update(&storage, &held, |lineage| {
                         let remote = lineage.remote_uri.as_mut().unwrap();
                         match update.as_str() {
+                            "rename" => {
+                                remote.namespace = package("renamed");
+                                remote.hash = TIP.to_string();
+                                lineage.base_hash = TIP.to_string();
+                                lineage.latest_hash = BASE.to_string();
+                            }
                             "pull" | "pull-behind" => {
                                 remote.hash = TIP.to_string();
                                 lineage.base_hash = TIP.to_string();
@@ -1325,6 +1340,18 @@ mod tests {
         #[test(tokio::test)]
         async fn a_move_killed_before_its_ref_lands_still_reads_as_behind() -> Res {
             let lineage = killed_at("move", "ref.before-temp").await?;
+            assert_eq!(
+                (lineage.base_hash.as_str(), lineage.latest_hash.as_str()),
+                (BASE, TIP)
+            );
+            Ok(())
+        }
+
+        /// Another package's tip is cached only once the ref names it, even in
+        /// the same bucket.
+        #[test(tokio::test)]
+        async fn a_rename_killed_before_its_ref_lands_still_reads_as_behind() -> Res {
+            let lineage = killed_at("rename", "ref.before-temp").await?;
             assert_eq!(
                 (lineage.base_hash.as_str(), lineage.latest_hash.as_str()),
                 (BASE, TIP)
