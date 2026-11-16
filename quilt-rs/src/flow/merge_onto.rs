@@ -32,13 +32,15 @@ pub enum MergeRefusal {
 }
 
 /// Why [`merge_dir_meta`] could not produce a merged folder list.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum MergeDirMetaError {
     /// Folder metadata both sides changed differently, or a file and folder
     /// that share a name. Folder keys keep their trailing `/`.
+    #[error("folder metadata changed differently on both sides, or clashes with a file: {0:?}")]
     Paths(Vec<PathBuf>),
     /// The merged tree is invalid for another reason, such as a duplicate
     /// logical key.
+    #[error("merged tree is invalid: {0}")]
     Invalid(Error),
 }
 
