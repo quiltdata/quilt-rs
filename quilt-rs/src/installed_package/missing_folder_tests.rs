@@ -14,7 +14,12 @@ async fn committed_package(temp_dir: &TempDir) -> Res<(LocalDomain, InstalledPac
     let domain = LocalDomain::new(temp_dir.path());
     domain.set_home(temp_dir.path()).await?;
     let (package, _) = domain
-        .create_package(("demo", "pkg").into(), None, Some("empty".to_string()))
+        .create_package(
+            ("demo", "pkg").into(),
+            None,
+            Some("empty".to_string()),
+            UserMeta::Clear,
+        )
         .await?;
     let home = package.package_home().await?;
     std::fs::create_dir_all(home.join("sub"))?;
@@ -125,7 +130,12 @@ async fn an_unavailable_walk_leaves_the_stat_cache_alone() -> Res {
     domain.set_home(temp_dir.path()).await?;
     let namespace: Namespace = ("demo", "pkg").into();
     let (package, _) = domain
-        .create_package(namespace.clone(), None, Some("empty".to_string()))
+        .create_package(
+            namespace.clone(),
+            None,
+            Some("empty".to_string()),
+            UserMeta::Clear,
+        )
         .await?;
     let home = package.package_home().await?;
     std::fs::write(home.join("a.txt"), b"a")?;
@@ -194,7 +204,12 @@ async fn a_package_tracking_nothing_still_takes_a_rule_in_a_missing_folder() -> 
     let domain = LocalDomain::new(temp_dir.path());
     domain.set_home(temp_dir.path()).await?;
     let (package, _) = domain
-        .create_package(("demo", "empty").into(), None, Some("empty".to_string()))
+        .create_package(
+            ("demo", "empty").into(),
+            None,
+            Some("empty".to_string()),
+            UserMeta::Clear,
+        )
         .await?;
     let home = package.package_home().await?;
     std::fs::remove_dir_all(&home)?;
