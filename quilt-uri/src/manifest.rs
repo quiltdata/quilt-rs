@@ -60,6 +60,11 @@ impl TryFrom<S3PackageUri> for ManifestUri {
             namespace: uri.namespace,
             hash: match uri.revision {
                 RevisionPointer::Hash(top_hash) => top_hash,
+                RevisionPointer::HashPrefix(prefix) => {
+                    return Err(UriError::Package(format!(
+                        "a whole hash is required for that conversion; {prefix:?} is a prefix, which a registry has to resolve"
+                    )));
+                }
                 RevisionPointer::Tag(_) => {
                     return Err(UriError::Package(
                         "Hash is required for that conversion".to_string(),

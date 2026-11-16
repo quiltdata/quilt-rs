@@ -18,6 +18,7 @@ use quilt_uri::Host;
 use quilt_uri::Namespace;
 
 mod browse;
+mod catalog;
 mod commit;
 mod create;
 mod gc;
@@ -390,11 +391,51 @@ impl PackageRef {
 }
 
 #[derive(Subcommand, Debug)]
+enum CatalogAction {
+    /// Make this Quilt stack the default
+    Set {
+        /// Ex. open.quiltdata.com
+        host: Host,
+    },
+    /// Forget the default; quilt3's is not taken again
+    Clear,
+}
+
+/// Parse `--meta` / `--user-meta` / `-u`. `default` is [`UserMeta::Keep`] on
+/// `commit` and [`UserMeta::Clear`] on `create`. Only a JSON object is
+/// accepted; any other JSON value is [`Error::CommitMetaInvalid`].
+fn parse_meta_flag(text: Option<&str>, default: UserMeta) -> Result<UserMeta, Error> {
+    let Some(text) = text else {
+        return Ok(default);
+    };
+    // `UserMeta::parse` always returns `Set`; Keep and Clear are not reachable.
+    let UserMeta::Set(value, numbers) = UserMeta::parse(text)? else {
+        unreachable!("UserMeta::parse always returns Set");
+    };
+    if value.is_object() {
+        Ok(UserMeta::Set(value, numbers))
+    } else {
+        Err(Error::CommitMetaInvalid(text.to_string()))
+    }
+}
+
+#[derive(Subcommand, Debug)]
 enum Commands {
     /// Browse remote manifest
     Browse {
         #[arg(value_name = "PKG_URI")]
         uri: String,
+    },
+    /// Show, set or clear the default catalog
+    ///
+    /// The default is what `login` and `role` use when you leave out `--host`.
+    /// It is kept in `settings.json` in the shared folder (`QUILT_AUTH_DIR`),
+    /// and is never used for a package: a package keeps the catalog it was
+    /// installed from, or none. With nothing stored, it is taken from quilt3's
+    /// `config.yml`, which is only read.
+    Catalog {
+        #[command(subcommand)]
+        action: Option<CatalogAction>,
     },
     /// Create a new local package
     Create {
@@ -407,14 +448,32 @@ enum Commands {
         /// Commit message for the initial revision
         #[arg(short, long)]
         message: Option<String>,
+        /// Package metadata as a JSON object (quilt3's `--meta`). No flag
+        /// writes no `user_meta` key. `--user-meta` is the same flag. Only an
+        /// object is accepted.
+        #[arg(
+            short = 'u',
+            long = "meta",
+            visible_alias = "user-meta",
+            value_name = "JSON"
+        )]
+        user_meta: Option<String>,
     },
     /// Commit new package revision
     Commit {
         /// Commit message
         #[arg(short, long)]
         message: String,
-        /// JSON string for user meta
-        #[arg(short, long)]
+        /// Package metadata as a JSON object (quilt3's `--meta`). No flag
+        /// keeps the previous revision's metadata. `--user-meta` is the same
+        /// flag. Only an object is accepted (`--meta null` is an error). There
+        /// is no flag for removing the `user_meta` key (`Clear`).
+        #[arg(
+            short = 'u',
+            long = "meta",
+            visible_alias = "user-meta",
+            value_name = "JSON"
+        )]
         user_meta: Option<String>,
         #[command(flatten)]
         pkg: PackageRef,
@@ -511,8 +570,10 @@ enum Commands {
         /// Code from the `https://QUILT_STACK/code` page
         #[arg(short, long)]
         code: Option<String>,
+        /// Quilt stack to log in to. Omit to use the default catalog.
+        /// Ex. open.quiltdata.com
         #[arg(long)]
-        host: Host,
+        host: Option<Host>,
     },
     /// List installed packages
     ///
@@ -591,10 +652,10 @@ enum Commands {
     /// client signed in as you can read and write, this CLI and the desktop
     /// app alike. Listing marks the active role with a leading asterisk.
     Role {
-        /// Quilt stack to read the role from.
+        /// Quilt stack to read the role from. Omit to use the default catalog.
         /// Ex. open.quiltdata.com
         #[arg(long)]
-        host: Host,
+        host: Option<Host>,
         /// Switch to this role instead of listing the roles you hold
         #[arg(long, value_name = "ROLE")]
         set: Option<String>,
@@ -686,6 +747,7 @@ impl Commands {
             self,
             Commands::Login { .. }
                 | Commands::Browse { .. }
+                | Commands::Catalog { .. }
                 | Commands::Role { .. }
                 | Commands::Home { dir: Some(_), .. }
                 | Commands::Upgrade
@@ -740,15 +802,28 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             log::debug!("Browsing {args:?}");
             Ok(browse::command(m, args).await)
         }
+        Commands::Catalog { action } => {
+            let action = match action {
+                None => catalog::Action::Show,
+                Some(CatalogAction::Set { host }) => catalog::Action::Set(host),
+                Some(CatalogAction::Clear) => catalog::Action::Clear,
+            };
+            let args = catalog::Input { action };
+
+            log::debug!("Catalog {args:?}");
+            Ok(catalog::command(m, args).await)
+        }
         Commands::Create {
             namespace,
             source,
             message,
+            user_meta,
         } => {
             let args = create::Input {
                 namespace: namespace.try_into()?,
                 source,
                 message,
+                user_meta: parse_meta_flag(user_meta.as_deref(), UserMeta::Clear)?,
             };
 
             log::debug!("Creating {args:?}");
@@ -762,17 +837,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             no_workflow,
         } => {
             let namespace = pkg.resolve(&m).await?;
-            let user_meta = match &user_meta {
-                Some(object) => match serde_json::from_str(object)? {
-                    serde_json::Value::Object(object) => {
-                        UserMeta::Set(serde_json::Value::Object(object))
-                    }
-                    _ => {
-                        return Err(Error::CommitMetaInvalid(object.clone()));
-                    }
-                },
-                None => UserMeta::Keep,
-            };
+            let user_meta = parse_meta_flag(user_meta.as_deref(), UserMeta::Keep)?;
             let workflow = commit_workflow_intent(workflow.as_deref(), no_workflow)?;
             let args = commit::Input {
                 message,
@@ -832,6 +897,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             Ok(keep::command(m, args).await)
         }
         Commands::Login { code, host } => {
+            let host = catalog::host_or_default(host).await?;
             if let Some(code) = code {
                 let args = login::Input { code, host };
 
@@ -902,6 +968,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             Ok(remove_revisions::command(m, args).await)
         }
         Commands::Role { host, set } => {
+            let host = catalog::host_or_default(host).await?;
             let args = role::Input { host, set };
 
             log::debug!("Role {args:?}");
@@ -965,6 +1032,12 @@ Then run:
     )]
     LoginRequired(Host),
 
+    #[error("No catalog given and no default set. Pass --host, or run \"quilt catalog set HOST\"")]
+    NoCatalog,
+
+    #[error("Could not determine the folder for shared settings. Set QUILT_AUTH_DIR")]
+    SettingsDir,
+
     #[error("Package {0} not found")]
     NamespaceNotFound(Namespace),
 
@@ -976,7 +1049,7 @@ Then run:
     )]
     NamespaceRequired,
 
-    #[error("Invalid JSON for user_meta object. Object is required")]
+    #[error("Invalid --meta: a JSON object is required, got {0}")]
     CommitMetaInvalid(String),
 
     #[error("workflow id cannot be empty; omit --workflow to use the bucket's default workflow")]
@@ -1061,6 +1134,8 @@ impl Error {
                 _ => "quilt_error",
             },
             Error::LoginRequired(_) => "login_required",
+            Error::NoCatalog => "no_catalog",
+            Error::SettingsDir => "settings_dir",
             Error::NamespaceNotFound(_) => "namespace_not_found",
             Error::NoDownloadWithPath => "no_download_with_path",
             Error::NamespaceRequired => "namespace_required",
@@ -1104,6 +1179,7 @@ mod tests {
                 namespace: namespace.clone(),
                 source: None,
                 message: None,
+                user_meta: UserMeta::Clear,
             })
             .await?;
         let held = created.installed_package.lock().await?;
@@ -1183,6 +1259,8 @@ mod tests {
                 "namespace_not_found",
             ),
             (Error::LoginRequired(fixtures::host()), "login_required"),
+            (Error::NoCatalog, "no_catalog"),
+            (Error::SettingsDir, "settings_dir"),
             (
                 Error::Json(
                     serde_json::from_str::<serde_json::Value>("{").expect_err("malformed JSON"),
@@ -1278,8 +1356,37 @@ mod tests {
         let Commands::Role { host, set } = switching.command else {
             panic!("expected the role command");
         };
-        assert_eq!(host.to_string(), "quilt.test");
+        assert_eq!(host.unwrap().to_string(), "quilt.test");
         assert_eq!(set.as_deref(), Some("ReadOnly"));
+    }
+
+    /// `--host` is optional on `login` and `role`: left out, they use the
+    /// default catalog. `catalog` alone shows it.
+    #[test]
+    fn host_is_optional_where_a_default_can_stand_in() {
+        let login = Args::try_parse_from(["quilt", "login"]).unwrap();
+        assert!(matches!(login.command, Commands::Login { host: None, .. }));
+        let role = Args::try_parse_from(["quilt", "role"]).unwrap();
+        assert!(matches!(role.command, Commands::Role { host: None, .. }));
+
+        let show = Args::try_parse_from(["quilt", "catalog"]).unwrap();
+        assert!(matches!(show.command, Commands::Catalog { action: None }));
+        let set = Args::try_parse_from(["quilt", "catalog", "set", "quilt.test"]).unwrap();
+        let Commands::Catalog {
+            action: Some(CatalogAction::Set { host }),
+        } = set.command
+        else {
+            panic!("expected catalog set");
+        };
+        assert_eq!(host.to_string(), "quilt.test");
+        let clear = Args::try_parse_from(["quilt", "catalog", "clear"]).unwrap();
+        assert!(matches!(
+            clear.command,
+            Commands::Catalog {
+                action: Some(CatalogAction::Clear)
+            }
+        ));
+        assert!(Args::try_parse_from(["quilt", "catalog", "set"]).is_err());
     }
 
     /// `--host` names the Quilt stack for a first push, as in `login` and
@@ -2086,7 +2193,7 @@ mod tests {
         let commands = [
             Commands::Login {
                 code: None,
-                host: fixtures::host(),
+                host: Some(fixtures::host()),
             },
             Commands::Browse {
                 uri: "not-a-package-uri".to_string(),
@@ -2132,7 +2239,7 @@ mod tests {
             json: false,
             command: Commands::Login {
                 code: None,
-                host: fixtures::host(),
+                host: Some(fixtures::host()),
             },
         };
 
@@ -2309,6 +2416,76 @@ mod tests {
         assert_eq!(output_str, "Package in/valid not found\n".to_string());
 
         Ok(())
+    }
+
+    #[test]
+    fn meta_and_user_meta_flags_agree_on_commit_and_create() {
+        let json = r#"{"n": 1}"#;
+        let commit_flags = [
+            ["quilt", "commit", "-m", "x", "--meta", json],
+            ["quilt", "commit", "-m", "x", "-u", json],
+            ["quilt", "commit", "-m", "x", "--user-meta", json],
+        ];
+        let metas: Vec<_> = commit_flags
+            .iter()
+            .map(|argv| {
+                let args = Args::try_parse_from(*argv).expect("parses");
+                let Commands::Commit { user_meta, .. } = args.command else {
+                    panic!("expected commit: {args:?}");
+                };
+                user_meta
+            })
+            .collect();
+        assert!(metas.iter().all(|m| m.as_deref() == Some(json)));
+
+        let create_flags = [
+            ["quilt", "create", "-n", "a/b", "--meta", json],
+            ["quilt", "create", "-n", "a/b", "-u", json],
+            ["quilt", "create", "-n", "a/b", "--user-meta", json],
+        ];
+        let metas: Vec<_> = create_flags
+            .iter()
+            .map(|argv| {
+                let args = Args::try_parse_from(*argv).expect("parses");
+                let Commands::Create { user_meta, .. } = args.command else {
+                    panic!("expected create: {args:?}");
+                };
+                user_meta
+            })
+            .collect();
+        assert!(metas.iter().all(|m| m.as_deref() == Some(json)));
+    }
+
+    #[test]
+    fn parse_meta_flag_accepts_an_object_and_refuses_other_json() {
+        let object = r#"{"n": 18446744073709551616}"#;
+        let UserMeta::Set(value, numbers) =
+            parse_meta_flag(Some(object), UserMeta::Keep).expect("object")
+        else {
+            panic!("expected Set");
+        };
+        assert!(value["n"].is_number());
+        assert!(!numbers.is_empty());
+
+        assert!(matches!(
+            parse_meta_flag(None, UserMeta::Keep).unwrap(),
+            UserMeta::Keep
+        ));
+        assert!(matches!(
+            parse_meta_flag(None, UserMeta::Clear).unwrap(),
+            UserMeta::Clear
+        ));
+
+        for rejected in ["null", "[]", "1", "\"s\"", "true"] {
+            let err = parse_meta_flag(Some(rejected), UserMeta::Keep).unwrap_err();
+            assert!(
+                matches!(err, Error::CommitMetaInvalid(ref got) if got == rejected),
+                "rejected {rejected}: {err:?}"
+            );
+        }
+
+        let err = parse_meta_flag(Some("{"), UserMeta::Keep).unwrap_err();
+        assert!(matches!(err, Error::Json(_)), "bad JSON: {err:?}");
     }
 
     /// The workflow flags are first-push-only: without `--bucket` there is no
@@ -3264,6 +3441,7 @@ mod tests {
                     namespace: "test/pkg".to_string(),
                     source: Some(source.clone()),
                     message: Some("first".to_string()),
+                    user_meta: None,
                 },
             ),
             ("list", Commands::List { fetch: false }),

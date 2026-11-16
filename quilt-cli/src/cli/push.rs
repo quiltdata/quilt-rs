@@ -484,7 +484,7 @@ mod tests {
         m.commit(commit::Input {
             message: "Unbounded Defy 2 Landmine".to_string(),
             namespace: namespace.clone(),
-            user_meta: UserMeta::Set(serde_json::json!({"Naturist": "Conjure"})),
+            user_meta: UserMeta::set(serde_json::json!({"Naturist": "Conjure"})),
             workflow: WorkflowIntent::NoWorkflow,
             host_config: None,
         })
@@ -518,7 +518,7 @@ mod tests {
         m.commit(commit::Input {
             message: "Equate 1 Fragment Grimace".to_string(),
             namespace: namespace.clone(),
-            user_meta: UserMeta::Set(serde_json::json!({"Antitoxic": "Mankind"})),
+            user_meta: UserMeta::set(serde_json::json!({"Antitoxic": "Mankind"})),
             workflow: WorkflowIntent::NoWorkflow,
             host_config: None,
         })
@@ -546,13 +546,22 @@ mod tests {
 
     /// Integration test: create local package → set bucket → push to S3 → verify lineage.
     /// Uses fiskus-us-east-1 with a dedicated namespace (no catalog — local AWS creds).
+    /// The package name is unique so this first push finds no latest tag; a
+    /// reused name would not certify after a top-hash change.
     #[test(tokio::test)]
     async fn live_write_push_local_package_bucket_only() -> Result<(), Error> {
         use crate::cli::create;
         use crate::cli::status;
         use quilt_rs::lineage::UpstreamState;
 
-        let namespace: Namespace = ("cli_test", "local_push").into();
+        let name = format!(
+            "local_push_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        );
+        let namespace: Namespace = ("cli_test", name.as_str()).into();
         let host_config = Some(HostConfig::default_sha256_chunked());
 
         // Step 1: Create model and local package
@@ -563,6 +572,7 @@ mod tests {
                 namespace: namespace.clone(),
                 source: None,
                 message: None,
+                user_meta: UserMeta::Clear,
             })
             .await?;
 
@@ -686,7 +696,7 @@ mod tests {
         m.commit(commit::Input {
             message: "Unbounded Defy 2 Landmine".to_string(),
             namespace: namespace.clone(),
-            user_meta: UserMeta::Set(serde_json::json!({"Naturist": "Conjure"})),
+            user_meta: UserMeta::set(serde_json::json!({"Naturist": "Conjure"})),
             workflow: WorkflowIntent::NoWorkflow,
             host_config: host_config.clone(),
         })

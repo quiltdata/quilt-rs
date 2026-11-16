@@ -31,6 +31,7 @@ pub mod object_hash;
 mod package_lock;
 pub mod paths;
 pub mod quiltignore;
+pub mod settings;
 pub mod stat_cache;
 pub mod state_store;
 
@@ -44,6 +45,7 @@ pub use error::AuthError;
 pub use error::ChecksumError;
 pub use error::Error;
 pub use error::FsError;
+pub use error::HashPrefixError;
 pub use error::InstallPackageError;
 pub use error::InstallPathError;
 pub use error::LineageError;

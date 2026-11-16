@@ -1413,8 +1413,10 @@ mod tests {
                             schemas: std::collections::BTreeMap::new(),
                         }),
                     }),
+                    user_meta_numbers: quilt::manifest::RawNumbers::default(),
                 },
                 rows: Vec::new(),
+                dir_meta: Vec::new(),
             })
         });
 
@@ -1479,8 +1481,10 @@ mod tests {
                         config: config_uri,
                         id: None,
                     }),
+                    user_meta_numbers: quilt::manifest::RawNumbers::default(),
                 },
                 rows: Vec::new(),
+                dir_meta: Vec::new(),
             })
         });
 
@@ -1543,8 +1547,10 @@ mod tests {
                     message: quilt::manifest::HeaderMessage::Null,
                     user_meta: None,
                     workflow: None,
+                    user_meta_numbers: quilt::manifest::RawNumbers::default(),
                 },
                 rows: Vec::new(),
+                dir_meta: Vec::new(),
             })
         });
 
@@ -1604,8 +1610,10 @@ mod tests {
                     message: quilt::manifest::HeaderMessage::Null,
                     user_meta: None,
                     workflow: None,
+                    user_meta_numbers: quilt::manifest::RawNumbers::default(),
                 },
                 rows: Vec::new(),
+                dir_meta: Vec::new(),
             })
         });
         model

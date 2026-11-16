@@ -54,6 +54,15 @@ pub(crate) fn holds_user_meta(meta: &serde_json::Value) -> bool {
     }
 }
 
+/// The `user_meta` of `header` as written, when it says anything.
+pub(crate) fn written_user_meta(header: &ManifestHeader) -> Option<String> {
+    header
+        .user_meta
+        .as_ref()
+        .filter(|meta| holds_user_meta(meta))
+        .and(header.user_meta_text())
+}
+
 impl Revision {
     /// The facts `header` records about the revision at `hash`.
     #[must_use]
@@ -148,6 +157,7 @@ mod tests {
 
     use test_log::test;
 
+    use crate::flow::UserMeta;
     use crate::flow::create;
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::DomainLineage;
@@ -171,6 +181,7 @@ mod tests {
             namespace.clone(),
             None,
             Some("initial import".to_string()),
+            UserMeta::Clear,
         )
         .await?;
 

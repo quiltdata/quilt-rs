@@ -155,6 +155,19 @@ fn classify_generic_is_paused() {
 }
 
 #[test]
+fn classify_a_missing_package_folder_is_transient() {
+    // Nothing for the user to clear: syncing retries on backoff and resumes
+    // once the folder is back, where the default arm would pause until cleared.
+    let err = Error::from(quilt::Error::PackageOp(
+        quilt::PackageOpError::WorkingCopyUnavailable("/gone/demo".into()),
+    ));
+    match classify_sync_err(err) {
+        Err(WatchError::Transient(_)) => {}
+        other => panic!("expected Transient(_), got {other:?}"),
+    }
+}
+
+#[test]
 fn classify_config_format_error_is_conflict() {
     // A malformed `.quilt/workflows/config.yml` surfaces as
     // `RemoteCatalogError::InvalidWorkflowsConfig` (config-schema rejection). It
@@ -2470,6 +2483,7 @@ fn stale_claim_model(
                     ..quilt::manifest::ManifestHeader::default()
                 },
                 rows: Vec::new(),
+                dir_meta: Vec::new(),
             })
         });
     model
@@ -2557,7 +2571,7 @@ async fn our_own_interrupted_claim_is_published_by_the_sweep_not_autosync() -> R
         1,
         "one revision, the sweep's: {published:?}"
     );
-    let quilt::flow::UserMeta::Set(meta) = &published[0] else {
+    let quilt::flow::UserMeta::Set(meta, _) = &published[0] else {
         panic!("the sweep sets the metadata, got {:?}", published[0]);
     };
     assert_eq!(meta["agent_exec"]["claim"]["status"], "failed");

@@ -11,6 +11,7 @@ use crate::engine::telemetry::prelude::*;
 use quilt_rs::flow::UserMeta;
 use quilt_rs::io::remote::HostConfig;
 use quilt_rs::io::remote::WorkflowIntent;
+use quilt_rs::manifest::RawNumbers;
 
 use quilt_uri::ManifestUri;
 
@@ -24,10 +25,31 @@ fn parse_metadata(input: &str) -> Result<UserMeta, Error> {
     if input.trim().is_empty() {
         return Ok(UserMeta::Keep);
     }
-    match serde_json::from_str(input) {
-        Ok(json) => Ok(UserMeta::Set(json)),
-        Err(err) => Err(Error::Json(err)),
-    }
+    UserMeta::parse(input).map_err(Error::Json)
+}
+
+/// `default` with the head's `agent_exec` in place of its own, carrying the
+/// exact number text of both sides: the default's, except under `agent_exec`,
+/// and the head's under `agent_exec` when that task is kept.
+fn keep_head_task_with_numbers(
+    default: serde_json::Value,
+    default_numbers: RawNumbers,
+    head: Option<&serde_json::Value>,
+    head_numbers: &RawNumbers,
+) -> (serde_json::Value, RawNumbers) {
+    let task = head.and_then(|head| head.get("agent_exec"));
+    let numbers = match (&default, task) {
+        (serde_json::Value::Object(_), Some(_)) => default_numbers
+            .without("/agent_exec")
+            .union(&head_numbers.only("/agent_exec")),
+        (serde_json::Value::Object(_), None) => default_numbers.without("/agent_exec"),
+        (_, None) => default_numbers,
+        (_, Some(_)) => head_numbers.only("/agent_exec"),
+    };
+    (
+        crate::engine::tasks::agent_exec::keep_head_task(default, head),
+        numbers,
+    )
 }
 
 pub async fn package_commit(
@@ -214,15 +236,18 @@ pub async fn publish_locked_with_settings<M: QuiltModel>(
         installed.namespace, message, metadata, workflow
     );
     let metadata = match parse_metadata(&metadata)? {
-        UserMeta::Set(default) if task == HeadTask::Keep => {
+        UserMeta::Set(default, default_numbers) if task == HeadTask::Keep => {
             let lineage = model.get_installed_package_lineage(installed).await?;
             let head = model
                 .get_installed_package_manifest(installed, &lineage)
                 .await?;
-            UserMeta::Set(crate::engine::tasks::agent_exec::keep_head_task(
+            let (value, numbers) = keep_head_task_with_numbers(
                 default,
+                default_numbers,
                 head.header.user_meta.as_ref(),
-            ))
+                &head.header.user_meta_numbers,
+            );
+            UserMeta::Set(value, numbers)
         }
         metadata => metadata,
     };
@@ -428,8 +453,10 @@ mod tests {
                         ),
                         user_meta: None,
                         workflow: None,
+                        user_meta_numbers: quilt::manifest::RawNumbers::default(),
                     },
                     rows: Vec::new(),
+                    dir_meta: Vec::new(),
                 })
             });
 
@@ -595,5 +622,39 @@ mod tests {
         let origin = Some(fixtures::host());
         set_remote(&model, &namespace, origin, "my-bucket".to_string(), intent).await?;
         Ok(())
+    }
+
+    #[test]
+    fn parse_metadata_keeps_big_integers() {
+        let UserMeta::Set(value, numbers) =
+            parse_metadata(r#"{"n": 18446744073709551616}"#).expect("json")
+        else {
+            panic!("expected Set");
+        };
+        assert!(!numbers.is_empty());
+        assert!(value["n"].is_number());
+        assert!(matches!(parse_metadata("").unwrap(), UserMeta::Keep));
+        assert!(matches!(parse_metadata("   ").unwrap(), UserMeta::Keep));
+        assert!(parse_metadata("{").is_err());
+    }
+
+    #[test]
+    fn keep_head_task_path_keeps_the_heads_numbers() {
+        let default = UserMeta::parse(r#"{"source":"desktop","n": 18446744073709551616,"agent_exec": {"drop": 36893488147419103232}}"#)
+            .unwrap();
+        let UserMeta::Set(default, default_numbers) = default else {
+            panic!("expected Set");
+        };
+        let (head, head_numbers) =
+            RawNumbers::parse(r#"{"title": "t", "agent_exec": {"m": 36893488147419103232}}"#)
+                .unwrap();
+        let (value, numbers) =
+            keep_head_task_with_numbers(default, default_numbers, Some(&head), &head_numbers);
+        assert!(value["n"].is_number());
+        assert!(value["agent_exec"]["m"].is_number());
+        assert!(!numbers.only("/n").is_empty());
+        assert!(!numbers.only("/agent_exec").is_empty());
+        assert!(numbers.only("/agent_exec/drop").is_empty());
+        assert_eq!(value["source"], "desktop");
     }
 }

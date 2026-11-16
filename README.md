@@ -79,6 +79,10 @@ is the version:
 
 ```bash
 quilt commit -n lab/assays -m "add well A2"
+# Optional package metadata, as a JSON object: --meta '{"owner": "lab"}'
+# (`-u` and `--user-meta` are the same flag). No flag keeps the previous
+# revision's metadata. `quilt create` also takes `--meta`; without it the
+# first revision has no `user_meta` key.
 ```
 
 ```text

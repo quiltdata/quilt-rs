@@ -4,6 +4,7 @@ use std::marker::Unpin;
 use std::path::PathBuf;
 
 use aws_sdk_s3::primitives::ByteStream;
+use bytes::Bytes;
 use tokio::io::AsyncReadExt;
 use tokio_stream::Stream;
 use tokio_stream::StreamExt;
@@ -12,11 +13,14 @@ use url::Url;
 
 use crate::Error;
 use crate::Res;
+use crate::checksum::hash_file;
 use crate::error::ManifestError;
+use crate::error::PackageOpError;
 use crate::io::remote::HostChecksums;
 use crate::io::remote::HostConfig;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
+use crate::manifest::DirMeta;
 use crate::manifest::Manifest;
 use crate::manifest::ManifestHeader;
 use crate::manifest::ManifestRow;
@@ -25,8 +29,14 @@ use crate::manifest::TopHasher;
 use crate::manifest::Workflow;
 #[cfg(test)]
 use crate::manifest::WorkflowId;
+use crate::object_hash::Crc64Hash;
+use crate::object_hash::Hash;
 use crate::object_hash::MULTIHASH_CRC64_NVME;
+use crate::object_hash::MULTIHASH_SHA256;
 use crate::object_hash::MULTIHASH_SHA256_CHUNKED;
+use crate::object_hash::ObjectHash;
+use crate::object_hash::Sha256ChunkedHash;
+use crate::object_hash::Sha256Hash;
 use quilt_uri::Host;
 use quilt_uri::ManifestUri;
 use quilt_uri::ObjectUri;
@@ -163,9 +173,10 @@ pub async fn resolve_tag(
     })
 }
 
-/// `ManifestUri` should always have `hash`.
-/// But `S3PackageUri` can be tagged (e.g. "latest" or timestamp).
-/// So, we need to download the tag and find out what the `hash` is
+/// `ManifestUri` should always have a whole `hash`.
+/// But `S3PackageUri` can be tagged (e.g. "latest" or timestamp), or name a
+/// short hash. So, we need to download the tag, or ask the registry which
+/// revision the prefix names, and find out what the `hash` is
 async fn resolve_top_hash(
     remote: &impl Remote,
     host: Option<&Host>,
@@ -173,14 +184,18 @@ async fn resolve_top_hash(
 ) -> Res<String> {
     match &uri.revision {
         RevisionPointer::Hash(top_hash) => Ok(top_hash.clone()),
+        RevisionPointer::HashPrefix(prefix) => {
+            crate::flow::resolve_hash(remote, host, &uri.bucket, prefix).await
+        }
         RevisionPointer::Tag(tag) => Ok(resolve_tag(remote, host, uri, tag.clone()).await?.hash),
     }
 }
 
 /// Converts `S3PackageUri` to `ManifestUri`
-/// `ManifestUri` should always have `hash`.
-/// But `S3PackageUri` can be tagged (e.g. "latest" or timestamp).
-/// So, we need to download the tag and find out what the `hash` is
+/// `ManifestUri` should always have a whole `hash`.
+/// But `S3PackageUri` can be tagged (e.g. "latest" or timestamp), or name a
+/// short hash. So, we need to download the tag, or ask the registry which
+/// revision the prefix names, and find out what the `hash` is
 pub async fn resolve_manifest_uri(
     remote: &impl Remote,
     host: Option<&Host>,
@@ -226,13 +241,184 @@ pub async fn upload_row(
     let file_path = local_url
         .to_file_path()
         .map_err(|()| UriError::FileScheme(local_url))?;
+    let host_config = committed_checksums(host_config, &row);
+    upload_row_from_path(remote, &host_config, package_handle, row, &file_path).await
+}
 
+/// Where the bytes of a row come from when the caller supplies them, rather
+/// than the row naming a `file://` path.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RowContent {
+    /// A file on disk, which may be anywhere: it need not be under a package
+    /// home or any managed working folder.
+    Path(PathBuf),
+    /// The bytes themselves, held in memory by the caller. Cloning shares the
+    /// buffer.
+    Bytes(Bytes),
+}
+
+impl RowContent {
+    /// How many bytes this content holds now. For a file that is its size on
+    /// disk at this moment.
+    pub async fn size(&self, storage: &(impl Storage + Sync)) -> Res<u64> {
+        match self {
+            RowContent::Path(path) => Ok(file_stat(storage, path).await?.0),
+            RowContent::Bytes(bytes) => Ok(bytes.len() as u64),
+        }
+    }
+}
+
+/// A file's size and modified time, from one open handle.
+async fn file_stat(
+    storage: &(impl Storage + Sync),
+    path: &std::path::Path,
+) -> Res<(u64, Option<std::time::SystemTime>)> {
+    let meta = storage.open_file(path).await?.metadata().await?;
+    Ok((meta.len(), meta.modified().ok()))
+}
+
+/// [`upload_row`], for a row whose bytes the caller supplies: the row's own
+/// `physical_key` is ignored and its `size` is taken from the content.
+///
+/// What the row's `hash` means decides the checksum type:
+///
+/// - A row with no hash, [`ObjectHash::default`], was never hashed, so its
+///   bytes are uploaded with the host's configured checksum type
+///   (sha2-256-chunked unless the host enables `crc64Checksums`, the preferred
+///   direction) and S3's
+///   checksum becomes the row's hash.
+/// - A row that already carries a real hash, such as one quilt3 computed in
+///   memory, keeps it, with its labeled type. The bytes are uploaded with that
+///   type and the checksum S3 answers with must equal the row's hash, or the
+///   upload is an error: the supplied bytes are not the ones the hash was made
+///   from. A type S3 cannot compute (a legacy plain SHA-256) is checked by
+///   hashing the content here instead, and the row keeps its hash.
+///
+/// A [`RowContent::Path`] uploads straight from that file, which is read by
+/// path and so cannot be read once for both its size and its content. Instead
+/// its size and modified time are read before the upload and again after the
+/// upload and any local hash check, and a file that changed in between is an
+/// error rather than a manifest whose size and hash disagree with the bytes.
+///
+/// The multipart upload and the checksum S3 computes both read a file, so
+/// [`RowContent::Bytes`] is staged to a private temporary file for the length
+/// of the upload and removed after it, success or failure. Nothing lands in any
+/// package home.
+pub async fn upload_row_content(
+    storage: &(impl Storage + Sync),
+    remote: &impl Remote,
+    host_config: &HostConfig,
+    package_handle: S3PackageHandle,
+    row: ManifestRow,
+    content: &RowContent,
+) -> Res<ManifestRow> {
+    let claimed = (row.hash != ObjectHash::default()).then(|| row.hash.clone());
+    let host_config = match &claimed {
+        Some(_) => committed_checksums(host_config, &row),
+        None => host_config.clone(),
+    };
+    let uploaded = match content {
+        RowContent::Path(path) => {
+            let before = file_stat(storage, path).await?;
+            let row = ManifestRow {
+                size: before.0,
+                ..row
+            };
+            let uploaded =
+                upload_row_from_path(remote, &host_config, package_handle, row, path).await?;
+            // Verified inside the window the stat check covers, so the bytes
+            // hashed here are the ones that were uploaded.
+            let verdict = match claimed {
+                Some(claimed) => verify_claimed_hash(storage, content, &uploaded, claimed).await,
+                None => Ok(uploaded),
+            };
+            if file_stat(storage, path).await? != before {
+                return Err(Error::PackageOp(PackageOpError::Push(format!(
+                    "{} changed while it was being uploaded",
+                    path.display()
+                ))));
+            }
+            return verdict;
+        }
+        RowContent::Bytes(bytes) => {
+            let staging = tempfile::tempdir()?;
+            let staged = staging.path().join(uuid::Uuid::new_v4().to_string());
+            storage
+                .write_byte_stream(&staged, ByteStream::from(bytes.clone()))
+                .await?;
+            let row = ManifestRow {
+                size: bytes.len() as u64,
+                ..row
+            };
+            let uploaded =
+                upload_row_from_path(remote, &host_config, package_handle, row, &staged).await;
+            // Best effort: `staging` also removes the directory when it drops.
+            let _ = storage.remove_file(&staged).await;
+            uploaded?
+        }
+    };
+    let Some(claimed) = claimed else {
+        return Ok(uploaded);
+    };
+    verify_claimed_hash(storage, content, &uploaded, claimed).await
+}
+
+/// The hash of `bytes` under the multihash `algorithm`, as
+/// [`hash_file`] hashes a file; an unknown algorithm is SHA-256 chunked.
+pub(crate) async fn hash_bytes(bytes: &[u8], algorithm: u64) -> Res<ObjectHash> {
+    let size = bytes.len() as u64;
+    Ok(match algorithm {
+        MULTIHASH_CRC64_NVME => Crc64Hash::from_reader(bytes, size).await?.into(),
+        MULTIHASH_SHA256 => Sha256Hash::from_reader(bytes, size).await?.into(),
+        _ => Sha256ChunkedHash::from_reader(bytes, size).await?.into(),
+    })
+}
+
+/// Checks the bytes uploaded for `uploaded` against the hash the caller claimed
+/// for them, and returns the row carrying the claimed hash.
+async fn verify_claimed_hash(
+    storage: &(impl Storage + Sync),
+    content: &RowContent,
+    uploaded: &ManifestRow,
+    claimed: ObjectHash,
+) -> Res<ManifestRow> {
+    let algorithm = claimed.algorithm();
+    let verified = if algorithm == MULTIHASH_CRC64_NVME || algorithm == MULTIHASH_SHA256_CHUNKED {
+        // S3 computed the claimed type over the bytes it stored.
+        uploaded.hash == claimed
+    } else {
+        let computed = match content {
+            RowContent::Path(path) => hash_file(storage, path, algorithm).await?.0,
+            RowContent::Bytes(bytes) => hash_bytes(bytes, algorithm).await?,
+        };
+        computed == claimed
+    };
+    if !verified {
+        return Err(Error::PackageOp(PackageOpError::Push(format!(
+            "{} was uploaded, but its bytes do not hash to the hash the row carries ({claimed})",
+            uploaded.logical_key
+        ))));
+    }
+    Ok(ManifestRow {
+        hash: claimed,
+        ..uploaded.clone()
+    })
+}
+
+/// Uploads `row`'s bytes from `file_path` with `host_config`'s checksum type
+/// as it stands: the caller picks the type.
+async fn upload_row_from_path(
+    remote: &impl Remote,
+    host_config: &HostConfig,
+    package_handle: S3PackageHandle,
+    row: ManifestRow,
+    file_path: &std::path::Path,
+) -> Res<ManifestRow> {
     let object_uri = ObjectUri::new(package_handle, row.logical_key.to_path_buf());
     log::info!("Uploading to S3: {object_uri}");
 
-    let host_config = committed_checksums(host_config, &row);
     let (remote_url, hash) = remote
-        .upload_file(&host_config, &file_path, &object_uri.into(), row.size)
+        .upload_file(host_config, file_path, &object_uri.into(), row.size)
         .await?;
 
     // Update the manifest with the sha2-256-chunked checksum
@@ -269,13 +455,15 @@ pub trait RowsStream: Stream<Item = StreamItem> {}
 
 impl<T: Stream<Item = StreamItem>> RowsStream for T {}
 
-/// Builds the manifest from `Stream<Result<Row>>`
+/// Builds the manifest from `Stream<Result<Row>>` and the folders' `dir_meta`,
+/// which the top hash leaves out.
 /// It writes the manifest to temporary file using JSONL format.
 /// Then it calculates `top_hash` and move the temporary file to the destination path.
 pub async fn build_manifest_from_rows_stream(
     storage: &impl Storage,
     dest_dir: PathBuf,
     header: ManifestHeader,
+    dir_meta: Vec<DirMeta>,
     mut stream: impl RowsStream + Unpin,
 ) -> Res<(PathBuf, String)> {
     let temp_dir = tempfile::tempdir()?;
@@ -301,10 +489,15 @@ pub async fn build_manifest_from_rows_stream(
     }
 
     // Create JSONL manifest
-    let manifest = Manifest { header, rows };
+    let manifest = Manifest {
+        header,
+        rows,
+        dir_meta,
+    };
+    let jsonl = manifest.try_to_jsonlines()?;
 
     storage
-        .write_byte_stream(&temp_path, ByteStream::from(&manifest))
+        .write_byte_stream(&temp_path, ByteStream::from(jsonl.into_bytes()))
         .await?;
 
     let top_hash = top_hasher.finalize();
@@ -328,6 +521,7 @@ mod tests {
 
     use tokio_stream;
 
+    use crate::error::HashPrefixError;
     use crate::fixtures;
     use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::LocalStorage;
@@ -362,6 +556,89 @@ mod tests {
         assert_eq!(
             top_hash,
             "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
+        );
+        Ok(())
+    }
+
+    const ALPHA: &str = "abcdef01aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const BETA: &str = "abcdef01bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+    fn prefix_error(err: crate::Error) -> HashPrefixError {
+        match err {
+            crate::Error::HashPrefix(inner) => inner,
+            other => panic!("expected a hash prefix error, got {other:?}"),
+        }
+    }
+
+    async fn registry_with(hashes: &[&str]) -> Res<MockRemote> {
+        let remote = MockRemote::default();
+        for hash in hashes {
+            let manifest = S3Uri::try_from(format!("s3://b/.quilt/packages/{hash}").as_str())?;
+            remote.put_object(None, &manifest, b"{}".to_vec()).await?;
+        }
+        Ok(remote)
+    }
+
+    /// A short hash in the address resolves through the registry to the whole
+    /// one, so the manifest address, and what it displays, carry all 64.
+    #[test(tokio::test)]
+    async fn a_short_hash_in_a_package_uri_resolves_to_the_whole_hash() -> Res {
+        let remote = registry_with(&[ALPHA, BETA]).await?;
+        let uri = S3PackageUri::try_from("quilt+s3://b#package=foo/bar@abcdef01a")?;
+
+        let manifest = resolve_manifest_uri(&remote, None, &uri).await?;
+
+        assert_eq!(manifest.hash, ALPHA);
+        assert_eq!(
+            manifest.to_string(),
+            format!("quilt+s3://b#package=foo/bar@{ALPHA}")
+        );
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn a_short_hash_that_names_no_revision_or_several_is_an_error() -> Res {
+        let remote = registry_with(&[ALPHA, BETA]).await?;
+
+        let uri = S3PackageUri::try_from("quilt+s3://b#package=foo/bar@123456")?;
+        let err = resolve_manifest_uri(&remote, None, &uri).await.unwrap_err();
+        assert_eq!(
+            prefix_error(err),
+            HashPrefixError::NoMatch("123456".to_string())
+        );
+
+        let uri = S3PackageUri::try_from("quilt+s3://b#package=foo/bar@abcdef01")?;
+        let err = resolve_manifest_uri(&remote, None, &uri).await.unwrap_err();
+        assert_eq!(
+            prefix_error(err),
+            HashPrefixError::Ambiguous {
+                prefix: "abcdef01".to_string(),
+                matches: vec![ALPHA.to_string(), BETA.to_string()],
+                more: 0,
+            }
+        );
+        Ok(())
+    }
+
+    /// The parser refuses a bad hash, but a revision built by hand can hold
+    /// one, and resolving it says what is wrong with it.
+    #[test(tokio::test)]
+    async fn a_hash_prefix_built_by_hand_is_checked_when_resolved() -> Res {
+        let remote = registry_with(&[ALPHA]).await?;
+        let mut uri = S3PackageUri::try_from("quilt+s3://b#package=foo/bar")?;
+
+        uri.revision = RevisionPointer::HashPrefix("abc".to_string());
+        let err = resolve_manifest_uri(&remote, None, &uri).await.unwrap_err();
+        assert_eq!(
+            prefix_error(err),
+            HashPrefixError::InvalidLength("abc".to_string())
+        );
+
+        uri.revision = RevisionPointer::HashPrefix("ABCDEF".to_string());
+        let err = resolve_manifest_uri(&remote, None, &uri).await.unwrap_err();
+        assert_eq!(
+            prefix_error(err),
+            HashPrefixError::NotHex("ABCDEF".to_string())
         );
         Ok(())
     }
@@ -441,6 +718,7 @@ mod tests {
             &mock_storage,
             dest_dir.to_path_buf(),
             manifest.header,
+            manifest.dir_meta,
             rows_stream,
         )
         .await?;

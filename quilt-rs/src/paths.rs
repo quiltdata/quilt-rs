@@ -270,13 +270,18 @@ impl DomainPaths {
     }
 
     /// What directories are essential when we initiate `InstalledPackage`
-    fn required_for_installing(&self, home: &Home, namespace: &Namespace) -> Vec<PathBuf> {
+    fn required_for_installing(
+        &self,
+        home: &Home,
+        namespace: &Namespace,
+        with_package_home: bool,
+    ) -> Vec<PathBuf> {
         let mut paths = vec![];
         paths.extend(self.required());
-        paths.extend(vec![
-            package_home(home, namespace),
-            self.installed_manifests_dir(namespace),
-        ]);
+        if with_package_home {
+            paths.push(package_home(home, namespace));
+        }
+        paths.push(self.installed_manifests_dir(namespace));
         paths
     }
 
@@ -286,7 +291,23 @@ impl DomainPaths {
         home: &Home,
         namespace: &Namespace,
     ) -> Res {
-        scaffold_paths(storage, self.required_for_installing(home, namespace)).await
+        scaffold_paths(storage, self.required_for_installing(home, namespace, true)).await
+    }
+
+    /// [`Self::scaffold_for_installing`] without the package's working folder,
+    /// for a package whose folder went missing: creating it empty would make
+    /// every tracked file look deleted.
+    pub async fn scaffold_for_installing_without_package_home(
+        &self,
+        storage: &impl Storage,
+        home: &Home,
+        namespace: &Namespace,
+    ) -> Res {
+        scaffold_paths(
+            storage,
+            self.required_for_installing(home, namespace, false),
+        )
+        .await
     }
 
     /// What directories are essential when we work with cached manifests

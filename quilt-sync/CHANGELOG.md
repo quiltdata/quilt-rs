@@ -21,6 +21,11 @@
 
 ## [v0.28.1-dev]
 
+### Added
+
+- Publish and commit metadata parsed from JSON keeps the exact text of integers beyond 64 bits, and a publish that keeps or updates the head's `agent_exec` task — autosync, a claim, a completion, or unrunnable — also keeps those numbers (<https://github.com/quiltdata/quilt-rs/pull/1394>)
+- A `quilt+s3://` link can name a revision by a short hash (6 to 63 characters) after `@`, as in quilt3; QuiltSync looks it up in the package's bucket, and a hash that matches nothing, or several revisions, is reported as a revision that is not there (<https://github.com/quiltdata/quilt-rs/pull/1392>)
+
 ### Changed
 
 - QuiltSync starts faster with many packages: at launch it checks up to eight packages at once instead of one after another (<https://github.com/quiltdata/quilt-rs/pull/1376>)
@@ -28,6 +33,7 @@
 ### Fixed
 
 - Publishing a new package no longer replaces the latest revision someone else already published under the same name: the package shows the conflict, and you choose which revision stays latest (<https://github.com/quiltdata/quilt-rs/pull/1373>)
+- A package whose folder was deleted, or is on a disk that is not mounted, no longer shows every file as removed, and autosync no longer commits and publishes an empty revision for it; it reports the folder, and the package works again once the folder is back; adding a pattern to `.quiltignore` no longer recreates the folder holding only that file (<https://github.com/quiltdata/quilt-rs/pull/1397>)
 
 ### quilt-rs
 

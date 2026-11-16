@@ -27,12 +27,18 @@ async fn test_single_row_manifest() -> Res {
         hash: Sha256ChunkedHash::try_from(objects::LESS_THAN_8MB_HASH_B64)?.into(),
         size: 16,
         meta: Some(serde_json::json!({"type": "text"})),
+        meta_numbers: crate::manifest::RawNumbers::default(),
     };
 
     let rows_stream = tokio_stream::iter(vec![Ok(vec![Ok(manifest_row)])]);
-    let (dest_path, top_hash) =
-        build_manifest_from_rows_stream(&storage, dest_dir.to_path_buf(), header, rows_stream)
-            .await?;
+    let (dest_path, top_hash) = build_manifest_from_rows_stream(
+        &storage,
+        dest_dir.to_path_buf(),
+        header,
+        Vec::new(),
+        rows_stream,
+    )
+    .await?;
     assert_eq!(dest_path, dest_dir.join(top_hash::SINGLE_ROW_TOP_HASH));
     assert_eq!(top_hash, top_hash::SINGLE_ROW_TOP_HASH);
 
@@ -44,6 +50,7 @@ async fn test_single_row_manifest() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         manifest.header.clone(),
+        manifest.dir_meta.clone(),
         manifest.records_stream().await,
     )
     .await?;
@@ -69,6 +76,7 @@ async fn test_mixed_hash_types_manifest() -> Res {
         .into(),
         size: 8,
         meta: None,
+        meta_numbers: crate::manifest::RawNumbers::default(),
     };
 
     let row2 = ManifestRow {
@@ -77,6 +85,7 @@ async fn test_mixed_hash_types_manifest() -> Res {
         hash: Sha256ChunkedHash::try_from(objects::LESS_THAN_8MB_HASH_B64)?.into(),
         size: 16,
         meta: None,
+        meta_numbers: crate::manifest::RawNumbers::default(),
     };
 
     let row3 = ManifestRow {
@@ -85,12 +94,18 @@ async fn test_mixed_hash_types_manifest() -> Res {
         hash: Crc64Hash::try_from("dGVzdGRhdGEAAAAAAAAAAAAAAAAAAAAA")?.into(),
         size: 32,
         meta: None,
+        meta_numbers: crate::manifest::RawNumbers::default(),
     };
 
     let rows_stream = tokio_stream::iter(vec![Ok(vec![Ok(row1), Ok(row2), Ok(row3)])]);
-    let (dest_path, top_hash) =
-        build_manifest_from_rows_stream(&storage, dest_dir.to_path_buf(), header, rows_stream)
-            .await?;
+    let (dest_path, top_hash) = build_manifest_from_rows_stream(
+        &storage,
+        dest_dir.to_path_buf(),
+        header,
+        Vec::new(),
+        rows_stream,
+    )
+    .await?;
     assert_eq!(
         dest_path,
         dest_dir.join(top_hash::MIXED_HASH_TYPES_TOP_HASH)
@@ -105,6 +120,7 @@ async fn test_mixed_hash_types_manifest() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         manifest.header.clone(),
+        manifest.dir_meta.clone(),
         manifest.records_stream().await,
     )
     .await?;
@@ -130,6 +146,7 @@ async fn test_multiple_rows_manifest() -> Res {
         hash: Sha256ChunkedHash::try_from(objects::ZERO_HASH_B64)?.into(),
         size: 0,
         meta: Some(serde_json::json!({"format": "json"})),
+        meta_numbers: crate::manifest::RawNumbers::default(),
     };
 
     let row2 = ManifestRow {
@@ -138,6 +155,7 @@ async fn test_multiple_rows_manifest() -> Res {
         hash: Sha256ChunkedHash::try_from(objects::EQUAL_TO_8MB_HASH_B64)?.into(),
         size: 8_388_608,
         meta: Some(serde_json::Value::Null),
+        meta_numbers: crate::manifest::RawNumbers::default(),
     };
 
     let row3 = ManifestRow {
@@ -146,12 +164,18 @@ async fn test_multiple_rows_manifest() -> Res {
         hash: Sha256ChunkedHash::try_from(objects::MORE_THAN_8MB_HASH_B64)?.into(),
         size: 18_874_368,
         meta: Some(serde_json::json!({"width": 1920, "height": 1080})),
+        meta_numbers: crate::manifest::RawNumbers::default(),
     };
 
     let rows_stream = tokio_stream::iter(vec![Ok(vec![Ok(row1), Ok(row2), Ok(row3)])]);
-    let (dest_path, top_hash) =
-        build_manifest_from_rows_stream(&storage, dest_dir.to_path_buf(), header, rows_stream)
-            .await?;
+    let (dest_path, top_hash) = build_manifest_from_rows_stream(
+        &storage,
+        dest_dir.to_path_buf(),
+        header,
+        Vec::new(),
+        rows_stream,
+    )
+    .await?;
     assert_eq!(dest_path, dest_dir.join(top_hash::MULTIPLE_ROWS_TOP_HASH));
     assert_eq!(top_hash, top_hash::MULTIPLE_ROWS_TOP_HASH);
 
@@ -163,6 +187,7 @@ async fn test_multiple_rows_manifest() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         manifest.header.clone(),
+        manifest.dir_meta.clone(),
         manifest.records_stream().await,
     )
     .await?;
@@ -201,6 +226,7 @@ async fn test_hash_normalization_equivalence_manifest() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         manifest1.header.clone(),
+        Vec::new(),
         manifest1.records_stream().await,
     )
     .await?;
@@ -209,6 +235,7 @@ async fn test_hash_normalization_equivalence_manifest() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         manifest2.header.clone(),
+        Vec::new(),
         manifest2.records_stream().await,
     )
     .await?;
@@ -217,6 +244,7 @@ async fn test_hash_normalization_equivalence_manifest() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         manifest3.header.clone(),
+        Vec::new(),
         manifest3.records_stream().await,
     )
     .await?;
@@ -267,6 +295,7 @@ async fn test_workflow_schemas_equivalence_manifest() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         manifest1.header.clone(),
+        Vec::new(),
         manifest1.records_stream().await,
     )
     .await?;
@@ -274,6 +303,7 @@ async fn test_workflow_schemas_equivalence_manifest() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         manifest2.header.clone(),
+        Vec::new(),
         manifest2.records_stream().await,
     )
     .await?;

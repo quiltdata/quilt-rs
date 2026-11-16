@@ -22,7 +22,9 @@ use quilt_uri::Tag;
 
 /// Publish `manifest`, whose rows are already on the remote, as the revision
 /// after `parent`, and tag it `latest` only if `latest` still names `parent`
-/// when read just before the tag write.
+/// when read just before the tag write. That read and the write are two
+/// requests, not one atomic step, so a push that lands between them can still
+/// be overwritten.
 pub async fn push_onto(
     paths: &DomainPaths,
     storage: &(impl Storage + Sync),
@@ -60,6 +62,7 @@ pub async fn push_onto(
         storage,
         paths.cached_manifests_dir(&parent.bucket),
         manifest.header.clone(),
+        manifest.dir_meta.clone(),
         stream,
     )
     .await?;
@@ -96,6 +99,7 @@ mod tests {
 
     use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::mocks::MockStorage;
+    use crate::manifest::DirMeta;
     use crate::manifest::HeaderMessage;
     use crate::manifest::ManifestHeader;
     use quilt_uri::S3Uri;
@@ -129,7 +133,9 @@ mod tests {
                 .into(),
                 size: 29,
                 meta: None,
+                meta_numbers: crate::manifest::RawNumbers::default(),
             }],
+            dir_meta: Vec::new(),
         })
     }
 
@@ -231,6 +237,30 @@ mod tests {
             "expected a workflow rejection, got: {pushed:?}"
         );
         assert_eq!(read(&remote, LATEST).await?, PARENT);
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn the_folder_metadata_is_published_and_not_hashed() -> Res {
+        let remote = remote_with_latest(PARENT).await?;
+        let physical_key = "s3://b/a/c/out.md?versionId=v1";
+        let mut with_dirs = manifest(physical_key)?;
+        with_dirs.dir_meta = vec![DirMeta::new(
+            crate::LogicalKey::new("data")?,
+            serde_json::json!({"owner": "team"}),
+        )];
+
+        let plain = push(&remote, manifest(physical_key)?).await?;
+        let pushed = push(&remote, with_dirs.clone()).await?;
+
+        assert_eq!(pushed.manifest_uri.hash, plain.manifest_uri.hash);
+        let body = read(
+            &remote,
+            &format!("s3://b/.quilt/packages/{}", pushed.manifest_uri.hash),
+        )
+        .await?;
+        let published = Manifest::from_reader(body.as_bytes()).await?;
+        assert_eq!(published.dir_meta, with_dirs.dir_meta);
         Ok(())
     }
 }

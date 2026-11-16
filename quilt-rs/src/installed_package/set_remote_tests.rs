@@ -192,6 +192,14 @@ impl Remote for BadBucketRemote {
     ) -> Res<Vec<String>> {
         unreachable!("test only exercises verify_bucket")
     }
+    async fn manifest_hashes_with_prefix(
+        &self,
+        _host: Option<&Host>,
+        _bucket: &str,
+        _prefix: &str,
+    ) -> Res<Vec<String>> {
+        unreachable!("test only exercises verify_bucket")
+    }
 }
 
 #[test(tokio::test)]
@@ -564,7 +572,7 @@ async fn test_set_remote_recommits_existing_commit() -> Res {
     let commit = package
         .commit(
             "Initial commit".to_string(),
-            UserMeta::Set(serde_json::json!({"key": "value"})),
+            UserMeta::set(serde_json::json!({"key": "value"})),
             None,
             None,
         )
@@ -754,7 +762,7 @@ schemas:
     package
         .commit(
             "Initial commit".to_string(),
-            UserMeta::Set(serde_json::json!({"key": "value"})),
+            UserMeta::set(serde_json::json!({"key": "value"})),
             None,
             None,
         )
@@ -869,7 +877,7 @@ schemas:
     package
         .commit(
             "Initial commit".to_string(),
-            UserMeta::Set(serde_json::json!({"key": "value"})),
+            UserMeta::set(serde_json::json!({"key": "value"})),
             None,
             None,
         )
@@ -977,7 +985,7 @@ schemas:
     package
         .commit(
             "Initial commit".to_string(),
-            UserMeta::Set(serde_json::json!({"key": "value"})),
+            UserMeta::set(serde_json::json!({"key": "value"})),
             None,
             None,
         )
@@ -1084,7 +1092,7 @@ async fn package_with_config(
     package
         .commit(
             "Initial commit".to_string(),
-            UserMeta::Set(serde_json::json!({"key": "value"})),
+            UserMeta::set(serde_json::json!({"key": "value"})),
             None,
             None,
         )

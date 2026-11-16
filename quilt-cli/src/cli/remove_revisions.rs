@@ -139,6 +139,7 @@ pub async fn remove_old<S: Storage + Clone + Sync, R: Remote>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quilt_rs::flow::UserMeta;
 
     use test_log::test;
 
@@ -228,6 +229,7 @@ mod tests {
             namespace: namespace.clone(),
             source: None,
             message: None,
+            user_meta: UserMeta::Clear,
         })
         .await?;
 
