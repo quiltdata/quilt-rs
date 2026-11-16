@@ -949,6 +949,9 @@ mod tests {
             )
             .await?;
 
+        // Every command finds the home first.
+        let home = crate::cli::initialize_home(&m, None, &mut Vec::new()).await;
+        assert!(home.is_ok(), "{home:?}");
         let output = model(local_domain, Input::default()).await?;
 
         let rows = output.to_json()["packages"].clone();

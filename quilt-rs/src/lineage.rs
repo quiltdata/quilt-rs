@@ -186,8 +186,19 @@ impl DomainLineageIo {
         Ok(finish(&lineage.packages.into_keys().collect()))
     }
 
+    /// Reads the home alone, so a package entry that does not parse does not
+    /// stop it.
     pub async fn home(&self, storage: &(impl Storage + Sync)) -> Res<Home> {
-        Ok(self.read(storage).await?.home)
+        #[derive(Deserialize)]
+        struct OnlyHome {
+            #[serde(default)]
+            home: Home,
+        }
+
+        let record: OnlyHome = serde_json::from_slice(&self.read_bytes(storage).await?)
+            .map_err(|err| Error::Lineage(LineageError::Parse(err)))?;
+        require_home(&record.home)?;
+        Ok(record.home)
     }
 
     /// The stored home, or `None` when the domain has none yet. A record that

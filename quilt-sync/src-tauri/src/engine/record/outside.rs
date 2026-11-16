@@ -162,13 +162,16 @@ impl Outside {
 
     /// Record every package whose revision moved since it was last seen.
     pub async fn check(&self) {
-        let before = self.state.lock().expect("outside lock").seen.clone();
+        // Taken at the first step under the lock `check_each` holds, so no
+        // write of ours lands between it and the save.
+        let before = std::sync::OnceLock::new();
         let found = self
             .lineage
             .check_each(
                 &LocalStorage::new(),
                 |namespace, lineage| {
                     let mut state = self.state.lock().expect("outside lock");
+                    before.get_or_init(|| state.seen.clone());
                     // Numbered under the lock `check_each` holds, so a write
                     // after it, ours or another tool's, comes later; kept as
                     // pending, so a stop waits for it.
@@ -178,10 +181,11 @@ impl Outside {
                 },
                 |installed| {
                     let mut state = self.state.lock().expect("outside lock");
+                    let before = before.get_or_init(|| state.seen.clone());
                     state
                         .seen
                         .retain(|namespace, _| installed.contains(namespace));
-                    self.save(&mut state, &before);
+                    self.save(&mut state, before);
                 },
             )
             .await;
