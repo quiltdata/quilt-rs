@@ -1416,6 +1416,7 @@ mod tests {
                     user_meta_numbers: quilt::manifest::RawNumbers::default(),
                 },
                 rows: Vec::new(),
+                dir_meta: Vec::new(),
             })
         });
 
@@ -1483,6 +1484,7 @@ mod tests {
                     user_meta_numbers: quilt::manifest::RawNumbers::default(),
                 },
                 rows: Vec::new(),
+                dir_meta: Vec::new(),
             })
         });
 
@@ -1548,6 +1550,7 @@ mod tests {
                     user_meta_numbers: quilt::manifest::RawNumbers::default(),
                 },
                 rows: Vec::new(),
+                dir_meta: Vec::new(),
             })
         });
 
@@ -1610,6 +1613,7 @@ mod tests {
                     user_meta_numbers: quilt::manifest::RawNumbers::default(),
                 },
                 rows: Vec::new(),
+                dir_meta: Vec::new(),
             })
         });
         model

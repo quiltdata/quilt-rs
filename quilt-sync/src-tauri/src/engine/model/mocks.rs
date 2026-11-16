@@ -23,6 +23,7 @@ pub fn create_remote_manifest() -> quilt::manifest::Manifest {
             user_meta_numbers: quilt::manifest::RawNumbers::default(),
         },
         rows: Vec::new(),
+        dir_meta: Vec::new(),
     }
 }
 

@@ -31,9 +31,14 @@ async fn test_single_row_manifest() -> Res {
     };
 
     let rows_stream = tokio_stream::iter(vec![Ok(vec![Ok(manifest_row)])]);
-    let (dest_path, top_hash) =
-        build_manifest_from_rows_stream(&storage, dest_dir.to_path_buf(), header, rows_stream)
-            .await?;
+    let (dest_path, top_hash) = build_manifest_from_rows_stream(
+        &storage,
+        dest_dir.to_path_buf(),
+        header,
+        Vec::new(),
+        rows_stream,
+    )
+    .await?;
     assert_eq!(dest_path, dest_dir.join(top_hash::SINGLE_ROW_TOP_HASH));
     assert_eq!(top_hash, top_hash::SINGLE_ROW_TOP_HASH);
 
@@ -45,6 +50,7 @@ async fn test_single_row_manifest() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         manifest.header.clone(),
+        manifest.dir_meta.clone(),
         manifest.records_stream().await,
     )
     .await?;
@@ -92,9 +98,14 @@ async fn test_mixed_hash_types_manifest() -> Res {
     };
 
     let rows_stream = tokio_stream::iter(vec![Ok(vec![Ok(row1), Ok(row2), Ok(row3)])]);
-    let (dest_path, top_hash) =
-        build_manifest_from_rows_stream(&storage, dest_dir.to_path_buf(), header, rows_stream)
-            .await?;
+    let (dest_path, top_hash) = build_manifest_from_rows_stream(
+        &storage,
+        dest_dir.to_path_buf(),
+        header,
+        Vec::new(),
+        rows_stream,
+    )
+    .await?;
     assert_eq!(
         dest_path,
         dest_dir.join(top_hash::MIXED_HASH_TYPES_TOP_HASH)
@@ -109,6 +120,7 @@ async fn test_mixed_hash_types_manifest() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         manifest.header.clone(),
+        manifest.dir_meta.clone(),
         manifest.records_stream().await,
     )
     .await?;
@@ -156,9 +168,14 @@ async fn test_multiple_rows_manifest() -> Res {
     };
 
     let rows_stream = tokio_stream::iter(vec![Ok(vec![Ok(row1), Ok(row2), Ok(row3)])]);
-    let (dest_path, top_hash) =
-        build_manifest_from_rows_stream(&storage, dest_dir.to_path_buf(), header, rows_stream)
-            .await?;
+    let (dest_path, top_hash) = build_manifest_from_rows_stream(
+        &storage,
+        dest_dir.to_path_buf(),
+        header,
+        Vec::new(),
+        rows_stream,
+    )
+    .await?;
     assert_eq!(dest_path, dest_dir.join(top_hash::MULTIPLE_ROWS_TOP_HASH));
     assert_eq!(top_hash, top_hash::MULTIPLE_ROWS_TOP_HASH);
 
@@ -170,6 +187,7 @@ async fn test_multiple_rows_manifest() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         manifest.header.clone(),
+        manifest.dir_meta.clone(),
         manifest.records_stream().await,
     )
     .await?;
@@ -208,6 +226,7 @@ async fn test_hash_normalization_equivalence_manifest() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         manifest1.header.clone(),
+        Vec::new(),
         manifest1.records_stream().await,
     )
     .await?;
@@ -216,6 +235,7 @@ async fn test_hash_normalization_equivalence_manifest() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         manifest2.header.clone(),
+        Vec::new(),
         manifest2.records_stream().await,
     )
     .await?;
@@ -224,6 +244,7 @@ async fn test_hash_normalization_equivalence_manifest() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         manifest3.header.clone(),
+        Vec::new(),
         manifest3.records_stream().await,
     )
     .await?;
@@ -274,6 +295,7 @@ async fn test_workflow_schemas_equivalence_manifest() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         manifest1.header.clone(),
+        Vec::new(),
         manifest1.records_stream().await,
     )
     .await?;
@@ -281,6 +303,7 @@ async fn test_workflow_schemas_equivalence_manifest() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         manifest2.header.clone(),
+        Vec::new(),
         manifest2.records_stream().await,
     )
     .await?;

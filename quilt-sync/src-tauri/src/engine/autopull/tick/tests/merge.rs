@@ -29,6 +29,7 @@ fn revision(message: &str, rows: Vec<quilt::manifest::ManifestRow>) -> quilt::ma
             ..quilt::manifest::ManifestHeader::default()
         },
         rows,
+        dir_meta: Vec::new(),
     }
 }
 
@@ -870,6 +871,36 @@ async fn a_copy_whose_change_latest_already_holds_moves_to_it_without_publishing
     assert_eq!(seen(&remote).events, ["move to h1"]);
     assert!(reporter.published.lock().unwrap().is_empty());
     assert!(inner.paused.read().await.is_empty());
+    Ok(())
+}
+
+/// The change `latest` lacks is folder metadata alone: the files are the same
+/// on both sides, so only the metadata can show there is something to publish.
+#[tokio::test]
+async fn a_copy_whose_only_change_is_folder_metadata_is_published_onto_latest() -> Result<(), Error>
+{
+    let dir_meta = vec![quilt::manifest::DirMeta {
+        logical_key: quilt::LogicalKey::new("data")?,
+        meta: json!({"owner": "team"}),
+    }];
+    let (model, remote) = model_of(Copy {
+        ours: quilt::manifest::Manifest {
+            dir_meta: dir_meta.clone(),
+            ..revision("mine", vec![file("a.csv", "1")?])
+        },
+        ..Copy::new(
+            vec![file("a.csv", "1")?],
+            vec![file("a.csv", "1")?],
+            vec![file("a.csv", "1")?],
+        )
+    });
+
+    let (inner, _) = tick(&model).await;
+
+    let remote = seen(&remote);
+    assert_eq!(remote.events, ["push onto h1", "move to r1"]);
+    assert_eq!(remote.latest().dir_meta, dir_meta);
+    assert!(inner.paused.read().await.is_empty(), "not paused");
     Ok(())
 }
 

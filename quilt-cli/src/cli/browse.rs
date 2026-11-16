@@ -203,6 +203,7 @@ mod tests {
                     meta: None,
                     meta_numbers: quilt_rs::manifest::RawNumbers::default(),
                 }],
+                dir_meta: Vec::new(),
             },
         };
 
@@ -227,6 +228,7 @@ mod tests {
                     user_meta_numbers: quilt_rs::manifest::RawNumbers::default(),
                 },
                 rows: Vec::new(),
+                dir_meta: Vec::new(),
             },
         };
 
