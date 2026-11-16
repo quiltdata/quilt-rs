@@ -15,10 +15,9 @@ use tracing::info;
 
 use crate::Error;
 use crate::Res;
-use crate::io::storage::LockGuard;
 use crate::io::storage::Storage;
 use crate::manifest::Manifest;
-use crate::package_lock;
+use crate::package_lock::PackageLock;
 use crate::paths::DomainPaths;
 use quilt_uri::Namespace;
 
@@ -410,7 +409,7 @@ pub(crate) async fn lock_every_package(
     storage: &(impl Storage + Sync),
     installed: &BTreeSet<Namespace>,
     except: Option<&Namespace>,
-) -> Res<Vec<LockGuard>> {
+) -> Res<Vec<PackageLock>> {
     let mut namespaces = installed.clone();
     for owner_dir in list_dirs(storage, &paths.locks_dir()).await? {
         let Some(owner) = owner_dir.file_name() else {
@@ -441,8 +440,8 @@ pub(crate) async fn lock_every_package(
     }
     let mut held = Vec::with_capacity(namespaces.len());
     for namespace in namespaces {
-        match package_lock::try_lock(storage, paths, &namespace).await? {
-            Some(guard) => held.push(guard),
+        match PackageLock::try_take(storage, paths, &namespace).await? {
+            Some(lock) => held.push(lock),
             None => return Err(Error::PackageBusy(namespace)),
         }
     }
@@ -696,7 +695,7 @@ mod tests {
         let before = object_names(&paths)?;
 
         let busy: Namespace = "acme/busy".try_into()?;
-        let _held = package_lock::lock(&LocalStorage::new(), &paths, &busy).await?;
+        let _held = PackageLock::take(&LocalStorage::new(), &paths, &busy).await?;
         let result = domain.gc().await;
 
         assert!(
@@ -713,7 +712,7 @@ mod tests {
     async fn an_install_holding_its_lock_before_its_entry_is_busy() -> Res {
         let (domain, paths, _dir) = domain().await?;
         let installing: Namespace = "acme/new".try_into()?;
-        let _held = package_lock::lock(&LocalStorage::new(), &paths, &installing).await?;
+        let _held = PackageLock::take(&LocalStorage::new(), &paths, &installing).await?;
 
         let result = domain.gc().await;
 
@@ -730,7 +729,7 @@ mod tests {
     async fn a_held_lock_of_a_dot_named_package_is_busy() -> Res {
         let (domain, paths, _dir) = domain().await?;
         let creating: Namespace = "acme/.foo".try_into()?;
-        let _held = package_lock::lock(&LocalStorage::new(), &paths, &creating).await?;
+        let _held = PackageLock::take(&LocalStorage::new(), &paths, &creating).await?;
         assert!(paths.locks_dir().join("acme/.foo.lock").is_file());
 
         let result = domain.gc().await;
@@ -859,7 +858,7 @@ mod tests {
         let (domain, paths, _dir) = domain().await?;
         create(&domain, "acme/kept", &[("a.txt", "a")]).await?;
         let invalid = Namespace::from(("acme", "."));
-        let _held = package_lock::lock(&LocalStorage::new(), &paths, &invalid).await?;
+        let _held = PackageLock::take(&LocalStorage::new(), &paths, &invalid).await?;
         assert!(paths.locks_dir().join("acme/..lock").is_file());
 
         assert!(domain.gc().await?.is_empty());
@@ -987,7 +986,7 @@ mod tests {
         create(&domain, "acme/gone", &[("b.txt", "bb")]).await?;
         let before = object_names(&paths)?;
         let busy: Namespace = "acme/busy".try_into()?;
-        let _held = package_lock::lock(&LocalStorage::new(), &paths, &busy).await?;
+        let _held = PackageLock::take(&LocalStorage::new(), &paths, &busy).await?;
 
         let pruned = domain
             .uninstall_package_pruning("acme/gone".try_into()?)
@@ -1121,7 +1120,7 @@ mod tests {
         }
         let before = object_names(&paths)?;
         let busy: Namespace = "acme/busy".try_into()?;
-        let _held = package_lock::lock(&LocalStorage::new(), &paths, &busy).await?;
+        let _held = PackageLock::take(&LocalStorage::new(), &paths, &busy).await?;
 
         let result = domain.uninstall_package_pruning(namespace).await;
 
@@ -1155,7 +1154,7 @@ mod tests {
         create(&domain, "acme/busy", &[("a.txt", "a")]).await?;
         create(&domain, "acme/empty", &[]).await?;
         let busy: Namespace = "acme/busy".try_into()?;
-        let _held = package_lock::lock(&LocalStorage::new(), &paths, &busy).await?;
+        let _held = PackageLock::take(&LocalStorage::new(), &paths, &busy).await?;
 
         let pruned = domain
             .uninstall_package_pruning("acme/empty".try_into()?)
@@ -1263,7 +1262,7 @@ mod tests {
     async fn the_estimate_answers_while_a_package_is_busy() -> Res {
         let (domain, paths, _dir) = domain_with_garbage().await?;
         let busy: Namespace = "acme/kept".try_into()?;
-        let _held = package_lock::lock(&LocalStorage::new(), &paths, &busy).await?;
+        let _held = PackageLock::take(&LocalStorage::new(), &paths, &busy).await?;
 
         let size = domain.measure_storage().await?;
 

@@ -278,7 +278,7 @@ mod tests {
     use crate::io::storage::LocalStorage;
     use crate::lineage::CommitState;
     use crate::manifest::ManifestRow;
-    use crate::package_lock;
+    use crate::package_lock::PackageLock;
 
     const PLATE: (&str, &str) = ("user", "plate-07");
     const OTHER: (&str, &str) = ("lab", "assays");
@@ -405,7 +405,7 @@ mod tests {
     async fn a_busy_other_package_keeps_the_objects() -> Res {
         let (paths, _dir) = fixture()?;
         let storage = LocalStorage::new();
-        let _held = package_lock::lock(&storage, &paths, &OTHER.into()).await?;
+        let _held = PackageLock::take(&storage, &paths, &OTHER.into()).await?;
 
         let report = remove_revisions(
             &paths,
@@ -429,7 +429,7 @@ mod tests {
     async fn the_callers_own_lock_is_not_a_busy_package() -> Res {
         let (paths, _dir) = fixture()?;
         let storage = LocalStorage::new();
-        let _own = package_lock::lock(&storage, &paths, &PLATE.into()).await?;
+        let _own = PackageLock::take(&storage, &paths, &PLATE.into()).await?;
 
         let report = remove_revisions(
             &paths,

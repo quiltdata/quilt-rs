@@ -44,7 +44,7 @@ pub fn on_package_lock_wait(notice: impl Fn() + Send + Sync + 'static) {
 }
 
 /// Takes `namespace`'s lock, waiting for it if another writer holds it.
-pub(crate) async fn lock(
+async fn lock(
     storage: &impl Storage,
     paths: &DomainPaths,
     namespace: &Namespace,
@@ -62,7 +62,7 @@ pub(crate) async fn lock(
 
 /// Takes `namespace`'s lock if it is free now; `None` when another writer
 /// holds it.
-pub(crate) async fn try_lock(
+async fn try_lock(
     storage: &impl Storage,
     paths: &DomainPaths,
     namespace: &Namespace,
@@ -76,19 +76,11 @@ pub(crate) async fn try_lock(
 /// [`Self::try_take`] make one, so a function given one knows the lock is
 /// held, and need not take it again, which would wait on itself.
 #[derive(Debug)]
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the ref store that takes it is not used yet")
-)]
 pub(crate) struct PackageLock {
     namespace: Namespace,
     _guard: LockGuard,
 }
 
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the ref store that takes it is not used yet")
-)]
 impl PackageLock {
     /// [`lock`], kept as proof.
     pub(crate) async fn take(

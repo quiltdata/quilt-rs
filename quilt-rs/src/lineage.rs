@@ -20,6 +20,7 @@ use crate::Res;
 use crate::error::LineageError;
 use crate::io::storage::Storage;
 use crate::io::storage::StorageExt;
+use crate::package_lock::PackageLock;
 use crate::paths;
 use quilt_uri::Namespace;
 
@@ -255,29 +256,28 @@ impl DomainLineageIo {
             .collect())
     }
 
-    /// Store a package's first entry, as an install or a create made it. The
-    /// caller holds the package's lock.
-    pub async fn create_package(
+    /// Store the locked package's first entry, as an install or a create
+    /// made it.
+    pub(crate) async fn create_package(
         &self,
         storage: &(impl Storage + Sync),
-        namespace: &Namespace,
+        held: &PackageLock,
         lineage: PackageLineage,
     ) -> Res {
-        self.update_package_lineage(storage, namespace, |entry| {
+        self.update_package_lineage(storage, held.namespace(), |entry| {
             *entry = Some(lineage);
             Ok(())
         })
         .await
     }
 
-    /// Forget a package, as an uninstall does. The caller holds the
-    /// package's lock.
-    pub async fn remove_package(
+    /// Forget the locked package, as an uninstall does.
+    pub(crate) async fn remove_package(
         &self,
         storage: &(impl Storage + Sync),
-        namespace: &Namespace,
+        held: &PackageLock,
     ) -> Res {
-        self.update_package_lineage(storage, namespace, |entry| {
+        self.update_package_lineage(storage, held.namespace(), |entry| {
             *entry = None;
             Ok(())
         })
@@ -618,6 +618,28 @@ impl PackageLineageIo {
                 Ok(lineage)
             })
             .await
+    }
+
+    /// [`Self::write`] by a writer holding this package's lock.
+    pub(crate) async fn write_locked(
+        &self,
+        storage: &(impl Storage + Sync),
+        held: &PackageLock,
+        lineage: PackageLineage,
+    ) -> Res<PackageLineage> {
+        debug_assert_eq!(held.namespace(), &self.namespace);
+        self.write(storage, lineage).await
+    }
+
+    /// [`Self::edit`] by a writer holding this package's lock.
+    pub(crate) async fn edit_locked(
+        &self,
+        storage: &(impl Storage + Sync),
+        held: &PackageLock,
+        edit: impl FnOnce(&mut PackageLineage),
+    ) -> Res<PackageLineage> {
+        debug_assert_eq!(held.namespace(), &self.namespace);
+        self.edit(storage, edit).await
     }
 }
 
