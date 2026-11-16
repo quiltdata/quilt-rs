@@ -546,13 +546,22 @@ mod tests {
 
     /// Integration test: create local package → set bucket → push to S3 → verify lineage.
     /// Uses fiskus-us-east-1 with a dedicated namespace (no catalog — local AWS creds).
+    /// The package name is unique so this first push finds no latest tag; a
+    /// reused name would not certify after a top-hash change.
     #[test(tokio::test)]
     async fn live_write_push_local_package_bucket_only() -> Result<(), Error> {
         use crate::cli::create;
         use crate::cli::status;
         use quilt_rs::lineage::UpstreamState;
 
-        let namespace: Namespace = ("cli_test", "local_push").into();
+        let name = format!(
+            "local_push_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        );
+        let namespace: Namespace = ("cli_test", name.as_str()).into();
         let host_config = Some(HostConfig::default_sha256_chunked());
 
         // Step 1: Create model and local package
