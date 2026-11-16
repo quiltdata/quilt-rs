@@ -16,7 +16,12 @@ async fn current_revision_reads_only_the_selected_installed_manifest() -> Res {
     let namespace: Namespace = ("demo", "sales").into();
     let before = Utc::now();
     let (package, _) = domain
-        .create_package(namespace.clone(), None, Some("initial import".to_string()))
+        .create_package(
+            namespace.clone(),
+            None,
+            Some("initial import".to_string()),
+            UserMeta::Clear,
+        )
         .await?;
     let snapshot = package.lineage().await?;
     let expected_hash = snapshot
@@ -67,7 +72,12 @@ async fn current_revision_prefers_a_pending_commit_over_the_remote_hash() -> Res
 
     let namespace: Namespace = ("demo", "pending").into();
     let (package, _) = domain
-        .create_package(namespace.clone(), None, Some("local work".to_string()))
+        .create_package(
+            namespace.clone(),
+            None,
+            Some("local work".to_string()),
+            UserMeta::Clear,
+        )
         .await?;
     let pending_hash = package
         .lineage()

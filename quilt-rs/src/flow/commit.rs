@@ -155,13 +155,35 @@ async fn create_immutable_object_copy(
 ///
 /// The manifest header stores metadata as an optional JSON value; this enum
 /// is the caller-facing contract for changing it. `Keep` carries the previous
-/// revision's metadata forward verbatim. `Clear` produces a header without a
-/// `user_meta` field. `Set` replaces it (objects are stored with sorted keys).
+/// revision's metadata forward verbatim, including the integers beyond 64 bits
+/// it kept. `Clear` produces a header without a `user_meta` field. `Set`
+/// replaces both the value and its kept number text (objects are stored with
+/// sorted keys). Prefer [`Self::parse`] when the value comes from JSON text.
 #[derive(Debug, Clone, PartialEq)]
 pub enum UserMeta {
     Keep,
     Clear,
-    Set(serde_json::Value),
+    Set(serde_json::Value, RawNumbers),
+}
+
+impl UserMeta {
+    /// Replace metadata with `value`, with no kept number text. Prefer
+    /// [`Self::parse`] when the text may hold integers beyond 64 bits or `-0`.
+    #[must_use]
+    pub fn set(value: serde_json::Value) -> Self {
+        Self::Set(value, RawNumbers::default())
+    }
+
+    /// Parse JSON text as quilt3's `set_meta` does: any JSON value, with the
+    /// exact number text quilt3 keeps.
+    ///
+    /// # Errors
+    ///
+    /// The text is not JSON.
+    pub fn parse(text: &str) -> Result<Self, serde_json::Error> {
+        let (value, numbers) = RawNumbers::parse(text)?;
+        Ok(Self::Set(value, numbers))
+    }
 }
 
 /// What a commit did: nothing, because the new top hash is the current
@@ -298,26 +320,24 @@ pub async fn commit_package(
         }
     }
 
-    let (user_meta, user_meta_numbers) = match user_meta {
-        UserMeta::Keep => (
-            manifest.header.user_meta.clone(),
-            manifest.header.user_meta_numbers.clone(),
-        ),
-        UserMeta::Clear => (None, RawNumbers::default()),
-        UserMeta::Set(serde_json::Value::Object(mut m)) => {
-            m.sort_keys();
-            (Some(m.into()), RawNumbers::default())
-        }
-        UserMeta::Set(other) => (Some(other), RawNumbers::default()),
-    };
-
-    let header = ManifestHeader {
+    let mut header = ManifestHeader {
         message: HeaderMessage::Text(message.clone()),
         workflow,
-        user_meta,
-        user_meta_numbers,
         ..ManifestHeader::default()
     };
+    match user_meta {
+        UserMeta::Keep => {
+            header.user_meta = manifest.header.user_meta.clone();
+            header.user_meta_numbers = manifest.header.user_meta_numbers.clone();
+        }
+        UserMeta::Clear => {
+            header.user_meta = None;
+            header.user_meta_numbers = RawNumbers::default();
+        }
+        UserMeta::Set(value, numbers) => {
+            header.set_meta(value, numbers);
+        }
+    }
 
     debug!(
         "⏳ Building new manifest with {} removed, {} modified, {} new files",
@@ -423,9 +443,14 @@ mod tests {
     /// A manifest whose header carries the given package-level metadata and no
     /// rows — a minimal stand-in for a previously committed revision.
     fn manifest_with_meta(user_meta: Option<serde_json::Value>) -> Manifest {
+        manifest_with_set(user_meta, RawNumbers::default())
+    }
+
+    fn manifest_with_set(user_meta: Option<serde_json::Value>, numbers: RawNumbers) -> Manifest {
         Manifest {
             header: ManifestHeader {
                 user_meta,
+                user_meta_numbers: numbers,
                 ..ManifestHeader::default()
             },
             ..Manifest::default()
@@ -634,7 +659,7 @@ mod tests {
         let meta = serde_json::json!({"kept": "value"});
         assert_eq!(
             commit_hash(Some(meta.clone()), UserMeta::Keep).await?,
-            commit_hash(Some(meta.clone()), UserMeta::Set(meta)).await?,
+            commit_hash(Some(meta.clone()), UserMeta::set(meta)).await?,
             "Keep must inherit the previous header's user_meta"
         );
         Ok(())
@@ -771,6 +796,246 @@ mod tests {
         Ok(())
     }
 
+    /// `Package().set_meta(m)` fixtures from quilt3 (deployment 911571ae). The
+    /// input is the JSON text passed to `set_meta` (or `None`). The fixture is
+    /// named by the top hash quilt3 gave, and has no `message` key.
+    const SET_META_CASES: &[(&str, Option<&str>)] = &[
+        (
+            "7daa63c5ca85ef0b08ed66f4192599a29808142e2c25816e562ede18751c8b4b-set-meta-big-integer.jsonl",
+            Some(r#"{"n": 123456789012345678901234567890}"#),
+        ),
+        (
+            "d3593da9d5c4b8f950f371de32b7b90be1791e51f85449e31dd333382e477f3c-set-meta-negative-zero.jsonl",
+            Some(r#"{"z": -0}"#),
+        ),
+        (
+            "5937f8e0405bee9897ec08ad3dcb57795ec27c20d1926a42b07bc4ba9b96e843-set-meta-scientific.jsonl",
+            Some(r#"{"e": 1e-7}"#),
+        ),
+        (
+            "e1d245aa43b3461c60964c9b87d1b93871bc22b32556a689e344b4569e464dc5-set-meta-non-ascii.jsonl",
+            Some(r#"{"café": "日本語"}"#),
+        ),
+        (
+            "420acdd728e7b2d847ff8c2dc48deeff144d1b29fd94803ede46e0335cad761e-set-meta-nested.jsonl",
+            Some(
+                r#"{"list": [1, 18446744073709551616], "outer": {"inner": 18446744073709551616}}"#,
+            ),
+        ),
+        (
+            "76e309f51e73644e4c95a1bf8534cf8b05571d8a1396b202d3ed7a2e78079f70-set-meta-none.jsonl",
+            Some("null"),
+        ),
+    ];
+
+    fn fixture_path(name: &str) -> std::path::PathBuf {
+        std::env::current_dir()
+            .expect("cwd")
+            .join("fixtures/quilt3-packages")
+            .join(name)
+    }
+
+    /// `UserMeta::parse` of the same text, applied through
+    /// `ManifestHeader::set_meta` (what `commit_package` uses for `Set`),
+    /// gives quilt3's top hash and, but for the spaces quilt3 writes after
+    /// `:` and `,`, the same header text.
+    #[test(tokio::test)]
+    async fn test_set_from_quilt3_text_matches_fixture_hash_and_header() -> Res {
+        let storage = MockStorage::default();
+        for (name, text) in SET_META_CASES {
+            let expected = name.split_once('-').expect("named <hash>-<case>").0;
+            let quilt3 = Manifest::from_path(&LocalStorage::default(), &fixture_path(name)).await?;
+            let mut header = ManifestHeader {
+                message: crate::manifest::HeaderMessage::Missing,
+                user_meta: None,
+                user_meta_numbers: RawNumbers::default(),
+                ..ManifestHeader::default()
+            };
+            match UserMeta::parse(text.expect("fixture text"))? {
+                UserMeta::Set(value, numbers) => header.set_meta(value, numbers),
+                other => panic!("parse should return Set, got {other:?}"),
+            }
+            let manifest = Manifest {
+                header: header.clone(),
+                ..Manifest::default()
+            };
+            let (_, top_hash) = build_manifest_from_rows_stream(
+                &storage,
+                storage.temp_dir.path().to_path_buf(),
+                header,
+                Vec::new(),
+                manifest.records_stream().await,
+            )
+            .await?;
+            assert_eq!(top_hash, expected, "{name}: top hash");
+            assert!(
+                manifest.header.same_user_meta(&quilt3.header),
+                "{name}: user_meta text"
+            );
+            let ours_header = manifest
+                .to_jsonlines()
+                .lines()
+                .next()
+                .expect("header")
+                .to_string();
+            let quilt3_header = compact_json_spaces(
+                std::fs::read_to_string(fixture_path(name))?
+                    .lines()
+                    .next()
+                    .expect("fixture header"),
+            );
+            assert_eq!(ours_header, quilt3_header, "{name}: header text");
+        }
+        Ok(())
+    }
+
+    /// Spaces after `:` and `,` outside strings, as `quilt3_fixtures_tests`
+    /// does, so a quilt3 dump can be compared to a compact header.
+    fn compact_json_spaces(line: &str) -> String {
+        let mut out = String::new();
+        let mut in_string = false;
+        let mut after_separator = false;
+        let mut escape = false;
+        for c in line.chars() {
+            if in_string {
+                out.push(c);
+                if escape {
+                    escape = false;
+                } else if c == '\\' {
+                    escape = true;
+                } else if c == '"' {
+                    in_string = false;
+                }
+                continue;
+            }
+            if c == ' ' && after_separator {
+                after_separator = false;
+                continue;
+            }
+            after_separator = matches!(c, ':' | ',');
+            in_string = c == '"';
+            out.push(c);
+        }
+        out
+    }
+
+    /// `Keep` after `Set` keeps the numbers; `Set` replaces and does not merge.
+    #[test(tokio::test)]
+    async fn test_commit_keep_after_set_keeps_numbers_and_set_replaces() -> Res {
+        let set = UserMeta::parse(r#"{"a": 1, "n": 123456789012345678901234567890}"#)?;
+        let UserMeta::Set(value, numbers) = set.clone() else {
+            panic!("expected Set");
+        };
+        let hash_set = commit_hash(None, set).await?;
+        let hash_keep = {
+            let storage = MockStorage::default();
+            let paths = DomainPaths::new(std::path::absolute("/foo")?);
+            let (_lineage, commit) = commit_package(
+                PackageLineage::default(),
+                &mut manifest_with_set(Some(value), numbers),
+                &paths,
+                &storage,
+                &MockRemote::default(),
+                None,
+                PathBuf::default(),
+                InstalledPackageStatus::default(),
+                ("foo", "bar").into(),
+                String::default(),
+                UserMeta::Keep,
+                None,
+            )
+            .await?;
+            commit.hash().unwrap().to_string()
+        };
+        assert_eq!(hash_set, hash_keep, "Keep after Set must keep the numbers");
+
+        let replaced = UserMeta::parse(r#"{"b": 2}"#)?;
+        let storage = MockStorage::default();
+        let paths = DomainPaths::new(std::path::absolute("/foo")?);
+        let namespace: Namespace = ("foo", "bar").into();
+        let first = UserMeta::parse(r#"{"a": 1, "n": 123456789012345678901234567890}"#)?;
+        let UserMeta::Set(first_value, first_numbers) = first else {
+            panic!("expected Set");
+        };
+        let (_lineage, commit) = commit_package(
+            PackageLineage::default(),
+            &mut manifest_with_set(Some(first_value), first_numbers),
+            &paths,
+            &storage,
+            &MockRemote::default(),
+            None,
+            PathBuf::default(),
+            InstalledPackageStatus::default(),
+            namespace.clone(),
+            String::default(),
+            replaced,
+            None,
+        )
+        .await?;
+        let written = Manifest::from_path(
+            &storage,
+            &paths.installed_manifest(&namespace, commit.hash().unwrap()),
+        )
+        .await?;
+        assert_eq!(written.header.user_meta, Some(serde_json::json!({"b": 2})));
+        assert!(
+            written.header.user_meta_numbers.is_empty(),
+            "a replacing Set must drop the previous numbers"
+        );
+        Ok(())
+    }
+
+    /// `Set(null)` writes `"user_meta": null` and matches quilt3's hash for
+    /// `set_meta(None)` when the header has no message, as that package does.
+    #[test(tokio::test)]
+    async fn test_commit_set_null_writes_null_and_matches_quilt3() -> Res {
+        let mut header = ManifestHeader {
+            message: crate::manifest::HeaderMessage::Missing,
+            user_meta: None,
+            user_meta_numbers: RawNumbers::default(),
+            ..ManifestHeader::default()
+        };
+        match UserMeta::parse("null")? {
+            UserMeta::Set(value, numbers) => header.set_meta(value, numbers),
+            other => panic!("expected Set, got {other:?}"),
+        }
+        assert_eq!(header.user_meta, Some(serde_json::Value::Null));
+        let storage = MockStorage::default();
+        let manifest = Manifest {
+            header: header.clone(),
+            ..Manifest::default()
+        };
+        let (_, top_hash) = build_manifest_from_rows_stream(
+            &storage,
+            storage.temp_dir.path().to_path_buf(),
+            header,
+            Vec::new(),
+            manifest.records_stream().await,
+        )
+        .await?;
+        assert_eq!(
+            top_hash,
+            "76e309f51e73644e4c95a1bf8534cf8b05571d8a1396b202d3ed7a2e78079f70"
+        );
+        Ok(())
+    }
+
+    /// `set_meta` replaces the value and clears stale number text.
+    #[test]
+    fn test_header_set_meta_clears_stale_numbers() -> Res {
+        let mut header = ManifestHeader::default();
+        let first = UserMeta::parse(r#"{"n": 123456789012345678901234567890}"#)?;
+        let UserMeta::Set(value, numbers) = first else {
+            panic!("expected Set");
+        };
+        header.set_meta(value, numbers);
+        assert!(!header.user_meta_numbers.is_empty());
+        header.set_meta(serde_json::json!({"b": 2}), RawNumbers::default());
+        assert_eq!(header.user_meta, Some(serde_json::json!({"b": 2})));
+        assert!(header.user_meta_numbers.is_empty());
+        Ok(())
+    }
+
     #[test(tokio::test)]
     async fn test_commit_meta() -> Res {
         let storage = MockStorage::default();
@@ -796,7 +1061,7 @@ mod tests {
             InstalledPackageStatus::default(),
             ("foo", "bar").into(),
             commit_message,
-            UserMeta::Set(serde_json::Value::Object(user_meta)),
+            UserMeta::set(serde_json::Value::Object(user_meta)),
             None,
         )
         .await?;
@@ -859,7 +1124,7 @@ mod tests {
             status,
             ("foo", "bar").into(),
             String::from("Initial"),
-            UserMeta::Set(serde_json::json!({"A": "b", "z": "Y", "a": "B", "Z": "y"})),
+            UserMeta::set(serde_json::json!({"A": "b", "z": "Y", "a": "B", "Z": "y"})),
             None,
         )
         .await?;
@@ -931,7 +1196,7 @@ mod tests {
             status,
             ("foo", "bar").into(),
             String::from("Initial"),
-            UserMeta::Set(serde_json::json!({"A": "b", "z": "Y", "a": "B", "Z": "y"})),
+            UserMeta::set(serde_json::json!({"A": "b", "z": "Y", "a": "B", "Z": "y"})),
             None,
         )
         .await?;
@@ -1015,7 +1280,7 @@ mod tests {
             status,
             ("foo", "bar").into(),
             String::from("Initial"),
-            UserMeta::Set(serde_json::json!({"A": "b", "z": "Y", "a": "B", "Z": "y"})),
+            UserMeta::set(serde_json::json!({"A": "b", "z": "Y", "a": "B", "Z": "y"})),
             None,
         )
         .await;
@@ -1089,7 +1354,7 @@ mod tests {
             status,
             ("foo", "bar").into(),
             String::from("Initial"),
-            UserMeta::Set(serde_json::json!({"A": "b", "z": "Y", "a": "B", "Z": "y"})),
+            UserMeta::set(serde_json::json!({"A": "b", "z": "Y", "a": "B", "Z": "y"})),
             None,
         )
         .await?;

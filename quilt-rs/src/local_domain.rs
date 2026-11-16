@@ -286,6 +286,7 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
         namespace: Namespace,
         source: Option<PathBuf>,
         message: Option<String>,
+        user_meta: flow::UserMeta,
     ) -> Res<(InstalledPackage<S, R>, flow::LeftOut)> {
         info!("Creating package: {}", namespace);
         let _held = package_lock::lock(&self.storage, &self.paths, &namespace).await?;
@@ -299,6 +300,7 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
             namespace.clone(),
             source,
             message,
+            user_meta,
         )
         .await?;
 

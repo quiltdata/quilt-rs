@@ -9,6 +9,7 @@ use std::sync::Mutex;
 
 use quilt_rs::flow::UserMeta;
 use quilt_rs::io::remote::WorkflowIntent;
+use quilt_rs::manifest::RawNumbers;
 use quilt_uri::Namespace;
 use serde_json::Value;
 use serde_json::json;
@@ -137,6 +138,7 @@ pub async fn check<M: QuiltModel>(
 struct Head {
     lineage: quilt::lineage::PackageLineage,
     user_meta: Value,
+    user_meta_numbers: RawNumbers,
     workflow: Option<quilt::manifest::Workflow>,
     rows: Vec<quilt::manifest::ManifestRow>,
     verdict: Verdict,
@@ -172,6 +174,7 @@ async fn read_head<M: QuiltModel>(
     );
     Ok(Some(Head {
         user_meta: user_meta.clone(),
+        user_meta_numbers: manifest.header.user_meta_numbers.clone(),
         workflow: manifest.header.workflow,
         rows: manifest.rows,
         lineage,
@@ -236,6 +239,7 @@ async fn try_check<M: QuiltModel>(
     let Some(Head {
         lineage,
         user_meta,
+        user_meta_numbers,
         workflow,
         rows,
         verdict,
@@ -244,6 +248,7 @@ async fn try_check<M: QuiltModel>(
         return Ok(());
     };
     let user_meta = &user_meta;
+    let user_meta_numbers = &user_meta_numbers;
     if verdict == Verdict::LeaveAlone {
         return Ok(());
     }
@@ -269,7 +274,16 @@ async fn try_check<M: QuiltModel>(
     if verdict == Verdict::Interrupted {
         let record = &tasks.record;
         return sweep(
-            model, data_dir, &locked, pkg, workflow, &lineage, user_meta, tree, record,
+            model,
+            data_dir,
+            &locked,
+            pkg,
+            workflow,
+            &lineage,
+            user_meta,
+            user_meta_numbers,
+            tree,
+            record,
         )
         .await;
     }
@@ -300,8 +314,17 @@ async fn try_check<M: QuiltModel>(
             settings::remember_invocation(data_dir, &claim.invocation_id).await?;
             let claimed_meta = agent_exec::with_claim(user_meta, claim.claimed());
             let message = format!("Task {document} claimed");
-            let outcome =
-                publish(model, &locked, pkg, workflow, claimed_meta, message, status).await?;
+            let outcome = publish(
+                model,
+                &locked,
+                pkg,
+                workflow,
+                claimed_meta,
+                user_meta_numbers.clone(),
+                message,
+                status,
+            )
+            .await?;
             // A claim's metadata is new each time, so its publish always pushes.
             let Some(push) = outcome.push() else {
                 warn!("tasks: {}: the claim published nothing", pkg.namespace);
@@ -330,7 +353,17 @@ async fn try_check<M: QuiltModel>(
             return Ok(());
         }
     };
-    let outcome = publish(model, &locked, pkg, workflow, meta, message, status).await?;
+    let outcome = publish(
+        model,
+        &locked,
+        pkg,
+        workflow,
+        meta,
+        user_meta_numbers.clone(),
+        message,
+        status,
+    )
+    .await?;
     if outcome.push().is_some_and(|push| !push.certified_latest) {
         reset_if_clean(model, pkg, &locked).await?;
     }
@@ -451,6 +484,7 @@ async fn sweep<M: QuiltModel>(
     workflow: WorkflowIntent,
     head: &quilt::lineage::PackageLineage,
     user_meta: &Value,
+    user_meta_numbers: &RawNumbers,
     Tree { status, commit }: Tree,
     record: &Record,
 ) -> Result<(), Error> {
@@ -513,7 +547,17 @@ async fn sweep<M: QuiltModel>(
     };
     let tree = Tree { status, commit };
     publish_outcome(
-        model, locked, pkg, workflow, head, user_meta, claim, message, tree, record,
+        model,
+        locked,
+        pkg,
+        workflow,
+        head,
+        user_meta,
+        user_meta_numbers,
+        claim,
+        message,
+        tree,
+        record,
     )
     .await
 }
@@ -550,6 +594,7 @@ async fn publish_outcome<M: QuiltModel>(
     workflow: WorkflowIntent,
     head: &quilt::lineage::PackageLineage,
     user_meta: &Value,
+    user_meta_numbers: &RawNumbers,
     mut claim: Value,
     mut message: String,
     Tree { status, commit }: Tree,
@@ -576,7 +621,17 @@ async fn publish_outcome<M: QuiltModel>(
         .filter(|uri| counted && uri.hash == head.base_hash);
     let meta = agent_exec::with_claim(user_meta, claim);
     let changes = status.changes.clone();
-    let published = publish(model, locked, pkg, workflow, meta, message, status).await?;
+    let published = publish(
+        model,
+        locked,
+        pkg,
+        workflow,
+        meta,
+        user_meta_numbers.clone(),
+        message,
+        status,
+    )
+    .await?;
     let Some(push) = published.push() else {
         return Ok(());
     };
@@ -694,21 +749,25 @@ fn carried_workflow(workflow: Option<&quilt::manifest::Workflow>) -> WorkflowInt
     }
 }
 
+#[allow(clippy::too_many_arguments, reason = "one publish's inputs")]
 async fn publish<M: QuiltModel>(
     model: &M,
     locked: &M::Locked,
     pkg: &quilt::InstalledPackage,
     workflow: WorkflowIntent,
     meta: Value,
+    numbers: RawNumbers,
     message: String,
     status: quilt::lineage::InstalledPackageStatus,
 ) -> Result<quilt::PublishOutcome, Error> {
     let workflow = model.resolve_workflow(pkg, workflow).await?;
+    // Keep numbers the new value still holds, including claim fields an
+    // interruption leaves in place, and drop ones a replaced claim left behind.
     model
         .locked_package_publish(
             locked,
             message,
-            UserMeta::Set(meta),
+            UserMeta::Set(meta.clone(), numbers.still_in(&meta)),
             workflow,
             None,
             Some(status),
@@ -884,6 +943,7 @@ async fn finish<M: QuiltModel>(
         workflow,
         &lineage,
         &base,
+        &head.header.user_meta_numbers,
         claim,
         message,
         tree,

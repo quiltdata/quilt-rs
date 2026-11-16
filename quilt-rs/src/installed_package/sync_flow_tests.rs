@@ -88,7 +88,7 @@ async fn test_spamming_commit_writes() -> Res {
         let commit = package
             .commit(
                 format!("Commit new1 {i}"),
-                UserMeta::Set(serde_json::json!({ "count": i })),
+                UserMeta::set(serde_json::json!({ "count": i })),
                 None,
                 None,
             )
