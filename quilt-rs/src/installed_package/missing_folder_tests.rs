@@ -198,6 +198,24 @@ async fn a_rule_is_never_written_into_a_missing_folder() -> Res {
     Ok(())
 }
 
+/// `stop_ignoring` at [`Scope::Package`] writes into the package folder, so it
+/// must refuse when that would recreate a folder holding only the exception.
+#[test(tokio::test)]
+async fn stop_ignoring_in_this_package_refuses_a_missing_folder() -> Res {
+    let temp_dir = TempDir::new()?;
+    let (_, package) = committed_package(&temp_dir).await?;
+    let home = package.package_home().await?;
+    std::fs::remove_dir_all(&home)?;
+
+    let error = package
+        .stop_ignoring(Path::new(".snakemake"), true, Scope::Package)
+        .await
+        .unwrap_err();
+    assert!(refuses_naming(&error, &home), "{error:?}");
+    assert!(!home.exists());
+    Ok(())
+}
+
 #[test(tokio::test)]
 async fn a_package_tracking_nothing_still_takes_a_rule_in_a_missing_folder() -> Res {
     let temp_dir = TempDir::new()?;

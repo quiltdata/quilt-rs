@@ -1260,6 +1260,23 @@ mod tests {
         );
     }
 
+    /// `append_package_lines` passes `create_folder: false` so a folder that
+    /// vanished between the check and the write is not recreated empty.
+    #[test]
+    fn append_does_not_create_a_missing_folder_when_told_not_to() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("missing").join(".quiltignore");
+        let error = append(&path, &["*.tmp".to_string()], false).unwrap_err();
+        assert!(
+            matches!(
+                error,
+                Error::Fs(crate::error::FsError::Write { path: ref named, .. }) if *named == path
+            ),
+            "{error:?}"
+        );
+        assert!(!path.parent().unwrap().exists());
+    }
+
     #[test]
     fn append_lines_starts_each_on_a_line_of_its_own() {
         let dir = TempDir::new().unwrap();
