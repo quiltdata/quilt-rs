@@ -193,10 +193,51 @@ pub enum InstallPathError {
     Uninstall(PathBuf),
 }
 
+/// The message of a hash mismatch on read, in the words `install_paths` uses.
+fn hash_mismatch_message(key: &str, replaced: bool, expected: &str, computed: &str) -> String {
+    if replaced {
+        format!(
+            "The remote no longer holds this revision's content for {key}: the object it points to has been replaced (expected {expected}, got {computed})"
+        )
+    } else {
+        format!(
+            "The package records a hash for {key} that its file does not match: the package may be corrupt (expected {expected}, got {computed})"
+        )
+    }
+}
+
 #[derive(Error, Debug)]
 pub enum ChecksumError {
     #[error("Checksum error: {0}")]
     Mismatch(String),
+
+    /// A read object's bytes do not hash to its row. `replaced` is whether the
+    /// row's `physical_key` has no `versionId` (or the `null` one), so a later
+    /// revision may have replaced the object: the wording is the one
+    /// `install_paths` uses for that case, and for a pinned version, whose bytes
+    /// cannot have changed and so whose recorded hash must be wrong.
+    #[error("{}", hash_mismatch_message(.key, *.replaced, .expected, .computed))]
+    HashMismatch {
+        /// The row's logical key.
+        key: String,
+        /// The hash the row records.
+        expected: String,
+        /// The hash of the bytes that were read.
+        computed: String,
+        /// Whether the object may have been replaced since the row was made.
+        replaced: bool,
+    },
+
+    /// A read object is not the size its row records.
+    #[error("{key} is {actual} bytes, but its row says {expected}")]
+    SizeMismatch {
+        /// The row's logical key.
+        key: String,
+        /// The size the row records.
+        expected: u64,
+        /// How many bytes were read.
+        actual: u64,
+    },
 
     #[error("Missing checksum: {0:?}")]
     Missing(HostChecksums),
