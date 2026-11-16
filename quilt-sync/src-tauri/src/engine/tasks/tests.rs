@@ -49,6 +49,7 @@ fn without_claim(meta: &Value) -> Value {
 /// A revision a check published.
 struct Revision {
     meta: Value,
+    numbers: quilt::manifest::RawNumbers,
     message: String,
     /// The invocation IDs this desktop had on disk when it was pushed.
     own_at_push: BTreeSet<String>,
@@ -161,9 +162,18 @@ fn expect_latest(model: &mut MockQuiltModel, meta: Value, paths: &'static [&'sta
 }
 
 fn manifest(meta: &Value, paths: &[&str]) -> Result<quilt::manifest::Manifest, Error> {
+    manifest_with_numbers(meta, quilt::manifest::RawNumbers::default(), paths)
+}
+
+fn manifest_with_numbers(
+    meta: &Value,
+    numbers: quilt::manifest::RawNumbers,
+    paths: &[&str],
+) -> Result<quilt::manifest::Manifest, Error> {
     Ok(quilt::manifest::Manifest {
         header: quilt::manifest::ManifestHeader {
             user_meta: Some(meta.clone()),
+            user_meta_numbers: numbers,
             ..quilt::manifest::ManifestHeader::default()
         },
         rows: paths
@@ -215,6 +225,8 @@ struct Fixture {
     gone: &'static [&'static str],
     /// The paths whose bytes do not match the package's hash.
     mismatched: &'static [&'static str],
+    /// Number text the head's `user_meta` carries, empty unless a test sets it.
+    head_numbers: quilt::manifest::RawNumbers,
 }
 
 impl Fixture {
@@ -248,6 +260,7 @@ impl Fixture {
             rows: &["TASK.md", "sub/TASK.md"],
             gone: &[],
             mismatched: &[],
+            head_numbers: quilt::manifest::RawNumbers::default(),
         }
     }
 
@@ -322,9 +335,10 @@ impl Fixture {
         let latest = self.latest_meta.clone().unwrap_or(meta.clone());
         expect_latest(&mut model, latest, &[]);
         let rows = self.rows;
+        let head_numbers = self.head_numbers.clone();
         model
             .expect_get_installed_package_manifest()
-            .returning(move |_, _| manifest(&meta, rows));
+            .returning(move |_, _| manifest_with_numbers(&meta, head_numbers.clone(), rows));
         model
             .expect_try_lock_package()
             .returning(|p| Ok(Some(p.namespace.clone())));
@@ -351,7 +365,7 @@ impl Fixture {
         model
             .expect_locked_package_publish()
             .returning(move |_, message, meta, _, _, status| {
-                let UserMeta::Set(meta, _) = meta else {
+                let UserMeta::Set(meta, numbers) = meta else {
                     panic!("a task revision sets its metadata");
                 };
                 // The mock is synchronous, so the file is read without the runtime.
@@ -366,6 +380,7 @@ impl Fixture {
                 events.lock().unwrap().push("publish".to_string());
                 published.lock().unwrap().push(Revision {
                     meta,
+                    numbers,
                     message,
                     own_at_push,
                     paths: changed_paths(status.as_ref()),
@@ -430,6 +445,32 @@ async fn a_claim_changes_only_the_claim_and_starts_the_run() {
     assert!(
         fixture.tasks.holds(&namespace()),
         "autosync is held while it runs"
+    );
+}
+
+#[tokio::test]
+async fn a_claim_keeps_the_heads_number_text() {
+    let (meta, numbers) = quilt::manifest::RawNumbers::parse(
+        r#"{"title":"kept","n":18446744073709551616,"agent_exec":{"document":"TASK.md","agent":{"id":"kiro"},"claim":{"status":"unclaimed","old":36893488147419103232}}}"#,
+    )
+    .unwrap();
+    let fixture = Fixture {
+        head_numbers: numbers,
+        ..Fixture::new()
+    };
+
+    fixture.check(meta, fresh(BTreeMap::new()), true).await;
+
+    let published = fixture.published.lock().unwrap();
+    assert_eq!(published.len(), 1, "one claim revision");
+    let Revision { numbers, .. } = &published[0];
+    assert!(
+        !numbers.only("/n").is_empty(),
+        "the head's integer beyond 64 bits is kept"
+    );
+    assert!(
+        numbers.only("/agent_exec/claim").is_empty(),
+        "numbers under the replaced claim are dropped"
     );
 }
 
@@ -1317,13 +1358,14 @@ fn finishing_model(
     model
         .expect_locked_package_publish()
         .returning(move |_, message, meta, _, _, status| {
-            let UserMeta::Set(meta, _) = meta else {
+            let UserMeta::Set(meta, numbers) = meta else {
                 panic!("a task revision sets its metadata");
             };
             events.lock().unwrap().push("publish".to_string());
             committed.store(true, std::sync::atomic::Ordering::SeqCst);
             published.lock().unwrap().push(Revision {
                 meta,
+                numbers,
                 message,
                 own_at_push: BTreeSet::new(),
                 paths: changed_paths(status.as_ref()),

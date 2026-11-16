@@ -79,6 +79,10 @@ pub(super) async fn onto_latest<M: QuiltModel>(
             header: ManifestHeader {
                 message: outcome.header.message.clone(),
                 user_meta: Some(user_meta),
+                user_meta_numbers: header
+                    .user_meta_numbers
+                    .without("/agent_exec/claim")
+                    .union(&outcome.header.user_meta_numbers.only("/agent_exec/claim")),
                 ..header
             },
             rows,
