@@ -29,7 +29,7 @@
 ### Changed
 
 - QuiltSync starts faster with many packages: at launch it checks up to eight packages at once instead of one after another (<https://github.com/quiltdata/quilt-rs/pull/1376>)
-- The main page no longer has a **Recent files** view. A package's time on the main page is when it last changed: an edit or commit not yet published, otherwise when QuiltSync last installed, pulled, downloaded or committed its files
+- The main page no longer has a **Recent files** view. A package's time on the main page is when it last changed: an edit or commit not yet published, otherwise when QuiltSync last installed, pulled, downloaded or committed its files (<https://github.com/quiltdata/quilt-rs/pull/1403>)
 
 ### Fixed
 
