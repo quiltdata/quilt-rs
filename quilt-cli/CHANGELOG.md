@@ -32,6 +32,10 @@
 - Building from source now requires Rust 1.99 or newer (<https://github.com/quiltdata/quilt-rs/pull/1370>)
 - `quilt push` of a new package no longer replaces a `latest` someone else already published under the same name: it uploads the revision and warns that `latest` was not updated (<https://github.com/quiltdata/quilt-rs/pull/1373>)
 
+### Fixed
+
+- `quilt status` of a package whose folder is missing says the working copy is unavailable and lists no changes, where it listed every file as removed, and `quilt commit` refuses, naming the folder, where it recorded an empty revision (<https://github.com/quiltdata/quilt-rs/pull/1397>)
+
 ### quilt-rs
 
 - Updated [from v0.53.0 to v0.54.0-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.53.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))

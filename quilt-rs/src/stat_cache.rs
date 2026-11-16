@@ -202,20 +202,6 @@ mod tests {
     }
 
     #[test]
-    fn a_walk_that_read_nothing_keeps_what_was_saved() {
-        let entry = CachedHash {
-            stamp: stamp(at(100, 0)),
-            hash: hash(),
-            saved_at: at(200, 0),
-        };
-        let mut cache = cache_with(entry, true);
-        assert_eq!(cache.gone(), [PathBuf::from("a")]);
-        cache.keep_all();
-        assert_eq!(cache.gone().len(), 0);
-        assert!(!cache.is_full());
-    }
-
-    #[test]
     fn any_stamp_value_that_differs_misses() {
         let saved = stamp(at(100, 0));
         let cache = cache_with(
