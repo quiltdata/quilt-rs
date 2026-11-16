@@ -30,6 +30,7 @@
 
 ### Changed
 
+- `quilt list` shows a package whose lineage can't be read as a row naming the error (`unreadable: …`, and `error` in `--json`) and lists the others, where that package failed the whole list (<https://github.com/quiltdata/quilt-rs/pull/1402>)
 - `quilt create` without `--meta` writes no `user_meta` key, where it previously wrote `"user_meta": {}` (<https://github.com/quiltdata/quilt-rs/pull/1394>)
 - Building from source now requires Rust 1.99 or newer (<https://github.com/quiltdata/quilt-rs/pull/1370>)
 - `quilt push` of a new package no longer replaces a `latest` someone else already published under the same name: it uploads the revision and warns that `latest` was not updated (<https://github.com/quiltdata/quilt-rs/pull/1373>)

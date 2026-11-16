@@ -17,7 +17,6 @@ use crate::Error;
 use crate::Res;
 use crate::io::storage::LockGuard;
 use crate::io::storage::Storage;
-use crate::lineage::DomainLineage;
 use crate::manifest::Manifest;
 use crate::package_lock;
 use crate::paths::DomainPaths;
@@ -103,19 +102,20 @@ pub fn format_bytes(bytes: u64) -> String {
 /// Delete every object no installed manifest uses, everything in the
 /// `packages/` cache and everything in `staging/`.
 ///
-/// Try-locks every package first, and deletes nothing if one is busy:
-/// [`Error::PackageBusy`] names it. The locks are held to the end, so no
-/// writer can stage a file or file an object meanwhile.
+/// Try-locks every package first, each of `installed` and each with a lock
+/// file, and deletes nothing if one is busy: [`Error::PackageBusy`] names it.
+/// The locks are held to the end, so no writer can stage a file or file an
+/// object meanwhile.
 pub async fn gc(
     paths: &DomainPaths,
     storage: &(impl Storage + Sync),
-    lineage: &DomainLineage,
+    installed: &BTreeSet<Namespace>,
 ) -> Res<GcReport> {
     info!(
         "⏳ Collecting garbage in {}",
         paths.dot_quilt_dir().display()
     );
-    let _held = lock_every_package(paths, storage, lineage, None).await?;
+    let _held = lock_every_package(paths, storage, installed, None).await?;
     let report = sweep(paths, storage, Sweep::Delete).await?;
     info!("✔️ Collected garbage: {report:?}");
     Ok(report)
@@ -300,14 +300,14 @@ async fn object_len(storage: &(impl Storage + Sync), path: &Path) -> Res<Option<
 pub(crate) async fn prune(
     paths: &DomainPaths,
     storage: &(impl Storage + Sync),
-    lineage: &DomainLineage,
+    installed: &BTreeSet<Namespace>,
     candidates: BTreeMap<String, u64>,
 ) -> Res<Pruned> {
     // Nothing to delete needs no lock, and a busy package then keeps nothing.
     if candidates.is_empty() {
         return Ok(Pruned::Freed(GcReport::default()));
     }
-    let _held = match lock_every_package(paths, storage, lineage, None).await {
+    let _held = match lock_every_package(paths, storage, installed, None).await {
         Ok(held) => held,
         Err(Error::PackageBusy(namespace)) => return Ok(Pruned::Busy(namespace)),
         Err(err) => return Err(err),
@@ -394,9 +394,9 @@ pub(crate) fn row_objects(
     std::iter::once(hex::encode(hash.digest())).chain(by_key)
 }
 
-/// Try-lock every package in the lineage and every package with a lock
-/// file. An install takes its lock before its lineage entry exists, so the
-/// files catch one in flight.
+/// Try-lock every `installed` package and every package with a lock file. An
+/// install takes its lock before its lineage entry exists, so the files catch
+/// one in flight.
 ///
 /// A package created or first installed after this scan takes a lock that
 /// is not held here, so its new objects are not protected. That is by
@@ -408,10 +408,10 @@ pub(crate) fn row_objects(
 pub(crate) async fn lock_every_package(
     paths: &DomainPaths,
     storage: &(impl Storage + Sync),
-    lineage: &DomainLineage,
+    installed: &BTreeSet<Namespace>,
     except: Option<&Namespace>,
 ) -> Res<Vec<LockGuard>> {
-    let mut namespaces: BTreeSet<Namespace> = lineage.namespaces().into_iter().collect();
+    let mut namespaces = installed.clone();
     for owner_dir in list_dirs(storage, &paths.locks_dir()).await? {
         let Some(owner) = owner_dir.file_name() else {
             continue;

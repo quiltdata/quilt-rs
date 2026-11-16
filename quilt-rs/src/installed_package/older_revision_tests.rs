@@ -19,8 +19,8 @@ use test_log::test;
 use crate::checksum::calculate_hash;
 use crate::io::remote::mocks::Gate;
 use crate::io::remote::mocks::MockRemote;
-use crate::lineage::DomainLineage;
 use crate::lineage::DomainLineageIo;
+use crate::lineage::Home;
 use crate::lineage::PackageLineageIo;
 use crate::manifest::ManifestRow;
 use crate::manifest::TopHasher;
@@ -112,11 +112,12 @@ impl Rev1Installed {
             .await?;
 
         let storage = LocalStorage::new();
-        let (domain_lineage, home_dir) = DomainLineage::from_temp_dir()?;
+        let (home, home_dir) = Home::from_temp_dir()?;
         let (paths, paths_dir) = DomainPaths::from_temp_dir()?;
         // Revision 1 explicitly — not latest.
-        let domain_lineage = flow::install_package(
-            domain_lineage,
+        let installed = flow::install_package(
+            &home,
+            false,
             &paths,
             &storage,
             &remote,
@@ -128,8 +129,13 @@ impl Rev1Installed {
             },
         )
         .await?;
-        let domain_io = DomainLineageIo::new(paths.lineage());
-        domain_io.write(&storage, domain_lineage).await?;
+        let domain_io = DomainLineageIo::write_fixture(
+            &storage,
+            &paths,
+            home.as_ref(),
+            [(namespace.clone(), installed)],
+        )
+        .await?;
 
         Ok(Self {
             package: InstalledPackage {
@@ -348,13 +354,14 @@ async fn a_pull_of_one_package_does_not_hold_up_a_download_of_another() -> Res {
         "the other package's download must not wait"
     );
 
-    let lineage = domain.get_lineage().await?;
     assert_eq!(
-        lineage.packages[&t.package.namespace].current_hash(),
+        t.package.lineage().await?.current_hash(),
         Some(t.rev2.as_str())
     );
     assert_eq!(
-        lineage.packages[&other.namespace]
+        other
+            .lineage()
+            .await?
             .paths
             .keys()
             .cloned()
@@ -382,20 +389,19 @@ async fn installing_another_package_during_a_pull_keeps_the_pull() -> Res {
         inside(&resolving_other, Duration::from_secs(10), t.pull())
     );
     pulled?;
-    installed?;
+    let installed = installed?;
     assert!(
         finished_inside,
         "the pull must not wait for another package"
     );
 
-    let lineage = domain.get_lineage().await?;
     assert_eq!(
-        lineage.packages[&t.package.namespace].current_hash(),
+        t.package.lineage().await?.current_hash(),
         Some(t.rev2.as_str()),
         "the pull's entry survives the install"
     );
     assert_eq!(
-        lineage.packages[&other_uri.namespace].current_hash(),
+        installed.lineage().await?.current_hash(),
         Some(t.rev1.as_str())
     );
     Ok(())

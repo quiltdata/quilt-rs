@@ -240,6 +240,28 @@ async fn a_package_tracking_nothing_still_takes_a_rule_in_a_missing_folder() -> 
     Ok(())
 }
 
+/// A lineage record that does not parse stops a commit before it creates any
+/// folder, so a missing one is not recreated empty.
+#[test(tokio::test)]
+async fn an_unreadable_record_does_not_recreate_a_missing_folder() -> Res {
+    let temp_dir = TempDir::new()?;
+    let (domain, package) = committed_package(&temp_dir).await?;
+    let home = package.package_home().await?;
+    std::fs::remove_dir_all(&home)?;
+    domain
+        .lineage_io()
+        .damage_fixture(&LocalStorage::new(), &("demo", "other").into())
+        .await?;
+
+    let result = package
+        .commit("after rm".to_string(), UserMeta::Keep, None, None)
+        .await;
+
+    assert!(result.is_err(), "{result:?}");
+    assert!(!home.exists());
+    Ok(())
+}
+
 /// What cannot be undone is said to be the folder, not "cannot overwrite".
 #[test(tokio::test)]
 async fn undoing_a_commit_refuses_in_a_missing_folder() -> Res {

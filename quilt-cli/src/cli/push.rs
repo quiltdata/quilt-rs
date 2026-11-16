@@ -207,7 +207,7 @@ mod tests {
         use quilt_rs::io::remote::mocks::MockRemote;
         use quilt_rs::lineage::DomainLineageIo;
         use quilt_rs::lineage::Home;
-        use quilt_rs::lineage::PackageLineageIo;
+        use quilt_rs::lineage::PackageLineage;
         use quilt_rs::manifest::Workflow;
         use quilt_rs::manifest::WorkflowId;
         use quilt_rs::paths::DomainPaths;
@@ -229,24 +229,13 @@ mod tests {
 
         // A brand-new local package: a commit will be stamped below, and only
         // then is the remote attached, mirroring `create → commit → set-remote`.
-        // Built as JSON, not formatted in: a Windows path's backslashes
-        // would be escapes inside a JSON string.
-        let lineage_json = serde_json::json!({
-            "packages": {
-                "reference/push-gate": {
-                    "commit": null,
-                    "remote": null,
-                    "base_hash": "",
-                    "latest_hash": "",
-                    "paths": {}
-                }
-            },
-            "home": &home,
-        })
-        .to_string();
-        storage
-            .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-            .await?;
+        let lineage = DomainLineageIo::write_fixture(
+            &storage,
+            &paths,
+            home_dir.path(),
+            [(namespace.clone(), PackageLineage::default())],
+        )
+        .await?;
 
         let config_uri = S3Uri::try_from("s3://b/.quilt/workflows/config.yml")?;
         // Config v1: a permissive `gate` workflow with no metadata_schema.
@@ -259,10 +248,7 @@ mod tests {
             .await?;
 
         let package = InstalledPackage {
-            lineage: PackageLineageIo::new(
-                DomainLineageIo::new(paths.lineage()),
-                namespace.clone(),
-            ),
+            lineage: lineage.create_package_lineage(namespace.clone()),
             paths,
             remote: std::sync::Arc::new(remote),
             storage,
@@ -354,7 +340,7 @@ mod tests {
         use quilt_rs::io::remote::mocks::MockRemote;
         use quilt_rs::lineage::DomainLineageIo;
         use quilt_rs::lineage::Home;
-        use quilt_rs::lineage::PackageLineageIo;
+        use quilt_rs::lineage::PackageLineage;
         use quilt_rs::paths::DomainPaths;
         use tempfile::TempDir;
 
@@ -367,27 +353,15 @@ mod tests {
         paths
             .scaffold_for_installing(&storage, &home, &namespace)
             .await?;
-        let lineage_json = serde_json::json!({
-            "packages": {
-                "local/only": {
-                    "commit": null,
-                    "remote": null,
-                    "base_hash": "",
-                    "latest_hash": "",
-                    "paths": {}
-                }
-            },
-            "home": &home,
-        })
-        .to_string();
-        storage
-            .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-            .await?;
+        let lineage = DomainLineageIo::write_fixture(
+            &storage,
+            &paths,
+            home_dir.path(),
+            [(namespace.clone(), PackageLineage::default())],
+        )
+        .await?;
         let package = InstalledPackage {
-            lineage: PackageLineageIo::new(
-                DomainLineageIo::new(paths.lineage()),
-                namespace.clone(),
-            ),
+            lineage: lineage.create_package_lineage(namespace.clone()),
             paths,
             remote: std::sync::Arc::new(MockRemote::default()),
             storage,
