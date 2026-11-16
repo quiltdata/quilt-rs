@@ -546,6 +546,41 @@ mod tests {
         Ok(())
     }
 
+    /// Creating a package that is installed already is refused, and the
+    /// installed one keeps its lineage.
+    #[test(tokio::test)]
+    async fn creating_an_installed_package_again_is_refused() -> Res<()> {
+        let temp_dir = TempDir::new()?;
+        let domain = LocalDomain::new(temp_dir.path());
+        domain.set_home(temp_dir.path()).await?;
+        let namespace = Namespace::from(("foo", "bar"));
+        let (package, _) = domain
+            .create_package(namespace.clone(), None, None, flow::UserMeta::Clear)
+            .await?;
+        let first = package.lineage().await?;
+
+        let again = domain
+            .create_package(
+                namespace.clone(),
+                None,
+                Some("again".to_string()),
+                flow::UserMeta::Clear,
+            )
+            .await;
+
+        assert!(
+            matches!(
+                again,
+                Err(Error::InstallPackage(
+                    crate::InstallPackageError::AlreadyInstalled(ref ns)
+                )) if *ns == namespace
+            ),
+            "{again:?}"
+        );
+        assert_eq!(package.lineage().await?, first);
+        Ok(())
+    }
+
     #[test(tokio::test)]
     async fn test_list_installed_packages() -> Res<()> {
         // Create a temporary directory for testing
