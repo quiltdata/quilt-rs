@@ -1522,7 +1522,7 @@ mod keys_holding_a_backslash {
 
         let remote = MockRemote::default();
         let mut jsonl = String::from("{\"version\":\"v0\",\"message\":\"\"}\n");
-        jsonl.push_str("{\"logical_key\":\"folder-meta/\",\"meta\":{\"owner\":\"team\"}}\n");
+        jsonl.push_str("{\"logical_key\":\"folder-meta/\",\"meta\":{\"owner\":\"team\",\"n\":18446744073709551617}}\n");
         for (i, key) in keys.iter().enumerate() {
             let body = format!("body of {key}");
             let physical_key = format!("s3://bucket/{i}");
@@ -1571,6 +1571,7 @@ mod keys_holding_a_backslash {
                 installed.contains(r#""logical_key":"folder-meta/""#),
                 "{installed}"
             );
+            assert!(installed.contains("18446744073709551617"), "{installed}");
             assert_eq!(lineage.paths.len(), manifest.rows.len());
             for row in &manifest.rows {
                 let body = std::fs::read(row.logical_key.join_to(&package_home)).unwrap();
