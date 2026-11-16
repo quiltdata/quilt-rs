@@ -253,6 +253,10 @@ pub(crate) async fn process_signal(
             return;
         }
     };
+    // No folder was walked, so there is nothing to report or time.
+    if status.working_copy == quilt::lineage::WorkingCopy::Absent {
+        return;
+    }
     // Emit on every signal — including a spurious wake that recomputes an
     // identical status. The event carries a fingerprint of the observation,
     // and the *consumer* skips a repeat. A producer-side suppression map here
@@ -738,6 +742,33 @@ mod tests {
             MappingSignal::changed(("acme", "demo").into()),
         )
         .await;
+        assert!(reporter.statuses.lock().unwrap().is_empty());
+    }
+
+    /// The startup walk signals every package, one with no working copy too,
+    /// which has no folder to report on.
+    #[tokio::test]
+    async fn signal_for_a_package_with_no_working_copy_emits_nothing() {
+        let mut model = MockQuiltModel::new();
+        model
+            .expect_get_installed_package()
+            .returning(|_| Ok(Some(fresh_pkg())));
+        model.expect_recompute_local_status().return_once(|_, _| {
+            Ok(quilt::lineage::InstalledPackageStatus {
+                working_copy: quilt::lineage::WorkingCopy::Absent,
+                ..Default::default()
+            })
+        });
+        let reporter = Arc::new(RecordingReporter::default());
+
+        process_signal(
+            &model,
+            reporter.as_ref(),
+            None,
+            MappingSignal::changed(("acme", "demo").into()),
+        )
+        .await;
+
         assert!(reporter.statuses.lock().unwrap().is_empty());
     }
 

@@ -193,6 +193,21 @@ async fn an_open_into_a_folder_holding_only_os_metadata_proceeds() -> Res {
     Ok(())
 }
 
+/// Only a file by those names is metadata; a folder by one is content.
+#[test(tokio::test)]
+async fn an_open_into_a_folder_holding_a_folder_named_like_metadata_is_refused() -> Res {
+    let t = Tracked::new().await?;
+    std::fs::create_dir_all(t.folder().join(".DS_Store"))?;
+
+    let opened = t.package.open_working_copy(None).await;
+
+    assert!(
+        matches!(opened, Err(Error::Lineage(LineageError::FolderNotEmpty(_)))),
+        "{opened:?}"
+    );
+    Ok(())
+}
+
 #[test(tokio::test)]
 async fn keep_refuses_a_tracked_package_and_saves_no_scope() -> Res {
     let t = Tracked::new().await?;

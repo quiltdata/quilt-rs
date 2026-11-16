@@ -535,8 +535,6 @@ pub trait QuiltModel {
     }
 
     /// Give a package tracked with no working copy its folder, with every file
-    /// of its current revision.
-    /// Give a package tracked with no working copy its folder, with every file
     /// of its current revision, on the held lock. Answers how many files could
     /// not be downloaded.
     async fn locked_package_open_working_copy(

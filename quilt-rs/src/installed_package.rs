@@ -95,14 +95,16 @@ pub type PublishOutcome = flow::PublishOutcome<PushOutcome>;
 /// What a file browser leaves in a folder it only showed.
 const OS_METADATA: &[&str] = &[".DS_Store", "Thumbs.db", "desktop.ini"];
 
-/// Whether `folder` holds anything but [`OS_METADATA`].
+/// Whether `folder` holds anything but [`OS_METADATA`] files.
 async fn holds_files(storage: &impl Storage, folder: &Path) -> Res<bool> {
     if !storage.exists(folder).await {
         return Ok(false);
     }
     let mut entries = storage.read_dir(folder).await?;
     while let Some(entry) = entries.next_entry().await? {
-        if !OS_METADATA.contains(&entry.file_name().to_string_lossy().as_ref()) {
+        let metadata = OS_METADATA.contains(&entry.file_name().to_string_lossy().as_ref())
+            && entry.file_type().await?.is_file();
+        if !metadata {
             return Ok(true);
         }
     }
@@ -860,7 +862,8 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
     /// Give a package tracked with no working copy its folder at
     /// `<home>/<namespace>`, and install `paths` there, or every file of the
     /// current revision when `None`. It then is a working copy like any
-    /// other. If the files can't be installed, the package stays without one.
+    /// other. If the files can't be installed, the package stays without one,
+    /// unless its folder already holds files by then.
     pub async fn open_working_copy(
         &self,
         paths: Option<&[PathBuf]>,
@@ -918,26 +921,24 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
             Ok(report) => return Ok(report),
             Err(err) => err,
         };
-        // The record goes back first: until it does, the folder is its
-        // working copy and stays.
-        match self
+        // With files in it, placed now or saved meanwhile, the folder stays a
+        // working copy: nothing is deleted and a retry has nothing in its way.
+        if !matches!(holds_files(&self.storage, &folder).await, Ok(false)) {
+            return Err(err);
+        }
+        if let Err(undo) = self
             .lineage
             .edit(&self.storage, |entry| {
                 entry.working_copy = WorkingCopyLocation::None;
             })
             .await
         {
-            // A file someone saved there meanwhile keeps the folder.
-            Ok(_) => match holds_files(&self.storage, &folder).await {
-                Ok(false) => {
-                    if let Err(undo) = self.storage.remove_dir_all(&folder).await {
-                        log::warn!("Failed to remove {}: {undo}", folder.display());
-                    }
-                }
-                Ok(true) => {}
-                Err(undo) => log::warn!("Failed to look into {}: {undo}", folder.display()),
-            },
-            Err(undo) => log::warn!("Failed to undo opening {}: {undo}", self.namespace),
+            log::warn!("Failed to undo opening {}: {undo}", self.namespace);
+            return Err(err);
+        }
+        // Not recursive: a file arriving now stays, and so does the folder.
+        if let Err(undo) = self.storage.remove_dir(&folder).await {
+            log::debug!("Left {} in place: {undo}", folder.display());
         }
         Err(err)
     }
