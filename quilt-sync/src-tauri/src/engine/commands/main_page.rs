@@ -1745,14 +1745,7 @@ mod tests {
                 std::path::PathBuf::from(format!("f{i}.csv")),
                 quilt::lineage::PathState {
                     timestamp: chrono::DateTime::from_timestamp_millis(*ms).unwrap(),
-                    // `Multihash` by name would mean taking the `multihash` crate as a
-                    // direct dependency of this one — it is not, and `quilt-rs` does not
-                    // re-export it — purely to spell a test fixture's zero value.
-                    #[allow(
-                        clippy::default_trait_access,
-                        reason = "the type is not nameable here without a new dependency"
-                    )]
-                    hash: Default::default(),
+                    hash: None,
                 },
             );
         }
@@ -3448,13 +3441,7 @@ mod tests {
                         0,
                     )
                     .expect("test timestamp is a valid instant"),
-                    // `Multihash` by name would mean taking the `multihash` crate as a
-                    // direct dependency of this one — see `lineage_with`'s identical note.
-                    #[allow(
-                        clippy::default_trait_access,
-                        reason = "the type is not nameable here without a new dependency"
-                    )]
-                    hash: Default::default(),
+                    hash: None,
                 },
             );
         }
