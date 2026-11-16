@@ -65,6 +65,10 @@ pub(super) async fn onto_latest<M: QuiltModel>(
                         MergeBlock::Paths(paths.iter().map(|p| p.display().to_string()).collect())
                     }
                     quilt::flow::MergeRefusal::UserMeta => MergeBlock::Metadata,
+                    quilt::flow::MergeRefusal::Invalid(reason) => {
+                        error!("autosync: {namespace}: merge produced an invalid tree: {reason}");
+                        return Err(WatchError::Conflict(PausedReason::Other(reason)));
+                    }
                 };
                 return Err(WatchError::Conflict(PausedReason::MergeRefused(block)));
             }
@@ -196,11 +200,21 @@ async fn read<M: QuiltModel>(
 
 /// Whether the merge left `theirs` as it was, so there is nothing to publish.
 /// The merge always carries the copy's message, so the message is no sign of
-/// new work.
+/// new work. The merged folder metadata is sorted and holds only metadata that
+/// says something.
 fn is_unchanged(merged: &Manifest, theirs: &Manifest) -> bool {
     let mut rows = theirs.rows.clone();
     rows.sort_by(|a, b| a.logical_key.cmp(&b.logical_key));
-    merged.header.user_meta == theirs.header.user_meta && merged.rows == rows
+    let mut dir_meta: Vec<_> = theirs
+        .dir_meta
+        .iter()
+        .filter(|dir| dir.holds_meta())
+        .cloned()
+        .collect();
+    dir_meta.sort_by(|a, b| a.logical_key.cmp(&b.logical_key));
+    merged.header.user_meta == theirs.header.user_meta
+        && merged.rows == rows
+        && merged.dir_meta == dir_meta
 }
 
 /// The package the merge runs over, under its held lock.

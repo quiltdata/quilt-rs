@@ -163,8 +163,14 @@ pub async fn recommit_for_remote(
 
     let stream = tokio_stream::iter(vec![Ok(rows)]);
     let dest_dir = paths.installed_manifests_dir(&namespace);
-    let (_manifest_path, new_top_hash) =
-        build_manifest_from_rows_stream(storage, dest_dir, header, stream).await?;
+    let (_manifest_path, new_top_hash) = build_manifest_from_rows_stream(
+        storage,
+        dest_dir,
+        header,
+        manifest.dir_meta.clone(),
+        stream,
+    )
+    .await?;
 
     info!(
         "✔️ Re-committed with new hash: {} (was: {})",
@@ -247,7 +253,8 @@ mod tests {
         };
         let stream = tokio_stream::iter(vec![Ok(vec![Ok(manifest_row)])]);
         let (_path, top_hash) =
-            build_manifest_from_rows_stream(&storage, installed_dir, header, stream).await?;
+            build_manifest_from_rows_stream(&storage, installed_dir, header, Vec::new(), stream)
+                .await?;
 
         let commit = CommitState {
             hash: top_hash,
@@ -309,6 +316,36 @@ mod tests {
             "Old hash should be in prev_hashes"
         );
 
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_recommit_keeps_the_folder_metadata() -> Res {
+        let (lineage, mut manifest, storage, paths, namespace) =
+            create_test_package(&HostConfig::default_sha256_chunked()).await?;
+        manifest.dir_meta = vec![crate::manifest::DirMeta {
+            logical_key: crate::LogicalKey::new("data")?,
+            meta: serde_json::json!({"owner": "team"}),
+        }];
+
+        let lineage = recommit_for_remote(
+            lineage,
+            &manifest,
+            &paths,
+            &storage,
+            &MockRemote::default(),
+            None,
+            namespace.clone(),
+            HostConfig::default_crc64(),
+            None,
+            None,
+        )
+        .await?;
+
+        let hash = &lineage.commit.as_ref().unwrap().hash;
+        let recommitted =
+            Manifest::from_path(&storage, &paths.installed_manifest(&namespace, hash)).await?;
+        assert_eq!(recommitted.dir_meta, manifest.dir_meta);
         Ok(())
     }
 
@@ -488,7 +525,8 @@ mod tests {
         };
         let stream = tokio_stream::iter(vec![Ok(Vec::<Res<ManifestRow>>::new())]);
         let (_path, top_hash) =
-            build_manifest_from_rows_stream(&storage, installed_dir, header, stream).await?;
+            build_manifest_from_rows_stream(&storage, installed_dir, header, Vec::new(), stream)
+                .await?;
 
         let lineage = PackageLineage {
             commit: Some(CommitState {
@@ -542,7 +580,8 @@ mod tests {
         };
         let stream = tokio_stream::iter(vec![Ok(Vec::<Res<ManifestRow>>::new())]);
         let (_path, top_hash) =
-            build_manifest_from_rows_stream(storage, installed_dir, header, stream).await?;
+            build_manifest_from_rows_stream(storage, installed_dir, header, Vec::new(), stream)
+                .await?;
 
         let lineage = PackageLineage {
             commit: Some(CommitState {

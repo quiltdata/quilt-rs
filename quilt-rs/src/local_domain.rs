@@ -465,8 +465,14 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
     ) -> Res<(PathBuf, String)> {
         info!("Building manifest at: {}", dest_path.display());
         let dest_dir = dest_path.parent().unwrap_or(&dest_path).to_path_buf();
-        build_manifest_from_rows_stream(&self.storage, dest_dir, ManifestHeader::default(), stream)
-            .await
+        build_manifest_from_rows_stream(
+            &self.storage,
+            dest_dir,
+            ManifestHeader::default(),
+            Vec::new(),
+            stream,
+        )
+        .await
     }
 }
 

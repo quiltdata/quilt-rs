@@ -22,6 +22,7 @@ pub fn create_remote_manifest() -> quilt::manifest::Manifest {
             workflow: None,
         },
         rows: Vec::new(),
+        dir_meta: Vec::new(),
     }
 }
 

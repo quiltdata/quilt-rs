@@ -430,6 +430,7 @@ mod tests {
                         workflow: None,
                     },
                     rows: Vec::new(),
+                    dir_meta: Vec::new(),
                 })
             });
 
