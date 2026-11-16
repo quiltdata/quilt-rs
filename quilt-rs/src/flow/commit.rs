@@ -626,6 +626,43 @@ mod tests {
         Ok(())
     }
 
+    /// A package with no working copy has no files to commit either.
+    #[test(tokio::test)]
+    async fn test_commit_refuses_a_package_with_no_working_copy() -> Res {
+        let storage = MockStorage::default();
+        let paths = DomainPaths::new(std::path::absolute("/foo")?);
+        let status = InstalledPackageStatus {
+            working_copy: crate::lineage::WorkingCopy::Absent,
+            ..InstalledPackageStatus::default()
+        };
+        let error = commit_package(
+            PackageLineage::default(),
+            &mut Manifest::default(),
+            &paths,
+            &storage,
+            &MockRemote::default(),
+            None,
+            PathBuf::from("/none/pkg"),
+            status,
+            ("foo", "bar").into(),
+            String::default(),
+            UserMeta::Clear,
+            None,
+        )
+        .await;
+        assert!(
+            matches!(error, Err(Error::PackageOp(PackageOpError::Package(_)))),
+            "{error:?}"
+        );
+        let hash = fixtures::top_hash::EMPTY_NONE_TOP_HASH;
+        assert!(
+            !storage
+                .exists(&paths.installed_manifest(&("foo", "bar").into(), hash))
+                .await
+        );
+        Ok(())
+    }
+
     /// Commit a package whose previous revision carried `initial_meta`,
     /// passing `passed_meta` as the new metadata; returns the new top hash.
     async fn commit_hash(

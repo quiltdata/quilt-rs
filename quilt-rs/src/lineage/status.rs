@@ -112,13 +112,16 @@ impl InstalledPackageStatus {
     }
 
     /// Refuses with [`PackageOpError::WorkingCopyUnavailable`] when the
-    /// working folder could not be read, for an operation that acts on what
-    /// the folder holds.
+    /// working folder could not be read, and when the package has none, for
+    /// an operation that acts on what the folder holds.
     pub fn require_working_copy(&self) -> Res {
-        match self.unavailable_home() {
-            None => Ok(()),
-            Some(home) => Err(Error::PackageOp(PackageOpError::WorkingCopyUnavailable(
-                home.to_path_buf(),
+        match &self.working_copy {
+            WorkingCopy::Available => Ok(()),
+            WorkingCopy::Unavailable(home) => Err(Error::PackageOp(
+                PackageOpError::WorkingCopyUnavailable(home.clone()),
+            )),
+            WorkingCopy::Absent => Err(Error::PackageOp(PackageOpError::Package(
+                "The package has no working copy; open it as a working copy first".to_string(),
             ))),
         }
     }
