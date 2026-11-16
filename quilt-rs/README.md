@@ -20,8 +20,10 @@ use quilt_uri::{S3PackageUri, ManifestUri};
 let path = PathBuf::from("/foo/bar");
 let local_domain = LocalDomain::new(path);
 
-// Create a manifest URI from a package URI
-let package_uri = S3PackageUri::try_from("quilt+s3://bucket#package=namespace@hash")?;
+// Create a manifest URI from a package URI with a whole hash
+let package_uri = S3PackageUri::try_from(
+    "quilt+s3://bucket#package=namespace@0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+)?;
 let manifest_uri = ManifestUri::try_from(package_uri)?;
 
 // Install the package
@@ -38,6 +40,19 @@ let installed_package = local_domain.install_package(&manifest_uri).await?;
 4. **Status** — detect modifications (`flow::status`)
 5. **Commit** — create a local package version (`flow::commit_package`)
 6. **Push** — upload changes to remote (`flow::push_package`)
+
+## Short hashes
+
+A package URI may name a revision by a short hash, as in quilt3:
+`quilt+s3://bucket#package=namespace@abcdef`, 6 to 63 lowercase hex
+characters. Parsing keeps it as written (`RevisionPointer::HashPrefix`) and
+never touches the network; `ManifestUri::try_from` refuses it. Use
+`io::manifest::resolve_manifest_uri`, which asks the bucket's registry through
+`flow::resolve_hash` and returns a `ManifestUri` with the whole hash, so
+displaying or storing the result never carries the prefix. A prefix that no
+revision starts with, or that several do, is a `HashPrefixError`, as is one
+built by hand that is the wrong length or not hex; the parser refuses those
+two itself.
 
 ## Reading an object
 

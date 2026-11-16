@@ -249,8 +249,8 @@ impl From<&crate::engine::error::Error> for Failure {
 impl From<&crate::engine::quilt::Error> for Failure {
     fn from(err: &crate::engine::quilt::Error) -> Self {
         use crate::engine::quilt::{
-            Error as E, InstallPackageError, LoginError, PackageOpError, RemoteCatalogError,
-            RoleError, WorkflowValidationError,
+            Error as E, HashPrefixError, InstallPackageError, LoginError, PackageOpError,
+            RemoteCatalogError, RoleError, WorkflowValidationError,
         };
 
         match err {
@@ -307,8 +307,13 @@ impl From<&crate::engine::quilt::Error> for Failure {
 
             // The page offered a revision this copy no longer holds, or one that
             // became protected since the list was drawn: either way the
-            // revision the user meant is no longer there to remove.
-            E::RevisionNotRemovable { .. } => Self::Refusal(RefusalKind::Missing),
+            // revision the user meant is no longer there to remove. The same
+            // goes for a link whose short hash names no revision, or no single
+            // one.
+            E::RevisionNotRemovable { .. }
+            | E::HashPrefix(HashPrefixError::NoMatch(_) | HashPrefixError::Ambiguous { .. }) => {
+                Self::Refusal(RefusalKind::Missing)
+            }
 
             // The uninstall happened; what kept the objects is the failure.
             E::PruneFailed(_, inner, _) => Self::from(inner.as_ref()),
@@ -336,11 +341,10 @@ impl From<&crate::engine::quilt::Error> for Failure {
             | E::S3(_)
             | E::Checksum(_)
             | E::Fs(_)
-            // Every short-hash failure is the user's to fix, like an undo
-            // refusal (see `Undo` above), and unreachable from this surface
-            // today: nothing in QuiltSync takes a short hash yet. Giving them
-            // a refusal kind waits for the surface that does.
-            | E::HashPrefix(_)
+            // The rest of the short-hash failures are a prefix of the wrong length
+            // or not hex. A link's parser refuses those before anything is
+            // resolved, so one reaching here was built by our own code.
+            | E::HashPrefix(HashPrefixError::InvalidLength(_) | HashPrefixError::NotHex(_))
             | E::InstallPath(_)
             | E::Io(_)
             | E::Json(_)
@@ -633,6 +637,26 @@ mod tests {
         });
 
         assert_eq!(refusal(&err), Some(RefusalKind::Missing));
+    }
+
+    /// A link's short hash that no revision starts with, or that several do,
+    /// is a revision the user meant that is not there to open.
+    #[test]
+    fn a_short_hash_that_names_no_single_revision_is_a_refusal() {
+        use quilt::HashPrefixError;
+
+        for inner in [
+            HashPrefixError::NoMatch("abcdef".into()),
+            HashPrefixError::Ambiguous {
+                prefix: "abcdef".into(),
+                matches: vec!["a".repeat(64), "b".repeat(64)],
+                more: 0,
+            },
+        ] {
+            let err = Error::Quilt(quilt::Error::HashPrefix(inner));
+
+            assert_eq!(refusal(&err), Some(RefusalKind::Missing));
+        }
     }
 
     /// The property that makes the refusal series comparable: `action` is exactly

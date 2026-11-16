@@ -96,6 +96,10 @@ Under `--json`, `ignored` holds the `files` and `folders` counts, and with
 `folder`), `rule`, `source` (`built-in`, `user` or `package`), and `line`,
 `rules_file` and `size` where they apply.
 
+A package URI's `@hash` may be a prefix of 6 to 63 lowercase hex characters,
+as in quilt3: `install` and `browse` look it up in the bucket's registry, and
+fail when no revision starts with it or several do, naming the candidates.
+
 `install` fetches the package manifest and starts tracking it; files are
 downloaded only for the paths you name with `--path` (repeatable) or a
 `&path=` parameter in the URI. A path the package already tracks is left as
