@@ -386,6 +386,56 @@ pub enum FsError {
     ByteStream(#[from] byte_stream::error::Error),
 }
 
+/// Why a short top hash did not resolve to one revision.
+///
+/// The three outcomes quilt3's `resolve_top_hash` tells apart
+/// (`api/python/quilt3/backends/base.py` in quiltdata/quilt): a prefix of the
+/// wrong length, a prefix no revision starts with, and one that several do;
+/// plus [`NotHex`](Self::NotHex), which quilt3 has no case for.
+#[derive(Error, Debug, PartialEq, Eq)]
+pub enum HashPrefixError {
+    /// Shorter than [`MIN_HASH_PREFIX_LEN`](crate::flow::MIN_HASH_PREFIX_LEN) or
+    /// longer than a whole top hash.
+    #[error(
+        "Invalid hash: {0:?} (a hash prefix is {min} to {max} characters)",
+        min = crate::flow::MIN_HASH_PREFIX_LEN,
+        max = crate::flow::TOP_HASH_LEN
+    )]
+    InvalidLength(String),
+
+    /// Not lowercase hex, so no top hash starts with it. Refused without
+    /// asking the registry.
+    #[error("Invalid hash: {0:?} (a hash is lowercase hex)")]
+    NotHex(String),
+
+    /// No revision in the registry starts with the prefix.
+    #[error("Found zero matches for {0:?}")]
+    NoMatch(String),
+
+    /// More than one revision starts with the prefix. `matches` lists the
+    /// first [`MAX_LISTED_MATCHES`](crate::flow::MAX_LISTED_MATCHES), sorted,
+    /// so the caller can say which to pick, and `more` counts the rest.
+    #[error(
+        "Found multiple matches: {prefix:?} starts {} revisions ({}{})",
+        .matches.len() + .more,
+        .matches.join(", "),
+        and_more(*.more)
+    )]
+    Ambiguous {
+        prefix: String,
+        matches: Vec<String>,
+        more: usize,
+    },
+}
+
+fn and_more(more: usize) -> String {
+    if more == 0 {
+        String::new()
+    } else {
+        format!(", and {more} more")
+    }
+}
+
 #[derive(Error, Debug, PartialEq)]
 pub enum PackageOpError {
     #[error("Commit error: {0}")]
@@ -418,6 +468,9 @@ pub enum Error {
 
     #[error(transparent)]
     Fs(#[from] FsError),
+
+    #[error(transparent)]
+    HashPrefix(#[from] HashPrefixError),
 
     #[error(transparent)]
     InstallPackage(InstallPackageError),

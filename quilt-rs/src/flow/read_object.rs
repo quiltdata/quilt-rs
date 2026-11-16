@@ -718,6 +718,17 @@ mod tests {
                 .published_revisions(host, bucket, namespace)
                 .await
         }
+
+        async fn manifest_hashes_with_prefix(
+            &self,
+            host: Option<&Host>,
+            bucket: &str,
+            prefix: &str,
+        ) -> Res<Vec<String>> {
+            self.inner
+                .manifest_hashes_with_prefix(host, bucket, prefix)
+                .await
+        }
     }
 
     fn in_pieces(contents: &[u8], size: usize) -> Vec<bytes::Bytes> {

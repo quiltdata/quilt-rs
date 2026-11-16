@@ -18,6 +18,8 @@ use crate::object_hash::ObjectHash;
 use quilt_uri::Host;
 use quilt_uri::Namespace;
 use quilt_uri::S3Uri;
+use quilt_uri::is_top_hash;
+use quilt_uri::paths::get_manifest_key;
 use quilt_uri::paths::tag_key;
 
 use crate::Res;
@@ -234,6 +236,33 @@ impl Remote for MockRemote {
             }
             let pointer = tokio::fs::read_to_string(entry.path()).await?;
             hashes.push(pointer.trim().to_string());
+        }
+        Ok(hashes)
+    }
+
+    /// The names under `<bucket>/.quilt/packages/` that start with `prefix`
+    /// and are a whole top hash, as `put_object` stored them.
+    async fn manifest_hashes_with_prefix(
+        &self,
+        _host: Option<&Host>,
+        bucket: &str,
+        prefix: &str,
+    ) -> Res<Vec<String>> {
+        let dir = format!("s3://{bucket}/{}", get_manifest_key(""));
+        log::debug!("Mocking {dir}{prefix}* manifest listing");
+        if !self.storage.exists(storage_path(&dir)).await {
+            return Ok(Vec::new());
+        }
+        let mut entries = self.storage.read_dir(storage_path(&dir)).await?;
+        let mut hashes = Vec::new();
+        while let Some(entry) = entries.next_entry().await? {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            // A key nested under a hash-named name makes that name a directory,
+            // which S3 would not list as an object of its own.
+            if is_top_hash(&name) && name.starts_with(prefix) && entry.file_type().await?.is_file()
+            {
+                hashes.push(name);
+            }
         }
         Ok(hashes)
     }

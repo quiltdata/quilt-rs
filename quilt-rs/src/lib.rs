@@ -45,6 +45,7 @@ pub use error::AuthError;
 pub use error::ChecksumError;
 pub use error::Error;
 pub use error::FsError;
+pub use error::HashPrefixError;
 pub use error::InstallPackageError;
 pub use error::InstallPathError;
 pub use error::LineageError;
