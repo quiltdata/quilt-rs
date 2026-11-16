@@ -40,6 +40,7 @@
 
 ### Changed
 
+- Under the hood, quilt-rs has the on-disk formats for storing lineage per package (a ref file for each package, a domain config, and a cache of each remote tip), which nothing reads or writes yet. **Breaking:** `LineageError` has new variants for them, `FileParse`, `UnsupportedFormat` and `HomeChanged`, so an exhaustive match needs updating
 - **Breaking:** `InstalledPackageStatus` has a new field, `working_copy`, and `PackageOpError` a new variant, `WorkingCopyUnavailable`, so a literal naming every field, or an exhaustive match, needs updating (<https://github.com/quiltdata/quilt-rs/pull/1397>)
 - **Breaking:** `UserMeta::Set` carries the value and a `RawNumbers`, so every `Set` literal and every exhaustive match needs the numbers (use `UserMeta::parse` or `UserMeta::set`). `flow::create` and `LocalDomain::create_package` take a `UserMeta`; `Keep` and `Clear` write no `user_meta` key, where create previously wrote `"user_meta": {}` (<https://github.com/quiltdata/quilt-rs/pull/1394>)
 - **Breaking:** `DirMeta` is `#[non_exhaustive]`, so a struct literal no longer compiles outside this crate; use `DirMeta::new`, then set `meta_numbers` when the folder was read from a line (<https://github.com/quiltdata/quilt-rs/pull/1396>)

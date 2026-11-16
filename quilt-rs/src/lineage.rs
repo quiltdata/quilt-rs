@@ -49,6 +49,8 @@ mod home;
 pub use home::DEFAULT_HOME_DIR_NAME;
 pub use home::Home;
 
+mod refs;
+
 /// It's essentially just a map of `PackageLineage`.
 /// Represents the contents of `.quilt/data.json`
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
