@@ -602,7 +602,12 @@ mod tests {
         }
         let namespace: Namespace = namespace.try_into()?;
         domain
-            .create_package(namespace, Some(source.path().to_path_buf()), None)
+            .create_package(
+                namespace,
+                Some(source.path().to_path_buf()),
+                None,
+                crate::flow::UserMeta::Clear,
+            )
             .await?;
         Ok(())
     }

@@ -75,6 +75,7 @@ mod tests {
                 namespace: namespace.clone(),
                 source: None,
                 message: Some("initial".to_string()),
+                user_meta: UserMeta::Clear,
             })
             .await?;
         let package_home = created.installed_package.package_home().await?;
@@ -155,6 +156,7 @@ mod tests {
                 namespace: namespace.clone(),
                 source: None,
                 message: Some("initial".to_string()),
+                user_meta: UserMeta::Clear,
             })
             .await?;
         let package_home = created.installed_package.package_home().await?;

@@ -784,7 +784,7 @@ mod tests {
             HostConfig::default(),
             CommitOptions {
                 message: "Lorem ipsum".to_string(),
-                user_meta: UserMeta::Set(serde_json::json!({"lorem": "ipsum"})),
+                user_meta: UserMeta::set(serde_json::json!({"lorem": "ipsum"})),
                 workflow: None,
             },
         )

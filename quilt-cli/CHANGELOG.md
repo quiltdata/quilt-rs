@@ -23,12 +23,14 @@
 
 ### Added
 
+- `quilt commit` and `quilt create` take `--meta '<json>'` (quilt3's name; `-u` and `--user-meta` are the same flag) to set package metadata as a JSON object, keeping the exact text of integers beyond 64 bits. No flag on `commit` keeps the previous revision's metadata; no flag on `create` writes no `user_meta` key. A non-object (`--meta null`, an array, a string) is an error. `push` has no `--meta` (<https://github.com/quiltdata/quilt-rs/pull/1394>)
 - `quilt install` and `quilt browse` accept a short hash (6 to 63 lowercase hex characters) after `@` in a package URI, as quilt3 does, and look it up in the bucket's registry (<https://github.com/quiltdata/quilt-rs/pull/1392>)
 - `quilt catalog` shows, sets (`set HOST`) and clears the default catalog, which `quilt login` and `quilt role` use when `--host` is left out; a default is taken from quilt3's `config.yml` the first time, and never applies to a package (<https://github.com/quiltdata/quilt-rs/pull/1384>)
 - `quilt version` prints what `quilt --version` prints, and `quilt version --details` adds what a bug report needs: the library versions, the OS, and the folders quilt uses (<https://github.com/quiltdata/quilt-rs/pull/1371>)
 
 ### Changed
 
+- `quilt create` without `--meta` writes no `user_meta` key, where it previously wrote `"user_meta": {}` (<https://github.com/quiltdata/quilt-rs/pull/1394>)
 - Building from source now requires Rust 1.99 or newer (<https://github.com/quiltdata/quilt-rs/pull/1370>)
 - `quilt push` of a new package no longer replaces a `latest` someone else already published under the same name: it uploads the revision and warns that `latest` was not updated (<https://github.com/quiltdata/quilt-rs/pull/1373>)
 

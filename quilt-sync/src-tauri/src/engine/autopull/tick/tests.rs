@@ -2558,7 +2558,7 @@ async fn our_own_interrupted_claim_is_published_by_the_sweep_not_autosync() -> R
         1,
         "one revision, the sweep's: {published:?}"
     );
-    let quilt::flow::UserMeta::Set(meta) = &published[0] else {
+    let quilt::flow::UserMeta::Set(meta, _) = &published[0] else {
         panic!("the sweep sets the metadata, got {:?}", published[0]);
     };
     assert_eq!(meta["agent_exec"]["claim"]["status"], "failed");

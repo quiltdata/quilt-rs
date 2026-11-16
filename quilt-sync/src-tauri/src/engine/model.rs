@@ -553,7 +553,9 @@ pub trait QuiltModel {
         // On a clone, with the domain mutex released: the create waits on the
         // package's lock, and every other command needs the mutex meanwhile.
         let quilt = self.get_quilt().lock().await.clone();
-        Ok(quilt.create_package(namespace, source, message).await?)
+        Ok(quilt
+            .create_package(namespace, source, message, quilt::flow::UserMeta::Clear)
+            .await?)
     }
 
     async fn package_install(
