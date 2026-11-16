@@ -84,7 +84,8 @@ impl PackageRef {
     pub(crate) fn into_lineage(self, tip: Option<&TipCache>) -> PackageLineage {
         let latest_hash = match (&self.remote, tip) {
             (Some(remote), Some(tip)) if tip.bucket == remote.bucket => tip.latest_hash.clone(),
-            _ => self.untipped_latest().to_string(),
+            (Some(remote), _) if !remote.hash.is_empty() => self.base_hash.clone(),
+            _ => String::new(),
         };
         PackageLineage {
             commit: self.commit,
@@ -97,14 +98,6 @@ impl PackageRef {
                 .map(|key| (PathBuf::from(key), PathState::default()))
                 .collect(),
             sync_scope: self.sync_scope,
-        }
-    }
-
-    /// `latest_hash` with no tip cached for the remote's bucket.
-    pub(crate) fn untipped_latest(&self) -> &str {
-        match &self.remote {
-            Some(remote) if !remote.hash.is_empty() => &self.base_hash,
-            _ => "",
         }
     }
 }
