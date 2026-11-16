@@ -143,3 +143,83 @@ async fn an_unavailable_walk_leaves_the_stat_cache_alone() -> Res {
     assert_eq!(store.stat_cache(&namespace).await.gone(), saved);
     Ok(())
 }
+
+fn refuses_naming(error: &Error, home: &Path) -> bool {
+    matches!(
+        error,
+        Error::PackageOp(PackageOpError::WorkingCopyUnavailable(named)) if named == home
+    )
+}
+
+/// Writing a rule must not recreate the folder holding only `.quiltignore`:
+/// every tracked file would read as removed, and autosync would publish that.
+#[test(tokio::test)]
+async fn a_rule_is_never_written_into_a_missing_folder() -> Res {
+    let temp_dir = TempDir::new()?;
+    let (_, package) = committed_package(&temp_dir).await?;
+    let home = package.package_home().await?;
+    std::fs::write(home.join("a.log"), b"log")?;
+
+    std::fs::remove_dir_all(&home)?;
+
+    let error = package
+        .add_to_quiltignore(&["*.tmp".to_string()])
+        .await
+        .unwrap_err();
+    assert!(refuses_naming(&error, &home), "{error:?}");
+    // With the folder gone no rule is read, so nothing hides the file and
+    // there are no lines to write: the folder stays missing.
+    let lines = package
+        .stop_ignoring(Path::new("a.log"), false, Scope::Package)
+        .await?;
+    assert_eq!(lines, Some(Vec::new()));
+    assert!(!home.exists());
+    assert_eq!(package.status(None).await?.unavailable_home(), Some(&*home));
+
+    // Restored, the rule lands.
+    std::fs::create_dir_all(home.join("sub"))?;
+    std::fs::write(home.join("a.txt"), b"a")?;
+    std::fs::write(home.join("sub/b.txt"), b"b")?;
+    package.add_to_quiltignore(&["*.tmp".to_string()]).await?;
+    assert_eq!(
+        std::fs::read_to_string(home.join(".quiltignore"))?,
+        "*.tmp\n"
+    );
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_package_tracking_nothing_still_takes_a_rule_in_a_missing_folder() -> Res {
+    let temp_dir = TempDir::new()?;
+    let domain = LocalDomain::new(temp_dir.path());
+    domain.set_home(temp_dir.path()).await?;
+    let (package, _) = domain
+        .create_package(("demo", "empty").into(), None, Some("empty".to_string()))
+        .await?;
+    let home = package.package_home().await?;
+    std::fs::remove_dir_all(&home)?;
+
+    package.add_to_quiltignore(&["*.tmp".to_string()]).await?;
+    assert_eq!(
+        std::fs::read_to_string(home.join(".quiltignore"))?,
+        "*.tmp\n"
+    );
+    Ok(())
+}
+
+/// What cannot be undone is said to be the folder, not "cannot overwrite".
+#[test(tokio::test)]
+async fn undoing_a_commit_refuses_in_a_missing_folder() -> Res {
+    let temp_dir = TempDir::new()?;
+    let (_, package) = committed_package(&temp_dir).await?;
+    let home = package.package_home().await?;
+    let committed = package.lineage().await?.commit;
+
+    std::fs::remove_dir_all(&home)?;
+
+    let error = package.undo_commit().await.unwrap_err();
+    assert!(refuses_naming(&error, &home), "{error:?}");
+    assert!(!home.exists());
+    assert_eq!(package.lineage().await?.commit, committed);
+    Ok(())
+}

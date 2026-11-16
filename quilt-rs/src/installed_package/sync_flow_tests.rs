@@ -1250,6 +1250,37 @@ async fn test_pull_verdict_matches_the_full_dry_run() -> Res {
     Ok(())
 }
 
+/// A copy that is behind but whose folder is gone cannot be classified from an
+/// empty walk: it would read as a clean update, and the removals it would apply
+/// are of files that are not there to lose. Both dry runs refuse and name the
+/// folder, and the folder is not created.
+#[test(tokio::test)]
+async fn test_pull_dry_runs_refuse_a_missing_folder() -> Res {
+    let (package, _temp_dirs) = behind_package("{\"version\":\"v0\"}").await?;
+    let mut lineage = package.lineage().await?;
+    lineage
+        .paths
+        .insert(PathBuf::from("a.txt"), crate::lineage::PathState::default());
+    package.lineage.write(&package.storage, lineage).await?;
+    let home = package.package_home().await?;
+    std::fs::remove_dir_all(&home)?;
+
+    for error in [
+        package.pull_outcome(None).await.unwrap_err(),
+        package.pull_verdict(None).await.unwrap_err(),
+    ] {
+        assert!(
+            matches!(
+                &error,
+                Error::PackageOp(PackageOpError::WorkingCopyUnavailable(named)) if *named == home
+            ),
+            "{error:?}"
+        );
+    }
+    assert!(!home.exists());
+    Ok(())
+}
+
 /// A newer revision that changed only the header still has a hash to link to,
 /// though it brings no paths.
 #[test(tokio::test)]

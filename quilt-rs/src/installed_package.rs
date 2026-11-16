@@ -39,6 +39,7 @@ use crate::manifest::Workflow;
 use crate::package_lock;
 use crate::paths;
 use crate::paths::copy_cached_to_installed;
+use crate::quiltignore;
 use crate::quiltignore::Scope;
 use crate::state_store::PackageStateStore;
 use crate::workflow::WorkflowRules;
@@ -457,6 +458,19 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         Box::pin(self.lock().await?.stop_ignoring(path, is_dir, scope)).await
     }
 
+    /// Adds `lines` to the package's own `.quiltignore`. Like every writer here
+    /// it holds the package's lock. It never recreates a missing package folder:
+    /// a package that tracks files refuses with
+    /// [`PackageOpError::WorkingCopyUnavailable`].
+    pub async fn add_to_quiltignore(&self, lines: &[String]) -> Res {
+        Box::pin(self.lock().await?.add_to_quiltignore(lines)).await
+    }
+
+    async fn add_to_quiltignore_unlocked(&self, lines: &[String]) -> Res {
+        let (package_home, lineage) = self.lineage.read(&self.storage).await?;
+        quiltignore::append_package_lines(&lineage, &package_home, lines)
+    }
+
     async fn stop_ignoring_unlocked(
         &self,
         path: &Path,
@@ -778,11 +792,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
         // Installing into a recreated, empty folder would leave the tracked
         // files it lost to read as removed.
-        if !lineage.paths.is_empty() && self.storage.read_dir(&package_home).await.is_err() {
-            return Err(Error::PackageOp(PackageOpError::WorkingCopyUnavailable(
-                package_home,
-            )));
-        }
+        lineage.require_package_folder(&package_home)?;
         let remote_uri = lineage.remote()?;
 
         self.scaffold_paths_for_caching(&remote_uri.bucket).await?;
@@ -1513,6 +1523,9 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         self.scaffold_paths().await?;
 
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
+        // Undoing restores the files the commit holds, which is not what a
+        // folder that went missing is: say so, not that they cannot be overwritten.
+        lineage.require_package_folder(&package_home)?;
         if lineage.remote_uri.is_some() {
             return Err(Error::PackageOp(crate::PackageOpError::Undo(
                 "this package has a remote, so its commit chain has been consumed by pushing; \
@@ -1876,6 +1889,10 @@ impl<S: Storage + Clone + Sync, R: Remote> LockedPackage<S, R> {
 
     pub async fn kept(&self) -> Res<KeepReport> {
         self.package.kept_unlocked().await
+    }
+
+    pub async fn add_to_quiltignore(&self, lines: &[String]) -> Res {
+        self.package.add_to_quiltignore_unlocked(lines).await
     }
 
     pub async fn stop_ignoring(

@@ -119,7 +119,12 @@ pub fn stop_ignoring(
     if let Some(lines) = &lines
         && !lines.is_empty()
     {
-        crate::quiltignore::append_lines(&rules.file(scope), lines)?;
+        match scope {
+            Scope::Package => {
+                crate::quiltignore::append_package_lines(lineage, package_home, lines)?;
+            }
+            Scope::AllPackages => crate::quiltignore::append_lines(&rules.file(scope), lines)?,
+        }
     }
     Ok(lines)
 }

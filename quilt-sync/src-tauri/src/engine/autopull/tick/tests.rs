@@ -155,6 +155,19 @@ fn classify_generic_is_paused() {
 }
 
 #[test]
+fn classify_a_missing_package_folder_is_transient() {
+    // Nothing for the user to clear: syncing retries on backoff and resumes
+    // once the folder is back, where the default arm would pause until cleared.
+    let err = Error::from(quilt::Error::PackageOp(
+        quilt::PackageOpError::WorkingCopyUnavailable("/gone/demo".into()),
+    ));
+    match classify_sync_err(err) {
+        Err(WatchError::Transient(_)) => {}
+        other => panic!("expected Transient(_), got {other:?}"),
+    }
+}
+
+#[test]
 fn classify_config_format_error_is_conflict() {
     // A malformed `.quilt/workflows/config.yml` surfaces as
     // `RemoteCatalogError::InvalidWorkflowsConfig` (config-schema rejection). It

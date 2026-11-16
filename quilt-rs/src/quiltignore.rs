@@ -8,6 +8,7 @@ use ignore::gitignore::GitignoreBuilder;
 use tracing::trace;
 
 use crate::error::FsError;
+use crate::lineage::PackageLineage;
 use crate::{Error, Res};
 
 const QUILTIGNORE: &str = ".quiltignore";
@@ -430,6 +431,35 @@ fn appended(contents: &str, lines: &[String]) -> String {
 /// Add `lines` to the end of the rules file at `path`, creating it and its
 /// folder if missing.
 pub fn append_lines(path: &Path, lines: &[String]) -> Res {
+    append(path, lines, true)
+}
+
+/// [`append_lines`] for a package's own `.quiltignore`.
+///
+/// A package that tracks files must not have its folder recreated by this: a
+/// folder that holds only the rules file would read as every tracked file
+/// removed. So when `lineage` tracks files and `package_home` cannot be read,
+/// this refuses with [`PackageOpError::WorkingCopyUnavailable`] and writes
+/// nothing, and it never creates the folder itself. A package that tracks
+/// nothing loses nothing to a recreated folder, so it is written as before.
+pub fn append_package_lines(
+    lineage: &PackageLineage,
+    package_home: &Path,
+    lines: &[String],
+) -> Res {
+    if lineage.paths.is_empty() {
+        return append_lines(&package_home.join(QUILTIGNORE), lines);
+    }
+    lineage.require_package_folder(package_home)?;
+    let written = append(&package_home.join(QUILTIGNORE), lines, false);
+    if written.is_err() {
+        // The folder went between the check and the write.
+        lineage.require_package_folder(package_home)?;
+    }
+    written
+}
+
+fn append(path: &Path, lines: &[String], create_folder: bool) -> Res {
     use std::io::Write;
 
     let write_error = |source| {
@@ -438,7 +468,7 @@ pub fn append_lines(path: &Path, lines: &[String]) -> Res {
             source,
         })
     };
-    if let Some(dir) = path.parent() {
+    if create_folder && let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|source| {
             Error::Fs(FsError::DirectoryCreate {
                 path: dir.to_path_buf(),
@@ -1192,6 +1222,41 @@ mod tests {
             rules
                 .stop_ignoring_lines(Path::new("a\nb.log"), false, false, Scope::Package)
                 .is_err()
+        );
+    }
+
+    /// A package that tracks files never has its folder recreated for a rule.
+    #[test]
+    fn a_package_rule_is_not_written_into_a_missing_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("pkg");
+        let mut lineage = PackageLineage::default();
+        let rule = ["*.tmp".to_string()];
+
+        // Tracking nothing, the folder is made as `append_lines` does.
+        append_package_lines(&lineage, &home, &rule).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(home.join(".quiltignore")).unwrap(),
+            "*.tmp\n"
+        );
+        std::fs::remove_dir_all(&home).unwrap();
+
+        lineage
+            .paths
+            .insert(PathBuf::from("a.txt"), crate::lineage::PathState::default());
+        let error = append_package_lines(&lineage, &home, &rule).unwrap_err();
+        assert!(matches!(
+            error,
+            Error::PackageOp(crate::PackageOpError::WorkingCopyUnavailable(named))
+                if named == home
+        ));
+        assert!(!home.exists());
+
+        std::fs::create_dir(&home).unwrap();
+        append_package_lines(&lineage, &home, &rule).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(home.join(".quiltignore")).unwrap(),
+            "*.tmp\n"
         );
     }
 
