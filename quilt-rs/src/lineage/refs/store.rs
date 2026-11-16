@@ -339,7 +339,16 @@ impl RefStore {
             self.change_tip(storage, namespace, tip.as_ref(), fresh, had_tip)
                 .await?;
         }
-        let changed = stored.as_ref() != Some(&new_ref);
+        // Against the stored ref as this build would write it, so a form it
+        // reads but does not write, such as a copy's explicit `base`, is not
+        // taken for a change.
+        let changed = match &stored {
+            Some(stored) => {
+                let as_read = stored.clone().into_lineage(None);
+                PackageRef::from_lineage(&as_read, Some(stored))? != new_ref
+            }
+            None => true,
+        };
         if changed {
             put(
                 storage,
@@ -1199,6 +1208,33 @@ mod tests {
             BASE
         );
         assert!(!domain.paths.package_tip(&package("x")).exists());
+        Ok(())
+    }
+
+    /// A copy that names its base though it is the head's reads as it would
+    /// be written without it, so a change to the tip alone leaves it be.
+    #[test(tokio::test)]
+    async fn a_ref_in_a_form_this_build_does_not_write_is_not_rewritten_for_its_tip() -> Res {
+        let (domain, told) = Domain::hooked()?;
+        domain.install(&lineage("x", BASE, BASE)).await?;
+        let path = domain.paths.package_ref(&package("x"));
+        let mut stored: serde_json::Value = serde_json::from_slice(&std::fs::read(&path)?)?;
+        stored["copies"][0]["base"] = serde_json::json!(BASE);
+        let stored = serde_json::to_vec(&stored)?;
+        std::fs::write(&path, &stored)?;
+
+        let held = domain.lock(&package("x")).await?;
+        domain
+            .store
+            .update(&domain.storage, &held, |lineage| {
+                lineage.latest_hash = TIP.to_string();
+                Ok(())
+            })
+            .await?;
+        assert_eq!(std::fs::read(&path)?, stored);
+        assert_eq!(told.lock().unwrap().len(), 1, "the install alone");
+        let x = domain.store.read(&domain.storage, &package("x")).await?;
+        assert_eq!(x.latest_hash, TIP);
         Ok(())
     }
 
