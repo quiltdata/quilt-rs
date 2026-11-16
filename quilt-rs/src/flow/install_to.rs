@@ -36,7 +36,8 @@ pub struct InstallToReport {
 /// Installs rows of `manifest` into the folder `dest`, which can be anywhere.
 ///
 /// There is no package home, no `InstalledPackage` and no lineage: nothing is
-/// recorded about the folder, and nothing outside it is written. Each file is
+/// recorded about the folder, and nothing outside it is written. That includes
+/// the manifest's metadata, rows' and folders' alike: only the files are placed. Each file is
 /// fetched and checked against its row's hash first, by the same check
 /// [`install_paths`](super::install_paths) makes before a file enters the object
 /// store. A file that fails the check is left out and reported, as
@@ -63,8 +64,9 @@ pub struct InstallToReport {
 /// during the renames themselves, a window of milliseconds, is not caught, since
 /// a rename replaces what it finds.
 ///
-/// A `dest` that did not exist is created for the install and removed again if
-/// the install fails before placing anything.
+/// A `dest` that did not exist, with any folders above it that did not, is
+/// created for the install and removed again if the install fails before
+/// placing anything.
 ///
 /// `dest_registry`, which quilt3's `install` offers to put the package in
 /// another registry, is not here: it depends on how local registries are
@@ -82,7 +84,7 @@ pub async fn install_to(
     refuse_clashing_local_paths(&rows)?;
     refuse_blocked_targets(storage, &rows, dest).await?;
 
-    let created_dest = !storage.exists(dest).await;
+    let created = missing_folders(storage, dest).await;
     storage.create_dir_all(dest).await?;
     let staging = dest.join(format!(".quilt-install-{}", uuid::Uuid::new_v4()));
     storage.create_dir_all(&staging).await?;
@@ -91,8 +93,8 @@ pub async fn install_to(
     let report = match installed {
         Ok(report) => report,
         Err(err) => {
-            if created_dest {
-                remove_if_empty(storage, dest).await;
+            for dir in &created {
+                remove_if_empty(storage, dir).await;
             }
             return Err(err);
         }
@@ -105,6 +107,19 @@ pub async fn install_to(
         report.hash_mismatch.len()
     );
     Ok(report)
+}
+
+/// `dest` and the folders above it that do not exist yet, deepest first: the ones
+/// this install will make.
+async fn missing_folders(storage: &(impl Storage + Sync), dest: &Path) -> Vec<PathBuf> {
+    let mut missing = Vec::new();
+    for dir in dest.ancestors() {
+        if storage.exists(dir).await {
+            break;
+        }
+        missing.push(dir.to_path_buf());
+    }
+    missing
 }
 
 /// Removes `dir` if nothing is in it, for a folder this install made. A folder
@@ -243,6 +258,7 @@ mod tests {
 
     use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::mocks::MockStorage;
+    use crate::manifest::RawNumbers;
     use quilt_uri::S3Uri;
 
     /// The SHA-256 multihash of `body`, as a row's hash: a fetched object is
@@ -258,6 +274,7 @@ mod tests {
             hash: hash.try_into().expect("hash"),
             size: body.len() as u64,
             meta: None,
+            meta_numbers: RawNumbers::default(),
         }
     }
 
@@ -434,6 +451,27 @@ mod tests {
             !storage.exists(&dest).await,
             "a destination the install made is removed when it fails"
         );
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn a_failed_fetch_removes_every_folder_it_made_above_the_destination() -> Res {
+        let remote = MockRemote::default();
+        let storage = MockStorage::default();
+        let manifest = manifest(vec![row(
+            "gone.txt",
+            b"x",
+            "s3://b/p/gone.txt?versionId=v1",
+        )]);
+        let kept = std::path::absolute("/kept")?;
+        storage.create_dir_all(&kept).await?;
+        let dest = kept.join("made/also/dest");
+
+        let installed = install_to(&storage, &remote, None, &manifest, &dest, None).await;
+
+        assert!(installed.is_err());
+        assert!(!storage.exists(kept.join("made")).await);
+        assert!(storage.exists(&kept).await, "a folder that was there stays");
         Ok(())
     }
 

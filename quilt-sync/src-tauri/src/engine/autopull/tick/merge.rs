@@ -201,8 +201,10 @@ async fn read<M: QuiltModel>(
 /// Whether the merge left `theirs` as it was, so there is nothing to publish.
 /// The merge always carries the copy's message, so the message is no sign of
 /// new work. `user_meta` and each row's `meta` count as the top hash reads
-/// them: integers beyond 64 bits by their digits, and `-0.0` apart from `0.0`. The merged folder metadata is sorted and holds only metadata that
-/// says something.
+/// them: integers beyond 64 bits by their digits, and `-0.0` apart from `0.0`.
+/// Folder metadata is not hashed, so it is compared by value: the merged side is
+/// sorted and holds only metadata that says something, and `theirs` is brought
+/// to that form first.
 fn is_unchanged(merged: &Manifest, theirs: &Manifest) -> bool {
     let mut rows = theirs.rows.clone();
     rows.sort_by(|a, b| a.logical_key.cmp(&b.logical_key));

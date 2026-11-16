@@ -67,6 +67,10 @@ pub struct PushTarget {
 /// while it is uploading, or between that measurement and its upload, is an
 /// error.
 ///
+/// The header's `user_meta`, each row's `meta` and the manifest's `dir_meta` are
+/// published as given: integers beyond 64 bits keep their digits, and folder
+/// metadata, which the top hash leaves out, is written beside the rows.
+///
 /// Then the manifest is written and tagged with its timestamp, and `latest` is
 /// moved to it only if `latest` still names `target.parent` when read just
 /// before the tag write. `latest` also moves when it names nothing, even if the
@@ -124,6 +128,7 @@ pub async fn push_files(
     let manifest = Manifest {
         header: manifest.header,
         rows,
+        dir_meta: manifest.dir_meta,
     };
 
     let staging = tempfile::tempdir()?;
@@ -132,6 +137,7 @@ pub async fn push_files(
         storage,
         staging.path().join("manifests"),
         manifest.header.clone(),
+        manifest.dir_meta.clone(),
         stream,
     )
     .await?;
@@ -270,8 +276,10 @@ mod tests {
     use test_log::test;
 
     use crate::io::remote::mocks::MockRemote;
+    use crate::manifest::DirMeta;
     use crate::manifest::HeaderMessage;
     use crate::manifest::ManifestHeader;
+    use crate::manifest::RawNumbers;
     use quilt_uri::Host;
     use quilt_uri::S3Uri;
 
@@ -309,6 +317,7 @@ mod tests {
                 ..ManifestHeader::default()
             },
             rows,
+            dir_meta: Vec::new(),
         }
     }
 
@@ -376,6 +385,152 @@ mod tests {
             b.physical_key,
             "s3://bkt/test/survey/data/b.csv?versionId=version"
         );
+        Ok(())
+    }
+
+    /// A manifest whose metadata a lossy copy would change: integers beyond 64
+    /// bits in the header's and a row's, and folder metadata.
+    fn manifest_with_metadata() -> Res<Manifest> {
+        let (user_meta, user_meta_numbers) = RawNumbers::parse(r#"{"big": 18446744073709551616}"#)?;
+        let (meta, meta_numbers) = RawNumbers::parse(r#"{"id": 18446744073709551617}"#)?;
+        let mut manifest = manifest(vec![
+            ManifestRow {
+                meta: Some(meta),
+                meta_numbers,
+                ..bare_row("data/b.csv")
+            },
+            bare_row("a.txt"),
+        ]);
+        manifest.header.user_meta = Some(user_meta);
+        manifest.header.user_meta_numbers = user_meta_numbers;
+        manifest.dir_meta = vec![DirMeta {
+            logical_key: key("data"),
+            meta: serde_json::json!({"owner": "lab"}),
+        }];
+        Ok(manifest)
+    }
+
+    fn metadata_files() -> BTreeMap<LogicalKey, RowContent> {
+        BTreeMap::from([
+            (
+                key("a.txt"),
+                RowContent::Bytes(Bytes::from_static(b"hello")),
+            ),
+            (
+                key("data/b.csv"),
+                RowContent::Bytes(Bytes::from_static(b"x,y\n1,2\n")),
+            ),
+        ])
+    }
+
+    /// Folder metadata and integers beyond 64 bits are written as given, not
+    /// dropped or rounded to floats on the way through.
+    #[test(tokio::test)]
+    async fn folder_metadata_and_big_integers_reach_the_stored_manifest() -> Res {
+        let remote = MockRemote::default();
+        let sent = manifest_with_metadata()?;
+
+        let pushed = push_files(
+            &remote.storage,
+            &remote,
+            &target(None),
+            sent.clone(),
+            &metadata_files(),
+        )
+        .await?;
+
+        let text = read(
+            &remote,
+            &format!("s3://bkt/.quilt/packages/{}", pushed.manifest_uri.hash),
+        )
+        .await?;
+        assert!(text.contains("18446744073709551616"), "{text}");
+        assert!(text.contains("18446744073709551617"), "{text}");
+        let stored = pushed_manifest(&remote, &pushed.manifest_uri.hash).await?;
+        assert_eq!(stored.dir_meta, sent.dir_meta);
+        assert!(stored.header.same_user_meta(&sent.header));
+        let sent_row = sent
+            .get_record(std::path::Path::new("data/b.csv"))
+            .expect("sent");
+        let stored_row = stored
+            .get_record(std::path::Path::new("data/b.csv"))
+            .expect("stored");
+        assert!(stored_row.same_meta(sent_row));
+        Ok(())
+    }
+
+    /// Folder metadata is not hashed, so the top hash is the one the rows give.
+    #[test(tokio::test)]
+    async fn folder_metadata_does_not_change_the_top_hash() -> Res {
+        let with = MockRemote::default();
+        let without = MockRemote::default();
+        let sent = manifest_with_metadata()?;
+        let mut bare = sent.clone();
+        bare.dir_meta.clear();
+
+        let a = push_files(&with.storage, &with, &target(None), sent, &metadata_files()).await?;
+        let b = push_files(
+            &without.storage,
+            &without,
+            &target(None),
+            bare,
+            &metadata_files(),
+        )
+        .await?;
+
+        assert_eq!(a.manifest_uri.hash, b.manifest_uri.hash);
+        Ok(())
+    }
+
+    /// What a push publishes installs to a folder, and installing leaves the
+    /// manifest's metadata as it read.
+    #[test(tokio::test)]
+    async fn a_pushed_manifest_installs_to_a_folder_with_its_metadata_intact() -> Res {
+        let remote = MockRemote::default();
+        let pushed = push_files(
+            &remote.storage,
+            &remote,
+            &target(None),
+            manifest_with_metadata()?,
+            &metadata_files(),
+        )
+        .await?;
+        let stored = pushed_manifest(&remote, &pushed.manifest_uri.hash).await?;
+        let before = stored.clone();
+        // The mock's upload keeps nothing, so put the bytes where the rows say.
+        for row in &stored.rows {
+            let contents = metadata_files();
+            let RowContent::Bytes(bytes) = &contents[&row.logical_key] else {
+                unreachable!("metadata_files holds bytes")
+            };
+            remote
+                .put_object(
+                    None,
+                    &S3Uri::try_from(row.physical_key.as_str())?,
+                    bytes.to_vec(),
+                )
+                .await?;
+        }
+        let dest = std::path::absolute("/installed/here")?;
+
+        let report =
+            crate::flow::install_to(&remote.storage, &remote, None, &stored, &dest, None).await?;
+
+        assert_eq!(report.placed.len(), 2, "{report:?}");
+        assert_eq!(stored.dir_meta.len(), 1);
+        let placed = remote.storage.read_byte_stream(dest.join("a.txt")).await?;
+        assert_eq!(placed.collect().await?.to_vec(), b"hello");
+        assert_eq!(stored.dir_meta, before.dir_meta);
+        assert!(stored.header.same_user_meta(&before.header));
+        for (row, original) in stored.rows.iter().zip(&before.rows) {
+            assert!(row.same_meta(original));
+        }
+        let text = read(
+            &remote,
+            &format!("s3://bkt/.quilt/packages/{}", pushed.manifest_uri.hash),
+        )
+        .await?;
+        assert!(text.contains("18446744073709551617"), "{text}");
         Ok(())
     }
 
@@ -634,6 +789,17 @@ mod tests {
         ) -> Res<Vec<String>> {
             self.inner
                 .published_revisions(host, bucket, namespace)
+                .await
+        }
+
+        async fn manifest_hashes_with_prefix(
+            &self,
+            host: Option<&Host>,
+            bucket: &str,
+            prefix: &str,
+        ) -> Res<Vec<String>> {
+            self.inner
+                .manifest_hashes_with_prefix(host, bucket, prefix)
                 .await
         }
     }
