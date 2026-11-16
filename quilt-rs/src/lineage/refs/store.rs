@@ -313,7 +313,7 @@ impl RefStore {
     pub(crate) async fn sweep(&self, storage: &(impl Storage + Sync)) -> Res {
         for (namespace, paths) in self.leftovers(storage).await? {
             if let Some(_held) = PackageLock::try_take(storage, &self.paths, &namespace).await? {
-                remove_leftovers(storage, &paths).await?;
+                remove_leftovers(storage, &paths).await;
             }
         }
         self.sweep_config(storage).await
@@ -328,20 +328,8 @@ impl RefStore {
     ) -> Res {
         let mut leftovers = self.leftovers(storage).await?;
         for lock in held {
-            let Some(paths) = leftovers.remove(lock.namespace()) else {
-                continue;
-            };
-            // A temp left in place costs nothing, so it stops no gc.
-            match remove_leftovers(storage, &paths).await {
-                Ok(()) => info!(
-                    "Swept {} leftover temps of {}",
-                    paths.len(),
-                    lock.namespace()
-                ),
-                Err(err) => warn!(
-                    "❌ Could not sweep the temps of {}: {err}",
-                    lock.namespace()
-                ),
+            if let Some(paths) = leftovers.remove(lock.namespace()) {
+                remove_leftovers(storage, &paths).await;
             }
         }
         self.sweep_config(storage).await
@@ -379,7 +367,7 @@ impl RefStore {
                 .try_lock_exclusive(self.paths.domain_file_lock())
                 .await?
         {
-            remove_leftovers(storage, &config_temps).await?;
+            remove_leftovers(storage, &config_temps).await;
         }
         Ok(())
     }
@@ -747,11 +735,15 @@ async fn entries(storage: &(impl Storage + Sync), dir: &Path) -> Res<Vec<(PathBu
     Ok(entries)
 }
 
-async fn remove_leftovers(storage: &impl Storage, paths: &[PathBuf]) -> Res {
+/// Removes each of `paths`, logging one that stays: a temp left in place
+/// costs nothing, so it stops neither a start nor a gc.
+async fn remove_leftovers(storage: &impl Storage, paths: &[PathBuf]) {
     for path in paths {
-        remove_if_present(storage, path).await?;
+        match remove_if_present(storage, path).await {
+            Ok(_) => info!("Swept {}", path.display()),
+            Err(err) => warn!("❌ Could not sweep {}: {err}", path.display()),
+        }
     }
-    Ok(())
 }
 
 #[cfg(test)]

@@ -551,13 +551,23 @@ impl Placed {
         let mut kept = Vec::new();
         let placed_files = if self.existed { None } else { Some(files) };
         for (key, state) in placed_files.into_iter().flatten() {
-            let file = self.folder.join(key);
+            let Ok(key) = crate::LogicalKey::new(key) else {
+                continue;
+            };
+            let file = key.join_to(&self.folder);
             if !holds(storage, &file, state).await {
                 if storage.exists(&file).await {
                     kept.push(file);
                 }
-            } else if let Err(err) = flow::remove_working_file(storage, &self.folder, key).await {
+            } else if let Err(err) = storage.remove_file(&file).await {
                 warn!("Could not remove {}: {err}", file.display());
+            } else {
+                // `remove_dir` refuses a folder something was written into.
+                for folder in file.ancestors().skip(1) {
+                    if folder == self.folder || storage.remove_dir(folder).await.is_err() {
+                        break;
+                    }
+                }
             }
         }
         if let Some(manifest) = manifest
@@ -1005,15 +1015,32 @@ mod ref_store_tests {
         {
             use std::os::unix::fs::PermissionsExt;
 
-            let stuck = leftover()?;
-            std::fs::set_permissions(&owner, std::fs::Permissions::from_mode(0o500))?;
+            let dot_quilt = domain.paths.dot_quilt_dir();
+            let stuck = [
+                leftover()?,
+                dot_quilt.join(format!("domain.json.tmp-{}", uuid::Uuid::new_v4())),
+            ];
+            std::fs::write(&stuck[1], b"{")?;
+            let mode = |mode| std::fs::Permissions::from_mode(mode);
+            std::fs::set_permissions(&owner, mode(0o500))?;
+            std::fs::set_permissions(&dot_quilt, mode(0o500))?;
+            // Root removes them despite the modes.
+            let enforced = std::fs::write(owner.join("probe"), b"").is_err();
+            let swept = domain.sweep_leftovers().await;
             let collected = domain.gc().await;
-            std::fs::set_permissions(&owner, std::fs::Permissions::from_mode(0o700))?;
+            std::fs::set_permissions(&dot_quilt, mode(0o700))?;
+            std::fs::set_permissions(&owner, mode(0o700))?;
+            if enforced {
+                assert!(stuck.iter().all(|path| path.exists()), "they stay");
+            }
+            assert!(swept.is_ok(), "a temp that stays fails no start: {swept:?}");
             assert!(
                 collected.is_ok(),
                 "a temp that stays stops no gc: {collected:?}"
             );
-            std::fs::remove_file(stuck)?;
+            for path in stuck {
+                let _ = std::fs::remove_file(path);
+            }
         }
         assert!(
             domain

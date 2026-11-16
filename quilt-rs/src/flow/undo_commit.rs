@@ -131,7 +131,7 @@ fn nests(one: &Path, other: &Path) -> bool {
 
 /// Remove a working file, pruning directories it empties (below the package
 /// home). A file cannot be written where an emptied directory stands.
-pub(crate) async fn remove_working_file(
+async fn remove_working_file(
     storage: &(impl Storage + Sync),
     package_home: &Path,
     logical_key: &Path,

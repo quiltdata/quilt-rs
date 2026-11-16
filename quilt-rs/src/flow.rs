@@ -117,7 +117,6 @@ pub use status::rehash_changes;
 pub use stop_ignoring::StopIgnoring;
 pub use stop_ignoring::preview_stop_ignoring;
 pub use stop_ignoring::stop_ignoring;
-pub(crate) use undo_commit::remove_working_file;
 pub use undo_commit::undo_commit;
 pub use uninstall_package::uninstall_package;
 pub use uninstall_paths::uninstall_paths;
