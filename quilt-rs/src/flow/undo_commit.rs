@@ -102,7 +102,7 @@ pub async fn undo_commit(
             (*logical_key).clone(),
             PathState {
                 timestamp: storage.modified_timestamp(&working_path).await?,
-                hash: (*hash).clone().into(),
+                hash: Some((*hash).clone().into()),
             },
         );
     }

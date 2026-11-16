@@ -41,6 +41,7 @@
 
 ### Changed
 
+- **Breaking:** `PathState::hash` is an `Option`: a `data.json` path entry whose hash is missing (as a later release will write) or `null` reads as `None` and is written back without one (<https://github.com/quiltdata/quilt-rs/pull/1380>)
 - **Breaking:** `InstalledPackageStatus` has a new field, `working_copy`, and `PackageOpError` a new variant, `WorkingCopyUnavailable`, so a literal naming every field, or an exhaustive match, needs updating (<https://github.com/quiltdata/quilt-rs/pull/1397>)
 - **Breaking:** `UserMeta::Set` carries the value and a `RawNumbers`, so every `Set` literal and every exhaustive match needs the numbers (use `UserMeta::parse` or `UserMeta::set`). `flow::create` and `LocalDomain::create_package` take a `UserMeta`; `Keep` and `Clear` write no `user_meta` key, where create previously wrote `"user_meta": {}` (<https://github.com/quiltdata/quilt-rs/pull/1394>)
 - **Breaking:** `DirMeta` is `#[non_exhaustive]`, so a struct literal no longer compiles outside this crate; use `DirMeta::new`, then set `meta_numbers` when the folder was read from a line (<https://github.com/quiltdata/quilt-rs/pull/1396>)
