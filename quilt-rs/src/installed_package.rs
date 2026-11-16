@@ -90,6 +90,23 @@ pub struct KeepReport {
 /// [`PushOutcome`], so external callers see a non-generic type name.
 pub type PublishOutcome = flow::PublishOutcome<PushOutcome>;
 
+/// What a file browser leaves in a folder it only showed.
+const OS_METADATA: &[&str] = &[".DS_Store", "Thumbs.db", "desktop.ini"];
+
+/// Whether `folder` holds anything but [`OS_METADATA`].
+async fn holds_files(storage: &impl Storage, folder: &Path) -> Res<bool> {
+    if !storage.exists(folder).await {
+        return Ok(false);
+    }
+    let mut entries = storage.read_dir(folder).await?;
+    while let Some(entry) = entries.next_entry().await? {
+        if !OS_METADATA.contains(&entry.file_name().to_string_lossy().as_ref()) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// Every early return from the dry run means the same thing — nothing for a
 /// pull to do, and so no incoming paths or newer revision to name.
 fn nothing_to_pull() -> flow::PullPreview {
@@ -851,49 +868,46 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         };
         // Files already there would read as the package's own changes.
         let folder = paths::package_home(&home, &self.namespace);
-        if self.storage.exists(&folder).await
-            && self
-                .storage
-                .read_dir(&folder)
-                .await?
-                .next_entry()
-                .await?
-                .is_some()
-        {
+        if holds_files(&self.storage, &folder).await? {
             return Err(crate::LineageError::FolderNotEmpty(folder).into());
         }
+        // Made before the record names it, so an open cut short never leaves
+        // a working copy whose folder is missing.
+        self.storage.create_dir_all(&folder).await?;
         self.lineage
             .edit(&self.storage, |entry| {
                 entry.working_copy = WorkingCopy::Home;
             })
             .await?;
-        // `install_paths_unlocked` makes the folder itself.
-        let placed = async {
-            if keys.is_empty() {
-                self.scaffold_paths().await?;
-                return Ok(flow::InstallPathsReport::default());
-            }
+        let placed = if keys.is_empty() {
+            Ok(flow::InstallPathsReport::default())
+        } else {
             self.install_paths_unlocked(&keys).await
         };
-        let err = match placed.await {
+        let err = match placed {
             Ok(report) => return Ok(report),
             Err(err) => err,
         };
-        // The folder was empty or absent, so all it holds is this open's.
-        if let Err(undo) = self.storage.remove_dir_all(&folder).await {
-            log::warn!("Failed to remove {}: {undo}", folder.display());
-        }
-        if let Err(undo) = self
+        // The record goes back first: until it does, the folder is its
+        // working copy and stays.
+        match self
             .lineage
             .edit(&self.storage, |entry| {
                 entry.working_copy = WorkingCopy::None;
             })
             .await
         {
-            log::warn!(
-                "Failed to record {} as closed again: {undo}",
-                self.namespace
-            );
+            // A file someone saved there meanwhile keeps the folder.
+            Ok(_) => match holds_files(&self.storage, &folder).await {
+                Ok(false) => {
+                    if let Err(undo) = self.storage.remove_dir_all(&folder).await {
+                        log::warn!("Failed to remove {}: {undo}", folder.display());
+                    }
+                }
+                Ok(true) => {}
+                Err(undo) => log::warn!("Failed to look into {}: {undo}", folder.display()),
+            },
+            Err(undo) => log::warn!("Failed to undo opening {}: {undo}", self.namespace),
         }
         Err(err)
     }
@@ -1182,6 +1196,8 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
     }
 
     async fn keep_unlocked(&self, scope: SyncScope, download: bool) -> Res<KeepReport> {
+        // Refuses a package with no working copy before the scope is saved.
+        self.lineage.read(&self.storage).await?;
         self.set_sync_scope_unlocked(scope).await?;
         let kept = self.kept_unlocked().await?;
         if !download || kept.outstanding == 0 {

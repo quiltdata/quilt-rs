@@ -170,6 +170,51 @@ async fn an_open_into_a_folder_holding_files_is_refused() -> Res {
     Ok(())
 }
 
+/// A file browser's metadata is not the user's work.
+#[test(tokio::test)]
+async fn an_open_into_a_folder_holding_only_os_metadata_proceeds() -> Res {
+    let t = Tracked::new().await?;
+    std::fs::create_dir_all(t.folder())?;
+    std::fs::write(t.folder().join(".DS_Store"), "")?;
+
+    let opened = t.package.open_working_copy(None).await;
+
+    assert!(opened.is_ok(), "{opened:?}");
+    assert_eq!(t.package.lineage().await?.working_copy, WorkingCopy::Home);
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn keep_refuses_a_tracked_package_and_saves_no_scope() -> Res {
+    let t = Tracked::new().await?;
+
+    let kept = t.package.keep(SyncScope::EntirePackage, false).await;
+
+    assert!(is_no_working_copy(&kept));
+    assert_eq!(
+        t.package.lineage().await?.sync_scope,
+        SyncScope::IndividualFiles
+    );
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn installing_a_tracked_package_again_makes_no_folder() -> Res {
+    let t = Tracked::new().await?;
+    let remote = t.package.lineage().await?.remote_uri.expect("a remote");
+
+    let installed = t.domain.install_package(&remote).await;
+
+    assert!(matches!(
+        installed,
+        Err(Error::InstallPackage(
+            InstallPackageError::AlreadyInstalled(_)
+        ))
+    ));
+    assert!(!t.folder().exists());
+    Ok(())
+}
+
 #[test(tokio::test)]
 async fn an_open_that_fails_leaves_no_folder_and_no_working_copy() -> Res {
     let t = Tracked::new().await?;

@@ -210,13 +210,15 @@ impl DomainLineageIo {
     /// both is read from `data.json`, which an older build may have written
     /// since.
     ///
-    /// The [`EXT_FILE`] is read first: opening a working copy writes the
-    /// record into `data.json` before it leaves the other file, so an
-    /// unlocked read never misses it.
+    /// The [`EXT_FILE`] is read on both sides of `data.json`: a record moving
+    /// between them is written into one before it leaves the other, so an
+    /// unlocked read finds it in one of the three reads, whichever way it
+    /// moves.
     pub async fn read(&self, storage: &(impl Storage + Sync)) -> Res<DomainLineage> {
-        let ext = self.read_ext(storage).await?;
+        let before = self.read_ext(storage).await?;
         let mut lineage = self.read_data_json(storage).await?;
-        for (namespace, package) in ext.packages {
+        let after = self.read_ext(storage).await?;
+        for (namespace, package) in after.packages.into_iter().chain(before.packages) {
             lineage.packages.entry(namespace).or_insert(package);
         }
         Ok(lineage)
@@ -241,7 +243,7 @@ impl DomainLineageIo {
         match storage.read_bytes(&path).await {
             Ok(bytes) => serde_json::from_slice(&bytes)
                 .map_err(|err| Error::Lineage(LineageError::Parse(err))),
-            Err(_) if !storage.exists(&path).await => Ok(ExtLineage::default()),
+            Err(e) if e.is_not_found() || !storage.exists(&path).await => Ok(ExtLineage::default()),
             Err(e) => Err(e),
         }
     }
@@ -359,8 +361,8 @@ impl DomainLineageIo {
     /// one, only a missing folder is created and `data.json` is not rewritten.
     /// Refuses with
     /// [`LineageError::HomeInUse`] and changes nothing when `home` differs and
-    /// any package is installed, because their working folders live under the
-    /// current home. [`DomainLineageIo::overwrite_home`] skips that check.
+    /// any package has a working copy, since those live under the current
+    /// home. [`DomainLineageIo::overwrite_home`] skips that check.
     pub async fn set_home(
         &self,
         storage: &(impl Storage + Sync),
@@ -475,8 +477,12 @@ impl DomainLineageIo {
             },
         )
         .await?;
-        if elsewhere != ext_during {
-            self.write_ext(storage, &elsewhere).await?;
+        // Drops only records `data.json` now holds, which `read` prefers, so
+        // a failure leaves nothing wrong for the next write to tidy.
+        if elsewhere != ext_during
+            && let Err(err) = self.write_ext(storage, &elsewhere).await
+        {
+            log::warn!("Failed to tidy {EXT_FILE}: {err}");
         }
         Ok(())
     }

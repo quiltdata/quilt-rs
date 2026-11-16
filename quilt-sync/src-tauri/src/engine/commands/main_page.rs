@@ -554,6 +554,8 @@ async fn mark_unreadable_buckets(m: &impl model::QuiltModel, roles: &RoleCache, 
             .iter()
             .enumerate()
             .filter(|(_, row)| row_host(row) == Some(&host))
+            // Not synced, so a role that can't read its bucket asks nothing of it.
+            .filter(|(_, row)| row.package.state != PackageStateDto::NoWorkingCopy)
             .filter(|(_, row)| {
                 row.uri
                     .as_ref()
@@ -2109,8 +2111,8 @@ mod tests {
         assert!(!row.provisional, "a pause on disk owes the network nothing");
     }
 
-    /// `team/one` tracked with no working copy. No status is mocked, so a
-    /// status read panics the test.
+    /// `team/one` tracked with no working copy, in a bucket the role can't
+    /// read. No status is mocked, so a status read panics the test.
     fn mock_no_working_copy() -> crate::engine::model::MockQuiltModel {
         let mut model = crate::engine::model::mocks::create();
         model
@@ -2132,10 +2134,11 @@ mod tests {
             });
         model
             .expect_readable_buckets()
-            .returning(|_| Ok(vec!["test".to_string()]));
+            .returning(|_| Ok(Vec::new()));
         model
     }
 
+    /// Not even an unreadable bucket turns it into a denial: nothing syncs it.
     #[tokio::test]
     async fn a_package_with_no_working_copy_is_listed_as_such_and_settled() {
         let row = light_phase_row(&mock_no_working_copy(), None).await;

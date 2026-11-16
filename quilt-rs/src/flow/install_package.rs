@@ -49,6 +49,15 @@ pub async fn install_package_as(
 ) -> Res<DomainLineage> {
     info!("⏳ Installing package: {}", manifest_uri.display());
 
+    // TODO: if compatible (same remote), just return the installed package
+    // Checked before any folder is made, as the package may have none.
+    if lineage.packages.contains_key(&manifest_uri.namespace) {
+        debug!("❌ Package already installed: {}", manifest_uri.namespace);
+        return Err(Error::InstallPackage(
+            InstallPackageError::AlreadyInstalled(manifest_uri.namespace.clone()),
+        ));
+    }
+
     paths
         .scaffold_for(
             storage,
@@ -60,14 +69,6 @@ pub async fn install_package_as(
     paths
         .scaffold_for_caching(storage, &manifest_uri.bucket)
         .await?;
-
-    // TODO: if compatible (same remote), just return the installed package
-    if lineage.packages.contains_key(&manifest_uri.namespace) {
-        debug!("❌ Package already installed: {}", manifest_uri.namespace);
-        return Err(Error::InstallPackage(
-            InstallPackageError::AlreadyInstalled(manifest_uri.namespace.clone()),
-        ));
-    }
 
     debug!("⏳ Caching remote manifest");
     flow::cache_remote_manifest(paths, storage, remote, manifest_uri).await?;

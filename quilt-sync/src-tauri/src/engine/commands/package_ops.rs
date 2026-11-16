@@ -886,21 +886,32 @@ pub async fn change_catalog(
 
 async fn package_open_working_copy_command(
     m: &impl model::QuiltModel,
+    watcher: &Watcher,
     namespace: &str,
-) -> Result<quilt_uri::Namespace, Error> {
+) -> Result<String, Error> {
     let namespace = quilt_uri::Namespace::try_from(namespace)?;
-    model::open_working_copy(m, &namespace).await?;
-    Ok(namespace)
+    let installed = m
+        .get_installed_package(&namespace)
+        .await?
+        .ok_or_else(|| Error::from(quilt::InstallPackageError::NotInstalled(namespace.clone())))?;
+    // As the backlog download does: lock first, then keep a quit from
+    // landing between recording the working copy and placing its files.
+    let locked = m.lock_package(&installed).await?;
+    let _applying = watcher.apply_guard(&namespace);
+    Ok(match m.locked_package_open_working_copy(&locked).await? {
+        0 => format!("Opened {namespace} as a working copy"),
+        1 => format!("Opened {namespace} as a working copy; 1 file could not be downloaded"),
+        n => format!("Opened {namespace} as a working copy; {n} files could not be downloaded"),
+    })
 }
 
 /// Give a package tracked with no working copy its folder under the home,
 /// with every file of its current revision.
 pub async fn package_open_working_copy(s: &Services, namespace: String) -> Result<String, String> {
     Notify::new(format!("Opening {namespace} as a working copy"));
-    match package_open_working_copy_command(&*s.model, &namespace).await {
-        Ok(_) => {
+    match package_open_working_copy_command(&*s.model, &s.watcher, &namespace).await {
+        Ok(message) => {
             s.events.emit(PACKAGES_CHANGED_EVENT, ());
-            let message = format!("Opened {namespace} as a working copy");
             ::tracing::debug!("{message}");
             Ok(message)
         }
@@ -2285,16 +2296,26 @@ mod tests {
         Ok(())
     }
 
+    /// It opens the package named, and says how many files it could not
+    /// download.
     #[tokio::test]
-    async fn open_working_copy_opens_the_named_package() -> Result<(), Error> {
+    async fn open_working_copy_says_what_it_left_out() -> Result<(), Error> {
         let mut model = installed_model();
         model
-            .expect_open_working_copy()
+            .expect_lock_package()
             .times(1)
-            .withf(|package| package.namespace == ("acme", "demo").into())
-            .returning(|_| Ok(()));
-        let opened = super::package_open_working_copy_command(&model, "acme/demo").await?;
-        assert_eq!(opened, ("acme", "demo").into());
+            .returning(|package| Ok(package.namespace.clone()));
+        model
+            .expect_locked_package_open_working_copy()
+            .times(1)
+            .withf(|locked| *locked == ("acme", "demo").into())
+            .returning(|_| Ok(2));
+        let watcher = Watcher::new_for_test(Arc::new(LogReporter));
+        let said = super::package_open_working_copy_command(&model, &watcher, "acme/demo").await?;
+        assert_eq!(
+            said,
+            "Opened acme/demo as a working copy; 2 files could not be downloaded"
+        );
         Ok(())
     }
 

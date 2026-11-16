@@ -536,9 +536,15 @@ pub trait QuiltModel {
 
     /// Give a package tracked with no working copy its folder, with every file
     /// of its current revision.
-    async fn open_working_copy(&self, package: &quilt::InstalledPackage) -> Result<(), Error> {
-        package.open_working_copy(None).await?;
-        Ok(())
+    /// Give a package tracked with no working copy its folder, with every file
+    /// of its current revision, on the held lock. Answers how many files could
+    /// not be downloaded.
+    async fn locked_package_open_working_copy(
+        &self,
+        package: &Self::Locked,
+    ) -> Result<usize, Error> {
+        let report = package.open_working_copy().await?;
+        Ok(report.skipped.len() + report.hash_mismatch.len())
     }
 
     /// Replace only the catalog of the package's remote, keeping its bucket,
@@ -785,6 +791,8 @@ pub trait LockedOps: Send + Sync + Sized {
         paths: &[PathBuf],
     ) -> Result<quilt::flow::InstallPathsReport, Error>;
 
+    async fn open_working_copy(&self) -> Result<quilt::flow::InstallPathsReport, Error>;
+
     async fn reset_to_latest(&self) -> Result<quilt_uri::ManifestUri, Error>;
 
     async fn push(&self) -> Result<quilt::Pushed, Error>;
@@ -852,6 +860,10 @@ impl LockedOps for quilt::LockedPackage {
         paths: &[PathBuf],
     ) -> Result<quilt::flow::InstallPathsReport, Error> {
         Ok(quilt::LockedPackage::install_paths(self, paths).await?)
+    }
+
+    async fn open_working_copy(&self) -> Result<quilt::flow::InstallPathsReport, Error> {
+        Ok(quilt::LockedPackage::open_working_copy(self, None).await?)
     }
 
     async fn reset_to_latest(&self) -> Result<quilt_uri::ManifestUri, Error> {
@@ -940,6 +952,10 @@ impl LockedOps for quilt_uri::Namespace {
 
     async fn install_paths(&self, _: &[PathBuf]) -> Result<quilt::flow::InstallPathsReport, Error> {
         unreachable!("a mocked model sets its own install")
+    }
+
+    async fn open_working_copy(&self) -> Result<quilt::flow::InstallPathsReport, Error> {
+        unreachable!("a mocked model sets its own open")
     }
 
     async fn reset_to_latest(&self) -> Result<quilt_uri::ManifestUri, Error> {
