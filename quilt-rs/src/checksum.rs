@@ -26,6 +26,11 @@ use crate::object_hash::Sha256Hash;
 /// `algorithm`. An algorithm this crate doesn't know hashes as SHA-256
 /// chunked, the default.
 ///
+/// `size` is the reader's length, not a limit. SHA-256 chunked uses it for its
+/// part boundaries and reads that many bytes; SHA-256 and CRC64 ignore it and
+/// read until the reader ends, so give them a reader that ends where the
+/// object does.
+///
 /// The one place an algorithm code picks a hasher, shared by a file on disk
 /// ([`hash_file`]) and by bytes still streaming in (`flow::read_object`), so
 /// both always agree on a row's hash.

@@ -191,7 +191,12 @@ fn pump(mut body: ByteStream, check: Option<Check>) -> ObjectBody {
         };
         let mut streamed: u64 = 0;
         loop {
-            match body.try_next().await {
+            // A dropped reader stops the fetch at once, not at the next chunk.
+            let next = tokio::select! {
+                () = tx.closed() => return,
+                next = body.try_next() => next,
+            };
+            match next {
                 Ok(Some(chunk)) => {
                     streamed += chunk.len() as u64;
                     if let Some(open) = pipe.as_mut()
@@ -255,6 +260,9 @@ mod tests {
     use aws_smithy_types::body::SdkBody;
     use std::collections::VecDeque;
     use std::path::Path;
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::atomic::Ordering;
 
     use crate::checksum::hash_file;
     use crate::io::remote::mocks::MockRemote;
@@ -605,11 +613,22 @@ mod tests {
         inner: MockRemote,
         parts: Vec<bytes::Bytes>,
         then_fail: bool,
+        /// Never ends, and sets this when the body is dropped.
+        stall_until_dropped: Option<Arc<AtomicBool>>,
     }
 
     struct PiecesBody {
         pieces: VecDeque<bytes::Bytes>,
         then_fail: bool,
+        stalled: Option<Arc<AtomicBool>>,
+    }
+
+    impl Drop for PiecesBody {
+        fn drop(&mut self) {
+            if let Some(dropped) = &self.stalled {
+                dropped.store(true, Ordering::SeqCst);
+            }
+        }
     }
 
     impl http_body::Body for PiecesBody {
@@ -622,6 +641,9 @@ mod tests {
         ) -> Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
             if let Some(piece) = self.pieces.pop_front() {
                 return Poll::Ready(Some(Ok(http_body::Frame::data(piece))));
+            }
+            if self.stalled.is_some() {
+                return Poll::Pending;
             }
             if std::mem::take(&mut self.then_fail) {
                 let broken = std::io::Error::new(std::io::ErrorKind::ConnectionReset, "reset");
@@ -645,6 +667,7 @@ mod tests {
             let body = PiecesBody {
                 pieces: self.parts.iter().cloned().collect(),
                 then_fail: self.then_fail,
+                stalled: self.stall_until_dropped.clone(),
             };
             Ok(crate::io::remote::RemoteObjectStream {
                 body: ByteStream::new(SdkBody::from_body_1_x(body)),
@@ -716,6 +739,7 @@ mod tests {
                 inner: source,
                 parts: in_pieces(&contents, 7_001),
                 then_fail: false,
+                stall_until_dropped: None,
             };
 
             let mut stream = read_object(
@@ -755,6 +779,7 @@ mod tests {
                 inner: source,
                 parts: pieces,
                 then_fail: true,
+                stall_until_dropped: None,
             };
 
             let mut stream = read_object(
@@ -782,6 +807,50 @@ mod tests {
                 !matches!(failure, Error::Checksum(_)),
                 "algorithm {algorithm:#x}: {failure:?}"
             );
+        }
+        Ok(())
+    }
+
+    /// Dropping the stream while the remote has nothing more to send releases
+    /// the fetch then, without waiting for a chunk that may never come.
+    #[test(tokio::test)]
+    async fn dropping_the_stream_stops_a_stalled_fetch() -> Res {
+        let contents = body(20_000);
+        for algorithm in ALGORITHMS {
+            let source = MockRemote::default();
+            let row = row_of(&source.storage, &contents, algorithm).await?;
+            let released = Arc::new(AtomicBool::new(false));
+            let remote = Pieces {
+                inner: source,
+                parts: in_pieces(&contents, 10_000),
+                then_fail: false,
+                stall_until_dropped: Some(Arc::clone(&released)),
+            };
+            let mut stream = read_object(
+                &remote.inner.storage,
+                &remote,
+                None,
+                None,
+                &row,
+                ReadOptions::default(),
+            )
+            .await?;
+            // The two chunks arrive, then the remote stalls.
+            for _ in 0..2 {
+                assert!(stream.next().await.is_some());
+            }
+            assert!(!released.load(Ordering::SeqCst));
+
+            drop(stream);
+
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while !released.load(Ordering::SeqCst) {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "algorithm {algorithm:#x}: the fetch outlived its reader"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
         }
         Ok(())
     }
