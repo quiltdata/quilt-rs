@@ -46,7 +46,8 @@ managed working folder:
 
 - `flow::push_files` uploads rows from files or bytes the caller supplies, and
   publishes the manifest. A row with no hash gets S3's checksum of the host's
-  configured type; a row that already carries a real hash keeps it, and the
+  configured type (sha2-256-chunked unless the host enables `crc64Checksums`,
+  the preferred direction); a row that already carries a real hash keeps it, and the
   upload is an error unless the bytes hash to it. `latest` moves to the new
   revision only if it still names the revision the push was built on when read
   just before the tag write, or names nothing. That read and the write are two

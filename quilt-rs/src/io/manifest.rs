@@ -277,7 +277,9 @@ async fn file_stat(
 /// What the row's `hash` means decides the checksum type:
 ///
 /// - A row with no hash, [`ObjectHash::default`], was never hashed, so its
-///   bytes are uploaded with the host's configured checksum type and S3's
+///   bytes are uploaded with the host's configured checksum type
+///   (sha2-256-chunked unless the host enables `crc64Checksums`, the preferred
+///   direction) and S3's
 ///   checksum becomes the row's hash.
 /// - A row that already carries a real hash, such as one quilt3 computed in
 ///   memory, keeps it, with its labeled type. The bytes are uploaded with that

@@ -50,7 +50,8 @@ pub struct PushTarget {
 ///    themselves ([`RowContent`]). The row's own `physical_key` is ignored and
 ///    its `size` is measured from the content. Its `hash` decides the checksum:
 ///    a row with no hash ([`ObjectHash::default`](crate::object_hash::ObjectHash))
-///    gets S3's checksum of the host's configured type; a row that already
+///    gets S3's checksum of the host's configured type (sha2-256-chunked unless
+///    the host enables `crc64Checksums`, which is the preferred direction); a row that already
 ///    carries a real hash, such as one quilt3 computed in memory, keeps it with
 ///    its labeled type, and the upload is an error unless the bytes hash to it.
 /// 2. A `file://` `physical_key`, uploaded as `push` does.
