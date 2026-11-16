@@ -174,8 +174,9 @@ pub(crate) fn normalized_entry_meta(meta: Option<&serde_json::Value>) -> serde_j
     value
 }
 
-/// Whether two rows' `meta` are one to the top hash: the same value, and the
-/// same integers beyond 64 bits, as [`normalized_entry_meta`] reads them.
+/// Whether two rows' `meta` are one to the top hash: the same text, as
+/// [`normalized_entry_meta`] reads them, so integers beyond 64 bits count by
+/// their digits and `-0.0` is not `0.0`.
 pub(crate) fn same_entry_meta(a: &ManifestRow, b: &ManifestRow) -> bool {
     let (meta_a, meta_b) = (
         normalized_entry_meta(a.meta.as_ref()),
@@ -183,9 +184,6 @@ pub(crate) fn same_entry_meta(a: &ManifestRow, b: &ManifestRow) -> bool {
     );
     if meta_a != meta_b {
         return false;
-    }
-    if a.meta_numbers.is_empty() && b.meta_numbers.is_empty() {
-        return true;
     }
     let text = |meta: &serde_json::Value, row: &ManifestRow| {
         let mut out = String::new();
@@ -303,6 +301,10 @@ mod tests {
             &a,
             &row(r#"{"n": 1.8446744073709552e19}"#)?
         ));
+        // `serde_json` cannot tell `-0.0` from `0.0`; the top hash can.
+        let (zero, negative) = (row(r#"{"z": 0.0}"#)?, row(r#"{"z": -0.0}"#)?);
+        assert_eq!(zero.meta, negative.meta);
+        assert!(!same_entry_meta(&zero, &negative));
         Ok(())
     }
 
