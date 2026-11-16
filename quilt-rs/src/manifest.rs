@@ -40,6 +40,8 @@ pub struct ManifestHeader {
     #[serde(skip_serializing_if = "Option::is_none")] // Attempt to be quilt3-compatible.
     pub user_meta: Option<serde_json::Value>,
     /// The integers in `user_meta` beyond 64 bits, as read; see [`RawNumbers`].
+    /// Not serialized, so serde output such as the CLI's JSON has them as
+    /// floats; compared by `PartialEq`.
     #[serde(skip)]
     pub user_meta_numbers: RawNumbers,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -153,6 +155,8 @@ pub struct ManifestRow {
     pub size: u64,
     pub meta: Option<serde_json::Value>,
     /// The integers in `meta` beyond 64 bits, as read; see [`RawNumbers`].
+    /// Not serialized, so serde output such as the CLI's JSON has them as
+    /// floats; compared by `PartialEq`.
     #[serde(skip)]
     pub meta_numbers: RawNumbers,
 }

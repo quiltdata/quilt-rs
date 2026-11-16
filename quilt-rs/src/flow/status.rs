@@ -357,6 +357,7 @@ pub async fn rehash_changes(
                     .map(Change::Modified),
                 None => Some(Change::Modified(ManifestRow {
                     meta: current.meta,
+                    meta_numbers: current.meta_numbers,
                     ..calculate_hash(storage, &path, &logical_key, host_config).await?
                 })),
             },
@@ -1484,6 +1485,42 @@ mod tests {
         .await?;
         assert_ne!(stale, status.changes);
         assert_eq!(status.changes, package.walk_without_cache().await?);
+        Ok(())
+    }
+
+    /// A modified row the manifest does not have is rehashed whole, but its
+    /// `meta` stays as it was, big integers included.
+    #[test(tokio::test)]
+    async fn rehash_changes_keeps_the_meta_numbers_of_a_row_the_manifest_lacks()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let package = CachedPackage::new().await?;
+        std::fs::write(package.path("new.txt"), b"x")?;
+        let (meta, meta_numbers) =
+            crate::manifest::RawNumbers::parse(r#"{"n": 18446744073709551617}"#)?;
+        let current = ManifestRow {
+            meta: Some(meta.clone()),
+            meta_numbers: meta_numbers.clone(),
+            ..ManifestRow::default()
+        };
+        let status = InstalledPackageStatus {
+            changes: ChangeSet::from([(PathBuf::from("new.txt"), Change::Modified(current))]),
+            ..InstalledPackageStatus::default()
+        };
+
+        let status = rehash_changes(
+            &package.storage,
+            &Manifest::default(),
+            package.home.path(),
+            status,
+            &HostConfig::default(),
+        )
+        .await?;
+
+        let Some(Change::Modified(row)) = status.changes.get(Path::new("new.txt")) else {
+            panic!("{:?}", status.changes);
+        };
+        assert_eq!(row.meta, Some(meta));
+        assert_eq!(row.meta_numbers, meta_numbers);
         Ok(())
     }
 

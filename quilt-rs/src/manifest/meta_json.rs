@@ -22,8 +22,18 @@ use super::top_hasher::write_hash_string;
 ///
 /// Only numbers that `serde_json::Value` would hold wrongly are kept, so this
 /// is empty for nearly every manifest. A kept number applies only while the
-/// value at its place is still the float it was read as, so a value edited
-/// after reading never gets stale text.
+/// value at its place is still a float equal to the one it was read as, so a
+/// value edited after reading never gets stale text. The guard is f64
+/// equality: replacing the number with another that is the same float (the
+/// neighbouring integer, or `1.8446744073709552e19` for `18446744073709551616`)
+/// keeps the old text.
+///
+/// `ManifestRow` and `ManifestHeader` compare their `RawNumbers` in
+/// `PartialEq`, so two rows whose values are the same float but whose kept
+/// text differs are different rows. They are not serialized: a `Manifest`
+/// written through serde, such as the CLI's JSON output, has those numbers as
+/// floats. [`Manifest::to_jsonlines`](super::Manifest::to_jsonlines) is the
+/// writer that keeps them.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RawNumbers(BTreeMap<String, String>);
 
@@ -42,42 +52,46 @@ impl RawNumbers {
     /// The text is not JSON.
     pub fn parse(text: &str) -> Result<(Value, Self), serde_json::Error> {
         let mut value: Value = serde_json::from_str(text)?;
-        let numbers = Self::take(&mut value, "", text);
+        let numbers = if holds_float(&value) {
+            Self::take(&mut value, Scanner::new(text).scan_all())
+        } else {
+            Self::default()
+        };
         Ok((value, numbers))
     }
 
     /// The numbers kept for the value under `key` in the JSON object `line`,
     /// once `value` has been read from it; `-0` in `value` becomes `0`.
+    ///
+    /// Both a whole number beyond 64 bits and `-0` are floats in `value`, so
+    /// a value with no float needs no second look at the text; otherwise only
+    /// the text of `key`'s value is scanned.
     pub(crate) fn read(value: &mut Value, line: &str, key: &str) -> Self {
-        Self::take(value, &pointer_to(key), line)
+        if holds_float(value) {
+            Self::take(value, Scanner::new(line).scan_key(key))
+        } else {
+            Self::default()
+        }
     }
 
-    fn take(value: &mut Value, prefix: &str, text: &str) -> Self {
+    /// Keep the scanned integers that are what `value` holds, and turn the
+    /// `-0` it holds into `0`.
+    fn take(value: &mut Value, found: BTreeMap<String, String>) -> Self {
         let mut kept = BTreeMap::new();
-        if !may_hold_unrepresentable(text) {
-            return Self(kept);
-        }
-        for (pointer, number) in scan(text) {
-            let Some(relative) = pointer.strip_prefix(prefix) else {
-                continue;
-            };
-            if !(relative.is_empty() || relative.starts_with('/')) {
-                continue;
-            }
+        for (pointer, number) in found {
             if number == "-0" {
-                if let Some(slot) = value.pointer_mut(relative)
+                if let Some(slot) = value.pointer_mut(&pointer)
                     && slot
                         .as_f64()
                         .is_some_and(|f| f == 0.0 && f.is_sign_negative())
                 {
                     *slot = Value::from(0);
                 }
-            } else if let Some(Value::Number(n)) = value.pointer(relative)
+            } else if let Some(Value::Number(n)) = value.pointer(&pointer)
                 && n.is_f64()
                 && number.parse::<f64>().ok() == n.as_f64()
             {
-                // Not the text of a key that a later one of the same name replaced.
-                kept.insert(relative.to_string(), number);
+                kept.insert(pointer, number);
             }
         }
         Self(kept)
@@ -188,52 +202,137 @@ fn escape_pointer(key: &str) -> String {
     key.replace('~', "~0").replace('/', "~1")
 }
 
-fn pointer_to(key: &str) -> String {
-    format!("/{}", escape_pointer(key))
-}
-
-/// Whether `text` could hold an integer beyond 64 bits (a run of nineteen
-/// digits) or a `-0`; only then is it worth parsing again.
-fn may_hold_unrepresentable(text: &str) -> bool {
-    if text.contains("-0") {
-        return true;
+/// Whether `value` holds a float: where `serde_json` puts a whole number
+/// beyond 64 bits and `-0`.
+fn holds_float(value: &Value) -> bool {
+    match value {
+        Value::Number(n) => n.is_f64(),
+        Value::Array(items) => items.iter().any(holds_float),
+        Value::Object(map) => map.values().any(holds_float),
+        _ => false,
     }
-    let mut run = 0;
-    for byte in text.bytes() {
-        if byte.is_ascii_digit() {
-            run += 1;
-            if run >= 19 {
-                return true;
-            }
-        } else {
-            run = 0;
-        }
-    }
-    false
 }
 
-/// Every integer in the JSON `text` that is `-0` or outside the 64-bit range,
-/// as its JSON pointer and its text. The text is JSON `serde_json` has read,
-/// so a malformed one just ends the scan.
-fn scan(text: &str) -> Vec<(String, String)> {
-    let mut scanner = Scanner {
-        text,
-        pos: 0,
-        pointer: String::new(),
-        found: Vec::new(),
-    };
-    let _ = scanner.value();
-    scanner.found
-}
-
+/// A scan of JSON text for the integers `serde_json::Value` holds wrongly:
+/// `-0` and those outside the 64-bit range, by JSON pointer.
+///
+/// The text at a place is what its last occurrence is, as in `serde_json` and
+/// Python: a later key of the same name drops what an earlier one kept.
 struct Scanner<'a> {
     text: &'a str,
     pos: usize,
     pointer: String,
-    found: Vec<(String, String)>,
+    found: BTreeMap<String, String>,
 }
 
-impl Scanner<'_> {
+impl<'a> Scanner<'a> {
+    fn new(text: &'a str) -> Self {
+        Scanner {
+            text,
+            pos: 0,
+            pointer: String::new(),
+            found: BTreeMap::new(),
+        }
+    }
+
+    /// Every such integer in the text, which is JSON that `serde_json` has
+    /// read; a malformed text just ends the scan.
+    fn scan_all(mut self) -> BTreeMap<String, String> {
+        let _ = self.value();
+        self.found
+    }
+
+    /// Those in the value of `key` in the JSON object that is the text, by
+    /// pointer within that value. The other values are skipped, not read.
+    fn scan_key(mut self, key: &str) -> BTreeMap<String, String> {
+        if let Some(start) = self.seek_key(key) {
+            self.pos = start;
+            let _ = self.value();
+        }
+        self.found
+    }
+
+    /// Where the last value of `key` starts in the object that is the text.
+    fn seek_key(&mut self, key: &str) -> Option<usize> {
+        self.skip_space();
+        if self.peek()? != b'{' {
+            return None;
+        }
+        self.pos += 1;
+        let mut start = None;
+        loop {
+            self.skip_space();
+            if self.peek()? == b'}' {
+                return start;
+            }
+            let raw = self.string()?;
+            let is_key = if raw.contains('\\') {
+                serde_json::from_str::<String>(raw).ok()? == key
+            } else {
+                raw.get(1..raw.len() - 1) == Some(key)
+            };
+            self.skip_space();
+            if self.peek()? != b':' {
+                return None;
+            }
+            self.pos += 1;
+            self.skip_space();
+            if is_key {
+                start = Some(self.pos);
+            }
+            self.skip_value()?;
+            self.skip_space();
+            match self.peek()? {
+                b',' => self.pos += 1,
+                b'}' => return start,
+                _ => return None,
+            }
+        }
+    }
+
+    /// Past the value at the position, whatever it is.
+    fn skip_value(&mut self) -> Option<()> {
+        match self.peek()? {
+            b'"' => self.string().map(drop),
+            b'{' | b'[' => {
+                let mut depth = 0_usize;
+                loop {
+                    match self.peek()? {
+                        b'"' => {
+                            self.string()?;
+                        }
+                        b'{' | b'[' => {
+                            depth += 1;
+                            self.pos += 1;
+                        }
+                        b'}' | b']' => {
+                            depth -= 1;
+                            self.pos += 1;
+                            if depth == 0 {
+                                return Some(());
+                            }
+                        }
+                        _ => self.pos += 1,
+                    }
+                }
+            }
+            _ => {
+                while !matches!(self.peek()?, b',' | b'}' | b']') {
+                    self.pos += 1;
+                }
+                Some(())
+            }
+        }
+    }
+
+    /// A value starts at the current place: whatever was kept for the place
+    /// is not its value any more.
+    fn start_value(&mut self) {
+        if !self.found.is_empty() {
+            self.found.remove(&self.pointer);
+        }
+    }
+
     fn peek(&self) -> Option<u8> {
         self.text.as_bytes().get(self.pos).copied()
     }
@@ -245,7 +344,7 @@ impl Scanner<'_> {
     }
 
     /// The quoted string at the position, raw, and past it.
-    fn string(&mut self) -> Option<&str> {
+    fn string(&mut self) -> Option<&'a str> {
         let start = self.pos;
         self.pos += 1;
         loop {
@@ -263,6 +362,7 @@ impl Scanner<'_> {
 
     fn value(&mut self) -> Option<()> {
         self.skip_space();
+        self.start_value();
         match self.peek()? {
             b'{' => self.object(),
             b'[' => self.array(),
@@ -346,7 +446,7 @@ impl Scanner<'_> {
         let is_integer = token.bytes().all(|b| b == b'-' || b.is_ascii_digit());
         let fits = token.parse::<i64>().is_ok() || token.parse::<u64>().is_ok();
         if is_integer && (token == "-0" || !fits) {
-            self.found.push((self.pointer.clone(), token.to_string()));
+            self.found.insert(self.pointer.clone(), token.to_string());
         }
         Some(())
     }
@@ -424,6 +524,67 @@ mod tests {
             let (value, numbers) = RawNumbers::parse(text).unwrap();
             assert_eq!(written(&value, &numbers, Style::Hash), expected, "{text}");
         }
+    }
+
+    /// Each pair is what Python's `json.loads` and `json.dumps(sort_keys=True,
+    /// separators=(",", ":"))` give for the text.
+    #[test]
+    fn the_last_occurrence_decides_what_is_kept_whatever_it_is() {
+        for (text, expected) in [
+            (
+                r#"{"a":18446744073709551617,"a":1.8446744073709552e19}"#,
+                r#"{"a":1.8446744073709552e+19}"#,
+            ),
+            (
+                r#"{"a":1.8446744073709552e19,"a":18446744073709551617}"#,
+                r#"{"a":18446744073709551617}"#,
+            ),
+            (
+                r#"{"a":18446744073709551617,"a":{"b":1}}"#,
+                r#"{"a":{"b":1}}"#,
+            ),
+            (
+                r#"{"a":{"b":18446744073709551617},"a":{"c":1}}"#,
+                r#"{"a":{"c":1}}"#,
+            ),
+            (r#"{"a":-0,"a":-0.0}"#, r#"{"a":-0.0}"#),
+            (r#"{"a":-0.0,"a":-0}"#, r#"{"a":0}"#),
+            (
+                r#"{"o":{"n":18446744073709551617,"f":1.5},"o":{"n":2.5e19,"f":1.5}}"#,
+                r#"{"o":{"f":1.5,"n":2.5e+19}}"#,
+            ),
+            (
+                r#"{"o":{"n":18446744073709551617,"f":1.5},"o":{"f":1.5}}"#,
+                r#"{"o":{"f":1.5}}"#,
+            ),
+            (
+                r#"{"a":[18446744073709551617,1.5],"a":[1.5,18446744073709551617]}"#,
+                r#"{"a":[1.5,18446744073709551617]}"#,
+            ),
+        ] {
+            let (value, numbers) = RawNumbers::parse(text).unwrap();
+            assert_eq!(written(&value, &numbers, Style::Hash), expected, "{text}");
+        }
+    }
+
+    /// The same, found in a manifest line by key, with text around the key
+    /// that looks like the key, a string and a brace.
+    #[test]
+    fn a_line_is_read_by_its_last_meta_key_and_nothing_in_strings() {
+        let line = r#"{"logical_key": "q\"} \"meta\": {\"x\": -0}", "meta": {"n": 18446744073709551617, "f": 1.5}, "size": 1, "meta": {"n": 1.8446744073709552e19, "f": 1.5, "s": "-0}"}}"#;
+        let mut parsed: Value = serde_json::from_str(line).unwrap();
+        let mut meta = parsed["meta"].take();
+        let numbers = RawNumbers::read(&mut meta, line, "meta");
+        assert!(numbers.is_empty(), "{numbers:?}");
+
+        let line = r#"{"logical_key": "q\"} \"meta\": {\"x\": -0}", "meta": {"f": 1.5}, "size": 1, "meta": {"n": 18446744073709551617, "f": 1.5, "s": "-0}"}}"#;
+        let mut parsed: Value = serde_json::from_str(line).unwrap();
+        let mut meta = parsed["meta"].take();
+        let numbers = RawNumbers::read(&mut meta, line, "meta");
+        assert_eq!(
+            numbers.0,
+            BTreeMap::from([("/n".to_string(), "18446744073709551617".to_string())])
+        );
     }
 
     /// A number only applies while the value is still the float it was read as.

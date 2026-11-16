@@ -968,7 +968,7 @@ mod tests {
             physical_key: "s3://bucket/test1.txt".to_string(),
             hash: Sha256ChunkedHash::try_from(objects::ZERO_HASH_B64)?.into(),
             size: 0,
-            meta: Some(serde_json::json!({})), // Empty object,
+            meta: Some(serde_json::json!({})), // Empty object
             meta_numbers: crate::manifest::RawNumbers::default(),
         };
 
@@ -977,7 +977,7 @@ mod tests {
             physical_key: "s3://bucket/test2.txt".to_string(),
             hash: Sha256ChunkedHash::try_from(objects::LESS_THAN_8MB_HASH_B64)?.into(),
             size: 16,
-            meta: Some(serde_json::json!({"alpha": "first", "beta": "second"})), // Keys in alphabetical order,
+            meta: Some(serde_json::json!({"alpha": "first", "beta": "second"})), // Keys in alphabetical order
             meta_numbers: crate::manifest::RawNumbers::default(),
         };
 
@@ -995,7 +995,7 @@ mod tests {
             physical_key: "s3://bucket/test1.txt".to_string(),
             hash: Sha256ChunkedHash::try_from(objects::ZERO_HASH_B64)?.into(),
             size: 0,
-            meta: Some(serde_json::Value::Null), // Null becomes {},
+            meta: Some(serde_json::Value::Null), // Null becomes {}
             meta_numbers: crate::manifest::RawNumbers::default(),
         };
 
@@ -1004,7 +1004,7 @@ mod tests {
             physical_key: "s3://bucket/test2.txt".to_string(),
             hash: Sha256ChunkedHash::try_from(objects::LESS_THAN_8MB_HASH_B64)?.into(),
             size: 16,
-            meta: Some(serde_json::json!({"beta": "second", "alpha": "first"})), // Keys in different order,
+            meta: Some(serde_json::json!({"beta": "second", "alpha": "first"})), // Keys in different order
             meta_numbers: crate::manifest::RawNumbers::default(),
         };
 
@@ -1022,7 +1022,7 @@ mod tests {
             physical_key: "s3://bucket/test1.txt".to_string(),
             hash: Sha256ChunkedHash::try_from(objects::ZERO_HASH_B64)?.into(),
             size: 0,
-            meta: None, // None becomes {},
+            meta: None, // None becomes {}
             meta_numbers: crate::manifest::RawNumbers::default(),
         };
 
@@ -1031,7 +1031,7 @@ mod tests {
             physical_key: "s3://bucket/test2.txt".to_string(),
             hash: Sha256ChunkedHash::try_from(objects::LESS_THAN_8MB_HASH_B64)?.into(),
             size: 16,
-            meta: Some(serde_json::json!({"beta": "second", "alpha": "first"})), // Same as above after normalization,
+            meta: Some(serde_json::json!({"beta": "second", "alpha": "first"})), // Same as above after normalization
             meta_numbers: crate::manifest::RawNumbers::default(),
         };
 
