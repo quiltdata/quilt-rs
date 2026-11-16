@@ -778,7 +778,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
         // Installing into a recreated, empty folder would leave the tracked
         // files it lost to read as removed.
-        if !lineage.paths.is_empty() && !self.storage.exists(&package_home).await {
+        if !lineage.paths.is_empty() && self.storage.read_dir(&package_home).await.is_err() {
             return Err(Error::PackageOp(PackageOpError::WorkingCopyUnavailable(
                 package_home,
             )));

@@ -258,6 +258,13 @@ async fn swap_staged_into_place(
 ) -> Res {
     protect.check_removals(storage, working_dir).await?;
     if let Protect::Absent = protect {
+        // The folder can go missing while the files are fetched, and a rename
+        // would recreate it holding only these, so the tracked rest read as removed.
+        if !lineage.paths.is_empty() && storage.read_dir(working_dir).await.is_err() {
+            return Err(Error::PackageOp(PackageOpError::WorkingCopyUnavailable(
+                working_dir.to_path_buf(),
+            )));
+        }
         return place_where_absent(storage, staged, lineage).await;
     }
     for (staged_path, working_dest, row) in staged {
@@ -762,6 +769,30 @@ mod tests {
     // Verify installing the path that is already fetched to the `.quilt/objects`
     // Practically it is useful when we try to install identical files. Then we can re-use cache (because files are located by hash).
     // In other cases, it tests implementation details.
+    /// A folder that vanished while the files were fetched is not recreated
+    /// holding only them: the tracked files it lost would read as removed.
+    #[test(tokio::test)]
+    async fn test_swap_refuses_a_folder_that_went_missing_during_the_fetch() -> Res {
+        let storage = MockStorage::default();
+        let working_dir = storage.temp_dir.as_ref().join("gone");
+        let mut lineage = PackageLineage::default();
+        lineage
+            .paths
+            .insert(PathBuf::from("tracked.txt"), PathState::default());
+
+        let error =
+            swap_staged_into_place(&storage, &[], &working_dir, &Protect::Absent, &mut lineage)
+                .await;
+
+        assert!(matches!(
+            error,
+            Err(Error::PackageOp(PackageOpError::WorkingCopyUnavailable(named)))
+                if named == working_dir
+        ));
+        assert!(!working_dir.exists());
+        Ok(())
+    }
+
     #[test(tokio::test)]
     async fn test_installing_one_cached_path() -> Res {
         let (home, _temp_dir1) = Home::from_temp_dir()?;
