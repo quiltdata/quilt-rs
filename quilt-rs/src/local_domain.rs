@@ -104,12 +104,17 @@ impl LocalDomain {
 }
 
 impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
-    /// A domain over `paths` with the given storage and remote, for tests
-    /// that drive it against a mock.
+    /// A domain over `paths` with the given lineage, storage and remote, for
+    /// tests that drive it against a mock.
     #[cfg(test)]
-    pub(crate) fn with_parts(paths: paths::DomainPaths, storage: S, remote: Arc<R>) -> Self {
+    pub(crate) fn with_parts(
+        paths: paths::DomainPaths,
+        lineage: lineage::DomainLineageIo,
+        storage: S,
+        remote: Arc<R>,
+    ) -> Self {
         Self {
-            lineage: lineage::DomainLineageIo::new(paths.lineage()),
+            lineage,
             paths,
             storage,
             remote,
@@ -516,14 +521,9 @@ mod tests {
         let temp_dir = TempDir::new()?;
         let domain = LocalDomain::new(temp_dir.path());
         domain.set_home(temp_dir.path()).await?;
-        let folder = domain
-            .paths
-            .lineage()
-            .parent()
-            .expect("a folder")
-            .to_path_buf();
+        let folder = domain.paths.dot_quilt_dir();
         std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o000))?;
-        let readable = std::fs::read(domain.paths.lineage()).is_ok();
+        let readable = std::fs::read_dir(&folder).is_ok();
 
         let result = domain.stored_home().await;
 
