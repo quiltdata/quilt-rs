@@ -28,8 +28,9 @@ const BASE_HASH: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 /// A local commit at `hash` with none before it.
 fn pending_commit(hash: &str) -> CommitState {
     CommitState {
+        timestamp: "2024-01-01T00:00:00Z".parse().expect("a timestamp"),
         hash: hash.to_string(),
-        ..CommitState::default()
+        prev_hashes: Vec::new(),
     }
 }
 

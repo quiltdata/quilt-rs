@@ -39,9 +39,9 @@ async fn published(
         .await?;
     let lineage = PackageLineage {
         commit: Some(CommitState {
+            timestamp: "2024-01-01T00:00:00Z".parse().expect("a timestamp"),
             hash: HASH.to_string(),
             prev_hashes: vec!["older".to_string()],
-            ..CommitState::default()
         }),
         ..PackageLineage::from(ManifestUri {
             bucket: "bkt".to_string(),

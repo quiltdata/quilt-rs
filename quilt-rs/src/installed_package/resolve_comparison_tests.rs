@@ -70,9 +70,9 @@ async fn diverged_over<R: Remote>(
         .await?;
     let lineage = PackageLineage {
         commit: Some(CommitState {
+            timestamp: "2024-01-01T00:00:00Z".parse().expect("a timestamp"),
             hash: "local-2".to_string(),
             prev_hashes: vec!["local-1".to_string()],
-            ..CommitState::default()
         }),
         remote_uri,
         base_hash: BASE_REV.to_string(),
