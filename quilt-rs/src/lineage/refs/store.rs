@@ -363,9 +363,9 @@ impl RefStore {
                 .change_tip(storage, namespace, tip.as_ref(), fresh, had_tip)
                 .await
         {
-            // The tip left is one for another bucket, which the new ref ignores.
             warn!("❌ Could not cache the tip of {namespace}: {err}");
-            tip = None;
+            // The ref reads whatever tip is left; the hook is told that one.
+            tip = self.read_tip(storage, namespace).await;
         }
         Ok(changed.then(|| new_ref.into_lineage(tip.as_ref())))
     }
