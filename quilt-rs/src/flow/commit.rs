@@ -350,8 +350,14 @@ pub async fn commit_package(
 
     let stream = tokio_stream::iter(vec![Ok(all_rows)]);
     let dest_dir = paths.installed_manifests_dir(&namespace);
-    let (manifest_path, new_top_hash) =
-        build_manifest_from_rows_stream(storage, dest_dir, header, stream).await?;
+    let (manifest_path, new_top_hash) = build_manifest_from_rows_stream(
+        storage,
+        dest_dir,
+        header,
+        manifest.dir_meta.clone(),
+        stream,
+    )
+    .await?;
     info!(
         "✔️New manifest with {} was built in {}",
         manifest_path.display(),
@@ -1117,6 +1123,100 @@ mod tests {
         assert_eq!(
             empty_remote.get_object_count(config_uri.to_string().as_str()),
             0
+        );
+        Ok(())
+    }
+
+    /// A commit keeps the folders' metadata of the manifest it builds on, and
+    /// leaves it out of the top hash, so the hash is the one of the same
+    /// package without it.
+    #[test(tokio::test)]
+    async fn a_commit_keeps_the_folder_metadata() -> Res {
+        let dir_meta = vec![crate::manifest::DirMeta {
+            logical_key: crate::LogicalKey::new("data")?,
+            meta: serde_json::json!({"owner": "team"}),
+        }];
+        let paths = DomainPaths::new(std::path::absolute("/foo")?);
+        let namespace: Namespace = ("foo", "bar").into();
+        let mut hashes = Vec::new();
+        for dir_meta in [dir_meta.clone(), Vec::new()] {
+            let storage = MockStorage::default();
+            let (_, committed) = commit_package(
+                PackageLineage::default(),
+                &mut Manifest {
+                    dir_meta,
+                    ..Manifest::default()
+                },
+                &paths,
+                &storage,
+                &MockRemote::default(),
+                None,
+                PathBuf::default(),
+                InstalledPackageStatus::default(),
+                namespace.clone(),
+                "Lorem ipsum".to_string(),
+                UserMeta::Keep,
+                None,
+            )
+            .await?;
+            let hash = committed.hash().expect("a commit").to_string();
+            let written =
+                Manifest::from_path(&storage, &paths.installed_manifest(&namespace, &hash)).await?;
+            hashes.push((hash, written.dir_meta));
+        }
+        assert_eq!(hashes[0], (hashes[1].0.clone(), dir_meta));
+        assert_eq!(hashes[1].1, []);
+        Ok(())
+    }
+
+    /// quilt3 refuses `Package.set` of a file at a key that is already a
+    /// folder (`Cannot overwrite directory 'a' with PackageEntry`). A commit
+    /// whose carried folder metadata would clash with a new file does the
+    /// same, with `FileAndFolder`, and does not panic.
+    #[test(tokio::test)]
+    async fn a_commit_onto_a_clashing_folder_refuses_and_does_not_panic() -> Res {
+        let storage = MockStorage::default();
+        storage
+            .write_byte_stream(
+                std::path::absolute("/working-dir/a")?,
+                ByteStream::default(),
+            )
+            .await?;
+        let added = ManifestRow {
+            logical_key: crate::LogicalKey::new("a")?,
+            ..ManifestRow::default()
+        };
+        let status = InstalledPackageStatus {
+            changes: BTreeMap::from([(PathBuf::from("a"), Change::Added(added))]),
+            ..InstalledPackageStatus::default()
+        };
+        let mut manifest = Manifest {
+            dir_meta: vec![crate::manifest::DirMeta {
+                logical_key: crate::LogicalKey::new("a")?,
+                meta: serde_json::json!({"owner": "team"}),
+            }],
+            ..Manifest::default()
+        };
+        let paths = DomainPaths::new(std::path::absolute("/foo")?);
+        let err = commit_package(
+            PackageLineage::default(),
+            &mut manifest,
+            &paths,
+            &storage,
+            &MockRemote::default(),
+            None,
+            std::path::absolute("/working-dir")?,
+            status,
+            ("foo", "bar").into(),
+            "Lorem ipsum".to_string(),
+            UserMeta::Keep,
+            None,
+        )
+        .await
+        .expect_err("a file and folder of the same name must refuse");
+        assert!(
+            matches!(&err, Error::Manifest(ManifestError::FileAndFolder(key)) if key == "a"),
+            "{err}"
         );
         Ok(())
     }

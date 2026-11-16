@@ -35,7 +35,10 @@ async fn fetch_and_cache(
     debug!("✔️ Fetched JSONL manifest");
 
     storage
-        .write_byte_stream(cache_path, ByteStream::from(&manifest))
+        .write_byte_stream(
+            cache_path,
+            ByteStream::from(manifest.try_to_jsonlines()?.into_bytes()),
+        )
         .await?;
     debug!("✔️ JSONL manifest written to {}", cache_path.display());
     Ok(manifest)

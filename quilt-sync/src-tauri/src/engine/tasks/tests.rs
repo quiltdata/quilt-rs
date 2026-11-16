@@ -175,6 +175,7 @@ fn manifest(meta: &Value, paths: &[&str]) -> Result<quilt::manifest::Manifest, E
                 })
             })
             .collect::<Result<_, Error>>()?,
+        dir_meta: Vec::new(),
     })
 }
 
@@ -1303,6 +1304,7 @@ fn finishing_model(
                     ..quilt::manifest::ManifestHeader::default()
                 },
                 rows: Vec::new(),
+                dir_meta: Vec::new(),
             })
         });
     model
@@ -1595,6 +1597,7 @@ fn revision(meta: Value, rows: Vec<quilt::manifest::ManifestRow>) -> quilt::mani
             ..quilt::manifest::ManifestHeader::default()
         },
         rows,
+        dir_meta: Vec::new(),
     }
 }
 
@@ -2029,6 +2032,29 @@ async fn the_rebased_outcome_keeps_latests_workflow_under_its_own_message() -> R
     let remote = remote.lock().unwrap();
     assert_eq!(remote.latest().header.workflow, switched);
     assert_eq!(remote.latest().header.message(), Some(message.as_str()));
+    Ok(())
+}
+
+/// Another writer gave a folder metadata during the run.
+#[tokio::test]
+async fn the_rebased_outcome_keeps_latests_folder_metadata() -> Result<(), Error> {
+    let fixture = Fixture::new();
+    let task = file("TASK.md", "do it")?;
+    let folder_meta = vec![quilt::manifest::DirMeta {
+        logical_key: quilt::LogicalKey::new("data")?,
+        meta: serde_json::json!({"owner": "team"}),
+    }];
+    let mut latest = revision(edited_head(), vec![task.clone()]);
+    latest.dir_meta.clone_from(&folder_meta);
+    let revisions = Revisions {
+        latest,
+        ..Revisions::new(vec![task.clone()], vec![task.clone()], Vec::new())
+    };
+
+    let remote = finish_among(&fixture, revisions).await;
+
+    let remote = remote.lock().unwrap();
+    assert_eq!(remote.latest().dir_meta, folder_meta);
     Ok(())
 }
 

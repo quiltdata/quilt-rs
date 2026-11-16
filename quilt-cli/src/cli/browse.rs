@@ -201,6 +201,7 @@ mod tests {
                     size: 42,
                     meta: None,
                 }],
+                dir_meta: Vec::new(),
             },
         };
 
@@ -224,6 +225,7 @@ mod tests {
                     workflow: None,
                 },
                 rows: Vec::new(),
+                dir_meta: Vec::new(),
             },
         };
 

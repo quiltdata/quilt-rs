@@ -242,9 +242,14 @@ pub(crate) async fn push_package_impl(
     // also why the `new_manifest_uri.hash != commit.hash` guard below does not
     // fire on a normal push.
     let dest_dir = paths.cached_manifests_dir(&manifest_uri.bucket);
-    let (cache_path, top_hash) =
-        build_manifest_from_rows_stream(storage, dest_dir, local_manifest.header.clone(), stream)
-            .await?;
+    let (cache_path, top_hash) = build_manifest_from_rows_stream(
+        storage,
+        dest_dir,
+        local_manifest.header.clone(),
+        local_manifest.dir_meta.clone(),
+        stream,
+    )
+    .await?;
     debug!(
         "✔️ Built manifest with hash {} at {}",
         top_hash,
@@ -1169,6 +1174,69 @@ mod tests {
             latest.body.collect().await?.to_vec(),
             "a".repeat(64).as_bytes()
         );
+        Ok(())
+    }
+
+    /// The folders' metadata goes up with the manifest, and the top hash, which
+    /// is the one the commit named, does not change for it.
+    #[test(tokio::test)]
+    async fn test_push_keeps_the_folder_metadata() -> Res {
+        let manifest_uri = ManifestUri {
+            bucket: "b".to_string(),
+            namespace: ("a", "c").into(),
+            hash: "__FOO__".to_string(),
+            origin: None,
+        };
+        let lineage = PackageLineage {
+            commit: Some(CommitState {
+                timestamp: chrono::Utc::now(),
+                hash: fixtures::top_hash::EMPTY_NULL_TOP_HASH.to_string(),
+                prev_hashes: Vec::new(),
+            }),
+            remote_uri: Some(manifest_uri),
+            ..PackageLineage::default()
+        };
+        let paths = paths::DomainPaths::new(std::path::absolute("/foo")?);
+        let storage = MockStorage::default();
+        let remote = MockRemote::default();
+        remote
+            .put_object(
+                None,
+                &S3Uri::try_from("s3://b/.quilt/packages/__FOO__")?,
+                br#"{"version": "v0"}"#.to_vec(),
+            )
+            .await?;
+        remote
+            .put_object(
+                None,
+                &S3Uri::try_from("s3://b/.quilt/named_packages/a/c/latest")?,
+                fixtures::top_hash::EMPTY_NULL_TOP_HASH.as_bytes().to_vec(),
+            )
+            .await?;
+        let mut manifest = Manifest::default();
+        manifest.header.user_meta = Some(serde_json::Value::Null);
+        manifest.dir_meta = vec![crate::manifest::DirMeta {
+            logical_key: crate::LogicalKey::new("data")?,
+            meta: serde_json::json!({"owner": "team"}),
+        }];
+
+        let result = push_package(
+            lineage,
+            manifest.clone(),
+            &paths,
+            &storage,
+            &remote,
+            None,
+            HostConfig::default(),
+        )
+        .await?;
+
+        assert!(result.certified_latest);
+        let cached = paths
+            .cached_manifests_dir("b")
+            .join(fixtures::top_hash::EMPTY_NULL_TOP_HASH);
+        let pushed = Manifest::from_path(&storage, &cached).await?;
+        assert_eq!(pushed.dir_meta, manifest.dir_meta);
         Ok(())
     }
 }

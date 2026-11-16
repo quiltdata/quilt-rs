@@ -10,6 +10,7 @@ pub use crate::workflow::Workflow;
 pub use crate::workflow::WorkflowId;
 
 use std::path::Path;
+use std::path::PathBuf;
 
 use serde::Deserialize;
 use serde::Deserializer;
@@ -122,6 +123,86 @@ fn number_to_u64<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u64, D::E
     f64::deserialize(deserializer).map(|n| n as u64)
 }
 
+/// A file's manifest line. Hash and size are parsed here, so a folder row
+/// (no physical keys) can ignore them without this type being involved.
+#[derive(Deserialize)]
+struct Quilt3FileLine {
+    logical_key: PathBuf,
+    physical_keys: Vec<String>,
+    hash: object_hash::ObjectHash,
+    #[serde(deserialize_with = "number_to_u64")]
+    size: u64,
+    #[serde(default)]
+    meta: Option<serde_json::Value>,
+}
+
+/// A folder's manifest line. `hash` and `size` are ignored, as quilt3 ignores
+/// them, including a malformed hash such as `{"type":"nope"}`.
+#[derive(Deserialize)]
+struct Quilt3FolderLine {
+    logical_key: PathBuf,
+    #[serde(default)]
+    physical_keys: Option<Vec<String>>,
+    #[serde(default)]
+    meta: Option<serde_json::Value>,
+}
+
+enum Line {
+    File(Box<ManifestRow>),
+    Dir(DirMeta),
+}
+
+fn folder_line(logical_key: &Path, meta: Option<serde_json::Value>) -> Res<Line> {
+    let Some(folder) = logical_key
+        .to_str()
+        .and_then(|key| key.strip_suffix('/'))
+        .map(str::to_owned)
+    else {
+        return Err(ManifestError::Header("Physical key is missing".to_string()).into());
+    };
+    Ok(Line::Dir(DirMeta {
+        logical_key: LogicalKey::new(folder)?,
+        meta: meta.unwrap_or(serde_json::Value::Null),
+    }))
+}
+
+impl Line {
+    /// A file row is parsed first, with a typed hash, so a manifest of only
+    /// files is as cheap to read as it was before folder rows were accepted.
+    /// If that fails, or the keys are empty, the line is read as a folder and
+    /// hash and size are ignored — unless it has physical keys, in which case
+    /// the file-row error is kept.
+    fn from_jsonl(line: &str) -> Res<Self> {
+        match serde_json::from_str::<Quilt3FileLine>(line) {
+            Ok(file) if !file.physical_keys.is_empty() => Ok(Self::File(Box::new(
+                Quilt3ManifestRow {
+                    logical_key: LogicalKey::new(file.logical_key)?,
+                    physical_keys: file.physical_keys,
+                    hash: file.hash,
+                    size: file.size,
+                    meta: file.meta,
+                }
+                .try_into()?,
+            ))),
+            Ok(file) => folder_line(&file.logical_key, file.meta),
+            Err(file_err) => {
+                let folder: Quilt3FolderLine = match serde_json::from_str(line) {
+                    Ok(folder) => folder,
+                    Err(_) => return Err(file_err.into()),
+                };
+                if folder
+                    .physical_keys
+                    .as_ref()
+                    .is_some_and(|keys| !keys.is_empty())
+                {
+                    return Err(file_err.into());
+                }
+                folder_line(&folder.logical_key, folder.meta)
+            }
+        }
+    }
+}
+
 impl From<ManifestRow> for Quilt3ManifestRow {
     fn from(row: ManifestRow) -> Self {
         Self {
@@ -177,22 +258,74 @@ impl TryFrom<Quilt3ManifestRow> for ManifestRow {
     }
 }
 
-/// A package is a tree: no key twice, and no key that is also a folder.
+/// The metadata of a folder: a `{"logical_key": "dir/", "meta": …}` row, which
+/// has no physical key.
+///
+/// Like quilt3, a manifest keeps it where it is read, writes only metadata that
+/// says something (not `null`, `{}`, `0`, `""` or `false`), and leaves it out of
+/// the top hash.
+#[derive(Clone, Debug, Deserialize, Eq, Serialize, PartialEq)]
+pub struct DirMeta {
+    /// The folder, without the trailing `/` its manifest row has.
+    pub logical_key: LogicalKey,
+    pub meta: serde_json::Value,
+}
+
+impl DirMeta {
+    /// Whether the metadata says anything, as Python's `bool` sees it: quilt3
+    /// writes a folder row only when it does.
+    #[must_use]
+    pub fn holds_meta(&self) -> bool {
+        match &self.meta {
+            serde_json::Value::Null => false,
+            serde_json::Value::Bool(flag) => *flag,
+            serde_json::Value::Number(number) => number.as_f64() != Some(0.0),
+            serde_json::Value::String(text) => !text.is_empty(),
+            serde_json::Value::Array(items) => !items.is_empty(),
+            serde_json::Value::Object(fields) => !fields.is_empty(),
+        }
+    }
+}
+
+/// The row quilt3 writes for a folder's metadata: its key, as a folder, and `meta`.
+#[derive(Serialize)]
+struct Quilt3DirRow<'a> {
+    logical_key: String,
+    meta: &'a serde_json::Value,
+}
+
+/// A package is a tree: no key twice, and no key that is also a folder. A
+/// folder's metadata row is a folder, so it can't share a name with a file or
+/// sit under one, and a folder has one such row at most.
 ///
 /// In key order (see [`LogicalKey`]), a key that is also a folder comes right
 /// before one of the keys inside it, and a repeated key right before its twin,
 /// so comparing neighbours is enough.
-fn check_tree(rows: &[ManifestRow]) -> Res {
-    let mut keys: Vec<&LogicalKey> = rows.iter().map(|row| &row.logical_key).collect();
+pub(crate) fn check_tree(rows: &[ManifestRow], dir_meta: &[DirMeta]) -> Res {
+    let mut keys: Vec<(&LogicalKey, bool)> = rows
+        .iter()
+        .map(|row| (&row.logical_key, false))
+        .chain(dir_meta.iter().map(|dir| (&dir.logical_key, true)))
+        .collect();
     keys.sort_unstable();
     for pair in keys.windows(2) {
-        let (first, next) = (pair[0], pair[1]);
+        let ((first, first_is_dir), (next, next_is_dir)) = (pair[0], pair[1]);
+        let named = |key: &LogicalKey, is_dir| {
+            if is_dir {
+                format!("{key}/")
+            } else {
+                key.to_string()
+            }
+        };
         if first == next {
-            return Err(Error::Manifest(ManifestError::DuplicateLogicalKey(
-                first.to_string(),
-            )));
+            let error = if first_is_dir == next_is_dir {
+                ManifestError::DuplicateLogicalKey(named(first, first_is_dir))
+            } else {
+                ManifestError::FileAndFolder(first.to_string())
+            };
+            return Err(Error::Manifest(error));
         }
-        if first.is_folder_of(next) {
+        if !first_is_dir && first.is_folder_of(next) {
             return Err(Error::Manifest(ManifestError::FileAndFolder(
                 first.to_string(),
             )));
@@ -206,6 +339,9 @@ fn check_tree(rows: &[ManifestRow]) -> Res {
 pub struct Manifest {
     pub header: ManifestHeader,
     pub rows: Vec<ManifestRow>,
+    /// The metadata of folders, which quilt3 keeps beside the rows; see [`DirMeta`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dir_meta: Vec<DirMeta>,
     // XXX: iterators?
 }
 
@@ -247,13 +383,20 @@ impl Manifest {
         }
 
         let mut rows = Vec::new();
+        let mut dir_meta = Vec::new();
         while let Some(line) = lines.next_line().await? {
-            let row: Quilt3ManifestRow = serde_json::from_str(&line)?;
-            rows.push(ManifestRow::try_from(row)?);
+            match Line::from_jsonl(&line)? {
+                Line::File(row) => rows.push(*row),
+                Line::Dir(dir) => dir_meta.push(dir),
+            }
         }
 
-        check_tree(&rows)?;
-        Ok(Manifest { header, rows })
+        check_tree(&rows, &dir_meta)?;
+        Ok(Manifest {
+            header,
+            rows,
+            dir_meta,
+        })
     }
 
     /// Serialize the manifest to JSONL: the header line followed by one line
@@ -261,30 +404,54 @@ impl Manifest {
     ///
     /// # Panics
     ///
-    /// Panics if serializing the header or a row to JSON fails, which does not
-    /// happen for well-formed manifest values.
+    /// Panics if [`Self::try_to_jsonlines`] would return an error. That is a
+    /// programmer error: a well-formed [`Manifest`] always serializes. Prefer
+    /// [`Self::try_to_jsonlines`] in library paths that may be handed a
+    /// hand-built value.
     #[must_use]
     pub fn to_jsonlines(&self) -> String {
-        // TODO: This is slightly inefficient.
-        // We could use some kind of async iterator / stream idk
+        self.try_to_jsonlines().expect(
+            "Could not serialize manifest: a Manifest must form a tree and its header and rows must serialize",
+        )
+    }
+
+    /// Serialize the manifest to JSONL: the header line followed by one line
+    /// per row, folders in key order before the files, and only folder
+    /// metadata that says something.
+    ///
+    /// # Errors
+    ///
+    /// The rows and folder metadata do not form a tree (a duplicate key, or a
+    /// name that is both a file and a folder), or the header or a row could
+    /// not be serialized.
+    pub fn try_to_jsonlines(&self) -> Res<String> {
+        // In quilt3's order: the folders by name, before the files.
+        check_tree(&self.rows, &self.dir_meta)?;
+        let mut dirs: Vec<&DirMeta> = self
+            .dir_meta
+            .iter()
+            .filter(|dir| dir.holds_meta())
+            .collect();
+        dirs.sort_by(|a, b| a.logical_key.cmp(&b.logical_key));
+
         let mut buf = String::new();
-        buf.push_str(
-            serde_json::to_string(&self.header)
-                .expect("Could not serialize manifest header")
-                .as_str(),
-        );
+        buf.push_str(serde_json::to_string(&self.header)?.as_str());
         buf.push('\n');
+        for dir in dirs {
+            let row = Quilt3DirRow {
+                logical_key: format!("{}/", dir.logical_key),
+                meta: &dir.meta,
+            };
+            buf.push_str(serde_json::to_string(&row)?.as_str());
+            buf.push('\n');
+        }
 
         for row in &self.rows {
             let q3row = Quilt3ManifestRow::from(row.to_owned());
-            buf.push_str(
-                serde_json::to_string(&q3row)
-                    .expect("Could not serialize manifest row")
-                    .as_str(),
-            );
+            buf.push_str(serde_json::to_string(&q3row)?.as_str());
             buf.push('\n');
         }
-        buf
+        Ok(buf)
     }
 
     /// Read manifest from a file path, converting from Table format if needed
@@ -371,6 +538,8 @@ impl Manifest {
 
 impl From<&Manifest> for ByteStream {
     fn from(manifest: &Manifest) -> Self {
+        // Prefer `try_to_jsonlines` in library paths that may see a hand-built
+        // Manifest; this conversion is for a value already known to be valid.
         manifest.to_jsonlines().into_bytes().into()
     }
 }

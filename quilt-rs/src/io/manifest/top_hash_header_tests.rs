@@ -21,6 +21,7 @@ async fn test_empty_manifest_header_empty() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         Manifest::default().header,
+        Vec::new(),
         tokio_stream::empty(),
     )
     .await?;
@@ -35,6 +36,7 @@ async fn test_empty_manifest_header_empty() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         manifest.header.clone(),
+        manifest.dir_meta.clone(),
         manifest.records_stream().await,
     )
     .await?;
@@ -56,6 +58,7 @@ async fn test_empty_manifest_header_empty_none() -> Res {
             user_meta: None,
             ..ManifestHeader::default()
         },
+        Vec::new(),
         tokio_stream::empty(),
     )
     .await?;
@@ -70,6 +73,7 @@ async fn test_empty_manifest_header_empty_none() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         manifest.header.clone(),
+        manifest.dir_meta.clone(),
         manifest.records_stream().await,
     )
     .await?;
@@ -91,6 +95,7 @@ async fn test_empty_manifest_header_empty_null() -> Res {
             user_meta: Some(serde_json::Value::Null),
             ..ManifestHeader::default()
         },
+        Vec::new(),
         tokio_stream::empty(),
     )
     .await?;
@@ -105,6 +110,7 @@ async fn test_empty_manifest_header_empty_null() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         manifest.header.clone(),
+        manifest.dir_meta.clone(),
         manifest.records_stream().await,
     )
     .await?;
@@ -126,6 +132,7 @@ async fn test_empty_manifest_header_null_empty() -> Res {
             message: HeaderMessage::Null,
             ..ManifestHeader::default()
         },
+        Vec::new(),
         tokio_stream::empty(),
     )
     .await?;
@@ -140,6 +147,7 @@ async fn test_empty_manifest_header_null_empty() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         manifest.header.clone(),
+        manifest.dir_meta.clone(),
         manifest.records_stream().await,
     )
     .await?;
@@ -162,6 +170,7 @@ async fn test_empty_manifest_header_null_none() -> Res {
             user_meta: None,
             ..ManifestHeader::default()
         },
+        Vec::new(),
         tokio_stream::empty(),
     )
     .await?;
@@ -176,6 +185,7 @@ async fn test_empty_manifest_header_null_none() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         manifest.header.clone(),
+        manifest.dir_meta.clone(),
         manifest.records_stream().await,
     )
     .await?;
@@ -198,6 +208,7 @@ async fn test_empty_manifest_header_null_null() -> Res {
             user_meta: Some(serde_json::Value::Null),
             ..ManifestHeader::default()
         },
+        Vec::new(),
         tokio_stream::empty(),
     )
     .await?;
@@ -212,6 +223,7 @@ async fn test_empty_manifest_header_null_null() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         manifest.header.clone(),
+        manifest.dir_meta.clone(),
         manifest.records_stream().await,
     )
     .await?;
@@ -234,6 +246,7 @@ async fn test_empty_manifest_header_initial_empty() -> Res {
             user_meta: Some(serde_json::json!({})),
             ..ManifestHeader::default()
         },
+        Vec::new(),
         tokio_stream::empty(),
     )
     .await?;
@@ -248,6 +261,7 @@ async fn test_empty_manifest_header_initial_empty() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         manifest.header.clone(),
+        manifest.dir_meta.clone(),
         manifest.records_stream().await,
     )
     .await?;
@@ -270,6 +284,7 @@ async fn test_empty_manifest_header_initial_none() -> Res {
             user_meta: None,
             ..ManifestHeader::default()
         },
+        Vec::new(),
         tokio_stream::empty(),
     )
     .await?;
@@ -284,6 +299,7 @@ async fn test_empty_manifest_header_initial_none() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         manifest.header.clone(),
+        manifest.dir_meta.clone(),
         manifest.records_stream().await,
     )
     .await?;
@@ -306,6 +322,7 @@ async fn test_empty_manifest_header_initial_null() -> Res {
             user_meta: Some(serde_json::Value::Null),
             ..ManifestHeader::default()
         },
+        Vec::new(),
         tokio_stream::empty(),
     )
     .await?;
@@ -320,6 +337,7 @@ async fn test_empty_manifest_header_initial_null() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         manifest.header.clone(),
+        manifest.dir_meta.clone(),
         manifest.records_stream().await,
     )
     .await?;
@@ -342,6 +360,7 @@ async fn test_empty_manifest_header_initial_meta() -> Res {
             user_meta: Some(serde_json::json!({"key": "value"})),
             ..ManifestHeader::default()
         },
+        Vec::new(),
         tokio_stream::empty(),
     )
     .await?;
@@ -356,6 +375,7 @@ async fn test_empty_manifest_header_initial_meta() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         manifest.header.clone(),
+        manifest.dir_meta.clone(),
         manifest.records_stream().await,
     )
     .await?;
@@ -378,6 +398,7 @@ async fn test_empty_manifest_header_initial_complex_meta() -> Res {
             user_meta: Some(serde_json::json!({"author": "user", "timestamp": "2024-01-01"})),
             ..ManifestHeader::default()
         },
+        Vec::new(),
         tokio_stream::empty(),
     )
     .await?;
@@ -395,6 +416,7 @@ async fn test_empty_manifest_header_initial_complex_meta() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         manifest.header.clone(),
+        manifest.dir_meta.clone(),
         manifest.records_stream().await,
     )
     .await?;
@@ -429,6 +451,7 @@ async fn test_empty_manifest_header_initial_large_meta() -> Res {
             user_meta: Some(large_meta.clone()),
             ..ManifestHeader::default()
         },
+        Vec::new(),
         tokio_stream::empty(),
     )
     .await?;
@@ -446,6 +469,7 @@ async fn test_empty_manifest_header_initial_large_meta() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         manifest.header.clone(),
+        manifest.dir_meta.clone(),
         manifest.records_stream().await,
     )
     .await?;
@@ -472,6 +496,7 @@ async fn test_empty_manifest_header_empty_empty_simple_workflow() -> Res {
             }),
             ..ManifestHeader::default()
         },
+        Vec::new(),
         tokio_stream::empty(),
     )
     .await?;
@@ -489,6 +514,7 @@ async fn test_empty_manifest_header_empty_empty_simple_workflow() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         manifest.header.clone(),
+        manifest.dir_meta.clone(),
         manifest.records_stream().await,
     )
     .await?;
@@ -524,6 +550,7 @@ async fn test_empty_manifest_header_empty_empty_complex_workflow() -> Res {
             }),
             ..ManifestHeader::default()
         },
+        Vec::new(),
         tokio_stream::empty(),
     )
     .await?;
@@ -541,6 +568,7 @@ async fn test_empty_manifest_header_empty_empty_complex_workflow() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         manifest.header.clone(),
+        manifest.dir_meta.clone(),
         manifest.records_stream().await,
     )
     .await?;
@@ -570,6 +598,7 @@ async fn test_empty_manifest_header_initial_empty_simple_workflow() -> Res {
             }),
             ..ManifestHeader::default()
         },
+        Vec::new(),
         tokio_stream::empty(),
     )
     .await?;
@@ -587,6 +616,7 @@ async fn test_empty_manifest_header_initial_empty_simple_workflow() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         manifest.header.clone(),
+        manifest.dir_meta.clone(),
         manifest.records_stream().await,
     )
     .await?;
@@ -622,6 +652,7 @@ async fn test_empty_manifest_header_initial_empty_complex_workflow() -> Res {
             }),
             ..ManifestHeader::default()
         },
+        Vec::new(),
         tokio_stream::empty(),
     )
     .await?;
@@ -639,6 +670,7 @@ async fn test_empty_manifest_header_initial_empty_complex_workflow() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         manifest.header.clone(),
+        manifest.dir_meta.clone(),
         manifest.records_stream().await,
     )
     .await?;
@@ -668,6 +700,7 @@ async fn test_empty_manifest_header_empty_none_simple_workflow() -> Res {
             }),
             ..ManifestHeader::default()
         },
+        Vec::new(),
         tokio_stream::empty(),
     )
     .await?;
@@ -685,6 +718,7 @@ async fn test_empty_manifest_header_empty_none_simple_workflow() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         manifest.header.clone(),
+        manifest.dir_meta.clone(),
         manifest.records_stream().await,
     )
     .await?;
@@ -714,6 +748,7 @@ async fn test_empty_manifest_header_empty_null_simple_workflow() -> Res {
             }),
             ..ManifestHeader::default()
         },
+        Vec::new(),
         tokio_stream::empty(),
     )
     .await?;
@@ -731,6 +766,7 @@ async fn test_empty_manifest_header_empty_null_simple_workflow() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         manifest.header.clone(),
+        manifest.dir_meta.clone(),
         manifest.records_stream().await,
     )
     .await?;
@@ -760,6 +796,7 @@ async fn test_empty_manifest_header_initial_meta_simple_workflow() -> Res {
             }),
             ..ManifestHeader::default()
         },
+        Vec::new(),
         tokio_stream::empty(),
     )
     .await?;
@@ -777,6 +814,7 @@ async fn test_empty_manifest_header_initial_meta_simple_workflow() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         manifest.header.clone(),
+        manifest.dir_meta.clone(),
         manifest.records_stream().await,
     )
     .await?;
@@ -812,6 +850,7 @@ async fn test_empty_manifest_header_initial_none_complex_workflow() -> Res {
             }),
             ..ManifestHeader::default()
         },
+        Vec::new(),
         tokio_stream::empty(),
     )
     .await?;
@@ -829,6 +868,7 @@ async fn test_empty_manifest_header_initial_none_complex_workflow() -> Res {
         &storage,
         dest_dir.to_path_buf(),
         manifest.header.clone(),
+        manifest.dir_meta.clone(),
         manifest.records_stream().await,
     )
     .await?;
