@@ -72,7 +72,7 @@ impl std::fmt::Display for Output {
         let installed: Vec<_> = self.installed().collect();
         // A keep result says what it downloaded.
         if !self.working_copy {
-            output.push("No working copy".to_string());
+            output.push("No working copy: `quilt open` makes one".to_string());
         } else if installed.is_empty() && self.keep.is_none() {
             output.push("No paths installed".to_string());
         } else {

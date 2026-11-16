@@ -189,12 +189,15 @@ pub fn save_diagnostic_zip(info: &DiagnosticInfo) -> Result<PathBuf, Error> {
         }
     }
 
-    // Add data.json (lineage file)
+    // Add data.json (lineage file), and the records it can't hold
     let data_json = domain_paths.lineage();
-    if data_json.exists() {
-        zip_writer.start_file("data.json", options)?;
-        let contents = std::fs::read(&data_json)?;
-        zip_writer.write_all(&contents)?;
+    for name in ["data.json", quilt::lineage::EXT_FILE] {
+        let path = data_json.with_file_name(name);
+        if path.exists() {
+            zip_writer.start_file(name, options)?;
+            let contents = std::fs::read(&path)?;
+            zip_writer.write_all(&contents)?;
+        }
     }
 
     // Add client.json per host (OAuth client registration — client ID only)
@@ -271,6 +274,13 @@ mod tests {
         let data_json = br#"{"version":1,"packages":[]}"#;
         let domain_paths = DomainPaths::new(data_tmp.path().to_path_buf());
         write_file(&domain_paths.lineage(), data_json);
+        let data_ext = br#"{"packages":{}}"#;
+        write_file(
+            &domain_paths
+                .lineage()
+                .with_file_name(quilt::lineage::EXT_FILE),
+            data_ext,
+        );
 
         let one_host = "one.quilt.test";
         let another_host = "another.quilt.test";
@@ -312,6 +322,7 @@ mod tests {
             "logs/quiltsync.log",
             "logs/quiltsync.log.1",
             "data.json",
+            quilt::lineage::EXT_FILE,
             &one_entry,
             &another_entry,
         ];
@@ -331,6 +342,7 @@ mod tests {
         assert_eq!(entries["logs/quiltsync.log"], current_log);
         assert_eq!(entries["logs/quiltsync.log.1"], rotated_log);
         assert_eq!(entries["data.json"], data_json);
+        assert_eq!(entries[quilt::lineage::EXT_FILE], data_ext);
         assert_eq!(entries[&one_entry], one_client);
         assert_eq!(entries[&another_entry], another_client);
 

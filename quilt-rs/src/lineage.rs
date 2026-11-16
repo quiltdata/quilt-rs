@@ -111,7 +111,7 @@ impl DomainLineage {
 /// The records `data.json` can't hold: packages whose working copy is not at
 /// the home. A build that predates [`WorkingCopyLocation`] never opens this file, so
 /// it lists none of them, and its rewrites of `data.json` leave them be.
-const EXT_FILE: &str = "data-ext.json";
+pub const EXT_FILE: &str = "data-ext.json";
 
 #[derive(Default, Serialize, Deserialize)]
 struct ExtLineage {
