@@ -885,7 +885,7 @@ mod tests {
 
     /// Prints what verifying costs on a large object, which depends on the
     /// machine and on a release build, so it is not run by default:
-    /// `cargo test --release -p quilt-rs --lib read_object::tests::cost -- --ignored --nocapture`
+    /// `just test no-aws --release --run-ignored only --no-capture -E 'test(cost_of_verifying)'`
     #[test(tokio::test)]
     #[ignore = "a benchmark: it reports timings, and asserts nothing"]
     async fn cost_of_verifying_a_large_object() -> Res {
