@@ -404,11 +404,9 @@ mod tests {
         manifest.header.user_meta_numbers = user_meta_numbers;
         let (dir_meta, dir_meta_numbers) =
             RawNumbers::parse(r#"{"n": 123456789012345678901234567890}"#)?;
-        manifest.dir_meta = vec![DirMeta {
-            logical_key: key("data"),
-            meta: dir_meta,
-            meta_numbers: dir_meta_numbers,
-        }];
+        let mut dir = DirMeta::new(key("data"), dir_meta);
+        dir.meta_numbers = dir_meta_numbers;
+        manifest.dir_meta = vec![dir];
         Ok(manifest)
     }
 
