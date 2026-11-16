@@ -72,6 +72,13 @@ async fn atomic_write(
     sync_folder: bool,
     tag: Option<&str>,
 ) -> std::io::Result<()> {
+    // A path would move the temp out of the folder, and the rename with it.
+    if temp_name.file_name() != Some(temp_name.as_os_str()) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("temp name {} is not a file name", temp_name.display()),
+        ));
+    }
     let parent = folder_of(path);
     fs::create_dir_all(parent).await?;
     let tmp = parent.join(temp_name);
@@ -784,6 +791,28 @@ mod tests {
         ) -> std::task::Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
             std::task::Poll::Ready(Some(Err(std::io::Error::other("cut off"))))
         }
+    }
+
+    /// A temp name that is a path is refused before anything is written.
+    #[test(tokio::test)]
+    async fn a_temp_name_that_leaves_the_folder_is_refused() -> Res {
+        let temp_dir = tempdir()?;
+        let folder = temp_dir.path().join("folder");
+        let outside = temp_dir.path().join("outside.tmp");
+
+        for temp_name in [outside, std::path::PathBuf::from("../outside.tmp")] {
+            let result = LocalStorage::default()
+                .write_byte_stream_via(
+                    folder.join("data.json"),
+                    &temp_name,
+                    ByteStream::from_static(b"new"),
+                    None,
+                )
+                .await;
+            assert!(result.is_err(), "{} was taken", temp_name.display());
+        }
+        assert!(files_in(temp_dir.path()).is_empty());
+        Ok(())
     }
 
     /// A write whose body fails removes its named temp: only a killed write
