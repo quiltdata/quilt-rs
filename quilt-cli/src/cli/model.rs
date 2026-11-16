@@ -66,6 +66,10 @@ pub trait Commands {
         install::model(local_domain, args).await
     }
 
+    async fn open(&self, args: install::OpenInput) -> Result<install::Output, Error> {
+        install::open_model(self.get_local_domain(), args).await
+    }
+
     async fn keep(&self, args: keep::Input) -> Result<keep::Output, Error> {
         let local_domain = self.get_local_domain();
         keep::model(local_domain, args).await
@@ -194,6 +198,7 @@ pub async fn install_paths_into_temp_dir(
             uri: uri_str.to_string(),
             keep: None,
             download: true,
+            working_copy: true,
         })
         .await?;
 

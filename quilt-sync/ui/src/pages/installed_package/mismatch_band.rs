@@ -168,6 +168,10 @@ fn state_line(state: &PackageState) -> &'static str {
             "The requested version isn't installed on this computer. \
              You have the latest version installed, and that's what's shown."
         }
+        PackageState::NoWorkingCopy => {
+            "The requested version isn't installed on this computer. \
+             This package has no working copy; you're seeing the version it tracks."
+        }
         PackageState::NoSession { .. }
         | PackageState::SignInExpired { .. }
         | PackageState::Unreachable { .. }

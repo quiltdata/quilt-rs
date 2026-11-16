@@ -17,7 +17,8 @@ CLI and library callers choose their own root directory.
 ## Home directory
 
 Where package files (working copies) live. Each installed package occupies
-`<owner>/<package>/` inside it.
+`<owner>/<package>/` inside it, except a package tracked with no working copy,
+which has no folder.
 
 *QuiltSync*: set by the user on the Setup page on first launch, then stored in
 `$DATA_DIR/.quilt/data.json` and read from there on subsequent starts.
@@ -29,6 +30,13 @@ Defaults to `~/QuiltSync` if the user has not configured it yet.
 *All components (quilt-rs, quilt-cli, QuiltSync).* Tracks all installed
 packages, their remote origins, local commit state, and the home directory
 path. Path is hardcoded relative to `$DATA_DIR`.
+
+A package whose working copy is not at `<home>/<owner>/<package>/`, so far
+only one tracked with no working copy, is kept in `$DATA_DIR/.quilt/data-ext.json`
+instead, in the same record shape with a `working_copy` field. A build older
+than this split reads only `data.json`, so it neither lists such a package nor
+reads its missing folder as every file removed, and its rewrites of `data.json`
+leave the other file alone.
 
 ## Package state (`$DATA_DIR/.quilt/`)
 

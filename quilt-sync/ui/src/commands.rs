@@ -1749,6 +1749,16 @@ pub async fn package_pull_outcome(namespace: String) -> Result<PullPreview, Stri
     engine::invoke("package_pull_outcome", &Args { namespace }).await
 }
 
+/// Give a package tracked with no working copy its folder, with every file of
+/// its current revision.
+pub async fn package_open_working_copy(namespace: String) -> Result<String, String> {
+    #[derive(Serialize)]
+    struct Args {
+        namespace: String,
+    }
+    engine::invoke("package_open_working_copy", &Args { namespace }).await
+}
+
 /// Remove a package; with `prune`, also delete its downloaded files that no
 /// other package uses. What that freed goes to the inbox.
 pub async fn package_uninstall(

@@ -83,6 +83,9 @@ pub enum PackageState {
     /// so without this arm `paused` would not fail to deserialize. It would
     /// render "Sync stopped", which makes a different and stronger claim.
     Paused,
+    /// Tracked with no working copy: the package has no folder, so nothing
+    /// syncs until it is opened as one.
+    NoWorkingCopy,
     #[serde(other)]
     Unknown,
 }
@@ -144,6 +147,8 @@ pub enum PackageAction {
     SwitchRole,
     /// Read the package again, once its host may be back.
     TryAgain,
+    /// Make the package's folder and install its files there.
+    OpenWorkingCopy,
 }
 
 impl PackageAction {
@@ -159,6 +164,7 @@ impl PackageAction {
             Self::SignIn => "Sign in",
             Self::SwitchRole => "Switch role",
             Self::TryAgain => "Try again",
+            Self::OpenWorkingCopy => "Open as working copy",
         }
     }
 }
@@ -282,6 +288,8 @@ fn words(state: &PackageState, site: Site) -> String {
         // is what stopped.
         (PackageState::Paused, Site::ListRow) => "Sync paused".to_string(),
         (PackageState::Paused, Site::QueueRow) => "has stopped syncing".to_string(),
+        (PackageState::NoWorkingCopy, Site::ListRow) => "No working copy".to_string(),
+        (PackageState::NoWorkingCopy, Site::QueueRow) => "has no working copy".to_string(),
 
         (PackageState::Unknown, Site::ListRow) => "Sync stopped".to_string(),
         (PackageState::Unknown, Site::QueueRow) => "cannot be checked".to_string(),
@@ -333,7 +341,7 @@ fn tone(state: &PackageState) -> StateTone {
     match state {
         PackageState::Latest => StateTone::Success,
 
-        PackageState::PendingChanges { .. } => StateTone::Neutral,
+        PackageState::PendingChanges { .. } | PackageState::NoWorkingCopy => StateTone::Neutral,
 
         // Attention, not Danger: nothing is wrong with the package, and the
         // page still shows it.
@@ -377,6 +385,8 @@ fn action(state: &PackageState) -> Option<PackageAction> {
         PackageState::NoRemote => Some(PackageAction::ChooseS3Bucket),
 
         PackageState::Unreachable { .. } => Some(PackageAction::TryAgain),
+
+        PackageState::NoWorkingCopy => Some(PackageAction::OpenWorkingCopy),
 
         // The one remedy that is not about this package at all, and the only
         // one gated on the state's own payload rather than its variant. A
@@ -642,6 +652,12 @@ mod tests {
                 Some(TryAgain),
             ),
             (PackageState::Paused, "has stopped syncing", Danger, None),
+            (
+                PackageState::NoWorkingCopy,
+                "has no working copy",
+                Neutral,
+                Some(OpenWorkingCopy),
+            ),
             (PackageState::Unknown, "cannot be checked", Danger, None),
         ]
     }
@@ -837,6 +853,7 @@ mod tests {
                 host: Some("quilt.test".to_string()),
             },
             PackageState::Paused,
+            PackageState::NoWorkingCopy,
             PackageState::Unknown,
         ];
 
@@ -856,6 +873,7 @@ mod tests {
                 | PackageState::SignInExpired { .. }
                 | PackageState::Unreachable { .. }
                 | PackageState::Paused
+                | PackageState::NoWorkingCopy
                 | PackageState::Unknown => {}
             }
         }

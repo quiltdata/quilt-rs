@@ -20,6 +20,7 @@ use crate::io::storage::Storage;
 use crate::lineage;
 use crate::lineage::DomainLineage;
 use crate::lineage::Home;
+use crate::lineage::WorkingCopy;
 use crate::manifest::Manifest;
 use crate::manifest::ManifestHeader;
 use crate::package_lock;
@@ -249,7 +250,24 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
         }
     }
 
+    /// Track `manifest_uri`'s package with its working copy at
+    /// `<home>/<namespace>`, an empty folder until files are installed in it.
     pub async fn install_package(&self, manifest_uri: &ManifestUri) -> Res<InstalledPackage<S, R>> {
+        self.install(manifest_uri, WorkingCopy::Home).await
+    }
+
+    /// Track `manifest_uri`'s package with no working copy: its manifest is
+    /// installed and no folder is made. See
+    /// [`InstalledPackage::open_working_copy`].
+    pub async fn track_package(&self, manifest_uri: &ManifestUri) -> Res<InstalledPackage<S, R>> {
+        self.install(manifest_uri, WorkingCopy::None).await
+    }
+
+    async fn install(
+        &self,
+        manifest_uri: &ManifestUri,
+        working_copy: WorkingCopy,
+    ) -> Res<InstalledPackage<S, R>> {
         info!("Installing package: {}", manifest_uri.namespace);
         debug!("Installing from manifest: {}", manifest_uri.display());
         let _held = package_lock::lock(&self.storage, &self.paths, &manifest_uri.namespace).await?;
@@ -257,19 +275,18 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
         debug!("Preparing paths for installation");
         self.scaffold_paths_for_caching(&manifest_uri.bucket)
             .await?;
-        self.scaffold_paths_for_installing(&manifest_uri.namespace)
-            .await?;
 
         debug!("Reading domain lineage");
         let lineage: DomainLineage = self.lineage.read(&self.storage).await?;
 
         debug!("Executing package installation flow");
-        let lineage = flow::install_package(
+        let lineage = flow::install_package_as(
             lineage,
             &self.paths,
             &self.storage,
             &*self.remote,
             manifest_uri,
+            working_copy,
         )
         .await?;
 
@@ -360,11 +377,17 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
 
     /// Uninstall `namespace`, whose lock the caller holds.
     async fn uninstall_locked(&self, namespace: &Namespace) -> Res<()> {
-        debug!("Preparing paths for uninstallation");
-        self.scaffold_paths_for_installing(namespace).await?;
-
         debug!("Reading current lineage state");
         let lineage = self.lineage.read(&self.storage).await?;
+
+        debug!("Preparing paths for uninstallation");
+        let working_copy = lineage
+            .packages
+            .get(namespace)
+            .map_or_default(|package| package.working_copy.clone());
+        self.paths
+            .scaffold_for(&self.storage, &lineage.home, namespace, &working_copy)
+            .await?;
 
         debug!("Executing package uninstallation flow");
         // It removes the entry from this copy; the splice below removes it

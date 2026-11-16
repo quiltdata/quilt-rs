@@ -285,7 +285,7 @@ pub trait QuiltModel {
     /// a pull landing mid-read cannot pair one revision's keys with another's
     /// tracked paths. The sizes are the manifest's, not a stat of the files.
     /// Beside them, the untracked paths the scope covers that already have a
-    /// file here ([`quilt::InstalledPackage::untracked_on_disk`]).
+    /// file here ([`quilt::InstalledPackage::untracked_in_working_copy`]).
     async fn get_installed_package_sizes(
         &self,
         package: &quilt::InstalledPackage,
@@ -293,8 +293,8 @@ pub trait QuiltModel {
     ) -> Result<(BTreeMap<PathBuf, u64>, BTreeSet<PathBuf>), Error> {
         let manifest = package.manifest_from_lineage(lineage).await?;
         let on_disk = package
-            .untracked_on_disk(&package.package_home().await?, lineage, &manifest)
-            .await;
+            .untracked_in_working_copy(lineage, &manifest)
+            .await?;
         let sizes = manifest
             .rows
             .into_iter()
@@ -532,6 +532,13 @@ pub trait QuiltModel {
             .set_remote(bucket, origin, workflow)
             .await?
             .resolution_warning)
+    }
+
+    /// Give a package tracked with no working copy its folder, with every file
+    /// of its current revision.
+    async fn open_working_copy(&self, package: &quilt::InstalledPackage) -> Result<(), Error> {
+        package.open_working_copy(None).await?;
+        Ok(())
     }
 
     /// Replace only the catalog of the package's remote, keeping its bucket,
@@ -863,10 +870,15 @@ impl LockedOps for quilt::LockedPackage {
         host_config: Option<HostConfig>,
         status: Option<quilt::lineage::InstalledPackageStatus>,
     ) -> Result<quilt::PublishOutcome, Error> {
-        Ok(
-            quilt::LockedPackage::publish(self, message, metadata, workflow, host_config, status)
-                .await?,
-        )
+        Ok(Box::pin(quilt::LockedPackage::publish(
+            self,
+            message,
+            metadata,
+            workflow,
+            host_config,
+            status,
+        ))
+        .await?)
     }
 }
 

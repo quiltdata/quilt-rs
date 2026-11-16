@@ -39,6 +39,7 @@ cargo install quilt-cli
 | `create`    | Create a new local-only package                  |
 | `home`      | Print or set the folder packages keep files in   |
 | `install`   | Install a remote package locally                 |
+| `open`      | Make a working copy of a package tracked without one |
 | `keep`      | Show or set which of a package's files are kept  |
 | `status`    | Show working-directory changes                   |
 | `commit`    | Commit a new package revision                    |
@@ -291,6 +292,12 @@ Package files are stored under `~/QuiltSync` by default. Run
 `quilt home <dir>` first when you want a different package directory. The
 namespace defaults to the one in the URI, so `install` needs no `--namespace`
 here.
+
+`quilt install --no-working-copy` tracks a package without making its folder:
+`list` and `status` show it, marked `no working copy`, and `commit` and file
+installs refuse it. `quilt open --namespace <namespace>` later makes its folder
+under the home and installs every file of its current revision, or only those
+`--path` names.
 
 `quilt catalog set open.quiltdata.com` makes a stack the default, so `login`
 and `role` can leave out `--host`; `quilt catalog` shows it and

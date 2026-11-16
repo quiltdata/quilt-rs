@@ -23,6 +23,7 @@
 
 ### Added
 
+- A package tracked with no working copy, as `quilt install --no-working-copy` leaves one, is listed as **No working copy** and not synced, and its page offers **Open as working copy**, which makes its folder under the home with every file of its current revision
 - A `quilt+s3://` link can name a revision by a short hash (6 to 63 characters) after `@`, as in quilt3; QuiltSync looks it up in the package's bucket, and a hash that matches nothing, or several revisions, is reported as a revision that is not there (<https://github.com/quiltdata/quilt-rs/pull/1392>)
 
 ### Changed

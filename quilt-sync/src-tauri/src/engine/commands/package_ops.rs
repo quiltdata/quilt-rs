@@ -884,6 +884,34 @@ pub async fn change_catalog(
     }
 }
 
+async fn package_open_working_copy_command(
+    m: &impl model::QuiltModel,
+    namespace: &str,
+) -> Result<quilt_uri::Namespace, Error> {
+    let namespace = quilt_uri::Namespace::try_from(namespace)?;
+    model::open_working_copy(m, &namespace).await?;
+    Ok(namespace)
+}
+
+/// Give a package tracked with no working copy its folder under the home,
+/// with every file of its current revision.
+pub async fn package_open_working_copy(s: &Services, namespace: String) -> Result<String, String> {
+    Notify::new(format!("Opening {namespace} as a working copy"));
+    match package_open_working_copy_command(&*s.model, &namespace).await {
+        Ok(_) => {
+            s.events.emit(PACKAGES_CHANGED_EVENT, ());
+            let message = format!("Opened {namespace} as a working copy");
+            ::tracing::debug!("{message}");
+            Ok(message)
+        }
+        Err(err) => {
+            let msg = format!("Could not open {namespace} as a working copy: {err}");
+            ::tracing::error!("{msg}");
+            Err(msg)
+        }
+    }
+}
+
 /// A typed name must be one quilt3 accepts: `prefix/name`, each part made of
 /// `_`, `-` and what Python's `str.isalnum()` takes, which is quilt3's `\w`.
 /// Only here, where a reader types it: `Namespace` parses names from remotes
@@ -2254,6 +2282,19 @@ mod tests {
                 .expect_err("the mock stops it");
             assert!(matches!(err, Error::General(_)), "{typed:?}: {err}");
         }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn open_working_copy_opens_the_named_package() -> Result<(), Error> {
+        let mut model = installed_model();
+        model
+            .expect_open_working_copy()
+            .times(1)
+            .withf(|package| package.namespace == ("acme", "demo").into())
+            .returning(|_| Ok(()));
+        let opened = super::package_open_working_copy_command(&model, "acme/demo").await?;
+        assert_eq!(opened, ("acme", "demo").into());
         Ok(())
     }
 

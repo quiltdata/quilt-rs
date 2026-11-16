@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 
+use crate::lineage::WorkingCopy;
 use crate::manifest::ManifestRow;
 use crate::quiltignore;
 
@@ -76,6 +77,8 @@ pub struct InstalledPackageStatus {
     /// Empty when none is known. Carried with the verdict so a caller never
     /// pairs it with another read's tip.
     pub latest_hash: String,
+    /// Anything but [`WorkingCopy::Home`] was not walked, and has no changes.
+    pub working_copy: WorkingCopy,
 }
 
 impl InstalledPackageStatus {
@@ -89,6 +92,7 @@ impl InstalledPackageStatus {
             junky_changes: Vec::new(),
             latest_refreshed: false,
             latest_hash: String::new(),
+            working_copy: WorkingCopy::Home,
         }
     }
 

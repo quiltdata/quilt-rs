@@ -55,6 +55,7 @@ pub use gc::measure_storage;
 pub(crate) use gc::package_objects;
 pub(crate) use gc::prune;
 pub use install_package::install_package;
+pub(crate) use install_package::install_package_as;
 pub use install_paths::InstallPathsReport;
 pub(crate) use install_paths::OnMismatch;
 pub(crate) use install_paths::Protect;

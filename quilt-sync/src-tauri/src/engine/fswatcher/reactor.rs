@@ -329,6 +329,11 @@ pub(crate) async fn snapshot_mappings(model: &impl QuiltModel) -> Option<Mapping
                     lineage.paths.into_keys(),
                 ),
             )),
+            // No folder to watch.
+            Err(quilt::Error::Lineage(
+                quilt::LineageError::NoWorkingCopy(_)
+                | quilt::LineageError::UnrecognizedWorkingCopy(_),
+            )) => {}
             Err(err) => warn!(
                 "fswatcher: cannot read the lineage of {}: {err}",
                 pkg.namespace

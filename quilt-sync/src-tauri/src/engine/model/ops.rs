@@ -291,6 +291,18 @@ pub async fn set_remote(
         .await
 }
 
+/// Give a package tracked with no working copy its folder and files.
+pub async fn open_working_copy(
+    model: &impl QuiltModel,
+    namespace: &quilt_uri::Namespace,
+) -> Result<(), Error> {
+    let installed_package = model
+        .get_installed_package(namespace)
+        .await?
+        .ok_or_else(|| Error::from(quilt::InstallPackageError::NotInstalled(namespace.clone())))?;
+    model.open_working_copy(&installed_package).await
+}
+
 /// Add, change or remove the catalog of the package's remote.
 pub async fn change_catalog(
     model: &impl QuiltModel,

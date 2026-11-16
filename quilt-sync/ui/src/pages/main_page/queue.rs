@@ -160,7 +160,11 @@ pub fn derive_queue(
             continue;
         }
 
-        if package.state != PackageState::Latest {
+        // A package kept without a working copy was left so on purpose.
+        if !matches!(
+            package.state,
+            PackageState::Latest | PackageState::NoWorkingCopy
+        ) {
             rows.push(package);
         }
     }
@@ -326,7 +330,9 @@ fn precedence(state: &PackageState) -> u8 {
         PackageState::NoRemote => 6,
         PackageState::Unpublished => 7,
         PackageState::RoleDenied { .. } => 8,
-        PackageState::Latest => unreachable!("Latest never enters either collection"),
+        PackageState::Latest | PackageState::NoWorkingCopy => {
+            unreachable!("{state:?} never enters either collection")
+        }
     }
 }
 
@@ -474,7 +480,8 @@ pub fn action_href(action: PackageAction, namespace: &Namespace) -> String {
         | PackageAction::ChooseS3Bucket
         | PackageAction::SignIn
         | PackageAction::SwitchRole
-        | PackageAction::TryAgain => super::package_page_href(namespace),
+        | PackageAction::TryAgain
+        | PackageAction::OpenWorkingCopy => super::package_page_href(namespace),
     }
 }
 
@@ -760,6 +767,16 @@ mod tests {
     fn a_latest_package_never_reaches_the_queue() {
         // The queue is what needs a decision. Everything else is the list's job.
         let items = derive_queue(&[pkg("a/b", PackageState::Latest, Some("quilt.test"))], &[]);
+        assert_eq!(items, [] as [QueueItem; 0]);
+    }
+
+    #[test]
+    fn a_package_kept_with_no_working_copy_never_reaches_the_queue() {
+        // Left without a folder on purpose, so nothing awaits a decision.
+        let items = derive_queue(
+            &[pkg("a/b", PackageState::NoWorkingCopy, Some("quilt.test"))],
+            &[],
+        );
         assert_eq!(items, [] as [QueueItem; 0]);
     }
 
@@ -1550,12 +1567,14 @@ mod tests {
     #[test]
     fn action_href_names_the_right_page_and_carries_the_namespace() {
         use PackageAction::{
-            ChooseS3Bucket, GetLatest, Publish, Resolve, SignIn, SwitchRole, TryAgain,
+            ChooseS3Bucket, GetLatest, OpenWorkingCopy, Publish, Resolve, SignIn, SwitchRole,
+            TryAgain,
         };
         // Every verb, guarded by an exhaustive match: a verb added to the
         // vocabulary stops this test's build, as `action_href`'s own match does.
         let _ = |a: PackageAction| match a {
-            Publish | Resolve | GetLatest | ChooseS3Bucket | SignIn | SwitchRole | TryAgain => (),
+            Publish | Resolve | GetLatest | ChooseS3Bucket | SignIn | SwitchRole | TryAgain
+            | OpenWorkingCopy => (),
         };
         let org_pkg = ns("org/pkg");
         // Asserted as the whole string, since a substring match cannot tell a

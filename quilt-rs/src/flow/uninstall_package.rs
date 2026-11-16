@@ -20,7 +20,7 @@ pub async fn uninstall_package(
     info!("⏳ Uninstalling package {}", namespace);
 
     debug!("🔍 Checking if package exists in lineage");
-    lineage
+    let package = lineage
         .packages
         .remove(&namespace)
         .ok_or(Error::InstallPackage(InstallPackageError::NotInstalled(
@@ -33,10 +33,14 @@ pub async fn uninstall_package(
     storage.remove_dir_all(&manifest_path).await?;
     debug!("✔️ Removed manifests at: {}", manifest_path.display());
 
-    debug!("⏳ Removing working directory");
-    let package_home = paths::package_home(&lineage.home, &namespace);
-    storage.remove_dir_all(&package_home).await?;
-    debug!("✔️ Removed working directory: {}", package_home.display());
+    // A folder at `<home>/<namespace>` is not this package's unless its
+    // working copy is there.
+    if package.working_copy.is_home() {
+        debug!("⏳ Removing working directory");
+        let package_home = paths::package_home(&lineage.home, &namespace);
+        storage.remove_dir_all(&package_home).await?;
+        debug!("✔️ Removed working directory: {}", package_home.display());
+    }
 
     // Objects may be used by other packages. A pruning uninstall deletes the
     // ones no other manifest uses afterwards; see `flow::gc::prune`.

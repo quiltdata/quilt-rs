@@ -11,6 +11,7 @@ use tracing::error;
 use crate::Res;
 use crate::io::storage::Storage;
 use crate::lineage::Home;
+use crate::lineage::WorkingCopy;
 use quilt_uri::Host;
 use quilt_uri::ManifestUri;
 use quilt_uri::Namespace;
@@ -287,6 +288,23 @@ impl DomainPaths {
         namespace: &Namespace,
     ) -> Res {
         scaffold_paths(storage, self.required_for_installing(home, namespace)).await
+    }
+
+    /// [`Self::scaffold_for_installing`], leaving out the working copy's
+    /// folder unless `working_copy` is at the home.
+    pub async fn scaffold_for(
+        &self,
+        storage: &impl Storage,
+        home: &Home,
+        namespace: &Namespace,
+        working_copy: &WorkingCopy,
+    ) -> Res {
+        if working_copy.is_home() {
+            return self.scaffold_for_installing(storage, home, namespace).await;
+        }
+        let mut paths = self.required();
+        paths.push(self.installed_manifests_dir(namespace));
+        scaffold_paths(storage, paths).await
     }
 
     /// What directories are essential when we work with cached manifests

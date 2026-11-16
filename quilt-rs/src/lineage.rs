@@ -39,6 +39,7 @@ pub use package::LineagePaths;
 pub use package::PackageLineage;
 pub use package::PathState;
 pub use package::SyncScope;
+pub use package::WorkingCopy;
 
 mod downloads;
 pub use downloads::DownloadCounts;
@@ -104,6 +105,17 @@ impl DomainLineage {
             }
         }
     }
+}
+
+/// The records `data.json` can't hold: packages whose working copy is not at
+/// the home. A build that predates [`WorkingCopy`] never opens this file, so
+/// it lists none of them, and its rewrites of `data.json` leave them be.
+const EXT_FILE: &str = "data-ext.json";
+
+#[derive(Default, Serialize, Deserialize)]
+struct ExtLineage {
+    #[serde(default)]
+    packages: BTreeMap<Namespace, PackageLineage>,
 }
 
 type HookFn = dyn Fn(&Namespace, Option<&PackageLineage>, Option<&PackageLineage>) + Send + Sync;
@@ -194,7 +206,23 @@ impl DomainLineageIo {
         }
     }
 
+    /// `data.json` and the [`EXT_FILE`] records, as one record. A package in
+    /// both is read from `data.json`, which an older build may have written
+    /// since.
+    ///
+    /// The [`EXT_FILE`] is read first: opening a working copy writes the
+    /// record into `data.json` before it leaves the other file, so an
+    /// unlocked read never misses it.
     pub async fn read(&self, storage: &(impl Storage + Sync)) -> Res<DomainLineage> {
+        let ext = self.read_ext(storage).await?;
+        let mut lineage = self.read_data_json(storage).await?;
+        for (namespace, package) in ext.packages {
+            lineage.packages.entry(namespace).or_insert(package);
+        }
+        Ok(lineage)
+    }
+
+    async fn read_data_json(&self, storage: &(impl Storage + Sync)) -> Res<DomainLineage> {
         match storage.read_bytes(&self.path).await {
             Ok(bytes) => DomainLineage::from_slice(&bytes),
             Err(_) if !storage.exists(&self.path).await => {
@@ -204,23 +232,52 @@ impl DomainLineageIo {
         }
     }
 
-    /// Read a specific package lineage from the domain lineage
+    fn ext_path(&self) -> PathBuf {
+        self.path.with_file_name(EXT_FILE)
+    }
+
+    async fn read_ext(&self, storage: &(impl Storage + Sync)) -> Res<ExtLineage> {
+        let path = self.ext_path();
+        match storage.read_bytes(&path).await {
+            Ok(bytes) => serde_json::from_slice(&bytes)
+                .map_err(|err| Error::Lineage(LineageError::Parse(err))),
+            Err(_) if !storage.exists(&path).await => Ok(ExtLineage::default()),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// The domain's home and one package's entry, whatever its working copy.
+    pub(crate) async fn read_home_and_entry(
+        &self,
+        storage: &(impl Storage + Sync),
+        namespace: &Namespace,
+    ) -> Res<(Home, PackageLineage)> {
+        let mut domain_lineage = self.read(storage).await?;
+        let package_lineage = domain_lineage.packages.remove(namespace).ok_or_else(|| {
+            Error::InstallPackage(InstallPackageError::NotInstalled(namespace.clone()))
+        })?;
+        Ok((domain_lineage.home, package_lineage))
+    }
+
+    /// One package's entry, whatever its working copy.
+    pub async fn read_package_entry(
+        &self,
+        storage: &(impl Storage + Sync),
+        namespace: &Namespace,
+    ) -> Res<PackageLineage> {
+        Ok(self.read_home_and_entry(storage, namespace).await?.1)
+    }
+
+    /// One package's entry and its working copy's folder. A package with no
+    /// working copy is [`LineageError::NoWorkingCopy`].
     pub async fn read_package_lineage(
         &self,
         storage: &(impl Storage + Sync),
         namespace: &Namespace,
     ) -> Res<(PathBuf, PackageLineage)> {
-        let domain_lineage = self.read(storage).await?;
-
-        match domain_lineage.packages.get(namespace) {
-            Some(package_lineage) => {
-                let package_home = paths::package_home(&domain_lineage.home, namespace);
-                Ok((package_home, package_lineage.clone()))
-            }
-            None => Err(Error::InstallPackage(InstallPackageError::NotInstalled(
-                namespace.clone(),
-            ))),
-        }
+        let (home, package_lineage) = self.read_home_and_entry(storage, namespace).await?;
+        package_lineage.require_working_copy(namespace)?;
+        Ok((paths::package_home(&home, namespace), package_lineage))
     }
 
     /// `data.json.lock`, beside the file it guards. `data.json` itself is
@@ -355,13 +412,13 @@ impl DomainLineageIo {
                 }
                 storage.create_dir_all(home.as_ref()).await?;
                 lineage.home = home;
-                self.write_unlocked(storage, &lineage).await?;
+                self.write_data_json(storage, &lineage).await?;
                 Ok(lineage)
             }
             Err(_) if !storage.exists(&self.path).await => {
                 storage.create_dir_all(home.as_ref()).await?;
                 let lineage = DomainLineage::new(home);
-                self.write_unlocked(storage, &lineage).await?;
+                self.write_data_json(storage, &lineage).await?;
                 Ok(lineage)
             }
             Err(e) => Err(e),
@@ -387,7 +444,57 @@ impl DomainLineageIo {
         Ok(lineage)
     }
 
+    /// Write `lineage` across `data.json` and the [`EXT_FILE`]. A record
+    /// moving between them stays in the one it leaves until the other holds
+    /// it, so a write cut short reads as before or after the move.
     async fn write_unlocked(
+        &self,
+        storage: &(impl Storage + Sync),
+        lineage: &DomainLineage,
+    ) -> Res {
+        let (at_home, elsewhere): (BTreeMap<_, _>, BTreeMap<_, _>) = lineage
+            .packages
+            .clone()
+            .into_iter()
+            .partition(|(_, package)| package.working_copy.is_home());
+        let ext_before = self.read_ext(storage).await?.packages;
+        let mut ext_during = elsewhere.clone();
+        for (namespace, package) in &ext_before {
+            if at_home.contains_key(namespace) {
+                ext_during.insert(namespace.clone(), package.clone());
+            }
+        }
+        if ext_during != ext_before {
+            self.write_ext(storage, &ext_during).await?;
+        }
+        self.write_data_json(
+            storage,
+            &DomainLineage {
+                packages: at_home,
+                home: lineage.home.clone(),
+            },
+        )
+        .await?;
+        if elsewhere != ext_during {
+            self.write_ext(storage, &elsewhere).await?;
+        }
+        Ok(())
+    }
+
+    async fn write_ext(
+        &self,
+        storage: &(impl Storage + Sync),
+        packages: &BTreeMap<Namespace, PackageLineage>,
+    ) -> Res {
+        let contents = serde_json::to_string_pretty(&ExtLineage {
+            packages: packages.clone(),
+        })?;
+        storage
+            .write_byte_stream(self.ext_path(), contents.into_bytes().into())
+            .await
+    }
+
+    async fn write_data_json(
         &self,
         storage: &(impl Storage + Sync),
         lineage: &DomainLineage,
@@ -433,9 +540,28 @@ impl PackageLineageIo {
         }
     }
 
+    /// The entry and its working copy's folder; see
+    /// [`DomainLineageIo::read_package_lineage`].
     pub async fn read(&self, storage: &(impl Storage + Sync)) -> Res<(PathBuf, PackageLineage)> {
         self.domain_lineage
             .read_package_lineage(storage, &self.namespace)
+            .await
+    }
+
+    /// The entry, for a flow on the store alone.
+    pub async fn read_entry(&self, storage: &(impl Storage + Sync)) -> Res<PackageLineage> {
+        self.domain_lineage
+            .read_package_entry(storage, &self.namespace)
+            .await
+    }
+
+    /// The domain's home and the entry, whatever its working copy.
+    pub(crate) async fn read_home_and_entry(
+        &self,
+        storage: &(impl Storage + Sync),
+    ) -> Res<(Home, PackageLineage)> {
+        self.domain_lineage
+            .read_home_and_entry(storage, &self.namespace)
             .await
     }
 
@@ -445,10 +571,7 @@ impl PackageLineageIo {
     }
 
     pub async fn package_home(&self, storage: &(impl Storage + Sync)) -> Res<PathBuf> {
-        Ok(self
-            .domain_home(storage)
-            .await?
-            .join(self.namespace.to_string()))
+        Ok(self.read(storage).await?.0)
     }
 
     pub async fn domain_home(&self, storage: &(impl Storage + Sync)) -> Res<Home> {
@@ -1248,6 +1371,118 @@ mod tests {
             .await?;
         assert!(seen);
         assert!(told.lock().unwrap().is_empty());
+        Ok(())
+    }
+
+    fn with_working_copy(working_copy: WorkingCopy) -> PackageLineage {
+        PackageLineage {
+            working_copy,
+            ..PackageLineage::default()
+        }
+    }
+
+    /// An older build reads `data.json` alone and writes back what it read, so
+    /// its rewrite neither sees nor drops a package with no working copy.
+    #[test(tokio::test)]
+    async fn an_older_builds_rewrite_of_data_json_keeps_a_package_with_no_working_copy() -> Res {
+        let storage = MockStorage::default();
+        let path = PathBuf::from("data.json");
+        let io = DomainLineageIo::new(path.clone());
+        let (at_home, tracked) = (
+            Namespace::from(("a", "home")),
+            Namespace::from(("a", "none")),
+        );
+        let mut lineage = DomainLineage::new("/home");
+        lineage
+            .packages
+            .insert(at_home.clone(), with_working_copy(WorkingCopy::Home));
+        lineage
+            .packages
+            .insert(tracked.clone(), with_working_copy(WorkingCopy::None));
+        io.write(&storage, lineage).await?;
+
+        let mut old = DomainLineage::from_slice(&storage.read_bytes(&path).await?)?;
+        assert_eq!(old.namespaces(), std::slice::from_ref(&at_home));
+        old.packages.get_mut(&at_home).unwrap().latest_hash = "new".to_string();
+        let rewritten = serde_json::to_string_pretty(&old)?;
+        storage
+            .write_byte_stream(&path, rewritten.into_bytes().into())
+            .await?;
+
+        let read = io.read(&storage).await?;
+        assert_eq!(read.packages[&at_home].latest_hash, "new");
+        assert_eq!(read.packages[&tracked].working_copy, WorkingCopy::None);
+        Ok(())
+    }
+
+    /// A record in both files is read from `data.json`, and the next write
+    /// leaves it in `data.json` alone.
+    #[test(tokio::test)]
+    async fn a_package_in_both_files_is_read_from_data_json() -> Res {
+        let storage = MockStorage::default();
+        let io = DomainLineageIo::new(PathBuf::from("data.json"));
+        let both = Namespace::from(("a", "both"));
+        let mut lineage = DomainLineage::new("/home");
+        lineage
+            .packages
+            .insert(both.clone(), with_working_copy(WorkingCopy::None));
+        io.write(&storage, lineage.clone()).await?;
+        lineage
+            .packages
+            .insert(both.clone(), with_working_copy(WorkingCopy::Home));
+        io.write_data_json(&storage, &lineage).await?;
+
+        assert_eq!(
+            io.read(&storage).await?.packages[&both].working_copy,
+            WorkingCopy::Home
+        );
+        io.update(&storage, |lineage| {
+            lineage.home = Home::from("/elsewhere");
+            Ok(())
+        })
+        .await?;
+        assert!(io.read_ext(&storage).await?.packages.is_empty());
+        Ok(())
+    }
+
+    /// A working copy a later version records is written back as it was read.
+    #[test(tokio::test)]
+    async fn a_working_copy_this_version_does_not_know_is_kept_as_written() -> Res {
+        let storage = MockStorage::default();
+        let io = DomainLineageIo::new(PathBuf::from("data.json"));
+        let later = Namespace::from(("a", "later"));
+        let recorded = serde_json::json!({ "folder": "/somewhere" });
+        let mut lineage = DomainLineage::new("/home");
+        lineage.packages.insert(
+            later.clone(),
+            with_working_copy(WorkingCopy::Unrecognized(recorded.clone())),
+        );
+        io.write(&storage, lineage).await?;
+
+        io.update_package_lineage(&storage, &Namespace::from(("a", "other")), |entry| {
+            *entry = Some(PackageLineage::default());
+            Ok(())
+        })
+        .await?;
+
+        let ext: serde_json::Value =
+            serde_json::from_slice(&storage.read_bytes(io.ext_path()).await?)?;
+        assert_eq!(ext["packages"]["a/later"]["working_copy"], recorded);
+        assert!(matches!(
+            io.read_package_lineage(&storage, &later).await,
+            Err(Error::Lineage(LineageError::UnrecognizedWorkingCopy(_)))
+        ));
+        Ok(())
+    }
+
+    /// A record from before working copies could be anywhere is one at the
+    /// home, and one at the home is written without the key.
+    #[test]
+    fn a_record_without_a_working_copy_is_one_at_the_home() -> Res {
+        let lineage: PackageLineage =
+            serde_json::from_str(r#"{"commit":null,"base_hash":"","latest_hash":"","paths":{}}"#)?;
+        assert_eq!(lineage.working_copy, WorkingCopy::Home);
+        assert!(!serde_json::to_string(&lineage)?.contains("working_copy"));
         Ok(())
     }
 

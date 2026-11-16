@@ -146,6 +146,7 @@ fn states() -> Vec<(&'static str, PackageState)> {
             },
         ),
         ("syncing stopped for this package", PackageState::Paused),
+        ("tracked with no folder", PackageState::NoWorkingCopy),
         (
             "a state this build does not recognise",
             PackageState::Unknown,

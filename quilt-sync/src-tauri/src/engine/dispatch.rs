@@ -179,6 +179,7 @@ commands! {
         undo_commit(namespace: String) -> String;
         set_remote(namespace: String, origin: String, bucket: String, workflow: WorkflowIntent) -> SetRemoteResponse;
         change_catalog(namespace: String, origin: String) -> String;
+        package_open_working_copy(namespace: String) -> String;
         package_create(namespace: String, source: Option<String>, message: Option<String>) -> String;
         add_to_quiltignore(namespace: String, pattern: String, uri: Option<S3PackageUri>) -> String;
         stop_ignoring_preview(namespace: String, path: String, folder: bool) -> StopIgnoringPreview;

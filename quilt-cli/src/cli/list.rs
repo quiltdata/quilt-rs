@@ -30,6 +30,9 @@ except where marked unreachable. Changed files are ones not committed yet.";
 /// is as of the last sync. See [`Fetched::remote_checked`].
 const UNREACHABLE_SUFFIX: &str = " (remote unreachable)";
 
+/// Appended to the row of a package tracked with no working copy.
+const NO_WORKING_COPY_SUFFIX: &str = " (no working copy)";
+
 /// A `--fetch` row whose bucket has no catalog and whose check found the AWS
 /// credentials on this computer missing or refused. Worded as `QuiltSync` words it.
 const CREDENTIALS_UNUSABLE: &str =
@@ -55,6 +58,8 @@ pub struct PackageEntry {
     pub status: UpstreamState,
     /// `Some` on every row of a `--fetch` listing, `None` on a plain one.
     pub fetched: Option<Fetched>,
+    /// `false` for a package tracked with no working copy.
+    pub working_copy: bool,
 }
 
 /// What `--fetch` learned about a package beyond its [`UpstreamState`].
@@ -196,6 +201,15 @@ fn fetched_state(fetched: &Fetched) -> Cow<'static, str> {
 }
 
 fn state(entry: &PackageEntry) -> Cow<'static, str> {
+    let state = upstream(entry);
+    if entry.working_copy {
+        state
+    } else {
+        format!("{state}{NO_WORKING_COPY_SUFFIX}").into()
+    }
+}
+
+fn upstream(entry: &PackageEntry) -> Cow<'static, str> {
     match &entry.fetched {
         // A file count means the status call answered; without the remote, it
         // answered from the last-known tip, so the word is qualified rather
@@ -272,6 +286,9 @@ impl Render for Output {
                         row["credentials_unusable"] = true.into();
                     }
                 }
+                if !package.working_copy {
+                    row["working_copy"] = false.into();
+                }
                 row
             })
             .collect();
@@ -310,6 +327,7 @@ pub async fn model(local_domain: &quilt_rs::LocalDomain, args: Input) -> Result<
         for (namespace, lineage) in domain_lineage.packages {
             installed_packages_list.push(PackageEntry {
                 bucket: bucket(&lineage),
+                working_copy: lineage.working_copy.is_home(),
                 status: UpstreamState::from(lineage),
                 namespace,
                 fetched: None,
@@ -328,18 +346,23 @@ pub async fn model(local_domain: &quilt_rs::LocalDomain, args: Input) -> Result<
     for (namespace, lineage) in domain_lineage.packages {
         let installed_package = local_domain.create_installed_package(namespace.clone());
         let bucket = bucket(&lineage);
+        let working_copy = lineage.working_copy.is_home();
         let fallback = PackageEntry {
             bucket: bucket.clone(),
             namespace: namespace.clone(),
             status: UpstreamState::Error,
             fetched: Some(Fetched::failed()),
+            working_copy,
         };
         let limit = limit.clone();
         let task = tasks.spawn(async move {
             // Held until the check ends. The semaphore is never closed, so
             // this always holds a permit.
             let _permit = limit.acquire_owned().await;
-            fetch_entry(namespace, bucket, || installed_package.state()).await
+            fetch_entry(namespace, bucket, working_copy, || {
+                installed_package.state()
+            })
+            .await
         });
         spawned.insert(task.id(), fallback);
     }
@@ -375,7 +398,12 @@ pub async fn model(local_domain: &quilt_rs::LocalDomain, args: Input) -> Result<
 /// their own.
 ///
 /// [`InstalledPackage::state`]: quilt_rs::InstalledPackage::state
-async fn fetch_entry<F, Fut>(namespace: Namespace, bucket: Option<String>, state: F) -> PackageEntry
+async fn fetch_entry<F, Fut>(
+    namespace: Namespace,
+    bucket: Option<String>,
+    working_copy: bool,
+    state: F,
+) -> PackageEntry
 where
     F: FnOnce() -> Fut,
     Fut: std::future::Future<Output = Result<PackageStateReport, quilt_rs::Error>>,
@@ -409,6 +437,7 @@ where
         namespace,
         status,
         fetched: Some(fetched),
+        working_copy,
     }
 }
 
@@ -429,6 +458,7 @@ mod tests {
             namespace: ("example", name).into(),
             status,
             fetched: None,
+            working_copy: true,
         }
     }
 
@@ -476,6 +506,28 @@ mod tests {
         assert_eq!(
             output.to_json().to_string(),
             r#"{"packages":[{"bucket":"acme-research","namespace":"example/one","status":"up_to_date"},{"bucket":null,"namespace":"example/scratch","status":"local"}]}"#
+        );
+    }
+
+    /// A package with no working copy says so beside its status, as text and
+    /// as JSON.
+    #[test]
+    fn a_package_with_no_working_copy_is_marked() {
+        let output = Output::new(
+            vec![PackageEntry {
+                working_copy: false,
+                ..entry(Some("acme-research"), "one", UpstreamState::UpToDate)
+            }],
+            false,
+        );
+
+        assert!(
+            output.to_string().contains("synced (no working copy)"),
+            "{output}"
+        );
+        assert_eq!(
+            output.to_json()["packages"][0]["working_copy"],
+            serde_json::json!(false)
         );
     }
 
@@ -752,6 +804,7 @@ mod tests {
         let entry = fetch_entry(
             ("example", "one").into(),
             Some("acme-research".to_string()),
+            true,
             || async {
                 Ok(PackageStateReport {
                     state: PackageState::Behind,
@@ -771,6 +824,7 @@ mod tests {
         let stale = fetch_entry(
             ("example", "one").into(),
             Some("acme-research".to_string()),
+            true,
             || async {
                 Ok(PackageStateReport {
                     state: PackageState::Latest,
@@ -792,6 +846,7 @@ mod tests {
         let denied_row = fetch_entry(
             ("example", "one").into(),
             Some("acme-research".to_string()),
+            true,
             || async {
                 Err(s3_error(quilt_rs::S3ErrorKind::AccessDenied(
                     "denied".to_string(),
@@ -812,6 +867,7 @@ mod tests {
             let failed = fetch_entry(
                 ("example", "one").into(),
                 Some("acme-research".to_string()),
+                true,
                 || async { Err(err) },
             )
             .await;
@@ -837,6 +893,7 @@ mod tests {
             let row = fetch_entry(
                 ("example", "one").into(),
                 Some("bare-bucket".to_string()),
+                true,
                 || async { Err(err()) },
             )
             .await;

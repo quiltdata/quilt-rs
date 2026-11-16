@@ -11,6 +11,9 @@ use crate::cli::model::Commands;
 use crate::cli::output::Render;
 use crate::cli::output::Std;
 
+/// Said in place of the changes of a package tracked with no working copy.
+const NO_WORKING_COPY: &str = "No working copy: `quilt open` makes one";
+
 #[derive(Debug)]
 pub struct Input {
     pub namespace: Namespace,
@@ -136,7 +139,9 @@ impl std::fmt::Display for Output {
 
         output.push(discrete_state.to_string());
 
-        if self.status.changes.is_empty() {
+        if !self.status.working_copy.is_home() {
+            output.push(NO_WORKING_COPY.to_string());
+        } else if self.status.changes.is_empty() {
             output.push("No changes".to_string());
         } else {
             let entries = self
@@ -208,6 +213,9 @@ impl Render for Output {
                 "folders": self.status.ignored_dirs.len(),
             },
         });
+        if !self.status.working_copy.is_home() {
+            json["working_copy"] = false.into();
+        }
         if self.list_ignored {
             let paths: Vec<JsonIgnored> = self
                 .ignored()
@@ -278,6 +286,27 @@ mod tests {
     use quilt_rs::flow::UserMeta;
 
     use crate::cli::model::install_package_into_temp_dir;
+
+    /// A package with no working copy has no changes to list, and says how to
+    /// make a working copy instead.
+    #[test]
+    fn a_package_with_no_working_copy_says_how_to_open_one() {
+        let output = Output {
+            status: InstalledPackageStatus {
+                working_copy: quilt_rs::lineage::WorkingCopy::None,
+                ..InstalledPackageStatus::new(
+                    UpstreamState::UpToDate,
+                    std::collections::BTreeMap::new(),
+                )
+            },
+            list_ignored: false,
+        };
+
+        let text = output.to_string();
+        assert!(text.contains(NO_WORKING_COPY), "{text}");
+        assert!(!text.contains("No changes"), "{text}");
+        assert_eq!(output.to_json()["working_copy"], serde_json::json!(false));
+    }
 
     #[test]
     fn test_json_empty_status() {

@@ -23,6 +23,7 @@
 
 ### Added
 
+- `quilt install --no-working-copy` tracks a package without making its folder, `list` and `status` mark it `no working copy`, and `quilt open` makes its folder and installs its files; `commit` and file installs refuse such a package and name `quilt open`
 - `quilt install` and `quilt browse` accept a short hash (6 to 63 lowercase hex characters) after `@` in a package URI, as quilt3 does, and look it up in the bucket's registry (<https://github.com/quiltdata/quilt-rs/pull/1392>)
 - `quilt catalog` shows, sets (`set HOST`) and clears the default catalog, which `quilt login` and `quilt role` use when `--host` is left out; a default is taken from quilt3's `config.yml` the first time, and never applies to a package (<https://github.com/quiltdata/quilt-rs/pull/1384>)
 - `quilt version` prints what `quilt --version` prints, and `quilt version --details` adds what a bug report needs: the library versions, the OS, and the folders quilt uses (<https://github.com/quiltdata/quilt-rs/pull/1371>)

@@ -10,6 +10,7 @@ use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::lineage::DomainLineage;
 use crate::lineage::PackageLineage;
+use crate::lineage::WorkingCopy;
 use crate::paths::DomainPaths;
 use crate::paths::copy_cached_to_installed;
 use quilt_uri::ManifestUri;
@@ -26,10 +27,35 @@ pub async fn install_package(
     remote: &impl Remote,
     manifest_uri: &ManifestUri,
 ) -> Res<DomainLineage> {
+    install_package_as(
+        lineage,
+        paths,
+        storage,
+        remote,
+        manifest_uri,
+        WorkingCopy::Home,
+    )
+    .await
+}
+
+/// [`install_package`] recording `working_copy`. With none, no folder is made.
+pub async fn install_package_as(
+    lineage: DomainLineage,
+    paths: &DomainPaths,
+    storage: &(impl Storage + Sync),
+    remote: &impl Remote,
+    manifest_uri: &ManifestUri,
+    working_copy: WorkingCopy,
+) -> Res<DomainLineage> {
     info!("⏳ Installing package: {}", manifest_uri.display());
 
     paths
-        .scaffold_for_installing(storage, &lineage.home, &manifest_uri.namespace)
+        .scaffold_for(
+            storage,
+            &lineage.home,
+            &manifest_uri.namespace,
+            &working_copy,
+        )
         .await?;
     paths
         .scaffold_for_caching(storage, &manifest_uri.bucket)
@@ -68,7 +94,10 @@ pub async fn install_package(
     let mut lineage = lineage;
     lineage.packages.insert(
         manifest_uri.namespace.clone(),
-        PackageLineage::from_remote(manifest_uri.clone(), latest.hash),
+        PackageLineage {
+            working_copy,
+            ..PackageLineage::from_remote(manifest_uri.clone(), latest.hash)
+        },
     );
     info!(
         "✔️ Successfully installed package: {}",

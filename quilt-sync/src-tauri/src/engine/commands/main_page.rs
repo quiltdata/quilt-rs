@@ -96,6 +96,8 @@ pub enum PackageStateDto {
     /// Kept separate from `Unknown`, which makes a different and stronger claim:
     /// that the upstream state could not be read at all.
     Paused,
+    /// Tracked with no working copy, so there is no folder to sync.
+    NoWorkingCopy,
     /// `UpstreamState::Error`. The UI's `PackageState` catches this with
     /// `#[serde(other)]`, the same arm that catches a kind added after this build.
     Unknown,
@@ -671,6 +673,7 @@ async fn load_main_page_package(
     let has_remote = lineage.remote_uri.is_some();
     let bucket = lineage.remote_uri.as_ref().map(|uri| uri.bucket.clone());
     let changed_at = last_changed(&lineage);
+    let working_copy = lineage.working_copy.is_home();
     let typed_uri = lineage
         .remote_uri
         .as_ref()
@@ -690,6 +693,8 @@ async fn load_main_page_package(
         // §5's row 3, below the conflict above, which names its files and is the
         // more specific fact about the same disk.
         PackageStateDto::Paused
+    } else if !working_copy {
+        PackageStateDto::NoWorkingCopy
     } else {
         // `None`, not `Some(0)`: this phase has not looked at the working tree.
         // The heavy phase (`refresh_main_page_package`) measures it.
@@ -705,7 +710,9 @@ async fn load_main_page_package(
     // unreachable, which is when syncing cannot fix them.
     let provisional = !matches!(
         state,
-        PackageStateDto::PullConflict { .. } | PackageStateDto::Paused
+        PackageStateDto::PullConflict { .. }
+            | PackageStateDto::Paused
+            | PackageStateDto::NoWorkingCopy
     );
 
     Ok(Row {
@@ -962,6 +969,14 @@ pub(super) async fn refresh_main_page_package_from_model(
         .as_ref()
         .and_then(|uri| uri.origin.clone());
 
+    if !lineage.working_copy.is_home() {
+        return Ok(MainPagePackageRefresh {
+            state: PackageStateDto::NoWorkingCopy,
+            role_switch_host: None,
+            downloads: None,
+            changed_files: None,
+        });
+    }
     // No remote at all: `PackageState::resolve` ignores the file count for `Local`, so the
     // status call would be a local hash walk whose answer nothing reads. A remote
     // that exists but has never been pushed to still goes through the call below —
@@ -2092,6 +2107,48 @@ mod tests {
 
         assert_eq!(row.state, PackageStateDto::Paused);
         assert!(!row.provisional, "a pause on disk owes the network nothing");
+    }
+
+    /// `team/one` tracked with no working copy. No status is mocked, so a
+    /// status read panics the test.
+    fn mock_no_working_copy() -> crate::engine::model::MockQuiltModel {
+        let mut model = crate::engine::model::mocks::create();
+        model
+            .expect_get_installed_packages_list()
+            .return_once(|| Ok(vec![make_installed_package(("team", "one"))]));
+        model
+            .expect_get_installed_package()
+            .returning(|ns| Ok(Some(make_installed_package(ns.clone()))));
+        model
+            .expect_get_installed_package_lineage()
+            .returning(|pkg| {
+                Ok(quilt::lineage::PackageLineage {
+                    working_copy: quilt::lineage::WorkingCopy::None,
+                    ..quilt::lineage::PackageLineage::from_remote(
+                        make_manifest_uri(&pkg.namespace.to_string()),
+                        "abcdef".to_string(),
+                    )
+                })
+            });
+        model
+            .expect_readable_buckets()
+            .returning(|_| Ok(vec!["test".to_string()]));
+        model
+    }
+
+    #[tokio::test]
+    async fn a_package_with_no_working_copy_is_listed_as_such_and_settled() {
+        let row = light_phase_row(&mock_no_working_copy(), None).await;
+
+        assert_eq!(row.state, PackageStateDto::NoWorkingCopy);
+        assert!(!row.provisional, "no remote read can change it");
+    }
+
+    #[tokio::test]
+    async fn the_heavy_phase_reads_no_status_for_a_package_with_no_working_copy() {
+        let refreshed = refresh(&mock_no_working_copy(), &RoleCache::default()).await;
+
+        assert_eq!(refreshed.state, PackageStateDto::NoWorkingCopy);
     }
 
     #[test]

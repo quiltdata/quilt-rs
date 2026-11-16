@@ -34,6 +34,7 @@ use crate::lineage::InstalledPackageStatus;
 use crate::lineage::LineagePaths;
 use crate::lineage::SyncScope;
 use crate::lineage::UpstreamState;
+use crate::lineage::WorkingCopy;
 use crate::manifest::Manifest;
 use crate::manifest::Workflow;
 use crate::package_lock;
@@ -190,10 +191,16 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         }))
     }
 
+    /// The store's folders for this package, and its working copy's folder
+    /// when it has one at the home.
     pub async fn scaffold_paths(&self) -> Res {
-        let home = self.lineage.domain_home(&self.storage).await?;
+        let domain = self.lineage.read_domain(&self.storage).await?;
+        let working_copy = domain
+            .packages
+            .get(&self.namespace)
+            .map_or_default(|package| package.working_copy.clone());
         self.paths
-            .scaffold_for_installing(&self.storage, &home, &self.namespace)
+            .scaffold_for(&self.storage, &domain.home, &self.namespace, &working_copy)
             .await
     }
 
@@ -362,7 +369,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
     }
 
     pub async fn manifest(&self) -> Res<Manifest> {
-        let (_, lineage) = self.lineage.read(&self.storage).await?;
+        let lineage = self.lineage.read_entry(&self.storage).await?;
         self.manifest_from_lineage(&lineage).await
     }
 
@@ -405,7 +412,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
     }
 
     pub async fn lineage(&self) -> Res<lineage::PackageLineage> {
-        let (_, lineage) = self.lineage.read(&self.storage).await?;
+        let lineage = self.lineage.read_entry(&self.storage).await?;
         Ok(lineage)
     }
 
@@ -532,18 +539,40 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         &self,
         host_config_opt: Option<HostConfig>,
     ) -> Res<InstalledPackageStatus> {
-        let (package_home, lineage) = self.lineage.read(&self.storage).await?;
+        let (home, lineage) = self.lineage.read_home_and_entry(&self.storage).await?;
         let manifest = self.manifest().await?;
 
-        let host_config = match host_config_opt {
-            Some(hc) => hc,
-            None => self.status_host_config(&lineage, &manifest).await,
-        };
-
         let (_, status) = self
-            .walk(lineage, &manifest, &package_home, host_config)
+            .walk_if_any(&home, lineage, &manifest, host_config_opt)
             .await?;
         Ok(status)
+    }
+
+    /// [`Self::walk`] the working copy at the home. With none, the status the
+    /// lineage alone answers, and no folder is read.
+    async fn walk_if_any(
+        &self,
+        home: &lineage::Home,
+        lineage: lineage::PackageLineage,
+        manifest: &Manifest,
+        host_config_opt: Option<HostConfig>,
+    ) -> Res<(lineage::PackageLineage, InstalledPackageStatus)> {
+        if !lineage.working_copy.is_home() {
+            let status = InstalledPackageStatus {
+                upstream_state: lineage.clone().into(),
+                latest_hash: lineage.latest_hash.clone(),
+                working_copy: lineage.working_copy.clone(),
+                ..InstalledPackageStatus::default()
+            };
+            return Ok((lineage, status));
+        }
+        let host_config = match host_config_opt {
+            Some(hc) => hc,
+            None => self.status_host_config(&lineage, manifest).await,
+        };
+        let package_home = paths::package_home(home, &self.namespace);
+        self.walk(lineage, manifest, &package_home, host_config)
+            .await
     }
 
     /// The host config a status hashes new and changed files with.
@@ -603,9 +632,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         host_config_opt: Option<HostConfig>,
     ) -> Res<(InstalledPackageStatus, lineage::DownloadCounts)> {
         let (lineage, manifest, status) = self.status_with_manifest(host_config_opt).await?;
-        let on_disk = self
-            .untracked_on_disk(&self.package_home().await?, &lineage, &manifest)
-            .await;
+        let on_disk = self.untracked_in_working_copy(&lineage, &manifest).await?;
         let counts = lineage::DownloadCounts::count(
             &lineage,
             manifest
@@ -622,17 +649,12 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         &self,
         host_config_opt: Option<HostConfig>,
     ) -> Res<(lineage::PackageLineage, Manifest, InstalledPackageStatus)> {
-        let (package_home, lineage) = self.lineage.read(&self.storage).await?;
+        let (home, lineage) = self.lineage.read_home_and_entry(&self.storage).await?;
         let (lineage, latest_refreshed) = self.refresh_latest(lineage).await?;
         let manifest = self.manifest().await?;
 
-        let host_config = match host_config_opt {
-            Some(hc) => hc,
-            None => self.status_host_config(&lineage, &manifest).await,
-        };
-
         let (lineage, status) = self
-            .walk(lineage, &manifest, &package_home, host_config)
+            .walk_if_any(&home, lineage, &manifest, host_config_opt)
             .await?;
         Ok((
             lineage,
@@ -786,6 +808,94 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
             paths: lineage.paths,
             ..report
         })
+    }
+
+    /// Give a package tracked with no working copy its folder at
+    /// `<home>/<namespace>`, and install `paths` there, or every file of the
+    /// current revision when `None`. It then is a working copy like any
+    /// other. If the files can't be installed, the package stays without one.
+    pub async fn open_working_copy(
+        &self,
+        paths: Option<&[PathBuf]>,
+    ) -> Res<flow::InstallPathsReport> {
+        Box::pin(self.lock().await?.open_working_copy(paths)).await
+    }
+
+    async fn open_working_copy_unlocked(
+        &self,
+        paths: Option<&[PathBuf]>,
+    ) -> Res<flow::InstallPathsReport> {
+        let (home, lineage) = self.lineage.read_home_and_entry(&self.storage).await?;
+        match lineage.working_copy {
+            WorkingCopy::None => {}
+            WorkingCopy::Home => {
+                return Err(Error::InstallPackage(
+                    crate::InstallPackageError::AlreadyInstalled(self.namespace.clone()),
+                ));
+            }
+            WorkingCopy::Unrecognized(_) => {
+                return Err(
+                    crate::LineageError::UnrecognizedWorkingCopy(self.namespace.clone()).into(),
+                );
+            }
+        }
+        let keys: Vec<PathBuf> = match paths {
+            Some(paths) => paths.to_vec(),
+            None => self
+                .manifest_from_lineage(&lineage)
+                .await?
+                .rows
+                .into_iter()
+                .map(|row| row.logical_key.into())
+                .collect(),
+        };
+        // Files already there would read as the package's own changes.
+        let folder = paths::package_home(&home, &self.namespace);
+        if self.storage.exists(&folder).await
+            && self
+                .storage
+                .read_dir(&folder)
+                .await?
+                .next_entry()
+                .await?
+                .is_some()
+        {
+            return Err(crate::LineageError::FolderNotEmpty(folder).into());
+        }
+        self.lineage
+            .edit(&self.storage, |entry| {
+                entry.working_copy = WorkingCopy::Home;
+            })
+            .await?;
+        // `install_paths_unlocked` makes the folder itself.
+        let placed = async {
+            if keys.is_empty() {
+                self.scaffold_paths().await?;
+                return Ok(flow::InstallPathsReport::default());
+            }
+            self.install_paths_unlocked(&keys).await
+        };
+        let err = match placed.await {
+            Ok(report) => return Ok(report),
+            Err(err) => err,
+        };
+        // The folder was empty or absent, so all it holds is this open's.
+        if let Err(undo) = self.storage.remove_dir_all(&folder).await {
+            log::warn!("Failed to remove {}: {undo}", folder.display());
+        }
+        if let Err(undo) = self
+            .lineage
+            .edit(&self.storage, |entry| {
+                entry.working_copy = WorkingCopy::None;
+            })
+            .await
+        {
+            log::warn!(
+                "Failed to record {} as closed again: {undo}",
+                self.namespace
+            );
+        }
+        Err(err)
     }
 
     pub async fn uninstall_paths(&self, paths: &Vec<PathBuf>) -> Res<LineagePaths> {
@@ -987,7 +1097,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
     }
 
     async fn push_unlocked(&self, host_config_opt: Option<HostConfig>) -> Res<Pushed> {
-        let (_, lineage) = self.lineage.read(&self.storage).await?;
+        let lineage = self.lineage.read_entry(&self.storage).await?;
         Ok(self.push_from(lineage, host_config_opt).await?.0)
     }
 
@@ -1159,6 +1269,23 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
             }
         }
         on_disk
+    }
+
+    /// [`Self::untracked_on_disk`] in the working copy at the home; none for
+    /// a package without one.
+    pub async fn untracked_in_working_copy(
+        &self,
+        lineage: &lineage::PackageLineage,
+        manifest: &Manifest,
+    ) -> Res<BTreeSet<PathBuf>> {
+        if !lineage.working_copy.is_home() {
+            return Ok(BTreeSet::new());
+        }
+        let home = self.lineage.domain_home(&self.storage).await?;
+        let package_home = paths::package_home(&home, &self.namespace);
+        Ok(self
+            .untracked_on_disk(&package_home, lineage, manifest)
+            .await)
     }
 
     /// `scope` comes from the caller, not from the package's stored
@@ -1437,7 +1564,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
     }
 
     async fn certify_latest_unlocked(&self) -> Res<ManifestUri> {
-        let (_, lineage) = self.lineage.read(&self.storage).await?;
+        let lineage = self.lineage.read_entry(&self.storage).await?;
 
         // Push first so the hash we tag exists on remote, under the lock this
         // call already holds, and carry on from the entry the push wrote.
@@ -1534,7 +1661,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
                 "Bucket cannot be empty".to_string(),
             )));
         }
-        let (_, mut lineage) = self.lineage.read(&self.storage).await?;
+        let mut lineage = self.lineage.read_entry(&self.storage).await?;
         if let Some(existing) = &lineage.remote_uri
             && !existing.hash.is_empty()
         {
@@ -1631,7 +1758,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
     }
 
     async fn change_catalog_unlocked(&self, origin: Option<Host>) -> Res<ManifestUri> {
-        let (_, mut lineage) = self.lineage.read(&self.storage).await?;
+        let mut lineage = self.lineage.read_entry(&self.storage).await?;
         let Some(remote) = lineage.remote_uri.as_mut().filter(|r| !r.bucket.is_empty()) else {
             return Err(Error::PackageOp(PackageOpError::Package(
                 "This package has no bucket yet; set a remote first".to_string(),
@@ -1702,7 +1829,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
     /// it ([`Self::resolve_workflow`] and [`Self::workflows_config`]); the key
     /// itself is the shared [`WORKFLOWS_CONFIG_KEY`].
     async fn workflows_config_location(&self) -> Res<Option<(Option<Host>, S3Uri)>> {
-        let (_, lineage) = self.lineage.read(&self.storage).await?;
+        let lineage = self.lineage.read_entry(&self.storage).await?;
         let remote_uri = match lineage.remote_uri.as_ref() {
             Some(uri) if !uri.bucket.is_empty() => uri.clone(),
             _ => return Ok(None),
@@ -1808,6 +1935,13 @@ impl<S: Storage + Clone + Sync, R: Remote> LockedPackage<S, R> {
 
     pub async fn install_paths(&self, paths: &[PathBuf]) -> Res<flow::InstallPathsReport> {
         self.package.install_paths_unlocked(paths).await
+    }
+
+    pub async fn open_working_copy(
+        &self,
+        paths: Option<&[PathBuf]>,
+    ) -> Res<flow::InstallPathsReport> {
+        self.package.open_working_copy_unlocked(paths).await
     }
 
     pub async fn uninstall_paths(&self, paths: &Vec<PathBuf>) -> Res<LineagePaths> {
@@ -1921,6 +2055,8 @@ mod change_catalog_tests;
 mod current_revision_tests;
 #[cfg(test)]
 mod move_to_tests;
+#[cfg(test)]
+mod no_working_copy_tests;
 #[cfg(test)]
 mod older_revision_tests;
 #[cfg(test)]

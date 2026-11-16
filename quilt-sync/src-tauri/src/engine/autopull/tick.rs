@@ -1007,6 +1007,10 @@ pub(crate) async fn sync_package(
     if remote.bucket.is_empty() {
         return Pass::Skipped;
     }
+    // No folder to place files in or publish from.
+    if !lineage.working_copy.is_home() {
+        return Pass::Skipped;
+    }
     // `None` for a package with no catalog, which syncs on this computer's AWS
     // credentials.
     let origin = remote.origin.as_ref();

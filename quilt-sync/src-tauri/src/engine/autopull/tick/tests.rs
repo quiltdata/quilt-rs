@@ -2430,6 +2430,49 @@ async fn a_package_held_by_a_task_run_is_not_synced() {
     assert_eq!(pass().await, Pass::Busy, "the hold was all that skipped it");
 }
 
+/// A package with no working copy has no folder to pull into or publish from,
+/// so the tick leaves it before taking its lock.
+#[tokio::test]
+async fn a_package_with_no_working_copy_is_not_synced() {
+    let ns: Namespace = ("acme", "demo").into();
+    let remote = quilt_uri::ManifestUri {
+        bucket: "bucket".to_string(),
+        namespace: ns.clone(),
+        hash: "h0".to_string(),
+        origin: Some(fixtures::host()),
+    };
+    let lineage = quilt::lineage::PackageLineage {
+        working_copy: quilt::lineage::WorkingCopy::None,
+        ..quilt::lineage::PackageLineage::from_remote(remote, "h1".to_string())
+    };
+    let mut model = MockQuiltModel::new();
+    model
+        .expect_get_installed_package_lineage()
+        .returning(move |_| Ok(lineage.clone()));
+    // Reached only past the skip, where it answers `Busy`.
+    model.expect_try_lock_package().returning(|_| Ok(None));
+    let inner = make_inner(enabled());
+    let run = PassSettings {
+        publish: PublishSettings::default(),
+        wait: Duration::ZERO,
+        pull_enabled: true,
+        push_enabled: true,
+        tasks: None,
+    };
+
+    let pass = sync_package(
+        &model,
+        &RoleCache::default(),
+        &inner,
+        &demo_package(),
+        &run,
+        Instant::now(),
+    )
+    .await;
+
+    assert_eq!(pass, Pass::Skipped);
+}
+
 fn demo_package() -> quilt::InstalledPackage {
     quilt::LocalDomain::new(std::path::PathBuf::new())
         .create_installed_package(("acme", "demo").into())

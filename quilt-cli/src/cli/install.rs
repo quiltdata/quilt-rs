@@ -18,11 +18,22 @@ pub struct Input {
     pub keep: Option<SyncScope>,
     /// Whether to download the files `keep` covers.
     pub download: bool,
+    /// `false` tracks the package with no working copy.
+    pub working_copy: bool,
+}
+
+/// `quilt open`: the package and the paths to install, every one if `None`.
+#[derive(Debug)]
+pub struct OpenInput {
+    pub namespace: Namespace,
+    pub paths: Option<Vec<PathBuf>>,
 }
 
 #[derive(Debug)]
 pub struct Output {
     installed_package: quilt_rs::InstalledPackage,
+    /// `false` for a package tracked with no working copy.
+    working_copy: bool,
     paths: Vec<std::path::PathBuf>,
     /// Requested paths not installed because the remote no longer holds their
     /// bytes (an unversioned bucket, overwritten since).
@@ -60,7 +71,9 @@ impl std::fmt::Display for Output {
         let mut output = vec![format!("{}", self.installed_package)];
         let installed: Vec<_> = self.installed().collect();
         // A keep result says what it downloaded.
-        if installed.is_empty() && self.keep.is_none() {
+        if !self.working_copy {
+            output.push("No working copy".to_string());
+        } else if installed.is_empty() && self.keep.is_none() {
             output.push("No paths installed".to_string());
         } else {
             for path in installed {
@@ -91,7 +104,7 @@ impl std::fmt::Display for Output {
 
 impl Render for Output {
     fn to_json(&self) -> serde_json::Value {
-        serde_json::json!({
+        let mut json = serde_json::json!({
             "namespace": self.installed_package.namespace.to_string(),
             "paths": self
                 .installed()
@@ -118,7 +131,11 @@ impl Render for Output {
                 .map(|path| path.display().to_string())
                 .collect::<Vec<_>>(),
             "keep": self.keep.as_ref().map(Render::to_json),
-        })
+        });
+        if !self.working_copy {
+            json["working_copy"] = false.into();
+        }
+        json
     }
 }
 
@@ -126,19 +143,57 @@ pub async fn command(m: impl Commands, args: Input) -> Std {
     Std::from_result(m.install(args).await)
 }
 
+pub async fn open_command(m: impl Commands, args: OpenInput) -> Std {
+    Std::from_result(m.open(args).await)
+}
+
+/// [`quilt_rs::InstalledPackage::open_working_copy`] on an installed package.
+pub async fn open_model(
+    local_domain: &quilt_rs::LocalDomain,
+    OpenInput { namespace, paths }: OpenInput,
+) -> Result<Output, Error> {
+    let Some(installed_package) = local_domain.get_installed_package(&namespace).await? else {
+        return Err(Error::NamespaceNotFound(namespace));
+    };
+    let report = installed_package
+        .open_working_copy(paths.as_deref())
+        .await?;
+    let paths = paths.unwrap_or_else(|| report.paths.keys().cloned().collect());
+    Ok(Output {
+        installed_package,
+        working_copy: true,
+        paths,
+        skipped: report.skipped,
+        hash_mismatch: report.hash_mismatch,
+        already_installed: report.already_installed,
+        keep: None,
+    })
+}
+
 async fn install_package(
     local_domain: &quilt_rs::LocalDomain,
     uri: &quilt_uri::S3PackageUri,
     namespace: Namespace,
 ) -> Result<quilt_rs::InstalledPackage, Error> {
-    let remote = local_domain.get_remote();
     if let Some(installed_package) = local_domain.get_installed_package(&namespace).await? {
         // TODO: check the actual remote_manifest
         return Ok(installed_package);
     }
-    let manifest_uri =
-        quilt_rs::io::manifest::resolve_manifest_uri(remote, uri.catalog.as_ref(), uri).await?;
-    Ok(local_domain.install_package(&manifest_uri).await?)
+    Ok(local_domain
+        .install_package(&resolve(local_domain, uri).await?)
+        .await?)
+}
+
+async fn resolve(
+    local_domain: &quilt_rs::LocalDomain,
+    uri: &quilt_uri::S3PackageUri,
+) -> Result<quilt_uri::ManifestUri, Error> {
+    Ok(quilt_rs::io::manifest::resolve_manifest_uri(
+        local_domain.get_remote(),
+        uri.catalog.as_ref(),
+        uri,
+    )
+    .await?)
 }
 
 fn get_entries(
@@ -165,6 +220,7 @@ pub async fn model(
         uri,
         keep,
         download,
+        working_copy,
     }: Input,
 ) -> Result<Output, Error> {
     let uri: quilt_uri::S3PackageUri = uri.parse()?;
@@ -174,6 +230,23 @@ pub async fn model(
     let paths = get_entries(path, paths);
     if keep.is_some() && !download && !paths.is_empty() {
         return Err(Error::NoDownloadWithPath);
+    }
+    if !working_copy {
+        if !paths.is_empty() {
+            return Err(Error::NoWorkingCopyWithPath);
+        }
+        // Unlike an install, tracking refuses an installed package.
+        return Ok(Output {
+            installed_package: local_domain
+                .track_package(&resolve(local_domain, &uri).await?)
+                .await?,
+            working_copy: false,
+            paths,
+            skipped: Vec::new(),
+            hash_mismatch: Vec::new(),
+            already_installed: Vec::new(),
+            keep: None,
+        });
     }
     let installed_package = install_package(local_domain, &uri, namespace).await?;
 
@@ -185,6 +258,8 @@ pub async fn model(
     };
 
     Ok(Output {
+        // An installed package may have been tracked with none.
+        working_copy: installed_package.lineage().await?.working_copy.is_home(),
         installed_package,
         paths,
         skipped: report.skipped,
@@ -240,6 +315,7 @@ mod tests {
                     uri,
                     keep: None,
                     download: true,
+                    working_copy: true,
                 },
             )
             .await?;
@@ -331,6 +407,7 @@ mod tests {
                     uri: pkg::URI.to_string(),
                     keep: None,
                     download: true,
+                    working_copy: true,
                 },
             )
             .await?;
@@ -381,6 +458,7 @@ mod tests {
                 uri: pkg::R1_URI.to_string(),
                 keep: None,
                 download: true,
+                working_copy: true,
             },
         )
         .await?;
@@ -428,6 +506,7 @@ mod tests {
                 uri: pkg::R1_URI.to_string(),
                 keep: None,
                 download: true,
+                working_copy: true,
             },
         )
         .await?;
@@ -455,6 +534,7 @@ mod tests {
 
         let output = Output {
             installed_package: created.installed_package,
+            working_copy: true,
             paths: vec![
                 std::path::PathBuf::from("data/one.csv"),
                 std::path::PathBuf::from("data/two.csv"),
@@ -490,6 +570,7 @@ mod tests {
                 uri: pkg::URI.to_string(),
                 keep: None,
                 download: true,
+                working_copy: true,
             },
         )
         .await?;
@@ -503,6 +584,7 @@ mod tests {
                 uri: pkg::URI.to_string(),
                 keep: None,
                 download: true,
+                working_copy: true,
             },
         )
         .await?;
@@ -549,6 +631,7 @@ mod tests {
 
         let output = Output {
             installed_package: created.installed_package,
+            working_copy: true,
             paths: vec![
                 PathBuf::from("a.txt"),
                 PathBuf::from("b.txt"),
@@ -583,6 +666,7 @@ mod tests {
                 uri: pkg::URI.to_string(),
                 keep: Some(SyncScope::folders(["./one/"])?),
                 download,
+                working_copy: true,
             },
         )
         .await?;
@@ -636,6 +720,7 @@ mod tests {
                 uri: "quilt+s3://bucket#package=a/b&path=data.csv".to_string(),
                 keep: Some(SyncScope::EntirePackage),
                 download: false,
+                working_copy: true,
             },
         )
         .await
@@ -661,6 +746,7 @@ mod tests {
 
         let output = Output {
             installed_package: created.installed_package,
+            working_copy: true,
             paths: Vec::new(),
             skipped: Vec::new(),
             hash_mismatch: Vec::new(),

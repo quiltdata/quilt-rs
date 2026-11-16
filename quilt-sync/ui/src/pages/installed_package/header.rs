@@ -393,6 +393,18 @@ fn primary_action(
         Some(PackageAction::SignIn) => goto.set(sign_in_to.clone()),
         Some(PackageAction::SwitchRole) => role_open.set(true),
         Some(PackageAction::TryAgain) => reload.notify(),
+        Some(PackageAction::OpenWorkingCopy) => {
+            let ns = ns.to_string();
+            run_said(
+                busy,
+                outcome,
+                ns.clone(),
+                "Opened as a working copy.",
+                "Could not open as a working copy.",
+                Reread::OnSuccess(reload),
+                async move { commands::package_open_working_copy(ns).await },
+            );
+        }
         // `Publish` returned above; the header never offers `ChooseS3Bucket`.
         Some(PackageAction::Publish | PackageAction::ChooseS3Bucket) | None => (),
     };

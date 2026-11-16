@@ -297,6 +297,19 @@ pub enum LineageError {
     #[error("Operation requires a remote origin, but this is a local-only package")]
     NoRemote,
 
+    #[error("Package {0} has no working copy; open it as a working copy first")]
+    NoWorkingCopy(Namespace),
+
+    #[error("Package {0} has a working copy recorded by a newer version; update to use it")]
+    UnrecognizedWorkingCopy(Namespace),
+
+    /// Opening a working copy takes only an empty folder, which it then owns.
+    #[error(
+        "{} already holds files; move them away to open the package there",
+        .0.display()
+    )]
+    FolderNotEmpty(PathBuf),
+
     /// The home can't move while packages are installed: their working
     /// folders live under the current one.
     #[error(

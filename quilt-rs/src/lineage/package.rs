@@ -13,6 +13,7 @@ use crate::Res;
 use crate::error::LineageError;
 use crate::lineage::status::UpstreamState;
 use quilt_uri::ManifestUri;
+use quilt_uri::Namespace;
 
 fn multihash_to_str<S: ser::Serializer>(
     hash: &Multihash<256>,
@@ -207,6 +208,52 @@ fn holds(outer: &str, inner: &str) -> bool {
     Path::new(inner).starts_with(outer)
 }
 
+/// Where a package's files are placed and read from.
+///
+/// A package whose working copy is not at the home is never written to
+/// `data.json`, where a build that predates this field would read it as one
+/// whose files are all gone; see [`DomainLineageIo`](crate::lineage::DomainLineageIo).
+#[derive(Clone, Debug, PartialEq, Default)]
+pub enum WorkingCopy {
+    /// The folder `<home>/<namespace>`.
+    #[default]
+    Home,
+    /// None: the package is tracked in the store alone.
+    None,
+    /// What a later version recorded, kept as written. No flow reads or
+    /// places its files.
+    Unrecognized(serde_json::Value),
+}
+
+impl WorkingCopy {
+    /// Whether the package has files a flow may read or place.
+    #[must_use]
+    pub fn is_home(&self) -> bool {
+        matches!(self, Self::Home)
+    }
+}
+
+impl Serialize for WorkingCopy {
+    fn serialize<S: ser::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Home => serializer.serialize_str("home"),
+            Self::None => serializer.serialize_str("none"),
+            Self::Unrecognized(value) => value.serialize(serializer),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for WorkingCopy {
+    fn deserialize<D: de::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        Ok(match value.as_str() {
+            Some("home") => Self::Home,
+            Some("none") => Self::None,
+            _ => Self::Unrecognized(value),
+        })
+    }
+}
+
 /// Stores lineage (installation/modification history) of the package read from `data.json` file
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
 pub struct PackageLineage {
@@ -232,6 +279,10 @@ pub struct PackageLineage {
     /// package on the default scope; see [`SyncScope`].
     #[serde(default, skip_serializing_if = "SyncScope::is_default")]
     pub sync_scope: SyncScope,
+    /// Absent for a working copy at the home, so `data.json` keeps the shape
+    /// every build reads.
+    #[serde(default, skip_serializing_if = "WorkingCopy::is_home")]
+    pub working_copy: WorkingCopy,
 }
 
 impl From<PackageLineage> for UpstreamState {
@@ -318,6 +369,18 @@ impl PackageLineage {
             } else {
                 Some(self.base_hash.as_str())
             })
+    }
+
+    /// `Ok` for a working copy at the home, the only one whose files a flow
+    /// reads or places.
+    pub fn require_working_copy(&self, namespace: &Namespace) -> Res {
+        match self.working_copy {
+            WorkingCopy::Home => Ok(()),
+            WorkingCopy::None => Err(LineageError::NoWorkingCopy(namespace.clone()).into()),
+            WorkingCopy::Unrecognized(_) => {
+                Err(LineageError::UnrecognizedWorkingCopy(namespace.clone()).into())
+            }
+        }
     }
 
     pub fn update_latest(&mut self, manifest_uri: ManifestUri) {

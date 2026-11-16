@@ -504,6 +504,21 @@ enum Commands {
         /// downloading anything
         #[arg(long, requires = "keep")]
         no_download: bool,
+        /// Track the package with no working copy: record its manifest and
+        /// make no folder. `quilt open` makes one later
+        #[arg(long, conflicts_with_all = ["path", "keep"])]
+        no_working_copy: bool,
+    },
+    /// Make a working copy of a package tracked without one
+    ///
+    /// Makes the package's folder under the home and installs its files
+    /// there: the ones `--path` names, or every file of its current revision.
+    Open {
+        #[command(flatten)]
+        pkg: PackageRef,
+        /// Logical key to install. You can provide multiple paths
+        #[arg(short, long)]
+        path: Option<Vec<PathBuf>>,
     },
     /// Show or set which of a package's files this copy keeps
     ///
@@ -839,6 +854,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             keep_all,
             keep_folder,
             no_download,
+            no_working_copy,
         } => {
             let args = install::Input {
                 namespace: parse_optional_namespace(namespace)?,
@@ -846,10 +862,20 @@ pub async fn init(args: Args) -> Result<Std, Error> {
                 uri,
                 keep: keep::scope_from(false, keep_all, keep_folder)?,
                 download: !no_download,
+                working_copy: !no_working_copy,
             };
 
             log::debug!("Installing {args:?}");
             Ok(install::command(m, args).await)
+        }
+        Commands::Open { pkg, path } => {
+            let args = install::OpenInput {
+                namespace: pkg.resolve(&m).await?,
+                paths: path,
+            };
+
+            log::debug!("Opening {args:?}");
+            Ok(install::open_command(m, args).await)
         }
         Commands::Keep {
             pkg,
@@ -1016,6 +1042,12 @@ Then run:
     #[error("--no-download downloads nothing, so it cannot install --path or a &path= in the URI")]
     NoDownloadWithPath,
 
+    #[error("--no-working-copy makes no folder, so it cannot install a &path= in the URI")]
+    NoWorkingCopyWithPath,
+
+    #[error("Package {0} has no working copy. Run \"quilt open --namespace {0}\" to make one")]
+    NoWorkingCopy(Namespace),
+
     #[error(
         "Could not infer a namespace from the current directory. Pass --namespace or run inside <home>/<prefix>/<name>"
     )]
@@ -1062,7 +1094,12 @@ Then run:
 
 impl From<quilt_rs::Error> for Error {
     fn from(err: quilt_rs::Error) -> Error {
-        Error::Quilt(err)
+        match err {
+            quilt_rs::Error::Lineage(quilt_rs::LineageError::NoWorkingCopy(namespace)) => {
+                Error::NoWorkingCopy(namespace)
+            }
+            err => Error::Quilt(err),
+        }
     }
 }
 
@@ -1110,6 +1147,8 @@ impl Error {
             Error::SettingsDir => "settings_dir",
             Error::NamespaceNotFound(_) => "namespace_not_found",
             Error::NoDownloadWithPath => "no_download_with_path",
+            Error::NoWorkingCopyWithPath => "no_working_copy_with_path",
+            Error::NoWorkingCopy(_) => "no_working_copy",
             Error::NamespaceRequired => "namespace_required",
             Error::CommitMetaInvalid(_) => "commit_meta_invalid",
             Error::WorkflowEmpty => "workflow_empty",
@@ -1617,6 +1656,29 @@ mod tests {
         ));
         assert!(parse(&["--keep-all", "--keep-folder", "a"]).is_err());
         assert!(parse(&["--no-download"]).is_err());
+        assert!(matches!(
+            parse(&["--no-working-copy"]).expect("parses").command,
+            Commands::Install {
+                no_working_copy: true,
+                ..
+            }
+        ));
+        assert!(parse(&["--no-working-copy", "--path", "a"]).is_err());
+        assert!(parse(&["--no-working-copy", "--keep-all"]).is_err());
+        assert!(parse(&["--no-working-copy", "--keep-folder", "a"]).is_err());
+    }
+
+    /// A refusal for want of a working copy names the command that makes one.
+    #[test]
+    fn no_working_copy_names_quilt_open() {
+        let err = Error::from(quilt_rs::Error::Lineage(
+            quilt_rs::LineageError::NoWorkingCopy(("a", "b").into()),
+        ));
+        assert_eq!(err.kind(), "no_working_copy");
+        assert!(
+            err.to_string().contains("quilt open --namespace a/b"),
+            "{err}"
+        );
     }
 
     #[test]
@@ -2304,6 +2366,7 @@ mod tests {
                 keep_all: false,
                 keep_folder: Vec::new(),
                 no_download: false,
+                no_working_copy: false,
             },
         };
         let mut output = Vec::new();
@@ -3468,6 +3531,7 @@ mod tests {
                 keep_all: false,
                 keep_folder: Vec::new(),
                 no_download: false,
+                no_working_copy: false,
             },
         };
 
