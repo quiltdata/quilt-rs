@@ -24,6 +24,7 @@ use crate::lineage::PathState;
 use crate::lineage::SyncScope;
 use crate::logical_key::LogicalKey;
 use quilt_uri::ManifestUri;
+use quilt_uri::Namespace;
 
 /// Keys this version does not know, at the top level or in a working copy,
 /// kept so a rewrite carries them. Keys nested deeper are not kept, and an
@@ -118,14 +119,12 @@ impl PackageRef {
         })
     }
 
-    /// With no tip for the remote's bucket, `latest_hash` falls back to
-    /// `base_hash` so the package does not read as behind, or to empty for
-    /// a package never pushed.
+    /// `latest_hash` is the tip cached for this ref's remote package, or
+    /// [`Self::untipped_latest`] when none is.
     pub(crate) fn into_lineage(self, tip: Option<&TipCache>) -> PackageLineage {
         let latest_hash = match (&self.remote, tip) {
-            (Some(remote), Some(tip)) if tip.bucket == remote.bucket => tip.latest_hash.clone(),
-            (Some(remote), _) if !remote.hash.is_empty() => self.base_hash.clone(),
-            _ => String::new(),
+            (Some(remote), Some(tip)) if tip.is_for(remote) => tip.latest_hash.clone(),
+            _ => self.untipped_latest().to_string(),
         };
         let copy = self.copies.into_iter().next().unwrap_or_default();
         PackageLineage {
@@ -139,6 +138,16 @@ impl PackageRef {
                 .map(|key| (PathBuf::from(key), PathState::default()))
                 .collect(),
             sync_scope: copy.sync_scope,
+        }
+    }
+
+    /// The `latest_hash` this ref reads with its tip unknown: `base_hash`, so
+    /// the package does not read as behind, or empty for a package never
+    /// pushed.
+    pub(crate) fn untipped_latest(&self) -> &str {
+        match &self.remote {
+            Some(remote) if !remote.hash.is_empty() => &self.base_hash,
+            _ => "",
         }
     }
 }
@@ -186,14 +195,32 @@ pub(crate) enum MigrationState {
 pub(crate) struct TipCache {
     pub format: u32,
     pub latest_hash: String,
-    /// The bucket the tip was read from, so a cache left from another
-    /// remote is not taken for this one's.
+    /// The remote package the tip was read from, so a cache left from
+    /// another is not taken for this one's. Not its catalog, which only
+    /// signs the read.
     pub bucket: String,
+    pub namespace: Namespace,
     pub checked_at: DateTime<Utc>,
 }
 
 impl TipCache {
     pub(crate) const FORMAT: u32 = 1;
+
+    /// `latest_hash` as read now from `remote`'s package.
+    pub(crate) fn of(remote: &ManifestUri, latest_hash: &str) -> Self {
+        Self {
+            format: Self::FORMAT,
+            latest_hash: latest_hash.to_string(),
+            bucket: remote.bucket.clone(),
+            namespace: remote.namespace.clone(),
+            checked_at: Utc::now(),
+        }
+    }
+
+    /// Whether this is the tip of `remote`'s package, at whatever revision.
+    pub(crate) fn is_for(&self, remote: &ManifestUri) -> bool {
+        self.bucket == remote.bucket && self.namespace == remote.namespace
+    }
 
     /// `None` when the bytes are not a cache this version reads: the tip is
     /// then unknown, never an error.
@@ -484,12 +511,11 @@ mod tests {
         }
     }
 
-    fn tip(bucket: &str) -> TipCache {
+    /// `TIP`, read from the example's remote package.
+    fn tip() -> TipCache {
         TipCache {
-            format: 1,
-            latest_hash: TIP.to_string(),
-            bucket: bucket.to_string(),
             checked_at: "2026-11-12T21:00:00Z".parse().unwrap(),
+            ..TipCache::of(&remote(REMOTE), TIP)
         }
     }
 
@@ -498,7 +524,7 @@ mod tests {
         let lineage = lineage();
         let stored = PackageRef::from_lineage(&lineage, None)?;
         let stored = PackageRef::from_slice(&path(), &stored.to_vec()?)?;
-        let tip = TipCache::from_slice(&tip("b").to_vec()?);
+        let tip = TipCache::from_slice(&tip().to_vec()?);
         assert_eq!(
             stored.into_lineage(tip.as_ref()),
             PackageLineage {
@@ -514,12 +540,34 @@ mod tests {
     }
 
     #[test]
-    fn without_a_tip_for_its_bucket_a_package_reads_at_its_base() -> Res {
+    fn without_a_tip_for_its_package_a_package_reads_at_its_base() -> Res {
         let stored = PackageRef::from_lineage(&lineage(), None)?;
-        for tip in [None, Some(tip("another-bucket"))] {
-            let lineage = stored.clone().into_lineage(tip.as_ref());
+        let other_tips = [
+            TipCache {
+                bucket: "another-bucket".to_string(),
+                ..tip()
+            },
+            TipCache {
+                namespace: ("owner", "another-name").into(),
+                ..tip()
+            },
+        ];
+        for tip in [None].into_iter().chain(other_tips.iter().map(Some)) {
+            let lineage = stored.clone().into_lineage(tip);
             assert_eq!(lineage.latest_hash, BASE, "{tip:?}");
         }
+        Ok(())
+    }
+
+    #[test]
+    fn a_tip_read_through_another_catalog_is_still_the_packages() -> Res {
+        let stored = PackageRef::from_lineage(&lineage(), None)?;
+        let uncatalogued = ManifestUri {
+            origin: None,
+            ..remote(REMOTE)
+        };
+        let tip = TipCache::of(&uncatalogued, TIP);
+        assert_eq!(stored.into_lineage(Some(&tip)).latest_hash, TIP);
         Ok(())
     }
 
@@ -532,7 +580,7 @@ mod tests {
         let stored = PackageRef::from_lineage(&never_pushed, None)?;
         assert_eq!(stored.clone().into_lineage(None).latest_hash, "");
         assert_eq!(
-            stored.into_lineage(Some(&tip("b"))).latest_hash,
+            stored.into_lineage(Some(&tip())).latest_hash,
             TIP,
             "a tip read for it still counts"
         );
@@ -541,13 +589,13 @@ mod tests {
             ..lineage()
         };
         let stored = PackageRef::from_lineage(&local, None)?;
-        assert_eq!(stored.into_lineage(Some(&tip("b"))).latest_hash, "");
+        assert_eq!(stored.into_lineage(Some(&tip())).latest_hash, "");
         Ok(())
     }
 
     #[test]
     fn a_tip_cache_that_cannot_be_read_is_an_unknown_tip() -> Res {
-        let mut newer = serde_json::to_value(tip("b"))?;
+        let mut newer = serde_json::to_value(tip())?;
         newer["format"] = json!(2);
         for bytes in [
             b"".to_vec(),
@@ -561,20 +609,18 @@ mod tests {
     }
 
     #[test]
-    fn a_tip_cache_holds_the_tip_its_bucket_and_when_it_was_read() -> Res {
+    fn a_tip_cache_holds_the_tip_its_package_and_when_it_was_read() -> Res {
         let expected = json!({
             "format": 1,
             "latest_hash": TIP,
             "bucket": "b",
+            "namespace": "owner/name",
             "checked_at": "2026-11-12T21:00:00Z"
         });
-        assert_eq!(
-            serde_json::from_slice::<Value>(&tip("b").to_vec()?)?,
-            expected
-        );
+        assert_eq!(serde_json::from_slice::<Value>(&tip().to_vec()?)?, expected);
         assert_eq!(
             TipCache::from_slice(&serde_json::to_vec(&expected)?),
-            Some(tip("b"))
+            Some(tip())
         );
         Ok(())
     }

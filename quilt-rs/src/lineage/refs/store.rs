@@ -28,8 +28,9 @@ use crate::lineage::LineageHook;
 use crate::lineage::PackageLineage;
 use crate::package_lock::PackageLock;
 use crate::paths::DomainPaths;
-use chrono::Utc;
+use quilt_uri::ManifestUri;
 use quilt_uri::Namespace;
+use quilt_uri::S3PackageHandle;
 use tracing::warn;
 
 /// The refs, tip caches and domain config of one domain.
@@ -333,7 +334,11 @@ impl RefStore {
         let (mut tip, fresh) = wanted_tip(&new_ref, lineage, tip);
         let tip_first = match &stored {
             None => true,
-            Some(stored) => fresh && same_package(stored, &new_ref),
+            Some(stored) => {
+                let package =
+                    |remote: &Option<ManifestUri>| remote.as_ref().map(S3PackageHandle::from);
+                fresh && package(&stored.remote) == package(&new_ref.remote)
+            }
         };
         if tip_first {
             self.change_tip(storage, namespace, tip.as_ref(), fresh, had_tip)
@@ -505,7 +510,7 @@ async fn put(
 /// The tip cache `lineage` wants beside `new_ref`, and whether it differs
 /// from `tip`, the cache there now. A tip the ref already implies is not
 /// cached afresh, so a fallback is not made a tip; but a cache of the same
-/// bucket is overwritten rather than removed, so no kill leaves its old tip
+/// package is overwritten rather than removed, so no kill leaves its old tip
 /// beside the new ref.
 fn wanted_tip(
     new_ref: &PackageRef,
@@ -515,43 +520,10 @@ fn wanted_tip(
     let Some(remote) = &lineage.remote_uri else {
         return (None, false);
     };
-    let bucket = &remote.bucket;
-    let cached = tip.as_ref().is_some_and(|tip| tip.bucket == *bucket);
-    if !cached && lineage.latest_hash == untipped_latest(new_ref) {
-        return (None, false);
-    }
-    match tip {
-        Some(tip) if tip.bucket == *bucket && tip.latest_hash == lineage.latest_hash => {
-            (Some(tip), false)
-        }
-        _ => {
-            let tip = TipCache {
-                format: TipCache::FORMAT,
-                latest_hash: lineage.latest_hash.clone(),
-                bucket: bucket.clone(),
-                checked_at: Utc::now(),
-            };
-            (Some(tip), true)
-        }
-    }
-}
-
-/// Whether both refs' remotes name one package, at whatever revision.
-fn same_package(a: &PackageRef, b: &PackageRef) -> bool {
-    match (&a.remote, &b.remote) {
-        (Some(a), Some(b)) => {
-            a.origin == b.origin && a.bucket == b.bucket && a.namespace == b.namespace
-        }
-        (a, b) => a.is_none() && b.is_none(),
-    }
-}
-
-/// The `latest_hash` a ref reads with no tip cached for its bucket, by
-/// [`PackageRef::into_lineage`]'s rule.
-fn untipped_latest(stored: &PackageRef) -> &str {
-    match &stored.remote {
-        Some(remote) if !remote.hash.is_empty() => &stored.base_hash,
-        _ => "",
+    match tip.filter(|tip| tip.is_for(remote)) {
+        Some(tip) if tip.latest_hash == lineage.latest_hash => (Some(tip), false),
+        None if lineage.latest_hash == new_ref.untipped_latest() => (None, false),
+        _ => (Some(TipCache::of(remote, &lineage.latest_hash)), true),
     }
 }
 
@@ -1211,6 +1183,49 @@ mod tests {
         Ok(())
     }
 
+    #[test(tokio::test)]
+    async fn a_tip_read_for_another_name_in_the_bucket_is_never_taken_for_this_one() -> Res {
+        let domain = Domain::new()?;
+        domain.install(&lineage("x", BASE, TIP)).await?;
+        let held = domain.lock(&package("x")).await?;
+        let to_name = |name: &'static str| {
+            domain.store.update(&domain.storage, &held, move |lineage| {
+                lineage.remote_uri.as_mut().unwrap().namespace = package(name);
+                lineage.latest_hash = BASE.to_string();
+                Ok(())
+            })
+        };
+
+        to_name("renamed").await?;
+        to_name("x").await?;
+        let x = domain.store.read(&domain.storage, &package("x")).await?;
+        assert_eq!(x.latest_hash, BASE);
+        assert!(!domain.paths.package_tip(&package("x")).exists());
+        Ok(())
+    }
+
+    /// The tip is read from the bucket, whatever catalog signs the read.
+    #[test(tokio::test)]
+    async fn a_catalog_change_leaves_the_cached_tip_alone() -> Res {
+        let domain = Domain::new()?;
+        domain.install(&lineage("x", BASE, TIP)).await?;
+        let tip = domain.paths.package_tip(&package("x"));
+        let cached = std::fs::read(&tip)?;
+
+        let held = domain.lock(&package("x")).await?;
+        domain
+            .store
+            .update(&domain.storage, &held, |lineage| {
+                lineage.remote_uri.as_mut().unwrap().origin = Some("other.example.com".parse()?);
+                Ok(())
+            })
+            .await?;
+        assert_eq!(std::fs::read(&tip)?, cached);
+        let x = domain.store.read(&domain.storage, &package("x")).await?;
+        assert_eq!(x.latest_hash, TIP);
+        Ok(())
+    }
+
     /// A copy that names its base though it is the head's reads as it would
     /// be written without it, so a change to the tip alone leaves it be.
     #[test(tokio::test)]
@@ -1299,7 +1314,7 @@ mod tests {
         /// the tip moved on to `NEXT`, `push` makes `NEXT` its base and its
         /// remote's latest, `move` points it at another bucket
         /// whose tip is `NEXT`, `rename` points it at another package in its
-        /// bucket, at `TIP` with tip `BASE`, and `create` records it afresh at
+        /// bucket, at `NEXT` with tip `BASE`, and `create` records it afresh at
         /// `NEXT`.
         #[test]
         #[ignore = "run only as the child of killed_before_the_ref_lands"]
@@ -1329,8 +1344,8 @@ mod tests {
                             }
                             "rename" => {
                                 remote.namespace = package("renamed");
-                                remote.hash = TIP.to_string();
-                                lineage.base_hash = TIP.to_string();
+                                remote.hash = NEXT.to_string();
+                                lineage.base_hash = NEXT.to_string();
                                 lineage.latest_hash = BASE.to_string();
                             }
                             "pull" | "pull-behind" => {
@@ -1434,6 +1449,17 @@ mod tests {
             Ok(())
         }
 
+        /// The old name's tip, still cached, is not read as the new name's.
+        #[test(tokio::test)]
+        async fn a_rename_killed_after_its_ref_lands_reads_no_tip_of_the_old_name() -> Res {
+            let lineage = killed_at("rename", "ref.after-rename").await?;
+            assert_eq!(
+                (lineage.base_hash.as_str(), lineage.latest_hash.as_str()),
+                (NEXT, NEXT)
+            );
+            Ok(())
+        }
+
         /// A tip an earlier install left is gone before the new ref lands.
         #[test(tokio::test)]
         async fn a_create_killed_after_its_ref_lands_reads_no_earlier_tip() -> Res {
@@ -1445,7 +1471,7 @@ mod tests {
             Ok(())
         }
 
-        /// A tip the new ref's bucket shares is cached before the ref lands.
+        /// A new tip of the ref's own package is cached before the ref lands.
         #[test(tokio::test)]
         async fn a_pull_that_finds_a_newer_tip_killed_after_its_ref_lands_reads_as_behind() -> Res {
             let lineage = killed_at("pull-behind", "ref.after-rename").await?;
