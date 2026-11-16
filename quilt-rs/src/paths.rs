@@ -331,7 +331,7 @@ impl DomainPaths {
 
 #[cfg_attr(
     not(test),
-    expect(dead_code, reason = "the ref store that uses them is not built yet")
+    expect(dead_code, reason = "the ref store that uses them is not used yet")
 )]
 impl DomainPaths {
     /// Directory holding every package's ref, `refs/<owner>/<name>.json`.
@@ -357,8 +357,10 @@ impl DomainPaths {
         self.dot_quilt_dir().join("domain.json")
     }
 
+    /// Taken to create or remove a ref and to change the home. A file lock,
+    /// not the desktop app's in-process domain lock.
     #[must_use]
-    pub(crate) fn domain_lock(&self) -> PathBuf {
+    pub(crate) fn domain_file_lock(&self) -> PathBuf {
         self.dot_quilt_dir().join("domain.lock")
     }
 }
@@ -475,7 +477,7 @@ mod tests {
             PathBuf::from("foo/bar/.quilt/domain.json")
         );
         assert_eq!(
-            paths.domain_lock(),
+            paths.domain_file_lock(),
             PathBuf::from("foo/bar/.quilt/domain.lock")
         );
         assert_eq!(

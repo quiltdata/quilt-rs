@@ -4,14 +4,16 @@
 
 #![cfg_attr(
     not(test),
-    expect(dead_code, reason = "the ref store that uses them is not built yet")
+    expect(dead_code, reason = "nothing outside tests uses the ref store yet")
 )]
 
 use std::ffi::OsStr;
+use std::ffi::OsString;
 
 use uuid::Uuid;
 
 mod format;
+mod store;
 
 /// What a file in `refs/<owner>/` is, read from its name.
 #[derive(Debug, PartialEq, Eq)]
@@ -28,6 +30,14 @@ pub(crate) enum RefEntry {
 }
 
 impl RefEntry {
+    /// A temp for a write of `file_name`, which [`Self::classify`] traces
+    /// back to its package.
+    pub(crate) fn temp_name(file_name: &OsStr) -> OsString {
+        let mut temp_name = file_name.to_os_string();
+        temp_name.push(format!(".tmp-{}", Uuid::new_v4()));
+        temp_name
+    }
+
     /// Reads the package name from the end of `file_name`, since a package
     /// name may itself end in `.json` or `.latest`.
     pub(crate) fn classify(file_name: &OsStr) -> Self {

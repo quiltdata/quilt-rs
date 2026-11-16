@@ -18,6 +18,9 @@ pub mod auth;
 mod local;
 pub(crate) mod lock;
 
+#[cfg(all(test, unix))]
+pub(crate) use local::tests::Logged;
+
 pub use local::LocalStorage;
 pub use lock::LockGuard;
 
