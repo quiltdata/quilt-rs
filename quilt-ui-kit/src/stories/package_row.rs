@@ -266,8 +266,8 @@ fn EdgesStory() -> impl IntoView {
     view! {
         <Story
             title="PackageRow — edges"
-            note="Namespaces truncate from the right, the opposite of FileRow's paths: a \
-                  namespace is distinguished by its start. The time column is a 104px floor, \
+            note="Namespaces truncate from the right: a namespace is distinguished by its \
+                  start. The time column is a 104px floor, \
                   sized to the widest phrase RelativeTime can produce in the widest system \
                   face, and never a cap. The last cell is the worst-case phrase set, and \
                   every one of them has to sit inside the column. `Changed in both places`, \

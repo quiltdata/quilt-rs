@@ -1,8 +1,9 @@
 //! Container for the list region's controls.
 //!
-//! Deliberately holds nothing itself: the two views need different controls — the
-//! packages view adds Sort and Create package, the files view drops both, and
-//! Group's options differ between them — so composition belongs to the caller.
+//! Deliberately holds nothing itself: each list needs different controls — the
+//! main page's packages have Sort and Create package, a package's file pane has
+//! neither, and Group's options differ between them — so composition belongs to
+//! the caller.
 //!
 //! # Which control ends up nearest the list
 //!

@@ -1,8 +1,7 @@
 //! A file row's `[⋯]`: the commands it can offer, their words and their
 //! groups, and [`carry_out`] for the ones that write nothing. The package
-//! page's file pane, the commit page's list and the main page's recent files
-//! each decide which apply to a row; their pages run them and report how it
-//! went in their own way.
+//! page's file pane and the commit page's list each decide which apply to a
+//! row; their pages run them and report how it went in their own way.
 
 use std::future::Future;
 use std::pin::Pin;
