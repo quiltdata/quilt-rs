@@ -308,6 +308,44 @@ async fn a_folder_and_a_file_of_the_same_name_are_named_in_the_error() -> Res {
     Ok(())
 }
 
+/// A folder row that says nothing is not written, but it is still a folder when
+/// the manifest is checked, as it is when read.
+#[test]
+fn a_folder_that_says_nothing_still_clashes_with_a_file_and_with_itself() -> Res {
+    let silent = || -> Res<DirMeta> {
+        Ok(DirMeta {
+            logical_key: LogicalKey::new("data")?,
+            meta: serde_json::json!({}),
+        })
+    };
+    let file = ManifestRow {
+        logical_key: LogicalKey::new("data")?,
+        ..ManifestRow::default()
+    };
+    let err = Manifest {
+        rows: vec![file],
+        dir_meta: vec![silent()?],
+        ..Manifest::default()
+    }
+    .try_to_jsonlines()
+    .expect_err("a name cannot be a file and a folder");
+    assert!(
+        matches!(&err, Error::Manifest(ManifestError::FileAndFolder(key)) if key == "data"),
+        "{err}"
+    );
+    let err = Manifest {
+        dir_meta: vec![silent()?, silent()?],
+        ..Manifest::default()
+    }
+    .try_to_jsonlines()
+    .expect_err("folder metadata twice");
+    assert!(
+        matches!(&err, Error::Manifest(ManifestError::DuplicateLogicalKey(key)) if key == "data/"),
+        "{err}"
+    );
+    Ok(())
+}
+
 /// quilt3 writes a folder row only for metadata that says something, as Python
 /// sees it.
 #[test]

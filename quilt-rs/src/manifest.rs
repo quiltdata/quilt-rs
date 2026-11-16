@@ -426,13 +426,12 @@ impl Manifest {
     /// not be serialized.
     pub fn try_to_jsonlines(&self) -> Res<String> {
         // In quilt3's order: the folders by name, before the files.
+        check_tree(&self.rows, &self.dir_meta)?;
         let mut dirs: Vec<&DirMeta> = self
             .dir_meta
             .iter()
             .filter(|dir| dir.holds_meta())
             .collect();
-        let written: Vec<DirMeta> = dirs.iter().map(|dir| (*dir).clone()).collect();
-        check_tree(&self.rows, &written)?;
         dirs.sort_by(|a, b| a.logical_key.cmp(&b.logical_key));
 
         let mut buf = String::new();
