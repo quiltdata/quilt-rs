@@ -305,13 +305,13 @@ impl From<&crate::engine::quilt::Error> for Failure {
 
             E::PackageBusy(_) => Self::Refusal(RefusalKind::Busy),
 
-            // No revision starts with the short hash the user gave.
-            E::HashPrefix(HashPrefixError::NoMatch(_)) => Self::Refusal(RefusalKind::Missing),
-
             // The page offered a revision this copy no longer holds, or one that
             // became protected since the list was drawn: either way the
-            // revision the user meant is no longer there to remove.
-            E::RevisionNotRemovable { .. } => Self::Refusal(RefusalKind::Missing),
+            // revision the user meant is no longer there to remove. The same
+            // goes for a short hash no revision starts with.
+            E::RevisionNotRemovable { .. } | E::HashPrefix(HashPrefixError::NoMatch(_)) => {
+                Self::Refusal(RefusalKind::Missing)
+            }
 
             // The uninstall happened; what kept the objects is the failure.
             E::PruneFailed(_, inner, _) => Self::from(inner.as_ref()),
