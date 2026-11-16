@@ -200,8 +200,8 @@ async fn read<M: QuiltModel>(
 
 /// Whether the merge left `theirs` as it was, so there is nothing to publish.
 /// The merge always carries the copy's message, so the message is no sign of
-/// new work. `user_meta` counts with its integers beyond 64 bits, which are
-/// the same float whatever their digits. The merged folder metadata is sorted and holds only metadata that
+/// new work. `user_meta` and each row's `meta` count as the top hash reads
+/// them: integers beyond 64 bits by their digits, and `-0.0` apart from `0.0`. The merged folder metadata is sorted and holds only metadata that
 /// says something.
 fn is_unchanged(merged: &Manifest, theirs: &Manifest) -> bool {
     let mut rows = theirs.rows.clone();
@@ -214,7 +214,12 @@ fn is_unchanged(merged: &Manifest, theirs: &Manifest) -> bool {
         .collect();
     dir_meta.sort_by(|a, b| a.logical_key.cmp(&b.logical_key));
     merged.header.same_user_meta(&theirs.header)
-        && merged.rows == rows
+        && merged.rows.len() == rows.len()
+        && merged.rows.iter().zip(&rows).all(|(merged, theirs)| {
+            merged.matches_content(theirs)
+                && merged.physical_key == theirs.physical_key
+                && merged.same_meta(theirs)
+        })
         && merged.dir_meta == dir_meta
 }
 
@@ -326,6 +331,26 @@ mod tests {
         manifest.header.user_meta = Some(meta);
         manifest.header.user_meta_numbers = numbers;
         manifest
+    }
+
+    /// `-0.0` and `0.0` are equal as values, but they write differently.
+    #[test]
+    fn a_signed_zero_changed_in_a_row_s_meta_is_not_unchanged() {
+        let with_meta = |text: &str| {
+            let (meta, meta_numbers) = quilt::manifest::RawNumbers::parse(text).expect("json");
+            let mut manifest = Manifest::default();
+            manifest.rows.push(quilt::manifest::ManifestRow {
+                meta: Some(meta),
+                meta_numbers,
+                ..quilt::manifest::ManifestRow::default()
+            });
+            manifest
+        };
+        let merged = with_meta(r#"{"z": -0.0}"#);
+        let theirs = with_meta(r#"{"z": 0.0}"#);
+
+        assert!(!is_unchanged(&merged, &theirs));
+        assert!(is_unchanged(&theirs, &theirs.clone()));
     }
 
     /// Both integers are the same float, so only their digits tell them apart.

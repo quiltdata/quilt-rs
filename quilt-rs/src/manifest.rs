@@ -276,6 +276,16 @@ impl ManifestRow {
     }
 }
 
+impl ManifestRow {
+    /// Whether two rows write the same `meta`: the text the top hash reads,
+    /// so integers beyond 64 bits count by their digits and `-0.0` is not
+    /// `0.0`, and absent, empty and false `meta` are one.
+    #[must_use]
+    pub fn same_meta(&self, other: &Self) -> bool {
+        top_hasher::same_entry_meta(self, other)
+    }
+}
+
 impl TryFrom<Quilt3ManifestRow> for ManifestRow {
     type Error = Error;
 
