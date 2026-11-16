@@ -49,6 +49,22 @@ pub struct ManifestHeader {
     pub workflow: Option<Workflow>,
 }
 
+impl ManifestHeader {
+    /// Whether two headers have the same `user_meta` as written: the same
+    /// value and the same integers beyond 64 bits, ignoring kept numbers the
+    /// value has since left behind.
+    #[must_use]
+    pub fn same_user_meta(&self, other: &Self) -> bool {
+        let numbers = |header: &Self| {
+            header
+                .user_meta
+                .as_ref()
+                .map(|meta| header.user_meta_numbers.applying_to(meta))
+        };
+        self.user_meta == other.user_meta && numbers(self) == numbers(other)
+    }
+}
+
 /// A header's `message`. quilt3 hashes the header as read, so a missing key,
 /// `null` and a string each give a different top hash.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -851,6 +867,30 @@ mod tests {
         assert_eq!(header.message, HeaderMessage::Text(String::new()));
         assert_eq!(header.user_meta, Some(serde_json::json!({})));
         assert_eq!(header.workflow, None);
+        Ok(())
+    }
+
+    /// The same value with other integers beyond 64 bits writes other text, so
+    /// it is a different `user_meta`; a number the value has left behind
+    /// writes nothing, so it is not.
+    #[test]
+    fn same_user_meta_compares_the_numbers_that_apply() -> Res {
+        let header = |meta: serde_json::Value, numbers: RawNumbers| ManifestHeader {
+            user_meta: Some(meta),
+            user_meta_numbers: numbers,
+            ..ManifestHeader::default()
+        };
+        let (a, a_numbers) = RawNumbers::parse(r#"{"n": 18446744073709551616}"#)?;
+        let (b, b_numbers) = RawNumbers::parse(r#"{"n": 18446744073709551617}"#)?;
+        let (a, b) = (header(a, a_numbers.clone()), header(b, b_numbers));
+        assert_eq!(a.user_meta, b.user_meta);
+        assert!(!a.same_user_meta(&b));
+        assert!(a.same_user_meta(&a.clone()));
+
+        let three = serde_json::json!({"n": 3});
+        assert!(
+            header(three.clone(), a_numbers).same_user_meta(&header(three, RawNumbers::default()))
+        );
         Ok(())
     }
 }

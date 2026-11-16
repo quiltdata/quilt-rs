@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use crate::Error;
 use crate::LogicalKey;
 use crate::error::ManifestError;
-use crate::flow::list_revisions::holds_user_meta;
+use crate::flow::list_revisions::written_user_meta;
 use crate::manifest::DirMeta;
 use crate::manifest::Manifest;
 use crate::manifest::ManifestHeader;
@@ -59,13 +59,7 @@ pub fn merge_onto(
         Err(MergeDirMetaError::Invalid(err)) => return Err(MergeRefusal::Invalid(err.to_string())),
     };
     let [base_meta, ours_meta, theirs_meta] =
-        [&base.header, &ours.header, &theirs.header].map(|header| {
-            header
-                .user_meta
-                .as_ref()
-                .filter(|meta| holds_user_meta(meta))
-                .map(|meta| (meta, &header.user_meta_numbers))
-        });
+        [&base.header, &ours.header, &theirs.header].map(written_user_meta);
     let (user_meta, user_meta_numbers) = if ours_meta == base_meta || ours_meta == theirs_meta {
         (theirs.header.user_meta, theirs.header.user_meta_numbers)
     } else if theirs_meta == base_meta {
@@ -343,6 +337,33 @@ mod tests {
             Err(MergeRefusal::UserMeta),
             "both sides changed the same number to different digits"
         );
+        Ok(())
+    }
+
+    /// A number kept from the base, once the value has been edited away from
+    /// it, is not a difference: both sides write `{"n":3}`.
+    #[test]
+    fn package_meta_that_wrote_the_same_is_not_a_change_for_a_number_left_behind() -> Res {
+        let with = |meta: serde_json::Value, numbers: crate::manifest::RawNumbers| {
+            let mut manifest = Manifest::default();
+            manifest.header.user_meta = Some(meta);
+            manifest.header.user_meta_numbers = numbers;
+            manifest
+        };
+        let (_, left_behind) =
+            crate::manifest::RawNumbers::parse(r#"{"n": 18446744073709551616}"#)?;
+        assert!(!left_behind.is_empty());
+        let base = with(
+            serde_json::json!({"n": 1}),
+            crate::manifest::RawNumbers::default(),
+        );
+        let ours = with(serde_json::json!({"n": 3}), left_behind);
+        let theirs = with(
+            serde_json::json!({"n": 3}),
+            crate::manifest::RawNumbers::default(),
+        );
+
+        assert!(merge_onto(&base, &ours, theirs).is_ok());
         Ok(())
     }
 

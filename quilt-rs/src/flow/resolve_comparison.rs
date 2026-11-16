@@ -13,11 +13,10 @@ use std::collections::HashSet;
 use std::hash::BuildHasher;
 use std::path::PathBuf;
 
-use crate::flow::list_revisions::holds_user_meta;
+use crate::flow::list_revisions::written_user_meta;
 use crate::flow::remote_delta;
 use crate::lineage::CommitState;
 use crate::manifest::Manifest;
-use crate::manifest::RawNumbers;
 use crate::manifest::same_entry_meta;
 
 /// What each resolve choice costs: this copy's revision against the
@@ -75,18 +74,10 @@ pub fn compare_for_resolve<S: BuildHasher>(
         published_message: published.header.message().map(str::to_owned),
         differing,
         lost,
-        user_meta_differs: user_meta(current) != user_meta(published),
+        user_meta_differs: written_user_meta(&current.header)
+            != written_user_meta(&published.header),
         unpublished,
     }
-}
-
-fn user_meta(manifest: &Manifest) -> Option<(&serde_json::Value, &RawNumbers)> {
-    manifest
-        .header
-        .user_meta
-        .as_ref()
-        .filter(|v| holds_user_meta(v))
-        .map(|v| (v, &manifest.header.user_meta_numbers))
 }
 
 #[cfg(test)]
@@ -235,6 +226,21 @@ mod tests {
 
         assert!(comparison.user_meta_differs);
         assert_eq!(comparison.lost, 0);
+    }
+
+    /// A kept number the value has left behind writes nothing, so it is no
+    /// difference from a copy that never had it.
+    #[test]
+    fn a_number_left_behind_in_user_meta_is_no_difference() -> Res {
+        let (_, numbers) = crate::manifest::RawNumbers::parse(r#"{"n": 18446744073709551616}"#)?;
+        let mut current = with_user_meta(manifest_of(vec![]), Some(serde_json::json!({"n": 3})));
+        current.header.user_meta_numbers = numbers;
+        let published = with_user_meta(manifest_of(vec![]), Some(serde_json::json!({"n": 3})));
+
+        let comparison = compare_for_resolve(&current, &published, None, &HashSet::new());
+
+        assert!(!comparison.user_meta_differs);
+        Ok(())
     }
 
     #[test]

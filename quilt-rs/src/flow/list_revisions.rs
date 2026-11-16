@@ -54,6 +54,18 @@ pub(crate) fn holds_user_meta(meta: &serde_json::Value) -> bool {
     }
 }
 
+/// The `user_meta` of `header` as written, when it says anything: the value
+/// and the integers beyond 64 bits that still apply to it.
+pub(crate) fn written_user_meta(
+    header: &ManifestHeader,
+) -> Option<(&serde_json::Value, crate::manifest::RawNumbers)> {
+    header
+        .user_meta
+        .as_ref()
+        .filter(|meta| holds_user_meta(meta))
+        .map(|meta| (meta, header.user_meta_numbers.applying_to(meta)))
+}
+
 impl Revision {
     /// The facts `header` records about the revision at `hash`.
     #[must_use]

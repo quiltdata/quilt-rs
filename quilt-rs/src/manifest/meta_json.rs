@@ -97,6 +97,23 @@ impl RawNumbers {
         Self(kept)
     }
 
+    /// The numbers that still apply to `value`: those whose place holds a
+    /// float equal to the one they were read as. Two values that write the
+    /// same text have the same ones, whatever stale numbers either carries.
+    #[must_use]
+    pub fn applying_to(&self, value: &Value) -> Self {
+        Self(
+            self.0
+                .iter()
+                .filter(|(pointer, _)| {
+                    matches!(value.pointer(pointer), Some(Value::Number(n))
+                        if self.text_for(pointer, n).is_some())
+                })
+                .map(|(pointer, text)| (pointer.clone(), text.clone()))
+                .collect(),
+        )
+    }
+
     /// The same numbers for the value that sits under `prefix` (a JSON
     /// pointer) in a larger one.
     pub(crate) fn under(&self, prefix: &str) -> Self {
@@ -624,5 +641,20 @@ mod tests {
             BTreeMap::from([("/n".to_string(), "18446744073709551616".to_string())])
         );
         assert_eq!(meta["z"], serde_json::json!(0));
+    }
+
+    #[test]
+    fn applying_to_drops_the_numbers_a_value_has_left() {
+        let (value, numbers) =
+            RawNumbers::parse(r#"{"a": 18446744073709551616, "b": 18446744073709551617}"#).unwrap();
+        assert_eq!(numbers.applying_to(&value), numbers);
+
+        let edited = serde_json::json!({"a": 3, "b": value["b"]});
+        let kept = numbers.applying_to(&edited);
+        assert_eq!(
+            kept.0,
+            BTreeMap::from([("/b".to_string(), "18446744073709551617".to_string())])
+        );
+        assert!(numbers.applying_to(&serde_json::json!({"a": 3})).is_empty());
     }
 }
