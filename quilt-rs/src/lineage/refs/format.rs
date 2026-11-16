@@ -26,7 +26,8 @@ use crate::logical_key::LogicalKey;
 use quilt_uri::ManifestUri;
 
 /// Top-level keys this version does not know, kept so a rewrite carries
-/// them. Keys nested inside a known one are not kept.
+/// them. Keys nested inside a known one are not kept, and an integer beyond
+/// 64 bits comes back as a float, so a field needing either bumps `format`.
 pub(crate) type Extra = Map<String, Value>;
 
 /// What only the user and the remote can tell about one package:
