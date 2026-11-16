@@ -25,6 +25,11 @@ use crate::s3::check_bucket;
 #[serde(tag = "_tag", content = "value", try_from = "RawRevisionPointer")]
 pub enum RevisionPointer {
     Hash(String),
+    /// A short top hash ([`MIN_HASH_PREFIX_LEN`] to one fewer than
+    /// [`TOP_HASH_LEN`] lowercase hex characters), as quilt3 accepts after `@`.
+    /// Only a registry says which revision it names, so a parsed URI keeps it
+    /// as written and quilt-rs resolves it where it has a remote.
+    HashPrefix(String),
     Tag(Tag),
 }
 
@@ -33,6 +38,7 @@ pub enum RevisionPointer {
 #[serde(tag = "_tag", content = "value")]
 enum RawRevisionPointer {
     Hash(String),
+    HashPrefix(String),
     Tag(Tag),
 }
 
@@ -44,6 +50,15 @@ impl TryFrom<RawRevisionPointer> for RevisionPointer {
             RawRevisionPointer::Hash(hash) => {
                 check_stored_hash(&hash)?;
                 Ok(Self::Hash(hash))
+            }
+            RawRevisionPointer::HashPrefix(prefix) => {
+                check_hash_prefix(&prefix)?;
+                if prefix.len() == TOP_HASH_LEN {
+                    return Err(UriError::Package(format!(
+                        "a hash prefix is shorter than a whole hash; got {prefix:?}"
+                    )));
+                }
+                Ok(Self::HashPrefix(prefix))
             }
             RawRevisionPointer::Tag(tag) => Ok(Self::Tag(tag)),
         }
@@ -357,8 +372,13 @@ impl TryFrom<&str> for S3PackageUri {
                     "package spec may contain only one \"@\"".to_string(),
                 ));
             }
-            check_top_hash(top_hash)?;
-            (namespace.into(), RevisionPointer::Hash(top_hash.into()))
+            check_hash_prefix(top_hash)?;
+            let revision = if top_hash.len() == TOP_HASH_LEN {
+                RevisionPointer::Hash(top_hash.into())
+            } else {
+                RevisionPointer::HashPrefix(top_hash.into())
+            };
+            (namespace.into(), revision)
         } else {
             (pkg_spec, RevisionPointer::Tag(Tag::Latest))
         };
@@ -394,10 +414,37 @@ impl TryFrom<&str> for S3PackageUri {
     }
 }
 
+/// The shortest prefix of a top hash a package URI may name, as in quilt3.
+pub const MIN_HASH_PREFIX_LEN: usize = 6;
+
+/// The length of a whole top hash: the hex of a SHA-256.
+pub const TOP_HASH_LEN: usize = 64;
+
 /// A top hash is the hex SHA-256 of a manifest, as `TopHasher` writes it.
 #[must_use]
 pub fn is_top_hash(hash: &str) -> bool {
-    hash.len() == 64 && hash.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    hash.len() == TOP_HASH_LEN && is_lowercase_hex(hash)
+}
+
+fn is_lowercase_hex(text: &str) -> bool {
+    text.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// A whole top hash, or a prefix of one: [`MIN_HASH_PREFIX_LEN`] to
+/// [`TOP_HASH_LEN`] lowercase hex characters.
+fn check_hash_prefix(hash: &str) -> Result<(), UriError> {
+    let length = hash.chars().count();
+    if !(MIN_HASH_PREFIX_LEN..=TOP_HASH_LEN).contains(&length) {
+        return Err(UriError::Package(format!(
+            "a hash is {MIN_HASH_PREFIX_LEN} to {TOP_HASH_LEN} characters; got {length}: {hash:?}"
+        )));
+    }
+    if !is_lowercase_hex(hash) {
+        return Err(UriError::Package(format!(
+            "a hash is lowercase hex; got {hash:?}"
+        )));
+    }
+    Ok(())
 }
 
 /// A stored hash is a top hash, or empty for a remote that is set but not
@@ -545,6 +592,8 @@ impl S3PackageUri {
             RevisionPointer::Tag(tag) => format!(":{}", encode(&tag.to_string())),
             RevisionPointer::Hash(h) if full_hash => format!("@{}", encode(h)),
             RevisionPointer::Hash(h) => format!("@{}", encode(&Self::format_hash(h))),
+            // As written: shortening it would name a different prefix.
+            RevisionPointer::HashPrefix(prefix) => format!("@{}", encode(prefix)),
         };
         let path_part = match &self.path {
             Some(p) => format!("&path={}", encode(&p.display().to_string())),
@@ -573,7 +622,7 @@ impl S3PackageUri {
     pub fn display_for_host(&self, host: &Host) -> Result<url::Url, UriError> {
         let revision = match &self.revision {
             RevisionPointer::Tag(tag) => tag.to_string(),
-            RevisionPointer::Hash(hash) => hash.clone(),
+            RevisionPointer::Hash(hash) | RevisionPointer::HashPrefix(hash) => hash.clone(),
         };
         let path = self.path.as_ref().map(|p| p.display().to_string());
         let segments = [
@@ -1306,29 +1355,106 @@ mod tests {
         Ok(())
     }
 
-    /// Anything other than the full lowercase digest is not a top hash.
+    /// A hash is 6 to 64 lowercase hex characters: a whole one is a top hash,
+    /// a shorter one a prefix for a registry to resolve, as in quilt3.
     #[test]
-    fn a_hash_that_is_not_a_full_hex_digest_is_refused() {
+    fn a_short_hex_hash_parses_as_a_prefix() -> Res {
         let digest = "0123456789abcdef".repeat(4);
-        let cases = [
-            "zzzz".to_string(),
-            "deadbeef".to_string(),
-            digest.to_uppercase(),
-            digest[..63].to_string(),
-            format!("{digest}0"),
-            format!("{}/{}", &digest[..32], &digest[33..]),
-            format!("{}.{}", &digest[..32], &digest[33..]),
-            format!("{}é", &digest[..62]),
-        ];
-        for hash in cases {
-            let result = S3PackageUri::try_from(
-                format!("quilt+s3://bucket#package=foo/bar@{hash}").as_str(),
-            );
-            assert!(
-                matches!(result, Err(UriError::Package(_))),
-                "{hash:?} should be refused, got {result:?}"
+        for length in MIN_HASH_PREFIX_LEN..TOP_HASH_LEN {
+            let prefix = &digest[..length];
+            let uri: S3PackageUri =
+                format!("quilt+s3://bucket#package=foo/bar@{prefix}").parse()?;
+            assert_eq!(
+                uri.revision,
+                RevisionPointer::HashPrefix(prefix.to_string()),
+                "{length}"
             );
         }
+        Ok(())
+    }
+
+    /// The length is checked before the characters, as `resolve_hash` does.
+    #[test]
+    fn a_hash_of_the_wrong_length_is_refused() {
+        let digest = "0123456789abcdef".repeat(4);
+        for hash in [
+            "a".to_string(),
+            digest[..5].to_string(),
+            format!("{digest}0"),
+            "ééééé".to_string(),
+        ] {
+            let err = S3PackageUri::try_from(
+                format!("quilt+s3://bucket#package=foo/bar@{hash}").as_str(),
+            )
+            .unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                format!(
+                    "Invalid package URI: a hash is 6 to 64 characters; got {}: {hash:?}",
+                    hash.chars().count()
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn a_hash_that_is_not_lowercase_hex_is_refused() {
+        let digest = "0123456789abcdef".repeat(4);
+        for hash in [
+            "zzzzzz".to_string(),
+            "ABCDEF".to_string(),
+            digest.to_uppercase(),
+            "abcde/".to_string(),
+            "abc.ef".to_string(),
+            format!("{}é", &digest[..62]),
+            "z".repeat(TOP_HASH_LEN),
+        ] {
+            let err = S3PackageUri::try_from(
+                format!("quilt+s3://bucket#package=foo/bar@{hash}").as_str(),
+            )
+            .unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                format!("Invalid package URI: a hash is lowercase hex; got {hash:?}")
+            );
+        }
+    }
+
+    /// A prefix is shown as written, whatever its length, and parses back the
+    /// same: shortening it with `...` would name another prefix.
+    #[test]
+    fn a_hash_prefix_displays_whole_and_round_trips() -> Res {
+        let prefix = "0123456789abcdef0123";
+        let input = format!("quilt+s3://bucket#package=foo/bar@{prefix}");
+        let uri: S3PackageUri = input.parse()?;
+
+        assert_eq!(uri.to_string(), input);
+        assert_eq!(uri.display(), input);
+        assert_eq!(uri.to_string().parse::<S3PackageUri>()?, uri);
+        Ok(())
+    }
+
+    #[test]
+    fn a_hash_prefix_goes_into_a_catalog_url_as_written() -> Res {
+        let uri: S3PackageUri = "quilt+s3://bucket#package=foo/bar@abcdef".parse()?;
+        let host: Host = "catalog.example.com".parse()?;
+
+        assert_eq!(
+            uri.display_for_host(&host)?.as_str(),
+            "https://catalog.example.com/b/bucket/packages/foo/bar/tree/abcdef"
+        );
+        Ok(())
+    }
+
+    /// Only a registry can say which revision a prefix names, so a manifest
+    /// address cannot be made from one.
+    #[test]
+    fn a_hash_prefix_is_not_a_manifest_address() -> Res {
+        let uri: S3PackageUri = "quilt+s3://bucket#package=foo/bar@abcdef".parse()?;
+
+        let err = ManifestUri::try_from(uri).unwrap_err();
+        assert!(err.to_string().contains("\"abcdef\" is a prefix"), "{err}");
+        Ok(())
     }
 
     /// Display shortens by characters, so a hash built by hand that holds
@@ -1725,6 +1851,36 @@ mod tests {
             uri.display(),
             "quilt+s3://team-bucket#package=user/plate-07&path=runs/a/one.csv"
         );
+    }
+
+    #[test]
+    fn test_revision_pointer_serde_round_trip_hash_prefix() {
+        let revision = RevisionPointer::HashPrefix("abcdef".to_string());
+        let json = serde_json::to_string(&revision).unwrap();
+        assert_eq!(json, r#"{"_tag":"HashPrefix","value":"abcdef"}"#);
+        let parsed: RevisionPointer = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, revision);
+    }
+
+    /// Deserializing a prefix applies the parser's rule: 6 to 63 lowercase hex
+    /// characters, since a whole hash is a `Hash`.
+    #[test]
+    fn a_deserialized_hash_prefix_must_be_a_prefix() {
+        for prefix in [
+            "abc12".to_string(),
+            "ABCDEF".to_string(),
+            "../../x".to_string(),
+            "0123456789abcdef".repeat(4),
+        ] {
+            let json = format!(
+                r#"{{"_tag":"HashPrefix","value":{}}}"#,
+                serde_json::to_string(&prefix).unwrap()
+            );
+            assert!(
+                serde_json::from_str::<RevisionPointer>(&json).is_err(),
+                "{prefix:?} should not deserialize"
+            );
+        }
     }
 
     /// Deserializing a hash revision applies the parser's top hash rule.
