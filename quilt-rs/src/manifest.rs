@@ -1,10 +1,12 @@
 //!
 //! Namespace contains helpers to work with manifest and its content (rows).
 
+mod meta_json;
 mod top_hasher;
 
+pub use meta_json::RawNumbers;
 pub use top_hasher::TopHasher;
-pub(crate) use top_hasher::normalized_entry_meta;
+pub(crate) use top_hasher::same_entry_meta;
 
 pub use crate::workflow::Workflow;
 pub use crate::workflow::WorkflowId;
@@ -26,6 +28,8 @@ use crate::error::ManifestError;
 use crate::io::manifest::RowsStream;
 use crate::io::manifest::StreamRowsChunk;
 use crate::io::storage::ByteStream;
+use crate::manifest::meta_json::Style;
+use crate::manifest::meta_json::write_json;
 use crate::object_hash;
 
 /// Header (or first row) in JSONL manifest
@@ -36,8 +40,31 @@ pub struct ManifestHeader {
     pub message: HeaderMessage,
     #[serde(skip_serializing_if = "Option::is_none")] // Attempt to be quilt3-compatible.
     pub user_meta: Option<serde_json::Value>,
+    /// The integers in `user_meta` beyond 64 bits, as read; see [`RawNumbers`].
+    /// Not serialized, so serde output such as the CLI's JSON has them as
+    /// floats; compared by `PartialEq`.
+    #[serde(skip)]
+    pub user_meta_numbers: RawNumbers,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workflow: Option<Workflow>,
+}
+
+impl ManifestHeader {
+    /// Whether two headers write the same `user_meta`: the text the top hash
+    /// reads, so integers beyond 64 bits count by their digits, `-0.0` is not
+    /// `0.0`, and a kept number the value has left behind counts for nothing.
+    #[must_use]
+    pub fn same_user_meta(&self, other: &Self) -> bool {
+        self.user_meta_text() == other.user_meta_text()
+    }
+
+    pub(crate) fn user_meta_text(&self) -> Option<String> {
+        self.user_meta.as_ref().map(|meta| {
+            let mut text = String::new();
+            write_json(&mut text, meta, &self.user_meta_numbers, Style::Hash);
+            text
+        })
+    }
 }
 
 /// A header's `message`. quilt3 hashes the header as read, so a missing key,
@@ -97,6 +124,7 @@ impl Default for ManifestHeader {
             version: "v0".to_string(),
             message: HeaderMessage::Text(String::new()),
             user_meta: Some(serde_json::Value::Object(serde_json::Map::new())),
+            user_meta_numbers: RawNumbers::default(),
             workflow: None,
         }
     }
@@ -174,16 +202,19 @@ impl Line {
     /// the file-row error is kept.
     fn from_jsonl(line: &str) -> Res<Self> {
         match serde_json::from_str::<Quilt3FileLine>(line) {
-            Ok(file) if !file.physical_keys.is_empty() => Ok(Self::File(Box::new(
-                Quilt3ManifestRow {
+            Ok(file) if !file.physical_keys.is_empty() => {
+                let mut row = ManifestRow::try_from(Quilt3ManifestRow {
                     logical_key: LogicalKey::new(file.logical_key)?,
                     physical_keys: file.physical_keys,
                     hash: file.hash,
                     size: file.size,
                     meta: file.meta,
+                })?;
+                if let Some(meta) = row.meta.as_mut() {
+                    row.meta_numbers = RawNumbers::read(meta, line, "meta");
                 }
-                .try_into()?,
-            ))),
+                Ok(Self::File(Box::new(row)))
+            }
             Ok(file) => folder_line(&file.logical_key, file.meta),
             Err(file_err) => {
                 let folder: Quilt3FolderLine = match serde_json::from_str(line) {
@@ -225,6 +256,11 @@ pub struct ManifestRow {
     pub hash: object_hash::ObjectHash,
     pub size: u64,
     pub meta: Option<serde_json::Value>,
+    /// The integers in `meta` beyond 64 bits, as read; see [`RawNumbers`].
+    /// Not serialized, so serde output such as the CLI's JSON has them as
+    /// floats; compared by `PartialEq`.
+    #[serde(skip)]
+    pub meta_numbers: RawNumbers,
 }
 
 impl ManifestRow {
@@ -237,6 +273,16 @@ impl ManifestRow {
     #[must_use]
     pub fn matches_content(&self, other: &Self) -> bool {
         self.logical_key == other.logical_key && self.hash == other.hash && self.size == other.size
+    }
+}
+
+impl ManifestRow {
+    /// Whether two rows write the same `meta`: the text the top hash reads,
+    /// so integers beyond 64 bits count by their digits and `-0.0` is not
+    /// `0.0`, and absent, empty and false `meta` are one.
+    #[must_use]
+    pub fn same_meta(&self, other: &Self) -> bool {
+        top_hasher::same_entry_meta(self, other)
     }
 }
 
@@ -254,6 +300,7 @@ impl TryFrom<Quilt3ManifestRow> for ManifestRow {
             hash: row.hash,
             size: row.size,
             meta: row.meta,
+            meta_numbers: RawNumbers::default(),
         })
     }
 }
@@ -334,6 +381,24 @@ pub(crate) fn check_tree(rows: &[ManifestRow], dir_meta: &[DirMeta]) -> Res {
     Ok(())
 }
 
+/// One row as a manifest line, in quilt3's form, field for field as
+/// [`Quilt3ManifestRow`] writes it, with the metadata as quilt3 writes it.
+fn write_row(buf: &mut String, row: &ManifestRow) -> Res {
+    buf.push_str("{\"logical_key\":");
+    buf.push_str(&serde_json::to_string(&row.logical_key)?);
+    buf.push_str(",\"physical_keys\":[");
+    buf.push_str(&serde_json::to_string(&row.physical_key)?);
+    buf.push_str("],\"hash\":");
+    buf.push_str(&serde_json::to_string(&row.hash)?);
+    buf.push_str(",\"size\":");
+    buf.push_str(&row.size.to_string());
+    buf.push_str(",\"meta\":");
+    let meta = row.meta.clone().unwrap_or_else(|| serde_json::json!({}));
+    write_json(buf, &meta, &row.meta_numbers, Style::Manifest);
+    buf.push('}');
+    Ok(())
+}
+
 /// Legacy JSONL in-memory manifest
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Default)]
 pub struct Manifest {
@@ -373,6 +438,9 @@ impl Manifest {
             && user_meta.is_null()
         {
             header.user_meta = Some(serde_json::Value::Null);
+        }
+        if let Some(user_meta) = header.user_meta.as_mut() {
+            header.user_meta_numbers = RawNumbers::read(user_meta, &header_str, "user_meta");
         }
 
         if header.version != "v0" {
@@ -435,7 +503,13 @@ impl Manifest {
         dirs.sort_by(|a, b| a.logical_key.cmp(&b.logical_key));
 
         let mut buf = String::new();
-        buf.push_str(serde_json::to_string(&self.header)?.as_str());
+        let header = serde_json::to_value(&self.header)?;
+        write_json(
+            &mut buf,
+            &header,
+            &self.header.user_meta_numbers.under("/user_meta"),
+            Style::Manifest,
+        );
         buf.push('\n');
         for dir in dirs {
             let row = Quilt3DirRow {
@@ -447,8 +521,7 @@ impl Manifest {
         }
 
         for row in &self.rows {
-            let q3row = Quilt3ManifestRow::from(row.to_owned());
-            buf.push_str(serde_json::to_string(&q3row)?.as_str());
+            write_row(&mut buf, row)?;
             buf.push('\n');
         }
         Ok(buf)
@@ -569,6 +642,7 @@ mod tests {
             hash: object_hash::Sha256Hash::try_from("deadbeef")?.into(),
             size: 1,
             meta: None,
+            meta_numbers: crate::manifest::RawNumbers::default(),
         };
         let right = ManifestRow {
             logical_key: crate::LogicalKey::new("A")?,
@@ -576,6 +650,7 @@ mod tests {
             hash: object_hash::Sha256Hash::try_from("deadbeef")?.into(),
             size: 1,
             meta: None,
+            meta_numbers: crate::manifest::RawNumbers::default(),
         };
         assert!(left.matches_content(&right));
         Ok(())
@@ -591,6 +666,7 @@ mod tests {
             hash: object_hash::Sha256Hash::try_from("deadbeef")?.into(),
             size: 1,
             meta: Some(serde_json::Value::Object(meta)),
+            meta_numbers: crate::manifest::RawNumbers::default(),
         };
         let right = ManifestRow {
             logical_key: crate::LogicalKey::new("A")?,
@@ -598,6 +674,7 @@ mod tests {
             hash: object_hash::Sha256Hash::try_from("deadbeef")?.into(),
             size: 1,
             meta: None,
+            meta_numbers: crate::manifest::RawNumbers::default(),
         };
         assert!(left.matches_content(&right));
         Ok(())
@@ -746,6 +823,7 @@ mod tests {
                         size: 29,
                         hash: object_hash::Sha256ChunkedHash::try_from("/UMjH1bsbrMLBKdd9cqGGvtjhWzawhz1BfrxgngUhVI=")?.into(),
                         meta: Some(serde_json::json!({})),
+                        meta_numbers: crate::manifest::RawNumbers::default(),
                     }
         );
         assert_eq!(
@@ -756,6 +834,7 @@ mod tests {
                         size: 29,
                         hash: object_hash::Sha256ChunkedHash::try_from("/UMjH1bsbrMLBKdd9cqGGvtjhWzawhz1BfrxgngUhVI=")?.into(),
                         meta: Some(serde_json::json!({})),
+                        meta_numbers: crate::manifest::RawNumbers::default(),
                     }
         );
         Ok(())
@@ -800,6 +879,38 @@ mod tests {
         assert_eq!(header.message, HeaderMessage::Text(String::new()));
         assert_eq!(header.user_meta, Some(serde_json::json!({})));
         assert_eq!(header.workflow, None);
+        Ok(())
+    }
+
+    /// The same value with other integers beyond 64 bits, or a `-0.0` for a
+    /// `0.0`, writes other text, so it is a different `user_meta`; a number the
+    /// value has left behind writes nothing, so it is not.
+    #[test]
+    fn same_user_meta_compares_what_is_written() -> Res {
+        let header = |meta: serde_json::Value, numbers: RawNumbers| ManifestHeader {
+            user_meta: Some(meta),
+            user_meta_numbers: numbers,
+            ..ManifestHeader::default()
+        };
+        let (a, a_numbers) = RawNumbers::parse(r#"{"n": 18446744073709551616}"#)?;
+        let (b, b_numbers) = RawNumbers::parse(r#"{"n": 18446744073709551617}"#)?;
+        let (a, b) = (header(a, a_numbers.clone()), header(b, b_numbers));
+        assert_eq!(a.user_meta, b.user_meta);
+        assert!(!a.same_user_meta(&b));
+        assert!(a.same_user_meta(&a.clone()));
+
+        let three = serde_json::json!({"n": 3});
+        assert!(
+            header(three.clone(), a_numbers).same_user_meta(&header(three, RawNumbers::default()))
+        );
+
+        let (zero, _) = RawNumbers::parse(r#"{"z": 0.0}"#)?;
+        let (negative, _) = RawNumbers::parse(r#"{"z": -0.0}"#)?;
+        assert_eq!(zero, negative, "serde_json cannot tell them apart");
+        assert!(
+            !header(zero, RawNumbers::default())
+                .same_user_meta(&header(negative, RawNumbers::default()))
+        );
         Ok(())
     }
 }

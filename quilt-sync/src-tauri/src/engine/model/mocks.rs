@@ -20,6 +20,7 @@ pub fn create_remote_manifest() -> quilt::manifest::Manifest {
             message: quilt::manifest::HeaderMessage::Null,
             user_meta: None,
             workflow: None,
+            user_meta_numbers: quilt::manifest::RawNumbers::default(),
         },
         rows: Vec::new(),
         dir_meta: Vec::new(),

@@ -131,6 +131,7 @@ mod tests {
                 .into(),
                 size: 29,
                 meta: None,
+                meta_numbers: crate::manifest::RawNumbers::default(),
             }],
             dir_meta: Vec::new(),
         })

@@ -8,13 +8,13 @@ use std::path::PathBuf;
 use crate::Error;
 use crate::LogicalKey;
 use crate::error::ManifestError;
-use crate::flow::list_revisions::holds_user_meta;
+use crate::flow::list_revisions::written_user_meta;
 use crate::manifest::DirMeta;
 use crate::manifest::Manifest;
 use crate::manifest::ManifestHeader;
 use crate::manifest::ManifestRow;
 use crate::manifest::check_tree;
-use crate::manifest::normalized_entry_meta;
+use crate::manifest::same_entry_meta;
 
 /// Why a merge onto `latest` refused; nothing of it may be published.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -59,16 +59,14 @@ pub fn merge_onto(
         Err(MergeDirMetaError::Invalid(err)) => return Err(MergeRefusal::Invalid(err.to_string())),
     };
     let [base_meta, ours_meta, theirs_meta] =
-        [&base.header, &ours.header, &theirs.header].map(|header| {
-            header
-                .user_meta
-                .as_ref()
-                .filter(|meta| holds_user_meta(meta))
-        });
-    let user_meta = if ours_meta == base_meta || ours_meta == theirs_meta {
-        theirs.header.user_meta
+        [&base.header, &ours.header, &theirs.header].map(written_user_meta);
+    let (user_meta, user_meta_numbers) = if ours_meta == base_meta || ours_meta == theirs_meta {
+        (theirs.header.user_meta, theirs.header.user_meta_numbers)
     } else if theirs_meta == base_meta {
-        ours.header.user_meta.clone()
+        (
+            ours.header.user_meta.clone(),
+            ours.header.user_meta_numbers.clone(),
+        )
     } else {
         return Err(MergeRefusal::UserMeta);
     };
@@ -76,6 +74,7 @@ pub fn merge_onto(
         header: ManifestHeader {
             message: ours.header.message.clone(),
             user_meta,
+            user_meta_numbers,
             ..theirs.header
         },
         rows,
@@ -228,10 +227,7 @@ fn by_key(rows: &[ManifestRow]) -> BTreeMap<&LogicalKey, &ManifestRow> {
 fn same_row(a: Option<&ManifestRow>, b: Option<&ManifestRow>) -> bool {
     match (a, b) {
         (None, None) => true,
-        (Some(a), Some(b)) => {
-            a.hash == b.hash
-                && normalized_entry_meta(a.meta.as_ref()) == normalized_entry_meta(b.meta.as_ref())
-        }
+        (Some(a), Some(b)) => a.hash == b.hash && same_entry_meta(a, b),
         _ => false,
     }
 }
@@ -256,6 +252,7 @@ mod tests {
                 .unwrap(),
             size: content.len() as u64,
             meta: None,
+            meta_numbers: crate::manifest::RawNumbers::default(),
         })
     }
 
@@ -281,6 +278,93 @@ mod tests {
 
     fn paths(keys: &[&str]) -> MergeRefusal {
         MergeRefusal::Paths(keys.iter().map(PathBuf::from).collect())
+    }
+
+    /// A row whose `meta` is `text`, read as a manifest reads it.
+    fn with_meta_text(row: ManifestRow, text: &str) -> Res<ManifestRow> {
+        let (meta, meta_numbers) = crate::manifest::RawNumbers::parse(text)?;
+        Ok(ManifestRow {
+            meta: Some(meta),
+            meta_numbers,
+            ..row
+        })
+    }
+
+    /// Two integers beyond 64 bits read as one float, but they are two values.
+    #[test]
+    fn entry_meta_with_different_big_integers_is_a_change() -> Res {
+        let base = rows(vec![with_meta_text(
+            row("a.csv", b"1")?,
+            r#"{"n": 18446744073709551616}"#,
+        )?]);
+        let ours = rows(vec![with_meta_text(
+            row("a.csv", b"1")?,
+            r#"{"n": 18446744073709551617}"#,
+        )?]);
+        let theirs = base.clone();
+
+        let merged = merge_onto(&base, &ours, theirs).expect("merged");
+
+        assert_eq!(merged.rows, ours.rows);
+        assert_eq!(
+            merged.rows[0].meta_numbers, ours.rows[0].meta_numbers,
+            "the merged row writes ours' digits"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn package_meta_with_different_big_integers_is_a_change() -> Res {
+        let with = |text: &str| -> Res<Manifest> {
+            let (user_meta, user_meta_numbers) = crate::manifest::RawNumbers::parse(text)?;
+            let mut manifest = Manifest::default();
+            manifest.header.user_meta = Some(user_meta);
+            manifest.header.user_meta_numbers = user_meta_numbers;
+            Ok(manifest)
+        };
+        let base = with(r#"{"n": 18446744073709551616}"#)?;
+        let ours = with(r#"{"n": 18446744073709551617}"#)?;
+
+        let merged = merge_onto(&base, &ours, base.clone()).expect("merged");
+        assert_eq!(
+            merged.header.user_meta_numbers,
+            ours.header.user_meta_numbers
+        );
+
+        let theirs = with(r#"{"n": 18446744073709551618}"#)?;
+        assert_eq!(
+            merge_onto(&base, &ours, theirs),
+            Err(MergeRefusal::UserMeta),
+            "both sides changed the same number to different digits"
+        );
+        Ok(())
+    }
+
+    /// A number kept from the base, once the value has been edited away from
+    /// it, is not a difference: both sides write `{"n":3}`.
+    #[test]
+    fn package_meta_that_wrote_the_same_is_not_a_change_for_a_number_left_behind() -> Res {
+        let with = |meta: serde_json::Value, numbers: crate::manifest::RawNumbers| {
+            let mut manifest = Manifest::default();
+            manifest.header.user_meta = Some(meta);
+            manifest.header.user_meta_numbers = numbers;
+            manifest
+        };
+        let (_, left_behind) =
+            crate::manifest::RawNumbers::parse(r#"{"n": 18446744073709551616}"#)?;
+        assert!(!left_behind.is_empty());
+        let base = with(
+            serde_json::json!({"n": 1}),
+            crate::manifest::RawNumbers::default(),
+        );
+        let ours = with(serde_json::json!({"n": 3}), left_behind);
+        let theirs = with(
+            serde_json::json!({"n": 3}),
+            crate::manifest::RawNumbers::default(),
+        );
+
+        assert!(merge_onto(&base, &ours, theirs).is_ok());
+        Ok(())
     }
 
     #[test]

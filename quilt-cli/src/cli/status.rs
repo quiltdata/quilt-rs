@@ -441,6 +441,7 @@ mod tests {
                 hash: quilt_rs::object_hash::ObjectHash::default(),
                 size: 0,
                 meta: None,
+                meta_numbers: quilt_rs::manifest::RawNumbers::default(),
             })
         };
         let changes = std::collections::BTreeMap::from([

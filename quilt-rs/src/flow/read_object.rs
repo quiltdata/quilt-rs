@@ -295,6 +295,7 @@ mod tests {
             hash,
             size,
             meta: None,
+            meta_numbers: crate::manifest::RawNumbers::default(),
         })
     }
 

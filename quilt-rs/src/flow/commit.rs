@@ -27,6 +27,7 @@ use crate::manifest::HeaderMessage;
 use crate::manifest::Manifest;
 use crate::manifest::ManifestHeader;
 use crate::manifest::ManifestRow;
+use crate::manifest::RawNumbers;
 use crate::manifest::TopHasher;
 use crate::manifest::Workflow;
 use crate::paths::DomainPaths;
@@ -296,20 +297,24 @@ pub async fn commit_package(
         }
     }
 
-    let user_meta = match user_meta {
-        UserMeta::Keep => manifest.header.user_meta.clone(),
-        UserMeta::Clear => None,
+    let (user_meta, user_meta_numbers) = match user_meta {
+        UserMeta::Keep => (
+            manifest.header.user_meta.clone(),
+            manifest.header.user_meta_numbers.clone(),
+        ),
+        UserMeta::Clear => (None, RawNumbers::default()),
         UserMeta::Set(serde_json::Value::Object(mut m)) => {
             m.sort_keys();
-            Some(m.into())
+            (Some(m.into()), RawNumbers::default())
         }
-        UserMeta::Set(other) => Some(other),
+        UserMeta::Set(other) => (Some(other), RawNumbers::default()),
     };
 
     let header = ManifestHeader {
         message: HeaderMessage::Text(message.clone()),
         workflow,
         user_meta,
+        user_meta_numbers,
         ..ManifestHeader::default()
     };
 
@@ -405,6 +410,7 @@ mod tests {
 
     use crate::fixtures;
     use crate::io::remote::mocks::MockRemote;
+    use crate::io::storage::LocalStorage;
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::Change;
     use crate::manifest::WorkflowId;
@@ -591,6 +597,119 @@ mod tests {
             commit_hash(Some(meta.clone()), UserMeta::Set(meta)).await?,
             "Keep must inherit the previous header's user_meta"
         );
+        Ok(())
+    }
+
+    /// `Keep` carries integers beyond 64 bits as quilt3 hashes them: committing
+    /// quilt3's own manifest unchanged gives quilt3's top hash.
+    #[test(tokio::test)]
+    async fn test_commit_keep_hashes_big_integers_as_quilt3_does() -> Res {
+        let name =
+            "c73246b3eecc0d9da9fb691d2e18a1dc241ed5c6cfa5433955667497ef178701-big-integers.jsonl";
+        let path = std::env::current_dir()?
+            .join("fixtures/quilt3-packages")
+            .join(name);
+        let mut manifest = Manifest::from_path(&LocalStorage::default(), &path).await?;
+        assert!(!manifest.header.user_meta_numbers.is_empty());
+
+        let storage = MockStorage::default();
+        let paths = DomainPaths::new(std::path::absolute("/foo")?);
+        let (_lineage, commit) = commit_package(
+            PackageLineage::default(),
+            &mut manifest,
+            &paths,
+            &storage,
+            &MockRemote::default(),
+            None,
+            PathBuf::default(),
+            InstalledPackageStatus::default(),
+            ("foo", "bar").into(),
+            String::default(),
+            UserMeta::Keep,
+            None,
+        )
+        .await?;
+        assert_eq!(commit.hash(), name.split_once('-').map(|(hash, _)| hash));
+        Ok(())
+    }
+
+    /// A file modified since its row was committed, with another checksum type
+    /// than the host's now asks for, is committed with the row's `meta` and its
+    /// big integers' raw text, as the row had them.
+    #[test(tokio::test)]
+    async fn test_commit_modified_row_keeps_meta_under_another_checksum_type() -> Res {
+        use crate::checksum::calculate_hash;
+        use crate::io::remote::HostConfig;
+
+        let storage = MockStorage::default();
+        let paths = DomainPaths::new(std::path::absolute("/foo")?);
+        let home = std::path::absolute("/working-dir")?;
+        let file = home.join("data.csv");
+        storage
+            .write_byte_stream(&file, ByteStream::from_static(b"a,b\n1,2\n"))
+            .await?;
+        let (meta, meta_numbers) =
+            crate::manifest::RawNumbers::parse(r#"{"n": 18446744073709551617, "k": "v"}"#)?;
+        let base = ManifestRow {
+            meta: Some(meta.clone()),
+            meta_numbers: meta_numbers.clone(),
+            ..calculate_hash(
+                &storage,
+                &file,
+                Path::new("data.csv"),
+                &HostConfig::default_sha256_chunked(),
+            )
+            .await?
+        };
+        let mut manifest = Manifest::default();
+        manifest.insert_record(base.clone()).await?;
+        storage
+            .write_byte_stream(&file, ByteStream::from_static(b"a,b\n3,4\n"))
+            .await?;
+
+        let status = InstalledPackageStatus {
+            changes: BTreeMap::from([(PathBuf::from("data.csv"), Change::Modified(base.clone()))]),
+            ..InstalledPackageStatus::default()
+        };
+        let status = crate::flow::rehash_changes(
+            &storage,
+            &manifest,
+            &home,
+            status,
+            &HostConfig::default_crc64(),
+        )
+        .await?;
+        let namespace = ("foo", "bar").into();
+        let (_lineage, commit) = commit_package(
+            PackageLineage::default(),
+            &mut manifest,
+            &paths,
+            &storage,
+            &MockRemote::default(),
+            None,
+            home,
+            status,
+            ("foo", "bar").into(),
+            String::default(),
+            UserMeta::Keep,
+            None,
+        )
+        .await?;
+
+        let committed = Manifest::from_path(
+            &storage,
+            &paths.installed_manifest(&namespace, commit.hash().unwrap()),
+        )
+        .await?;
+        let row = committed.get_record(Path::new("data.csv")).unwrap();
+        assert_eq!(
+            row.hash.algorithm(),
+            crate::object_hash::MULTIHASH_CRC64_NVME
+        );
+        assert_ne!(row.hash, base.hash);
+        assert_eq!(row.meta, Some(meta));
+        assert_eq!(row.meta_numbers, meta_numbers);
+        assert!(!row.meta_numbers.is_empty());
         Ok(())
     }
 

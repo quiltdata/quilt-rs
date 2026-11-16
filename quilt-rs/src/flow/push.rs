@@ -1132,6 +1132,7 @@ mod tests {
                     .into(),
                     size: file_content.len() as u64,
                     meta: Some(serde_json::Value::Null),
+                    meta_numbers: crate::manifest::RawNumbers::default(),
                 })
                 .await?;
         }

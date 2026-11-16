@@ -91,6 +91,7 @@ pub async fn calculate_hash(
         size,
         hash,
         meta: None,
+        meta_numbers: crate::manifest::RawNumbers::default(),
     })
 }
 
@@ -109,9 +110,13 @@ pub async fn verify_hash(
             Ok(Some(modified))
         } else {
             // Need to recalculate with host's preferred algorithm
-            let calculated_row =
-                calculate_hash(storage, path, &modified.logical_key, host_config).await?;
-            Ok(Some(calculated_row))
+            // The row's metadata is the package's, not the file's, so it stays,
+            // raw numbers included.
+            Ok(Some(ManifestRow {
+                meta: modified.meta,
+                meta_numbers: modified.meta_numbers,
+                ..calculate_hash(storage, path, &modified.logical_key, host_config).await?
+            }))
         }
     } else {
         Ok(None)
@@ -314,6 +319,44 @@ mod tests {
 
         assert_eq!(modified_row.hash.to_string(), "LZmmpqbBItw=");
 
+        Ok(())
+    }
+
+    /// A modified file whose row has another checksum type than the host's is
+    /// hashed again with the host's, and the row keeps its `meta`, big
+    /// integers included.
+    #[test(tokio::test)]
+    async fn test_verify_hash_keeps_meta_when_the_algorithm_changes() -> Res {
+        let storage = MockStorage::default();
+        let path = Path::new("foo");
+        storage
+            .write_byte_stream(path, ByteStream::from_static(b"lorem ipsum"))
+            .await?;
+        let (meta, meta_numbers) =
+            crate::manifest::RawNumbers::parse(r#"{"n": 18446744073709551617, "k": "v"}"#)?;
+        let row = ManifestRow {
+            meta: Some(meta.clone()),
+            meta_numbers: meta_numbers.clone(),
+            ..calculate_hash(
+                &storage,
+                path,
+                Path::new("bar"),
+                &HostConfig::default_sha256_chunked(),
+            )
+            .await?
+        };
+        storage
+            .write_byte_stream(path, ByteStream::from_static(b"dolor sit amet"))
+            .await?;
+
+        let modified = verify_hash(&storage, path, row, &HostConfig::default_crc64())
+            .await?
+            .expect("the file changed");
+
+        assert_eq!(modified.hash.algorithm(), MULTIHASH_CRC64_NVME);
+        assert_eq!(modified.meta, Some(meta));
+        assert_eq!(modified.meta_numbers, meta_numbers);
+        assert!(!modified.meta_numbers.is_empty());
         Ok(())
     }
 

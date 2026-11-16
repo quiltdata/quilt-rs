@@ -69,6 +69,7 @@ async fn rehash_rows<'a>(
                 output.push(Ok(ManifestRow {
                     physical_key: row.physical_key,
                     meta: row.meta,
+                    meta_numbers: row.meta_numbers,
                     ..rehashed
                 }));
             }
@@ -105,6 +106,7 @@ pub async fn recommit_for_remote(
     let header = ManifestHeader {
         message: manifest.header.message.clone(),
         user_meta: manifest.header.user_meta.clone(),
+        user_meta_numbers: manifest.header.user_meta_numbers.clone(),
         workflow,
         ..ManifestHeader::default()
     };
@@ -203,6 +205,7 @@ mod tests {
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::PathState;
     use crate::manifest::HeaderMessage;
+    use crate::manifest::RawNumbers;
 
     /// Helper: create a local package with a single file using the given `host_config`,
     /// returning (lineage, manifest, storage, paths, namespace).
@@ -451,6 +454,89 @@ mod tests {
             "User meta should be preserved"
         );
 
+        Ok(())
+    }
+
+    /// Integers beyond 64 bits in the package metadata survive the new header.
+    #[test(tokio::test)]
+    async fn test_recommit_keeps_big_integers_in_meta() -> Res {
+        let sha256_config = HostConfig::default_sha256_chunked();
+        let crc64_config = HostConfig::default_crc64();
+
+        let (lineage, mut manifest, storage, paths, namespace) =
+            create_test_package(&sha256_config).await?;
+        let (meta, numbers) = RawNumbers::parse(r#"{"n": 18446744073709551616}"#)?;
+        manifest.header.user_meta = Some(meta);
+        manifest.header.user_meta_numbers = numbers.clone();
+
+        let lineage = recommit_for_remote(
+            lineage,
+            &manifest,
+            &paths,
+            &storage,
+            &MockRemote::default(),
+            None,
+            namespace.clone(),
+            crc64_config,
+            None,
+            None,
+        )
+        .await?;
+
+        let commit = lineage.commit.as_ref().unwrap();
+        let manifest_path = paths.installed_manifest(&namespace, &commit.hash);
+        let new_manifest = Manifest::from_path(&storage, &manifest_path).await?;
+        assert_eq!(new_manifest.header.user_meta_numbers, numbers);
+        assert!(
+            new_manifest
+                .to_jsonlines()
+                .contains(r#""user_meta":{"n":18446744073709551616}"#)
+        );
+        Ok(())
+    }
+
+    /// Moving a package from sha256-chunked to CRC64, as `set_remote` does,
+    /// keeps a big integer in a row's `meta` as quilt3 reads and hashes it.
+    #[test(tokio::test)]
+    async fn test_recommit_keeps_big_integers_in_row_meta() -> Res {
+        let sha256_config = HostConfig::default_sha256_chunked();
+        let crc64_config = HostConfig::default_crc64();
+
+        let (lineage, mut manifest, storage, paths, namespace) =
+            create_test_package(&sha256_config).await?;
+        let (meta, numbers) = RawNumbers::parse(r#"{"n": 18446744073709551617}"#)?;
+        manifest.rows[0].meta = Some(meta);
+        manifest.rows[0].meta_numbers = numbers.clone();
+
+        let lineage = recommit_for_remote(
+            lineage,
+            &manifest,
+            &paths,
+            &storage,
+            &MockRemote::default(),
+            None,
+            namespace.clone(),
+            crc64_config,
+            None,
+            None,
+        )
+        .await?;
+
+        let commit = lineage.commit.as_ref().unwrap();
+        let manifest_path = paths.installed_manifest(&namespace, &commit.hash);
+        let new_manifest = Manifest::from_path(&storage, &manifest_path).await?;
+        assert_eq!(new_manifest.rows[0].meta_numbers, numbers);
+        let written = new_manifest.to_jsonlines();
+        assert!(
+            written.contains(r#""meta":{"n":18446744073709551617}"#),
+            "{written}"
+        );
+        // quilt3's `Package.load` of the same header and row (CRC64 hash
+        // `jSnVw/bqjr4=`, size 11, `s3://` physical key) gives this top hash.
+        assert_eq!(
+            commit.hash,
+            "0d72440abaf0694cd14c01eab00cbb8390de7cc1ef7686ea9ba21db31edded19"
+        );
         Ok(())
     }
 
