@@ -2,7 +2,8 @@
 //!
 //! This is quilt3's `Package.resolve_hash` /
 //! `PackageRegistry.resolve_top_hash`
-//! (`api/python/quilt3/backends/base.py`), kept to its rules:
+//! (`api/python/quilt3/backends/base.py` in quiltdata/quilt), kept to its
+//! rules:
 //!
 //! - A prefix is [`MIN_HASH_PREFIX_LEN`] to [`TOP_HASH_LEN`] characters. A
 //!   shorter or longer one is `Invalid hash`, before anything is asked of the
@@ -12,7 +13,8 @@
 //! - A shorter prefix is matched against the manifests the registry holds
 //!   under `.quilt/packages/`, whatever package they belong to. No match and
 //!   several matches are errors, never a guess.
-//! - Matching is case-sensitive.
+//! - Matching is case-sensitive: top hashes are lowercase hex, so `ABCDEF` is
+//!   [`HashPrefixError::NotHex`], never a match.
 //!
 //! The registry is a bucket, not a package: like quilt3's, the answer does not
 //! depend on a package name, so a prefix two packages' manifests share is
@@ -22,8 +24,11 @@
 //! wrote:
 //!
 //! - A prefix that is not lowercase hex, or a 64-character string that is not
-//!   a top hash, matches nothing, and says so without a listing. quilt3
-//!   would list first, or pass the 64 characters on, and fail to find it.
+//!   a top hash, is [`HashPrefixError::NotHex`], without a listing. quilt3
+//!   would list first and find zero matches, or pass the 64 characters on and
+//!   fail to find the manifest.
+//! - An ambiguous prefix lists at most [`MAX_LISTED_MATCHES`] of the matches
+//!   and counts the rest. quilt3 lists none.
 //! - Only objects named by a whole top hash count as revisions. quilt3 counts
 //!   any object under `.quilt/packages/`.
 //! - The listing asks S3 for the keys that start with the prefix, where quilt3
@@ -42,6 +47,9 @@ pub const MIN_HASH_PREFIX_LEN: usize = 6;
 /// The length of a whole top hash: the hex of a SHA-256.
 pub const TOP_HASH_LEN: usize = 64;
 
+/// How many matches [`HashPrefixError::Ambiguous`] lists.
+pub const MAX_LISTED_MATCHES: usize = 20;
+
 /// The one top hash in `bucket`'s registry that starts with `prefix`.
 ///
 /// Asks `host`'s credentials, or this computer's AWS ones when `host` is
@@ -51,6 +59,7 @@ pub const TOP_HASH_LEN: usize = 64;
 ///
 /// [`HashPrefixError::InvalidLength`] for a prefix outside
 /// [`MIN_HASH_PREFIX_LEN`]..=[`TOP_HASH_LEN`] characters;
+/// [`HashPrefixError::NotHex`] for one that is not lowercase hex;
 /// [`HashPrefixError::NoMatch`] and [`HashPrefixError::Ambiguous`] when zero or
 /// several revisions start with it; and whatever the listing fails with.
 pub async fn resolve_hash(
@@ -67,11 +76,11 @@ pub async fn resolve_hash(
         return if is_top_hash(prefix) {
             Ok(prefix.to_string())
         } else {
-            Err(HashPrefixError::NoMatch(prefix.to_string()).into())
+            Err(HashPrefixError::NotHex(prefix.to_string()).into())
         };
     }
     if !is_lowercase_hex(prefix) {
-        return Err(HashPrefixError::NoMatch(prefix.to_string()).into());
+        return Err(HashPrefixError::NotHex(prefix.to_string()).into());
     }
 
     let found = remote
@@ -99,10 +108,14 @@ fn pick_one(prefix: &str, found: Vec<String>) -> Result<String, HashPrefixError>
     match matches.len() {
         0 => Err(HashPrefixError::NoMatch(prefix.to_string())),
         1 => Ok(matches.remove(0)),
-        _ => Err(HashPrefixError::Ambiguous {
-            prefix: prefix.to_string(),
-            matches,
-        }),
+        total => {
+            matches.truncate(MAX_LISTED_MATCHES);
+            Err(HashPrefixError::Ambiguous {
+                prefix: prefix.to_string(),
+                more: total - matches.len(),
+                matches,
+            })
+        }
     }
 }
 
@@ -199,11 +212,11 @@ mod tests {
             prefix_error(err),
             HashPrefixError::InvalidLength(_)
         ));
-        // Six characters pass the length check, then match nothing.
+        // Six characters pass the length check, then are not hex.
         let err = resolve_hash(&remote, None, BUCKET, "éééééé")
             .await
             .unwrap_err();
-        assert!(matches!(prefix_error(err), HashPrefixError::NoMatch(_)));
+        assert!(matches!(prefix_error(err), HashPrefixError::NotHex(_)));
         Ok(())
     }
 
@@ -244,8 +257,40 @@ mod tests {
             HashPrefixError::Ambiguous {
                 prefix: "abcdef".to_string(),
                 matches: vec![ALPHA.to_string(), BETA.to_string()],
+                more: 0,
             }
         );
+        Ok(())
+    }
+
+    /// A prefix a whole registry shares lists the first few and counts the
+    /// rest, so the message stays short.
+    #[test(tokio::test)]
+    async fn a_prefix_many_revisions_share_lists_only_the_first_few() -> Res {
+        let total = MAX_LISTED_MATCHES + 5;
+        let hashes: Vec<String> = (0..total).map(|n| format!("abcdef{n:058x}")).collect();
+        let remote = remote_with(&hashes.iter().map(String::as_str).collect::<Vec<_>>()).await?;
+
+        let err = resolve_hash(&remote, None, BUCKET, "abcdef")
+            .await
+            .unwrap_err();
+        let HashPrefixError::Ambiguous { matches, more, .. } = prefix_error(err) else {
+            panic!("expected Ambiguous");
+        };
+        assert_eq!(matches, hashes[..MAX_LISTED_MATCHES]);
+        assert_eq!(more, 5);
+
+        let message = HashPrefixError::Ambiguous {
+            prefix: "abcdef".to_string(),
+            matches,
+            more,
+        }
+        .to_string();
+        assert!(
+            message.contains(&format!("starts {total} revisions")),
+            "{message}"
+        );
+        assert!(message.ends_with(", and 5 more)"), "{message}");
         Ok(())
     }
 
@@ -270,24 +315,31 @@ mod tests {
                 .unwrap_err();
             assert_eq!(
                 prefix_error(err),
-                HashPrefixError::NoMatch(upper.to_string())
+                HashPrefixError::NotHex(upper.to_string())
             );
         }
         let err = resolve_hash(&remote, None, BUCKET, &ALPHA.to_uppercase())
             .await
             .unwrap_err();
-        assert!(matches!(prefix_error(err), HashPrefixError::NoMatch(_)));
+        assert!(matches!(prefix_error(err), HashPrefixError::NotHex(_)));
         Ok(())
     }
 
     #[test(tokio::test)]
-    async fn a_prefix_that_is_not_hex_matches_zero() -> Res {
+    async fn a_prefix_that_is_not_hex_is_refused_as_such() -> Res {
         let remote = remote_with(&[ALPHA]).await?;
 
-        for bad in ["zzzzzz", "abcde/", "abcdef ", "abc.ef"] {
+        for bad in [
+            "zzzzzz",
+            "abcde/",
+            "abcdef ",
+            "abc.ef",
+            &"z".repeat(TOP_HASH_LEN),
+        ] {
             let err = resolve_hash(&remote, None, BUCKET, bad).await.unwrap_err();
-            assert!(
-                matches!(prefix_error(err), HashPrefixError::NoMatch(_)),
+            assert_eq!(
+                prefix_error(err),
+                HashPrefixError::NotHex(bad.to_string()),
                 "{bad:?}"
             );
         }

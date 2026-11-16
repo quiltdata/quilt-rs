@@ -92,6 +92,7 @@ pub use remove_revisions::protection;
 pub use remove_revisions::remove_revisions;
 pub use reset_to_latest::reset_to_latest;
 pub use resolve_comparison::{ResolveComparison, compare_for_resolve};
+pub use resolve_hash::MAX_LISTED_MATCHES;
 pub use resolve_hash::MIN_HASH_PREFIX_LEN;
 pub use resolve_hash::TOP_HASH_LEN;
 pub use resolve_hash::resolve_hash;

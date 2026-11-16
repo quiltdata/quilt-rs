@@ -249,8 +249,8 @@ impl From<&crate::engine::error::Error> for Failure {
 impl From<&crate::engine::quilt::Error> for Failure {
     fn from(err: &crate::engine::quilt::Error) -> Self {
         use crate::engine::quilt::{
-            Error as E, HashPrefixError, InstallPackageError, LoginError, PackageOpError,
-            RemoteCatalogError, RoleError, WorkflowValidationError,
+            Error as E, InstallPackageError, LoginError, PackageOpError, RemoteCatalogError,
+            RoleError, WorkflowValidationError,
         };
 
         match err {
@@ -307,11 +307,8 @@ impl From<&crate::engine::quilt::Error> for Failure {
 
             // The page offered a revision this copy no longer holds, or one that
             // became protected since the list was drawn: either way the
-            // revision the user meant is no longer there to remove. The same
-            // goes for a short hash no revision starts with.
-            E::RevisionNotRemovable { .. } | E::HashPrefix(HashPrefixError::NoMatch(_)) => {
-                Self::Refusal(RefusalKind::Missing)
-            }
+            // revision the user meant is no longer there to remove.
+            E::RevisionNotRemovable { .. } => Self::Refusal(RefusalKind::Missing),
 
             // The uninstall happened; what kept the objects is the failure.
             E::PruneFailed(_, inner, _) => Self::from(inner.as_ref()),
@@ -337,11 +334,10 @@ impl From<&crate::engine::quilt::Error> for Failure {
             | E::S3(_)
             | E::Checksum(_)
             | E::Fs(_)
-            // A prefix that is too short or shared by several revisions is the
-            // user's to fix, like an undo refusal (see `Undo` above), and
-            // unreachable from this surface today: nothing in QuiltSync takes
-            // a short hash yet. It earns a refusal kind with the surface that
-            // does.
+            // Every short-hash failure is the user's to fix, like an undo
+            // refusal (see `Undo` above), and unreachable from this surface
+            // today: nothing in QuiltSync takes a short hash yet. Giving them
+            // a refusal kind waits for the surface that does.
             | E::HashPrefix(_)
             | E::InstallPath(_)
             | E::Io(_)
@@ -633,17 +629,6 @@ mod tests {
             hash: "abc".into(),
             why: "this copy does not hold it".into(),
         });
-
-        assert_eq!(refusal(&err), Some(RefusalKind::Missing));
-    }
-
-    /// No revision starts with the short hash that was typed: the revision the
-    /// user meant is not there, which is theirs to correct.
-    #[test]
-    fn a_short_hash_nothing_starts_with_is_a_refusal() {
-        let err = Error::Quilt(quilt::Error::HashPrefix(quilt::HashPrefixError::NoMatch(
-            "abcdef".into(),
-        )));
 
         assert_eq!(refusal(&err), Some(RefusalKind::Missing));
     }
