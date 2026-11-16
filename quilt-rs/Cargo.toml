@@ -16,6 +16,8 @@ homepage.workspace = true
 # Exposes the in-memory mock `Remote`/`Storage` implementations so downstream
 # crates can drive quilt-rs flows against a fake bucket in their own tests.
 testing = []
+# Compiles in the failpoints crash tests kill a process at; see `src/failpoint.rs`.
+failpoints = []
 
 [dependencies]
 async-trait.workspace = true
@@ -59,7 +61,7 @@ quilt-uri = { path = "../quilt-uri", version = "0.5.1-dev" }
 url.workspace = true
 uuid.workspace = true
 
-[target.'cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))'.dependencies]
+[target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]

@@ -115,6 +115,44 @@ pub trait Storage {
         body: ByteStream,
     ) -> impl Future<Output = Res> + Send + Sync;
 
+    /// [`Self::write_byte_stream`] for a file renamed elsewhere right after it
+    /// lands, such as a download staged until it is checked: the folder it
+    /// lands in is not synced, since nothing needs it there after a power loss.
+    fn write_staged_byte_stream(
+        &self,
+        path: impl AsRef<Path> + Send + Sync,
+        body: ByteStream,
+    ) -> impl Future<Output = Res> + Send + Sync {
+        self.write_byte_stream(path, body)
+    }
+
+    /// [`Self::write_byte_stream`] through a temp file named `temp_name` in
+    /// `path`'s folder, so a leftover from a killed write can be traced to its
+    /// target. The name is a bare file name, not the target's, and unique to
+    /// this write: the write truncates a file already there, and removes it on
+    /// failure. With a `tag`, the write passes the failpoints
+    /// `<tag>.before-temp`, `<tag>.after-temp` and `<tag>.after-rename`. A
+    /// storage that does not override this ignores both.
+    fn write_byte_stream_via(
+        &self,
+        path: impl AsRef<Path> + Send + Sync,
+        temp_name: impl AsRef<Path> + Send + Sync,
+        body: ByteStream,
+        tag: Option<&'static str>,
+    ) -> impl Future<Output = Res> + Send + Sync {
+        let _ = (temp_name, tag);
+        self.write_byte_stream(path, body)
+    }
+
+    /// Makes the entries created, renamed or removed in the folder `path`
+    /// survive a power loss. A failure is logged, not returned. On Windows,
+    /// which has no folder sync, and in a storage that does not override this,
+    /// it does nothing.
+    fn sync_dir(&self, path: impl AsRef<Path> + Send) -> impl Future<Output = ()> + Send {
+        let _ = path;
+        async {}
+    }
+
     /// Creates the directory `path` and any missing parent. On Unix `path` is
     /// created 0700, and one that already existed is set to 0700 where the
     /// file system allows. On Windows it is [`Self::create_dir_all`].
@@ -212,6 +250,30 @@ impl<S: Storage + Send + Sync> Storage for Arc<S> {
         body: ByteStream,
     ) -> Res {
         (**self).write_byte_stream(path, body).await
+    }
+
+    async fn write_staged_byte_stream(
+        &self,
+        path: impl AsRef<Path> + Send + Sync,
+        body: ByteStream,
+    ) -> Res {
+        (**self).write_staged_byte_stream(path, body).await
+    }
+
+    async fn write_byte_stream_via(
+        &self,
+        path: impl AsRef<Path> + Send + Sync,
+        temp_name: impl AsRef<Path> + Send + Sync,
+        body: ByteStream,
+        tag: Option<&'static str>,
+    ) -> Res {
+        (**self)
+            .write_byte_stream_via(path, temp_name, body, tag)
+            .await
+    }
+
+    async fn sync_dir(&self, path: impl AsRef<Path> + Send) {
+        (**self).sync_dir(path).await;
     }
 
     async fn create_private_dir(&self, path: impl AsRef<Path> + Send) -> Res {

@@ -23,6 +23,8 @@
 
 ### Added
 
+- `Storage::write_byte_stream_via` writes as `write_byte_stream` does through a temp file the caller names, and `Storage::sync_dir` syncs a folder on macOS and Linux, logging a failure. The non-default `failpoints` feature lets crash tests kill a process inside such a write (<https://github.com/quiltdata/quilt-rs/pull/1400>)
+- `Storage::write_staged_byte_stream`, for a file renamed elsewhere right after it lands: unlike `write_byte_stream`, it does not sync the folder (<https://github.com/quiltdata/quilt-rs/pull/1379>)
 - `UserMeta::parse` reads package metadata from JSON text as quilt3's `set_meta` does, keeping integers beyond 64 bits and turning `-0` into `0`, and `UserMeta::set` builds a `Set` with no kept number text. `ManifestHeader::set_meta` replaces `user_meta` and its numbers together. `RawNumbers` has `only`, `without` and `union` for splitting and joining kept numbers by JSON pointer (<https://github.com/quiltdata/quilt-rs/pull/1394>)
 - `io::manifest::resolve_manifest_uri` resolves a package URI's short hash to the whole one through `flow::resolve_hash`, so the `ManifestUri` it returns carries all 64 characters; no match, several matches, and a hand-built prefix that is the wrong length or not hex are a `HashPrefixError` (<https://github.com/quiltdata/quilt-rs/pull/1392>)
 - `flow::push_files` publishes a manifest from files or bytes the caller supplies, and `flow::install_to` installs a manifest's files into any folder, both without a package home or lineage. A push whose parent is no longer `latest` still saves its revision, leaves `latest` alone, and returns `PackageOpError::PushedNotLatest` with the pushed top hash (<https://github.com/quiltdata/quilt-rs/pull/1386>)
@@ -39,6 +41,7 @@
 
 ### Changed
 
+- **Breaking:** `PathState::hash` is an `Option`: a `data.json` path entry whose hash is missing (as a later release will write) or `null` reads as `None` and is written back without one (<https://github.com/quiltdata/quilt-rs/pull/1380>)
 - **Breaking:** `InstalledPackageStatus` has a new field, `working_copy`, and `PackageOpError` a new variant, `WorkingCopyUnavailable`, so a literal naming every field, or an exhaustive match, needs updating (<https://github.com/quiltdata/quilt-rs/pull/1397>)
 - **Breaking:** `UserMeta::Set` carries the value and a `RawNumbers`, so every `Set` literal and every exhaustive match needs the numbers (use `UserMeta::parse` or `UserMeta::set`). `flow::create` and `LocalDomain::create_package` take a `UserMeta`; `Keep` and `Clear` write no `user_meta` key, where create previously wrote `"user_meta": {}` (<https://github.com/quiltdata/quilt-rs/pull/1394>)
 - **Breaking:** `DirMeta` is `#[non_exhaustive]`, so a struct literal no longer compiles outside this crate; use `DirMeta::new`, then set `meta_numbers` when the folder was read from a line (<https://github.com/quiltdata/quilt-rs/pull/1396>)
@@ -54,6 +57,7 @@
 
 ### Fixed
 
+- On macOS and Linux, a `LocalStorage` byte-stream write also syncs the folder it writes into, so a power loss no longer undoes one into an existing folder, such as `.quilt/data.json`. A failed folder sync is logged, and the write still succeeds (<https://github.com/quiltdata/quilt-rs/pull/1379>)
 - A package whose working folder is missing or cannot be read no longer reports every tracked file as removed or commits an empty revision: `status` gives `WorkingCopy::Unavailable` with no changes, and `commit`, `publish`, `install_paths`, `undo_commit`, `add_to_quiltignore` (new) and a `pull` that would apply a revision refuse with `PackageOpError::WorkingCopyUnavailable`, naming the folder. A pull also refuses if the folder vanishes while the revision is being staged, instead of recreating it with only the files fetched; an explicit reset may still recreate it (<https://github.com/quiltdata/quilt-rs/pull/1397>)
 - On Windows, the top hash matches quilt3's for logical keys holding `\`, merging onto `latest` keeps keys such as `a/b` and `a\b` apart, and installing a package whose keys name one local file there (`a/b` and `a\b`, or `data` and `data\x.csv`) is refused before any file is written (<https://github.com/quiltdata/quilt-rs/pull/1377>)
 - The top hash matches quilt3's for metadata holding floats such as `1e-7` or `1e16`, and for an entry `meta` that is not an object, so quilt3 opens such packages (<https://github.com/quiltdata/quilt-rs/pull/1372>)

@@ -176,7 +176,25 @@ impl Storage for MockStorage {
         body: ByteStream,
     ) -> Res {
         let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
-        super::local::write(rel_path.as_ref(), body, true).await
+        super::local::write(rel_path.as_ref(), body, true, true).await
+    }
+
+    async fn write_byte_stream_via(
+        &self,
+        path: impl AsRef<Path> + Send + Sync,
+        temp_name: impl AsRef<Path> + Send + Sync,
+        body: ByteStream,
+        tag: Option<&'static str>,
+    ) -> Res {
+        let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
+        super::LocalStorage::new()
+            .write_byte_stream_via(rel_path, temp_name, body, tag)
+            .await
+    }
+
+    async fn sync_dir(&self, path: impl AsRef<Path> + Send) {
+        let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
+        super::LocalStorage::new().sync_dir(rel_path).await;
     }
 
     /// The same real lock as [`LocalStorage`](super::LocalStorage)'s, on the
