@@ -65,6 +65,10 @@ pub(super) async fn onto_latest<M: QuiltModel>(
                         MergeBlock::Paths(paths.iter().map(|p| p.display().to_string()).collect())
                     }
                     quilt::flow::MergeRefusal::UserMeta => MergeBlock::Metadata,
+                    quilt::flow::MergeRefusal::Invalid(reason) => {
+                        error!("autosync: {namespace}: merge produced an invalid tree: {reason}");
+                        return Err(WatchError::Conflict(PausedReason::Other(reason)));
+                    }
                 };
                 return Err(WatchError::Conflict(PausedReason::MergeRefused(block)));
             }

@@ -1168,4 +1168,56 @@ mod tests {
         assert_eq!(hashes[1].1, []);
         Ok(())
     }
+
+    /// quilt3 refuses `Package.set` of a file at a key that is already a
+    /// folder (`Cannot overwrite directory 'a' with PackageEntry`). A commit
+    /// whose carried folder metadata would clash with a new file does the
+    /// same, with `FileAndFolder`, and does not panic.
+    #[test(tokio::test)]
+    async fn a_commit_onto_a_clashing_folder_refuses_and_does_not_panic() -> Res {
+        let storage = MockStorage::default();
+        storage
+            .write_byte_stream(
+                std::path::absolute("/working-dir/a")?,
+                ByteStream::default(),
+            )
+            .await?;
+        let added = ManifestRow {
+            logical_key: crate::LogicalKey::new("a")?,
+            ..ManifestRow::default()
+        };
+        let status = InstalledPackageStatus {
+            changes: BTreeMap::from([(PathBuf::from("a"), Change::Added(added))]),
+            ..InstalledPackageStatus::default()
+        };
+        let mut manifest = Manifest {
+            dir_meta: vec![crate::manifest::DirMeta {
+                logical_key: crate::LogicalKey::new("a")?,
+                meta: serde_json::json!({"owner": "team"}),
+            }],
+            ..Manifest::default()
+        };
+        let paths = DomainPaths::new(std::path::absolute("/foo")?);
+        let err = commit_package(
+            PackageLineage::default(),
+            &mut manifest,
+            &paths,
+            &storage,
+            &MockRemote::default(),
+            None,
+            std::path::absolute("/working-dir")?,
+            status,
+            ("foo", "bar").into(),
+            "Lorem ipsum".to_string(),
+            UserMeta::Keep,
+            None,
+        )
+        .await
+        .expect_err("a file and folder of the same name must refuse");
+        assert!(
+            matches!(&err, Error::Manifest(ManifestError::FileAndFolder(key)) if key == "a"),
+            "{err}"
+        );
+        Ok(())
+    }
 }

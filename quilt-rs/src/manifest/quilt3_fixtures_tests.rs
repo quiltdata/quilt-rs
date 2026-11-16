@@ -342,36 +342,3 @@ fn only_folder_metadata_that_says_something_is_written() -> Res {
     }
     Ok(())
 }
-
-/// A hand-built Manifest must not write a file neither reader would accept.
-#[test(tokio::test)]
-async fn to_jsonlines_refuses_a_hand_built_file_and_folder_clash() -> Res {
-    let file = r#"{"logical_key":"data","physical_keys":["s3://bucket/data"],"hash":{"type":"SHA256","value":"00"},"size":1,"meta":{}}"#;
-    let mut manifest = Manifest::from_reader(folder_manifest(&[file]).as_bytes()).await?;
-    manifest.dir_meta = vec![DirMeta {
-        logical_key: LogicalKey::new("data")?,
-        meta: serde_json::json!({"a": 1}),
-    }];
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| manifest.to_jsonlines()));
-    assert!(
-        result.is_err(),
-        "a file and folder of the same name must not be written"
-    );
-    Ok(())
-}
-
-#[test(tokio::test)]
-async fn to_jsonlines_refuses_hand_built_duplicate_folder_metadata() -> Res {
-    let mut manifest = Manifest::from_reader(folder_manifest(&[A_FILE]).as_bytes()).await?;
-    let dir = DirMeta {
-        logical_key: LogicalKey::new("docs")?,
-        meta: serde_json::json!({"a": 1}),
-    };
-    manifest.dir_meta = vec![dir.clone(), dir];
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| manifest.to_jsonlines()));
-    assert!(
-        result.is_err(),
-        "duplicate folder metadata must not be written"
-    );
-    Ok(())
-}

@@ -7,7 +7,6 @@ use std::path::PathBuf;
 
 use crate::Error;
 use crate::LogicalKey;
-use crate::Res;
 use crate::error::ManifestError;
 use crate::flow::list_revisions::holds_user_meta;
 use crate::manifest::DirMeta;
@@ -27,6 +26,20 @@ pub enum MergeRefusal {
     Paths(Vec<PathBuf>),
     /// Both sides changed the package `user_meta`, to different values.
     UserMeta,
+    /// The merged rows and folder metadata do not form a valid tree, for a
+    /// reason other than a file and folder sharing a name.
+    Invalid(String),
+}
+
+/// Why [`merge_dir_meta`] could not produce a merged folder list.
+#[derive(Debug)]
+pub enum MergeDirMetaError {
+    /// Folder metadata both sides changed differently, or a file and folder
+    /// that share a name. Folder keys keep their trailing `/`.
+    Paths(Vec<PathBuf>),
+    /// The merged tree is invalid for another reason, such as a duplicate
+    /// logical key.
+    Invalid(Error),
 }
 
 /// `theirs` with the change from `base` to `ours` applied: its rows by
@@ -39,19 +52,9 @@ pub fn merge_onto(
 ) -> Result<Manifest, MergeRefusal> {
     let rows = merge_rows_onto(&base.rows, &ours.rows, theirs.rows).map_err(MergeRefusal::Paths)?;
     let dir_meta = match merge_dir_meta(&base.dir_meta, &ours.dir_meta, &theirs.dir_meta, &rows) {
-        Ok(Ok(dirs)) => dirs,
-        Ok(Err(paths)) => return Err(MergeRefusal::Paths(paths)),
-        Err(err) => {
-            // A tree error other than a file/folder clash, for example a
-            // duplicate logical key. merge_dir_meta returns it instead of
-            // ignoring it; this merge cannot be published.
-            return Err(MergeRefusal::Paths(match &err {
-                Error::Manifest(ManifestError::DuplicateLogicalKey(key)) => {
-                    vec![PathBuf::from(key)]
-                }
-                _ => vec![PathBuf::from(err.to_string())],
-            }));
-        }
+        Ok(dirs) => dirs,
+        Err(MergeDirMetaError::Paths(paths)) => return Err(MergeRefusal::Paths(paths)),
+        Err(MergeDirMetaError::Invalid(err)) => return Err(MergeRefusal::Invalid(err.to_string())),
     };
     let [base_meta, ours_meta, theirs_meta] =
         [&base.header, &ours.header, &theirs.header].map(|header| {
@@ -88,14 +91,14 @@ pub fn merge_onto(
 ///
 /// The keys of the folders both sides changed differently, or else of the
 /// file and folder that share a name (the file without a slash, the folder
-/// with one). Other tree errors, such as a duplicate logical key, are
-/// returned as `Err` too, not ignored.
+/// with one), as [`MergeDirMetaError::Paths`]. Other tree errors, such as a
+/// duplicate logical key, are [`MergeDirMetaError::Invalid`].
 pub fn merge_dir_meta(
     base: &[DirMeta],
     ours: &[DirMeta],
     theirs: &[DirMeta],
     rows: &[ManifestRow],
-) -> Res<Result<Vec<DirMeta>, Vec<PathBuf>>> {
+) -> Result<Vec<DirMeta>, MergeDirMetaError> {
     let meta_of = |dirs: &'_ [DirMeta]| -> BTreeMap<LogicalKey, serde_json::Value> {
         dirs.iter()
             .filter(|dir| dir.holds_meta())
@@ -122,18 +125,18 @@ pub fn merge_dir_meta(
         };
     }
     if !collisions.is_empty() {
-        return Ok(Err(collisions));
+        return Err(MergeDirMetaError::Paths(collisions));
     }
     let merged: Vec<DirMeta> = merged
         .into_iter()
         .map(|(logical_key, meta)| DirMeta { logical_key, meta })
         .collect();
     match check_tree(rows, &merged) {
-        Ok(()) => Ok(Ok(merged)),
-        Err(Error::Manifest(ManifestError::FileAndFolder(key))) => {
-            Ok(Err(file_and_folder_paths(&key, rows, &merged)))
-        }
-        Err(err) => Err(err),
+        Ok(()) => Ok(merged),
+        Err(Error::Manifest(ManifestError::FileAndFolder(key))) => Err(MergeDirMetaError::Paths(
+            file_and_folder_paths(&key, rows, &merged),
+        )),
+        Err(err) => Err(MergeDirMetaError::Invalid(err)),
     }
 }
 
@@ -595,9 +598,10 @@ mod tests {
         assert!(
             matches!(
                 err,
-                Error::Manifest(ManifestError::DuplicateLogicalKey(ref key)) if key == "a.csv"
+                MergeDirMetaError::Invalid(Error::Manifest(ManifestError::DuplicateLogicalKey(ref key)))
+                    if key == "a.csv"
             ),
-            "{err}"
+            "{err:?}"
         );
         Ok(())
     }
