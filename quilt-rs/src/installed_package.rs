@@ -922,7 +922,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
             Err(err) => err,
         };
         // With files in it, placed now or saved meanwhile, the folder stays a
-        // working copy: nothing is deleted and a retry has nothing in its way.
+        // working copy, so nothing is deleted.
         if !matches!(holds_files(&self.storage, &folder).await, Ok(false)) {
             return Err(err);
         }
