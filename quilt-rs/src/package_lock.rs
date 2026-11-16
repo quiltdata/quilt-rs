@@ -16,6 +16,7 @@
 //! a deleted file would lock an unlinked inode while a new writer locked a
 //! new file at the same path, and both would run.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::RwLock;
@@ -82,6 +83,7 @@ pub(crate) async fn try_lock(
 )]
 pub(crate) struct PackageLock {
     namespace: Namespace,
+    file: PathBuf,
     _guard: LockGuard,
 }
 
@@ -98,6 +100,7 @@ impl PackageLock {
     ) -> Res<Self> {
         Ok(Self {
             namespace: namespace.clone(),
+            file: paths.package_lock(namespace),
             _guard: lock(storage, paths, namespace).await?,
         })
     }
@@ -112,12 +115,15 @@ impl PackageLock {
             .await?
             .map(|guard| Self {
                 namespace: namespace.clone(),
+                file: paths.package_lock(namespace),
                 _guard: guard,
             }))
     }
 
-    pub(crate) fn namespace(&self) -> &Namespace {
-        &self.namespace
+    /// The package locked, if the lock is `paths`' own: a lock taken in
+    /// another domain proves nothing here.
+    pub(crate) fn namespace_in(&self, paths: &DomainPaths) -> Option<&Namespace> {
+        (self.file == paths.package_lock(&self.namespace)).then_some(&self.namespace)
     }
 }
 

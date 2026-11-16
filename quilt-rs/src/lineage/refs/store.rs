@@ -119,7 +119,7 @@ impl RefStore {
         held: &PackageLock,
         step: impl FnOnce(&mut PackageLineage) -> Res<T>,
     ) -> Res<T> {
-        let namespace = held.namespace();
+        let namespace = self.locked(held)?;
         self.writable_config(storage).await?;
         let (stored, tip) = self.read_ref(storage, namespace).await?;
         let before = stored.clone().into_lineage(tip.as_ref());
@@ -145,7 +145,7 @@ impl RefStore {
         lineage: &PackageLineage,
         placed: &Home,
     ) -> Res {
-        let namespace = held.namespace();
+        let namespace = self.locked(held)?;
         let (_domain, config) = self.lock_domain(storage).await?;
         if config.home != *placed {
             return Err(LineageError::HomeChanged {
@@ -170,7 +170,7 @@ impl RefStore {
 
     /// Removes the locked package's ref, which need not parse, then its tip.
     pub(crate) async fn remove(&self, storage: &(impl Storage + Sync), held: &PackageLock) -> Res {
-        let namespace = held.namespace();
+        let namespace = self.locked(held)?;
         let _domain = self.lock_domain(storage).await?;
         let was = match self.hook {
             Some(_) => self.read(storage, namespace).await.ok(),
@@ -277,6 +277,17 @@ impl RefStore {
             state,
         }
         .into())
+    }
+
+    /// The package `held` locks, refused if it was locked in another domain.
+    fn locked<'a>(&self, held: &'a PackageLock) -> Res<&'a Namespace> {
+        held.namespace_in(&self.paths).ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "the package lock was taken in another domain",
+            )
+            .into()
+        })
     }
 
     /// Takes the domain file lock, then reads the config under it.
@@ -400,19 +411,19 @@ impl RefStore {
         }
     }
 
-    /// Creates `refs/` and the owner's folder where missing, syncing the
-    /// parent of each so the new folder survives a power loss.
+    /// Creates `refs/` and the owner's folder where missing, and syncs the
+    /// parent of each, even one that existed: a create killed before its
+    /// sync leaves a folder that a power loss can still take.
     async fn create_folders(&self, storage: &(impl Storage + Sync), namespace: &Namespace) -> Res {
         let refs = self.paths.refs_dir();
         let owner = self.paths.package_ref(namespace);
         let owner = folder_of(&owner);
         for folder in [refs.as_path(), owner] {
-            if storage.exists(folder).await {
-                continue;
-            }
-            storage.create_dir_all(folder).await?;
-            if folder == owner {
-                crate::failpoint::hit("ref.create.after-owner-dir");
+            if !storage.exists(folder).await {
+                storage.create_dir_all(folder).await?;
+                if folder == owner {
+                    crate::failpoint::hit("ref.create.after-owner-dir");
+                }
             }
             storage.sync_dir(folder_of(folder)).await;
         }
@@ -918,7 +929,8 @@ mod tests {
 
     /// A folder that cannot be synced is made unreadable, before each write
     /// that syncs it: `.quilt` as `refs/` is created, `refs/` as an owner's
-    /// folder is, and the owner's folder as a ref is removed from it.
+    /// folder is created or reused, and the owner's folder as a ref is
+    /// removed from it.
     #[cfg(unix)]
     #[test(tokio::test)]
     async fn a_folder_sync_that_fails_is_logged_and_the_write_stands() -> Res {
@@ -963,6 +975,19 @@ mod tests {
         created?;
         assert_eq!(logged, [tracing::Level::WARN], "creating refs/other/");
 
+        let held_z = domain.lock(&package("z")).await?;
+        set_mode(&refs, 0o300)?;
+        let (created, logged) = Logged::during(domain.store.create(
+            &domain.storage,
+            &held_z,
+            &lineage("z", BASE, BASE),
+            &domain.home,
+        ))
+        .await;
+        set_mode(&refs, 0o700)?;
+        created?;
+        assert_eq!(logged, [tracing::Level::WARN], "refs/acme/ already there");
+
         let owner = refs.join("acme");
         set_mode(&owner, 0o300)?;
         let (removed, logged) = Logged::during(domain.store.remove(&domain.storage, &held_x)).await;
@@ -972,7 +997,7 @@ mod tests {
 
         assert_eq!(
             domain.store.namespaces(&domain.storage).await?,
-            BTreeSet::from([("other", "y").into()])
+            BTreeSet::from([("other", "y").into(), package("z")])
         );
         Ok(())
     }
@@ -1157,6 +1182,26 @@ mod tests {
             BASE
         );
         assert!(!domain.paths.package_tip(&package("x")).exists());
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn a_package_lock_from_another_domain_writes_nothing() -> Res {
+        let (here, there) = (Domain::new()?, Domain::new()?);
+        here.install(&lineage("x", BASE, BASE)).await?;
+        let held_there = there.lock(&package("x")).await?;
+
+        let updated = here
+            .store
+            .update(&here.storage, &held_there, |lineage| {
+                lineage.base_hash = NEXT.to_string();
+                Ok(())
+            })
+            .await;
+        assert!(updated.is_err(), "{updated:?}");
+        let removed = here.store.remove(&here.storage, &held_there).await;
+        assert!(removed.is_err(), "{removed:?}");
+        assert_eq!(here.base_hash(&package("x")).await?, BASE);
         Ok(())
     }
 
