@@ -383,7 +383,11 @@ async fn reset_if_clean<M: QuiltModel>(
     locked: &M::Locked,
 ) -> Result<(), Error> {
     let (tree, _) = walk(model, pkg, locked).await?;
-    if tree.status.changes.is_empty() && tree.commit.is_none() {
+    // An unreadable folder lists no change, but nothing was checked in it.
+    if tree.status.changes.is_empty()
+        && tree.status.unavailable_home().is_none()
+        && tree.commit.is_none()
+    {
         model.locked_package_reset_local(locked).await?;
     } else {
         warn!(
@@ -463,7 +467,7 @@ async fn sweep<M: QuiltModel>(
         // A claim that never left here is the one commit pending, and
         // changed only the metadata.
         let only_the_claim = commit.is_none_or(|commit| commit.prev_hashes.is_empty());
-        if status.changes.is_empty() && only_the_claim {
+        if status.changes.is_empty() && status.unavailable_home().is_none() && only_the_claim {
             model.locked_package_reset_local(locked).await?;
         } else {
             warn!(

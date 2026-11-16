@@ -170,9 +170,10 @@ When a package tracks files and its working folder is missing or cannot be read
 (deleted by hand, or on a disk that is not mounted), nothing can be said about
 those files: `status` reports the working copy as unavailable
 (`InstalledPackageStatus::working_copy`) and lists no changes, where it once
-listed every file `Removed`. `commit`, `publish` and a `pull` that would apply
-a revision refuse with `PackageOpError::WorkingCopyUnavailable`, which names the
-folder. None of them creates the folder empty. The copy works again once the
+listed every file `Removed`. `commit`, `publish`, `install_paths` and a `pull`
+that would apply a revision refuse with
+`PackageOpError::WorkingCopyUnavailable`, which names the folder. None of them
+creates the folder empty. The copy works again once the
 folder is restored, or once the package is uninstalled. Files deleted inside an
 existing folder are still `Removed`.
 

@@ -191,13 +191,12 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
     }
 
     /// Creates the folders the package's writers need, but not its working
-    /// folder when that has gone missing from a package that tracks files: an
-    /// empty folder in its place would read as every file deleted.
+    /// folder when the package tracks files: an existing one needs no creating,
+    /// and a missing one made empty would read as every file deleted.
     pub async fn scaffold_paths(&self) -> Res {
         let home = self.lineage.domain_home(&self.storage).await?;
-        if let Ok((package_home, lineage)) = self.lineage.read(&self.storage).await
+        if let Ok((_, lineage)) = self.lineage.read(&self.storage).await
             && !lineage.paths.is_empty()
-            && !self.storage.exists(&package_home).await
         {
             return self
                 .paths
@@ -777,6 +776,13 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         self.scaffold_paths().await?;
 
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
+        // Installing into a recreated, empty folder would leave the tracked
+        // files it lost to read as removed.
+        if !lineage.paths.is_empty() && !self.storage.exists(&package_home).await {
+            return Err(Error::PackageOp(PackageOpError::WorkingCopyUnavailable(
+                package_home,
+            )));
+        }
         let remote_uri = lineage.remote()?;
 
         self.scaffold_paths_for_caching(&remote_uri.bucket).await?;

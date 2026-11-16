@@ -57,6 +57,20 @@ async fn a_missing_folder_is_unavailable_and_a_commit_refuses() -> Res {
     assert_eq!(package.lineage().await?.commit, committed);
     assert_eq!(package.manifest().await?.rows.len(), 2);
 
+    // Nor does a download recreate it with only the files fetched.
+    let error = package
+        .install_paths(&[PathBuf::from("a.txt")])
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            &error,
+            Error::PackageOp(PackageOpError::WorkingCopyUnavailable(named)) if *named == home
+        ),
+        "{error:?}"
+    );
+    assert!(!home.exists());
+
     // Restored, the copy works again, with nothing changed.
     std::fs::create_dir_all(home.join("sub"))?;
     std::fs::write(home.join("a.txt"), b"a")?;
