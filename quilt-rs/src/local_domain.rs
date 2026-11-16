@@ -25,6 +25,7 @@ use crate::manifest::ManifestHeader;
 use crate::package_lock;
 use crate::paths;
 use crate::state_store::PackageStateStore;
+use quilt_uri::Host;
 use quilt_uri::ManifestUri;
 use quilt_uri::Namespace;
 
@@ -210,6 +211,17 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
             .inspect_err(|e| warn!("Failed to browse manifest {}: {}", uri.hash, e))
     }
 
+    /// [`flow::resolve_hash`] on this domain's remote: the whole top hash of
+    /// the one revision in `bucket`'s registry that starts with `prefix`.
+    pub async fn resolve_hash(
+        &self,
+        host: Option<&Host>,
+        bucket: &str,
+        prefix: &str,
+    ) -> Res<String> {
+        flow::resolve_hash(&*self.remote, host, bucket, prefix).await
+    }
+
     /// [`flow::push_onto`] on this domain's remote.
     pub async fn push_onto(
         &self,
@@ -274,6 +286,7 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
         namespace: Namespace,
         source: Option<PathBuf>,
         message: Option<String>,
+        user_meta: flow::UserMeta,
     ) -> Res<(InstalledPackage<S, R>, flow::LeftOut)> {
         info!("Creating package: {}", namespace);
         let _held = package_lock::lock(&self.storage, &self.paths, &namespace).await?;
@@ -287,6 +300,7 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
             namespace.clone(),
             source,
             message,
+            user_meta,
         )
         .await?;
 
@@ -453,8 +467,14 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
     ) -> Res<(PathBuf, String)> {
         info!("Building manifest at: {}", dest_path.display());
         let dest_dir = dest_path.parent().unwrap_or(&dest_path).to_path_buf();
-        build_manifest_from_rows_stream(&self.storage, dest_dir, ManifestHeader::default(), stream)
-            .await
+        build_manifest_from_rows_stream(
+            &self.storage,
+            dest_dir,
+            ManifestHeader::default(),
+            Vec::new(),
+            stream,
+        )
+        .await
     }
 }
 

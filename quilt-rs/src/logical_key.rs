@@ -290,6 +290,10 @@ mod tests {
             "...",
             ".. ",
             "a/. .",
+            " ..",
+            "a/ ../x.txt",
+            " .. ",
+            "a/ .. /x.txt",
             "\\a",
             "\\\\server\\share\\a",
             "\\\\?\\C:\\a",
@@ -304,6 +308,15 @@ mod tests {
             "c:a",
             "a\0b",
         ] {
+            assert!(LogicalKey::new(key).is_err(), "{key:?}");
+        }
+    }
+
+    /// Segments Windows reads as `..` (a name of only dots and spaces, with
+    /// at least two dots) would climb out of the package folder.
+    #[test]
+    fn dotted_space_segments_that_windows_reads_as_dotdot_are_refused() {
+        for key in [" ..", "a/ ../x.txt", " .. ", "a/ .. /x.txt"] {
             assert!(LogicalKey::new(key).is_err(), "{key:?}");
         }
     }

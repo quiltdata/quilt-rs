@@ -217,6 +217,16 @@ impl Storage for LocalStorage {
         fs::metadata(path).await.is_ok_and(|m| m.is_file())
     }
 
+    async fn remove_dir(&self, path: impl AsRef<Path> + Send) -> Res {
+        Ok(fs::remove_dir(path.as_ref()).await?)
+    }
+
+    async fn is_symlink(&self, path: impl AsRef<Path> + Send) -> bool {
+        fs::symlink_metadata(path.as_ref())
+            .await
+            .is_ok_and(|m| m.file_type().is_symlink())
+    }
+
     async fn modified_timestamp(&self, path: impl AsRef<Path>) -> Res<DateTime<Utc>> {
         let modified = fs::metadata(path).await.map(|m| m.modified())??;
         Ok(DateTime::<Utc>::from(modified))

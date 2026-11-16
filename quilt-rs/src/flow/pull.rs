@@ -305,6 +305,10 @@ pub async fn pull_package(
         return Ok((lineage, Pulled::UpToDate));
     }
 
+    // Applying `latest` into a folder that could not be read would recreate it
+    // with only the files `latest` touches.
+    snapshot.status.require_working_copy()?;
+
     // `manifest` is the installed (base) manifest the caller passed in;
     // `snapshot` carries the already-fetched `latest` and its manifest.
     //
@@ -523,6 +527,7 @@ mod tests {
                 .unwrap(),
             size: hash_seed.len() as u64,
             meta: None,
+            meta_numbers: crate::manifest::RawNumbers::default(),
         })
     }
 
@@ -973,6 +978,43 @@ mod tests {
             error.unwrap_err().to_string(),
             "General error regarding package: package has pending commits".to_string()
         );
+    }
+
+    /// A status that could not read the working folder lists no change, so
+    /// applying `latest` would recreate the folder with only the files it
+    /// touches.
+    #[test(tokio::test)]
+    async fn an_unavailable_working_copy_is_not_pulled_into() {
+        let lineage = PackageLineage {
+            remote_uri: Some(ManifestUri {
+                hash: "a".to_string(),
+                ..ManifestUri::default()
+            }),
+            base_hash: "a".to_string(),
+            latest_hash: "b".to_string(),
+            ..PackageLineage::default()
+        };
+        let status = InstalledPackageStatus {
+            working_copy: crate::lineage::WorkingCopy::Unavailable(PathBuf::from("/gone/pkg")),
+            ..InstalledPackageStatus::default()
+        };
+        let error = pull_package(
+            lineage,
+            &mut Manifest::default(),
+            &DomainPaths::default(),
+            &MockStorage::default(),
+            &MockRemote::default(),
+            PathBuf::default(),
+            snapshot_with(status, Manifest::default()),
+            Namespace::default(),
+            SyncScope::IndividualFiles,
+        )
+        .await;
+        assert!(matches!(
+            error,
+            Err(crate::Error::PackageOp(PackageOpError::WorkingCopyUnavailable(home)))
+                if home.as_path() == Path::new("/gone/pkg")
+        ));
     }
 
     #[test(tokio::test)]

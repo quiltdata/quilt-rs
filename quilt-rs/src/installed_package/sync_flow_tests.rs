@@ -88,7 +88,7 @@ async fn test_spamming_commit_writes() -> Res {
         let commit = package
             .commit(
                 format!("Commit new1 {i}"),
-                UserMeta::Set(serde_json::json!({ "count": i })),
+                UserMeta::set(serde_json::json!({ "count": i })),
                 None,
                 None,
             )
@@ -577,6 +577,14 @@ impl crate::io::remote::Remote for RejectedCredentialRemote {
     ) -> impl Future<Output = Res<Vec<String>>> {
         std::future::ready(Err(rejected_credential()))
     }
+    fn manifest_hashes_with_prefix(
+        &self,
+        _host: Option<&Host>,
+        _bucket: &str,
+        _prefix: &str,
+    ) -> impl Future<Output = Res<Vec<String>>> {
+        std::future::ready(Err(rejected_credential()))
+    }
 }
 
 fn rejected_credential() -> Error {
@@ -637,6 +645,14 @@ impl crate::io::remote::Remote for LoggedOutRemote {
         _host: Option<&Host>,
         _bucket: &str,
         _namespace: &Namespace,
+    ) -> impl Future<Output = Res<Vec<String>>> {
+        std::future::ready(Err(Error::Login(LoginError::NoSession(None))))
+    }
+    fn manifest_hashes_with_prefix(
+        &self,
+        _host: Option<&Host>,
+        _bucket: &str,
+        _prefix: &str,
     ) -> impl Future<Output = Res<Vec<String>>> {
         std::future::ready(Err(Error::Login(LoginError::NoSession(None))))
     }
@@ -703,6 +719,19 @@ impl crate::io::remote::Remote for DeniedRemote {
             version: None,
         };
         std::future::ready(Err(denied(&pointers)))
+    }
+    fn manifest_hashes_with_prefix(
+        &self,
+        _host: Option<&Host>,
+        bucket: &str,
+        _prefix: &str,
+    ) -> impl Future<Output = Res<Vec<String>>> {
+        let manifests = S3Uri {
+            bucket: bucket.to_string(),
+            key: quilt_uri::paths::get_manifest_key(""),
+            version: None,
+        };
+        std::future::ready(Err(denied(&manifests)))
     }
 }
 
@@ -1218,6 +1247,37 @@ async fn test_pull_verdict_matches_the_full_dry_run() -> Res {
     assert_eq!(preview.removed, vec![PathBuf::from("a.txt")]);
     assert_eq!(package.pull_verdict(None).await?, preview.outcome);
 
+    Ok(())
+}
+
+/// A copy that is behind but whose folder is gone cannot be classified from an
+/// empty walk: it would read as a clean update, and the removals it would apply
+/// are of files that are not there to lose. Both dry runs refuse and name the
+/// folder, and the folder is not created.
+#[test(tokio::test)]
+async fn test_pull_dry_runs_refuse_a_missing_folder() -> Res {
+    let (package, _temp_dirs) = behind_package("{\"version\":\"v0\"}").await?;
+    let mut lineage = package.lineage().await?;
+    lineage
+        .paths
+        .insert(PathBuf::from("a.txt"), crate::lineage::PathState::default());
+    package.lineage.write(&package.storage, lineage).await?;
+    let home = package.package_home().await?;
+    std::fs::remove_dir_all(&home)?;
+
+    for error in [
+        package.pull_outcome(None).await.unwrap_err(),
+        package.pull_verdict(None).await.unwrap_err(),
+    ] {
+        assert!(
+            matches!(
+                &error,
+                Error::PackageOp(PackageOpError::WorkingCopyUnavailable(named)) if *named == home
+            ),
+            "{error:?}"
+        );
+    }
+    assert!(!home.exists());
     Ok(())
 }
 

@@ -24,7 +24,12 @@ async fn the_count_is_the_manifest_files_and_parses_none_of_them() -> Res {
 
     let namespace: Namespace = ("demo", "sales").into();
     let (package, _) = domain
-        .create_package(namespace.clone(), None, Some("initial import".to_string()))
+        .create_package(
+            namespace.clone(),
+            None,
+            Some("initial import".to_string()),
+            UserMeta::Clear,
+        )
         .await?;
 
     package
@@ -62,7 +67,12 @@ async fn a_stranded_temp_file_is_not_a_revision() -> Res {
 
     let namespace: Namespace = ("demo", "sales").into();
     let (package, _) = domain
-        .create_package(namespace.clone(), None, Some("initial import".to_string()))
+        .create_package(
+            namespace.clone(),
+            None,
+            Some("initial import".to_string()),
+            UserMeta::Clear,
+        )
         .await?;
 
     let manifests = package.paths.installed_manifests_dir(&namespace);
@@ -368,6 +378,14 @@ impl Remote for ListingRemote {
     ) -> Res<Vec<String>> {
         self.asked.lock().unwrap().push(host.cloned());
         Ok(Vec::new())
+    }
+    async fn manifest_hashes_with_prefix(
+        &self,
+        _host: Option<&Host>,
+        _bucket: &str,
+        _prefix: &str,
+    ) -> Res<Vec<String>> {
+        unreachable!("only the listing is asked")
     }
 }
 

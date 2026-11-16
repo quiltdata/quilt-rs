@@ -83,6 +83,18 @@ impl Storage for MockStorage {
         Ok(fs::create_dir_all(rel_path).await?)
     }
 
+    async fn remove_dir(&self, path: impl AsRef<Path> + Send) -> Res {
+        let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
+        Ok(fs::remove_dir(rel_path).await?)
+    }
+
+    async fn is_symlink(&self, path: impl AsRef<Path> + Send) -> bool {
+        let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
+        fs::symlink_metadata(rel_path)
+            .await
+            .is_ok_and(|m| m.file_type().is_symlink())
+    }
+
     async fn remove_dir_all(&self, path: impl AsRef<Path>) -> Res {
         let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
         Ok(fs::remove_dir_all(rel_path).await?)

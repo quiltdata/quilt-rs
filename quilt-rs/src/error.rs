@@ -193,10 +193,64 @@ pub enum InstallPathError {
     Uninstall(PathBuf),
 }
 
+/// The message of a hash mismatch on read, in the words `install_paths` uses.
+fn hash_mismatch_message(key: &str, replaced: bool, expected: &str, computed: &str) -> String {
+    if replaced {
+        format!(
+            "The remote no longer holds this revision's content for {key}: the object it points to has been replaced (expected {expected}, got {computed})"
+        )
+    } else {
+        format!(
+            "The package records a hash for {key} that its file does not match: the package may be corrupt (expected {expected}, got {computed})"
+        )
+    }
+}
+
+/// The message of a size mismatch on read.
+fn size_mismatch_message(key: &str, replaced: bool, expected: u64, actual: u64) -> String {
+    let message = format!("{key} is {actual} bytes, but its row says {expected}");
+    if replaced {
+        format!("{message}: the object it points to may have been replaced")
+    } else {
+        message
+    }
+}
+
 #[derive(Error, Debug)]
 pub enum ChecksumError {
     #[error("Checksum error: {0}")]
     Mismatch(String),
+
+    /// A read object's bytes do not hash to its row. `replaced` is whether the
+    /// row's `physical_key` has no `versionId` (or the `null` one), so a later
+    /// revision may have replaced the object: the wording is the one
+    /// `install_paths` uses for that case, and for a pinned version, whose bytes
+    /// cannot have changed and so whose recorded hash must be wrong.
+    #[error("{}", hash_mismatch_message(.key, *.replaced, .expected, .computed))]
+    HashMismatch {
+        /// The row's logical key.
+        key: String,
+        /// The hash the row records.
+        expected: String,
+        /// The hash of the bytes that were read.
+        computed: String,
+        /// Whether the object may have been replaced since the row was made.
+        replaced: bool,
+    },
+
+    /// A read object is not the size its row records. `replaced` is as for
+    /// [`HashMismatch`](Self::HashMismatch).
+    #[error("{}", size_mismatch_message(.key, *.replaced, *.expected, *.actual))]
+    SizeMismatch {
+        /// The row's logical key.
+        key: String,
+        /// The size the row records.
+        expected: u64,
+        /// How many bytes were read.
+        actual: u64,
+        /// Whether the object may have been replaced since the row was made.
+        replaced: bool,
+    },
 
     #[error("Missing checksum: {0:?}")]
     Missing(HostChecksums),
@@ -332,6 +386,56 @@ pub enum FsError {
     ByteStream(#[from] byte_stream::error::Error),
 }
 
+/// Why a short top hash did not resolve to one revision.
+///
+/// The three outcomes quilt3's `resolve_top_hash` tells apart
+/// (`api/python/quilt3/backends/base.py` in quiltdata/quilt): a prefix of the
+/// wrong length, a prefix no revision starts with, and one that several do;
+/// plus [`NotHex`](Self::NotHex), which quilt3 has no case for.
+#[derive(Error, Debug, PartialEq, Eq)]
+pub enum HashPrefixError {
+    /// Shorter than [`MIN_HASH_PREFIX_LEN`](crate::flow::MIN_HASH_PREFIX_LEN) or
+    /// longer than a whole top hash.
+    #[error(
+        "Invalid hash: {0:?} (a hash prefix is {min} to {max} characters)",
+        min = crate::flow::MIN_HASH_PREFIX_LEN,
+        max = crate::flow::TOP_HASH_LEN
+    )]
+    InvalidLength(String),
+
+    /// Not lowercase hex, so no top hash starts with it. Refused without
+    /// asking the registry.
+    #[error("Invalid hash: {0:?} (a hash is lowercase hex)")]
+    NotHex(String),
+
+    /// No revision in the registry starts with the prefix.
+    #[error("Found zero matches for {0:?}")]
+    NoMatch(String),
+
+    /// More than one revision starts with the prefix. `matches` lists the
+    /// first [`MAX_LISTED_MATCHES`](crate::flow::MAX_LISTED_MATCHES), sorted,
+    /// so the caller can say which to pick, and `more` counts the rest.
+    #[error(
+        "Found multiple matches: {prefix:?} starts {} revisions ({}{})",
+        .matches.len() + .more,
+        .matches.join(", "),
+        and_more(*.more)
+    )]
+    Ambiguous {
+        prefix: String,
+        matches: Vec<String>,
+        more: usize,
+    },
+}
+
+fn and_more(more: usize) -> String {
+    if more == 0 {
+        String::new()
+    } else {
+        format!(", and {more} more")
+    }
+}
+
 #[derive(Error, Debug, PartialEq)]
 pub enum PackageOpError {
     #[error("Commit error: {0}")]
@@ -339,6 +443,33 @@ pub enum PackageOpError {
 
     #[error("Push error: {0}")]
     Push(String),
+
+    /// The revision's manifest was stored, but writing its timestamp tag, or
+    /// reading or writing `latest`, failed. The revision is reachable by
+    /// `top_hash`; whether `latest` moved is unknown. `reason` is the failure.
+    #[error(
+        "Pushed revision {top_hash}, but could not finish publishing it: {reason}. The revision manifest is saved; latest may not have been updated."
+    )]
+    PushTagFailed {
+        /// The top hash of the revision whose manifest was stored.
+        top_hash: String,
+        /// What failed, as the failing call reported it.
+        reason: String,
+    },
+
+    /// A push whose parent is no longer `latest`: the revision was written,
+    /// and `latest` was left alone.
+    #[error(
+        "Pushed revision {top_hash}, but did not make it latest: latest is {latest}, but this push was built on {expected}. The revision is saved, and latest is unchanged."
+    )]
+    PushedNotLatest {
+        /// The top hash of the revision that was written.
+        top_hash: String,
+        /// The revision `latest` still names.
+        latest: String,
+        /// What the push was built on: "revision <hash>", or "no earlier revision".
+        expected: String,
+    },
 
     #[error("Publish error: {0}")]
     Publish(String),
@@ -351,6 +482,15 @@ pub enum PackageOpError {
 
     #[error("Pull blocked by conflicting local changes: {0:?}")]
     PullConflict(Vec<PathBuf>),
+
+    /// The package tracks files, but its working folder is missing or cannot be
+    /// read, so what the files hold, or whether they were deleted, is unknown.
+    /// Restore the folder, or uninstall the package.
+    #[error(
+        "The working folder {} is missing or cannot be read, so the package's files cannot be checked; restore it, or uninstall the package",
+        .0.display()
+    )]
+    WorkingCopyUnavailable(PathBuf),
 }
 
 /// The error type for this library
@@ -364,6 +504,9 @@ pub enum Error {
 
     #[error(transparent)]
     Fs(#[from] FsError),
+
+    #[error(transparent)]
+    HashPrefix(#[from] HashPrefixError),
 
     #[error(transparent)]
     InstallPackage(InstallPackageError),

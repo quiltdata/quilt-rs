@@ -74,6 +74,14 @@ impl crate::io::remote::Remote for UnreachableRemote {
     ) -> impl Future<Output = Res<Vec<String>>> {
         std::future::ready(Err(no_network()))
     }
+    fn manifest_hashes_with_prefix(
+        &self,
+        _host: Option<&Host>,
+        _bucket: &str,
+        _prefix: &str,
+    ) -> impl Future<Output = Res<Vec<String>>> {
+        std::future::ready(Err(no_network()))
+    }
 }
 
 /// A package committed with CRC64 hashes, installed from a catalog host that
@@ -85,7 +93,12 @@ async fn unreachable_package(
     domain.set_home(temp_dir.path()).await?;
     let namespace: Namespace = ("demo", "offline").into();
     let (package, _) = domain
-        .create_package(namespace.clone(), None, Some("empty".to_string()))
+        .create_package(
+            namespace.clone(),
+            None,
+            Some("empty".to_string()),
+            UserMeta::Clear,
+        )
         .await?;
     let home = package.package_home().await?;
     std::fs::write(home.join("kept.txt"), b"kept")?;

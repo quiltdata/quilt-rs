@@ -294,6 +294,7 @@ async fn autosync_default_metadata_keeps_the_heads_agent_exec() -> Result<(), Er
                         ..quilt::manifest::ManifestHeader::default()
                     },
                     rows: Vec::new(),
+                    dir_meta: Vec::new(),
                 })
             });
         let published = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -318,7 +319,7 @@ async fn autosync_default_metadata_keeps_the_heads_agent_exec() -> Result<(), Er
 
         let published = published.lock().unwrap();
         assert!(
-            matches!(published.as_slice(), [quilt::flow::UserMeta::Set(meta)] if *meta == expected),
+            matches!(published.as_slice(), [quilt::flow::UserMeta::Set(meta, _)] if *meta == expected),
             "expected {expected}, got {published:?}"
         );
     }

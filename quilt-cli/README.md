@@ -50,6 +50,7 @@ cargo install quilt-cli
 | `uninstall` | Remove a package; `--prune` also deletes its files |
 | `gc`        | Delete stored files no installed package uses    |
 | `remove-revisions` | Remove old revisions this copy no longer needs |
+| `catalog`   | Show, set or clear the default Quilt stack       |
 | `login`     | Authenticate against a Quilt stack               |
 | `role`      | Show or switch your active role on a stack       |
 | `version`   | Print the version, as `quilt --version` does     |
@@ -94,6 +95,10 @@ Under `--json`, `ignored` holds the `files` and `folders` counts, and with
 `--ignored` a `paths` list whose entries carry `path`, `kind` (`file` or
 `folder`), `rule`, `source` (`built-in`, `user` or `package`), and `line`,
 `rules_file` and `size` where they apply.
+
+A package URI's `@hash` may be a prefix of 6 to 63 lowercase hex characters,
+as in quilt3: `install` and `browse` look it up in the bucket's registry, and
+fail when no revision starts with it or several do, naming the candidates.
 
 `install` fetches the package manifest and starts tracking it; files are
 downloaded only for the paths you name with `--path` (repeatable) or a
@@ -287,6 +292,13 @@ Package files are stored under `~/QuiltSync` by default. Run
 namespace defaults to the one in the URI, so `install` needs no `--namespace`
 here.
 
+`quilt catalog set open.quiltdata.com` makes a stack the default, so `login`
+and `role` can leave out `--host`; `quilt catalog` shows it and
+`quilt catalog clear` forgets it. With none set, `quilt catalog` takes the
+host of `navigator_url` from quilt3's `config.yml`, once, and keeps it in
+`settings.json` in the shared folder (`QUILT_AUTH_DIR`). The default is never
+used for a package, which keeps the catalog it came from, or none.
+
 URIs follow the [Quilt+ URI format](https://docs.quilt.bio/quilt-platform-catalog-user/uri).
 With `&catalog=<host>`, S3 requests use the stack credentials from
 `quilt login`; without it, the CLI uses your local AWS credentials from
@@ -306,9 +318,20 @@ echo "a,b,c" > data.csv
 
 quilt status
 quilt commit --message "Add data.csv"
+# Or with package metadata (a JSON object):
+# quilt commit -m "Add data.csv" --meta '{"owner":"me"}'
 
 quilt list
 ```
+
+`commit` and `create` take `--meta '<json>'` (quilt3's name; `-u` and
+`--user-meta` are the same flag). The value must be a JSON object; bad
+JSON or a non-object (`--meta null`, an array, a string) is an error.
+No flag on `commit` keeps the previous revision's metadata, including
+the exact text of integers beyond 64 bits. No flag on `create` writes
+no `user_meta` key. There is no flag for removing the key (`Clear` in
+the library), which quilt3 does not have, and `push` has no `--meta`:
+it publishes an existing commit.
 
 Add `--source <dir>` to `create` to populate the package from an existing
 directory instead of starting empty. The package stays local-only — usable

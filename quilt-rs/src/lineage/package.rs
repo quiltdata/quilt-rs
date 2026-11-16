@@ -11,6 +11,7 @@ use serde::ser;
 use crate::Error;
 use crate::Res;
 use crate::error::LineageError;
+use crate::error::PackageOpError;
 use crate::lineage::status::UpstreamState;
 use quilt_uri::ManifestUri;
 
@@ -285,6 +286,19 @@ impl PackageLineage {
         self.remote_uri
             .as_ref()
             .ok_or(Error::Lineage(LineageError::NoRemote))
+    }
+
+    /// Refuses with [`PackageOpError::WorkingCopyUnavailable`] when this package
+    /// tracks files and `package_home` cannot be listed, for an operation that
+    /// would otherwise create the folder holding only what it writes. A package
+    /// that tracks no files loses nothing to a recreated folder, so it passes.
+    pub fn require_package_folder(&self, package_home: &Path) -> Res {
+        if self.paths.is_empty() || std::fs::read_dir(package_home).is_ok() {
+            return Ok(());
+        }
+        Err(Error::PackageOp(PackageOpError::WorkingCopyUnavailable(
+            package_home.to_path_buf(),
+        )))
     }
 
     /// Returns a mutable reference to the remote `ManifestUri`,

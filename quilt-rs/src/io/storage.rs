@@ -72,6 +72,26 @@ pub trait Storage {
         path: impl AsRef<Path> + Send + Sync,
     ) -> impl Future<Output = Res<ReadDir>> + Send + Sync;
 
+    /// Removes an empty directory, and fails, leaving it, if it holds anything:
+    /// unlike [`remove_dir_all`](Self::remove_dir_all) it cannot delete a file
+    /// that appeared in it a moment ago. A storage that does not override this
+    /// removes nothing and fails.
+    fn remove_dir(&self, path: impl AsRef<Path> + Send) -> impl Future<Output = Res> + Send {
+        let _ = path;
+        async {
+            Err(crate::Error::Io(std::io::Error::from(
+                std::io::ErrorKind::Unsupported,
+            )))
+        }
+    }
+
+    /// Check if a path is itself a symbolic link, without following it. A
+    /// storage that does not override this reports none.
+    fn is_symlink(&self, path: impl AsRef<Path> + Send) -> impl Future<Output = bool> + Send {
+        let _ = path;
+        async { false }
+    }
+
     /// Removes a directory at this path, after removing all its contents.
     fn remove_dir_all(&self, path: impl AsRef<Path> + Send) -> impl Future<Output = Res> + Send;
 
@@ -147,6 +167,14 @@ impl<S: Storage + Send + Sync> Storage for Arc<S> {
 
     async fn create_dir_all(&self, path: impl AsRef<Path> + Send) -> Res {
         (**self).create_dir_all(path).await
+    }
+
+    async fn remove_dir(&self, path: impl AsRef<Path> + Send) -> Res {
+        (**self).remove_dir(path).await
+    }
+
+    async fn is_symlink(&self, path: impl AsRef<Path> + Send) -> bool {
+        (**self).is_symlink(path).await
     }
 
     async fn create_file(&self, path: impl AsRef<Path>) -> Res<File> {
