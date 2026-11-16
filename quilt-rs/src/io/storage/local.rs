@@ -372,6 +372,7 @@ mod tests {
     use test_log::test;
 
     use std::path::Path;
+    #[cfg(unix)]
     use std::path::PathBuf;
 
     use tempfile::tempdir;
