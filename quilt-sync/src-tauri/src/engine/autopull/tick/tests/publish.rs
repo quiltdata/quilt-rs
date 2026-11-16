@@ -294,6 +294,7 @@ async fn autosync_default_metadata_keeps_the_heads_agent_exec() -> Result<(), Er
                         ..quilt::manifest::ManifestHeader::default()
                     },
                     rows: Vec::new(),
+                    dir_meta: Vec::new(),
                 })
             });
         let published = Arc::new(std::sync::Mutex::new(Vec::new()));

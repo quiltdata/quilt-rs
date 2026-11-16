@@ -577,6 +577,14 @@ impl crate::io::remote::Remote for RejectedCredentialRemote {
     ) -> impl Future<Output = Res<Vec<String>>> {
         std::future::ready(Err(rejected_credential()))
     }
+    fn manifest_hashes_with_prefix(
+        &self,
+        _host: Option<&Host>,
+        _bucket: &str,
+        _prefix: &str,
+    ) -> impl Future<Output = Res<Vec<String>>> {
+        std::future::ready(Err(rejected_credential()))
+    }
 }
 
 fn rejected_credential() -> Error {
@@ -637,6 +645,14 @@ impl crate::io::remote::Remote for LoggedOutRemote {
         _host: Option<&Host>,
         _bucket: &str,
         _namespace: &Namespace,
+    ) -> impl Future<Output = Res<Vec<String>>> {
+        std::future::ready(Err(Error::Login(LoginError::NoSession(None))))
+    }
+    fn manifest_hashes_with_prefix(
+        &self,
+        _host: Option<&Host>,
+        _bucket: &str,
+        _prefix: &str,
     ) -> impl Future<Output = Res<Vec<String>>> {
         std::future::ready(Err(Error::Login(LoginError::NoSession(None))))
     }
@@ -703,6 +719,19 @@ impl crate::io::remote::Remote for DeniedRemote {
             version: None,
         };
         std::future::ready(Err(denied(&pointers)))
+    }
+    fn manifest_hashes_with_prefix(
+        &self,
+        _host: Option<&Host>,
+        bucket: &str,
+        _prefix: &str,
+    ) -> impl Future<Output = Res<Vec<String>>> {
+        let manifests = S3Uri {
+            bucket: bucket.to_string(),
+            key: quilt_uri::paths::get_manifest_key(""),
+            version: None,
+        };
+        std::future::ready(Err(denied(&manifests)))
     }
 }
 

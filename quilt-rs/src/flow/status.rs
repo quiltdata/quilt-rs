@@ -246,9 +246,15 @@ impl<S: Storage + Sync> Hasher<'_, S> {
         if hash.algorithm() == host_config.checksums.algorithm_code() {
             return Ok(Some(ManifestRow { hash, size, ..row }));
         }
-        self.calculate(&row.logical_key, path, stamp, host_config)
-            .await
-            .map(Some)
+        // The row's metadata is the package's, not the file's, so it stays,
+        // raw numbers included.
+        Ok(Some(ManifestRow {
+            meta: row.meta,
+            meta_numbers: row.meta_numbers,
+            ..self
+                .calculate(&row.logical_key, path, stamp, host_config)
+                .await?
+        }))
     }
 
     /// The same row `checksum::calculate_hash` gives.
@@ -273,6 +279,7 @@ impl<S: Storage + Sync> Hasher<'_, S> {
             size,
             hash,
             meta: None,
+            meta_numbers: crate::manifest::RawNumbers::default(),
         })
     }
 
@@ -356,6 +363,7 @@ pub async fn rehash_changes(
                     .map(Change::Modified),
                 None => Some(Change::Modified(ManifestRow {
                     meta: current.meta,
+                    meta_numbers: current.meta_numbers,
                     ..calculate_hash(storage, &path, &logical_key, host_config).await?
                 })),
             },
@@ -744,6 +752,7 @@ mod tests {
                     .into(),
                 meta: None,
                 physical_key: crate::paths::file_url(&physical_key)?,
+                meta_numbers: crate::manifest::RawNumbers::default(),
             };
             assert!(added_row.matches_content(&reference_row));
             Ok(())
@@ -1482,6 +1491,117 @@ mod tests {
         .await?;
         assert_ne!(stale, status.changes);
         assert_eq!(status.changes, package.walk_without_cache().await?);
+        Ok(())
+    }
+
+    /// A modified row the manifest does not have is rehashed whole, but its
+    /// `meta` stays as it was, big integers included.
+    #[test(tokio::test)]
+    async fn rehash_changes_keeps_the_meta_numbers_of_a_row_the_manifest_lacks()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let package = CachedPackage::new().await?;
+        std::fs::write(package.path("new.txt"), b"x")?;
+        let (meta, meta_numbers) =
+            crate::manifest::RawNumbers::parse(r#"{"n": 18446744073709551617}"#)?;
+        let current = ManifestRow {
+            meta: Some(meta.clone()),
+            meta_numbers: meta_numbers.clone(),
+            ..ManifestRow::default()
+        };
+        let status = InstalledPackageStatus {
+            changes: ChangeSet::from([(PathBuf::from("new.txt"), Change::Modified(current))]),
+            ..InstalledPackageStatus::default()
+        };
+
+        let status = rehash_changes(
+            &package.storage,
+            &Manifest::default(),
+            package.home.path(),
+            status,
+            &HostConfig::default(),
+        )
+        .await?;
+
+        let Some(Change::Modified(row)) = status.changes.get(Path::new("new.txt")) else {
+            panic!("{:?}", status.changes);
+        };
+        assert_eq!(row.meta, Some(meta));
+        assert_eq!(row.meta_numbers, meta_numbers);
+        Ok(())
+    }
+
+    /// A package whose tracked row has a checksum type other than the host's
+    /// and metadata with a big integer, and whose file has changed since.
+    async fn tracked_row_with_big_int_meta_modified()
+    -> Result<(CachedPackage, ManifestRow), Box<dyn std::error::Error>> {
+        let mut package = CachedPackage::new().await?;
+        let (meta, meta_numbers) =
+            crate::manifest::RawNumbers::parse(r#"{"n": 18446744073709551617, "k": "v"}"#)?;
+        let row = ManifestRow {
+            meta: Some(meta),
+            meta_numbers,
+            ..calculate_hash(
+                &package.storage,
+                &package.path("tracked.txt"),
+                Path::new("tracked.txt"),
+                &HostConfig::default_sha256_chunked(),
+            )
+            .await?
+        };
+        assert!(!row.meta_numbers.is_empty());
+        package.manifest = Manifest::default();
+        package.manifest.insert_record(row.clone()).await?;
+        package.lineage.paths.insert(
+            PathBuf::from("tracked.txt"),
+            PathState {
+                hash: row.hash.clone().into(),
+                ..PathState::default()
+            },
+        );
+        std::fs::write(package.path("tracked.txt"), b"changed")?;
+        Ok((package, row))
+    }
+
+    /// The status of a modified row, rehashed under a host whose checksum type
+    /// differs from the row's, keeps the row's `meta` and `meta_numbers`.
+    #[test(tokio::test)]
+    async fn a_modified_row_keeps_its_meta_when_the_host_algorithm_differs()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (package, row) = tracked_row_with_big_int_meta_modified().await?;
+        let crc64 = HostConfig::default_crc64();
+
+        let walked = package.walk_with(crc64.clone()).await?;
+        let (_, status) = create_status(
+            package.lineage.clone(),
+            &package.storage,
+            &package.domain_paths(),
+            &package.manifest,
+            package.home.path(),
+            crc64.clone(),
+        )
+        .await?;
+        let rehashed = rehash_changes(
+            &package.storage,
+            &package.manifest,
+            package.home.path(),
+            status.clone(),
+            &crc64,
+        )
+        .await?;
+
+        assert_eq!(walked, status.changes);
+        for changes in [&walked, &rehashed.changes] {
+            let Some(Change::Modified(modified)) = changes.get(Path::new("tracked.txt")) else {
+                panic!("{changes:?}");
+            };
+            assert_eq!(
+                modified.hash.algorithm(),
+                crate::object_hash::MULTIHASH_CRC64_NVME
+            );
+            assert_ne!(modified.hash, row.hash);
+            assert_eq!(modified.meta, row.meta);
+            assert_eq!(modified.meta_numbers, row.meta_numbers);
+        }
         Ok(())
     }
 

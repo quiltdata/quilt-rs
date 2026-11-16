@@ -50,6 +50,8 @@ use quilt_uri::S3Uri;
 use crate::io::manifest::bytestream_to_string;
 use crate::io::remote::RemoteObjectStream;
 use quilt_uri::Tag;
+use quilt_uri::is_top_hash;
+use quilt_uri::paths::get_manifest_key;
 use quilt_uri::paths::tag_key;
 
 mod response_timeout;
@@ -654,6 +656,38 @@ impl RemoteS3 {
         Ok(hashes)
     }
 
+    /// [`Remote::manifest_hashes_with_prefix`]: the keys under
+    /// `.quilt/packages/` that start with `prefix`, listed page by page.
+    async fn manifest_hashes_listed(
+        &self,
+        host: Option<&Host>,
+        bucket: &str,
+        prefix: &str,
+    ) -> Res<Vec<String>> {
+        let client = self.get_client_for_bucket(host, bucket).await?;
+        let directory = get_manifest_key("");
+        let mut pages = client
+            .list_objects_v2()
+            .bucket(bucket)
+            .prefix(format!("{directory}{prefix}"))
+            .into_paginator()
+            .send();
+        let mut hashes = Vec::new();
+        while let Some(page) = pages.next().await {
+            let page =
+                page.map_err(|err| s3_error_or_session_loss(err, host, S3ErrorKind::ListObjects))?;
+            hashes.extend(
+                page.contents()
+                    .iter()
+                    .filter_map(|object| object.key())
+                    .filter_map(|key| key.strip_prefix(&directory))
+                    .filter(|name| is_top_hash(name))
+                    .map(str::to_string),
+            );
+        }
+        Ok(hashes)
+    }
+
     async fn get_client_for_bucket(
         &self,
         host: Option<&Host>,
@@ -861,6 +895,17 @@ impl Remote for RemoteS3 {
         }
     }
 
+    async fn manifest_hashes_with_prefix(
+        &self,
+        host: Option<&Host>,
+        bucket: &str,
+        prefix: &str,
+    ) -> Res<Vec<String>> {
+        self.manifest_hashes_listed(host, bucket, prefix)
+            .await
+            .map_err(|e| self.forget_ambient_clients_on(e))
+    }
+
     fn clear_client_cache(&self, host: Option<&Host>) {
         RemoteS3::clear_client_cache(self, host);
     }
@@ -944,6 +989,30 @@ mod tests {
         ] {
             assert!(hashes.iter().any(|h| h == hash), "{hash} in {hashes:?}");
         }
+        Ok(())
+    }
+
+    /// A short prefix finds the fixture package's old revision in the
+    /// bucket's `.quilt/packages/`, and `resolve_hash` turns it into the
+    /// whole hash.
+    #[test(tokio::test)]
+    async fn live_manifest_hashes_with_prefix() -> Res<()> {
+        let remote = RemoteS3::new(DomainPaths::default(), LocalStorage::new());
+        let hash = "f8216f57739c9824f22f1f7a1f8ded59fd50791c92bf9c317d06376811ecbfef";
+
+        let listed = remote
+            .manifest_hashes_with_prefix(None, "data-yaml-spec-tests", &hash[..12])
+            .await?;
+        assert_eq!(listed, vec![hash.to_string()]);
+
+        let resolved =
+            crate::flow::resolve_hash(&remote, None, "data-yaml-spec-tests", &hash[..8]).await?;
+        assert_eq!(resolved, hash);
+
+        let none = remote
+            .manifest_hashes_with_prefix(None, "data-yaml-spec-tests", "ffffffffffff")
+            .await?;
+        assert!(none.is_empty(), "{none:?}");
         Ok(())
     }
 

@@ -65,6 +65,10 @@ pub(super) async fn onto_latest<M: QuiltModel>(
                         MergeBlock::Paths(paths.iter().map(|p| p.display().to_string()).collect())
                     }
                     quilt::flow::MergeRefusal::UserMeta => MergeBlock::Metadata,
+                    quilt::flow::MergeRefusal::Invalid(reason) => {
+                        error!("autosync: {namespace}: merge produced an invalid tree: {reason}");
+                        return Err(WatchError::Conflict(PausedReason::Other(reason)));
+                    }
                 };
                 return Err(WatchError::Conflict(PausedReason::MergeRefused(block)));
             }
@@ -196,11 +200,27 @@ async fn read<M: QuiltModel>(
 
 /// Whether the merge left `theirs` as it was, so there is nothing to publish.
 /// The merge always carries the copy's message, so the message is no sign of
-/// new work.
+/// new work. `user_meta` and each row's `meta` count as the top hash reads
+/// them: integers beyond 64 bits by their digits, and `-0.0` apart from `0.0`. The merged folder metadata is sorted and holds only metadata that
+/// says something.
 fn is_unchanged(merged: &Manifest, theirs: &Manifest) -> bool {
     let mut rows = theirs.rows.clone();
     rows.sort_by(|a, b| a.logical_key.cmp(&b.logical_key));
-    merged.header.user_meta == theirs.header.user_meta && merged.rows == rows
+    let mut dir_meta: Vec<_> = theirs
+        .dir_meta
+        .iter()
+        .filter(|dir| dir.holds_meta())
+        .cloned()
+        .collect();
+    dir_meta.sort_by(|a, b| a.logical_key.cmp(&b.logical_key));
+    merged.header.same_user_meta(&theirs.header)
+        && merged.rows.len() == rows.len()
+        && merged.rows.iter().zip(&rows).all(|(merged, theirs)| {
+            merged.matches_content(theirs)
+                && merged.physical_key == theirs.physical_key
+                && merged.same_meta(theirs)
+        })
+        && merged.dir_meta == dir_meta
 }
 
 /// The package the merge runs over, under its held lock.
@@ -299,4 +319,47 @@ fn outcome(
 /// [`classify_sync_err`]'s classification, which is never `Ok`.
 fn sync_err(err: crate::engine::Error) -> WatchError {
     classify_sync_err(err).expect_err("an error classifies as one")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn with_user_meta(text: &str) -> Manifest {
+        let (meta, numbers) = quilt::manifest::RawNumbers::parse(text).expect("json");
+        let mut manifest = Manifest::default();
+        manifest.header.user_meta = Some(meta);
+        manifest.header.user_meta_numbers = numbers;
+        manifest
+    }
+
+    /// `-0.0` and `0.0` are equal as values, but they write differently.
+    #[test]
+    fn a_signed_zero_changed_in_a_row_s_meta_is_not_unchanged() {
+        let with_meta = |text: &str| {
+            let (meta, meta_numbers) = quilt::manifest::RawNumbers::parse(text).expect("json");
+            let mut manifest = Manifest::default();
+            manifest.rows.push(quilt::manifest::ManifestRow {
+                meta: Some(meta),
+                meta_numbers,
+                ..quilt::manifest::ManifestRow::default()
+            });
+            manifest
+        };
+        let merged = with_meta(r#"{"z": -0.0}"#);
+        let theirs = with_meta(r#"{"z": 0.0}"#);
+
+        assert!(!is_unchanged(&merged, &theirs));
+        assert!(is_unchanged(&theirs, &theirs.clone()));
+    }
+
+    /// Both integers are the same float, so only their digits tell them apart.
+    #[test]
+    fn a_big_integer_changed_in_the_metadata_is_not_unchanged() {
+        let merged = with_user_meta(r#"{"n": 18446744073709551617}"#);
+        let theirs = with_user_meta(r#"{"n": 18446744073709551616}"#);
+
+        assert!(!is_unchanged(&merged, &theirs));
+        assert!(is_unchanged(&theirs, &theirs.clone()));
+    }
 }

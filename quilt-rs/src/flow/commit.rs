@@ -27,6 +27,7 @@ use crate::manifest::HeaderMessage;
 use crate::manifest::Manifest;
 use crate::manifest::ManifestHeader;
 use crate::manifest::ManifestRow;
+use crate::manifest::RawNumbers;
 use crate::manifest::TopHasher;
 use crate::manifest::Workflow;
 use crate::paths::DomainPaths;
@@ -296,20 +297,24 @@ pub async fn commit_package(
         }
     }
 
-    let user_meta = match user_meta {
-        UserMeta::Keep => manifest.header.user_meta.clone(),
-        UserMeta::Clear => None,
+    let (user_meta, user_meta_numbers) = match user_meta {
+        UserMeta::Keep => (
+            manifest.header.user_meta.clone(),
+            manifest.header.user_meta_numbers.clone(),
+        ),
+        UserMeta::Clear => (None, RawNumbers::default()),
         UserMeta::Set(serde_json::Value::Object(mut m)) => {
             m.sort_keys();
-            Some(m.into())
+            (Some(m.into()), RawNumbers::default())
         }
-        UserMeta::Set(other) => Some(other),
+        UserMeta::Set(other) => (Some(other), RawNumbers::default()),
     };
 
     let header = ManifestHeader {
         message: HeaderMessage::Text(message.clone()),
         workflow,
         user_meta,
+        user_meta_numbers,
         ..ManifestHeader::default()
     };
 
@@ -350,8 +355,14 @@ pub async fn commit_package(
 
     let stream = tokio_stream::iter(vec![Ok(all_rows)]);
     let dest_dir = paths.installed_manifests_dir(&namespace);
-    let (manifest_path, new_top_hash) =
-        build_manifest_from_rows_stream(storage, dest_dir, header, stream).await?;
+    let (manifest_path, new_top_hash) = build_manifest_from_rows_stream(
+        storage,
+        dest_dir,
+        header,
+        manifest.dir_meta.clone(),
+        stream,
+    )
+    .await?;
     info!(
         "✔️New manifest with {} was built in {}",
         manifest_path.display(),
@@ -399,6 +410,7 @@ mod tests {
 
     use crate::fixtures;
     use crate::io::remote::mocks::MockRemote;
+    use crate::io::storage::LocalStorage;
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::Change;
     use crate::manifest::WorkflowId;
@@ -585,6 +597,119 @@ mod tests {
             commit_hash(Some(meta.clone()), UserMeta::Set(meta)).await?,
             "Keep must inherit the previous header's user_meta"
         );
+        Ok(())
+    }
+
+    /// `Keep` carries integers beyond 64 bits as quilt3 hashes them: committing
+    /// quilt3's own manifest unchanged gives quilt3's top hash.
+    #[test(tokio::test)]
+    async fn test_commit_keep_hashes_big_integers_as_quilt3_does() -> Res {
+        let name =
+            "c73246b3eecc0d9da9fb691d2e18a1dc241ed5c6cfa5433955667497ef178701-big-integers.jsonl";
+        let path = std::env::current_dir()?
+            .join("fixtures/quilt3-packages")
+            .join(name);
+        let mut manifest = Manifest::from_path(&LocalStorage::default(), &path).await?;
+        assert!(!manifest.header.user_meta_numbers.is_empty());
+
+        let storage = MockStorage::default();
+        let paths = DomainPaths::new(std::path::absolute("/foo")?);
+        let (_lineage, commit) = commit_package(
+            PackageLineage::default(),
+            &mut manifest,
+            &paths,
+            &storage,
+            &MockRemote::default(),
+            None,
+            PathBuf::default(),
+            InstalledPackageStatus::default(),
+            ("foo", "bar").into(),
+            String::default(),
+            UserMeta::Keep,
+            None,
+        )
+        .await?;
+        assert_eq!(commit.hash(), name.split_once('-').map(|(hash, _)| hash));
+        Ok(())
+    }
+
+    /// A file modified since its row was committed, with another checksum type
+    /// than the host's now asks for, is committed with the row's `meta` and its
+    /// big integers' raw text, as the row had them.
+    #[test(tokio::test)]
+    async fn test_commit_modified_row_keeps_meta_under_another_checksum_type() -> Res {
+        use crate::checksum::calculate_hash;
+        use crate::io::remote::HostConfig;
+
+        let storage = MockStorage::default();
+        let paths = DomainPaths::new(std::path::absolute("/foo")?);
+        let home = std::path::absolute("/working-dir")?;
+        let file = home.join("data.csv");
+        storage
+            .write_byte_stream(&file, ByteStream::from_static(b"a,b\n1,2\n"))
+            .await?;
+        let (meta, meta_numbers) =
+            crate::manifest::RawNumbers::parse(r#"{"n": 18446744073709551617, "k": "v"}"#)?;
+        let base = ManifestRow {
+            meta: Some(meta.clone()),
+            meta_numbers: meta_numbers.clone(),
+            ..calculate_hash(
+                &storage,
+                &file,
+                Path::new("data.csv"),
+                &HostConfig::default_sha256_chunked(),
+            )
+            .await?
+        };
+        let mut manifest = Manifest::default();
+        manifest.insert_record(base.clone()).await?;
+        storage
+            .write_byte_stream(&file, ByteStream::from_static(b"a,b\n3,4\n"))
+            .await?;
+
+        let status = InstalledPackageStatus {
+            changes: BTreeMap::from([(PathBuf::from("data.csv"), Change::Modified(base.clone()))]),
+            ..InstalledPackageStatus::default()
+        };
+        let status = crate::flow::rehash_changes(
+            &storage,
+            &manifest,
+            &home,
+            status,
+            &HostConfig::default_crc64(),
+        )
+        .await?;
+        let namespace = ("foo", "bar").into();
+        let (_lineage, commit) = commit_package(
+            PackageLineage::default(),
+            &mut manifest,
+            &paths,
+            &storage,
+            &MockRemote::default(),
+            None,
+            home,
+            status,
+            ("foo", "bar").into(),
+            String::default(),
+            UserMeta::Keep,
+            None,
+        )
+        .await?;
+
+        let committed = Manifest::from_path(
+            &storage,
+            &paths.installed_manifest(&namespace, commit.hash().unwrap()),
+        )
+        .await?;
+        let row = committed.get_record(Path::new("data.csv")).unwrap();
+        assert_eq!(
+            row.hash.algorithm(),
+            crate::object_hash::MULTIHASH_CRC64_NVME
+        );
+        assert_ne!(row.hash, base.hash);
+        assert_eq!(row.meta, Some(meta));
+        assert_eq!(row.meta_numbers, meta_numbers);
+        assert!(!row.meta_numbers.is_empty());
         Ok(())
     }
 
@@ -1117,6 +1242,100 @@ mod tests {
         assert_eq!(
             empty_remote.get_object_count(config_uri.to_string().as_str()),
             0
+        );
+        Ok(())
+    }
+
+    /// A commit keeps the folders' metadata of the manifest it builds on, and
+    /// leaves it out of the top hash, so the hash is the one of the same
+    /// package without it.
+    #[test(tokio::test)]
+    async fn a_commit_keeps_the_folder_metadata() -> Res {
+        let dir_meta = vec![crate::manifest::DirMeta {
+            logical_key: crate::LogicalKey::new("data")?,
+            meta: serde_json::json!({"owner": "team"}),
+        }];
+        let paths = DomainPaths::new(std::path::absolute("/foo")?);
+        let namespace: Namespace = ("foo", "bar").into();
+        let mut hashes = Vec::new();
+        for dir_meta in [dir_meta.clone(), Vec::new()] {
+            let storage = MockStorage::default();
+            let (_, committed) = commit_package(
+                PackageLineage::default(),
+                &mut Manifest {
+                    dir_meta,
+                    ..Manifest::default()
+                },
+                &paths,
+                &storage,
+                &MockRemote::default(),
+                None,
+                PathBuf::default(),
+                InstalledPackageStatus::default(),
+                namespace.clone(),
+                "Lorem ipsum".to_string(),
+                UserMeta::Keep,
+                None,
+            )
+            .await?;
+            let hash = committed.hash().expect("a commit").to_string();
+            let written =
+                Manifest::from_path(&storage, &paths.installed_manifest(&namespace, &hash)).await?;
+            hashes.push((hash, written.dir_meta));
+        }
+        assert_eq!(hashes[0], (hashes[1].0.clone(), dir_meta));
+        assert_eq!(hashes[1].1, []);
+        Ok(())
+    }
+
+    /// quilt3 refuses `Package.set` of a file at a key that is already a
+    /// folder (`Cannot overwrite directory 'a' with PackageEntry`). A commit
+    /// whose carried folder metadata would clash with a new file does the
+    /// same, with `FileAndFolder`, and does not panic.
+    #[test(tokio::test)]
+    async fn a_commit_onto_a_clashing_folder_refuses_and_does_not_panic() -> Res {
+        let storage = MockStorage::default();
+        storage
+            .write_byte_stream(
+                std::path::absolute("/working-dir/a")?,
+                ByteStream::default(),
+            )
+            .await?;
+        let added = ManifestRow {
+            logical_key: crate::LogicalKey::new("a")?,
+            ..ManifestRow::default()
+        };
+        let status = InstalledPackageStatus {
+            changes: BTreeMap::from([(PathBuf::from("a"), Change::Added(added))]),
+            ..InstalledPackageStatus::default()
+        };
+        let mut manifest = Manifest {
+            dir_meta: vec![crate::manifest::DirMeta {
+                logical_key: crate::LogicalKey::new("a")?,
+                meta: serde_json::json!({"owner": "team"}),
+            }],
+            ..Manifest::default()
+        };
+        let paths = DomainPaths::new(std::path::absolute("/foo")?);
+        let err = commit_package(
+            PackageLineage::default(),
+            &mut manifest,
+            &paths,
+            &storage,
+            &MockRemote::default(),
+            None,
+            std::path::absolute("/working-dir")?,
+            status,
+            ("foo", "bar").into(),
+            "Lorem ipsum".to_string(),
+            UserMeta::Keep,
+            None,
+        )
+        .await
+        .expect_err("a file and folder of the same name must refuse");
+        assert!(
+            matches!(&err, Error::Manifest(ManifestError::FileAndFolder(key)) if key == "a"),
+            "{err}"
         );
         Ok(())
     }

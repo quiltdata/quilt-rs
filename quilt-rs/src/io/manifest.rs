@@ -20,6 +20,7 @@ use crate::io::remote::HostChecksums;
 use crate::io::remote::HostConfig;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
+use crate::manifest::DirMeta;
 use crate::manifest::Manifest;
 use crate::manifest::ManifestHeader;
 use crate::manifest::ManifestRow;
@@ -443,13 +444,15 @@ pub trait RowsStream: Stream<Item = StreamItem> {}
 
 impl<T: Stream<Item = StreamItem>> RowsStream for T {}
 
-/// Builds the manifest from `Stream<Result<Row>>`
+/// Builds the manifest from `Stream<Result<Row>>` and the folders' `dir_meta`,
+/// which the top hash leaves out.
 /// It writes the manifest to temporary file using JSONL format.
 /// Then it calculates `top_hash` and move the temporary file to the destination path.
 pub async fn build_manifest_from_rows_stream(
     storage: &impl Storage,
     dest_dir: PathBuf,
     header: ManifestHeader,
+    dir_meta: Vec<DirMeta>,
     mut stream: impl RowsStream + Unpin,
 ) -> Res<(PathBuf, String)> {
     let temp_dir = tempfile::tempdir()?;
@@ -475,10 +478,15 @@ pub async fn build_manifest_from_rows_stream(
     }
 
     // Create JSONL manifest
-    let manifest = Manifest { header, rows };
+    let manifest = Manifest {
+        header,
+        rows,
+        dir_meta,
+    };
+    let jsonl = manifest.try_to_jsonlines()?;
 
     storage
-        .write_byte_stream(&temp_path, ByteStream::from(&manifest))
+        .write_byte_stream(&temp_path, ByteStream::from(jsonl.into_bytes()))
         .await?;
 
     let top_hash = top_hasher.finalize();
@@ -615,6 +623,7 @@ mod tests {
             &mock_storage,
             dest_dir.to_path_buf(),
             manifest.header,
+            manifest.dir_meta,
             rows_stream,
         )
         .await?;
