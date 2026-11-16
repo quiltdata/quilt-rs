@@ -660,9 +660,8 @@ async fn installed_at(
     package: &quilt::InstalledPackage,
     lineage: &quilt::lineage::PackageLineage,
 ) -> Option<DateTime<Utc>> {
-    let manifest = package
-        .paths
-        .installed_manifest(&package.namespace, lineage.current_hash()?);
+    let hash = lineage.current_hash().filter(|hash| !hash.is_empty())?;
+    let manifest = package.paths.installed_manifest(&package.namespace, hash);
     package.storage.modified_timestamp(&manifest).await.ok()
 }
 
@@ -1742,6 +1741,22 @@ mod tests {
         .unwrap();
 
         assert_eq!(row.package.changed_at, Some(1_700_000_000_000.0));
+    }
+
+    #[tokio::test]
+    async fn a_remote_with_no_hash_has_no_install_time() {
+        let dir = tempfile::tempdir().unwrap();
+        let installed =
+            quilt::LocalDomain::new(dir.path()).create_installed_package(("team", "one").into());
+        let manifests = installed
+            .paths
+            .installed_manifests_dir(&installed.namespace);
+        std::fs::create_dir_all(&manifests).unwrap();
+        let mut uri = make_manifest_uri("team/one");
+        uri.hash = String::new();
+        let lineage = quilt::lineage::PackageLineage::from_remote(uri, String::new());
+
+        assert_eq!(installed_at(&installed, &lineage).await, None);
     }
 
     #[tokio::test]

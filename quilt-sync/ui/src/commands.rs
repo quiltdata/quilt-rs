@@ -1067,8 +1067,8 @@ pub struct MainPagePackagesData {
 pub struct MainPagePackageData {
     pub namespace: Namespace,
     pub state: quilt_ui_kit::PackageState,
-    /// Epoch milliseconds — see `last_changed` on the engine's side. `None` only
-    /// when nothing has been written to the package.
+    /// Epoch milliseconds — see `last_changed` on the engine's side. `None` when
+    /// none of the times it reads is known.
     pub changed_at: Option<f64>,
     /// The queue's group key for `RoleDenied` (§4.3, R2): one host can hold
     /// both readable and unreadable buckets, so `derive_queue` groups a
