@@ -128,9 +128,9 @@ pub trait Storage {
 
     /// [`Self::write_byte_stream`] through a temp file named `temp_name` in
     /// `path`'s folder, so a leftover from a killed write can be traced to its
-    /// target. The name must be unique to this write: the write truncates a
-    /// file already there, and removes it on failure. A name that is a path
-    /// is refused. With a `tag`, the write passes the failpoints
+    /// target. The name is a bare file name, not the target's, and unique to
+    /// this write: the write truncates a file already there, and removes it on
+    /// failure. With a `tag`, the write passes the failpoints
     /// `<tag>.before-temp`, `<tag>.after-temp` and `<tag>.after-rename`. A
     /// storage that does not override this ignores both.
     fn write_byte_stream_via(

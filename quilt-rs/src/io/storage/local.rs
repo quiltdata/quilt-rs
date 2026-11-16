@@ -72,11 +72,17 @@ async fn atomic_write(
     sync_folder: bool,
     tag: Option<&str>,
 ) -> std::io::Result<()> {
-    // A path would move the temp out of the folder, and the rename with it.
-    if temp_name.file_name() != Some(temp_name.as_os_str()) {
+    // A path would move the temp out of the folder, and the target's own name
+    // would write over it in place: either way the rename is not atomic.
+    if temp_name.file_name() != Some(temp_name.as_os_str())
+        || path.file_name() == Some(temp_name.as_os_str())
+    {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
-            format!("temp name {} is not a file name", temp_name.display()),
+            format!(
+                "temp name {} is not a file name of its own",
+                temp_name.display()
+            ),
         ));
     }
     let parent = folder_of(path);
@@ -812,6 +818,27 @@ mod tests {
             assert!(result.is_err(), "{} was taken", temp_name.display());
         }
         assert!(files_in(temp_dir.path()).is_empty());
+        Ok(())
+    }
+
+    /// A temp named after its target is refused, and the target left whole.
+    #[test(tokio::test)]
+    async fn a_temp_named_after_its_target_is_refused() -> Res {
+        let temp_dir = tempdir()?;
+        let dest = temp_dir.path().join("data.json");
+        std::fs::write(&dest, b"old")?;
+
+        let result = LocalStorage::default()
+            .write_byte_stream_via(
+                &dest,
+                "data.json",
+                ByteStream::new(aws_smithy_types::body::SdkBody::from_body_1_x(FailingBody)),
+                None,
+            )
+            .await;
+
+        assert!(result.is_err());
+        assert_eq!(std::fs::read(&dest).ok(), Some(b"old".to_vec()));
         Ok(())
     }
 
