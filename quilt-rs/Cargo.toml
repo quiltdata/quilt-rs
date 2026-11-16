@@ -16,6 +16,8 @@ homepage.workspace = true
 # Exposes the in-memory mock `Remote`/`Storage` implementations so downstream
 # crates can drive quilt-rs flows against a fake bucket in their own tests.
 testing = []
+# Compiles in the failpoints crash tests kill a process at; see `src/failpoint.rs`.
+failpoints = []
 
 [dependencies]
 async-trait.workspace = true
