@@ -4,6 +4,7 @@ use std::marker::Unpin;
 use std::path::PathBuf;
 
 use aws_sdk_s3::primitives::ByteStream;
+use bytes::Bytes;
 use tokio::io::AsyncReadExt;
 use tokio_stream::Stream;
 use tokio_stream::StreamExt;
@@ -12,7 +13,9 @@ use url::Url;
 
 use crate::Error;
 use crate::Res;
+use crate::checksum::hash_file;
 use crate::error::ManifestError;
+use crate::error::PackageOpError;
 use crate::io::remote::HostChecksums;
 use crate::io::remote::HostConfig;
 use crate::io::remote::Remote;
@@ -26,8 +29,14 @@ use crate::manifest::TopHasher;
 use crate::manifest::Workflow;
 #[cfg(test)]
 use crate::manifest::WorkflowId;
+use crate::object_hash::Crc64Hash;
+use crate::object_hash::Hash;
 use crate::object_hash::MULTIHASH_CRC64_NVME;
+use crate::object_hash::MULTIHASH_SHA256;
 use crate::object_hash::MULTIHASH_SHA256_CHUNKED;
+use crate::object_hash::ObjectHash;
+use crate::object_hash::Sha256ChunkedHash;
+use crate::object_hash::Sha256Hash;
 use quilt_uri::Host;
 use quilt_uri::ManifestUri;
 use quilt_uri::ObjectUri;
@@ -227,13 +236,184 @@ pub async fn upload_row(
     let file_path = local_url
         .to_file_path()
         .map_err(|()| UriError::FileScheme(local_url))?;
+    let host_config = committed_checksums(host_config, &row);
+    upload_row_from_path(remote, &host_config, package_handle, row, &file_path).await
+}
 
+/// Where the bytes of a row come from when the caller supplies them, rather
+/// than the row naming a `file://` path.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RowContent {
+    /// A file on disk, which may be anywhere: it need not be under a package
+    /// home or any managed working folder.
+    Path(PathBuf),
+    /// The bytes themselves, held in memory by the caller. Cloning shares the
+    /// buffer.
+    Bytes(Bytes),
+}
+
+impl RowContent {
+    /// How many bytes this content holds now. For a file that is its size on
+    /// disk at this moment.
+    pub async fn size(&self, storage: &(impl Storage + Sync)) -> Res<u64> {
+        match self {
+            RowContent::Path(path) => Ok(file_stat(storage, path).await?.0),
+            RowContent::Bytes(bytes) => Ok(bytes.len() as u64),
+        }
+    }
+}
+
+/// A file's size and modified time, from one open handle.
+async fn file_stat(
+    storage: &(impl Storage + Sync),
+    path: &std::path::Path,
+) -> Res<(u64, Option<std::time::SystemTime>)> {
+    let meta = storage.open_file(path).await?.metadata().await?;
+    Ok((meta.len(), meta.modified().ok()))
+}
+
+/// [`upload_row`], for a row whose bytes the caller supplies: the row's own
+/// `physical_key` is ignored and its `size` is taken from the content.
+///
+/// What the row's `hash` means decides the checksum type:
+///
+/// - A row with no hash, [`ObjectHash::default`], was never hashed, so its
+///   bytes are uploaded with the host's configured checksum type
+///   (sha2-256-chunked unless the host enables `crc64Checksums`, the preferred
+///   direction) and S3's
+///   checksum becomes the row's hash.
+/// - A row that already carries a real hash, such as one quilt3 computed in
+///   memory, keeps it, with its labeled type. The bytes are uploaded with that
+///   type and the checksum S3 answers with must equal the row's hash, or the
+///   upload is an error: the supplied bytes are not the ones the hash was made
+///   from. A type S3 cannot compute (a legacy plain SHA-256) is checked by
+///   hashing the content here instead, and the row keeps its hash.
+///
+/// A [`RowContent::Path`] uploads straight from that file, which is read by
+/// path and so cannot be read once for both its size and its content. Instead
+/// its size and modified time are read before the upload and again after the
+/// upload and any local hash check, and a file that changed in between is an
+/// error rather than a manifest whose size and hash disagree with the bytes.
+///
+/// The multipart upload and the checksum S3 computes both read a file, so
+/// [`RowContent::Bytes`] is staged to a private temporary file for the length
+/// of the upload and removed after it, success or failure. Nothing lands in any
+/// package home.
+pub async fn upload_row_content(
+    storage: &(impl Storage + Sync),
+    remote: &impl Remote,
+    host_config: &HostConfig,
+    package_handle: S3PackageHandle,
+    row: ManifestRow,
+    content: &RowContent,
+) -> Res<ManifestRow> {
+    let claimed = (row.hash != ObjectHash::default()).then(|| row.hash.clone());
+    let host_config = match &claimed {
+        Some(_) => committed_checksums(host_config, &row),
+        None => host_config.clone(),
+    };
+    let uploaded = match content {
+        RowContent::Path(path) => {
+            let before = file_stat(storage, path).await?;
+            let row = ManifestRow {
+                size: before.0,
+                ..row
+            };
+            let uploaded =
+                upload_row_from_path(remote, &host_config, package_handle, row, path).await?;
+            // Verified inside the window the stat check covers, so the bytes
+            // hashed here are the ones that were uploaded.
+            let verdict = match claimed {
+                Some(claimed) => verify_claimed_hash(storage, content, &uploaded, claimed).await,
+                None => Ok(uploaded),
+            };
+            if file_stat(storage, path).await? != before {
+                return Err(Error::PackageOp(PackageOpError::Push(format!(
+                    "{} changed while it was being uploaded",
+                    path.display()
+                ))));
+            }
+            return verdict;
+        }
+        RowContent::Bytes(bytes) => {
+            let staging = tempfile::tempdir()?;
+            let staged = staging.path().join(uuid::Uuid::new_v4().to_string());
+            storage
+                .write_byte_stream(&staged, ByteStream::from(bytes.clone()))
+                .await?;
+            let row = ManifestRow {
+                size: bytes.len() as u64,
+                ..row
+            };
+            let uploaded =
+                upload_row_from_path(remote, &host_config, package_handle, row, &staged).await;
+            // Best effort: `staging` also removes the directory when it drops.
+            let _ = storage.remove_file(&staged).await;
+            uploaded?
+        }
+    };
+    let Some(claimed) = claimed else {
+        return Ok(uploaded);
+    };
+    verify_claimed_hash(storage, content, &uploaded, claimed).await
+}
+
+/// The hash of `bytes` under the multihash `algorithm`, as
+/// [`hash_file`] hashes a file; an unknown algorithm is SHA-256 chunked.
+pub(crate) async fn hash_bytes(bytes: &[u8], algorithm: u64) -> Res<ObjectHash> {
+    let size = bytes.len() as u64;
+    Ok(match algorithm {
+        MULTIHASH_CRC64_NVME => Crc64Hash::from_reader(bytes, size).await?.into(),
+        MULTIHASH_SHA256 => Sha256Hash::from_reader(bytes, size).await?.into(),
+        _ => Sha256ChunkedHash::from_reader(bytes, size).await?.into(),
+    })
+}
+
+/// Checks the bytes uploaded for `uploaded` against the hash the caller claimed
+/// for them, and returns the row carrying the claimed hash.
+async fn verify_claimed_hash(
+    storage: &(impl Storage + Sync),
+    content: &RowContent,
+    uploaded: &ManifestRow,
+    claimed: ObjectHash,
+) -> Res<ManifestRow> {
+    let algorithm = claimed.algorithm();
+    let verified = if algorithm == MULTIHASH_CRC64_NVME || algorithm == MULTIHASH_SHA256_CHUNKED {
+        // S3 computed the claimed type over the bytes it stored.
+        uploaded.hash == claimed
+    } else {
+        let computed = match content {
+            RowContent::Path(path) => hash_file(storage, path, algorithm).await?.0,
+            RowContent::Bytes(bytes) => hash_bytes(bytes, algorithm).await?,
+        };
+        computed == claimed
+    };
+    if !verified {
+        return Err(Error::PackageOp(PackageOpError::Push(format!(
+            "{} was uploaded, but its bytes do not hash to the hash the row carries ({claimed})",
+            uploaded.logical_key
+        ))));
+    }
+    Ok(ManifestRow {
+        hash: claimed,
+        ..uploaded.clone()
+    })
+}
+
+/// Uploads `row`'s bytes from `file_path` with `host_config`'s checksum type
+/// as it stands: the caller picks the type.
+async fn upload_row_from_path(
+    remote: &impl Remote,
+    host_config: &HostConfig,
+    package_handle: S3PackageHandle,
+    row: ManifestRow,
+    file_path: &std::path::Path,
+) -> Res<ManifestRow> {
     let object_uri = ObjectUri::new(package_handle, row.logical_key.to_path_buf());
     log::info!("Uploading to S3: {object_uri}");
 
-    let host_config = committed_checksums(host_config, &row);
     let (remote_url, hash) = remote
-        .upload_file(&host_config, &file_path, &object_uri.into(), row.size)
+        .upload_file(host_config, file_path, &object_uri.into(), row.size)
         .await?;
 
     // Update the manifest with the sha2-256-chunked checksum

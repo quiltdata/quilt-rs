@@ -23,6 +23,7 @@
 
 ### Added
 
+- `flow::push_files` publishes a manifest from files or bytes the caller supplies, and `flow::install_to` installs a manifest's files into any folder, both without a package home or lineage. A push whose parent is no longer `latest` still saves its revision, leaves `latest` alone, and returns `PackageOpError::PushedNotLatest` with the pushed top hash (<https://github.com/quiltdata/quilt-rs/pull/1386>)
 - `flow::resolve_hash` and `LocalDomain::resolve_hash` turn a short top hash (6 to 64 characters) into the whole one, with quilt3's rules: a whole hash comes back as given, a shorter prefix is matched case-sensitively against the bucket's `.quilt/packages/`, and a prefix that is not lowercase hex, matches nothing or matches several is a `HashPrefixError` (<https://github.com/quiltdata/quilt-rs/pull/1390>)
 - `flow::read_object` streams an object's bytes and checks them against the row's hash as they arrive, ending the stream with `ChecksumError::HashMismatch` or `ChecksumError::SizeMismatch` after the last chunk when they do not match (a read or hashing failure is a different error). On by default (`ReadOptions::unverified()` turns it off). Objects already in the object store are not hash-checked, only compared to the row's size, and read from the remote when that differs (<https://github.com/quiltdata/quilt-rs/pull/1388>)
 - `checksum::hash_reader` hashes any async reader with the algorithm a row's hash uses, the same hashing `hash_file` applies to a file on disk (<https://github.com/quiltdata/quilt-rs/pull/1388>)

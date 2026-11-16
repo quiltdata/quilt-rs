@@ -48,7 +48,7 @@ pub struct InstallPathsReport {
 }
 
 /// Why fetched bytes were not stored: they do not hash to the row.
-enum Mismatch {
+pub(super) enum Mismatch {
     /// The `physical_key` has no `versionId`, or the `null` one S3 writes while
     /// versioning is suspended, so a later revision may have replaced the
     /// object it names.
@@ -78,7 +78,7 @@ impl Mismatch {
 /// read as a local modification nobody made, and a retry would take them from
 /// the store as a cache hit. So the fetch lands in this apply's staging
 /// directory and moves into the store only once it hashes to the row.
-async fn cache_immutable_object(
+pub(super) async fn cache_immutable_object(
     storage: &impl Storage,
     remote: &impl Remote,
     host: Option<&Host>,
@@ -145,6 +145,29 @@ async fn commit_staged(
     storage.modified_timestamp(&mutable_target).await
 }
 
+/// Refuses, naming each logical key, when any of the destinations already holds
+/// a file: it is not one this install placed, so it is the user's own, and a
+/// rename would replace it. The check [`place_where_absent`] makes before its
+/// first rename, and [`install_to`](super::install_to) makes before its own.
+pub(super) async fn refuse_if_present<'a, P: AsRef<Path>>(
+    storage: &(impl Storage + Sync),
+    destinations: impl Iterator<Item = (P, &'a LogicalKey)>,
+) -> Res {
+    let mut existing = Vec::new();
+    for (working_dest, key) in destinations {
+        if storage.exists(working_dest.as_ref()).await {
+            existing.push(key.to_path_buf());
+        }
+    }
+    if !existing.is_empty() {
+        debug!("❌ Local files appeared while the paths were being staged");
+        return Err(Error::InstallPath(InstallPathError::LocalFileExists(
+            existing,
+        )));
+    }
+    Ok(())
+}
+
 /// Places every staged file where nothing is, or none of them: anything already
 /// at a destination is a file this copy does not track, the user's own, and it
 /// must survive.
@@ -157,18 +180,13 @@ async fn place_where_absent(
     staged: &[(PathBuf, PathBuf, ManifestRow)],
     lineage: &mut PackageLineage,
 ) -> Res {
-    let mut existing = Vec::new();
-    for (_, working_dest, row) in staged {
-        if storage.exists(working_dest).await {
-            existing.push(row.logical_key.to_path_buf());
-        }
-    }
-    if !existing.is_empty() {
-        debug!("❌ Local files appeared while the paths were being staged");
-        return Err(Error::InstallPath(InstallPathError::LocalFileExists(
-            existing,
-        )));
-    }
+    refuse_if_present(
+        storage,
+        staged
+            .iter()
+            .map(|(_, working_dest, row)| (working_dest.as_path(), &row.logical_key)),
+    )
+    .await?;
     for (staged_path, working_dest, row) in staged {
         let last_modified = commit_staged(storage, staged_path, working_dest).await?;
         lineage.paths.insert(
@@ -504,7 +522,7 @@ pub async fn install_paths(
 /// Sorted by those names, a path that is also a folder comes right before one
 /// of the paths inside it, and a repeated path right before its twin, so
 /// comparing neighbours is enough.
-fn refuse_clashing_local_paths(rows: &[ManifestRow]) -> Res {
+pub(super) fn refuse_clashing_local_paths(rows: &[ManifestRow]) -> Res {
     let mut local: Vec<(Vec<Component>, &LogicalKey)> = rows
         .iter()
         .map(|row| {
