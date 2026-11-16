@@ -23,11 +23,13 @@
 
 ### Added
 
+- `flow::resolve_hash` and `LocalDomain::resolve_hash` turn a short top hash (6 to 64 characters) into the whole one, with quilt3's rules: a whole hash comes back as given, a shorter prefix is matched case-sensitively against the bucket's `.quilt/packages/`, and no match or several matches is a `HashPrefixError` (<https://github.com/quiltdata/quilt-rs/pull/1390>)
 - `settings` module: `SharedSettings` reads, sets and clears a default catalog (`default_catalog`, a bare host) in the shared `settings.json`, taking it from quilt3's `config.yml` when none is stored, and `effective_catalog` keeps a package's own catalog ahead of it (<https://github.com/quiltdata/quilt-rs/pull/1384>)
 - `VERSION` holds the crate's version, and `LocalDomain::stored_home` reads the home without setting one, `None` when the domain has none yet (<https://github.com/quiltdata/quilt-rs/pull/1371>)
 
 ### Changed
 
+- **Breaking:** `Remote` has a new required method, `manifest_hashes_with_prefix`, and `Error` a new variant, `HashPrefix`, so an outside `Remote` implementation or exhaustive match on `Error` needs updating (<https://github.com/quiltdata/quilt-rs/pull/1390>)
 - Building from source now requires Rust 1.99 or newer (<https://github.com/quiltdata/quilt-rs/pull/1370>)
 - **Breaking:** `ManifestError` has two new variants, `DuplicateLogicalKey` and `FileAndFolder`, for a manifest whose logical keys do not form a tree (<https://github.com/quiltdata/quilt-rs/pull/1372>)
 - **Breaking:** `InstallPathError` has a new variant, `LocalPathClash`, for a package whose logical keys name the same local file, or a file and its folder, on this system (<https://github.com/quiltdata/quilt-rs/pull/1377>)
