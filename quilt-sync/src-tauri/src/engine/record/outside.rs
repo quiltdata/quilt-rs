@@ -1,11 +1,11 @@
 //! Changes another tool made on this computer: a package's revision moved,
 //! and no write of this process moved it.
 //!
-//! Every write of `data.json` this process makes reaches [`Outside::hook`]
-//! as it lands, and the revision it leaves is remembered. A pass,
-//! [`Outside::check`], reads every package under the same lock and records
-//! each revision that moved since: only another process, such as the quilt
-//! CLI, writes without the hook. A write here first checks the entry it
+//! Every lineage write this process makes reaches [`Outside::hook`] as it
+//! lands, and the revision it leaves is remembered. A pass,
+//! [`Outside::check`], reads every package under the lock its writes take
+//! and records each revision that moved since: only another process, such as
+//! the quilt CLI, writes without the hook. A write here first checks the entry it
 //! replaces, so a move made just before it is not lost.
 //!
 //! `outside.json` in the data folder keeps what was seen, so a move made
@@ -99,10 +99,10 @@ pub struct Outside {
 }
 
 impl Outside {
-    /// What was seen in `data_dir`, for the domain whose `data.json` is
-    /// `lineage`. A file that cannot be read starts empty: the next pass
+    /// What was seen in `data_dir`, for the domain whose lineage `lineage`
+    /// reads. A file that cannot be read starts empty: the next pass
     /// remembers every package and records nothing.
-    pub async fn open(data_dir: &Path, lineage: PathBuf, record: Arc<Record>) -> Arc<Self> {
+    pub async fn open(data_dir: &Path, lineage: DomainLineageIo, record: Arc<Record>) -> Arc<Self> {
         let path = data_dir.join(FILE_NAME);
         let seen = match tokio::fs::read(&path).await {
             Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_else(|err| {
@@ -123,7 +123,7 @@ impl Outside {
         };
         Arc::new(Self {
             path: Some(path),
-            lineage: DomainLineageIo::new(lineage),
+            lineage,
             state: Mutex::new(State {
                 seen,
                 unsaved: false,
@@ -133,10 +133,10 @@ impl Outside {
     }
 
     #[cfg(test)]
-    fn in_memory(lineage: PathBuf, record: Arc<Record>) -> Arc<Self> {
+    fn in_memory(lineage: DomainLineageIo, record: Arc<Record>) -> Arc<Self> {
         Arc::new(Self {
             path: None,
-            lineage: DomainLineageIo::new(lineage),
+            lineage,
             state: Mutex::new(State {
                 seen: SeenMap::new(),
                 unsaved: false,
@@ -162,24 +162,32 @@ impl Outside {
 
     /// Record every package whose revision moved since it was last seen.
     pub async fn check(&self) {
+        // Taken at the first step under the lock `check_each` holds, so no
+        // write of ours lands between it and the save.
+        let before = std::sync::OnceLock::new();
         let found = self
             .lineage
-            .read_locked(&LocalStorage::new(), |domain| {
-                let mut state = self.state.lock().expect("outside lock");
-                let before = state.seen.clone();
-                for (namespace, lineage) in &domain.packages {
-                    // Numbered under the lock, so a write after it, ours or
-                    // another tool's, comes later; kept as pending, so a stop
-                    // waits for it.
+            .check_each(
+                &LocalStorage::new(),
+                |namespace, lineage| {
+                    let mut state = self.state.lock().expect("outside lock");
+                    before.get_or_init(|| state.seen.clone());
+                    // Numbered under the lock `check_each` holds, so a write
+                    // after it, ours or another tool's, comes later; kept as
+                    // pending, so a stop waits for it.
                     if let Some(draft) = saw(&mut state.seen, namespace, Some(lineage)) {
                         self.record.insert_later(self.record.number(draft));
                     }
-                }
-                state
-                    .seen
-                    .retain(|namespace, _| domain.packages.contains_key(namespace));
-                self.save(&mut state, &before);
-            })
+                },
+                |installed| {
+                    let mut state = self.state.lock().expect("outside lock");
+                    let before = before.get_or_init(|| state.seen.clone());
+                    state
+                        .seen
+                        .retain(|namespace, _| installed.contains(namespace));
+                    self.save(&mut state, before);
+                },
+            )
             .await;
         if let Err(err) = found {
             debug!("outside: could not read the packages: {err}");
@@ -187,9 +195,9 @@ impl Outside {
     }
 
     /// Write what was seen when it differs from `before`, or an earlier
-    /// write failed. Called under the lock on `data.json`, so it is written
-    /// at once: a stop right after a write must not leave an older revision
-    /// here, which the next start would take for another tool's move.
+    /// write failed. Called under the lock lineage writes take, so it is
+    /// written at once: a stop right after a write must not leave an older
+    /// revision here, which the next start would take for another tool's move.
     fn save(&self, state: &mut State, before: &SeenMap) {
         let Some(path) = &self.path else {
             return;
@@ -215,8 +223,8 @@ impl Outside {
 mod tests {
     use super::*;
 
+    use quilt_rs::LocalDomain;
     use quilt_rs::lineage::CommitState;
-    use quilt_rs::lineage::DomainLineage;
     use quilt_uri::ManifestUri;
 
     use crate::engine::events::EventSink;
@@ -287,6 +295,13 @@ mod tests {
         assert_eq!(saw(&mut seen, &ns(), Some(&on("b", None))), None);
     }
 
+    /// The lineage of a domain on `dir`, with its home set.
+    async fn domain(dir: &Path) -> DomainLineageIo {
+        let domain = LocalDomain::new(dir);
+        domain.set_home(dir).await.unwrap();
+        domain.lineage_io().clone()
+    }
+
     /// A domain on `dir` whose writes go through `outside`'s hook, as this
     /// process's do, and one without it, as the CLI's.
     async fn setup() -> (
@@ -297,14 +312,10 @@ mod tests {
         DomainLineageIo,
     ) {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("data.json");
+        let theirs = domain(dir.path()).await;
         let record = Arc::new(Record::in_memory(EventSink::new()));
-        let outside = Outside::in_memory(path.clone(), Arc::clone(&record));
-        let ours = DomainLineageIo::new(path.clone()).with_hook(outside.hook());
-        let theirs = DomainLineageIo::new(path);
-        ours.write(&LocalStorage::new(), DomainLineage::new(dir.path()))
-            .await
-            .unwrap();
+        let outside = Outside::in_memory(theirs.clone(), Arc::clone(&record));
+        let ours = theirs.clone().with_hook(outside.hook());
         (dir, record, outside, ours, theirs)
     }
 
@@ -366,16 +377,11 @@ mod tests {
     #[tokio::test]
     async fn a_failed_save_is_tried_again() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("data.json");
-        let theirs = DomainLineageIo::new(path.clone());
-        theirs
-            .write(&LocalStorage::new(), DomainLineage::new(dir.path()))
-            .await
-            .unwrap();
+        let theirs = domain(dir.path()).await;
         put(&theirs, on("a", None)).await;
         let data_dir = dir.path().join("app");
         let record = Arc::new(Record::in_memory(EventSink::new()));
-        let outside = Outside::open(&data_dir, path, record).await;
+        let outside = Outside::open(&data_dir, theirs, record).await;
 
         // The folder is missing, so the write fails.
         outside.check().await;
@@ -389,21 +395,15 @@ mod tests {
     #[tokio::test]
     async fn a_move_while_closed_is_found_after_start() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("data.json");
         let record = Arc::new(Record::in_memory(EventSink::new()));
-        let theirs = DomainLineageIo::new(path.clone());
-        let storage = LocalStorage::new();
-        theirs
-            .write(&storage, DomainLineage::new(dir.path()))
-            .await
-            .unwrap();
+        let theirs = domain(dir.path()).await;
         put(&theirs, on("a", None)).await;
 
-        let first = Outside::open(dir.path(), path.clone(), Arc::clone(&record)).await;
+        let first = Outside::open(dir.path(), theirs.clone(), Arc::clone(&record)).await;
         first.check().await;
         drop(first);
         put(&theirs, on("b", None)).await;
-        let second = Outside::open(dir.path(), path, Arc::clone(&record)).await;
+        let second = Outside::open(dir.path(), theirs.clone(), Arc::clone(&record)).await;
         second.check().await;
 
         assert_eq!(

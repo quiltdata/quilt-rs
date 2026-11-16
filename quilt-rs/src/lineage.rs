@@ -92,21 +92,24 @@ impl AsRef<PathBuf> for DomainLineage {
 
 impl DomainLineage {
     pub fn from_slice(input: &[u8]) -> Res<Self> {
-        let result: Result<Self, serde_json::Error> = serde_json::from_slice(input);
-
-        match result {
-            Ok(lineage) => {
-                if lineage.as_ref().as_os_str().is_empty() {
-                    return Err(Error::Lineage(LineageError::MissingHome));
-                }
-                Ok(lineage)
-            }
-            Err(err) => {
-                log::error!("Failed to parse DomainLineage from `{input:?}`");
-                Err(Error::Lineage(LineageError::Parse(err)))
-            }
-        }
+        parse_record(input, |lineage: &Self| &lineage.home)
     }
+}
+
+/// `data.json` read as `T`, all or part of the record, refused without a
+/// home.
+fn parse_record<T: serde::de::DeserializeOwned>(
+    input: &[u8],
+    home: impl FnOnce(&T) -> &Home,
+) -> Res<T> {
+    let record: T = serde_json::from_slice(input).map_err(|err| {
+        log::error!("Failed to parse DomainLineage from `{input:?}`");
+        Error::Lineage(LineageError::Parse(err))
+    })?;
+    if home(&record).as_ref().as_os_str().is_empty() {
+        return Err(Error::Lineage(LineageError::MissingHome));
+    }
+    Ok(record)
 }
 
 type HookFn = dyn Fn(&Namespace, Option<&PackageLineage>, Option<&PackageLineage>) + Send + Sync;
@@ -155,7 +158,7 @@ pub struct DomainLineageIo {
 // TODO impl std::io::Write and std::io::Read for DomainLineageIo
 impl DomainLineageIo {
     #[must_use]
-    pub fn new(path: PathBuf) -> Self {
+    pub(crate) fn new(path: PathBuf) -> Self {
         DomainLineageIo { path, hook: None }
     }
 
@@ -166,15 +169,119 @@ impl DomainLineageIo {
         self
     }
 
-    /// Read the whole record under the short lock and hand it to `look`, so no
-    /// write of this process or another lands while `look` runs.
-    pub async fn read_locked<T>(
+    /// Show `look` each installed package's entry under the lock its writes
+    /// take, so none lands while `look` runs, then hand `finish` every
+    /// installed package's namespace before that lock is released.
+    pub async fn check_each<T>(
         &self,
         storage: &(impl Storage + Sync),
-        look: impl FnOnce(&DomainLineage) -> T,
+        mut look: impl FnMut(&Namespace, &PackageLineage),
+        finish: impl FnOnce(&BTreeSet<Namespace>) -> T,
     ) -> Res<T> {
         let _locked = storage.lock_exclusive(self.lock_path()).await?;
-        Ok(look(&self.read(storage).await?))
+        let lineage = self.read(storage).await?;
+        for (namespace, entry) in &lineage.packages {
+            look(namespace, entry);
+        }
+        Ok(finish(&lineage.packages.into_keys().collect()))
+    }
+
+    /// Reads the home alone, so a package entry that does not parse does not
+    /// stop it.
+    pub async fn home(&self, storage: &(impl Storage + Sync)) -> Res<Home> {
+        #[derive(Deserialize)]
+        struct OnlyHome {
+            #[serde(default)]
+            home: Home,
+        }
+
+        let record = parse_record(&self.read_bytes(storage).await?, |r: &OnlyHome| &r.home)?;
+        Ok(record.home)
+    }
+
+    /// The stored home, or `None` when the domain has none yet. A record that
+    /// exists but can't be read, such as for lack of permission, is an error.
+    pub async fn stored_home(&self, storage: &(impl Storage + Sync)) -> Res<Option<Home>> {
+        match self.home(storage).await {
+            Ok(home) => Ok(Some(home)),
+            Err(Error::Lineage(LineageError::MissingHome)) => Ok(None),
+            // `Missing` also covers a record whose folder can't be looked into.
+            Err(Error::Lineage(LineageError::Missing)) => {
+                match storage.open_file(&self.path).await {
+                    Err(err) if err.is_not_found() => Ok(None),
+                    Err(err) => Err(err),
+                    Ok(_) => Err(Error::Lineage(LineageError::Missing)),
+                }
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    pub async fn namespaces(&self, storage: &(impl Storage + Sync)) -> Res<BTreeSet<Namespace>> {
+        Ok(self.read(storage).await?.packages.into_keys().collect())
+    }
+
+    pub async fn contains(
+        &self,
+        storage: &(impl Storage + Sync),
+        namespace: &Namespace,
+    ) -> Res<bool> {
+        Ok(self.read(storage).await?.packages.contains_key(namespace))
+    }
+
+    /// Every installed package's entry, each read on its own: an entry that
+    /// can't be read is an error for that package alone.
+    pub async fn read_packages(
+        &self,
+        storage: &(impl Storage + Sync),
+    ) -> Res<BTreeMap<Namespace, Res<PackageLineage>>> {
+        #[derive(Deserialize)]
+        struct Entries {
+            #[serde(default)]
+            packages: BTreeMap<Namespace, serde_json::Value>,
+            #[serde(default)]
+            home: Home,
+        }
+
+        let entries = parse_record(&self.read_bytes(storage).await?, |e: &Entries| &e.home)?;
+        Ok(entries
+            .packages
+            .into_iter()
+            .map(|(namespace, entry)| {
+                let entry = serde_json::from_value(entry)
+                    .map_err(|err| Error::Lineage(LineageError::Parse(err)));
+                (namespace, entry)
+            })
+            .collect())
+    }
+
+    /// Store a package's first entry, as an install or a create made it. The
+    /// caller holds the package's lock.
+    pub async fn create_package(
+        &self,
+        storage: &(impl Storage + Sync),
+        namespace: &Namespace,
+        lineage: PackageLineage,
+    ) -> Res {
+        self.update_package_lineage(storage, namespace, |entry| {
+            *entry = Some(lineage);
+            Ok(())
+        })
+        .await
+    }
+
+    /// Forget a package, as an uninstall does. The caller holds the
+    /// package's lock.
+    pub async fn remove_package(
+        &self,
+        storage: &(impl Storage + Sync),
+        namespace: &Namespace,
+    ) -> Res {
+        self.update_package_lineage(storage, namespace, |entry| {
+            *entry = None;
+            Ok(())
+        })
+        .await
     }
 
     /// Tell the hook of each package entry that differs from `before` to
@@ -197,9 +304,13 @@ impl DomainLineageIo {
         }
     }
 
-    pub async fn read(&self, storage: &(impl Storage + Sync)) -> Res<DomainLineage> {
+    pub(crate) async fn read(&self, storage: &(impl Storage + Sync)) -> Res<DomainLineage> {
+        DomainLineage::from_slice(&self.read_bytes(storage).await?)
+    }
+
+    async fn read_bytes(&self, storage: &(impl Storage + Sync)) -> Res<Vec<u8>> {
         match storage.read_bytes(&self.path).await {
-            Ok(bytes) => DomainLineage::from_slice(&bytes),
+            Ok(bytes) => Ok(bytes),
             Err(_) if !storage.exists(&self.path).await => {
                 Err(Error::Lineage(LineageError::Missing))
             }
@@ -244,7 +355,7 @@ impl DomainLineageIo {
     /// different packages meet. A writer of one package holds that package's
     /// lock (see [`InstalledPackage::lock`](crate::InstalledPackage::lock))
     /// from its first read, and takes this one only inside it.
-    pub async fn update<T>(
+    pub(crate) async fn update<T>(
         &self,
         storage: &(impl Storage + Sync),
         step: impl FnOnce(&mut DomainLineage) -> Res<T>,
@@ -311,7 +422,7 @@ impl DomainLineageIo {
         &self,
         storage: &(impl Storage + Sync),
         home: impl AsRef<Path>,
-    ) -> Res<DomainLineage> {
+    ) -> Res<Home> {
         self.change_home(storage, home, false).await
     }
 
@@ -323,7 +434,7 @@ impl DomainLineageIo {
         &self,
         storage: &(impl Storage + Sync),
         home: impl AsRef<Path>,
-    ) -> Res<DomainLineage> {
+    ) -> Res<Home> {
         self.change_home(storage, home, true).await
     }
 
@@ -334,7 +445,7 @@ impl DomainLineageIo {
         storage: &(impl Storage + Sync),
         home: impl AsRef<Path>,
         overwrite: bool,
-    ) -> Res<DomainLineage> {
+    ) -> Res<Home> {
         let _locked = storage.lock_exclusive(self.lock_path()).await?;
         match storage.read_bytes(&self.path).await {
             Ok(bytes) => {
@@ -348,7 +459,7 @@ impl DomainLineageIo {
                 let home = Home::from(home);
                 if lineage.home == home {
                     storage.create_dir_all(home.as_ref()).await?;
-                    return Ok(lineage);
+                    return Ok(home);
                 }
                 if !overwrite && !home_missing && !lineage.packages.is_empty() {
                     return Err(Error::Lineage(LineageError::HomeInUse {
@@ -359,22 +470,24 @@ impl DomainLineageIo {
                 storage.create_dir_all(home.as_ref()).await?;
                 lineage.home = home;
                 self.write_unlocked(storage, &lineage).await?;
-                Ok(lineage)
+                Ok(lineage.home)
             }
             Err(_) if !storage.exists(&self.path).await => {
                 storage.create_dir_all(home.as_ref()).await?;
                 let lineage = DomainLineage::new(home);
                 self.write_unlocked(storage, &lineage).await?;
-                Ok(lineage)
+                Ok(lineage.home)
             }
             Err(e) => Err(e),
         }
     }
 
-    /// Replace the whole record, under the lock. For setting a domain up; a
-    /// writer of one package goes through [`Self::update_package_lineage`], or
-    /// it writes back every other package's entry as it read them.
-    pub async fn write(
+    /// Replace the whole record, under the lock. For setting a test's domain
+    /// up; a writer of one package goes through
+    /// [`Self::update_package_lineage`], or it writes back every other
+    /// package's entry as it read them.
+    #[cfg(any(test, feature = "testing"))]
+    pub(crate) async fn write(
         &self,
         storage: &(impl Storage + Sync),
         lineage: DomainLineage,
@@ -404,6 +517,40 @@ impl DomainLineageIo {
     #[must_use]
     pub fn create_package_lineage(&self, namespace: Namespace) -> PackageLineageIo {
         PackageLineageIo::new(self.clone(), namespace)
+    }
+
+    /// Store a test's domain: `home` and `packages` replace whatever the
+    /// domain at `paths` held. Returns the handle its packages read through.
+    #[cfg(any(test, feature = "testing"))]
+    pub async fn write_fixture(
+        storage: &(impl Storage + Sync),
+        paths: &paths::DomainPaths,
+        home: impl AsRef<Path>,
+        packages: impl IntoIterator<Item = (Namespace, PackageLineage)>,
+    ) -> Res<Self> {
+        let io = Self::new(paths.lineage());
+        let lineage = DomainLineage {
+            packages: packages.into_iter().collect(),
+            home: Home::from(home),
+        };
+        io.write(storage, lineage).await?;
+        Ok(io)
+    }
+
+    /// Leave `namespace`'s stored entry one no reader can parse.
+    #[cfg(any(test, feature = "testing"))]
+    pub async fn damage_fixture(
+        &self,
+        storage: &(impl Storage + Sync),
+        namespace: &Namespace,
+    ) -> Res {
+        let _locked = storage.lock_exclusive(self.lock_path()).await?;
+        let mut record: serde_json::Value =
+            serde_json::from_slice(&self.read_bytes(storage).await?)?;
+        record["packages"][namespace.to_string()] = serde_json::json!({ "paths": "damaged" });
+        storage
+            .write_byte_stream(self.path.clone(), serde_json::to_vec(&record)?.into())
+            .await
     }
 }
 
@@ -442,9 +589,8 @@ impl PackageLineageIo {
             .await
     }
 
-    /// The whole domain's record this package's entry lives in.
-    pub(crate) async fn read_domain(&self, storage: &(impl Storage + Sync)) -> Res<DomainLineage> {
-        self.domain_lineage.read(storage).await
+    pub(crate) fn domain(&self) -> &DomainLineageIo {
+        &self.domain_lineage
     }
 
     pub async fn package_home(&self, storage: &(impl Storage + Sync)) -> Res<PathBuf> {
@@ -455,8 +601,7 @@ impl PackageLineageIo {
     }
 
     pub async fn domain_home(&self, storage: &(impl Storage + Sync)) -> Res<Home> {
-        let domain_lineage = self.domain_lineage.read(storage).await?;
-        Ok(domain_lineage.home)
+        self.domain_lineage.home(storage).await
     }
 
     /// Splices `lineage` in as this package's entry, under the short lock,
@@ -749,11 +894,14 @@ mod tests {
             )
             .await?;
 
-        let lineage = DomainLineageIo::new(file_path)
-            .set_home(&storage, "/home/directory")
-            .await?;
+        let io = DomainLineageIo::new(file_path);
+        let home = io.set_home(&storage, "/home/directory").await?;
 
-        assert_eq!(lineage, DomainLineage::new("/home/directory"));
+        assert_eq!(home, Home::from("/home/directory"));
+        assert_eq!(
+            io.read(&storage).await.ok(),
+            Some(DomainLineage::new("/home/directory"))
+        );
         Ok(())
     }
 
@@ -768,11 +916,11 @@ mod tests {
             .write_byte_stream(&file_path, ByteStream::from_static(stored))
             .await?;
 
-        let lineage = DomainLineageIo::new(file_path.clone())
+        let home = DomainLineageIo::new(file_path.clone())
             .set_home(&storage, "/home/directory")
             .await?;
 
-        assert_eq!(lineage, DomainLineage::new("/home/directory"));
+        assert_eq!(home, Home::from("/home/directory"));
         assert_eq!(storage.read_bytes(&file_path).await?, stored.to_vec());
         assert!(
             storage.exists("/home/directory").await,
@@ -825,11 +973,11 @@ mod tests {
             .write_byte_stream(&file_path, ByteStream::from_static(ONE_INSTALLED))
             .await?;
 
-        let lineage = DomainLineageIo::new(file_path)
+        let home = DomainLineageIo::new(file_path)
             .set_home(&storage, "/old/home")
             .await?;
 
-        assert_eq!(lineage.home, Home::from("/old/home"));
+        assert_eq!(home, Home::from("/old/home"));
         Ok(())
     }
 
@@ -1066,6 +1214,45 @@ mod tests {
         Ok(())
     }
 
+    /// An entry that does not parse costs that package alone.
+    #[test(tokio::test)]
+    async fn read_packages_reads_past_an_entry_that_does_not_parse() -> Res {
+        let storage = MockStorage::default();
+        let file_path = PathBuf::from("lineage.json");
+        storage
+            .write_byte_stream(
+                &file_path,
+                ByteStream::from_static(
+                    br#"{"packages":{
+                        "foo/good":{"commit":null,"base_hash":"b","latest_hash":"","paths":{}},
+                        "foo/bad":{"commit":null,"base_hash":"","latest_hash":"","paths":"damaged"}
+                    },"home":"/home/directory"}"#,
+                ),
+            )
+            .await?;
+
+        let packages = DomainLineageIo::new(file_path)
+            .read_packages(&storage)
+            .await;
+
+        let Ok(packages) = packages else {
+            panic!("one entry failed the whole list: {packages:?}");
+        };
+        let good = Namespace::from(("foo", "good"));
+        let bad = Namespace::from(("foo", "bad"));
+        assert_eq!(packages.keys().collect::<Vec<_>>(), [&bad, &good]);
+        assert_eq!(
+            packages[&good].as_ref().ok().map(|l| l.base_hash.as_str()),
+            Some("b")
+        );
+        assert!(
+            matches!(packages[&bad], Err(Error::Lineage(LineageError::Parse(_)))),
+            "{:?}",
+            packages[&bad]
+        );
+        Ok(())
+    }
+
     #[test(tokio::test)]
     async fn test_update_package_lineage() -> Res {
         let storage = MockStorage::default();
@@ -1291,10 +1478,7 @@ mod tests {
                 Ok(())
             })
             .await?;
-        let seen = io
-            .read_locked(&storage, |l| l.packages.contains_key(&foo))
-            .await?;
-        assert!(seen);
+        assert!(io.contains(&storage, &foo).await?);
         assert!(told.lock().unwrap().is_empty());
         Ok(())
     }

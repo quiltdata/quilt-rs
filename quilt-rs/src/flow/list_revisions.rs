@@ -160,7 +160,7 @@ mod tests {
     use crate::flow::UserMeta;
     use crate::flow::create;
     use crate::io::storage::mocks::MockStorage;
-    use crate::lineage::DomainLineage;
+    use crate::lineage::Home;
 
     /// A created package's manifest is enumerated, with its header message.
     ///
@@ -169,13 +169,14 @@ mod tests {
     /// `commit` — more setup than belongs here.
     #[test(tokio::test)]
     async fn test_list_revisions_reads_the_installed_manifest() -> Res {
-        let (lineage, _temp_dir) = DomainLineage::from_temp_dir()?;
+        let (home, _temp_dir) = Home::from_temp_dir()?;
         let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
         let storage = MockStorage::default();
         let namespace: Namespace = ("demo", "sales").into();
 
         create(
-            lineage,
+            &home,
+            false,
             &paths,
             &storage,
             namespace.clone(),

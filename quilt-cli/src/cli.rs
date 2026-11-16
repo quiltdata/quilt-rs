@@ -2283,8 +2283,13 @@ mod tests {
     async fn test_missing_home_lineage_is_repaired_without_flag() -> Result<(), Error> {
         let (model, domain_temp_dir) = Model::from_temp_dir()?;
         let paths = quilt_rs::paths::DomainPaths::new(domain_temp_dir.path().to_path_buf());
-        std::fs::create_dir_all(paths.dot_quilt_dir())?;
-        std::fs::write(paths.lineage(), br#"{"packages":{},"home":""}"#)?;
+        quilt_rs::lineage::DomainLineageIo::write_fixture(
+            &quilt_rs::io::storage::LocalStorage::new(),
+            &paths,
+            "",
+            [],
+        )
+        .await?;
 
         initialize_home(&model, None, &mut Vec::new()).await?;
 

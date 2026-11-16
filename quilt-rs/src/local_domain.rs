@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::marker::Unpin;
 use std::path::Path;
 use std::path::PathBuf;
@@ -6,8 +7,6 @@ use std::sync::Arc;
 use tracing::{debug, info, trace, warn};
 
 use crate::Error;
-use crate::InstallPackageError;
-use crate::LineageError;
 use crate::Res;
 use crate::flow;
 use crate::installed_package::InstalledPackage;
@@ -18,7 +17,6 @@ use crate::io::remote::RemoteS3;
 use crate::io::storage::LocalStorage;
 use crate::io::storage::Storage;
 use crate::lineage;
-use crate::lineage::DomainLineage;
 use crate::lineage::Home;
 use crate::manifest::Manifest;
 use crate::manifest::ManifestHeader;
@@ -101,19 +99,7 @@ impl LocalDomain {
     /// A record that exists but can't be read, such as for lack of
     /// permission, is an error, not `None`.
     pub async fn stored_home(&self) -> Res<Option<Home>> {
-        match self.get_home().await {
-            Ok(home) => Ok(Some(home)),
-            Err(Error::Lineage(LineageError::MissingHome)) => Ok(None),
-            // `Missing` also covers a record whose folder can't be looked into.
-            Err(Error::Lineage(LineageError::Missing)) => {
-                match tokio::fs::try_exists(self.paths.lineage()).await {
-                    Ok(false) => Ok(None),
-                    Ok(true) => Err(Error::Lineage(LineageError::Missing)),
-                    Err(err) => Err(err.into()),
-                }
-            }
-            Err(err) => Err(err),
-        }
+        self.lineage.stored_home(&self.storage).await
     }
 }
 
@@ -148,6 +134,13 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
         self
     }
 
+    /// The handle this domain's lineage reads and writes go through, telling
+    /// the hook set so far.
+    #[must_use]
+    pub fn lineage_io(&self) -> &lineage::DomainLineageIo {
+        &self.lineage
+    }
+
     /// The user-wide ignore rules file, which every package reads below its
     /// own `.quiltignore`.
     #[must_use]
@@ -167,25 +160,25 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
     }
 
     pub async fn get_home(&self) -> Res<Home> {
-        let lineage: DomainLineage = self.lineage.read(&self.storage).await?;
-        Ok(lineage.home)
+        self.lineage.home(&self.storage).await
     }
 
     /// See [`lineage::DomainLineageIo::set_home`]: creates the home folder,
     /// and refuses a new home while packages are installed.
     pub async fn set_home(&self, dir: impl AsRef<Path>) -> Res<Home> {
         info!("Setting home directory to {}", dir.as_ref().display());
-        Ok(self.lineage.set_home(&self.storage, dir).await?.home)
+        self.lineage.set_home(&self.storage, dir).await
     }
 
     /// [`LocalDomain::set_home`] even while packages are installed: they then
     /// point at empty folders under the new home.
     pub async fn overwrite_home(&self, dir: impl AsRef<Path>) -> Res<Home> {
         info!("Overwriting home directory with {}", dir.as_ref().display());
-        Ok(self.lineage.overwrite_home(&self.storage, dir).await?.home)
+        self.lineage.overwrite_home(&self.storage, dir).await
     }
 
-    pub async fn scaffold_paths_for_installing(&self, namespace: &Namespace) -> Res {
+    /// Returns the home it scaffolded under.
+    pub async fn scaffold_paths_for_installing(&self, namespace: &Namespace) -> Res<Home> {
         debug!(
             "Scaffolding installation paths for namespace: {}",
             namespace
@@ -193,7 +186,8 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
         let home = self.get_home().await?;
         self.paths
             .scaffold_for_installing(&self.storage, &home, namespace)
-            .await
+            .await?;
+        Ok(home)
     }
 
     pub async fn scaffold_paths_for_caching(&self, bucket: &str) -> Res {
@@ -254,18 +248,23 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
         debug!("Installing from manifest: {}", manifest_uri.display());
         let _held = package_lock::lock(&self.storage, &self.paths, &manifest_uri.namespace).await?;
 
+        // Read before anything is created: a record that does not parse
+        // stops it here.
+        let installed = self
+            .lineage
+            .contains(&self.storage, &manifest_uri.namespace)
+            .await?;
         debug!("Preparing paths for installation");
         self.scaffold_paths_for_caching(&manifest_uri.bucket)
             .await?;
-        self.scaffold_paths_for_installing(&manifest_uri.namespace)
+        let home = self
+            .scaffold_paths_for_installing(&manifest_uri.namespace)
             .await?;
-
-        debug!("Reading domain lineage");
-        let lineage: DomainLineage = self.lineage.read(&self.storage).await?;
 
         debug!("Executing package installation flow");
         let lineage = flow::install_package(
-            lineage,
+            &home,
+            installed,
             &self.paths,
             &self.storage,
             &*self.remote,
@@ -274,7 +273,8 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
         .await?;
 
         debug!("Updating domain lineage");
-        self.insert_package(lineage, &manifest_uri.namespace)
+        self.lineage
+            .create_package(&self.storage, &manifest_uri.namespace, lineage)
             .await?;
 
         info!("Successfully installed package: {}", manifest_uri.namespace);
@@ -291,10 +291,12 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
         info!("Creating package: {}", namespace);
         let _held = package_lock::lock(&self.storage, &self.paths, &namespace).await?;
 
-        let lineage: DomainLineage = self.lineage.read(&self.storage).await?;
+        let home = self.get_home().await?;
+        let installed = self.lineage.contains(&self.storage, &namespace).await?;
 
         let (lineage, left_out) = flow::create(
-            lineage,
+            &home,
+            installed,
             &self.paths,
             &self.storage,
             namespace.clone(),
@@ -304,7 +306,9 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
         )
         .await?;
 
-        self.insert_package(lineage, &namespace).await?;
+        self.lineage
+            .create_package(&self.storage, &namespace, lineage)
+            .await?;
 
         info!("Successfully created package: {}", namespace);
         Ok((self.create_installed_package(namespace), left_out))
@@ -337,12 +341,12 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
         // The package's own lock is released above: the prune try-locks
         // every package, this one among them.
         let prune = async {
-            let lineage = self
+            let installed = self
                 .lineage
-                .read(&self.storage)
+                .namespaces(&self.storage)
                 .await
                 .map_err(|err| (err, None))?;
-            let pruned = flow::prune(&self.paths, &self.storage, &lineage, candidates)
+            let pruned = flow::prune(&self.paths, &self.storage, &installed, candidates)
                 .await
                 .map_err(|err| (err, None))?;
             // Some of its files could not be counted, so not all went. The
@@ -362,23 +366,23 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
 
     /// Uninstall `namespace`, whose lock the caller holds.
     async fn uninstall_locked(&self, namespace: &Namespace) -> Res<()> {
+        let installed = self.lineage.contains(&self.storage, namespace).await?;
         debug!("Preparing paths for uninstallation");
-        self.scaffold_paths_for_installing(namespace).await?;
-
-        debug!("Reading current lineage state");
-        let lineage = self.lineage.read(&self.storage).await?;
+        let home = self.scaffold_paths_for_installing(namespace).await?;
 
         debug!("Executing package uninstallation flow");
-        // It removes the entry from this copy; the splice below removes it
-        // from the record as it is now.
-        flow::uninstall_package(lineage, &self.paths, &self.storage, namespace.clone()).await?;
+        flow::uninstall_package(
+            &home,
+            installed,
+            &self.paths,
+            &self.storage,
+            namespace.clone(),
+        )
+        .await?;
 
         debug!("Updating domain lineage after uninstallation");
         self.lineage
-            .update_package_lineage(&self.storage, namespace, |entry| {
-                *entry = None;
-                Ok(())
-            })
+            .remove_package(&self.storage, namespace)
             .await?;
 
         info!("Successfully uninstalled package: {}", namespace);
@@ -390,8 +394,8 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
     /// See [`flow::gc`]; a package busy in another writer stops it with
     /// [`Error::PackageBusy`] and nothing deleted.
     pub async fn gc(&self) -> Res<flow::GcReport> {
-        let lineage = self.lineage.read(&self.storage).await?;
-        flow::gc(&self.paths, &self.storage, &lineage).await
+        let installed = self.lineage.namespaces(&self.storage).await?;
+        flow::gc(&self.paths, &self.storage, &installed).await
     }
 
     /// How much `.quilt/` holds, and what [`Self::gc`] would free now. See
@@ -401,29 +405,12 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
         flow::measure_storage(&self.paths, &self.storage).await
     }
 
-    /// Splices the one entry an install or a create made into the record as
-    /// it is now, leaving every other package's entry as another writer may
-    /// have changed it meanwhile. The caller holds the package's lock.
-    async fn insert_package(&self, made: DomainLineage, namespace: &Namespace) -> Res {
-        let mut made = made;
-        let entry = made.packages.remove(namespace).ok_or_else(|| {
-            Error::InstallPackage(InstallPackageError::NotInstalled(namespace.clone()))
-        })?;
-        self.lineage
-            .update_package_lineage(&self.storage, namespace, |current| {
-                *current = Some(entry);
-                Ok(())
-            })
-            .await
-    }
-
     pub async fn list_installed_packages(&self) -> Res<Vec<InstalledPackage<S, R>>> {
         // A pair of lines for a lookup that runs on every tick. The count is the
         // only part worth keeping, and only when it is surprising — so both go to
         // `trace` and the status line reports what was found.
         trace!("Listing installed packages");
-        let lineage = self.lineage.read(&self.storage).await?;
-        let namespaces = lineage.namespaces();
+        let namespaces = self.lineage.namespaces(&self.storage).await?;
 
         trace!("Found {} installed packages", namespaces.len());
         let mut packages = Vec::with_capacity(namespaces.len());
@@ -433,16 +420,11 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
         Ok(packages)
     }
 
-    /// The whole lineage record — every installed package, in one read.
-    ///
-    /// [`list_installed_packages`](Self::list_installed_packages) hands back
-    /// an [`InstalledPackage`] per namespace, and each
-    /// [`InstalledPackage::lineage`] call re-reads and re-parses this record
-    /// to pluck one entry out of it. That is the right shape for operating on
-    /// one package and the wrong one for surveying them all.
-    pub async fn get_lineage(&self) -> Res<DomainLineage> {
-        trace!("Reading domain lineage");
-        self.lineage.read(&self.storage).await
+    /// Every installed package's lineage; see
+    /// [`lineage::DomainLineageIo::read_packages`].
+    pub async fn read_packages(&self) -> Res<BTreeMap<Namespace, Res<lineage::PackageLineage>>> {
+        trace!("Reading every package's lineage");
+        self.lineage.read_packages(&self.storage).await
     }
 
     pub async fn get_installed_package(
@@ -450,8 +432,7 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
         namespace: &Namespace,
     ) -> Res<Option<InstalledPackage<S, R>>> {
         trace!("Looking up installed package: {}", namespace);
-        let lineage = self.lineage.read(&self.storage).await?;
-        if lineage.packages.contains_key(namespace) {
+        if self.lineage.contains(&self.storage, namespace).await? {
             trace!("Found installed package: {}", namespace);
             Ok(Some(self.create_installed_package(namespace.to_owned())))
         } else {
@@ -567,6 +548,71 @@ mod tests {
         Ok(())
     }
 
+    /// Creating a package that is installed already is refused, and the
+    /// installed one keeps its lineage.
+    #[test(tokio::test)]
+    async fn creating_an_installed_package_again_is_refused() -> Res<()> {
+        let temp_dir = TempDir::new()?;
+        let domain = LocalDomain::new(temp_dir.path());
+        domain.set_home(temp_dir.path()).await?;
+        let namespace = Namespace::from(("foo", "bar"));
+        let (package, _) = domain
+            .create_package(namespace.clone(), None, None, flow::UserMeta::Clear)
+            .await?;
+        let first = package.lineage().await?;
+
+        let again = domain
+            .create_package(
+                namespace.clone(),
+                None,
+                Some("again".to_string()),
+                flow::UserMeta::Clear,
+            )
+            .await;
+
+        assert!(
+            matches!(
+                again,
+                Err(Error::InstallPackage(
+                    crate::InstallPackageError::AlreadyInstalled(ref ns)
+                )) if *ns == namespace
+            ),
+            "{again:?}"
+        );
+        assert_eq!(package.lineage().await?, first);
+        Ok(())
+    }
+
+    /// An install over a record that does not parse fails before it creates
+    /// the package's folder.
+    #[test(tokio::test)]
+    async fn an_install_over_an_unreadable_record_creates_no_folder() -> Res<()> {
+        let temp_dir = TempDir::new()?;
+        let domain = LocalDomain::new(temp_dir.path());
+        domain.set_home(temp_dir.path()).await?;
+        domain
+            .create_package(("foo", "other").into(), None, None, flow::UserMeta::Clear)
+            .await?;
+        domain
+            .lineage
+            .damage_fixture(&domain.storage, &("foo", "other").into())
+            .await?;
+
+        let result = domain
+            .install_package(&ManifestUri {
+                bucket: "bucket".to_string(),
+                namespace: ("foo", "bar").into(),
+                hash: "abcdef0000000000000000000000000000000000000000000000000000000000"
+                    .to_string(),
+                origin: None,
+            })
+            .await;
+
+        assert!(result.is_err(), "{result:?}");
+        assert!(!temp_dir.path().join("foo").join("bar").exists());
+        Ok(())
+    }
+
     #[test(tokio::test)]
     async fn test_list_installed_packages() -> Res<()> {
         // Create a temporary directory for testing
@@ -581,16 +627,14 @@ mod tests {
         assert!(packages.is_empty());
 
         // Add some packages to the lineage
-        let mut lineage = local_domain.lineage.read(&local_domain.storage).await?;
-
-        let namespaces = vec![
+        let namespaces = [
             Namespace::from(("foo", "bar")),
             Namespace::from(("test", "package")),
             Namespace::from(("abc", "xyz")),
         ];
 
-        for namespace in &namespaces {
-            lineage.packages.insert(
+        let packages = namespaces.iter().map(|namespace| {
+            (
                 namespace.clone(),
                 PackageLineage {
                     commit: None,
@@ -608,13 +652,15 @@ mod tests {
                     paths: std::collections::BTreeMap::new(),
                     ..PackageLineage::default()
                 },
-            );
-        }
-
-        local_domain
-            .lineage
-            .write(&local_domain.storage, lineage)
-            .await?;
+            )
+        });
+        lineage::DomainLineageIo::write_fixture(
+            &local_domain.storage,
+            &local_domain.paths,
+            temp_dir.path(),
+            packages,
+        )
+        .await?;
 
         // Now list_installed_packages should return packages in sorted order
         let packages = local_domain.list_installed_packages().await?;
