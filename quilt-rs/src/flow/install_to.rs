@@ -1,4 +1,5 @@
 use std::collections::BTreeSet;
+use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -65,9 +66,12 @@ pub struct InstallToReport {
 /// checked to be absent again, as [`install_paths`](super::install_paths) does,
 /// so a file that appeared during the fetch is not overwritten. A rename that
 /// fails partway (a full disk, a permission change) leaves the files already
-/// placed where they are: they are not rolled back. A file created at a target
-/// during the renames themselves, a window of milliseconds, is not caught, since
-/// a rename replaces what it finds.
+/// placed where they are: they are not rolled back. Each target is
+/// checked once more right before its own rename, which also stops a key that
+/// names a file placed earlier in the call (two keys can name one file on a
+/// case-insensitive disk). A file created at a target in the instant between
+/// that check and its rename is not caught, since a rename replaces what it
+/// finds.
 ///
 /// A `dest` that did not exist, with any folders above it that did not, is
 /// created for the install and removed again if the install fails before
@@ -173,11 +177,16 @@ fn select_rows(manifest: &Manifest, only: Option<&[PathBuf]>) -> Res<Vec<Manifes
     let Some(only) = only else {
         return Ok(manifest.rows.clone());
     };
+    let by_key: HashMap<&Path, &ManifestRow> = manifest
+        .rows
+        .iter()
+        .map(|row| (row.logical_key.as_path(), row))
+        .collect();
     only.iter()
         .map(|path| {
-            manifest
-                .get_record(LogicalKey::new(path.as_path())?.as_path())
-                .cloned()
+            by_key
+                .get(LogicalKey::new(path.as_path())?.as_path())
+                .map(|row| (*row).clone())
                 .ok_or_else(|| Error::InstallPath(InstallPathError::NotInRevision(path.clone())))
         })
         .collect()
@@ -295,6 +304,10 @@ async fn fetch_and_place(
     )
     .await?;
     for (held, target, row) in staged {
+        // Again, right before this rename: on a case-insensitive disk two keys
+        // can name one file, and the first rename has just made the second
+        // target exist.
+        refuse_if_present(storage, std::iter::once((&target, &row.logical_key))).await?;
         if let Some(parent) = target.parent() {
             storage.create_dir_all(parent).await?;
         }
