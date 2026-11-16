@@ -1293,11 +1293,9 @@ mod tests {
     async fn a_commit_keeps_the_folder_metadata() -> Res {
         let (meta, meta_numbers) =
             crate::manifest::RawNumbers::parse(r#"{"n": 123456789012345678901234567890}"#)?;
-        let dir_meta = vec![crate::manifest::DirMeta {
-            logical_key: crate::LogicalKey::new("data")?,
-            meta,
-            meta_numbers,
-        }];
+        let mut dir = crate::manifest::DirMeta::new(crate::LogicalKey::new("data")?, meta);
+        dir.meta_numbers = meta_numbers;
+        let dir_meta = vec![dir];
         let paths = DomainPaths::new(std::path::absolute("/foo")?);
         let namespace: Namespace = ("foo", "bar").into();
         let mut hashes = Vec::new();

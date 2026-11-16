@@ -39,6 +39,7 @@
 ### Changed
 
 - **Breaking:** `InstalledPackageStatus` has a new field, `working_copy`, and `PackageOpError` a new variant, `WorkingCopyUnavailable`, so a literal naming every field, or an exhaustive match, needs updating (<https://github.com/quiltdata/quilt-rs/pull/1397>)
+- **Breaking:** `DirMeta` is `#[non_exhaustive]`, so a struct literal no longer compiles outside this crate; use `DirMeta::new`, then set `meta_numbers` when the folder was read from a line (<https://github.com/quiltdata/quilt-rs/pull/1396>)
 - **Breaking:** `Remote` has a new required method, `manifest_hashes_with_prefix`, and `Error` a new variant, `HashPrefix`, so an outside `Remote` implementation or exhaustive match on `Error` needs updating (<https://github.com/quiltdata/quilt-rs/pull/1390>)
 - **Breaking:** `io::manifest::build_manifest_from_rows_stream` takes the folder metadata as a new fourth argument, and a `Manifest` literal needs the new `dir_meta` field (<https://github.com/quiltdata/quilt-rs/pull/1387>)
 - **Breaking:** `MergeRefusal` has a new `Invalid` variant for a merged tree that is invalid for a reason other than a file/folder clash (<https://github.com/quiltdata/quilt-rs/pull/1387>)
@@ -51,7 +52,7 @@
 
 ### Fixed
 
-- A package whose working folder is missing or cannot be read no longer reports every tracked file as removed or commits an empty revision: `status` gives `WorkingCopy::Unavailable` with no changes, and `commit`, `publish` and a `pull` that would apply a revision refuse with `PackageOpError::WorkingCopyUnavailable`, naming the folder (<https://github.com/quiltdata/quilt-rs/pull/1397>)
+- A package whose working folder is missing or cannot be read no longer reports every tracked file as removed or commits an empty revision: `status` gives `WorkingCopy::Unavailable` with no changes, and `commit`, `publish`, `install_paths` and a `pull` that would apply a revision refuse with `PackageOpError::WorkingCopyUnavailable`, naming the folder (<https://github.com/quiltdata/quilt-rs/pull/1397>)
 - On Windows, the top hash matches quilt3's for logical keys holding `\`, merging onto `latest` keeps keys such as `a/b` and `a\b` apart, and installing a package whose keys name one local file there (`a/b` and `a\b`, or `data` and `data\x.csv`) is refused before any file is written (<https://github.com/quiltdata/quilt-rs/pull/1377>)
 - The top hash matches quilt3's for metadata holding floats such as `1e-7` or `1e16`, and for an entry `meta` that is not an object, so quilt3 opens such packages (<https://github.com/quiltdata/quilt-rs/pull/1372>)
 - The top hash and the written manifest match quilt3's for a manifest's metadata holding whole numbers beyond 64 bits, which are kept as written, including through a re-commit and in folder metadata, and for `-0`, which is `0`; floats are written as Python writes them, such as `1e+16`. Numbers in `UserMeta::Set` are still read as floats, and a number past what a float holds (such as `1e400`, `NaN` or a 400-digit integer) is still refused, where quilt3 loads it (<https://github.com/quiltdata/quilt-rs/pull/1389>, <https://github.com/quiltdata/quilt-rs/pull/1393>)

@@ -190,10 +190,10 @@ fn folder_line(logical_key: &Path, meta: Option<serde_json::Value>, line: &str) 
     };
     let mut meta = meta.unwrap_or(serde_json::Value::Null);
     let meta_numbers = RawNumbers::read(&mut meta, line, "meta");
-    Ok(Line::Dir(DirMeta {
-        logical_key: LogicalKey::new(folder)?,
-        meta,
-        meta_numbers,
+    Ok(Line::Dir({
+        let mut dir = DirMeta::new(LogicalKey::new(folder)?, meta);
+        dir.meta_numbers = meta_numbers;
+        dir
     }))
 }
 
@@ -315,7 +315,11 @@ impl TryFrom<Quilt3ManifestRow> for ManifestRow {
 /// says something (not `null`, `{}`, `0`, `""` or `false`), and leaves it out of
 /// the top hash. Whole numbers beyond 64 bits are kept as the text they were
 /// read with, and `-0` is `0`, the same as row `meta` and header `user_meta`.
+///
+/// The struct is `#[non_exhaustive]`; construct one with [`DirMeta::new`],
+/// then set [`Self::meta_numbers`] when the folder was read from a line.
 #[derive(Clone, Debug, Deserialize, Eq, Serialize, PartialEq)]
+#[non_exhaustive]
 pub struct DirMeta {
     /// The folder, without the trailing `/` its manifest row has.
     pub logical_key: LogicalKey,
@@ -328,8 +332,10 @@ pub struct DirMeta {
 }
 
 impl DirMeta {
-    /// A folder's metadata built by hand, with no kept number text. A manifest
-    /// that is read fills [`Self::meta_numbers`] from the line.
+    /// A folder's metadata built by hand, with no kept number text. This is
+    /// the public constructor: the struct is `#[non_exhaustive]`. A manifest
+    /// that is read fills [`Self::meta_numbers`] from the line; set that field
+    /// after `new` when a test or caller already has the numbers.
     #[must_use]
     pub fn new(logical_key: LogicalKey, meta: serde_json::Value) -> Self {
         Self {
@@ -410,7 +416,8 @@ pub(crate) fn check_tree(rows: &[ManifestRow], dir_meta: &[DirMeta]) -> Res {
 }
 
 /// One row as a manifest line, in quilt3's form, field for field as
-/// [`Quilt3ManifestRow`] writes it, with the metadata as quilt3 writes it.
+/// [`Quilt3ManifestRow`] writes it, with the metadata as quilt3 writes it
+/// (compact separators).
 fn write_row(buf: &mut String, row: &ManifestRow) -> Res {
     buf.push_str("{\"logical_key\":");
     buf.push_str(&serde_json::to_string(&row.logical_key)?);
@@ -427,7 +434,8 @@ fn write_row(buf: &mut String, row: &ManifestRow) -> Res {
     Ok(())
 }
 
-/// One folder-metadata row as a manifest line, with the metadata as quilt3 writes it.
+/// One folder-metadata row as a manifest line, with the metadata as quilt3 writes it
+/// (compact separators).
 fn write_dir_row(buf: &mut String, dir: &DirMeta) -> Res {
     buf.push_str("{\"logical_key\":");
     buf.push_str(&serde_json::to_string(&format!("{}/", dir.logical_key))?);
