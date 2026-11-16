@@ -596,6 +596,39 @@ mod tests {
         Ok(())
     }
 
+    /// `create` with no `--meta` and the default message matches the top hash
+    /// quilt3 8.1.0 gives an empty package with message "Created package" and
+    /// no `user_meta` key.
+    #[test(tokio::test)]
+    async fn test_create_with_no_meta_matches_quilt3_hash() -> Res {
+        const QUILT3_CREATE_NO_META: &str =
+            "a8f353aa77baa68e9c15e50e26ab8894b319acd0a1e1289280aea98f391d3e8d";
+
+        let (lineage, _temp_dir) = DomainLineage::from_temp_dir()?;
+        let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
+        let storage = MockStorage::default();
+        let namespace: Namespace = ("test", "no-meta").into();
+
+        let (lineage, _) = create_package(
+            lineage,
+            &paths,
+            &storage,
+            namespace.clone(),
+            None,
+            None,
+            UserMeta::Clear,
+        )
+        .await?;
+
+        let pkg = lineage.packages.get(&namespace).unwrap();
+        assert_eq!(
+            pkg.commit.as_ref().unwrap().hash,
+            QUILT3_CREATE_NO_META,
+            "create with no --meta should match quilt3 8.1.0"
+        );
+        Ok(())
+    }
+
     /// `--meta` on create sets the first revision's metadata, including the
     /// exact number text, and `Keep` is treated as no key, like `Clear`.
     #[test(tokio::test)]

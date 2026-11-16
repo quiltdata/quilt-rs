@@ -408,10 +408,14 @@ fn parse_meta_flag(text: Option<&str>, default: UserMeta) -> Result<UserMeta, Er
     let Some(text) = text else {
         return Ok(default);
     };
-    match UserMeta::parse(text)? {
-        UserMeta::Set(value, numbers) if value.is_object() => Ok(UserMeta::Set(value, numbers)),
-        UserMeta::Set(_, _) => Err(Error::CommitMetaInvalid(text.to_string())),
-        other => Ok(other),
+    // `UserMeta::parse` always returns `Set`; Keep and Clear are not reachable.
+    let UserMeta::Set(value, numbers) = UserMeta::parse(text)? else {
+        unreachable!("UserMeta::parse always returns Set");
+    };
+    if value.is_object() {
+        Ok(UserMeta::Set(value, numbers))
+    } else {
+        Err(Error::CommitMetaInvalid(text.to_string()))
     }
 }
 
