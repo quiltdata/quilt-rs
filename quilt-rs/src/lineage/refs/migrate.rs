@@ -250,7 +250,7 @@ async fn finish(storage: &(impl Storage + Sync), paths: &DomainPaths) -> Res {
 
 /// Keeps a done move's frozen copy as `data.json.pre-refs` if no move kept
 /// one, so that file is the `data.json` the domain's first move migrated.
-async fn keep_frozen_copy(storage: &(impl Storage + Sync), paths: &DomainPaths) -> Res {
+pub(super) async fn keep_frozen_copy(storage: &(impl Storage + Sync), paths: &DomainPaths) -> Res {
     let migrating = paths.lineage_migrating();
     if !storage.exists(&migrating).await {
         return Ok(());
@@ -704,6 +704,22 @@ mod tests {
 
         assert_eq!(migrated.written, BTreeSet::from([data()]));
         assert!(!paths.package_ref(&notes()).exists());
+        assert_eq!(read(&paths.lineage_pre_refs()), Some(bytes(&legacy())));
+        domain.assert_done("/home")
+    }
+
+    /// A first move stopped once done, before keeping its frozen copy, then
+    /// a rollback and a second move: the first `data.json` is still kept.
+    #[test(tokio::test)]
+    async fn a_rollback_after_a_move_stopped_once_done_keeps_its_frozen_copy() -> Res {
+        let domain = Domain::on(&legacy())?;
+        domain.up().await?;
+        let paths = &domain.paths;
+        std::fs::rename(paths.lineage_pre_refs(), paths.lineage_migrating())?;
+
+        super::super::rollback::down(&domain.storage, paths).await?;
+        domain.up().await?;
+
         assert_eq!(read(&paths.lineage_pre_refs()), Some(bytes(&legacy())));
         domain.assert_done("/home")
     }

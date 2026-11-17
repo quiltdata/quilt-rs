@@ -51,6 +51,8 @@ pub(crate) async fn down(storage: &(impl Storage + Sync), paths: &DomainPaths) -
     let store = RefStore::new(paths.clone());
     let (archive, archived, published) = match state::detect(storage, paths).await? {
         DomainState::Refs => {
+            // A move killed once done may not have kept its frozen copy yet.
+            super::migrate::keep_frozen_copy(storage, paths).await?;
             for namespace in store.listed(storage).await? {
                 read(storage, &store, &namespace).await?;
             }
