@@ -158,9 +158,9 @@ async fn test_list_installed_packages() -> Res<()> {
     Ok(())
 }
 
-/// Each store's files appear only in a domain that uses it: refs never
-/// create `data.json`, and `data.json` never creates a ref or the domain
-/// config.
+/// Each store's files appear only in a domain that uses it: refs leave in
+/// `data.json` only the stub, and `data.json` never creates a ref or the
+/// domain config.
 #[test(tokio::test)]
 async fn a_domain_writes_only_its_own_stores_files() -> Res<()> {
     let temp_dir = TempDir::new()?;
@@ -196,7 +196,10 @@ async fn a_domain_writes_only_its_own_stores_files() -> Res<()> {
             assert!(!paths.refs_dir().exists());
             assert!(!paths.domain_config().exists());
         }
-        LineageStore::Refs => assert!(!paths.lineage().exists()),
+        LineageStore::Refs => assert!(
+            std::fs::read(paths.lineage())
+                .is_ok_and(|bytes| crate::lineage::refs::state::is_stub(&bytes))
+        ),
     }
     assert_eq!(
         domain.list_installed_packages().await?.len(),

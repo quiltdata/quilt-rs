@@ -444,9 +444,9 @@ mod tests {
         assert_eq!(parsed, DiagnosticMetadata::from_info(&info));
     }
 
-    /// A domain with a ref per package sends its config, each ref and each
-    /// cache of a remote's tip as they are on disk, and no interrupted
-    /// write's temp.
+    /// A domain with a ref per package sends the stub, the `data.json` its
+    /// move kept, its config, each ref and each cache of a remote's tip as
+    /// they are on disk, and no interrupted write's temp.
     #[tokio::test]
     async fn a_bundle_carries_each_ref_and_tip() {
         let data_tmp = TempDir::new().expect("data tempdir");
@@ -494,6 +494,8 @@ mod tests {
         assert_eq!(
             names,
             [
+                "data.json",
+                "data.json.pre-refs",
                 "domain.json",
                 "metadata.json",
                 "refs/acme/data.json",

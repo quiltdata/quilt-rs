@@ -1,0 +1,70 @@
+{
+  "packages": {
+    "lab/assays": {
+      "commit": null,
+      "remote": {
+        "bucket": "example-bucket",
+        "namespace": "lab/assays",
+        "hash": "5b5f9e0c1d2e3f405162738495a6b7c8d9e0f1021324354657687980a1b2c3d4",
+        "origin": "catalog.example.com"
+      },
+      "base_hash": "5b5f9e0c1d2e3f405162738495a6b7c8d9e0f1021324354657687980a1b2c3d4",
+      "latest_hash": "e4d3c2b1a0f9e8d7c6b5a49382716051f4e3d2c1b0a9f8e7d6c5b4a392817060",
+      "paths": {
+        "README.md": {
+          "timestamp": "2026-09-02T14:21:07.118230Z",
+          "hash": "1220c3ab8ff13720e8ad9047dd39466b3c8974e592c2fa383d4a3960714caef0c4f2"
+        },
+        "plates/plate-01.csv": {
+          "timestamp": "2026-09-02T14:21:09.402117Z",
+          "hash": "90ea02204c2a1f8b3e5d7c9a0b1e2f3d4c5b6a79881726354f4e3d2c1b0a9f8e7d6c5b4a"
+        }
+      }
+    },
+    "lab/images": {
+      "commit": {
+        "timestamp": "2026-10-11T08:00:42.551904Z",
+        "hash": "0f1e2d3c4b5a69788796a5b4c3d2e1f00112233445566778899aabbccddeeff0",
+        "prev_hashes": [
+          "a1b2c3d4e5f60718293a4b5c6d7e8f9012233445566778899aabbccddeeff001",
+          "9988776655443322110ffeeddccbbaa99887766554433221100ffeeddccbbaa9"
+        ]
+      },
+      "remote": {
+        "bucket": "example-bucket",
+        "namespace": "lab/images",
+        "hash": "9988776655443322110ffeeddccbbaa99887766554433221100ffeeddccbbaa9",
+        "origin": null
+      },
+      "base_hash": "9988776655443322110ffeeddccbbaa99887766554433221100ffeeddccbbaa9",
+      "latest_hash": "9988776655443322110ffeeddccbbaa99887766554433221100ffeeddccbbaa9",
+      "paths": {
+        "raw/scan-001.tif": {
+          "timestamp": "2026-10-11T07:58:13.004500Z",
+          "hash": "90ea0220aa11bb22cc33dd44ee55ff6600112233445566778899aabbccddeeff00112233"
+        },
+        "summary.json": {
+          "timestamp": "2026-10-11T07:59:30.270011Z",
+          "hash": "1220f0e1d2c3b4a5968778695a4b3c2d1e0f00112233445566778899aabbccddeeff"
+        }
+      },
+      "sync_scope": {
+        "folders": [
+          "raw"
+        ]
+      }
+    },
+    "me/scratch": {
+      "commit": {
+        "timestamp": "2026-11-01T17:45:00.000001Z",
+        "hash": "2222333344445555666677778888999900001111222233334444555566667777",
+        "prev_hashes": [
+          "7777666655554444333322221111000099998888777766665555444433332222"
+        ]
+      },
+      "base_hash": "",
+      "latest_hash": "",
+      "paths": {}
+    }
+  }
+}

@@ -144,14 +144,25 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
     }
 
     /// The domain with its lineage in a ref per package under `.quilt/refs/`,
-    /// a preview: it never reads or writes `data.json`, so a domain whose
-    /// packages are there reads as having none. Setting the home of a domain
-    /// with no `.quilt/domain.json` writes one. Keeps the hook set so far.
+    /// a preview. Its first use moves the lineage there from `data.json`,
+    /// leaving in its place a stub that builds without refs fail to read;
+    /// [`Self::rollback_lineage`] moves it back. Keeps the hook set so far.
     #[cfg(any(test, feature = "ref-store-preview"))]
     #[must_use]
     pub fn with_ref_store(mut self) -> Self {
         self.lineage = self.lineage.into_refs(self.paths.clone());
         self
+    }
+
+    /// Hands the domain's lineage back from refs to `data.json`, or finishes
+    /// a rollback that was interrupted, and returns the folder the refs were
+    /// moved to. Refused while any ref holds what `data.json` cannot. A
+    /// domain opened on refs afterwards moves the lineage there again, but
+    /// not through a value that had already found it there.
+    #[cfg(any(test, feature = "ref-store-preview"))]
+    pub async fn rollback_lineage(&self) -> Res<PathBuf> {
+        let rolled = lineage::refs::rollback::down(&self.storage, &self.paths).await?;
+        Ok(rolled.archive)
     }
 
     /// The domain with its lineage in `store`.
@@ -283,11 +294,17 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
         info!("Installing package: {}", manifest_uri.namespace);
         debug!("Installing from manifest: {}", manifest_uri.display());
         let namespace = &manifest_uri.namespace;
-        let held = PackageLock::take(&self.storage, &self.paths, namespace).await?;
+        let held = self
+            .lineage
+            .lock_package(&self.storage, &self.paths, namespace)
+            .await?;
 
         // Read before anything is created: a record that does not parse
         // stops it here.
-        let installed = self.lineage.contains(&self.storage, namespace).await?;
+        let installed = self
+            .lineage
+            .contains_to_write(&self.storage, namespace)
+            .await?;
         debug!("Preparing paths for installation");
         self.scaffold_paths_for_caching(&manifest_uri.bucket)
             .await?;
@@ -332,10 +349,16 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
         user_meta: flow::UserMeta,
     ) -> Res<(InstalledPackage<S, R>, flow::LeftOut)> {
         info!("Creating package: {}", namespace);
-        let held = PackageLock::take(&self.storage, &self.paths, &namespace).await?;
+        let held = self
+            .lineage
+            .lock_package(&self.storage, &self.paths, &namespace)
+            .await?;
 
         let home = self.get_home().await?;
-        let installed = self.lineage.contains(&self.storage, &namespace).await?;
+        let installed = self
+            .lineage
+            .contains_to_write(&self.storage, &namespace)
+            .await?;
         let placed = Placed::before(&self.storage, &home, &namespace).await;
 
         let (lineage, left_out) = flow::create(
@@ -369,7 +392,10 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
 
     pub async fn uninstall_package(&self, namespace: Namespace) -> Res<()> {
         info!("Uninstalling package: {}", namespace);
-        let held = PackageLock::take(&self.storage, &self.paths, &namespace).await?;
+        let held = self
+            .lineage
+            .lock_package(&self.storage, &self.paths, &namespace)
+            .await?;
         self.uninstall_locked(&held).await
     }
 
@@ -386,7 +412,10 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
     pub async fn uninstall_package_pruning(&self, namespace: Namespace) -> Res<flow::Pruned> {
         info!("Uninstalling package and its objects: {}", namespace);
         let (candidates, unread) = {
-            let held = PackageLock::take(&self.storage, &self.paths, &namespace).await?;
+            let held = self
+                .lineage
+                .lock_package(&self.storage, &self.paths, &namespace)
+                .await?;
             let found = flow::package_objects(&self.paths, &self.storage, &namespace).await?;
             self.uninstall_locked(&held).await?;
             found
@@ -1067,6 +1096,273 @@ mod ref_store_tests {
         assert_eq!(package.lineage().await?.latest_hash, uri.hash);
         assert_eq!(std::fs::read(&ref_file)?, before);
         assert_eq!(told.load(std::sync::atomic::Ordering::SeqCst), told_before);
+        Ok(())
+    }
+
+    /// A domain under `root/domain` whose `data.json` holds `acme/x`, with
+    /// `a.txt`, its home `root/home`.
+    async fn on_data_json(root: &Path) -> Res<LocalDomain> {
+        let source = root.join("source");
+        std::fs::create_dir_all(&source)?;
+        std::fs::write(source.join("a.txt"), b"a")?;
+        let domain = LocalDomain::new(root.join("domain"));
+        domain.set_home(root.join("home")).await?;
+        domain
+            .create_package(
+                ("acme", "x").into(),
+                Some(source),
+                None,
+                flow::UserMeta::Clear,
+            )
+            .await?;
+        Ok(domain)
+    }
+
+    fn is_stub(path: &Path) -> bool {
+        std::fs::read(path).is_ok_and(|bytes| lineage::refs::state::is_stub(&bytes))
+    }
+
+    /// The domain config as a rollback killed after its first step leaves
+    /// it, at `home`.
+    fn rolling_back(paths: &paths::DomainPaths, home: &Path) -> Res<()> {
+        let archive = lineage::refs::state::archive_name(uuid::Uuid::new_v4());
+        let config = serde_json::json!({
+            "format": 1,
+            "home": home,
+            "migration": {"rolling_back": {"archive": archive}},
+        });
+        std::fs::write(paths.domain_config(), serde_json::to_vec(&config)?)?;
+        Ok(())
+    }
+
+    /// The move takes each package's lock, so a writer moves the domain
+    /// before it takes its own.
+    #[test(tokio::test)]
+    async fn a_commit_that_is_a_domain_s_first_use_moves_it_to_refs_and_commits() -> Res<()> {
+        let root = TempDir::new()?;
+        on_data_json(root.path()).await?;
+        std::fs::write(root.path().join("home/acme/x/b.txt"), b"b")?;
+        let domain = LocalDomain::new(root.path().join("domain")).with_ref_store();
+        let package = domain.create_installed_package(("acme", "x").into());
+
+        let committed = tokio::time::timeout(
+            Duration::from_secs(30),
+            package.commit("b".to_string(), flow::UserMeta::Keep, None, None),
+        )
+        .await;
+
+        assert!(
+            matches!(committed, Ok(Ok(flow::Committed::Recorded(_)))),
+            "{committed:?}"
+        );
+        assert!(is_stub(&domain.paths.lineage()));
+        let lineage = package.lineage().await?;
+        assert!(
+            lineage.paths.contains_key(Path::new("b.txt")),
+            "{lineage:?}"
+        );
+        Ok(())
+    }
+
+    /// Only `quilt lineage rollback` finishes a rollback that was
+    /// interrupted; every other operation is refused, naming it.
+    #[test(tokio::test)]
+    async fn an_interrupted_rollback_refuses_every_other_operation_until_it_is_finished() -> Res<()>
+    {
+        let root = TempDir::new()?;
+        on_data_json(root.path()).await?;
+        let moved = LocalDomain::new(root.path().join("domain")).with_ref_store();
+        moved.list_installed_packages().await?;
+        rolling_back(&moved.paths, &root.path().join("home"))?;
+        let domain = LocalDomain::new(root.path().join("domain")).with_ref_store();
+
+        let refused = [
+            domain.get_home().await.map(drop),
+            domain.list_installed_packages().await.map(drop),
+            domain
+                .create_installed_package(("acme", "x").into())
+                .commit("c".to_string(), flow::UserMeta::Keep, None, None)
+                .await
+                .map(drop),
+            domain.uninstall_package(("acme", "x").into()).await,
+        ];
+        domain.rollback_lineage().await?;
+
+        for result in refused {
+            assert!(
+                matches!(
+                    &result,
+                    Err(err @ Error::Lineage(LineageError::RollingBack { .. }))
+                        if err.to_string().contains("quilt lineage rollback")
+                ),
+                "{result:?}"
+            );
+        }
+        let rolled = LocalDomain::new(root.path().join("domain"));
+        assert_eq!(rolled.list_installed_packages().await?.len(), 1);
+        Ok(())
+    }
+
+    /// A domain value that has found the domain on refs never moves it again,
+    /// so an app left running does not undo a rollback another process ran.
+    #[test(tokio::test)]
+    async fn a_domain_rolled_back_under_a_running_app_is_not_moved_again() -> Res<()> {
+        let root = TempDir::new()?;
+        on_data_json(root.path()).await?;
+        let running = LocalDomain::new(root.path().join("domain")).with_ref_store();
+        running.list_installed_packages().await?;
+        LocalDomain::new(root.path().join("domain"))
+            .rollback_lineage()
+            .await?;
+
+        let listed = running.list_installed_packages().await;
+
+        assert!(listed.is_err(), "{listed:?}");
+        assert!(!is_stub(&running.paths.lineage()));
+        assert!(!running.paths.domain_config().exists());
+        Ok(())
+    }
+
+    /// Two first uses at once by clones of one domain value move the domain
+    /// once: a rollback that lands between them is not undone by the second.
+    #[test(tokio::test(flavor = "multi_thread"))]
+    async fn clones_used_first_at_once_move_the_domain_once() -> Res<()> {
+        let root = TempDir::new()?;
+        on_data_json(root.path()).await?;
+        let running = LocalDomain::new(root.path().join("domain")).with_ref_store();
+        let held = LocalStorage::new()
+            .lock_exclusive(running.paths.migrate_lock())
+            .await?;
+        let settle = || tokio::time::sleep(Duration::from_millis(200));
+        let first = tokio::spawn({
+            let running = running.clone();
+            async move { running.list_installed_packages().await.map(drop) }
+        });
+        settle().await;
+        let rollback = tokio::spawn({
+            let domain = LocalDomain::new(root.path().join("domain"));
+            async move {
+                // Refused if it gets the lock before the first move.
+                loop {
+                    match domain.rollback_lineage().await {
+                        Err(Error::Lineage(LineageError::RollbackRefused(_))) => settle().await,
+                        rolled => break rolled.map(drop),
+                    }
+                }
+            }
+        });
+        settle().await;
+        let second = tokio::spawn({
+            let running = running.clone();
+            async move { running.list_installed_packages().await.map(drop) }
+        });
+        settle().await;
+
+        drop(held);
+        let (first, rollback, second) = tokio::time::timeout(Duration::from_secs(30), async {
+            (first.await, rollback.await, second.await)
+        })
+        .await
+        .expect("no task waits forever");
+        rollback.expect("the task ran")?;
+        // Each listed before the rollback, or refused after it.
+        for listed in [first, second] {
+            let listed = listed.expect("the task ran");
+            assert!(
+                matches!(listed, Ok(()) | Err(Error::Lineage(_))),
+                "{listed:?}"
+            );
+        }
+
+        assert!(!is_stub(&running.paths.lineage()));
+        assert!(!running.paths.domain_config().exists());
+        Ok(())
+    }
+
+    /// Reading the home moves nothing: a domain not yet on refs, or one whose
+    /// move stopped before its config, is read where its home is now.
+    #[test(tokio::test)]
+    async fn the_stored_home_of_a_domain_not_yet_on_refs_is_read_without_moving_it() -> Res<()> {
+        for stopped_after_the_stub in [false, true] {
+            let root = TempDir::new()?;
+            let paths = on_data_json(root.path()).await?.paths;
+            if stopped_after_the_stub {
+                std::fs::rename(paths.lineage(), paths.lineage_migrating())?;
+                std::fs::write(paths.lineage(), lineage::refs::state::STUB)?;
+            }
+            let files = |paths: &paths::DomainPaths| {
+                [
+                    paths.lineage(),
+                    paths.lineage_migrating(),
+                    paths.domain_config(),
+                ]
+                .map(|path| std::fs::read(path).ok())
+            };
+            let before = files(&paths);
+            let domain = LocalDomain::new(root.path().join("domain")).with_ref_store();
+
+            let home = domain.stored_home().await;
+
+            assert!(
+                matches!(&home, Ok(Some(home)) if *home == Home::from(root.path().join("home"))),
+                "{stopped_after_the_stub}: {home:?}"
+            );
+            assert_eq!(files(&paths), before, "{stopped_after_the_stub}");
+        }
+        Ok(())
+    }
+
+    /// An install or a create that would be refused its ref downloads and
+    /// places nothing first.
+    #[test(tokio::test)]
+    async fn an_install_or_a_create_is_refused_before_it_places_anything_once_a_rollback_began()
+    -> Res<()> {
+        let root = TempDir::new()?;
+        let (remote, uri) = remote_with_one_revision().await?;
+        let paths = paths::DomainPaths::new(root.path().join("domain"));
+        let domain = LocalDomain::with_parts(
+            paths.clone(),
+            lineage::DomainLineageIo::refs(paths.clone()),
+            LocalStorage::new(),
+            Arc::new(remote),
+        );
+        domain.set_home(root.path().join("home")).await?;
+        rolling_back(&paths, &root.path().join("home"))?;
+        let source = root.path().join("source");
+        std::fs::create_dir_all(&source)?;
+        std::fs::write(source.join("a.txt"), b"a")?;
+
+        let installed = domain.install_package(&uri).await.map(drop);
+        let created = domain
+            .create_package(
+                ("acme", "y").into(),
+                Some(source),
+                None,
+                flow::UserMeta::Clear,
+            )
+            .await
+            .map(drop);
+
+        for result in [installed, created] {
+            assert!(
+                matches!(
+                    result,
+                    Err(Error::Lineage(LineageError::RefsNotWritable { .. }))
+                ),
+                "{result:?}"
+            );
+        }
+        assert!(!paths.cached_manifest(&uri).exists());
+        for namespace in [uri.namespace, ("acme", "y").into()] {
+            assert!(!paths.installed_manifests_dir(&namespace).exists());
+            assert!(
+                !root
+                    .path()
+                    .join("home")
+                    .join(namespace.to_string())
+                    .exists()
+            );
+        }
         Ok(())
     }
 

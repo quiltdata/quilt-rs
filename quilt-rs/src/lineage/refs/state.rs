@@ -3,11 +3,6 @@
 //! and back, read from its files, so a move or a rollback that was killed
 //! resumes from the step it reached.
 
-#![cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the cut-over and the rollback read it")
-)]
-
 use std::path::PathBuf;
 
 use serde::Deserialize;
