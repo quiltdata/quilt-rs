@@ -157,7 +157,8 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
     /// Hands the domain's lineage back from refs to `data.json`, or finishes
     /// a rollback that was interrupted, and returns the folder the refs were
     /// moved to. Refused while any ref holds what `data.json` cannot. A
-    /// domain opened on refs afterwards moves the lineage there again.
+    /// domain opened on refs afterwards moves the lineage there again, but
+    /// not through a value that had already found it there.
     #[cfg(any(test, feature = "ref-store-preview"))]
     pub async fn rollback_lineage(&self) -> Res<PathBuf> {
         let rolled = lineage::refs::rollback::down(&self.storage, &self.paths).await?;
