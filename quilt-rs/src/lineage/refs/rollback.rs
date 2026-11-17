@@ -197,7 +197,11 @@ async fn entry(
     let mut entry = serde_json::to_value(lineage)?;
     if let Some(entry) = entry.as_object_mut() {
         for (key, value) in extra {
-            entry.entry(key).or_insert(value);
+            // The entry leaves out a default scope, which the copy's scope,
+            // not a stray top-level key, stands for.
+            if key != "sync_scope" {
+                entry.entry(key).or_insert(value);
+            }
         }
     }
     Ok(entry)
@@ -413,7 +417,11 @@ mod tests {
         domain.put_ref("untipped", &pushed("untipped"))?;
         domain.put_ref(
             "local",
-            &json!({"format": 1, "copies": [{"tracked": ["a.csv"]}]}),
+            &json!({
+                "format": 1,
+                "copies": [{"tracked": ["a.csv"]}],
+                "sync_scope": "entire_package",
+            }),
         )?;
         domain.put_ref(
             "unpushed",
@@ -462,6 +470,8 @@ mod tests {
         assert_eq!(tipped["remote"], remote("tipped", BASE));
         assert_eq!(tipped["sync_scope"], json!("entire_package"));
         assert_eq!(tipped["future"], json!({"nested": [1, 2]}));
+        // The copy's default scope, not a stray top-level one.
+        assert_eq!(entry("local").get("sync_scope"), None);
         let paths = tipped["paths"].as_object().expect("paths");
         assert_eq!(paths.keys().collect::<Vec<_>>(), ["a.csv", "data/gone.csv"]);
         assert!(
