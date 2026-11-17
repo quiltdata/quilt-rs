@@ -187,6 +187,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
     }
 
     /// [`Self::lock`] without the wait: `None` while another writer holds it.
+    /// On refs, a domain's move on first use still waits.
     pub async fn try_lock(&self) -> Res<Option<LockedPackage<S, R>>> {
         let held = self
             .lineage

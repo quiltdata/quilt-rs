@@ -280,8 +280,8 @@ impl DomainLineageIo {
         PackageLock::take(storage, paths, namespace).await
     }
 
-    /// [`Self::lock_package`] without the wait: `None` while another writer
-    /// holds it.
+    /// [`Self::lock_package`] without waiting for the package's lock: `None`
+    /// while another writer holds it. A move on first use still waits.
     pub(crate) async fn try_lock_package(
         &self,
         storage: &(impl Storage + Sync),
