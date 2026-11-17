@@ -239,14 +239,16 @@ impl DomainLineageIo {
     /// take, so none lands while `look` runs, then hand `finish` every
     /// installed package's namespace before that lock is released.
     ///
-    /// With a ref per package, each package is read under its own lock and
-    /// `finish` runs after the last; a package whose lock is busy, or whose
-    /// ref can't be read, is not shown to `look` but is handed to `finish`.
+    /// With a ref per package, each package is read under its own lock, and
+    /// one whose lock is busy, or whose ref can't be read, is not shown to
+    /// `look`. `finish` runs after the last, under the lock that installing
+    /// and uninstalling take, with every installed package, or with `None`
+    /// when that lock is busy or the packages can't be listed.
     pub async fn check_each<T>(
         &self,
         storage: &(impl Storage + Sync),
         mut look: impl FnMut(&Namespace, &PackageLineage),
-        finish: impl FnOnce(&BTreeSet<Namespace>) -> T,
+        finish: impl FnOnce(Option<&BTreeSet<Namespace>>) -> T,
     ) -> Res<T> {
         #[cfg(any(test, feature = "ref-store-preview"))]
         if let Some(store) = &self.refs {
@@ -257,7 +259,7 @@ impl DomainLineageIo {
         for (namespace, entry) in &lineage.packages {
             look(namespace, entry);
         }
-        Ok(finish(&lineage.packages.into_keys().collect()))
+        Ok(finish(Some(&lineage.packages.into_keys().collect())))
     }
 
     /// Reads the home alone, so a package entry that does not parse does not

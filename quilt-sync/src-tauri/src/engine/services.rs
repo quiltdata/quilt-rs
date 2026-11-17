@@ -41,6 +41,17 @@ use crate::engine::telemetry::Telemetry;
 use crate::engine::telemetry::prelude::*;
 use crate::engine::updates::Updates;
 
+/// The domain at `data_dir`, its lineage in a ref per package where a build
+/// with the `ref-store-preview` feature is run with `QUILT_LINEAGE=refs`.
+fn open_domain(data_dir: &std::path::Path) -> quilt::LocalDomain {
+    let domain = quilt::LocalDomain::new(data_dir);
+    #[cfg(feature = "ref-store-preview")]
+    if std::env::var_os("QUILT_LINEAGE").is_some_and(|value| value == "refs") {
+        return domain.with_ref_store();
+    }
+    domain
+}
+
 pub struct Services {
     pub data_dir: PathBuf,
     pub model: Arc<Model>,
@@ -126,7 +137,7 @@ impl Services {
         let events = EventSink::new();
         let record = Arc::new(Record::open(&data_dir, events.clone()).await);
         debug!("Root directory is {data_dir:?}");
-        let domain = quilt::LocalDomain::new(&data_dir).with_state_store(state_store);
+        let domain = open_domain(&data_dir).with_state_store(state_store);
         if let Err(err) = domain.sweep_leftovers().await {
             error!("Failed to sweep what killed lineage writes left: {err}");
         }

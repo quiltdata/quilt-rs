@@ -30,6 +30,7 @@
 
 - QuiltSync starts faster with many packages: at launch it checks up to eight packages at once instead of one after another (<https://github.com/quiltdata/quilt-rs/pull/1376>)
 - The main page no longer has a **Recent files** view. A package's time on the main page is when it last changed: an edit or commit not yet published, otherwise when QuiltSync last installed, pulled, downloaded or committed its files (<https://github.com/quiltdata/quilt-rs/pull/1403>)
+- Under the hood, a QuiltSync built with the non-default `ref-store-preview` feature and run with `QUILT_LINEAGE=refs` keeps its lineage in a ref per package, and the diagnostics bundle carries those files when a domain has them (<https://github.com/quiltdata/quilt-rs/pull/1412>)
 
 ### Fixed
 

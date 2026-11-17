@@ -215,6 +215,19 @@ impl DomainPaths {
         self.dot_quilt_dir().join(LINEAGE_FILE)
     }
 
+    /// Directory holding every package's ref, `refs/<owner>/<name>.json`,
+    /// and beside each its cache of the remote's tip.
+    #[must_use]
+    pub fn refs_dir(&self) -> PathBuf {
+        self.dot_quilt_dir().join("refs")
+    }
+
+    /// The home and migration state of a domain whose packages keep refs.
+    #[must_use]
+    pub fn domain_config(&self) -> PathBuf {
+        self.dot_quilt_dir().join("domain.json")
+    }
+
     /// The package's lock file, `.quilt/locks/<owner>/<name>.lock`; see
     /// [`InstalledPackage::lock`](crate::InstalledPackage::lock).
     #[must_use]
@@ -331,12 +344,6 @@ impl DomainPaths {
 
 #[cfg(any(test, feature = "ref-store-preview"))]
 impl DomainPaths {
-    /// Directory holding every package's ref, `refs/<owner>/<name>.json`.
-    #[must_use]
-    pub(crate) fn refs_dir(&self) -> PathBuf {
-        self.dot_quilt_dir().join("refs")
-    }
-
     /// `RefEntry::classify` reads these names back.
     #[must_use]
     pub(crate) fn package_ref(&self, namespace: &Namespace) -> PathBuf {
@@ -347,11 +354,6 @@ impl DomainPaths {
     #[must_use]
     pub(crate) fn package_tip(&self, namespace: &Namespace) -> PathBuf {
         self.refs_dir().join(format!("{namespace}.json.latest"))
-    }
-
-    #[must_use]
-    pub(crate) fn domain_config(&self) -> PathBuf {
-        self.dot_quilt_dir().join("domain.json")
     }
 
     /// Taken to create or remove a ref and to change the home. A file lock,

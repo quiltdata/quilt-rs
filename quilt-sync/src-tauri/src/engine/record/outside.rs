@@ -64,8 +64,8 @@ type SeenMap = BTreeMap<Namespace, Seen>;
 
 struct State {
     seen: SeenMap,
-    /// A change the file does not hold yet: its write failed.
-    unsaved: bool,
+    /// What the file holds, as last read or written.
+    saved: SeenMap,
 }
 
 /// Remember `now` as `namespace`'s entry, `None` when it is not installed,
@@ -125,8 +125,8 @@ impl Outside {
             path: Some(path),
             lineage,
             state: Mutex::new(State {
+                saved: seen.clone(),
                 seen,
-                unsaved: false,
             }),
             record,
         })
@@ -139,7 +139,7 @@ impl Outside {
             lineage,
             state: Mutex::new(State {
                 seen: SeenMap::new(),
-                unsaved: false,
+                saved: SeenMap::new(),
             }),
             record,
         })
@@ -151,41 +151,42 @@ impl Outside {
         let outside = Arc::clone(self);
         LineageHook::new(move |namespace, was, is| {
             let mut state = outside.state.lock().expect("outside lock");
-            let before = state.seen.clone();
             if let Some(draft) = saw(&mut state.seen, namespace, was) {
                 outside.record.insert_later(outside.record.number(draft));
             }
             saw(&mut state.seen, namespace, is);
-            outside.save(&mut state, &before);
+            outside.save(&mut state);
         })
     }
 
     /// Record every package whose revision moved since it was last seen.
     pub async fn check(&self) {
-        // Taken at the first step under the lock `check_each` holds, so no
-        // write of ours lands between it and the save.
-        let before = std::sync::OnceLock::new();
         let found = self
             .lineage
             .check_each(
                 &LocalStorage::new(),
                 |namespace, lineage| {
                     let mut state = self.state.lock().expect("outside lock");
-                    before.get_or_init(|| state.seen.clone());
                     // Numbered under the lock `check_each` holds, so a write
                     // after it, ours or another tool's, comes later; kept as
                     // pending, so a stop waits for it.
                     if let Some(draft) = saw(&mut state.seen, namespace, Some(lineage)) {
                         self.record.insert_later(self.record.number(draft));
+                        // Saved with it: a stop before `finish` must not
+                        // leave the move to be recorded again.
+                        self.save(&mut state);
                     }
                 },
                 |installed| {
                     let mut state = self.state.lock().expect("outside lock");
-                    let before = before.get_or_init(|| state.seen.clone());
-                    state
-                        .seen
-                        .retain(|namespace, _| installed.contains(namespace));
-                    self.save(&mut state, before);
+                    // Unknown while a package is installed or removed: a
+                    // later pass forgets what is gone.
+                    if let Some(installed) = installed {
+                        state
+                            .seen
+                            .retain(|namespace, _| installed.contains(namespace));
+                    }
+                    self.save(&mut state);
                 },
             )
             .await;
@@ -194,15 +195,15 @@ impl Outside {
         }
     }
 
-    /// Write what was seen when it differs from `before`, or an earlier
-    /// write failed. Called under the lock lineage writes take, so it is
-    /// written at once: a stop right after a write must not leave an older
-    /// revision here, which the next start would take for another tool's move.
-    fn save(&self, state: &mut State, before: &SeenMap) {
+    /// Write what was seen when the file holds something else. The hook calls
+    /// it under the lock its write holds, so it is written at once: a stop
+    /// right after a write must not leave an older revision here, which the
+    /// next start would take for another tool's move.
+    fn save(&self, state: &mut State) {
         let Some(path) = &self.path else {
             return;
         };
-        if !state.unsaved && *before == state.seen {
+        if state.saved == state.seen {
             return;
         }
         let result = serde_json::to_vec(&state.seen)
@@ -212,9 +213,9 @@ impl Outside {
                 std::fs::write(&partial, bytes)?;
                 std::fs::rename(&partial, path)
             });
-        state.unsaved = result.is_err();
-        if let Err(err) = result {
-            warn!("outside: could not write {}: {err}", path.display());
+        match result {
+            Ok(()) => state.saved = state.seen.clone(),
+            Err(err) => warn!("outside: could not write {}: {err}", path.display()),
         }
     }
 }
@@ -225,6 +226,8 @@ mod tests {
 
     use quilt_rs::LocalDomain;
     use quilt_rs::lineage::CommitState;
+    use quilt_rs::lineage::LineageStore;
+    use quilt_rs::paths::DomainPaths;
     use quilt_uri::ManifestUri;
 
     use crate::engine::events::EventSink;
@@ -295,16 +298,49 @@ mod tests {
         assert_eq!(saw(&mut seen, &ns(), Some(&on("b", None))), None);
     }
 
-    /// The lineage of a domain on `dir`, with its home set.
-    async fn domain(dir: &Path) -> DomainLineageIo {
-        let domain = LocalDomain::new(dir);
+    /// Runs each named case once on each lineage store.
+    macro_rules! on_each_store {
+        ($($case:ident),* $(,)?) => {
+            mod on_data_json {
+                $(#[tokio::test]
+                async fn $case() {
+                    super::$case(super::LineageStore::DataJson).await;
+                })*
+            }
+            mod on_refs {
+                $(#[tokio::test]
+                async fn $case() {
+                    super::$case(super::LineageStore::Refs).await;
+                })*
+            }
+        };
+    }
+
+    on_each_store!(
+        our_own_writes_are_not_outside,
+        another_tools_write_is_found_by_the_pass,
+        our_write_after_another_tools_finds_its_move,
+        a_busy_package_keeps_what_was_seen,
+        an_unreadable_package_keeps_what_was_seen,
+        a_failed_save_is_tried_again,
+        a_move_while_closed_is_found_after_start,
+    );
+
+    /// The lineage of a domain on `dir` in `store`, with its home set.
+    async fn domain(dir: &Path, store: LineageStore) -> DomainLineageIo {
+        let domain = match store {
+            LineageStore::DataJson => LocalDomain::new(dir),
+            LineageStore::Refs => LocalDomain::new(dir).with_ref_store(),
+        };
         domain.set_home(dir).await.unwrap();
         domain.lineage_io().clone()
     }
 
     /// A domain on `dir` whose writes go through `outside`'s hook, as this
     /// process's do, and one without it, as the CLI's.
-    async fn setup() -> (
+    async fn setup(
+        store: LineageStore,
+    ) -> (
         tempfile::TempDir,
         Arc<Record>,
         Arc<Outside>,
@@ -312,7 +348,7 @@ mod tests {
         DomainLineageIo,
     ) {
         let dir = tempfile::tempdir().unwrap();
-        let theirs = domain(dir.path()).await;
+        let theirs = domain(dir.path(), store).await;
         let record = Arc::new(Record::in_memory(EventSink::new()));
         let outside = Outside::in_memory(theirs.clone(), Arc::clone(&record));
         let ours = theirs.clone().with_hook(outside.hook());
@@ -334,9 +370,8 @@ mod tests {
         record.entries().await.into_iter().map(|e| e.kind).collect()
     }
 
-    #[tokio::test]
-    async fn our_own_writes_are_not_outside() {
-        let (_dir, record, outside, ours, _) = setup().await;
+    async fn our_own_writes_are_not_outside(store: LineageStore) {
+        let (_dir, record, outside, ours, _) = setup(store).await;
         put(&ours, on("a", None)).await;
         outside.check().await;
         put(&ours, on("b", None)).await;
@@ -344,9 +379,8 @@ mod tests {
         assert_eq!(kinds(&record).await, vec![]);
     }
 
-    #[tokio::test]
-    async fn another_tools_write_is_found_by_the_pass() {
-        let (_dir, record, outside, ours, theirs) = setup().await;
+    async fn another_tools_write_is_found_by_the_pass(store: LineageStore) {
+        let (_dir, record, outside, ours, theirs) = setup(store).await;
         put(&ours, on("a", Some("c"))).await;
         put(&theirs, on("c", None)).await;
         outside.check().await;
@@ -359,9 +393,8 @@ mod tests {
 
     /// Our write right after another tool's, before any pass, still records
     /// the other tool's move.
-    #[tokio::test]
-    async fn our_write_after_another_tools_finds_its_move() {
-        let (_dir, record, outside, ours, theirs) = setup().await;
+    async fn our_write_after_another_tools_finds_its_move(store: LineageStore) {
+        let (_dir, record, outside, ours, theirs) = setup(store).await;
         put(&ours, on("a", None)).await;
         put(&theirs, on("b", None)).await;
         put(&ours, on("c", None)).await;
@@ -372,12 +405,92 @@ mod tests {
         );
     }
 
+    /// A package the pass finds locked keeps what was seen, so a move made
+    /// before it is found once the lock is free.
+    async fn a_busy_package_keeps_what_was_seen(store: LineageStore) {
+        let (dir, record, outside, _, theirs) = setup(store).await;
+        put(&theirs, on("a", None)).await;
+        outside.check().await;
+        put(&theirs, on("b", None)).await;
+
+        let package = LocalDomain::new(dir.path()).create_installed_package(ns());
+        let held = package.lock().await.unwrap();
+        outside.check().await;
+        drop(held);
+        outside.check().await;
+
+        assert_eq!(
+            kinds(&record).await,
+            vec![Kind::Outside { published: false }]
+        );
+    }
+
+    /// A package whose entry can't be read keeps what was seen, so a move is
+    /// found once it reads again.
+    async fn an_unreadable_package_keeps_what_was_seen(store: LineageStore) {
+        let (dir, record, outside, _, theirs) = setup(store).await;
+        let storage = LocalStorage::new();
+        put(&theirs, on("a", None)).await;
+        outside.check().await;
+
+        theirs.damage_fixture(&storage, &ns()).await.unwrap();
+        outside.check().await;
+        let paths = DomainPaths::new(dir.path().to_path_buf());
+        DomainLineageIo::write_fixture(
+            store,
+            &storage,
+            &paths,
+            dir.path(),
+            [(ns(), on("b", None))],
+        )
+        .await
+        .unwrap();
+        outside.check().await;
+
+        assert_eq!(
+            kinds(&record).await,
+            vec![Kind::Outside { published: false }]
+        );
+    }
+
+    /// A pass that can't tell what is installed forgets nothing, so a package
+    /// another tool uninstalls and installs again at another revision is
+    /// found to have moved.
+    #[tokio::test]
+    async fn a_pass_that_cant_list_the_packages_forgets_nothing() {
+        let (dir, record, outside, _, theirs) = setup(LineageStore::Refs).await;
+        put(&theirs, on("a", None)).await;
+        outside.check().await;
+        theirs
+            .update_package_lineage(&LocalStorage::new(), &ns(), |entry| {
+                *entry = None;
+                Ok(())
+            })
+            .await
+            .unwrap();
+
+        // The ref store's domain lock, as an install holds it.
+        let domain_lock = DomainPaths::new(dir.path().to_path_buf())
+            .dot_quilt_dir()
+            .join("domain.lock");
+        let held = std::fs::File::create(domain_lock).unwrap();
+        held.lock().unwrap();
+        outside.check().await;
+        drop(held);
+        put(&theirs, on("b", None)).await;
+        outside.check().await;
+
+        assert_eq!(
+            kinds(&record).await,
+            vec![Kind::Outside { published: false }]
+        );
+    }
+
     /// A write that failed is tried again on the next pass, though nothing
     /// changed since.
-    #[tokio::test]
-    async fn a_failed_save_is_tried_again() {
+    async fn a_failed_save_is_tried_again(store: LineageStore) {
         let dir = tempfile::tempdir().unwrap();
-        let theirs = domain(dir.path()).await;
+        let theirs = domain(dir.path(), store).await;
         put(&theirs, on("a", None)).await;
         let data_dir = dir.path().join("app");
         let record = Arc::new(Record::in_memory(EventSink::new()));
@@ -392,11 +505,10 @@ mod tests {
     }
 
     /// What was seen survives a restart, so a move while closed is found.
-    #[tokio::test]
-    async fn a_move_while_closed_is_found_after_start() {
+    async fn a_move_while_closed_is_found_after_start(store: LineageStore) {
         let dir = tempfile::tempdir().unwrap();
         let record = Arc::new(Record::in_memory(EventSink::new()));
-        let theirs = domain(dir.path()).await;
+        let theirs = domain(dir.path(), store).await;
         put(&theirs, on("a", None)).await;
 
         let first = Outside::open(dir.path(), theirs.clone(), Arc::clone(&record)).await;
