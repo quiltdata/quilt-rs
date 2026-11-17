@@ -437,6 +437,7 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
         .await?;
 
         debug!("Updating domain lineage after uninstallation");
+        crate::failpoint::hit("flow.uninstall.before-lineage");
         self.lineage.remove_package(&self.storage, held).await?;
 
         info!("Successfully uninstalled package: {}", namespace);

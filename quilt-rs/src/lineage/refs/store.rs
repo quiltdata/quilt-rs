@@ -537,7 +537,7 @@ impl RefStore {
         Ok((held, self.writable_config(storage).await?))
     }
 
-    async fn read_ref(
+    pub(super) async fn read_ref(
         &self,
         storage: &(impl Storage + Sync),
         namespace: &Namespace,
