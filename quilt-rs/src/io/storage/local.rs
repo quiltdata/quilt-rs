@@ -391,6 +391,9 @@ pub(crate) mod tests {
     use tempfile::tempdir;
     use tokio::io::AsyncWriteExt;
 
+    use crate::io::storage::LockGuard;
+    use crate::io::storage::StorageExt;
+
     #[test(tokio::test)]
     #[ignore = "doesn't work in CI: in CI the file has a `now` modification date"]
     async fn test_getting_file_modified_ts() -> Res {
@@ -466,6 +469,123 @@ pub(crate) mod tests {
         assert_ne!(bytes, [] as [u8; 0]);
         assert_eq!(bytes, fs::read("fixtures/user-settings.mkfg").await?);
 
+        Ok(())
+    }
+
+    /// [`LocalStorage`] that, once, writes `replacement` over a file the moment
+    /// a read of it starts, the way another process's lineage write lands:
+    /// through a temp file renamed onto it.
+    struct ReplaceOnRead {
+        inner: LocalStorage,
+        replacement: std::sync::Mutex<Option<Vec<u8>>>,
+    }
+
+    impl ReplaceOnRead {
+        async fn replace(&self, path: &Path) -> Res {
+            let replacement = self.replacement.lock().unwrap().take();
+            if let Some(bytes) = replacement {
+                self.inner
+                    .write_byte_stream(path, ByteStream::from(bytes))
+                    .await?;
+            }
+            Ok(())
+        }
+    }
+
+    impl Storage for ReplaceOnRead {
+        async fn copy(
+            &self,
+            from: impl AsRef<Path> + Send,
+            to: impl AsRef<Path> + Send,
+        ) -> Res<u64> {
+            self.inner.copy(from, to).await
+        }
+        async fn create_dir_all(&self, path: impl AsRef<Path> + Send) -> Res {
+            self.inner.create_dir_all(path).await
+        }
+        async fn create_file(&self, path: impl AsRef<Path>) -> Res<fs::File> {
+            self.inner.create_file(path).await
+        }
+        async fn exists(&self, path: impl AsRef<Path>) -> bool {
+            self.inner.exists(path).await
+        }
+        async fn is_file(&self, path: impl AsRef<Path>) -> bool {
+            self.inner.is_file(path).await
+        }
+        async fn modified_timestamp(&self, path: impl AsRef<Path>) -> Res<DateTime<Utc>> {
+            self.inner.modified_timestamp(path).await
+        }
+        async fn open_file(&self, path: impl AsRef<Path> + Send) -> Res<fs::File> {
+            let file = self.inner.open_file(path.as_ref()).await?;
+            self.replace(path.as_ref()).await?;
+            Ok(file)
+        }
+        async fn read_byte_stream(&self, path: impl AsRef<Path> + Send + Sync) -> Res<ByteStream> {
+            let stream = self.inner.read_byte_stream(path.as_ref()).await?;
+            self.replace(path.as_ref()).await?;
+            Ok(stream)
+        }
+        async fn read_dir(&self, path: impl AsRef<Path> + Send + Sync) -> Res<fs::ReadDir> {
+            self.inner.read_dir(path).await
+        }
+        async fn remove_dir_all(&self, path: impl AsRef<Path> + Send) -> Res {
+            self.inner.remove_dir_all(path).await
+        }
+        async fn remove_file(&self, path: impl AsRef<Path> + Send) -> Result<(), std::io::Error> {
+            self.inner.remove_file(path).await
+        }
+        async fn rename(&self, from: impl AsRef<Path> + Send, to: impl AsRef<Path> + Send) -> Res {
+            self.inner.rename(from, to).await
+        }
+        async fn write_byte_stream(
+            &self,
+            path: impl AsRef<Path> + Send + Sync,
+            body: ByteStream,
+        ) -> Res {
+            self.inner.write_byte_stream(path, body).await
+        }
+        async fn create_private_dir(&self, path: impl AsRef<Path> + Send) -> Res {
+            self.inner.create_private_dir(path).await
+        }
+        async fn write_private_byte_stream(
+            &self,
+            path: impl AsRef<Path> + Send + Sync,
+            body: ByteStream,
+        ) -> Res {
+            self.inner.write_private_byte_stream(path, body).await
+        }
+        async fn lock_exclusive(&self, path: impl AsRef<Path> + Send) -> Res<LockGuard> {
+            self.inner.lock_exclusive(path).await
+        }
+        async fn try_lock_exclusive(
+            &self,
+            path: impl AsRef<Path> + Send,
+        ) -> Res<Option<LockGuard>> {
+            self.inner.try_lock_exclusive(path).await
+        }
+    }
+
+    #[test(tokio::test)]
+    async fn a_file_replaced_during_a_read_is_read_whole() -> Res {
+        let temp_dir = tempdir()?;
+        let path = temp_dir.path().join("data.json");
+        let before = br#"["before"]"#.to_vec();
+        for after in [br#"["a longer replacement"]"#.to_vec(), b"[]".to_vec()] {
+            fs::write(&path, &before).await?;
+            let storage = ReplaceOnRead {
+                inner: LocalStorage::new(),
+                replacement: std::sync::Mutex::new(Some(after.clone())),
+            };
+
+            let read = storage.read_bytes(&path).await?;
+
+            assert_eq!(fs::read(&path).await?, after, "the file was replaced");
+            assert!(
+                read == before || read == after,
+                "read {}",
+                String::from_utf8_lossy(&read)
+            );
+        }
         Ok(())
     }
 

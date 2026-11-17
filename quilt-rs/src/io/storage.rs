@@ -11,8 +11,10 @@ use chrono::DateTime;
 use chrono::Utc;
 use tokio::fs::File;
 use tokio::fs::ReadDir;
+use tokio::io::AsyncReadExt;
 
 use crate::Res;
+use crate::error::FsError;
 
 pub mod auth;
 mod local;
@@ -308,11 +310,24 @@ pub trait StorageExt: Storage {
     fn read_bytes(
         &self,
         path: impl AsRef<Path> + Send + Sync,
-    ) -> impl Future<Output = Res<Vec<u8>>> + Send + Sync;
+    ) -> impl Future<Output = Res<Vec<u8>>> + Send;
 }
 
 impl<T: Storage + Sync> StorageExt for T {
+    // Not through `read_byte_stream`: it takes the length before it opens the
+    // file, so a file renamed over `path` in between reads cut to the old size.
     async fn read_bytes(&self, path: impl AsRef<Path> + Send + Sync) -> Res<Vec<u8>> {
-        Ok(self.read_byte_stream(path).await?.collect().await?.to_vec())
+        let path = path.as_ref();
+        let mut file = self.open_file(path).await?;
+        // Unsized, tokio reads in doubling chunks, each a blocking call.
+        let size = file.metadata().await.map_or(0, |m| m.len());
+        let mut bytes = Vec::with_capacity(usize::try_from(size).unwrap_or(0));
+        file.read_to_end(&mut bytes)
+            .await
+            .map_err(|source| FsError::Read {
+                path: path.to_path_buf(),
+                source,
+            })?;
+        Ok(bytes)
     }
 }
