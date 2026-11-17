@@ -353,12 +353,38 @@ pub enum LineageError {
     },
 
     /// The domain config, at `path`, does not say the domain's lineage has
-    /// moved to refs, so no ref is written.
+    /// moved to refs, so its packages are neither listed nor written.
     #[error(
-        "Lineage cannot be written while the move to per-package refs {state} ({})",
+        "Lineage cannot be listed or written while the move to per-package refs {state} ({})",
         path.display()
     )]
     RefsNotWritable { path: PathBuf, state: &'static str },
+
+    /// `data.json` does not parse, so its lineage is not moved to refs and
+    /// nothing is changed.
+    #[cfg(any(test, feature = "ref-store-preview"))]
+    #[error(
+        "Cannot move the lineage in {} to per-package refs: it does not parse: {source}",
+        path.display()
+    )]
+    MigrationRefused {
+        path: PathBuf,
+        source: serde_json::Error,
+    },
+
+    /// A ref `data.json` cannot hold, so the lineage stays on refs.
+    #[cfg(any(test, feature = "ref-store-preview"))]
+    #[error("Cannot roll the lineage back to data.json: {0}")]
+    RollbackRefused(Box<LineageError>),
+
+    /// A rollback was interrupted, and only the command that started it
+    /// finishes it.
+    #[cfg(any(test, feature = "ref-store-preview"))]
+    #[error(
+        "The lineage is being rolled back to data.json; run `quilt lineage rollback` to finish ({})",
+        path.display()
+    )]
+    RollingBack { path: PathBuf },
 }
 
 /// The tail of [`LineageError::HomeChanged`]'s message naming `kept`.
@@ -826,6 +852,17 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "The home changed from /old/home to /new/home while the package was being placed, so it was not recorded"
+        );
+    }
+
+    #[test]
+    fn an_interrupted_rollback_names_the_command_that_finishes_it() {
+        let err = LineageError::RollingBack {
+            path: PathBuf::from("/d/.quilt/domain.json"),
+        };
+        assert!(
+            err.to_string().contains("run `quilt lineage rollback`"),
+            "{err}"
         );
     }
 

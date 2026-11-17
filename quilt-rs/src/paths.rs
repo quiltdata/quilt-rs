@@ -364,6 +364,51 @@ impl DomainPaths {
     }
 }
 
+/// The files of the move from `data.json` to refs and back.
+#[cfg(any(test, feature = "ref-store-preview"))]
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the cut-over and the rollback use them")
+)]
+impl DomainPaths {
+    /// Held throughout by the one process moving the domain either way.
+    #[must_use]
+    pub(crate) fn migrate_lock(&self) -> PathBuf {
+        self.dot_quilt_dir().join("migrate.lock")
+    }
+
+    /// `data.json` as the domain's first move to refs found it, which no
+    /// later move overwrites.
+    #[must_use]
+    pub(crate) fn lineage_pre_refs(&self) -> PathBuf {
+        self.dot_quilt_dir()
+            .join(format!("{LINEAGE_FILE}.pre-refs"))
+    }
+
+    /// A later move's own copy of `data.json`, which it migrates from, so
+    /// the first move's stays as it was.
+    #[must_use]
+    pub(crate) fn lineage_migrating(&self) -> PathBuf {
+        self.dot_quilt_dir()
+            .join(format!("{LINEAGE_FILE}.migrating"))
+    }
+
+    /// The `data.json` a rollback builds from the refs, before it replaces
+    /// the stub.
+    #[must_use]
+    pub(crate) fn lineage_rollback(&self) -> PathBuf {
+        self.dot_quilt_dir()
+            .join(format!("{LINEAGE_FILE}.rollback"))
+    }
+
+    /// Where a rollback moves `refs/`, under the name the domain config
+    /// records.
+    #[must_use]
+    pub(crate) fn refs_archive(&self, name: &str) -> PathBuf {
+        self.dot_quilt_dir().join(name)
+    }
+}
+
 pub async fn copy_cached_to_installed(
     paths: &DomainPaths,
     storage: &impl Storage,
@@ -478,6 +523,26 @@ mod tests {
         assert_eq!(
             paths.domain_file_lock(),
             PathBuf::from("foo/bar/.quilt/domain.lock")
+        );
+        assert_eq!(
+            paths.migrate_lock(),
+            PathBuf::from("foo/bar/.quilt/migrate.lock")
+        );
+        assert_eq!(
+            paths.lineage_pre_refs(),
+            PathBuf::from("foo/bar/.quilt/data.json.pre-refs")
+        );
+        assert_eq!(
+            paths.lineage_migrating(),
+            PathBuf::from("foo/bar/.quilt/data.json.migrating")
+        );
+        assert_eq!(
+            paths.lineage_rollback(),
+            PathBuf::from("foo/bar/.quilt/data.json.rollback")
+        );
+        assert_eq!(
+            paths.refs_archive("refs.rolled-back-x"),
+            PathBuf::from("foo/bar/.quilt/refs.rolled-back-x")
         );
         assert_eq!(
             paths.cached_manifests_root(),

@@ -532,12 +532,10 @@ impl Placed {
         }
     }
 
-    /// `created`, unless the home changed before the package was recorded:
-    /// then it removes what was placed, `files` in the folder and the
-    /// `manifest` installed, keeps each file edited since and names it in
-    /// the error. Nothing else refers to them while the package has no ref.
-    /// In a folder that was there before, a file may be the user's own with
-    /// the same bytes, so none is removed.
+    /// `created`, unless the package was refused its ref because the home
+    /// changed or the lineage is moving: then what was placed goes, but for
+    /// files edited since, which a home change's error names. Nothing refers
+    /// to them without a ref.
     async fn undo_if_unrecorded(
         self,
         storage: &(impl Storage + Sync),
@@ -545,9 +543,30 @@ impl Placed {
         files: &LineagePaths,
         manifest: Option<PathBuf>,
     ) -> Res {
-        let Err(Error::Lineage(LineageError::HomeChanged { placed, home, .. })) = created else {
-            return created;
-        };
+        match created {
+            Err(Error::Lineage(LineageError::HomeChanged { placed, home, .. })) => {
+                let kept = self.undo(storage, files, manifest).await;
+                Err(LineageError::HomeChanged { placed, home, kept }.into())
+            }
+            Err(err @ Error::Lineage(LineageError::RefsNotWritable { .. })) => {
+                for file in self.undo(storage, files, manifest).await {
+                    warn!("Kept {}, edited while it was placed", file.display());
+                }
+                Err(err)
+            }
+            created => created,
+        }
+    }
+
+    /// Removes what was placed and returns the files kept. In a folder that
+    /// was there before, a file may be the user's own with the same bytes,
+    /// so none is removed.
+    async fn undo(
+        self,
+        storage: &(impl Storage + Sync),
+        files: &LineagePaths,
+        manifest: Option<PathBuf>,
+    ) -> Vec<PathBuf> {
         let mut kept = Vec::new();
         let placed_files = if self.existed { None } else { Some(files) };
         for (key, state) in placed_files.into_iter().flatten() {
@@ -579,7 +598,7 @@ impl Placed {
             // Not empty when a file in it was kept.
             let _ = storage.remove_dir(&self.folder).await;
         }
-        Err(LineageError::HomeChanged { placed, home, kept }.into())
+        kept
     }
 }
 
@@ -713,13 +732,29 @@ mod ref_store_tests {
         Ok((remote, uri))
     }
 
-    /// Holds the domain file lock until `placed`, which the placing makes
-    /// true last, as a home change in another process would, runs
-    /// `meanwhile`, moves the home to `root/moved`, then lets `placing` go
-    /// on to record the package.
+    /// [`write_config_once_placed`] moving the home to `root/moved`.
     async fn move_home_once_placed<T>(
         domain: &LocalDomain<impl Storage + Clone + Sync, impl Remote>,
         root: &Path,
+        placed: impl Fn() -> bool,
+        placing: tokio::task::JoinHandle<Res<T>>,
+        meanwhile: impl FnOnce() -> std::io::Result<()>,
+    ) -> Res<T> {
+        let config = serde_json::json!({
+            "format": 1,
+            "home": root.join("moved"),
+            "migration": "done",
+        });
+        write_config_once_placed(domain, &config, placed, placing, meanwhile).await
+    }
+
+    /// Holds the domain file lock until `placed`, which the placing makes
+    /// true last, as a home change or a rollback in another process would,
+    /// runs `meanwhile`, writes `config`, then lets `placing` go on to
+    /// record the package.
+    async fn write_config_once_placed<T>(
+        domain: &LocalDomain<impl Storage + Clone + Sync, impl Remote>,
+        config: &serde_json::Value,
         placed: impl Fn() -> bool,
         placing: tokio::task::JoinHandle<Res<T>>,
         meanwhile: impl FnOnce() -> std::io::Result<()>,
@@ -732,12 +767,7 @@ mod ref_store_tests {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         meanwhile()?;
-        let config = serde_json::json!({
-            "format": 1,
-            "home": root.join("moved"),
-            "migration": "done",
-        });
-        std::fs::write(domain.paths.domain_config(), serde_json::to_vec(&config)?)?;
+        std::fs::write(domain.paths.domain_config(), serde_json::to_vec(config)?)?;
         drop(held);
         placing.await.expect("the task ran")
     }
@@ -784,6 +814,57 @@ mod ref_store_tests {
         assert_eq!(
             home_changed(root.path(), &result),
             Some(Vec::new()),
+            "{result:?}"
+        );
+        assert!(
+            !domain
+                .lineage
+                .contains(&domain.storage, &uri.namespace)
+                .await?
+        );
+        assert!(!manifest.exists());
+        assert!(!root.path().join("home/acme/x").exists());
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn a_rollback_begun_under_an_install_records_nothing_and_removes_what_it_placed()
+    -> Res<()> {
+        let root = TempDir::new()?;
+        let (remote, uri) = remote_with_one_revision().await?;
+        let paths = paths::DomainPaths::new(root.path().join("domain"));
+        let domain = LocalDomain::with_parts(
+            paths.clone(),
+            lineage::DomainLineageIo::refs(paths.clone()),
+            LocalStorage::new(),
+            Arc::new(remote),
+        );
+        domain.set_home(root.path().join("home")).await?;
+        let manifest = paths.installed_manifest(&uri.namespace, &uri.hash);
+
+        let installing = tokio::spawn({
+            let (domain, uri) = (domain.clone(), uri.clone());
+            async move { domain.install_package(&uri).await.map(drop) }
+        });
+        let rolling_back = serde_json::json!({
+            "format": 1,
+            "home": root.path().join("home"),
+            "migration": {"rolling_back": {"archive": "refs.rolled-back-x"}},
+        });
+        let result = write_config_once_placed(
+            &domain,
+            &rolling_back,
+            || manifest.is_file(),
+            installing,
+            || Ok(()),
+        )
+        .await;
+
+        assert!(
+            matches!(
+                result,
+                Err(Error::Lineage(LineageError::RefsNotWritable { .. }))
+            ),
             "{result:?}"
         );
         assert!(

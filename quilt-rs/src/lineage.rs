@@ -51,7 +51,7 @@ pub use home::DEFAULT_HOME_DIR_NAME;
 pub use home::Home;
 
 #[cfg(any(test, feature = "ref-store-preview"))]
-mod refs;
+pub(crate) mod refs;
 
 /// It's essentially just a map of `PackageLineage`.
 /// Represents the contents of `.quilt/data.json`
