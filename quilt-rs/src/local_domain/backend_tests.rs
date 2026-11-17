@@ -205,3 +205,99 @@ async fn a_domain_writes_only_its_own_stores_files() -> Res<()> {
     );
     Ok(())
 }
+
+/// The ways a package's stored entry can be one this build cannot use.
+#[derive(Clone, Copy, Debug)]
+enum Damage {
+    Unparsable,
+    LaterFormat,
+    TwoCopies,
+}
+
+async fn damage(domain: &LocalDomain, namespace: &Namespace, how: Damage) -> Res<()> {
+    let edit: fn(&mut serde_json::Value) = match how {
+        Damage::Unparsable => {
+            return domain
+                .lineage
+                .damage_fixture(&domain.storage, namespace)
+                .await;
+        }
+        Damage::LaterFormat => |stored| stored["format"] = 2.into(),
+        Damage::TwoCopies => |stored| {
+            let copy = stored["copies"][0].clone();
+            stored["copies"]
+                .as_array_mut()
+                .expect("a copies list")
+                .push(copy);
+        },
+    };
+    let path = domain.paths.package_ref(namespace);
+    let mut stored = serde_json::from_slice(&std::fs::read(&path)?)?;
+    edit(&mut stored);
+    std::fs::write(&path, serde_json::to_vec(&stored)?)?;
+    Ok(())
+}
+
+/// Validation item 1 of <https://github.com/quiltdata/quilt-specs/pull/292>:
+/// with one package's entry damaged, every other package is still listed,
+/// but on `data.json`, which is read whole, none of them can be used, and on
+/// refs all of them can. The listing names the damaged package either way.
+#[test(tokio::test)]
+async fn a_damaged_package_costs_every_other_on_data_json_and_none_on_refs() -> Res<()> {
+    // What the damaged package's error says: on refs, the file it is in.
+    let (ways, named, usable_others): (&[Damage], _, _) = match BACKEND {
+        LineageStore::DataJson => (&[Damage::Unparsable], "Failed to parse lineage file", 0),
+        LineageStore::Refs => (
+            &[Damage::Unparsable, Damage::LaterFormat, Damage::TwoCopies],
+            "damaged.json",
+            3,
+        ),
+    };
+    for &how in ways {
+        let temp_dir = TempDir::new()?;
+        let domain = domain(temp_dir.path().join("domain"));
+        let home = domain.set_home(temp_dir.path().join("home")).await?;
+        let damaged = Namespace::from(("acme", "damaged"));
+        let others = [("acme", "one"), ("acme", "two"), ("other", "three")].map(Namespace::from);
+        for namespace in others.iter().chain([&damaged]) {
+            domain
+                .create_package(namespace.clone(), None, None, flow::UserMeta::Clear)
+                .await?;
+        }
+        damage(&domain, &damaged, how).await?;
+
+        let listed = domain.read_packages().await?;
+        let error = listed[&damaged].as_ref().err().map(ToString::to_string);
+        assert!(
+            error.as_ref().is_some_and(|err| err.contains(named)),
+            "{how:?}: {error:?}"
+        );
+        let mut usable = 0;
+        for namespace in &others {
+            std::fs::write(
+                paths::package_home(&home, namespace).join("new.txt"),
+                b"new",
+            )?;
+            let committed = domain
+                .create_installed_package(namespace.clone())
+                .commit("new".to_string(), flow::UserMeta::Keep, None, None)
+                .await;
+            match committed {
+                Ok(flow::Committed::Recorded(_)) => usable += 1,
+                // `data.json` is parsed whole, so the damaged entry stops it.
+                Err(Error::Lineage(LineageError::Parse(_))) => {}
+                other => panic!("{how:?}: {namespace}: {other:?}"),
+            }
+        }
+        let still_listed = others
+            .iter()
+            .filter(|namespace| listed.get(namespace).is_some_and(Result::is_ok))
+            .count();
+        assert_eq!(
+            (still_listed, usable),
+            (others.len(), usable_others),
+            "{how:?}"
+        );
+    }
+    Ok(())
+}
