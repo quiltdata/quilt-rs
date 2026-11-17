@@ -11,11 +11,13 @@
 use std::path::PathBuf;
 
 use serde::Deserialize;
+use uuid::Uuid;
 
 use super::format::MigrationState;
 use super::store::read_config;
 use super::store::read_if_exists;
 use crate::Res;
+use crate::error::LineageError;
 use crate::io::storage::Storage;
 use crate::paths::DomainPaths;
 
@@ -91,7 +93,7 @@ pub(crate) async fn detect(
             source: source().await,
         },
         Some(MigrationState::RollingBack { archive }) => {
-            let archive = paths.refs_archive(&archive);
+            let archive = archive_path(paths, &archive)?;
             DomainState::RollingBack {
                 archived: storage.exists(&archive).await,
                 published: lineage().await?.is_some_and(|bytes| !is_stub(&bytes)),
@@ -103,6 +105,30 @@ pub(crate) async fn detect(
         },
         None => DomainState::Legacy,
     })
+}
+
+const ARCHIVE_PREFIX: &str = "refs.rolled-back-";
+
+/// The name a rollback gives its archive.
+pub(crate) fn archive_name(uuid: Uuid) -> String {
+    format!("{ARCHIVE_PREFIX}{uuid}")
+}
+
+/// `.quilt/<name>`, for a name a rollback gives its archive: any other, such
+/// as `refs`, `..` or an absolute path, is a damaged domain config.
+fn archive_path(paths: &DomainPaths, name: &str) -> Res<PathBuf> {
+    let named = name
+        .strip_prefix(ARCHIVE_PREFIX)
+        .and_then(|uuid| Uuid::try_parse(uuid).ok())
+        .is_some_and(|uuid| archive_name(uuid) == name);
+    if !named {
+        return Err(LineageError::FileParse {
+            path: paths.domain_config(),
+            source: serde::de::Error::custom(format!("{name:?} is not a rollback's archive")),
+        }
+        .into());
+    }
+    Ok(paths.refs_archive(name))
 }
 
 #[cfg(test)]
@@ -117,7 +143,7 @@ mod tests {
     use crate::lineage::DomainLineage;
     use crate::lineage::DomainLineageIo;
 
-    const ARCHIVE: &str = "refs.rolled-back-x";
+    const ARCHIVE: &str = "refs.rolled-back-67e55044-10b1-426f-9247-bb680e5fe0c8";
 
     fn legacy() -> Vec<u8> {
         serde_json::to_vec(&json!({"home": "/home", "packages": {}})).unwrap()

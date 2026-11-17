@@ -401,6 +401,13 @@ impl DomainPaths {
             .join(format!("{LINEAGE_FILE}.rollback"))
     }
 
+    /// The short lock, `data.json.lock`, every build that writes `data.json`
+    /// takes; `DomainLineageIo` names it too.
+    #[must_use]
+    pub(crate) fn lineage_lock(&self) -> PathBuf {
+        self.dot_quilt_dir().join(format!("{LINEAGE_FILE}.lock"))
+    }
+
     /// Where a rollback moves `refs/`, under the name the domain config
     /// records.
     #[must_use]
@@ -539,6 +546,10 @@ mod tests {
         assert_eq!(
             paths.lineage_rollback(),
             PathBuf::from("foo/bar/.quilt/data.json.rollback")
+        );
+        assert_eq!(
+            paths.lineage_lock(),
+            PathBuf::from("foo/bar/.quilt/data.json.lock")
         );
         assert_eq!(
             paths.refs_archive("refs.rolled-back-x"),
