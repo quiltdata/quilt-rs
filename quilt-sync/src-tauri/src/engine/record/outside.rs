@@ -298,46 +298,16 @@ mod tests {
         assert_eq!(saw(&mut seen, &ns(), Some(&on("b", None))), None);
     }
 
-    /// Runs each named case once on each lineage store.
-    macro_rules! on_each_store {
-        ($($case:ident),* $(,)?) => {
-            mod on_data_json {
-                $(#[tokio::test]
-                async fn $case() {
-                    super::$case(super::LineageStore::DataJson).await;
-                })*
-            }
-            mod on_refs {
-                $(#[tokio::test]
-                async fn $case() {
-                    super::$case(super::LineageStore::Refs).await;
-                })*
-            }
-        };
-    }
-
-    on_each_store!(
-        our_own_writes_are_not_outside,
-        another_tools_write_is_found_by_the_pass,
-        our_write_after_another_tools_finds_its_move,
-        a_busy_package_keeps_what_was_seen,
-        an_unreadable_package_keeps_what_was_seen,
-        a_failed_save_is_tried_again,
-        a_move_while_closed_is_found_after_start,
-    );
-
-    /// The lineage of a domain on `dir` in `store`, with its home set.
-    async fn domain(dir: &Path, store: LineageStore) -> DomainLineageIo {
-        let domain = LocalDomain::new(dir).with_lineage_store(store);
+    /// The lineage of a domain on `dir`, with its home set.
+    async fn domain(dir: &Path) -> DomainLineageIo {
+        let domain = LocalDomain::new(dir);
         domain.set_home(dir).await.unwrap();
         domain.lineage_io().clone()
     }
 
     /// A domain on `dir` whose writes go through `outside`'s hook, as this
     /// process's do, and one without it, as the CLI's.
-    async fn setup(
-        store: LineageStore,
-    ) -> (
+    async fn setup() -> (
         tempfile::TempDir,
         Arc<Record>,
         Arc<Outside>,
@@ -345,7 +315,7 @@ mod tests {
         DomainLineageIo,
     ) {
         let dir = tempfile::tempdir().unwrap();
-        let theirs = domain(dir.path(), store).await;
+        let theirs = domain(dir.path()).await;
         let record = Arc::new(Record::in_memory(EventSink::new()));
         let outside = Outside::in_memory(theirs.clone(), Arc::clone(&record));
         let ours = theirs.clone().with_hook(outside.hook());
@@ -367,8 +337,9 @@ mod tests {
         record.entries().await.into_iter().map(|e| e.kind).collect()
     }
 
-    async fn our_own_writes_are_not_outside(store: LineageStore) {
-        let (_dir, record, outside, ours, _) = setup(store).await;
+    #[tokio::test]
+    async fn our_own_writes_are_not_outside() {
+        let (_dir, record, outside, ours, _) = setup().await;
         put(&ours, on("a", None)).await;
         outside.check().await;
         put(&ours, on("b", None)).await;
@@ -376,8 +347,9 @@ mod tests {
         assert_eq!(kinds(&record).await, vec![]);
     }
 
-    async fn another_tools_write_is_found_by_the_pass(store: LineageStore) {
-        let (_dir, record, outside, ours, theirs) = setup(store).await;
+    #[tokio::test]
+    async fn another_tools_write_is_found_by_the_pass() {
+        let (_dir, record, outside, ours, theirs) = setup().await;
         put(&ours, on("a", Some("c"))).await;
         put(&theirs, on("c", None)).await;
         outside.check().await;
@@ -390,8 +362,9 @@ mod tests {
 
     /// Our write right after another tool's, before any pass, still records
     /// the other tool's move.
-    async fn our_write_after_another_tools_finds_its_move(store: LineageStore) {
-        let (_dir, record, outside, ours, theirs) = setup(store).await;
+    #[tokio::test]
+    async fn our_write_after_another_tools_finds_its_move() {
+        let (_dir, record, outside, ours, theirs) = setup().await;
         put(&ours, on("a", None)).await;
         put(&theirs, on("b", None)).await;
         put(&ours, on("c", None)).await;
@@ -404,15 +377,14 @@ mod tests {
 
     /// A package the pass finds locked keeps what was seen, so a move made
     /// before it is found once the lock is free.
-    async fn a_busy_package_keeps_what_was_seen(store: LineageStore) {
-        let (dir, record, outside, _, theirs) = setup(store).await;
+    #[tokio::test]
+    async fn a_busy_package_keeps_what_was_seen() {
+        let (dir, record, outside, _, theirs) = setup().await;
         put(&theirs, on("a", None)).await;
         outside.check().await;
         put(&theirs, on("b", None)).await;
 
-        let package = LocalDomain::new(dir.path())
-            .with_lineage_store(store)
-            .create_installed_package(ns());
+        let package = LocalDomain::new(dir.path()).create_installed_package(ns());
         let held = package.lock().await.unwrap();
         outside.check().await;
         drop(held);
@@ -426,8 +398,9 @@ mod tests {
 
     /// A package whose entry can't be read keeps what was seen, so a move is
     /// found once it reads again.
-    async fn an_unreadable_package_keeps_what_was_seen(store: LineageStore) {
-        let (dir, record, outside, _, theirs) = setup(store).await;
+    #[tokio::test]
+    async fn an_unreadable_package_keeps_what_was_seen() {
+        let (dir, record, outside, _, theirs) = setup().await;
         let storage = LocalStorage::new();
         put(&theirs, on("a", None)).await;
         outside.check().await;
@@ -436,7 +409,7 @@ mod tests {
         outside.check().await;
         let paths = DomainPaths::new(dir.path().to_path_buf());
         DomainLineageIo::write_fixture(
-            store,
+            LineageStore::Refs,
             &storage,
             &paths,
             dir.path(),
@@ -457,7 +430,7 @@ mod tests {
     /// found to have moved.
     #[tokio::test]
     async fn a_pass_that_cant_list_the_packages_forgets_nothing() {
-        let (dir, record, outside, _, theirs) = setup(LineageStore::Refs).await;
+        let (dir, record, outside, _, theirs) = setup().await;
         put(&theirs, on("a", None)).await;
         outside.check().await;
         theirs
@@ -487,9 +460,10 @@ mod tests {
 
     /// A write that failed is tried again on the next pass, though nothing
     /// changed since.
-    async fn a_failed_save_is_tried_again(store: LineageStore) {
+    #[tokio::test]
+    async fn a_failed_save_is_tried_again() {
         let dir = tempfile::tempdir().unwrap();
-        let theirs = domain(dir.path(), store).await;
+        let theirs = domain(dir.path()).await;
         put(&theirs, on("a", None)).await;
         let data_dir = dir.path().join("app");
         let record = Arc::new(Record::in_memory(EventSink::new()));
@@ -504,10 +478,11 @@ mod tests {
     }
 
     /// What was seen survives a restart, so a move while closed is found.
-    async fn a_move_while_closed_is_found_after_start(store: LineageStore) {
+    #[tokio::test]
+    async fn a_move_while_closed_is_found_after_start() {
         let dir = tempfile::tempdir().unwrap();
         let record = Arc::new(Record::in_memory(EventSink::new()));
-        let theirs = domain(dir.path(), store).await;
+        let theirs = domain(dir.path()).await;
         put(&theirs, on("a", None)).await;
 
         let first = Outside::open(dir.path(), theirs.clone(), Arc::clone(&record)).await;

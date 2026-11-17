@@ -24,6 +24,7 @@ pub(crate) mod lock;
 pub(crate) use local::tests::Logged;
 
 pub use local::LocalStorage;
+#[cfg(any(test, feature = "testing"))]
 pub(crate) use local::temp_name;
 pub use lock::LockGuard;
 

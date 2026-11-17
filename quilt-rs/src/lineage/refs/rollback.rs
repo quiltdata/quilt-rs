@@ -17,10 +17,9 @@ use super::format::PackageRef;
 use super::format::TipCache;
 use super::state;
 use super::state::DomainState;
-use super::store::put;
-use super::store::read_config;
 use super::store::read_if_exists;
 use super::store::remove_if_present;
+use super::store::set_migration;
 use crate::Error;
 use crate::InstallPackageError;
 use crate::Res;
@@ -109,19 +108,6 @@ async fn begin(storage: &(impl Storage + Sync), paths: &DomainPaths) -> Res<Path
     )
     .await?;
     Ok(paths.refs_archive(&name))
-}
-
-async fn set_migration(
-    storage: &(impl Storage + Sync),
-    paths: &DomainPaths,
-    migration: MigrationState,
-) -> Res {
-    let _domain = storage.lock_exclusive(paths.domain_file_lock()).await?;
-    let mut config = read_config(storage, paths)
-        .await?
-        .ok_or(LineageError::Missing)?;
-    config.migration = Some(migration);
-    put(storage, &paths.domain_config(), config.to_vec()?, None).await
 }
 
 /// Step 2: the legacy file from the refs, staged. A ref that came to hold
@@ -491,7 +477,8 @@ mod tests {
         let gone = timestamp("data/gone.csv")?;
         assert!(before <= gone && gone <= after, "{gone}");
         // The older client reads every entry.
-        let read = DomainLineageIo::data_json(domain.paths.lineage())
+        let read = DomainLineageIo::new(domain.paths.clone())
+            .into_data_json()
             .read_packages(&domain.storage)
             .await?;
         assert_eq!(read.len(), 5);

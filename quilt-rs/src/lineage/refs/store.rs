@@ -64,6 +64,11 @@ impl RefStore {
         &self.paths
     }
 
+    #[cfg(any(test, feature = "testing"))]
+    pub(crate) fn hook(&self) -> Option<&LineageHook> {
+        self.hook.as_ref()
+    }
+
     /// Shows `look` each package's lineage, read under its lock, then hands
     /// `finish` the packages installed now, listed under the domain file
     /// lock, or `None` if it is busy or that fails. A package whose lock is
@@ -219,8 +224,9 @@ impl RefStore {
         let before = stored.clone().into_lineage(tip.as_ref());
         let mut lineage = before.clone();
         let out = step(&mut lineage)?;
+        let new_ref = PackageRef::from_lineage(&lineage, Some(&stored))?;
         if let Some(after) = self
-            .write(storage, namespace, Some(stored), tip, &lineage)
+            .write(storage, namespace, Some(stored), new_ref, tip, &lineage)
             .await?
         {
             self.tell(namespace, Some(&before), Some(&after));
@@ -254,34 +260,33 @@ impl RefStore {
                 InstallPackageError::AlreadyInstalled(namespace.clone()),
             ));
         }
-        self.create_folders(storage, namespace).await?;
-        // A tip a killed removal left behind is replaced or removed.
-        let tip = self.read_tip(storage, namespace).await;
-        if let Some(after) = self.write(storage, namespace, None, tip, lineage).await? {
+        let new_ref = PackageRef::from_lineage(lineage, None)?;
+        if let Some(after) = self
+            .create_unchecked(storage, held, new_ref, lineage)
+            .await?
+        {
             self.tell(namespace, None, Some(&after));
         }
         Ok(())
     }
 
     /// Writes the locked package's first ref, `new_ref`, after the tip cache
-    /// `lineage` wants beside it, whatever the domain config says: the move
-    /// from `data.json` writes refs before the config says done.
-    pub(super) async fn create_moved(
+    /// `lineage` wants beside it, whatever the home and the domain config
+    /// say: the move from `data.json` writes refs before the config says
+    /// done.
+    pub(super) async fn create_unchecked(
         &self,
         storage: &(impl Storage + Sync),
         held: &PackageLock,
-        new_ref: &PackageRef,
+        new_ref: PackageRef,
         lineage: &PackageLineage,
-    ) -> Res {
+    ) -> Res<Option<PackageLineage>> {
         let namespace = held.namespace();
         self.create_folders(storage, namespace).await?;
+        // A tip a killed removal left behind is replaced or removed.
         let tip = self.read_tip(storage, namespace).await;
-        let had_tip = tip.is_some();
-        let (tip, fresh) = wanted_tip(new_ref, lineage, tip);
-        self.change_tip(storage, namespace, tip.as_ref(), fresh, had_tip)
-            .await?;
-        let path = self.paths.package_ref(namespace);
-        put(storage, &path, new_ref.to_vec()?, Some("ref")).await
+        self.write(storage, namespace, None, new_ref, tip, lineage)
+            .await
     }
 
     /// Removes the locked package's ref, then its tip. A ref that does not
@@ -555,21 +560,21 @@ impl RefStore {
         TipCache::from_slice(&bytes)
     }
 
-    /// Stores `lineage` over `stored` and its `tip`. The tip cache changes
-    /// before the ref only where the ref on disk cannot lose a tip by it: when
-    /// there is no ref yet, or for a new tip of the stored ref's own remote.
-    /// Otherwise it changes after, and a failure then is logged, since the
-    /// ref has landed. Returns the lineage as it now reads when the ref
-    /// changed.
+    /// Stores `new_ref`, which holds `lineage`, over `stored` and its `tip`.
+    /// The tip cache changes before the ref only where the ref on disk cannot
+    /// lose a tip by it: when there is no ref yet, or for a new tip of the
+    /// stored ref's own remote. Otherwise it changes after, and a failure
+    /// then is logged, since the ref has landed. Returns the lineage as it now
+    /// reads when the ref changed.
     async fn write(
         &self,
         storage: &(impl Storage + Sync),
         namespace: &Namespace,
         stored: Option<PackageRef>,
+        new_ref: PackageRef,
         tip: Option<TipCache>,
         lineage: &PackageLineage,
     ) -> Res<Option<PackageLineage>> {
-        let new_ref = PackageRef::from_lineage(lineage, stored.as_ref())?;
         let had_tip = tip.is_some();
         let (mut tip, fresh) = wanted_tip(&new_ref, lineage, tip);
         let tip_first = match &stored {
@@ -736,8 +741,22 @@ pub(super) async fn read_config(
         .transpose()
 }
 
+/// Records `migration` in the domain config, under the domain file lock.
+pub(super) async fn set_migration(
+    storage: &(impl Storage + Sync),
+    paths: &DomainPaths,
+    migration: MigrationState,
+) -> Res {
+    let _domain = storage.lock_exclusive(paths.domain_file_lock()).await?;
+    let mut config = read_config(storage, paths)
+        .await?
+        .ok_or(LineageError::Missing)?;
+    config.migration = Some(migration);
+    put(storage, &paths.domain_config(), config.to_vec()?, None).await
+}
+
 /// The bytes of `path`, or `None` when there is no such file.
-pub(super) async fn read_if_exists(
+pub(in crate::lineage) async fn read_if_exists(
     storage: &(impl Storage + Sync),
     path: &Path,
 ) -> Res<Option<Vec<u8>>> {

@@ -206,17 +206,13 @@ pub fn save_diagnostic_zip(info: &DiagnosticInfo) -> Result<PathBuf, Error> {
         "domain.json",
     )?;
     add_refs(&mut zip_writer, options, &domain_paths.refs_dir(), "refs")?;
-    for name in [
-        "data.json.pre-refs",
-        "data.json.migrating",
-        "data.json.rollback",
+    for path in [
+        domain_paths.lineage_pre_refs(),
+        domain_paths.lineage_migrating(),
+        domain_paths.lineage_rollback(),
     ] {
-        add_file(
-            &mut zip_writer,
-            options,
-            &domain_paths.dot_quilt_dir().join(name),
-            name,
-        )?;
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        add_file(&mut zip_writer, options, &path, &name)?;
     }
 
     // Add client.json per host (OAuth client registration — client ID only)
