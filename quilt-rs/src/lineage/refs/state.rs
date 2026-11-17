@@ -49,10 +49,10 @@ pub(crate) enum DomainState {
     /// In `data.json`, or nowhere yet: no move has put the stub in place.
     Legacy,
     /// A move was killed after putting the stub in place and before writing
-    /// the domain config, so `source` holds the lineage.
-    StubOnly { source: PathBuf },
-    /// A move is writing the refs from `source`.
-    Migrating { source: PathBuf },
+    /// the domain config, so its frozen copy holds the lineage.
+    StubOnly,
+    /// A move is writing the refs from its frozen copy.
+    Migrating,
     /// In the refs.
     Refs,
     /// Going back to `data.json`.
@@ -78,20 +78,9 @@ pub(crate) async fn detect(
         .and_then(|config| config.migration);
     let lineage_path = paths.lineage();
     let lineage = || read_if_exists(storage, &lineage_path);
-    // A later move freezes its copy apart, keeping the first move's.
-    let source = async || {
-        let migrating = paths.lineage_migrating();
-        if storage.exists(&migrating).await {
-            migrating
-        } else {
-            paths.lineage_pre_refs()
-        }
-    };
     Ok(match migration {
         Some(MigrationState::Done) => DomainState::Refs,
-        Some(MigrationState::InProgress) => DomainState::Migrating {
-            source: source().await,
-        },
+        Some(MigrationState::InProgress) => DomainState::Migrating,
         Some(MigrationState::RollingBack { archive }) => {
             let archive = archive_path(paths, &archive)?;
             DomainState::RollingBack {
@@ -100,9 +89,7 @@ pub(crate) async fn detect(
                 archive,
             }
         }
-        None if lineage().await?.is_some_and(|bytes| is_stub(&bytes)) => DomainState::StubOnly {
-            source: source().await,
-        },
+        None if lineage().await?.is_some_and(|bytes| is_stub(&bytes)) => DomainState::StubOnly,
         None => DomainState::Legacy,
     })
 }
@@ -169,12 +156,6 @@ mod tests {
     fn named(state: DomainState) -> DomainState {
         let name = |path: PathBuf| PathBuf::from(path.file_name().expect("a file"));
         match state {
-            DomainState::StubOnly { source } => DomainState::StubOnly {
-                source: name(source),
-            },
-            DomainState::Migrating { source } => DomainState::Migrating {
-                source: name(source),
-            },
             DomainState::RollingBack {
                 archive,
                 archived,
@@ -188,18 +169,6 @@ mod tests {
         }
     }
 
-    fn stub_only(source: &str) -> DomainState {
-        DomainState::StubOnly {
-            source: source.into(),
-        }
-    }
-
-    fn migrating(source: &str) -> DomainState {
-        DomainState::Migrating {
-            source: source.into(),
-        }
-    }
-
     fn rolled_back(archived: bool, published: bool) -> DomainState {
         DomainState::RollingBack {
             archive: ARCHIVE.into(),
@@ -208,73 +177,38 @@ mod tests {
         }
     }
 
-    /// Each on-disk state the resume rules name, and which frozen copy a
-    /// resumed move reads: what `data.json` and the domain config hold,
-    /// whether a later move froze its own copy beside the first's, and
-    /// whether the archive exists.
+    /// Each on-disk state the resume rules name: what `data.json` and the
+    /// domain config hold, and whether the archive exists.
     #[test(tokio::test)]
     async fn each_state_a_move_or_rollback_leaves_is_told_apart() -> Res {
         let stub = || Some(STUB.to_vec());
         let in_progress = || Some(config(Some(json!("in_progress"))));
         let done = || Some(config(Some(json!("done"))));
         let rolling = || Some(config(rolling_back()));
-        for (lineage, domain_config, second_move, archive, expected) in [
-            (None, None, false, false, DomainState::Legacy),
-            (Some(legacy()), None, false, false, DomainState::Legacy),
+        for (lineage, domain_config, archive, expected) in [
+            (None, None, false, DomainState::Legacy),
+            (Some(legacy()), None, false, DomainState::Legacy),
             (
                 Some(legacy()),
                 Some(config(None)),
-                false,
                 false,
                 DomainState::Legacy,
             ),
-            (stub(), None, false, false, stub_only("data.json.pre-refs")),
-            (
-                stub(),
-                Some(config(None)),
-                false,
-                false,
-                stub_only("data.json.pre-refs"),
-            ),
-            (stub(), None, true, false, stub_only("data.json.migrating")),
-            (
-                stub(),
-                in_progress(),
-                false,
-                false,
-                migrating("data.json.pre-refs"),
-            ),
-            (
-                stub(),
-                in_progress(),
-                true,
-                false,
-                migrating("data.json.migrating"),
-            ),
-            (stub(), done(), false, false, DomainState::Refs),
+            (stub(), None, false, DomainState::StubOnly),
+            (stub(), Some(config(None)), false, DomainState::StubOnly),
+            (stub(), in_progress(), false, DomainState::Migrating),
+            (stub(), done(), false, DomainState::Refs),
             // A preview domain, stood up on refs with no move.
-            (None, done(), false, false, DomainState::Refs),
-            (stub(), rolling(), false, false, rolled_back(false, false)),
-            (stub(), rolling(), false, true, rolled_back(true, false)),
-            (
-                Some(legacy()),
-                rolling(),
-                false,
-                true,
-                rolled_back(true, true),
-            ),
+            (None, done(), false, DomainState::Refs),
+            (stub(), rolling(), false, rolled_back(false, false)),
+            (stub(), rolling(), true, rolled_back(true, false)),
+            (Some(legacy()), rolling(), true, rolled_back(true, true)),
         ] {
             let root = tempfile::TempDir::new()?;
             let paths = DomainPaths::new(root.path().to_path_buf());
             std::fs::create_dir_all(paths.dot_quilt_dir())?;
             if let Some(bytes) = &lineage {
                 std::fs::write(paths.lineage(), bytes)?;
-                if is_stub(bytes) {
-                    std::fs::write(paths.lineage_pre_refs(), legacy())?;
-                }
-            }
-            if second_move {
-                std::fs::write(paths.lineage_migrating(), legacy())?;
             }
             if let Some(bytes) = &domain_config {
                 std::fs::write(paths.domain_config(), bytes)?;

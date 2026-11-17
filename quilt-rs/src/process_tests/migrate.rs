@@ -70,26 +70,27 @@ fn moved(world: &World) -> Res<Vec<BTreeSet<String>>> {
 
 /// An older build installs between a move stopped before the stub and its
 /// resume: on a fresh domain it finds no `data.json`, sets the home as the
-/// CLI does, and installs. Returns the installed revision's hash.
-async fn install_by_an_older_build(world: &World) -> Res<String> {
+/// CLI does, and installs. Returns the installed revision's hash and the
+/// `data.json` the install left.
+async fn install_by_an_older_build(world: &World) -> Res<(String, Vec<u8>)> {
     world
         .domain_on(LineageStore::DataJson)
         .set_home(world.root.join("home"))
         .await?;
     let revision = world.publish(&[("a.txt", b"one")]).await?;
     Operation::LegacyInstall.run(world, &revision.hash).await?;
-    Ok(revision.hash)
+    Ok((revision.hash, std::fs::read(paths(world).lineage())?))
 }
 
-async fn assert_installed(world: &World, hash: &str) -> Res {
+/// The install is in the refs, and `data.json.pre-refs` is the `data.json`
+/// the resumed move found, not the copy the stopped one froze.
+async fn assert_installed(world: &World, (hash, moved): (String, Vec<u8>)) -> Res {
     let paths = paths(world);
+    assert_eq!(std::fs::read(paths.lineage_pre_refs())?, moved);
     let store = RefStore::new(paths.clone());
     let storage = LocalStorage::new();
     let lineage = store.read(&storage, &target()).await?;
-    assert_eq!(
-        lineage.remote_uri.map(|remote| remote.hash),
-        Some(hash.to_string())
-    );
+    assert_eq!(lineage.remote_uri.map(|remote| remote.hash), Some(hash));
     assert_eq!(
         store.home(&storage).await?.as_ref(),
         &world.root.join("home")
@@ -110,14 +111,14 @@ async fn an_install_by_an_older_build_after_a_move_stopped_before_the_stub_is_mo
     let paths = paths(&world);
     std::fs::create_dir_all(paths.dot_quilt_dir())?;
     std::fs::write(
-        paths.lineage_pre_refs(),
+        paths.lineage_migrating(),
         serde_json::to_vec(&crate::lineage::DomainLineage::default())?,
     )?;
-    let hash = install_by_an_older_build(&world).await?;
+    let installed = install_by_an_older_build(&world).await?;
 
     up(&world).await?;
 
-    assert_installed(&world, &hash).await
+    assert_installed(&world, installed).await
 }
 
 /// Two processes wait on the lock together: one moves every package, and
@@ -203,8 +204,8 @@ mod killed {
     }
 
     /// A move killed at each step, on a domain with packages and on a fresh
-    /// one, resumes to the refs an uninterrupted move writes, and no kill
-    /// leaves a ref that does not read.
+    /// one, resumes to the refs and the `data.json.pre-refs` an uninterrupted
+    /// move leaves, and no kill leaves a ref that does not read.
     #[test(tokio::test)]
     async fn a_move_killed_at_each_step_resumes_to_the_same_refs() -> Res {
         let with_packages = TempDir::new()?;
@@ -217,13 +218,15 @@ mod killed {
             let whole = copy(&start, &whole_dir)?;
             up(&whole).await?;
             let expected = refs(&whole).await?;
+            let pre_refs = std::fs::read(paths(&whole).lineage_pre_refs())?;
             assert_eq!(expected.is_empty(), !has_packages);
             for step in [
-                "after-pre-refs",
+                "after-freeze",
                 "after-stub",
                 "after-config",
                 "after-ref",
                 "before-done",
+                "after-done",
             ] {
                 let dir = TempDir::new()?;
                 let world = copy(&start, &dir)?;
@@ -236,6 +239,11 @@ mod killed {
                 up(&world).await?;
 
                 assert_moved(&world, &expected).await?;
+                assert_eq!(
+                    std::fs::read(paths(&world).lineage_pre_refs())?,
+                    pre_refs,
+                    "{name}"
+                );
             }
         }
         Ok(())
@@ -280,13 +288,13 @@ mod killed {
             &world,
             Operation::MigrateUp,
             "",
-            "migrate.up.after-pre-refs"
+            "migrate.up.after-freeze"
         )?);
-        let hash = install_by_an_older_build(&world).await?;
+        let installed = install_by_an_older_build(&world).await?;
 
         up(&world).await?;
 
-        assert_installed(&world, &hash).await
+        assert_installed(&world, installed).await
     }
 
     /// After a move and a rollback, a second move killed once it froze its

@@ -11,7 +11,6 @@
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::path::Path;
-use std::path::PathBuf;
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -27,7 +26,6 @@ use super::state::DomainState;
 use super::store::put;
 use super::store::read_config;
 use super::store::read_if_exists;
-use super::store::remove_if_present;
 use crate::Error;
 use crate::Res;
 use crate::error::LineageError;
@@ -94,9 +92,10 @@ impl Frozen {
 /// refs is left as it is, and one being rolled back is refused.
 pub(crate) async fn up(storage: &(impl Storage + Sync), paths: &DomainPaths) -> Res<Migrated> {
     let _moving = storage.lock_exclusive(paths.migrate_lock()).await?;
-    let (source, frozen) = match state::detect(storage, paths).await? {
+    let source = paths.lineage_migrating();
+    let frozen = match state::detect(storage, paths).await? {
         DomainState::Refs => {
-            remove_working_copy(storage, paths).await?;
+            keep_frozen_copy(storage, paths).await?;
             return Ok(Migrated::default());
         }
         DomainState::RollingBack { .. } => {
@@ -109,28 +108,27 @@ pub(crate) async fn up(storage: &(impl Storage + Sync), paths: &DomainPaths) -> 
             let _domain = storage.lock_exclusive(paths.domain_file_lock()).await?;
             freeze(storage, paths).await?
         }
-        DomainState::StubOnly { source } => {
+        DomainState::StubOnly => {
             let frozen = Frozen::read(storage, &source).await?;
             let _domain = storage.lock_exclusive(paths.domain_file_lock()).await?;
             begin(storage, paths, &frozen.home).await?;
-            (source, frozen)
+            frozen
         }
-        DomainState::Migrating { source } => {
-            let frozen = Frozen::read(storage, &source).await?;
-            (source, frozen)
-        }
+        DomainState::Migrating => Frozen::read(storage, &source).await?,
     };
-    let migrated = write_refs(storage, paths, &source, frozen.packages).await?;
+    let migrated = write_refs(storage, paths, frozen.packages).await?;
     crate::failpoint::hit("migrate.up.before-done");
     finish(storage, paths).await?;
     Ok(migrated)
 }
 
 /// Under `data.json.lock`, which older builds write `data.json` under: copies
-/// `data.json`, or an empty lineage where there is none, to the frozen copy
-/// it returns, puts the stub in its place, and records the move as begun.
-/// Older builds then fail on the stub, so the copy stays as it was frozen.
-async fn freeze(storage: &(impl Storage + Sync), paths: &DomainPaths) -> Res<(PathBuf, Frozen)> {
+/// `data.json`, or an empty lineage where there is none, to
+/// `data.json.migrating`, puts the stub in its place, and records the move as
+/// begun. Older builds then fail on the stub, so the copy stays as it was
+/// frozen. A copy a run killed before the stub left is overwritten, since
+/// `data.json` was still the lineage then.
+async fn freeze(storage: &(impl Storage + Sync), paths: &DomainPaths) -> Res<Frozen> {
     let lineage = paths.lineage();
     let _short = storage.lock_exclusive(paths.lineage_lock()).await?;
     let bytes = match read_if_exists(storage, &lineage).await? {
@@ -139,22 +137,16 @@ async fn freeze(storage: &(impl Storage + Sync), paths: &DomainPaths) -> Res<(Pa
     };
     let frozen = Frozen::from_slice(&lineage, &bytes)?;
     set_refs_aside(storage, paths).await?;
-    // The first move's copy is kept for good.
-    let source = if storage.exists(paths.lineage_pre_refs()).await {
-        paths.lineage_migrating()
-    } else {
-        paths.lineage_pre_refs()
-    };
     storage
-        .write_byte_stream(&source, ByteStream::from(bytes))
+        .write_byte_stream(paths.lineage_migrating(), ByteStream::from(bytes))
         .await?;
-    crate::failpoint::hit("migrate.up.after-pre-refs");
+    crate::failpoint::hit("migrate.up.after-freeze");
     storage
         .write_byte_stream(&lineage, ByteStream::from_static(state::STUB))
         .await?;
     crate::failpoint::hit("migrate.up.after-stub");
     begin(storage, paths, &frozen.home).await?;
-    Ok((source, frozen))
+    Ok(frozen)
 }
 
 /// Moves aside a `refs/` found before the move began. No ref is written
@@ -186,13 +178,12 @@ async fn begin(storage: &(impl Storage + Sync), paths: &DomainPaths, home: &Home
     Ok(())
 }
 
-/// Writes the ref of each of `packages`, the entries frozen in `source`,
-/// under its lock, unless it has one: a ref already there was written from
-/// this same copy by a run that was killed.
+/// Writes the ref of each of `packages`, the frozen copy's entries, under
+/// its lock, unless it has one: a ref already there was written from this
+/// same copy by a run that was killed.
 async fn write_refs(
     storage: &(impl Storage + Sync),
     paths: &DomainPaths,
-    source: &Path,
     packages: BTreeMap<String, Value>,
 ) -> Res<Migrated> {
     let store = RefStore::new(paths.clone());
@@ -203,7 +194,7 @@ async fn write_refs(
             Err(err) => {
                 warn!(
                     "❌ {name} in {} was not moved to refs: {err}",
-                    source.display()
+                    paths.lineage_migrating().display()
                 );
                 migrated.skipped.insert(name, err);
                 continue;
@@ -253,19 +244,30 @@ async fn finish(storage: &(impl Storage + Sync), paths: &DomainPaths) -> Res {
         config.migration = Some(MigrationState::Done);
         put(storage, &paths.domain_config(), config.to_vec()?, None).await?;
     }
-    remove_working_copy(storage, paths).await
+    crate::failpoint::hit("migrate.up.after-done");
+    keep_frozen_copy(storage, paths).await
 }
 
-/// The first move's copy, `data.json.pre-refs`, stays for good.
-async fn remove_working_copy(storage: &(impl Storage + Sync), paths: &DomainPaths) -> Res {
-    if remove_if_present(storage, &paths.lineage_migrating()).await? {
-        storage.sync_dir(paths.dot_quilt_dir()).await;
+/// Keeps a done move's frozen copy as `data.json.pre-refs` if no move kept
+/// one, so that file is the `data.json` the domain's first move migrated.
+async fn keep_frozen_copy(storage: &(impl Storage + Sync), paths: &DomainPaths) -> Res {
+    let migrating = paths.lineage_migrating();
+    if !storage.exists(&migrating).await {
+        return Ok(());
     }
+    let pre_refs = paths.lineage_pre_refs();
+    if storage.exists(&pre_refs).await {
+        storage.remove_file(&migrating).await?;
+    } else {
+        storage.rename(&migrating, &pre_refs).await?;
+    }
+    storage.sync_dir(paths.dot_quilt_dir()).await;
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
     use std::time::Duration;
 
     use serde_json::json;
@@ -339,6 +341,10 @@ mod tests {
 
     fn in_progress() -> Vec<u8> {
         bytes(&json!({"format": 1, "home": "/home", "migration": "in_progress"}))
+    }
+
+    fn done() -> Vec<u8> {
+        bytes(&json!({"format": 1, "home": "/home", "migration": "done"}))
     }
 
     fn write(path: &Path, bytes: &[u8]) -> Res {
@@ -547,13 +553,15 @@ mod tests {
             read(&domain.paths.lineage()),
             Some(b"{\"home\": \"/home\", \"pack".to_vec())
         );
+        assert!(!domain.paths.lineage_migrating().exists());
         assert!(!domain.paths.lineage_pre_refs().exists());
         assert!(!domain.paths.domain_config().exists());
         Ok(())
     }
 
     /// Validation item 5's resume, from what a kill at each step leaves,
-    /// built directly: each ends with the refs an uninterrupted move writes.
+    /// built directly: each ends with the refs an uninterrupted move writes,
+    /// and with the `data.json` it moved kept as `data.json.pre-refs`.
     #[test(tokio::test)]
     async fn a_move_stopped_at_each_step_resumes_to_the_same_refs() -> Res {
         let expected = moved_legacy().await?;
@@ -563,26 +571,28 @@ mod tests {
                 .map(|(path, bytes)| (path.clone(), bytes.clone())),
         );
         let steps = [
-            "after-pre-refs",
+            "after-freeze",
             "after-stub",
             "after-config",
             "after-ref",
             "before-done",
+            "after-done",
         ];
         for (at, step) in steps.into_iter().enumerate() {
             let domain = Domain::on(&legacy())?;
             let paths = &domain.paths;
-            write(&paths.lineage_pre_refs(), &bytes(&legacy()))?;
+            write(&paths.lineage_migrating(), &bytes(&legacy()))?;
             if at >= 1 {
                 write(&paths.lineage(), state::STUB)?;
             }
             if at >= 2 {
-                write(&paths.domain_config(), &in_progress())?;
+                let config = if at == 5 { done() } else { in_progress() };
+                write(&paths.domain_config(), &config)?;
             }
             if at == 3 {
                 domain.put_refs(&first_ref)?;
             }
-            if at == 4 {
+            if at >= 4 {
                 domain.put_refs(&expected)?;
             }
 
@@ -599,10 +609,28 @@ mod tests {
         Ok(())
     }
 
+    /// A move stopped after its freeze, before the stub, while `data.json`
+    /// is still the lineage: an older build's write lands, and the resume
+    /// moves and keeps `data.json` as that write left it.
+    #[test(tokio::test)]
+    async fn a_move_stopped_before_the_stub_freezes_data_json_again() -> Res {
+        let domain = Domain::on(&legacy_without_notes())?;
+        write(&domain.paths.lineage_migrating(), &bytes(&legacy()))?;
+
+        let migrated = domain.up().await?;
+
+        assert_eq!(migrated.written, BTreeSet::from([data()]));
+        assert_eq!(
+            read(&domain.paths.lineage_pre_refs()),
+            Some(bytes(&legacy_without_notes()))
+        );
+        domain.assert_done("/home")
+    }
+
     #[test(tokio::test)]
     async fn a_ref_an_interrupted_move_wrote_is_not_rewritten() -> Res {
         let domain = Domain::on(&legacy())?;
-        write(&domain.paths.lineage_pre_refs(), &bytes(&legacy()))?;
+        write(&domain.paths.lineage_migrating(), &bytes(&legacy()))?;
         write(&domain.paths.lineage(), state::STUB)?;
         write(&domain.paths.domain_config(), &in_progress())?;
         let written = bytes(&json!({
@@ -679,19 +707,21 @@ mod tests {
         domain.assert_done("/home")
     }
 
+    /// A later move stopped once done, before removing its own copy.
     #[test(tokio::test)]
-    async fn a_domain_on_refs_is_left_as_it_is_but_for_a_leftover_working_copy() -> Res {
+    async fn a_domain_on_refs_is_left_as_it_is_but_for_a_later_move_s_copy() -> Res {
         let domain = Domain::new()?;
         let paths = &domain.paths;
-        let done = bytes(&json!({"format": 1, "home": "/home", "migration": "done"}));
         write(&paths.lineage(), state::STUB)?;
-        write(&paths.domain_config(), &done)?;
-        write(&paths.lineage_migrating(), &bytes(&legacy()))?;
+        write(&paths.domain_config(), &done())?;
+        write(&paths.lineage_pre_refs(), &bytes(&legacy()))?;
+        write(&paths.lineage_migrating(), &bytes(&legacy_without_notes()))?;
 
         let migrated = domain.up().await?;
 
         assert!(migrated.written.is_empty());
-        assert_eq!(read(&paths.domain_config()), Some(done));
+        assert_eq!(read(&paths.domain_config()), Some(done()));
+        assert_eq!(read(&paths.lineage_pre_refs()), Some(bytes(&legacy())));
         assert!(domain.refs()?.is_empty());
         domain.assert_done("/home")
     }

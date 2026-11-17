@@ -64,7 +64,7 @@ pub(crate) async fn down(storage: &(impl Storage + Sync), paths: &DomainPaths) -
             published,
         } => (archive, archived, published),
         DomainState::Legacy => return Err(not_on_refs(paths, "has not started")),
-        DomainState::StubOnly { .. } | DomainState::Migrating { .. } => {
+        DomainState::StubOnly | DomainState::Migrating => {
             return Err(not_on_refs(paths, "is in progress"));
         }
     };
