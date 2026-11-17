@@ -38,6 +38,7 @@
 
 ### Fixed
 
+- `quilt` runs every command with 8 MiB of stack on every OS, where on Windows it had the 1 MB of the main thread, which a debug build nearly filled (<https://github.com/quiltdata/quilt-rs/pull/1429>)
 - `quilt list`, `quilt status` and the commands that write lineage no longer fail now and then with a parse error such as `EOF while parsing` while another `quilt` or QuiltSync writes the same domain's lineage (<https://github.com/quiltdata/quilt-rs/pull/1416>)
 - `quilt status` of a package whose folder is missing says the working copy is unavailable and lists no changes, where it listed every file as removed, and `quilt commit` refuses, naming the folder, where it recorded an empty revision (<https://github.com/quiltdata/quilt-rs/pull/1397>)
 
