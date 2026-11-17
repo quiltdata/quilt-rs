@@ -82,8 +82,8 @@ impl RefStore {
 
     /// Shows `look` each package's lineage, read under its lock, then hands
     /// `finish` the packages installed now, listed under the domain file
-    /// lock, or `None` if it is busy or that fails. A busy or unreadable
-    /// package is not shown.
+    /// lock, or `None` if it is busy or that fails. A package whose lock is
+    /// busy or can't be taken, or whose ref can't be read, is not shown.
     pub(crate) async fn check_each<T>(
         &self,
         storage: &(impl Storage + Sync),
@@ -92,7 +92,8 @@ impl RefStore {
     ) -> Res<T> {
         let namespaces = self.namespaces(storage).await?;
         for namespace in &namespaces {
-            let Some(_held) = PackageLock::try_take(storage, &self.paths, namespace).await? else {
+            let Ok(Some(_held)) = PackageLock::try_take(storage, &self.paths, namespace).await
+            else {
                 continue;
             };
             if let Ok(lineage) = self.read(storage, namespace).await {
@@ -947,16 +948,19 @@ mod tests {
         Ok(())
     }
 
-    /// A package busy in a writer, or whose ref can't be read, is not shown,
-    /// but every package is handed to `finish`.
+    /// A package busy in a writer, whose lock can't be taken, or whose ref
+    /// can't be read, is not shown, but every package is handed to `finish`.
     #[test(tokio::test)]
     async fn each_package_is_checked_under_its_lock_unless_busy_or_unreadable() -> Res {
         let domain = Domain::new()?;
-        for name in ["busy", "damaged", "free"] {
+        for name in ["busy", "damaged", "free", "unlockable"] {
             domain.install(&lineage(name, BASE, BASE)).await?;
         }
         std::fs::write(domain.paths.package_ref(&package("damaged")), b"{")?;
         let _busy = domain.lock(&package("busy")).await?;
+        let unlockable = domain.paths.package_lock(&package("unlockable"));
+        std::fs::remove_file(&unlockable)?;
+        std::fs::create_dir(&unlockable)?;
 
         let mut shown = Vec::new();
         let all = domain
@@ -973,7 +977,8 @@ mod tests {
             Some(BTreeSet::from([
                 package("busy"),
                 package("damaged"),
-                package("free")
+                package("free"),
+                package("unlockable"),
             ]))
         );
         Ok(())

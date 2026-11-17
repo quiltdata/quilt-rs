@@ -64,8 +64,8 @@ type SeenMap = BTreeMap<Namespace, Seen>;
 
 struct State {
     seen: SeenMap,
-    /// A change the file does not hold yet: its write failed.
-    unsaved: bool,
+    /// What the file holds, as last read or written.
+    saved: SeenMap,
 }
 
 /// Remember `now` as `namespace`'s entry, `None` when it is not installed,
@@ -125,8 +125,8 @@ impl Outside {
             path: Some(path),
             lineage,
             state: Mutex::new(State {
+                saved: seen.clone(),
                 seen,
-                unsaved: false,
             }),
             record,
         })
@@ -139,7 +139,7 @@ impl Outside {
             lineage,
             state: Mutex::new(State {
                 seen: SeenMap::new(),
-                unsaved: false,
+                saved: SeenMap::new(),
             }),
             record,
         })
@@ -151,27 +151,22 @@ impl Outside {
         let outside = Arc::clone(self);
         LineageHook::new(move |namespace, was, is| {
             let mut state = outside.state.lock().expect("outside lock");
-            let before = state.seen.clone();
             if let Some(draft) = saw(&mut state.seen, namespace, was) {
                 outside.record.insert_later(outside.record.number(draft));
             }
             saw(&mut state.seen, namespace, is);
-            outside.save(&mut state, &before);
+            outside.save(&mut state);
         })
     }
 
     /// Record every package whose revision moved since it was last seen.
     pub async fn check(&self) {
-        // Taken at the pass's first step: `finish` saves what `look` changed
-        // since, and a write of ours saves its own.
-        let before = std::sync::OnceLock::new();
         let found = self
             .lineage
             .check_each(
                 &LocalStorage::new(),
                 |namespace, lineage| {
                     let mut state = self.state.lock().expect("outside lock");
-                    before.get_or_init(|| state.seen.clone());
                     // Numbered under the lock `check_each` holds, so a write
                     // after it, ours or another tool's, comes later; kept as
                     // pending, so a stop waits for it.
@@ -181,7 +176,6 @@ impl Outside {
                 },
                 |installed| {
                     let mut state = self.state.lock().expect("outside lock");
-                    let before = before.get_or_init(|| state.seen.clone());
                     // Unknown while a package is installed or removed: a
                     // later pass forgets what is gone.
                     if let Some(installed) = installed {
@@ -189,7 +183,7 @@ impl Outside {
                             .seen
                             .retain(|namespace, _| installed.contains(namespace));
                     }
-                    self.save(&mut state, before);
+                    self.save(&mut state);
                 },
             )
             .await;
@@ -198,15 +192,15 @@ impl Outside {
         }
     }
 
-    /// Write what was seen when it differs from `before`, or an earlier
-    /// write failed. The hook calls it under the lock its write holds, so it
-    /// is written at once: a stop right after a write must not leave an older
-    /// revision here, which the next start would take for another tool's move.
-    fn save(&self, state: &mut State, before: &SeenMap) {
+    /// Write what was seen when the file holds something else. The hook calls
+    /// it under the lock its write holds, so it is written at once: a stop
+    /// right after a write must not leave an older revision here, which the
+    /// next start would take for another tool's move.
+    fn save(&self, state: &mut State) {
         let Some(path) = &self.path else {
             return;
         };
-        if !state.unsaved && *before == state.seen {
+        if state.saved == state.seen {
             return;
         }
         let result = serde_json::to_vec(&state.seen)
@@ -216,9 +210,9 @@ impl Outside {
                 std::fs::write(&partial, bytes)?;
                 std::fs::rename(&partial, path)
             });
-        state.unsaved = result.is_err();
-        if let Err(err) = result {
-            warn!("outside: could not write {}: {err}", path.display());
+        match result {
+            Ok(()) => state.saved = state.seen.clone(),
+            Err(err) => warn!("outside: could not write {}: {err}", path.display()),
         }
     }
 }

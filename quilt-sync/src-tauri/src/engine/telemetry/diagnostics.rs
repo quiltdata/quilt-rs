@@ -221,8 +221,8 @@ pub fn save_diagnostic_zip(info: &DiagnosticInfo) -> Result<PathBuf, Error> {
 }
 
 /// Add each ref and each cache of a remote's tip under `dir` as
-/// `<name>/...`, leaving out the temps of interrupted writes and any file
-/// that can't be read.
+/// `<name>/...`, leaving out the temps of interrupted writes, links, which
+/// could lead out of the folder, and any file that can't be read.
 fn add_refs(
     zip_writer: &mut zip::ZipWriter<std::fs::File>,
     options: zip::write::SimpleFileOptions,
@@ -235,12 +235,17 @@ fn add_refs(
     for entry in entries.flatten() {
         let path = entry.path();
         let entry_name = format!("{name}/{}", entry.file_name().to_string_lossy());
-        if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
+        if kind.is_dir() {
             add_refs(zip_writer, options, &path, &entry_name)?;
-        } else if matches!(
-            path.extension().and_then(|ext| ext.to_str()),
-            Some("json" | "latest")
-        ) && let Ok(contents) = std::fs::read(&path)
+        } else if kind.is_file()
+            && matches!(
+                path.extension().and_then(|ext| ext.to_str()),
+                Some("json" | "latest")
+            )
+            && let Ok(contents) = std::fs::read(&path)
         {
             zip_writer.start_file(entry_name, options)?;
             zip_writer.write_all(&contents)?;
@@ -466,19 +471,28 @@ mod tests {
         }
     }
 
-    /// A ref that can't be read, such as one removed after its folder was
-    /// read, is left out, not an error. A link to nothing stands in for it.
+    /// A link named as a ref is left out, so the bundle never carries a file
+    /// from elsewhere, and so is a ref that can't be read, without failing
+    /// the bundle.
     #[cfg(unix)]
     #[test]
-    fn a_ref_that_cant_be_read_is_left_out() {
+    fn a_link_or_a_ref_that_cant_be_read_is_left_out() {
+        use std::os::unix::fs::PermissionsExt;
+
         let data_tmp = TempDir::new().expect("data tempdir");
         let logs_tmp = TempDir::new().expect("logs tempdir");
         let owner = DomainPaths::new(data_tmp.path().to_path_buf())
             .refs_dir()
             .join("acme");
+        let private = data_tmp.path().join("private.json");
+        write_file(&private, br#"{"secret":true}"#);
         std::fs::create_dir_all(&owner).expect("create owner dir");
-        std::os::unix::fs::symlink(owner.join("missing"), owner.join("data.json"))
-            .expect("link the ref to nothing");
+        std::os::unix::fs::symlink(&private, owner.join("linked.json"))
+            .expect("link a ref to the private file");
+        let locked = owner.join("locked.json");
+        write_file(&locked, b"{}");
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000))
+            .expect("make the ref unreadable");
 
         let info = make_info(
             data_tmp.path().to_path_buf(),
