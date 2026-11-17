@@ -105,9 +105,13 @@ pub(crate) async fn up(storage: &(impl Storage + Sync), paths: &DomainPaths) -> 
             }
             .into());
         }
-        DomainState::Legacy => freeze(storage, paths).await?,
+        DomainState::Legacy => {
+            let _domain = storage.lock_exclusive(paths.domain_file_lock()).await?;
+            freeze(storage, paths).await?
+        }
         DomainState::StubOnly { source } => {
             let frozen = Frozen::read(storage, &source).await?;
+            let _domain = storage.lock_exclusive(paths.domain_file_lock()).await?;
             begin(storage, paths, &frozen.home).await?;
             (source, frozen)
         }
@@ -166,6 +170,8 @@ async fn set_refs_aside(storage: &(impl Storage + Sync), paths: &DomainPaths) ->
     Ok(())
 }
 
+/// The caller holds the domain file lock, without which a sweep may delete
+/// the config's temp mid-write.
 async fn begin(storage: &(impl Storage + Sync), paths: &DomainPaths, home: &Home) -> Res {
     let config = DomainConfig {
         format: DomainConfig::FORMAT,
@@ -733,23 +739,33 @@ mod tests {
         Ok(())
     }
 
-    /// A build on `data.json` writes it under the short lock, so the move,
-    /// which freezes it under that lock, never copies it mid-write.
+    /// The move freezes `data.json` only while no build on `data.json` is
+    /// writing it under the short lock, and no sweep is taking the domain
+    /// config's temps under the domain file lock.
     #[test(tokio::test)]
-    async fn the_move_waits_for_a_build_on_data_json_writing_it() -> Res {
-        let domain = Domain::on(&legacy())?;
-        let short = DomainLineageIo::new(domain.paths.lineage()).short_lock_path();
-        let held = domain.storage.lock_exclusive(&short).await?;
-        let moving = domain.up();
-        tokio::pin!(moving);
+    async fn the_move_begins_once_it_holds_the_short_and_domain_locks() -> Res {
+        let paths = |domain: &Domain| {
+            [
+                DomainLineageIo::new(domain.paths.lineage()).short_lock_path(),
+                domain.paths.domain_file_lock(),
+            ]
+        };
+        for at in 0..2 {
+            let domain = Domain::on(&legacy())?;
+            let held = domain.storage.lock_exclusive(&paths(&domain)[at]).await?;
+            let moving = domain.up();
+            tokio::pin!(moving);
 
-        let waited = tokio::time::timeout(Duration::from_millis(300), &mut moving).await;
-        assert!(waited.is_err(), "the move did not wait");
-        assert_eq!(read(&domain.paths.lineage()), Some(bytes(&legacy())));
-        drop(held);
-        moving.await?;
+            let waited = tokio::time::timeout(Duration::from_millis(300), &mut moving).await;
+            assert!(waited.is_err(), "the move did not wait for lock {at}");
+            assert_eq!(read(&domain.paths.lineage()), Some(bytes(&legacy())));
+            assert!(!domain.paths.domain_config().exists());
+            drop(held);
+            moving.await?;
 
-        domain.assert_done("/home")
+            domain.assert_done("/home")?;
+        }
+        Ok(())
     }
 
     /// The structure is the contract: a key `PackageLineage` writes is not
