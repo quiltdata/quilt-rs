@@ -156,13 +156,11 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
 
     /// Hands the domain's lineage back from refs to `data.json`, or finishes
     /// a rollback that was interrupted, and returns the folder the refs were
-    /// moved to. Refused while any ref holds what `data.json` cannot. This
-    /// domain value does not move the lineage to refs again, but any other
-    /// opened on refs does.
+    /// moved to. Refused while any ref holds what `data.json` cannot. A
+    /// domain opened on refs afterwards moves the lineage there again.
     #[cfg(any(test, feature = "ref-store-preview"))]
     pub async fn rollback_lineage(&self) -> Res<PathBuf> {
         let rolled = lineage::refs::rollback::down(&self.storage, &self.paths).await?;
-        self.lineage.found_on_refs();
         Ok(rolled.archive)
     }
 
@@ -1189,29 +1187,22 @@ mod ref_store_tests {
     }
 
     /// A domain value that has found the domain on refs never moves it again,
-    /// so an app left running does not undo a rollback, whether it ran it or
-    /// another process did.
+    /// so an app left running does not undo a rollback another process ran.
     #[test(tokio::test)]
     async fn a_domain_rolled_back_under_a_running_app_is_not_moved_again() -> Res<()> {
-        for rolled_by_itself in [true, false] {
-            let root = TempDir::new()?;
-            on_data_json(root.path()).await?;
-            let running = LocalDomain::new(root.path().join("domain")).with_ref_store();
-            running.list_installed_packages().await?;
-            if rolled_by_itself {
-                running.rollback_lineage().await?;
-            } else {
-                LocalDomain::new(root.path().join("domain"))
-                    .rollback_lineage()
-                    .await?;
-            }
+        let root = TempDir::new()?;
+        on_data_json(root.path()).await?;
+        let running = LocalDomain::new(root.path().join("domain")).with_ref_store();
+        running.list_installed_packages().await?;
+        LocalDomain::new(root.path().join("domain"))
+            .rollback_lineage()
+            .await?;
 
-            let listed = running.list_installed_packages().await;
+        let listed = running.list_installed_packages().await;
 
-            assert!(listed.is_err(), "{listed:?}");
-            assert!(!is_stub(&running.paths.lineage()), "{rolled_by_itself}");
-            assert!(!running.paths.domain_config().exists());
-        }
+        assert!(listed.is_err(), "{listed:?}");
+        assert!(!is_stub(&running.paths.lineage()));
+        assert!(!running.paths.domain_config().exists());
         Ok(())
     }
 
@@ -1237,9 +1228,12 @@ mod ref_store_tests {
             let before = files(&paths);
             let domain = LocalDomain::new(root.path().join("domain")).with_ref_store();
 
-            let home = domain.stored_home().await?;
+            let home = domain.stored_home().await;
 
-            assert_eq!(home, Some(Home::from(root.path().join("home"))));
+            assert!(
+                matches!(&home, Ok(Some(home)) if *home == Home::from(root.path().join("home"))),
+                "{stopped_after_the_stub}: {home:?}"
+            );
             assert_eq!(files(&paths), before, "{stopped_after_the_stub}");
         }
         Ok(())

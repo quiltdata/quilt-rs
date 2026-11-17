@@ -262,19 +262,12 @@ impl DomainLineageIo {
                     migrated.skipped.len()
                 );
             }
-            self.found_on_refs();
+            self.ready
+                .0
+                .store(true, std::sync::atomic::Ordering::Release);
         }
         let _ = storage;
         Ok(())
-    }
-
-    /// Marks this handle and its clones as having found the domain on refs,
-    /// as a rollback through it has.
-    #[cfg(any(test, feature = "ref-store-preview"))]
-    pub(crate) fn found_on_refs(&self) {
-        self.ready
-            .0
-            .store(true, std::sync::atomic::Ordering::Release);
     }
 
     /// This handle, with its hook, on the domain at `paths` with a ref per

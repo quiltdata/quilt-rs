@@ -99,12 +99,9 @@ mod tests {
         let domain = temp_dir.path().to_string_lossy().to_string();
         let args = Args::try_parse_from(["quilt", "--domain", &domain, "lineage", "rollback"])
             .map_err(|err| Error::Test(err.to_string()))?;
-        let output = init(args).await?;
+        let output = init(args).await;
 
-        assert!(
-            matches!(output, Std::Out(_)),
-            "the rollback finished: {output:?}"
-        );
+        assert!(matches!(output, Ok(Std::Out(_))), "{output:?}");
         assert!(!dot_quilt.join("domain.json").exists());
         assert!(
             quilt_rs::LocalDomain::new(temp_dir.path())
