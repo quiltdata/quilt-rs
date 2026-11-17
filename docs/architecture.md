@@ -41,15 +41,14 @@ in code by `LocalDomain`. Its on-disk layout:
 ├── installed/          # Local package installations, by namespace
 ├── objects/            # Content-addressed object store (deduplicated)
 ├── refs/               # Each installed package's origin and commit tracking
-├── locks/              # One lock per package, held by each of its writers
+├── locks/              # Each package's lock, among others
 ├── domain.json         # The home directory, and where a move of the lineage stands
-└── domain.lock         # Held by install, uninstall and each write of domain.json
+└── domain.lock         # The domain's lock
 ```
 
 Each package's lineage is a ref of its own, `refs/<owner>/<name>.json`,
 written whole under that package's lock, so a damaged ref costs that
-package alone and updates of different packages never wait on each other;
-installing and uninstalling also take the domain lock.
+package alone and updates of different packages never wait on each other.
 A remote's tip is a cache beside it, `<name>.json.latest`, that may be
 missing or stale. Earlier versions kept every package in one
 `data.json`; a domain moves from there on first use, and

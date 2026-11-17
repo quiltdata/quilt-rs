@@ -31,14 +31,14 @@ home directory path; `refs/<owner>/<package>.json` holds one installed
 package's remote origin and local commit state. Path is hardcoded relative to
 `$DATA_DIR`.
 
-| Artifact | Path | Written |
-|----------|------|---------|
-| Package ref | `.quilt/refs/<owner>/<package>.json` | Under the package's lock; an install or uninstall also takes the domain lock |
-| Remote tip cache | `.quilt/refs/<owner>/<package>.json.latest` | Under the package's lock; may be missing or stale |
-| Domain config | `.quilt/domain.json` | Under the domain lock |
-| Package lock | `.quilt/locks/<owner>/<package>.lock` | Created by its first holder, never deleted |
-| Domain lock | `.quilt/domain.lock` | Created by its first holder |
-| Move lock | `.quilt/migrate.lock` | Held by a move to refs or back |
+| Artifact | Path |
+|----------|------|
+| Package ref | `.quilt/refs/<owner>/<package>.json` |
+| Remote tip cache, which may be missing or stale | `.quilt/refs/<owner>/<package>.json.latest` |
+| Domain config | `.quilt/domain.json` |
+| Package lock | `.quilt/locks/<owner>/<package>.lock` |
+| Domain lock | `.quilt/domain.lock` |
+| Move lock, held by a move to refs or back | `.quilt/migrate.lock` |
 
 A domain kept in `data.json` by an earlier version moves here on its first
 use, which keeps that file as `data.json.pre-refs` and leaves in `data.json` a
