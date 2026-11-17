@@ -42,9 +42,10 @@ package's remote origin and local commit state. Path is hardcoded relative to
 
 A domain kept in `data.json` by an earlier version moves here on its first
 use, which keeps that file as `data.json.pre-refs` and leaves in `data.json` a
-stub that earlier versions fail to read. The move copies `data.json` to
-`data.json.migrating` and reads only that copy, under `data.json.lock`, the
-lock earlier versions write `data.json` under. `quilt lineage rollback` moves
+stub that earlier versions fail to read. Under `data.json.lock`, which
+earlier versions write `data.json` under, the move copies `data.json` to
+`data.json.migrating` and puts the stub in its place; it then reads only that
+copy. `quilt lineage rollback` moves
 the domain back: it writes `data.json.rollback` from the refs, moves `refs/`
 to `refs.rolled-back-<uuid>/`, and puts that file in place of the stub. A
 move or rollback a kill interrupted resumes from what these files show.

@@ -158,15 +158,13 @@ async fn test_list_installed_packages() -> Res<()> {
     Ok(())
 }
 
-/// A domain on refs leaves in `data.json` only the stub.
-#[test(tokio::test)]
-async fn a_domain_on_refs_leaves_only_the_stub_in_data_json() -> Res<()> {
-    let temp_dir = TempDir::new()?;
-    let source = temp_dir.path().join("source");
+/// Sets `domain` up under `root` and writes its lineage every way a package
+/// can, leaving one package installed.
+async fn write_every_way(domain: &LocalDomain, root: &Path) -> Res<()> {
+    let source = root.join("source");
     std::fs::create_dir_all(&source)?;
     std::fs::write(source.join("a.txt"), b"a")?;
-    let domain = domain(temp_dir.path().join("domain"));
-    domain.set_home(temp_dir.path().join("home")).await?;
+    domain.set_home(root.join("home")).await?;
     let (package, _) = domain
         .create_package(
             ("foo", "bar").into(),
@@ -187,17 +185,40 @@ async fn a_domain_on_refs_leaves_only_the_stub_in_data_json() -> Res<()> {
         .await?;
     domain.uninstall_package(("foo", "baz").into()).await?;
     domain.gc().await?;
-
-    assert!(
-        std::fs::read(domain.paths.lineage())
-            .is_ok_and(|bytes| crate::lineage::refs::state::is_stub(&bytes))
-    );
     assert_eq!(
         domain.list_installed_packages().await?.len(),
         1,
         "the writes landed"
     );
     Ok(())
+}
+
+/// A domain on refs leaves in `data.json` only the stub.
+#[test(tokio::test)]
+async fn a_domain_on_refs_leaves_only_the_stub_in_data_json() -> Res<()> {
+    let temp_dir = TempDir::new()?;
+    let domain = domain(temp_dir.path().join("domain"));
+    write_every_way(&domain, temp_dir.path()).await?;
+
+    assert!(
+        std::fs::read(domain.paths.lineage())
+            .is_ok_and(|bytes| crate::lineage::refs::state::is_stub(&bytes))
+    );
+    Ok(())
+}
+
+/// A domain on `data.json`, the older build in tests, is never moved to
+/// refs: tests of the two builds together would otherwise run refs twice.
+#[test(tokio::test)]
+async fn a_domain_on_data_json_creates_no_ref_or_domain_config() -> Res<()> {
+    let temp_dir = TempDir::new()?;
+    let domain =
+        LocalDomain::new(temp_dir.path().join("domain")).with_lineage_store(LineageStore::DataJson);
+    let wrote = write_every_way(&domain, temp_dir.path()).await;
+
+    assert!(!domain.paths.refs_dir().exists());
+    assert!(!domain.paths.domain_config().exists());
+    wrote
 }
 
 /// The ways a package's stored entry can be one this build cannot use.
