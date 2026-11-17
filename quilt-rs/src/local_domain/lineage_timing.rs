@@ -193,10 +193,20 @@ async fn time<T, F: Future<Output = Res<T>>>(
     Ok((runs[RUNS / 2], runs[RUNS * 3 / 4], runs[RUNS - 1]))
 }
 
-/// What `quilt list` reads: every package's lineage.
+/// What the quilt CLI runs before every command that needs a home: a sweep,
+/// then two reads of the home.
+async fn start(domain: &LocalDomain<LocalStorage, MockRemote>) -> Res {
+    domain.sweep_leftovers().await?;
+    domain.get_home().await?;
+    domain.get_home().await?;
+    Ok(())
+}
+
+/// What `quilt list` runs: every package's lineage.
 async fn list(
     domain: &LocalDomain<LocalStorage, MockRemote>,
 ) -> Res<BTreeMap<Namespace, Res<PackageLineage>>> {
+    start(domain).await?;
     domain.read_packages().await
 }
 
@@ -205,6 +215,7 @@ async fn status(
     domain: &LocalDomain<LocalStorage, MockRemote>,
     namespace: &Namespace,
 ) -> Res<InstalledPackageStatus> {
+    start(domain).await?;
     domain
         .get_installed_package(namespace)
         .await?
