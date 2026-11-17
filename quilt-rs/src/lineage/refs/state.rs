@@ -264,7 +264,7 @@ mod tests {
         let paths = DomainPaths::new(root.path().to_path_buf());
         std::fs::create_dir_all(paths.dot_quilt_dir())?;
         std::fs::write(paths.lineage(), STUB)?;
-        let io = DomainLineageIo::data_json(paths.lineage());
+        let io = DomainLineageIo::new(paths.clone()).into_data_json();
         let storage = LocalStorage::new();
 
         let parsed = DomainLineage::from_slice(STUB);

@@ -159,7 +159,7 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
     #[must_use]
     pub fn with_lineage_store(mut self, store: lineage::LineageStore) -> Self {
         if store == lineage::LineageStore::DataJson {
-            self.lineage = self.lineage.into_data_json(self.paths.lineage());
+            self.lineage = self.lineage.into_data_json();
         }
         self
     }
@@ -1473,24 +1473,7 @@ mod ref_store_tests {
 }
 
 #[cfg(test)]
-#[path = "local_domain"]
-mod on_data_json {
-    use super::*;
-
-    const BACKEND: lineage::LineageStore = lineage::LineageStore::DataJson;
-
-    mod backend_tests;
-}
-#[cfg(test)]
-#[path = "local_domain"]
-#[expect(clippy::duplicate_mod, reason = "the tests run once on each store")]
-mod on_refs {
-    use super::*;
-
-    const BACKEND: lineage::LineageStore = lineage::LineageStore::Refs;
-
-    mod backend_tests;
-}
+mod backend_tests;
 
 #[cfg(test)]
 mod lineage_timing;

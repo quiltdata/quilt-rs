@@ -3,7 +3,7 @@ use test_log::test;
 
 use super::*;
 
-use super::on_data_json::sync_flow_tests::DeniedRemote;
+use super::sync_flow_tests::DeniedRemote;
 use crate::error::LineageError;
 use crate::io::remote::mocks::MockRemote;
 use crate::lineage::DomainLineageIo;
@@ -80,7 +80,7 @@ async fn diverged_over<R: Remote>(
         ..PackageLineage::default()
     };
     let domain_lineage_io = DomainLineageIo::write_fixture(
-        crate::lineage::LineageStore::DataJson,
+        BACKEND,
         &storage,
         &paths,
         "/tmp/working_dir",

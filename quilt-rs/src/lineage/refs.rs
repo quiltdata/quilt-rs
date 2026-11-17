@@ -17,6 +17,7 @@ mod store;
 mod roundtrip_tests;
 
 pub(crate) use store::RefStore;
+pub(super) use store::read_if_exists;
 
 /// What a file in `refs/<owner>/` is, read from its name.
 #[derive(Debug, PartialEq, Eq)]

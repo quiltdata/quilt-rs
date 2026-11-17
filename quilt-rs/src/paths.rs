@@ -374,14 +374,14 @@ impl DomainPaths {
     /// `data.json` as the domain's first move to refs found it, which no
     /// later move overwrites.
     #[must_use]
-    pub(crate) fn lineage_pre_refs(&self) -> PathBuf {
+    pub fn lineage_pre_refs(&self) -> PathBuf {
         self.dot_quilt_dir()
             .join(format!("{LINEAGE_FILE}.pre-refs"))
     }
 
     /// Every move's frozen copy of `data.json`, which it migrates from.
     #[must_use]
-    pub(crate) fn lineage_migrating(&self) -> PathBuf {
+    pub fn lineage_migrating(&self) -> PathBuf {
         self.dot_quilt_dir()
             .join(format!("{LINEAGE_FILE}.migrating"))
     }
@@ -389,13 +389,13 @@ impl DomainPaths {
     /// The `data.json` a rollback builds from the refs, before it replaces
     /// the stub.
     #[must_use]
-    pub(crate) fn lineage_rollback(&self) -> PathBuf {
+    pub fn lineage_rollback(&self) -> PathBuf {
         self.dot_quilt_dir()
             .join(format!("{LINEAGE_FILE}.rollback"))
     }
 
     /// The short lock, `data.json.lock`, every build that writes `data.json`
-    /// takes; `DomainLineageIo` names it too.
+    /// takes.
     #[must_use]
     pub(crate) fn lineage_lock(&self) -> PathBuf {
         self.dot_quilt_dir().join(format!("{LINEAGE_FILE}.lock"))

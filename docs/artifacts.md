@@ -31,10 +31,23 @@ home directory path; `refs/<owner>/<package>.json` holds one installed
 package's remote origin and local commit state. Path is hardcoded relative to
 `$DATA_DIR`.
 
+| Artifact | Path | Written |
+|----------|------|---------|
+| Package ref | `.quilt/refs/<owner>/<package>.json` | Under the package's lock; created and removed under the domain lock too |
+| Remote tip cache | `.quilt/refs/<owner>/<package>.json.latest` | Under the package's lock; may be missing or stale |
+| Domain config | `.quilt/domain.json` | Under the domain lock |
+| Package lock | `.quilt/locks/<owner>/<package>.lock` | Created by its first holder, never deleted |
+| Domain lock | `.quilt/domain.lock` | Created by its first holder |
+| Move lock | `.quilt/migrate.lock` | Held by a move to refs or back |
+
 A domain kept in `data.json` by an earlier version moves here on its first
 use, which keeps that file as `data.json.pre-refs` and leaves in `data.json` a
-stub that earlier versions fail to read. `quilt lineage rollback` moves the
-domain back to `data.json`.
+stub that earlier versions fail to read. The move copies `data.json` to
+`data.json.migrating` and reads only that copy, under `data.json.lock`, the
+lock earlier versions write `data.json` under. `quilt lineage rollback` moves
+the domain back: it writes `data.json.rollback` from the refs, moves `refs/`
+to `refs.rolled-back-<uuid>/`, and puts that file in place of the stub. A
+move or rollback a kill interrupted resumes from what these files show.
 
 ## Package state (`$DATA_DIR/.quilt/`)
 

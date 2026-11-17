@@ -2061,51 +2061,33 @@ impl<S: Storage + Clone + Sync, R: Remote> LockedPackage<S, R> {
     }
 }
 
-// The package-flow suites, run once against each lineage store from the same
-// files in `installed_package/`. A suite names the store as `BACKEND`.
+/// The store the package-flow suites keep their fixtures' lineage in.
 #[cfg(test)]
-#[path = "installed_package"]
-mod on_data_json {
-    use super::*;
+const BACKEND: lineage::LineageStore = lineage::LineageStore::Refs;
 
-    const BACKEND: lineage::LineageStore = lineage::LineageStore::DataJson;
-
-    mod change_catalog_tests;
-    mod missing_folder_tests;
-    mod move_to_tests;
-    mod older_revision_tests;
-    mod ordered_writers_tests;
-    mod set_remote_tests;
-    pub(super) mod sync_flow_tests;
-    mod tracked_set_tests;
-}
 #[cfg(test)]
-#[path = "installed_package"]
-#[expect(clippy::duplicate_mod, reason = "the suites run once on each store")]
-mod on_refs {
-    use super::*;
-
-    const BACKEND: lineage::LineageStore = lineage::LineageStore::Refs;
-
-    mod change_catalog_tests;
-    mod missing_folder_tests;
-    mod move_to_tests;
-    mod older_revision_tests;
-    mod ordered_writers_tests;
-    mod set_remote_tests;
-    mod sync_flow_tests;
-    mod tracked_set_tests;
-}
-
+mod change_catalog_tests;
 #[cfg(test)]
 mod current_revision_tests;
 #[cfg(test)]
-mod data_json_tests;
+mod missing_folder_tests;
+#[cfg(test)]
+mod move_to_tests;
+#[cfg(test)]
+mod older_revision_tests;
+#[cfg(test)]
+mod ordered_writers_tests;
 #[cfg(test)]
 mod resolve_comparison_tests;
 #[cfg(test)]
 mod revision_history_tests;
 #[cfg(test)]
+mod set_remote_tests;
+#[cfg(test)]
 mod stat_cache_tests;
+#[cfg(test)]
+mod sync_flow_tests;
+#[cfg(test)]
+mod tracked_set_tests;
 #[cfg(test)]
 mod unreachable_host_tests;

@@ -41,8 +41,19 @@ in code by `LocalDomain`. Its on-disk layout:
 ├── installed/          # Local package installations, by namespace
 ├── objects/            # Content-addressed object store (deduplicated)
 ├── refs/               # Each installed package's origin and commit tracking
-└── domain.json         # The home directory
+├── locks/              # One lock per package, held by each of its writers
+├── domain.json         # The home directory, and where a move of the lineage stands
+└── domain.lock         # Held to install, uninstall or change the home
 ```
+
+Each package's lineage is a ref of its own, `refs/<owner>/<name>.json`,
+written whole under that package's lock, so a damaged ref costs that
+package alone and writers of different packages never wait on each other.
+A remote's tip is a cache beside it, `<name>.json.latest`, that may be
+missing or stale. Earlier versions kept every package in one
+`data.json`; a domain moves from there on first use, and
+`quilt lineage rollback` moves it back
+([artifacts](artifacts.md)).
 
 The load-bearing choice is that a checked-out working file is a **mutable
 copy out of `objects/`**, never the canonical object itself. Editing a

@@ -21,6 +21,7 @@ use super::state::DomainState;
 use super::store::put;
 use super::store::read_config;
 use super::store::read_if_exists;
+use super::store::set_migration;
 use crate::Error;
 use crate::Res;
 use crate::error::LineageError;
@@ -200,7 +201,7 @@ async fn write_refs(
             continue;
         }
         store
-            .create_moved(storage, &held, &new_ref, &lineage)
+            .create_unchecked(storage, &held, new_ref, &lineage)
             .await?;
         crate::failpoint::hit("migrate.up.after-ref");
         migrated.written.insert(namespace);
@@ -231,14 +232,7 @@ fn moved(
 }
 
 async fn finish(storage: &(impl Storage + Sync), paths: &DomainPaths) -> Res {
-    {
-        let _domain = storage.lock_exclusive(paths.domain_file_lock()).await?;
-        let mut config = read_config(storage, paths)
-            .await?
-            .ok_or(LineageError::Missing)?;
-        config.migration = Some(MigrationState::Done);
-        put(storage, &paths.domain_config(), config.to_vec()?, None).await?;
-    }
+    set_migration(storage, paths, MigrationState::Done).await?;
     crate::failpoint::hit("migrate.up.after-done");
     keep_frozen_copy(storage, paths).await
 }
@@ -271,7 +265,6 @@ mod tests {
     use super::*;
     use crate::io::storage::LocalStorage;
     use crate::lineage::CommitState;
-    use crate::lineage::DomainLineageIo;
     use crate::lineage::SyncScope;
     use crate::lineage::refs::RefEntry;
     use crate::lineage::refs::format::Extra;
@@ -786,12 +779,8 @@ mod tests {
     /// config's temps under the domain file lock.
     #[test(tokio::test)]
     async fn the_move_begins_once_it_holds_the_short_and_domain_locks() -> Res {
-        let paths = |domain: &Domain| {
-            [
-                DomainLineageIo::data_json(domain.paths.lineage()).short_lock_path(),
-                domain.paths.domain_file_lock(),
-            ]
-        };
+        let paths =
+            |domain: &Domain| [domain.paths.lineage_lock(), domain.paths.domain_file_lock()];
         for at in 0..2 {
             let domain = Domain::on(&legacy())?;
             let held = domain.storage.lock_exclusive(&paths(&domain)[at]).await?;

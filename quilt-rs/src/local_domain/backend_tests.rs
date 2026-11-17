@@ -1,4 +1,4 @@
-//! `LocalDomain` on the lineage store `BACKEND`.
+//! `LocalDomain` over its lineage store.
 
 use tempfile::TempDir;
 use test_log::test;
@@ -8,7 +8,7 @@ use crate::lineage::LineageStore;
 use crate::lineage::PackageLineage;
 
 fn domain(root: impl AsRef<Path>) -> LocalDomain {
-    LocalDomain::new(root).with_lineage_store(BACKEND)
+    LocalDomain::new(root)
 }
 
 /// A domain that was never used, not even its folder, has no home, and
@@ -138,7 +138,7 @@ async fn test_list_installed_packages() -> Res<()> {
         )
     });
     lineage::DomainLineageIo::write_fixture(
-        BACKEND,
+        LineageStore::Refs,
         &local_domain.storage,
         &local_domain.paths,
         temp_dir.path(),
@@ -158,11 +158,9 @@ async fn test_list_installed_packages() -> Res<()> {
     Ok(())
 }
 
-/// Each store's files appear only in a domain that uses it: refs leave in
-/// `data.json` only the stub, and `data.json` never creates a ref or the
-/// domain config.
+/// A domain on refs leaves in `data.json` only the stub.
 #[test(tokio::test)]
-async fn a_domain_writes_only_its_own_stores_files() -> Res<()> {
+async fn a_domain_on_refs_leaves_only_the_stub_in_data_json() -> Res<()> {
     let temp_dir = TempDir::new()?;
     let source = temp_dir.path().join("source");
     std::fs::create_dir_all(&source)?;
@@ -190,17 +188,10 @@ async fn a_domain_writes_only_its_own_stores_files() -> Res<()> {
     domain.uninstall_package(("foo", "baz").into()).await?;
     domain.gc().await?;
 
-    let paths = &domain.paths;
-    match BACKEND {
-        LineageStore::DataJson => {
-            assert!(!paths.refs_dir().exists());
-            assert!(!paths.domain_config().exists());
-        }
-        LineageStore::Refs => assert!(
-            std::fs::read(paths.lineage())
-                .is_ok_and(|bytes| crate::lineage::refs::state::is_stub(&bytes))
-        ),
-    }
+    assert!(
+        std::fs::read(domain.paths.lineage())
+            .is_ok_and(|bytes| crate::lineage::refs::state::is_stub(&bytes))
+    );
     assert_eq!(
         domain.list_installed_packages().await?.len(),
         1,
@@ -242,21 +233,11 @@ async fn damage(domain: &LocalDomain, namespace: &Namespace, how: Damage) -> Res
 }
 
 /// Validation item 1 of <https://github.com/quiltdata/quilt-specs/pull/292>:
-/// with one package's entry damaged, every other package is still listed,
-/// but on `data.json`, which is read whole, none of them can be used, and on
-/// refs all of them can. The listing names the damaged package either way.
+/// with one package's ref damaged, every other package is still listed and
+/// usable, and the listing names the damaged package's file.
 #[test(tokio::test)]
-async fn a_damaged_package_costs_every_other_on_data_json_and_none_on_refs() -> Res<()> {
-    // What the damaged package's error says: on refs, the file it is in.
-    let (ways, named, usable_others): (&[Damage], _, _) = match BACKEND {
-        LineageStore::DataJson => (&[Damage::Unparsable], "Failed to parse lineage file", 0),
-        LineageStore::Refs => (
-            &[Damage::Unparsable, Damage::LaterFormat, Damage::TwoCopies],
-            "damaged.json",
-            3,
-        ),
-    };
-    for &how in ways {
+async fn a_damaged_package_costs_no_other() -> Res<()> {
+    for how in [Damage::Unparsable, Damage::LaterFormat, Damage::TwoCopies] {
         let temp_dir = TempDir::new()?;
         let domain = domain(temp_dir.path().join("domain"));
         let home = domain.set_home(temp_dir.path().join("home")).await?;
@@ -272,11 +253,16 @@ async fn a_damaged_package_costs_every_other_on_data_json_and_none_on_refs() -> 
         let listed = domain.read_packages().await?;
         let error = listed[&damaged].as_ref().err().map(ToString::to_string);
         assert!(
-            error.as_ref().is_some_and(|err| err.contains(named)),
+            error
+                .as_ref()
+                .is_some_and(|err| err.contains("damaged.json")),
             "{how:?}: {error:?}"
         );
-        let mut usable = 0;
         for namespace in &others {
+            assert!(
+                listed.get(namespace).is_some_and(Result::is_ok),
+                "{how:?}: {namespace}"
+            );
             std::fs::write(
                 paths::package_home(&home, namespace).join("new.txt"),
                 b"new",
@@ -285,22 +271,11 @@ async fn a_damaged_package_costs_every_other_on_data_json_and_none_on_refs() -> 
                 .create_installed_package(namespace.clone())
                 .commit("new".to_string(), flow::UserMeta::Keep, None, None)
                 .await;
-            match committed {
-                Ok(flow::Committed::Recorded(_)) => usable += 1,
-                // `data.json` is parsed whole, so the damaged entry stops it.
-                Err(Error::Lineage(LineageError::Parse(_))) => {}
-                other => panic!("{how:?}: {namespace}: {other:?}"),
-            }
+            assert!(
+                matches!(committed, Ok(flow::Committed::Recorded(_))),
+                "{how:?}: {namespace}: {committed:?}"
+            );
         }
-        let still_listed = others
-            .iter()
-            .filter(|namespace| listed.get(namespace).is_some_and(Result::is_ok))
-            .count();
-        assert_eq!(
-            (still_listed, usable),
-            (others.len(), usable_others),
-            "{how:?}"
-        );
     }
     Ok(())
 }
