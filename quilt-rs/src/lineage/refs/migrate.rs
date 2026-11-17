@@ -20,7 +20,6 @@ use uuid::Uuid;
 
 use super::RefStore;
 use super::format::DomainConfig;
-use super::format::Extra;
 use super::format::MigrationState;
 use super::format::PackageRef;
 use super::state;
@@ -47,8 +46,7 @@ use quilt_uri::Namespace;
 pub(crate) struct Migrated {
     /// The packages whose ref this run wrote.
     pub written: BTreeSet<Namespace>,
-    /// The entries left out, by their name in the frozen copy of `data.json`,
-    /// which keeps them.
+    /// The entries left out, by their name in `data.json`.
     pub skipped: BTreeMap<String, Error>,
 }
 
@@ -180,7 +178,9 @@ async fn begin(storage: &(impl Storage + Sync), paths: &DomainPaths, home: &Home
         format: DomainConfig::FORMAT,
         home: home.clone(),
         migration: Some(MigrationState::InProgress),
-        extra: Extra::new(),
+        extra: read_config(storage, paths)
+            .await?
+            .map_or_default(|config| config.extra),
     };
     put(storage, &paths.domain_config(), config.to_vec()?, None).await?;
     crate::failpoint::hit("migrate.up.after-config");
@@ -203,7 +203,7 @@ async fn write_refs(
             Ok(moved) => moved,
             Err(err) => {
                 warn!(
-                    "❌ {name} was not moved to refs and stays in {}: {err}",
+                    "❌ {name} in {} was not moved to refs: {err}",
                     source.display()
                 );
                 migrated.skipped.insert(name, err);
@@ -278,6 +278,7 @@ mod tests {
     use crate::lineage::DomainLineageIo;
     use crate::lineage::SyncScope;
     use crate::lineage::refs::RefEntry;
+    use crate::lineage::refs::format::Extra;
     use crate::lineage::refs::format::TipCache;
     use quilt_uri::ManifestUri;
 
@@ -693,6 +694,23 @@ mod tests {
         assert!(migrated.written.is_empty());
         assert_eq!(read(&paths.domain_config()), Some(done));
         assert!(domain.refs()?.is_empty());
+        domain.assert_done("/home")
+    }
+
+    #[test(tokio::test)]
+    async fn a_domain_config_keeps_the_keys_this_version_does_not_read() -> Res {
+        let domain = Domain::on(&legacy())?;
+        write(
+            &domain.paths.domain_config(),
+            &bytes(&json!({"format": 1, "home": "/old", "future": true})),
+        )?;
+
+        domain.up().await?;
+
+        assert_eq!(
+            domain.config()?.extra,
+            Extra::from_iter([("future".to_string(), json!(true))])
+        );
         domain.assert_done("/home")
     }
 
