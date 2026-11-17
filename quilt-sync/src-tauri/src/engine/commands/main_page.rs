@@ -994,7 +994,6 @@ pub(super) async fn refresh_main_page_package_from_model(
             state: PackageStateDto::NoWorkingCopy,
             role_switch_host: None,
             downloads: None,
-            changed_files: None,
         });
     }
     // No remote at all: `PackageState::resolve` ignores the file count for `Local`, so the
