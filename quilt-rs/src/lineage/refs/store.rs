@@ -93,7 +93,9 @@ impl RefStore {
     ) -> Res<T> {
         let namespaces = match self.namespaces(storage).await {
             Ok(namespaces) => namespaces,
-            Err(Error::Lineage(LineageError::RefsNotWritable { .. })) => return Ok(finish(None)),
+            Err(Error::Lineage(LineageError::RefsNotWritable { .. } | LineageError::Missing)) => {
+                return Ok(finish(None));
+            }
             Err(err) => return Err(err),
         };
         for namespace in &namespaces {
@@ -1460,12 +1462,8 @@ mod tests {
                     listing,
                 )
                 .await;
-            let forgot_nothing = match config {
-                None => matches!(checked, Err(Error::Lineage(LineageError::Missing))),
-                Some(_) => matches!(checked, Ok(None)),
-            };
             assert!(
-                shown.is_empty() && forgot_nothing,
+                shown.is_empty() && matches!(checked, Ok(None)),
                 "check_each, {state}: {shown:?}, {checked:?}"
             );
             let x = store.read(storage, &package("x")).await;
