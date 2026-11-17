@@ -601,9 +601,8 @@ impl DomainLineageIo {
         .await
     }
 
-    /// Apply `edit` to one package's entry under the lock and write it: a
-    /// field update that does not depend on other work. A package that is not
-    /// installed is an error.
+    /// [`Self::update_package_lineage`] applying `edit` to the entry. A
+    /// package that is not installed is an error.
     #[cfg(any(test, feature = "testing"))]
     pub async fn edit_package_lineage(
         &self,
@@ -862,7 +861,7 @@ impl PackageLineageIo {
             .await
     }
 
-    /// Splices `lineage` in as this package's entry, leaving every other
+    /// Store `lineage` as this package's entry, leaving every other
     /// package's entry as it is on disk now. The caller holds the package's
     /// lock, so the entry it replaces is the one it read.
     pub(crate) async fn write_locked(
