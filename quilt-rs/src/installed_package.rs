@@ -2068,6 +2068,7 @@ mod on_data_json {
     mod ordered_writers_tests;
     mod set_remote_tests;
     pub(super) mod sync_flow_tests;
+    mod tracked_set_tests;
 }
 #[cfg(test)]
 #[path = "installed_package"]
@@ -2084,6 +2085,7 @@ mod on_refs {
     mod ordered_writers_tests;
     mod set_remote_tests;
     mod sync_flow_tests;
+    mod tracked_set_tests;
 }
 
 #[cfg(test)]
