@@ -197,6 +197,13 @@ pub fn save_diagnostic_zip(info: &DiagnosticInfo) -> Result<PathBuf, Error> {
         zip_writer.write_all(&contents)?;
     }
 
+    // The lineage of a domain that keeps a ref per package
+    if let Ok(contents) = std::fs::read(domain_paths.domain_config()) {
+        zip_writer.start_file("domain.json", options)?;
+        zip_writer.write_all(&contents)?;
+    }
+    add_refs(&mut zip_writer, options, &domain_paths.refs_dir(), "refs")?;
+
     // Add client.json per host (OAuth client registration — client ID only)
     for host in &info.auth_hosts {
         let client_json = auth_dir.join(host).join(quilt::paths::AUTH_CLIENT);
@@ -211,6 +218,35 @@ pub fn save_diagnostic_zip(info: &DiagnosticInfo) -> Result<PathBuf, Error> {
     zip_writer.finish()?;
 
     Ok(zip_path)
+}
+
+/// Add each ref and each cache of a remote's tip under `dir` as
+/// `<name>/...`, leaving out the temps of interrupted writes and any file
+/// that can't be read.
+fn add_refs(
+    zip_writer: &mut zip::ZipWriter<std::fs::File>,
+    options: zip::write::SimpleFileOptions,
+    dir: &Path,
+    name: &str,
+) -> Result<(), Error> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Ok(());
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let entry_name = format!("{name}/{}", entry.file_name().to_string_lossy());
+        if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            add_refs(zip_writer, options, &path, &entry_name)?;
+        } else if matches!(
+            path.extension().and_then(|ext| ext.to_str()),
+            Some("json" | "latest")
+        ) && let Ok(contents) = std::fs::read(&path)
+        {
+            zip_writer.start_file(entry_name, options)?;
+            zip_writer.write_all(&contents)?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -366,6 +402,92 @@ mod tests {
             serde_json::from_slice(&entries["metadata.json"]).expect("parse metadata.json");
         assert_eq!(parsed.authenticated_hosts, [] as [String; 0]);
         assert_eq!(parsed, DiagnosticMetadata::from_info(&info));
+    }
+
+    /// A domain with a ref per package sends its config, each ref and each
+    /// cache of a remote's tip as they are on disk, and no interrupted
+    /// write's temp.
+    #[tokio::test]
+    async fn a_bundle_carries_each_ref_and_tip() {
+        let data_tmp = TempDir::new().expect("data tempdir");
+        let logs_tmp = TempDir::new().expect("logs tempdir");
+        let domain = quilt::LocalDomain::new(data_tmp.path()).with_ref_store();
+        domain.set_home(data_tmp.path()).await.expect("set home");
+        let namespace = quilt_uri::Namespace::from(("acme", "data"));
+        let lineage = quilt::lineage::PackageLineage {
+            remote_uri: Some(quilt_uri::ManifestUri {
+                bucket: "bucket".to_string(),
+                namespace: namespace.clone(),
+                hash: "a".repeat(64),
+                origin: None,
+            }),
+            base_hash: "a".repeat(64),
+            latest_hash: "b".repeat(64),
+            ..quilt::lineage::PackageLineage::default()
+        };
+        domain
+            .lineage_io()
+            .update_package_lineage(
+                &quilt::io::storage::LocalStorage::new(),
+                &namespace,
+                |entry| {
+                    *entry = Some(lineage);
+                    Ok(())
+                },
+            )
+            .await
+            .expect("install");
+        let dot_quilt = DomainPaths::new(data_tmp.path().to_path_buf()).dot_quilt_dir();
+        write_file(
+            &dot_quilt.join("refs/acme/data.json.tmp-0b3c55e2-8d4f-4e0a-9f8a-2c1d7e6b5a43"),
+            b"{",
+        );
+
+        let info = make_info(
+            data_tmp.path().to_path_buf(),
+            logs_tmp.path().to_path_buf(),
+            Vec::new(),
+        );
+        let entries = read_zip_entries(&save_diagnostic_zip(&info).expect("save zip"));
+
+        let names: Vec<&str> = entries.keys().map(String::as_str).collect();
+        assert_eq!(
+            names,
+            [
+                "domain.json",
+                "metadata.json",
+                "refs/acme/data.json",
+                "refs/acme/data.json.latest",
+            ]
+        );
+        for name in names.into_iter().filter(|name| *name != "metadata.json") {
+            let on_disk = std::fs::read(dot_quilt.join(name)).expect("read the domain's file");
+            assert_eq!(entries[name], on_disk, "{name}");
+        }
+    }
+
+    /// A ref that can't be read, such as one removed after its folder was
+    /// read, is left out, not an error. A link to nothing stands in for it.
+    #[cfg(unix)]
+    #[test]
+    fn a_ref_that_cant_be_read_is_left_out() {
+        let data_tmp = TempDir::new().expect("data tempdir");
+        let logs_tmp = TempDir::new().expect("logs tempdir");
+        let owner = DomainPaths::new(data_tmp.path().to_path_buf())
+            .refs_dir()
+            .join("acme");
+        std::fs::create_dir_all(&owner).expect("create owner dir");
+        std::os::unix::fs::symlink(owner.join("missing"), owner.join("data.json"))
+            .expect("link the ref to nothing");
+
+        let info = make_info(
+            data_tmp.path().to_path_buf(),
+            logs_tmp.path().to_path_buf(),
+            Vec::new(),
+        );
+        let entries = read_zip_entries(&save_diagnostic_zip(&info).expect("save zip"));
+        let names: Vec<&str> = entries.keys().map(String::as_str).collect();
+        assert_eq!(names, ["metadata.json"]);
     }
 
     /// An install with no identity writes `install_id: null` rather than omitting

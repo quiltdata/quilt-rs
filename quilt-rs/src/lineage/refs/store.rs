@@ -80,14 +80,15 @@ impl RefStore {
         Ok(true)
     }
 
-    /// Each package's lineage, read under its lock, shown to `look`, then
-    /// every package's namespace handed to `finish`. A package whose lock
-    /// is busy, or whose ref can't be read, is not shown.
+    /// Shows `look` each package's lineage, read under its lock, then hands
+    /// `finish` the packages installed now, listed under the domain file
+    /// lock, or `None` if it is busy or that fails. A busy or unreadable
+    /// package is not shown.
     pub(crate) async fn check_each<T>(
         &self,
         storage: &(impl Storage + Sync),
         mut look: impl FnMut(&Namespace, &PackageLineage),
-        finish: impl FnOnce(&BTreeSet<Namespace>) -> T,
+        finish: impl FnOnce(Option<&BTreeSet<Namespace>>) -> T,
     ) -> Res<T> {
         let namespaces = self.namespaces(storage).await?;
         for namespace in &namespaces {
@@ -98,7 +99,28 @@ impl RefStore {
                 look(namespace, &lineage);
             }
         }
-        Ok(finish(&namespaces))
+        match self.list_locked(storage).await {
+            Ok(Some((_domain, installed))) => Ok(finish(Some(&installed))),
+            Ok(None) => Ok(finish(None)),
+            Err(err) => {
+                warn!("❌ Could not list the packages again after the check: {err}");
+                Ok(finish(None))
+            }
+        }
+    }
+
+    /// `None` while the domain file lock is busy.
+    async fn list_locked(
+        &self,
+        storage: &(impl Storage + Sync),
+    ) -> Res<Option<(LockGuard, BTreeSet<Namespace>)>> {
+        let Some(held) = storage
+            .try_lock_exclusive(self.paths.domain_file_lock())
+            .await?
+        else {
+            return Ok(None);
+        };
+        Ok(Some((held, self.namespaces(storage).await?)))
     }
 
     /// The home in the domain config, empty when the config has none.
@@ -846,6 +868,11 @@ mod tests {
         ("acme", name).into()
     }
 
+    /// What `check_each` handed `finish`.
+    fn listing(installed: Option<&BTreeSet<Namespace>>) -> Option<BTreeSet<Namespace>> {
+        installed.cloned()
+    }
+
     /// `name`'s lineage, pushed at `base`, with `latest` its remote's tip.
     fn lineage(name: &str, base: &str, latest: &str) -> PackageLineage {
         PackageLineage {
@@ -937,14 +964,85 @@ mod tests {
             .check_each(
                 &domain.storage,
                 |namespace, _| shown.push(namespace.clone()),
-                Clone::clone,
+                listing,
             )
             .await?;
         assert_eq!(shown, [package("free")]);
         assert_eq!(
             all,
-            BTreeSet::from([package("busy"), package("damaged"), package("free")])
+            Some(BTreeSet::from([
+                package("busy"),
+                package("damaged"),
+                package("free")
+            ]))
         );
+        Ok(())
+    }
+
+    /// `finish` gets the packages installed once the pass ends, not those
+    /// listed before it.
+    #[test(tokio::test)]
+    async fn finish_gets_the_packages_installed_after_the_pass() -> Res {
+        let domain = Domain::new()?;
+        for name in ["gone", "kept"] {
+            domain.install(&lineage(name, BASE, BASE)).await?;
+        }
+        let gone = domain.paths.package_ref(&package("gone"));
+        let late = domain.paths.package_ref(&package("late"));
+
+        let all = domain
+            .store
+            .check_each(
+                &domain.storage,
+                |_, _| {
+                    if gone.exists() {
+                        std::fs::copy(&gone, &late).unwrap();
+                        std::fs::remove_file(&gone).unwrap();
+                    }
+                },
+                listing,
+            )
+            .await?;
+        assert_eq!(
+            all,
+            Some(BTreeSet::from([package("kept"), package("late")]))
+        );
+        Ok(())
+    }
+
+    /// `look` has run, so `finish` does too when the packages can't be
+    /// listed again, told they are unknown.
+    #[test(tokio::test)]
+    async fn finish_gets_no_listing_when_the_packages_cant_be_listed_again() -> Res {
+        let domain = Domain::new()?;
+        domain.install(&lineage("kept", BASE, BASE)).await?;
+        std::fs::remove_file(domain.paths.domain_file_lock())?;
+        std::fs::create_dir(domain.paths.domain_file_lock())?;
+
+        let all = domain
+            .store
+            .check_each(&domain.storage, |_, _| {}, listing)
+            .await?;
+        assert_eq!(all, None);
+        Ok(())
+    }
+
+    /// A pass waits on no lock: while the domain file lock is busy, `finish`
+    /// is told the packages are unknown.
+    #[test(tokio::test)]
+    async fn finish_gets_no_listing_while_the_domain_lock_is_busy() -> Res {
+        let domain = Domain::new()?;
+        domain.install(&lineage("kept", BASE, BASE)).await?;
+        let _held = domain
+            .storage
+            .lock_exclusive(domain.paths.domain_file_lock())
+            .await?;
+
+        let pass = domain.store.check_each(&domain.storage, |_, _| {}, listing);
+        let all = tokio::time::timeout(Duration::from_secs(10), pass)
+            .await
+            .expect("the pass does not wait on the domain file lock")?;
+        assert_eq!(all, None);
         Ok(())
     }
 
