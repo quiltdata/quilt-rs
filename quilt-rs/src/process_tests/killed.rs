@@ -200,6 +200,9 @@ impl World {
                 Operation::Pull => synced && has("a.txt", b"two") && has("b.txt", b"same"),
                 Operation::Install => synced,
                 Operation::Uninstall => false,
+                Operation::PullAndDownload | Operation::CreateAndCommit => {
+                    unreachable!("not in the kill matrix")
+                }
             };
         Ok((done, lost))
     }
@@ -300,9 +303,6 @@ async fn run(operation: Operation, store: LineageStore, failpoint: Option<&str>)
     })
 }
 
-/// How long an operation may take before its cell fails.
-const LIMIT: Duration = Duration::from_secs(30);
-
 const OPERATIONS: [Operation; 5] = [
     Operation::Commit,
     Operation::Pull,
@@ -310,8 +310,6 @@ const OPERATIONS: [Operation; 5] = [
     Operation::Push,
     Operation::Uninstall,
 ];
-
-const STORES: [LineageStore; 2] = [LineageStore::DataJson, LineageStore::Refs];
 
 type Matrix = BTreeMap<(usize, Step, usize), Cell>;
 

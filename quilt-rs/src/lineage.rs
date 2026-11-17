@@ -533,6 +533,12 @@ impl DomainLineageIo {
         PathBuf::from(path)
     }
 
+    /// [`Self::lock_path`], for a test that holds the short lock itself.
+    #[cfg(test)]
+    pub(crate) fn short_lock_path(&self) -> PathBuf {
+        self.lock_path()
+    }
+
     /// **The short lock.** Under `data.json.lock`: re-read the whole record,
     /// let `step` change it, and write it back if it changed. An error from
     /// `step` writes nothing.

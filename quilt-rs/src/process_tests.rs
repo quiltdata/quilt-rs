@@ -1,6 +1,6 @@
-//! Package operations run in a child process, on a domain and a remote both
+//! Package operations run in child processes, on a domain and a remote both
 //! kept on disk, so a test can kill one with nothing unwinding and look at
-//! what it left.
+//! what it left, or run several at once.
 
 use std::path::Path;
 use std::path::PathBuf;
@@ -32,9 +32,16 @@ use quilt_uri::ManifestUri;
 use quilt_uri::Namespace;
 use quilt_uri::S3Uri;
 
+mod concurrent;
+#[cfg(unix)]
 mod killed;
 
 const BUCKET: &str = "b";
+
+const STORES: [LineageStore; 2] = [LineageStore::DataJson, LineageStore::Refs];
+
+/// How long an operation may take before the test fails.
+const LIMIT: Duration = Duration::from_secs(30);
 
 /// The package every operation acts on.
 fn target() -> Namespace {
@@ -157,7 +164,14 @@ enum Operation {
     Install,
     Push,
     Uninstall,
+    /// Pulls, then downloads the file the argument names.
+    PullAndDownload,
+    /// Creates the package the argument names, then commits a new file to
+    /// it [`COMMITS`] times.
+    CreateAndCommit,
 }
+
+const COMMITS: usize = 3;
 
 impl Operation {
     fn name(self) -> &'static str {
@@ -167,6 +181,8 @@ impl Operation {
             Operation::Install => "install",
             Operation::Push => "push",
             Operation::Uninstall => "uninstall",
+            Operation::PullAndDownload => "pull-and-download",
+            Operation::CreateAndCommit => "create-and-commit",
         }
     }
 
@@ -177,6 +193,8 @@ impl Operation {
             Operation::Install,
             Operation::Push,
             Operation::Uninstall,
+            Operation::PullAndDownload,
+            Operation::CreateAndCommit,
         ]
         .into_iter()
         .find(|operation| operation.name() == name)
@@ -208,6 +226,24 @@ impl Operation {
                 package.push(host_config).await?;
             }
             Operation::Uninstall => world.domain().uninstall_package(target()).await?,
+            Operation::PullAndDownload => {
+                Box::pin(Operation::Pull.run(world, "")).await?;
+                package.install_paths(&[PathBuf::from(arg)]).await?;
+            }
+            Operation::CreateAndCommit => {
+                let namespace = Namespace::try_from(arg)?;
+                let (package, _) = world
+                    .domain()
+                    .create_package(namespace, None, None, UserMeta::Clear)
+                    .await?;
+                let home = package.package_home().await?;
+                for n in 0..COMMITS {
+                    std::fs::write(home.join(format!("{n}.txt")), arg)?;
+                    package
+                        .commit(n.to_string(), UserMeta::Keep, None, host_config.clone())
+                        .await?;
+                }
+            }
         }
         Ok(())
     }
@@ -273,6 +309,7 @@ fn command(world: &World, operation: Operation, arg: &str) -> Res<std::process::
 
 /// Runs `operation` in a child and kills it once it reaches the failpoint
 /// `name`. Returns whether it did: a child that ends first is not killed.
+#[cfg(unix)]
 fn killed_at(world: &World, operation: Operation, arg: &str, name: &str) -> Res<bool> {
     let signals = TempDir::new()?;
     // Its output stays out of the test's: a killed child has nothing to
@@ -284,7 +321,7 @@ fn killed_at(world: &World, operation: Operation, arg: &str, name: &str) -> Res<
         .stderr(std::process::Stdio::null())
         .spawn()?;
     let reached = signals.path().join(format!("{name}.reached"));
-    let deadline = Instant::now() + Duration::from_secs(30);
+    let deadline = Instant::now() + LIMIT;
     let mut exited = None;
     while !reached.exists() && exited.is_none() && Instant::now() < deadline {
         // Not `?`: the child is killed below on every path.
