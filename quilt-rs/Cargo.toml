@@ -19,9 +19,6 @@ homepage.workspace = true
 testing = []
 # Compiles in the failpoints crash tests kill a process at; see `src/failpoint.rs`.
 failpoints = []
-# A preview of per-package lineage: `LocalDomain::with_ref_store` keeps a
-# domain's lineage in a ref per package instead of `data.json`.
-ref-store-preview = []
 
 [dependencies]
 async-trait.workspace = true

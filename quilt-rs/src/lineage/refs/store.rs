@@ -77,7 +77,11 @@ impl RefStore {
     ) -> Res<T> {
         let namespaces = match self.namespaces(storage).await {
             Ok(namespaces) => namespaces,
-            Err(Error::Lineage(LineageError::RefsNotWritable { .. } | LineageError::Missing)) => {
+            Err(Error::Lineage(
+                LineageError::RefsNotWritable { .. }
+                | LineageError::Missing
+                | LineageError::MissingHome,
+            )) => {
                 return Ok(finish(None));
             }
             Err(err) => return Err(err),
@@ -143,7 +147,16 @@ impl RefStore {
         let Some(config) = self.read_config(storage).await? else {
             return Err(LineageError::Missing.into());
         };
-        self.writable(Some(config))?;
+        // Refused without a home, as `data.json` is, so a new domain asks for one.
+        if self
+            .writable(Some(config))?
+            .home
+            .as_ref()
+            .as_os_str()
+            .is_empty()
+        {
+            return Err(LineageError::MissingHome.into());
+        }
         let listed = self.listed(storage).await?;
         // A rollback begun meanwhile may have archived the refs listed.
         self.writable_config(storage).await?;

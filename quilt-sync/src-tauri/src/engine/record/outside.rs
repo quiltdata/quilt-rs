@@ -328,10 +328,7 @@ mod tests {
 
     /// The lineage of a domain on `dir` in `store`, with its home set.
     async fn domain(dir: &Path, store: LineageStore) -> DomainLineageIo {
-        let domain = match store {
-            LineageStore::DataJson => LocalDomain::new(dir),
-            LineageStore::Refs => LocalDomain::new(dir).with_ref_store(),
-        };
+        let domain = LocalDomain::new(dir).with_lineage_store(store);
         domain.set_home(dir).await.unwrap();
         domain.lineage_io().clone()
     }
@@ -413,7 +410,9 @@ mod tests {
         outside.check().await;
         put(&theirs, on("b", None)).await;
 
-        let package = LocalDomain::new(dir.path()).create_installed_package(ns());
+        let package = LocalDomain::new(dir.path())
+            .with_lineage_store(store)
+            .create_installed_package(ns());
         let held = package.lock().await.unwrap();
         outside.check().await;
         drop(held);

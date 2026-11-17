@@ -2322,7 +2322,7 @@ mod tests {
     impl Default for SilentHost {
         fn default() -> Self {
             Self {
-                domain: tokio::sync::Mutex::new(quilt::LocalDomain::new(std::path::PathBuf::new())),
+                domain: tokio::sync::Mutex::new(crate::engine::model::mocks::nowhere()),
             }
         }
     }
@@ -2398,7 +2398,7 @@ mod tests {
     impl Default for SilentRole {
         fn default() -> Self {
             Self {
-                domain: tokio::sync::Mutex::new(quilt::LocalDomain::new(std::path::PathBuf::new())),
+                domain: tokio::sync::Mutex::new(crate::engine::model::mocks::nowhere()),
             }
         }
     }

@@ -1,7 +1,6 @@
 //!
 //! Per-package lineage: one ref file per package under `.quilt/refs/`, a
 //! domain config for the home, and a disposable cache of each remote tip.
-//! Only the `ref-store-preview` feature compiles it outside tests.
 
 use std::ffi::OsStr;
 use std::ffi::OsString;
