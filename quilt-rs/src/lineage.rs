@@ -175,7 +175,9 @@ impl DomainLineageIo {
                         .into());
                     }
                     _ => {
-                        let migrated = refs::migrate::up(storage, paths).await?;
+                        // Boxed: inline, the move once per handle would grow
+                        // every writer's future, and a debug build's stack.
+                        let migrated = Box::pin(refs::migrate::up(storage, paths)).await?;
                         log::info!(
                             "Moved the lineage of {} packages to refs, leaving out {}",
                             migrated.written.len(),
@@ -761,6 +763,23 @@ mod tests {
     fn the_default_scope_writes_no_key() {
         let json = serde_json::to_string(&PackageLineage::default()).unwrap();
         assert!(!json.contains("sync_scope"), "{json}");
+    }
+
+    /// Every writer awaits its package's lock, so the lock future is part of
+    /// every command's, and a debug `quilt` on Windows has 1 MB of stack for
+    /// them all. The move to refs, which a handle runs at most once, stays
+    /// out of it.
+    #[test]
+    fn a_writers_lock_future_does_not_carry_the_move_to_refs() {
+        let paths = paths::DomainPaths::new(PathBuf::from("domain"));
+        let io = DomainLineageIo::new(paths.clone());
+        let storage = crate::io::storage::LocalStorage::new();
+        let namespace = Namespace::from(("foo", "bar"));
+
+        let locking = io.lock_package(&storage, &paths, &namespace);
+
+        let size = std::mem::size_of_val(&locking);
+        assert!(size <= 2048, "the lock future is {size} bytes");
     }
 
     #[test]
