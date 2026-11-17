@@ -30,7 +30,7 @@
 
 ### Changed
 
-- Under the hood, a build with the non-default `ref-store-preview` feature can keep a domain's lineage in a ref per package; every default build keeps `data.json` and behaves as before (<https://github.com/quiltdata/quilt-rs/pull/1410>)
+- Under the hood, a build with the non-default `ref-store-preview` feature can move a domain's lineage to a ref per package, and `quilt lineage rollback` moves it back; every default build keeps `data.json` and behaves as before (<https://github.com/quiltdata/quilt-rs/pull/1410>)
 - `quilt list` shows a package whose lineage can't be read as a row naming the error (`unreadable: …`, and `error` in `--json`) and lists the others, where that package failed the whole list (<https://github.com/quiltdata/quilt-rs/pull/1402>)
 - `quilt create` without `--meta` writes no `user_meta` key, where it previously wrote `"user_meta": {}` (<https://github.com/quiltdata/quilt-rs/pull/1394>)
 - Building from source now requires Rust 1.99 or newer (<https://github.com/quiltdata/quilt-rs/pull/1370>)

@@ -1,6 +1,5 @@
-//! Validation item 5's round trips: the `data.json` files in
-//! `fixtures/lineage/`, moved to refs by a domain opened on them and back by
-//! its rollback.
+//! The `data.json` files in `fixtures/lineage/`, moved to refs by a domain
+//! opened on them and back by its rollback.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -32,11 +31,14 @@ const KNOWN: [&str; 6] = [
     "sync_scope",
 ];
 
+fn fixtures_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/lineage")
+}
+
 /// Each fixture's name and contents.
 fn fixtures() -> Res<Vec<(String, Value)>> {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/lineage");
     let mut fixtures = Vec::new();
-    for entry in std::fs::read_dir(dir)? {
+    for entry in std::fs::read_dir(fixtures_dir())? {
         let path = entry?.path();
         let name = path
             .file_name()
@@ -51,11 +53,8 @@ fn fixtures() -> Res<Vec<(String, Value)>> {
 
 /// The fixture `quilt-cli-0.40.2.json`, written by that release.
 fn released() -> Res<Value> {
-    Ok(fixtures()?
-        .into_iter()
-        .find(|(name, _)| name == "quilt-cli-0.40.2.json")
-        .expect("the fixture")
-        .1)
+    let path = fixtures_dir().join("quilt-cli-0.40.2.json");
+    Ok(serde_json::from_slice(&std::fs::read(path)?)?)
 }
 
 struct Domain {
@@ -66,21 +65,23 @@ struct Domain {
 impl Domain {
     /// A domain whose `data.json` is `lineage`.
     fn on(lineage: &Value) -> Res<Self> {
-        let root = TempDir::new()?;
-        let paths = DomainPaths::new(root.path().join("domain"));
-        std::fs::create_dir_all(paths.dot_quilt_dir())?;
-        std::fs::write(paths.lineage(), serde_json::to_vec_pretty(lineage)?)?;
-        Ok(Self { root, paths })
+        Self::write(TempDir::new()?, lineage)
     }
 
     /// [`Self::on`] with the home moved into the test's folder, for a test
     /// that places files.
     fn housing(lineage: &Value) -> Res<Self> {
-        let domain = Self::on(lineage)?;
+        let root = TempDir::new()?;
         let mut lineage = lineage.clone();
-        lineage["home"] = json!(domain.root.path().join("home"));
-        std::fs::write(domain.paths.lineage(), serde_json::to_vec_pretty(&lineage)?)?;
-        Ok(domain)
+        lineage["home"] = json!(root.path().join("home"));
+        Self::write(root, &lineage)
+    }
+
+    fn write(root: TempDir, lineage: &Value) -> Res<Self> {
+        let paths = DomainPaths::new(root.path().join("domain"));
+        std::fs::create_dir_all(paths.dot_quilt_dir())?;
+        std::fs::write(paths.lineage(), serde_json::to_vec_pretty(lineage)?)?;
+        Ok(Self { root, paths })
     }
 
     /// The domain as a build with refs opens it.
@@ -127,15 +128,28 @@ fn entries(lineage: &Value) -> Res<BTreeMap<String, Value>> {
     Ok(serde_json::from_value(lineage["packages"].clone())?)
 }
 
-/// `entry` as `PackageLineage` reads it, without the paths' hashes and
-/// times, which the refs do not keep.
-fn authoritative(entry: &Value) -> Res<PackageLineage> {
-    let mut lineage: PackageLineage = serde_json::from_value(entry.clone())?;
+/// `lineage` without the paths' hashes and times, which the refs do not
+/// keep.
+fn untimed(mut lineage: PackageLineage) -> PackageLineage {
     lineage
         .paths
         .values_mut()
         .for_each(|path| *path = PathState::default());
-    Ok(lineage)
+    lineage
+}
+
+/// `entry` as `PackageLineage` reads it, [`untimed`].
+fn authoritative(entry: &Value) -> Res<PackageLineage> {
+    Ok(untimed(serde_json::from_value(entry.clone())?))
+}
+
+/// Each of `domain`'s packages, [`untimed`].
+async fn read(domain: &LocalDomain) -> Res<BTreeMap<Namespace, PackageLineage>> {
+    let mut read = BTreeMap::new();
+    for (namespace, lineage) in domain.read_packages().await? {
+        read.insert(namespace, untimed(lineage?));
+    }
+    Ok(read)
 }
 
 /// The keys of `entry` that `PackageLineage` does not read.
@@ -149,15 +163,15 @@ fn unknown(entry: &Value) -> BTreeMap<String, Value> {
         .collect()
 }
 
-/// Checks that `back`, the `data.json` a rollback wrote between `when.0`
-/// and `when.1`, holds what `original` held, but for the paths' hashes,
-/// which it leaves out, and their times, which it takes from the working
-/// files, and with none there from when it ran.
+/// Checks that `back`, written by a rollback between `before` and `after`
+/// with no working file there, holds `original` but for what the rollback
+/// rebuilds: each path's hash left out, and its time taken from that run.
 fn assert_round_trip(
     name: &str,
     original: &Value,
     back: &Value,
-    when: (DateTime<Utc>, DateTime<Utc>),
+    before: DateTime<Utc>,
+    after: DateTime<Utc>,
 ) -> Res {
     // A missing home reads as an empty one, as `data.json`'s parser has it.
     let home = |lineage: &Value| {
@@ -179,7 +193,7 @@ fn assert_round_trip(
         for (key, path) in paths {
             assert_eq!(path.get("hash"), None, "{at}: {key}");
             let timestamp: DateTime<Utc> = serde_json::from_value(path["timestamp"].clone())?;
-            assert!(when.0 <= timestamp && timestamp <= when.1, "{at}: {key}");
+            assert!(before <= timestamp && timestamp <= after, "{at}: {key}");
         }
     }
     Ok(())
@@ -202,23 +216,19 @@ async fn each_fixture_moves_to_refs_and_back_keeping_what_it_held() -> Res {
         let domain = Domain::on(original)?;
         let on_refs = domain.on_refs();
 
-        let moved = on_refs.read_packages().await?;
+        let moved = read(&on_refs).await?;
 
         let mut expected = BTreeMap::new();
         for (namespace, entry) in entries(original)? {
             expected.insert(Namespace::try_from(namespace)?, authoritative(&entry)?);
         }
-        let mut read = BTreeMap::new();
-        for (namespace, lineage) in moved {
-            read.insert(namespace, lineage?);
-        }
-        assert_eq!(read, expected, "{name}");
+        assert_eq!(moved, expected, "{name}");
 
         let before = Utc::now();
         on_refs.rollback_lineage().await?;
         let after = Utc::now();
 
-        assert_round_trip(name, original, &domain.data_json()?, (before, after))?;
+        assert_round_trip(name, original, &domain.data_json()?, before, after)?;
     }
     Ok(())
 }
@@ -257,11 +267,13 @@ async fn two_rollbacks_with_an_upgrade_between_both_complete() -> Res {
     let first_data_json = std::fs::read(domain.paths.lineage())?;
     let mut rolled = Vec::new();
 
+    let before = Utc::now();
     for _ in 0..2 {
         let on_refs = domain.on_refs();
         on_refs.list_installed_packages().await?;
         rolled.push(on_refs.rollback_lineage().await?);
     }
+    let after = Utc::now();
 
     rolled.sort();
     assert_eq!(domain.archives()?, rolled);
@@ -273,15 +285,7 @@ async fn two_rollbacks_with_an_upgrade_between_both_complete() -> Res {
         std::fs::read(domain.paths.lineage_pre_refs())?,
         first_data_json
     );
-    let back = domain.data_json()?;
-    for (namespace, entry) in entries(&original)? {
-        assert_eq!(
-            authoritative(&back["packages"][&namespace])?,
-            authoritative(&entry)?,
-            "{namespace}"
-        );
-    }
-    Ok(())
+    assert_round_trip("twice", &original, &domain.data_json()?, before, after)
 }
 
 /// What the older client writes between a rollback and the next upgrade is
@@ -298,26 +302,14 @@ async fn an_older_client_s_writes_after_a_rollback_are_in_the_refs_after_the_nex
         .create_package(created.clone(), None, Some("after".into()), UserMeta::Clear)
         .await?;
     older.uninstall_package(("acme", "scoped").into()).await?;
-    let mut expected = BTreeMap::new();
-    for (namespace, lineage) in older.read_packages().await? {
-        let mut lineage = lineage?;
-        lineage
-            .paths
-            .values_mut()
-            .for_each(|path| *path = PathState::default());
-        expected.insert(namespace, lineage);
-    }
+    let expected = read(&older).await?;
 
-    let moved = domain.on_refs().read_packages().await?;
+    let moved = read(&domain.on_refs()).await?;
 
-    let mut read = BTreeMap::new();
-    for (namespace, lineage) in moved {
-        read.insert(namespace, lineage?);
-    }
     assert_eq!(
-        read.keys().collect::<Vec<_>>(),
-        [&("acme", "created").into(), &("acme", "local").into()]
+        moved.keys().collect::<Vec<_>>(),
+        [&created, &("acme", "local").into()]
     );
-    assert_eq!(read, expected);
+    assert_eq!(moved, expected);
     Ok(())
 }

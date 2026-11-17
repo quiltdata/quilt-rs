@@ -1857,12 +1857,11 @@ mod tests {
         assert!(output.status.success(), "{output:?}");
         let dot_quilt = domain.path().join(".quilt");
         let data_json = std::fs::read(dot_quilt.join("data.json")).unwrap_or_default();
-        let marker = serde_json::from_slice::<serde_json::Value>(&data_json)
-            .map(|record| record["lineage"].clone())
-            .unwrap_or_default();
         let found = if quilt_rs::lineage::DomainLineage::from_slice(&data_json).is_ok() {
             "lineage"
-        } else if marker == "refs" {
+        } else if serde_json::from_slice::<serde_json::Value>(&data_json)
+            .is_ok_and(|record| record["lineage"] == "refs")
+        {
             "stub"
         } else {
             "neither"

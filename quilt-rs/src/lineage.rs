@@ -248,7 +248,7 @@ impl DomainLineageIo {
             reason = "only a domain on refs is moved"
         )
     )]
-    pub(crate) async fn ready(&self, storage: &(impl Storage + Sync)) -> Res {
+    async fn ready(&self, storage: &(impl Storage + Sync)) -> Res {
         #[cfg(any(test, feature = "ref-store-preview"))]
         if let Some(store) = &self.refs
             && !self.ready.0.load(std::sync::atomic::Ordering::Acquire)
@@ -268,6 +268,30 @@ impl DomainLineageIo {
         }
         let _ = storage;
         Ok(())
+    }
+
+    /// The package's lock, for a writer: [`Self::ready`] runs first, since
+    /// the move takes every package's lock and would wait on the writer's.
+    pub(crate) async fn lock_package(
+        &self,
+        storage: &(impl Storage + Sync),
+        paths: &paths::DomainPaths,
+        namespace: &Namespace,
+    ) -> Res<PackageLock> {
+        self.ready(storage).await?;
+        PackageLock::take(storage, paths, namespace).await
+    }
+
+    /// [`Self::lock_package`] without the wait: `None` while another writer
+    /// holds it.
+    pub(crate) async fn try_lock_package(
+        &self,
+        storage: &(impl Storage + Sync),
+        paths: &paths::DomainPaths,
+        namespace: &Namespace,
+    ) -> Res<Option<PackageLock>> {
+        self.ready(storage).await?;
+        PackageLock::try_take(storage, paths, namespace).await
     }
 
     /// This handle, with its hook, on the domain at `paths` with a ref per
@@ -414,11 +438,12 @@ impl DomainLineageIo {
         storage: &(impl Storage + Sync),
         namespace: &Namespace,
     ) -> Res<bool> {
+        let installed = self.contains(storage, namespace).await?;
         #[cfg(any(test, feature = "ref-store-preview"))]
         if let Some(store) = &self.refs {
             store.writable_config(storage).await?;
         }
-        self.contains(storage, namespace).await
+        Ok(installed)
     }
 
     /// [`Self::contains`], refusing a package this build can't remove: on
@@ -674,8 +699,7 @@ impl DomainLineageIo {
     ) -> Res<T> {
         #[cfg(any(test, feature = "ref-store-preview"))]
         if let Some(store) = &self.refs {
-            self.ready(storage).await?;
-            let held = PackageLock::take(storage, store.paths(), namespace).await?;
+            let held = self.lock_package(storage, store.paths(), namespace).await?;
             return store.update_entry(storage, &held, step).await;
         }
         self.splice_entry(storage, namespace, step).await

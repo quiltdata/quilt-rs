@@ -293,8 +293,10 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
         info!("Installing package: {}", manifest_uri.namespace);
         debug!("Installing from manifest: {}", manifest_uri.display());
         let namespace = &manifest_uri.namespace;
-        self.lineage.ready(&self.storage).await?;
-        let held = PackageLock::take(&self.storage, &self.paths, namespace).await?;
+        let held = self
+            .lineage
+            .lock_package(&self.storage, &self.paths, namespace)
+            .await?;
 
         // Read before anything is created: a record that does not parse
         // stops it here.
@@ -346,8 +348,10 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
         user_meta: flow::UserMeta,
     ) -> Res<(InstalledPackage<S, R>, flow::LeftOut)> {
         info!("Creating package: {}", namespace);
-        self.lineage.ready(&self.storage).await?;
-        let held = PackageLock::take(&self.storage, &self.paths, &namespace).await?;
+        let held = self
+            .lineage
+            .lock_package(&self.storage, &self.paths, &namespace)
+            .await?;
 
         let home = self.get_home().await?;
         let installed = self
@@ -387,8 +391,10 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
 
     pub async fn uninstall_package(&self, namespace: Namespace) -> Res<()> {
         info!("Uninstalling package: {}", namespace);
-        self.lineage.ready(&self.storage).await?;
-        let held = PackageLock::take(&self.storage, &self.paths, &namespace).await?;
+        let held = self
+            .lineage
+            .lock_package(&self.storage, &self.paths, &namespace)
+            .await?;
         self.uninstall_locked(&held).await
     }
 
@@ -404,9 +410,11 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
     /// was read is still pruned.
     pub async fn uninstall_package_pruning(&self, namespace: Namespace) -> Res<flow::Pruned> {
         info!("Uninstalling package and its objects: {}", namespace);
-        self.lineage.ready(&self.storage).await?;
         let (candidates, unread) = {
-            let held = PackageLock::take(&self.storage, &self.paths, &namespace).await?;
+            let held = self
+                .lineage
+                .lock_package(&self.storage, &self.paths, &namespace)
+                .await?;
             let found = flow::package_objects(&self.paths, &self.storage, &namespace).await?;
             self.uninstall_locked(&held).await?;
             found
@@ -1113,6 +1121,19 @@ mod ref_store_tests {
         std::fs::read(path).is_ok_and(|bytes| lineage::refs::state::is_stub(&bytes))
     }
 
+    /// The domain config as a rollback killed after its first step leaves
+    /// it, at `home`.
+    fn rolling_back(paths: &paths::DomainPaths, home: &Path) -> Res<()> {
+        let archive = lineage::refs::state::archive_name(uuid::Uuid::new_v4());
+        let config = serde_json::json!({
+            "format": 1,
+            "home": home,
+            "migration": {"rolling_back": {"archive": archive}},
+        });
+        std::fs::write(paths.domain_config(), serde_json::to_vec(&config)?)?;
+        Ok(())
+    }
+
     /// The move takes each package's lock, so a writer moves the domain
     /// before it takes its own.
     #[test(tokio::test)]
@@ -1151,12 +1172,7 @@ mod ref_store_tests {
         on_data_json(root.path()).await?;
         let moved = LocalDomain::new(root.path().join("domain")).with_ref_store();
         moved.list_installed_packages().await?;
-        let config = serde_json::json!({
-            "format": 1,
-            "home": root.path().join("home"),
-            "migration": {"rolling_back": {"archive": lineage::refs::state::archive_name(uuid::Uuid::new_v4())}},
-        });
-        std::fs::write(moved.paths.domain_config(), serde_json::to_vec(&config)?)?;
+        rolling_back(&moved.paths, &root.path().join("home"))?;
         let domain = LocalDomain::new(root.path().join("domain")).with_ref_store();
 
         let refused = [
@@ -1254,12 +1270,7 @@ mod ref_store_tests {
             Arc::new(remote),
         );
         domain.set_home(root.path().join("home")).await?;
-        let config = serde_json::json!({
-            "format": 1,
-            "home": root.path().join("home"),
-            "migration": {"rolling_back": {"archive": lineage::refs::state::archive_name(uuid::Uuid::new_v4())}},
-        });
-        std::fs::write(paths.domain_config(), serde_json::to_vec(&config)?)?;
+        rolling_back(&paths, &root.path().join("home"))?;
         let source = root.path().join("source");
         std::fs::create_dir_all(&source)?;
         std::fs::write(source.join("a.txt"), b"a")?;
