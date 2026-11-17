@@ -2268,6 +2268,9 @@ mod tests {
                 .stored_home()
                 .await;
             assert!(matches!(stored, Ok(None)), "no home is stored: {stored:?}");
+            let dot_quilt = domain.path().join(".quilt");
+            assert!(!dot_quilt.join("domain.json").exists(), "no move ran");
+            assert!(!dot_quilt.join("data.json").exists(), "no move ran");
         }
         Ok(())
     }

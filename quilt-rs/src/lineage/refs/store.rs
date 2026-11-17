@@ -77,7 +77,11 @@ impl RefStore {
     ) -> Res<T> {
         let namespaces = match self.namespaces(storage).await {
             Ok(namespaces) => namespaces,
-            Err(Error::Lineage(LineageError::RefsNotWritable { .. } | LineageError::Missing)) => {
+            Err(Error::Lineage(
+                LineageError::RefsNotWritable { .. }
+                | LineageError::Missing
+                | LineageError::MissingHome,
+            )) => {
                 return Ok(finish(None));
             }
             Err(err) => return Err(err),

@@ -1168,6 +1168,11 @@ mod ref_store_tests {
             matches!(listed, Err(Error::Lineage(LineageError::MissingHome))),
             "{listed:?}"
         );
+        let checked = domain
+            .lineage
+            .check_each(&domain.storage, |_, _| {}, |found| found.is_none())
+            .await;
+        assert!(matches!(checked, Ok(true)), "{checked:?}");
         domain.set_home(root.path().join("home")).await?;
         assert!(domain.list_installed_packages().await?.is_empty());
         Ok(())
