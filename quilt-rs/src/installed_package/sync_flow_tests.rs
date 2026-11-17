@@ -2100,8 +2100,8 @@ async fn test_first_push_certifies_without_another_latest() -> Res {
 }
 
 /// A local package with `data.txt` committed.
-pub(in crate::installed_package) async fn committed_data_txt()
--> Res<(InstalledPackage<LocalStorage, RemoteS3>, tempfile::TempDir)> {
+async fn committed_data_txt() -> Res<(InstalledPackage<LocalStorage, RemoteS3>, tempfile::TempDir)>
+{
     let temp_dir = tempfile::TempDir::new()?;
     let domain = crate::local_domain::LocalDomain::new(temp_dir.path()).with_lineage_store(BACKEND);
     domain.set_home(temp_dir.path()).await?;

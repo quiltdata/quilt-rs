@@ -43,12 +43,13 @@ in code by `LocalDomain`. Its on-disk layout:
 ├── refs/               # Each installed package's origin and commit tracking
 ├── locks/              # One lock per package, held by each of its writers
 ├── domain.json         # The home directory, and where a move of the lineage stands
-└── domain.lock         # Held to install, uninstall or change the home
+└── domain.lock         # Held to add or remove a ref, or to change domain.json
 ```
 
 Each package's lineage is a ref of its own, `refs/<owner>/<name>.json`,
 written whole under that package's lock, so a damaged ref costs that
-package alone and writers of different packages never wait on each other.
+package alone and updates of different packages never wait on each other;
+only installing and uninstalling also take the domain lock.
 A remote's tip is a cache beside it, `<name>.json.latest`, that may be
 missing or stale. Earlier versions kept every package in one
 `data.json`; a domain moves from there on first use, and
