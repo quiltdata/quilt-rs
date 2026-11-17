@@ -113,8 +113,9 @@ impl RefStore {
         }
         match self.list_locked(storage).await {
             Ok(Some((_domain, installed))) => Ok(finish(Some(&installed))),
-            // Busy, or a rollback began meanwhile.
-            Ok(None) | Err(Error::Lineage(LineageError::RefsNotWritable { .. })) => {
+            // Busy, or a rollback began or ended meanwhile.
+            Ok(None)
+            | Err(Error::Lineage(LineageError::RefsNotWritable { .. } | LineageError::Missing)) => {
                 Ok(finish(None))
             }
             Err(err) => {
