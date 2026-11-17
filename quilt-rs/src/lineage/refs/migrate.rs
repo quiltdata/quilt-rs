@@ -469,7 +469,8 @@ mod tests {
                 "copies": [{"sync_scope": "individual_files", "tracked": ["notes.txt"]}]
             })
         );
-        let tip = TipCache::from_slice(&std::fs::read(domain.paths.package_tip(&data()))?);
+        let tip =
+            read(&domain.paths.package_tip(&data())).and_then(|tip| TipCache::from_slice(&tip));
         assert_eq!(tip.map(|tip| tip.latest_hash), Some(TIP.to_string()));
         assert!(!domain.paths.package_tip(&notes()).exists());
         Ok(())
