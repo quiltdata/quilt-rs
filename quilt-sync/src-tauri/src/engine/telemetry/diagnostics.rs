@@ -197,16 +197,27 @@ pub fn save_diagnostic_zip(info: &DiagnosticInfo) -> Result<PathBuf, Error> {
         zip_writer.write_all(&contents)?;
     }
 
-    // The lineage of a domain that keeps a ref per package; a link could
-    // lead out of the domain
-    let domain_config = domain_paths.domain_config();
-    if std::fs::symlink_metadata(&domain_config).is_ok_and(|meta| meta.is_file())
-        && let Ok(contents) = std::fs::read(&domain_config)
-    {
-        zip_writer.start_file("domain.json", options)?;
-        zip_writer.write_all(&contents)?;
-    }
+    // The lineage of a domain that keeps a ref per package, and the copies of
+    // `data.json` its move to refs and back keeps
+    add_file(
+        &mut zip_writer,
+        options,
+        &domain_paths.domain_config(),
+        "domain.json",
+    )?;
     add_refs(&mut zip_writer, options, &domain_paths.refs_dir(), "refs")?;
+    for name in [
+        "data.json.pre-refs",
+        "data.json.migrating",
+        "data.json.rollback",
+    ] {
+        add_file(
+            &mut zip_writer,
+            options,
+            &domain_paths.dot_quilt_dir().join(name),
+            name,
+        )?;
+    }
 
     // Add client.json per host (OAuth client registration — client ID only)
     for host in &info.auth_hosts {
@@ -222,6 +233,23 @@ pub fn save_diagnostic_zip(info: &DiagnosticInfo) -> Result<PathBuf, Error> {
     zip_writer.finish()?;
 
     Ok(zip_path)
+}
+
+/// Add `path` as `name` if it is a file that can be read, and not a link,
+/// which could lead out of the domain.
+fn add_file(
+    zip_writer: &mut zip::ZipWriter<std::fs::File>,
+    options: zip::write::SimpleFileOptions,
+    path: &Path,
+    name: &str,
+) -> Result<(), Error> {
+    if std::fs::symlink_metadata(path).is_ok_and(|meta| meta.is_file())
+        && let Ok(contents) = std::fs::read(path)
+    {
+        zip_writer.start_file(name, options)?;
+        zip_writer.write_all(&contents)?;
+    }
+    Ok(())
 }
 
 /// Add each ref and each cache of a remote's tip under `dir` as
@@ -478,9 +506,47 @@ mod tests {
         }
     }
 
-    /// A domain config or a ref that is a link is left out, so the bundle
-    /// never carries a file from elsewhere, and so is a ref that can't be
-    /// read, without failing the bundle.
+    /// A domain moving between `data.json` and refs sends each copy of
+    /// `data.json` the move keeps, as it is on disk.
+    #[test]
+    fn a_bundle_carries_the_copies_of_data_json_a_move_keeps() {
+        let data_tmp = TempDir::new().expect("data tempdir");
+        let logs_tmp = TempDir::new().expect("logs tempdir");
+        let dot_quilt = DomainPaths::new(data_tmp.path().to_path_buf()).dot_quilt_dir();
+        let copies: [(&str, &[u8]); 3] = [
+            ("data.json.pre-refs", br#"{"home":"/first","packages":{}}"#),
+            ("data.json.migrating", br#"{"home":"/later","packages":{}}"#),
+            ("data.json.rollback", br#"{"home":"/back","packages":{}}"#),
+        ];
+        for (name, contents) in copies {
+            write_file(&dot_quilt.join(name), contents);
+        }
+
+        let info = make_info(
+            data_tmp.path().to_path_buf(),
+            logs_tmp.path().to_path_buf(),
+            Vec::new(),
+        );
+        let entries = read_zip_entries(&save_diagnostic_zip(&info).expect("save zip"));
+
+        let names: Vec<&str> = entries.keys().map(String::as_str).collect();
+        assert_eq!(
+            names,
+            [
+                "data.json.migrating",
+                "data.json.pre-refs",
+                "data.json.rollback",
+                "metadata.json",
+            ]
+        );
+        for (name, contents) in copies {
+            assert_eq!(entries[name], contents, "{name}");
+        }
+    }
+
+    /// A domain config, a ref or a copy of `data.json` that is a link is left
+    /// out, so the bundle never carries a file from elsewhere, and so is a ref
+    /// that can't be read, without failing the bundle.
     #[cfg(unix)]
     #[test]
     fn a_link_or_a_ref_that_cant_be_read_is_left_out() {
@@ -497,6 +563,8 @@ mod tests {
             .expect("link a ref to the private file");
         std::os::unix::fs::symlink(&private, paths.domain_config())
             .expect("link the domain config to the private file");
+        std::os::unix::fs::symlink(&private, paths.dot_quilt_dir().join("data.json.pre-refs"))
+            .expect("link a copy of data.json to the private file");
         let locked = owner.join("locked.json");
         write_file(&locked, b"{}");
         std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000))
