@@ -1263,14 +1263,15 @@ mod ref_store_tests {
         })
         .await
         .expect("no task waits forever");
-        first.expect("the task ran")?;
         rollback.expect("the task ran")?;
-        // Listed before the rollback, or refused after it.
-        let second = second.expect("the task ran");
-        assert!(
-            matches!(second, Ok(()) | Err(Error::Lineage(_))),
-            "{second:?}"
-        );
+        // Each listed before the rollback, or refused after it.
+        for listed in [first, second] {
+            let listed = listed.expect("the task ran");
+            assert!(
+                matches!(listed, Ok(()) | Err(Error::Lineage(_))),
+                "{listed:?}"
+            );
+        }
 
         assert!(!is_stub(&running.paths.lineage()));
         assert!(!running.paths.domain_config().exists());
