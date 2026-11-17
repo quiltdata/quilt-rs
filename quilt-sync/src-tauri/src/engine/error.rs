@@ -307,11 +307,8 @@ fn lineage_kind(error: &quilt::LineageError) -> Option<&'static str> {
     match error {
         quilt::LineageError::Missing | quilt::LineageError::MissingHome => Some("setup_required"),
         quilt::LineageError::RefsNotWritable { .. } => Some("lineage_not_writable"),
-        #[cfg(any(test, feature = "ref-store-preview"))]
         quilt::LineageError::MigrationRefused { .. } => Some("lineage_migration_refused"),
-        #[cfg(any(test, feature = "ref-store-preview"))]
         quilt::LineageError::RollbackRefused(_) => Some("lineage_rollback_refused"),
-        #[cfg(any(test, feature = "ref-store-preview"))]
         quilt::LineageError::RollingBack { .. } => Some("lineage_rolling_back"),
         _ => None,
     }

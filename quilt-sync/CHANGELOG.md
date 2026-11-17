@@ -30,7 +30,7 @@
 
 - QuiltSync starts faster with many packages: at launch it checks up to eight packages at once instead of one after another (<https://github.com/quiltdata/quilt-rs/pull/1376>)
 - The main page no longer has a **Recent files** view. A package's time on the main page is when it last changed: an edit or commit not yet published, otherwise when QuiltSync last installed, pulled, downloaded or committed its files (<https://github.com/quiltdata/quilt-rs/pull/1403>)
-- Under the hood, a QuiltSync built with the non-default `ref-store-preview` feature and run with `QUILT_LINEAGE=refs` keeps its lineage in a ref per package, and the diagnostics bundle carries those files, and the copies of `data.json` a move to refs and back keeps, when a domain has them (<https://github.com/quiltdata/quilt-rs/pull/1412>, <https://github.com/quiltdata/quilt-rs/pull/1420>)
+- QuiltSync keeps each package's lineage in a file of its own under `.quilt/refs/`, so a damaged one costs only that package: its first use of a domain moves the lineage there from `data.json`, keeps that file as `data.json.pre-refs`, and leaves in its place a stub that an older QuiltSync or `quilt` refuses to read; `quilt lineage rollback` moves it back. The diagnostics bundle carries those files and the copies of `data.json` a move keeps (<https://github.com/quiltdata/quilt-rs/pull/1412>, <https://github.com/quiltdata/quilt-rs/pull/1420>, <https://github.com/quiltdata/quilt-rs/pull/1424>)
 
 ### Fixed
 

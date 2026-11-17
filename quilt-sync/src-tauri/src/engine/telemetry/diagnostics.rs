@@ -451,7 +451,7 @@ mod tests {
     async fn a_bundle_carries_each_ref_and_tip() {
         let data_tmp = TempDir::new().expect("data tempdir");
         let logs_tmp = TempDir::new().expect("logs tempdir");
-        let domain = quilt::LocalDomain::new(data_tmp.path()).with_ref_store();
+        let domain = quilt::LocalDomain::new(data_tmp.path());
         domain.set_home(data_tmp.path()).await.expect("set home");
         let namespace = quilt_uri::Namespace::from(("acme", "data"));
         let lineage = quilt::lineage::PackageLineage {

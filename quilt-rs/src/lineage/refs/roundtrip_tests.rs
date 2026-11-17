@@ -86,12 +86,13 @@ impl Domain {
 
     /// The domain as a build with refs opens it.
     fn on_refs(&self) -> LocalDomain {
-        LocalDomain::new(self.root.path().join("domain")).with_ref_store()
+        LocalDomain::new(self.root.path().join("domain"))
     }
 
     /// The domain as the older client, a build on `data.json`, opens it.
     fn on_data_json(&self) -> LocalDomain {
         LocalDomain::new(self.root.path().join("domain"))
+            .with_lineage_store(crate::lineage::LineageStore::DataJson)
     }
 
     fn data_json(&self) -> Res<Value> {
@@ -141,6 +142,20 @@ fn untimed(mut lineage: PackageLineage) -> PackageLineage {
 /// `entry` as `PackageLineage` reads it, [`untimed`].
 fn authoritative(entry: &Value) -> Res<PackageLineage> {
     Ok(untimed(serde_json::from_value(entry.clone())?))
+}
+
+/// `paths`'s lineage moved to refs, each package [`untimed`], read from its
+/// ref: a listing needs a home, which a fixture may lack.
+async fn moved(paths: &DomainPaths) -> Res<BTreeMap<Namespace, PackageLineage>> {
+    let storage = crate::io::storage::LocalStorage::new();
+    super::migrate::up(&storage, paths).await?;
+    let store = super::RefStore::new(paths.clone());
+    let mut read = BTreeMap::new();
+    for namespace in store.listed(&storage).await? {
+        let lineage = store.read(&storage, &namespace).await?;
+        read.insert(namespace, untimed(lineage));
+    }
+    Ok(read)
 }
 
 /// Each of `domain`'s packages, [`untimed`].
@@ -216,7 +231,7 @@ async fn each_fixture_moves_to_refs_and_back_keeping_what_it_held() -> Res {
         let domain = Domain::on(original)?;
         let on_refs = domain.on_refs();
 
-        let moved = read(&on_refs).await?;
+        let moved = moved(&domain.paths).await?;
 
         let mut expected = BTreeMap::new();
         for (namespace, entry) in entries(original)? {

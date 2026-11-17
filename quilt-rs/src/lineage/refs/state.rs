@@ -16,15 +16,14 @@ use crate::error::LineageError;
 use crate::io::storage::Storage;
 use crate::paths::DomainPaths;
 
-/// What `data.json` becomes once the refs hold the lineage. Its home and its
-/// packages are both null, so a build without refs fails to parse it whether
-/// it reads the home or the packages, and cannot repair it by a home change,
-/// as it would a file missing only its home.
+/// What `data.json` becomes once the refs hold the lineage. A build without
+/// refs fails to parse it whether it reads the home or the packages, so no
+/// home change repairs it, and quotes the first field it fails on, so
+/// `packages` comes first and holds the instruction.
 pub(crate) const STUB: &[u8] = br#"{
+  "packages": "This domain's lineage has moved to .quilt/refs/ and this quilt is too old to read it: upgrade quilt.",
   "home": null,
-  "packages": null,
-  "lineage": "refs",
-  "note": "This domain's lineage is in .quilt/refs/ and .quilt/domain.json. A quilt that fails to read this file predates them: upgrade it."
+  "lineage": "refs"
 }
 "#;
 
@@ -237,9 +236,19 @@ mod tests {
         Ok(())
     }
 
+    /// The stub the preview builds wrote.
+    const PREVIEW_STUB: &[u8] = br#"{
+  "home": null,
+  "packages": null,
+  "lineage": "refs",
+  "note": "This domain's lineage is in .quilt/refs/ and .quilt/domain.json. A quilt that fails to read this file predates them: upgrade it."
+}
+"#;
+
     #[test]
     fn the_stub_is_told_by_its_marker() {
         assert!(is_stub(STUB));
+        assert!(is_stub(PREVIEW_STUB));
         assert!(is_stub(br#"{"lineage":"refs","note":"another"}"#));
         assert!(!is_stub(&legacy()));
         assert!(!is_stub(br#"{"lineage":"data.json"}"#));
@@ -247,18 +256,21 @@ mod tests {
     }
 
     /// The stub fails to parse as a lineage, not merely for lacking a home,
-    /// so the `data.json` store neither reads it nor repairs it.
+    /// so the `data.json` store neither reads it nor repairs it, and the
+    /// error a whole-file read gives tells the user what to do.
     #[test(tokio::test)]
     async fn a_build_on_data_json_cannot_read_or_rewrite_the_stub() -> Res {
         let root = tempfile::TempDir::new()?;
         let paths = DomainPaths::new(root.path().to_path_buf());
         std::fs::create_dir_all(paths.dot_quilt_dir())?;
         std::fs::write(paths.lineage(), STUB)?;
-        let io = DomainLineageIo::new(paths.lineage());
+        let io = DomainLineageIo::data_json(paths.lineage());
         let storage = LocalStorage::new();
 
         let parsed = DomainLineage::from_slice(STUB);
         assert!(unparsed(&parsed), "{parsed:?}");
+        let told = parsed.unwrap_err().to_string();
+        assert!(told.contains("too old to read it: upgrade quilt"), "{told}");
         let home = io.home(&storage).await;
         assert!(unparsed(&home), "{home:?}");
         let packages = io.read_packages(&storage).await;

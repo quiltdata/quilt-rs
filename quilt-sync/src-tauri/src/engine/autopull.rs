@@ -895,15 +895,13 @@ mod tests {
                 Ok(listed
                     .iter()
                     .map(|ns| {
-                        crate::engine::quilt::LocalDomain::new(std::path::PathBuf::new())
-                            .create_installed_package(ns.clone())
+                        crate::engine::model::mocks::nowhere().create_installed_package(ns.clone())
                     })
                     .collect())
             });
         model.expect_get_installed_package().returning(|ns| {
             Ok(Some(
-                crate::engine::quilt::LocalDomain::new(std::path::PathBuf::new())
-                    .create_installed_package(ns.clone()),
+                crate::engine::model::mocks::nowhere().create_installed_package(ns.clone()),
             ))
         });
         model
@@ -945,9 +943,7 @@ mod tests {
     impl SlowWalks {
         fn new(count: usize) -> Self {
             Self {
-                quilt: tokio::sync::Mutex::new(crate::engine::quilt::LocalDomain::new(
-                    std::path::PathBuf::new(),
-                )),
+                quilt: tokio::sync::Mutex::new(crate::engine::model::mocks::nowhere()),
                 packages: (0..count)
                     .map(|i| ("acme", format!("pkg{i}").as_str()).into())
                     .collect(),
@@ -957,8 +953,7 @@ mod tests {
         }
 
         fn package(namespace: &Namespace) -> crate::engine::quilt::InstalledPackage {
-            crate::engine::quilt::LocalDomain::new(std::path::PathBuf::new())
-                .create_installed_package(namespace.clone())
+            crate::engine::model::mocks::nowhere().create_installed_package(namespace.clone())
         }
     }
 
@@ -1262,8 +1257,7 @@ mod tests {
         let mut model = crate::engine::model::MockQuiltModel::new();
         model.expect_get_installed_package().returning(|ns| {
             Ok(Some(
-                crate::engine::quilt::LocalDomain::new(std::path::PathBuf::new())
-                    .create_installed_package(ns.clone()),
+                crate::engine::model::mocks::nowhere().create_installed_package(ns.clone()),
             ))
         });
         model

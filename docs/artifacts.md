@@ -20,15 +20,21 @@ Where package files (working copies) live. Each installed package occupies
 `<owner>/<package>/` inside it.
 
 *QuiltSync*: set by the user on the Setup page on first launch, then stored in
-`$DATA_DIR/.quilt/data.json` and read from there on subsequent starts.
+`$DATA_DIR/.quilt/domain.json` and read from there on subsequent starts.
 Defaults to `~/QuiltSync` if the user has not configured it yet.
 *CLI/library*: the caller provides the path.
 
-## Domain (`$DATA_DIR/.quilt/data.json`)
+## Domain (`$DATA_DIR/.quilt/domain.json`, `$DATA_DIR/.quilt/refs/`)
 
-*All components (quilt-rs, quilt-cli, QuiltSync).* Tracks all installed
-packages, their remote origins, local commit state, and the home directory
-path. Path is hardcoded relative to `$DATA_DIR`.
+*All components (quilt-rs, quilt-cli, QuiltSync).* `domain.json` holds the
+home directory path; `refs/<owner>/<package>.json` holds one installed
+package's remote origin and local commit state. Path is hardcoded relative to
+`$DATA_DIR`.
+
+A domain kept in `data.json` by an earlier version moves here on its first
+use, which keeps that file as `data.json.pre-refs` and leaves in `data.json` a
+stub that earlier versions fail to read. `quilt lineage rollback` moves the
+domain back to `data.json`.
 
 ## Package state (`$DATA_DIR/.quilt/`)
 

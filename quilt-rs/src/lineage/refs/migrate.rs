@@ -788,7 +788,7 @@ mod tests {
     async fn the_move_begins_once_it_holds_the_short_and_domain_locks() -> Res {
         let paths = |domain: &Domain| {
             [
-                DomainLineageIo::new(domain.paths.lineage()).short_lock_path(),
+                DomainLineageIo::data_json(domain.paths.lineage()).short_lock_path(),
                 domain.paths.domain_file_lock(),
             ]
         };

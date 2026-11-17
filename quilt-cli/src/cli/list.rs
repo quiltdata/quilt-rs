@@ -961,9 +961,9 @@ mod tests {
         assert_eq!(rows[0]["namespace"], "example/damaged");
         assert_eq!(rows[0]["status"], "error");
         assert!(
-            rows[0]["error"]
-                .as_str()
-                .is_some_and(|err| err.starts_with("Failed to parse lineage file")),
+            rows[0]["error"].as_str().is_some_and(
+                |err| err.starts_with("Failed to parse") && err.contains("damaged.json")
+            ),
             "{rows}"
         );
         assert_eq!(rows[1]["namespace"], "example/local");
@@ -971,7 +971,7 @@ mod tests {
         assert_eq!(rows[1].get("error"), None);
         let rendered = format!("{output}");
         assert!(
-            rendered.contains("| unreadable: Failed to parse lineage file"),
+            rendered.contains("| unreadable: Failed to parse"),
             "{rendered}"
         );
 
@@ -988,8 +988,8 @@ mod tests {
     /// under `--fetch` the healthy one beside it reads as it does alone.
     #[test(tokio::test)]
     async fn test_model_fetches_past_a_damaged_ref() -> Result<(), Error> {
-        let (alone, _alone_dir) = crate::cli::model::create_ref_store_model_in_temp_dir().await?;
-        let (m, _temp_dir) = crate::cli::model::create_ref_store_model_in_temp_dir().await?;
+        let (alone, _alone_dir) = crate::cli::model::create_model_in_temp_dir().await?;
+        let (m, _temp_dir) = crate::cli::model::create_model_in_temp_dir().await?;
         for model in [&alone, &m] {
             model
                 .create(crate::cli::create::Input {

@@ -86,7 +86,7 @@ impl LocalDomain {
 
     pub fn new(root_dir: impl AsRef<Path>) -> Self {
         let paths = paths::DomainPaths::new(root_dir.as_ref().to_path_buf());
-        let lineage = lineage::DomainLineageIo::new(paths.lineage());
+        let lineage = lineage::DomainLineageIo::new(paths.clone());
         let storage = LocalStorage::new();
         let remote = Arc::new(RemoteS3::new(paths.clone(), storage.clone()));
         Self {
@@ -134,8 +134,8 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
         self
     }
 
-    /// The domain with `hook` told of every package entry its writes of
-    /// `data.json` change, by any of its packages. Only the desktop app sets
+    /// The domain with `hook` told of every package entry its lineage writes
+    /// change, by any of its packages. Only the desktop app sets
     /// one, to tell its own writes from another tool's.
     #[must_use]
     pub fn with_lineage_hook(mut self, hook: lineage::LineageHook) -> Self {
@@ -143,36 +143,25 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
         self
     }
 
-    /// The domain with its lineage in a ref per package under `.quilt/refs/`,
-    /// a preview. Its first use moves the lineage there from `data.json`,
-    /// leaving in its place a stub that builds without refs fail to read;
-    /// [`Self::rollback_lineage`] moves it back. Keeps the hook set so far.
-    #[cfg(any(test, feature = "ref-store-preview"))]
-    #[must_use]
-    pub fn with_ref_store(mut self) -> Self {
-        self.lineage = self.lineage.into_refs(self.paths.clone());
-        self
-    }
-
     /// Hands the domain's lineage back from refs to `data.json`, or finishes
     /// a rollback that was interrupted, and returns the folder the refs were
     /// moved to. Refused while any ref holds what `data.json` cannot. A
-    /// domain opened on refs afterwards moves the lineage there again, but
-    /// not through a value that had already found it there.
-    #[cfg(any(test, feature = "ref-store-preview"))]
+    /// domain opened afterwards moves the lineage to refs again, but not
+    /// through a value that had already found it there.
     pub async fn rollback_lineage(&self) -> Res<PathBuf> {
         let rolled = lineage::refs::rollback::down(&self.storage, &self.paths).await?;
         Ok(rolled.archive)
     }
 
-    /// The domain with its lineage in `store`.
-    #[cfg(test)]
+    /// The domain with its lineage in `store`: `data.json` stands in for a
+    /// build from before refs. Keeps the hook set so far.
+    #[cfg(any(test, feature = "testing"))]
     #[must_use]
-    pub(crate) fn with_lineage_store(self, store: lineage::LineageStore) -> Self {
-        match store {
-            lineage::LineageStore::DataJson => self,
-            lineage::LineageStore::Refs => self.with_ref_store(),
+    pub fn with_lineage_store(mut self, store: lineage::LineageStore) -> Self {
+        if store == lineage::LineageStore::DataJson {
+            self.lineage = self.lineage.into_data_json(self.paths.lineage());
         }
+        self
     }
 
     /// Deletes the temp files that killed lineage writes left, each package's
@@ -680,7 +669,8 @@ mod tests {
     #[test(tokio::test)]
     async fn an_install_over_an_unreadable_record_creates_no_folder() -> Res<()> {
         let temp_dir = TempDir::new()?;
-        let domain = LocalDomain::new(temp_dir.path());
+        let domain =
+            LocalDomain::new(temp_dir.path()).with_lineage_store(lineage::LineageStore::DataJson);
         domain.set_home(temp_dir.path()).await?;
         domain
             .create_package(("foo", "other").into(), None, None, flow::UserMeta::Clear)
@@ -726,7 +716,7 @@ mod ref_store_tests {
 
     /// A domain on refs under `root`, its home `root/home`.
     async fn domain(root: &Path) -> Res<LocalDomain> {
-        let domain = LocalDomain::new(root.join("domain")).with_ref_store();
+        let domain = LocalDomain::new(root.join("domain"));
         domain.set_home(root.join("home")).await?;
         Ok(domain)
     }
@@ -821,7 +811,7 @@ mod ref_store_tests {
         let paths = paths::DomainPaths::new(root.path().join("domain"));
         let domain = LocalDomain::with_parts(
             paths.clone(),
-            lineage::DomainLineageIo::refs(paths.clone()),
+            lineage::DomainLineageIo::new(paths.clone()),
             LocalStorage::new(),
             Arc::new(remote),
         );
@@ -865,7 +855,7 @@ mod ref_store_tests {
         let paths = paths::DomainPaths::new(root.path().join("domain"));
         let domain = LocalDomain::with_parts(
             paths.clone(),
-            lineage::DomainLineageIo::refs(paths.clone()),
+            lineage::DomainLineageIo::new(paths.clone()),
             LocalStorage::new(),
             Arc::new(remote),
         );
@@ -1065,7 +1055,7 @@ mod ref_store_tests {
         });
         let domain = LocalDomain::with_parts(
             paths.clone(),
-            lineage::DomainLineageIo::refs(paths.clone()),
+            lineage::DomainLineageIo::new(paths.clone()),
             LocalStorage::new(),
             Arc::new(remote),
         )
@@ -1105,7 +1095,8 @@ mod ref_store_tests {
         let source = root.join("source");
         std::fs::create_dir_all(&source)?;
         std::fs::write(source.join("a.txt"), b"a")?;
-        let domain = LocalDomain::new(root.join("domain"));
+        let domain = LocalDomain::new(root.join("domain"))
+            .with_lineage_store(lineage::LineageStore::DataJson);
         domain.set_home(root.join("home")).await?;
         domain
             .create_package(
@@ -1142,7 +1133,7 @@ mod ref_store_tests {
         let root = TempDir::new()?;
         on_data_json(root.path()).await?;
         std::fs::write(root.path().join("home/acme/x/b.txt"), b"b")?;
-        let domain = LocalDomain::new(root.path().join("domain")).with_ref_store();
+        let domain = LocalDomain::new(root.path().join("domain"));
         let package = domain.create_installed_package(("acme", "x").into());
 
         let committed = tokio::time::timeout(
@@ -1164,6 +1155,57 @@ mod ref_store_tests {
         Ok(())
     }
 
+    /// A new domain's packages can't be listed until it has a home, as on
+    /// `data.json`, so an app sends its user to set one up.
+    #[test(tokio::test)]
+    async fn a_new_domain_is_listed_only_once_it_has_a_home() -> Res<()> {
+        let root = TempDir::new()?;
+        let domain = LocalDomain::new(root.path().join("domain"));
+
+        let listed = domain.list_installed_packages().await.map(drop);
+
+        assert!(
+            matches!(listed, Err(Error::Lineage(LineageError::MissingHome))),
+            "{listed:?}"
+        );
+        let checked = domain
+            .lineage
+            .check_each(&domain.storage, |_, _| {}, |found| found.is_none())
+            .await;
+        assert!(matches!(checked, Ok(true)), "{checked:?}");
+        domain.set_home(root.path().join("home")).await?;
+        assert!(domain.list_installed_packages().await?.is_empty());
+        Ok(())
+    }
+
+    /// A domain first used while a rollback runs is refused at once, rather
+    /// than waiting to move the domain back once the rollback is done.
+    #[test(tokio::test)]
+    async fn a_first_use_during_a_rollback_is_refused_without_waiting_for_it() -> Res<()> {
+        let root = TempDir::new()?;
+        on_data_json(root.path()).await?;
+        let moved = LocalDomain::new(root.path().join("domain"));
+        moved.list_installed_packages().await?;
+        let rollback = LocalStorage::new()
+            .lock_exclusive(moved.paths.migrate_lock())
+            .await?;
+        rolling_back(&moved.paths, &root.path().join("home"))?;
+        let domain = LocalDomain::new(root.path().join("domain"));
+
+        let listed =
+            tokio::time::timeout(Duration::from_secs(5), domain.list_installed_packages()).await;
+
+        assert!(
+            matches!(
+                listed,
+                Ok(Err(Error::Lineage(LineageError::RollingBack { .. })))
+            ),
+            "{listed:?}"
+        );
+        drop(rollback);
+        Ok(())
+    }
+
     /// Only `quilt lineage rollback` finishes a rollback that was
     /// interrupted; every other operation is refused, naming it.
     #[test(tokio::test)]
@@ -1171,10 +1213,10 @@ mod ref_store_tests {
     {
         let root = TempDir::new()?;
         on_data_json(root.path()).await?;
-        let moved = LocalDomain::new(root.path().join("domain")).with_ref_store();
+        let moved = LocalDomain::new(root.path().join("domain"));
         moved.list_installed_packages().await?;
         rolling_back(&moved.paths, &root.path().join("home"))?;
-        let domain = LocalDomain::new(root.path().join("domain")).with_ref_store();
+        let domain = LocalDomain::new(root.path().join("domain"));
 
         let refused = [
             domain.get_home().await.map(drop),
@@ -1209,7 +1251,7 @@ mod ref_store_tests {
     async fn a_domain_rolled_back_under_a_running_app_is_not_moved_again() -> Res<()> {
         let root = TempDir::new()?;
         on_data_json(root.path()).await?;
-        let running = LocalDomain::new(root.path().join("domain")).with_ref_store();
+        let running = LocalDomain::new(root.path().join("domain"));
         running.list_installed_packages().await?;
         LocalDomain::new(root.path().join("domain"))
             .rollback_lineage()
@@ -1229,7 +1271,7 @@ mod ref_store_tests {
     async fn clones_used_first_at_once_move_the_domain_once() -> Res<()> {
         let root = TempDir::new()?;
         on_data_json(root.path()).await?;
-        let running = LocalDomain::new(root.path().join("domain")).with_ref_store();
+        let running = LocalDomain::new(root.path().join("domain"));
         let held = LocalStorage::new()
             .lock_exclusive(running.paths.migrate_lock())
             .await?;
@@ -1299,7 +1341,7 @@ mod ref_store_tests {
                 .map(|path| std::fs::read(path).ok())
             };
             let before = files(&paths);
-            let domain = LocalDomain::new(root.path().join("domain")).with_ref_store();
+            let domain = LocalDomain::new(root.path().join("domain"));
 
             let home = domain.stored_home().await;
 
@@ -1322,7 +1364,7 @@ mod ref_store_tests {
         let paths = paths::DomainPaths::new(root.path().join("domain"));
         let domain = LocalDomain::with_parts(
             paths.clone(),
-            lineage::DomainLineageIo::refs(paths.clone()),
+            lineage::DomainLineageIo::new(paths.clone()),
             LocalStorage::new(),
             Arc::new(remote),
         );

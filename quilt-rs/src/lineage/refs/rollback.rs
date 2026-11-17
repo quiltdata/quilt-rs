@@ -491,7 +491,7 @@ mod tests {
         let gone = timestamp("data/gone.csv")?;
         assert!(before <= gone && gone <= after, "{gone}");
         // The older client reads every entry.
-        let read = DomainLineageIo::new(domain.paths.lineage())
+        let read = DomainLineageIo::data_json(domain.paths.lineage())
             .read_packages(&domain.storage)
             .await?;
         assert_eq!(read.len(), 5);

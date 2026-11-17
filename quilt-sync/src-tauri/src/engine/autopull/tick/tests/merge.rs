@@ -159,12 +159,12 @@ fn model_of(copy: Copy) -> (MockQuiltModel, Arc<Mutex<Remote>>) {
     let mut model = MockQuiltModel::new();
     model.expect_get_installed_packages_list().returning(|| {
         Ok(vec![
-            quilt::LocalDomain::new(PathBuf::new()).create_installed_package(ns()),
+            crate::engine::model::mocks::nowhere().create_installed_package(ns()),
         ])
     });
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
-            quilt::LocalDomain::new(PathBuf::new()).create_installed_package(ns()),
+            crate::engine::model::mocks::nowhere().create_installed_package(ns()),
         ))
     });
     model

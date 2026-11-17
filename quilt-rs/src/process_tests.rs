@@ -96,7 +96,7 @@ impl World {
     /// there would open it.
     fn domain_on(&self, store: LineageStore) -> Domain {
         let paths = DomainPaths::new(self.root.join("domain"));
-        let lineage = DomainLineageIo::new(paths.lineage());
+        let lineage = DomainLineageIo::new(paths.clone());
         LocalDomain::with_parts(paths, lineage, LocalStorage::new(), Arc::new(self.remote()))
             .with_lineage_store(store)
     }

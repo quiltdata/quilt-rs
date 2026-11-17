@@ -362,7 +362,6 @@ pub enum LineageError {
 
     /// `data.json` does not parse, so its lineage is not moved to refs and
     /// nothing is changed.
-    #[cfg(any(test, feature = "ref-store-preview"))]
     #[error(
         "Cannot move the lineage in {} to per-package refs: it does not parse: {source}",
         path.display()
@@ -373,13 +372,11 @@ pub enum LineageError {
     },
 
     /// A ref `data.json` cannot hold, so the lineage stays on refs.
-    #[cfg(any(test, feature = "ref-store-preview"))]
     #[error("Cannot roll the lineage back to data.json: {0}")]
     RollbackRefused(Box<LineageError>),
 
     /// `data.json` beside refs is not the stub the move leaves, so a
     /// rollback would take it for one it had already published.
-    #[cfg(any(test, feature = "ref-store-preview"))]
     #[error(
         "{} is not the stub the move to per-package refs leaves, so it may hold a lineage the refs do not; move it aside to roll back",
         path.display()
@@ -388,7 +385,6 @@ pub enum LineageError {
 
     /// A rollback was interrupted, and only the command that started it
     /// finishes it.
-    #[cfg(any(test, feature = "ref-store-preview"))]
     #[error(
         "The lineage is being rolled back to data.json; run `quilt lineage rollback` to finish ({})",
         path.display()

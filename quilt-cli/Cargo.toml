@@ -18,11 +18,6 @@ homepage.workspace = true
 name = "quilt"
 path = "src/main.rs"
 
-[features]
-# A preview of per-package lineage: with it, `QUILT_LINEAGE=refs` keeps the
-# domain's lineage in a ref per package instead of `data.json`.
-ref-store-preview = ["quilt-rs/ref-store-preview"]
-
 [dependencies]
 # Library dependencies
 quilt-rs = { path = "../quilt-rs", version = "0.54.0-dev" }
@@ -49,9 +44,9 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 # Only for the memory-mapping test: already in the lock, so no new crate.
 libc = "0.2"
 # Pull quilt-rs with the `testing` feature so CLI tests can drive flows against
-# the in-memory mock remote, and with the ref-store preview so they can run on
-# it. Kept out of the normal dependency above so neither reaches release builds.
-quilt-rs = { path = "../quilt-rs", version = "0.54.0-dev", features = ["testing", "ref-store-preview"] }
+# the in-memory mock remote. Kept out of the normal dependency above so the
+# mock never leaks into release builds.
+quilt-rs = { path = "../quilt-rs", version = "0.54.0-dev", features = ["testing"] }
 # Shared test fixtures, such as the fake catalog host.
 quilt-uri = { path = "../quilt-uri", version = "0.5.1-dev", features = ["test-support"] }
 test-log.workspace = true

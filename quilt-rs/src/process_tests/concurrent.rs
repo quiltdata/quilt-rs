@@ -160,7 +160,7 @@ async fn a_commit_waits_on_a_domain_wide_lock_only_on_data_json() -> Res {
 
         let paths = DomainPaths::new(world.root.join("domain"));
         let lock = match store {
-            LineageStore::DataJson => DomainLineageIo::new(paths.lineage()).short_lock_path(),
+            LineageStore::DataJson => DomainLineageIo::data_json(paths.lineage()).short_lock_path(),
             LineageStore::Refs => paths.domain_file_lock(),
         };
         let held = LocalStorage::new().lock_exclusive(&lock).await?;
