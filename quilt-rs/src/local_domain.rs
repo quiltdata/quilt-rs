@@ -1155,8 +1155,8 @@ mod ref_store_tests {
         Ok(())
     }
 
-    /// A domain first used while a rollback runs is refused at once, and is
-    /// not moved back to refs once the rollback lets go of the domain.
+    /// A domain first used while a rollback runs is refused at once, rather
+    /// than waiting to move the domain back once the rollback is done.
     #[test(tokio::test)]
     async fn a_first_use_during_a_rollback_is_refused_without_waiting_for_it() -> Res<()> {
         let root = TempDir::new()?;
