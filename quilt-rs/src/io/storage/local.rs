@@ -18,7 +18,7 @@ use crate::error::FsError;
 use super::Storage;
 
 /// A unique name for a temp file that names no target.
-fn temp_name() -> String {
+pub(crate) fn temp_name() -> String {
     format!(".tmp-{}", Uuid::new_v4())
 }
 

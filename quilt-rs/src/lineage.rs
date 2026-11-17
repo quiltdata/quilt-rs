@@ -424,14 +424,14 @@ impl DomainLineageIo {
         self.splice_entry(storage, held.namespace(), step).await
     }
 
-    /// Delete the leftovers of writes a kill interrupted, on refs; `data.json`
-    /// leaves none to sweep.
+    /// Delete the leftovers of writes a kill interrupted, on refs. A temp a
+    /// kill leaves beside `data.json` is not swept.
     #[cfg_attr(
         not(any(test, feature = "ref-store-preview")),
         expect(
             clippy::unused_async,
             clippy::unused_async_trait_impl,
-            reason = "only refs leave temps to sweep"
+            reason = "only refs' temps are swept"
         )
     )]
     pub(crate) async fn sweep(&self, storage: &(impl Storage + Sync)) -> Res {
@@ -450,7 +450,7 @@ impl DomainLineageIo {
         expect(
             clippy::unused_async,
             clippy::unused_async_trait_impl,
-            reason = "only refs leave temps to sweep"
+            reason = "only refs' temps are swept"
         )
     )]
     pub(crate) async fn sweep_held(
@@ -531,6 +531,12 @@ impl DomainLineageIo {
         let mut path = self.path.clone().into_os_string();
         path.push(".lock");
         PathBuf::from(path)
+    }
+
+    /// [`Self::lock_path`], for a test that holds the short lock itself.
+    #[cfg(test)]
+    pub(crate) fn short_lock_path(&self) -> PathBuf {
+        self.lock_path()
     }
 
     /// **The short lock.** Under `data.json.lock`: re-read the whole record,
@@ -722,7 +728,12 @@ impl DomainLineageIo {
     ) -> Res {
         let contents = serde_json::to_string_pretty(lineage)?;
         storage
-            .write_byte_stream(self.path.clone(), contents.into_bytes().into())
+            .write_byte_stream_via(
+                self.path.clone(),
+                crate::io::storage::temp_name(),
+                contents.into_bytes().into(),
+                Some("data.json"),
+            )
             .await
     }
 

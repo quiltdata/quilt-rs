@@ -13,14 +13,42 @@ use super::Storage;
 
 /// A mock implementation of the `Storage` trait.
 pub(crate) struct MockStorage {
-    pub(crate) temp_dir: TempDir,
+    pub(crate) temp_dir: Root,
+}
+
+/// The folder a [`MockStorage`] keeps its files in.
+pub(crate) enum Root {
+    /// Its own, removed with it.
+    Owned(TempDir),
+    /// One that outlives it, so storages in several processes can share it.
+    #[cfg(test)]
+    Shared(std::path::PathBuf),
+}
+
+impl Root {
+    pub(crate) fn path(&self) -> &Path {
+        match self {
+            Root::Owned(dir) => dir.path(),
+            #[cfg(test)]
+            Root::Shared(path) => path,
+        }
+    }
+}
+
+impl AsRef<Path> for Root {
+    fn as_ref(&self) -> &Path {
+        self.path()
+    }
 }
 
 impl Clone for MockStorage {
     fn clone(&self) -> Self {
         MockStorage {
-            temp_dir: TempDir::new_in(self.temp_dir.path())
-                .expect("Failed to create temporary directory inside another temporary directory"),
+            temp_dir: Root::Owned(
+                TempDir::new_in(&self.temp_dir).expect(
+                    "Failed to create temporary directory inside another temporary directory",
+                ),
+            ),
         }
     }
 }
@@ -28,7 +56,7 @@ impl Clone for MockStorage {
 impl Default for MockStorage {
     fn default() -> Self {
         MockStorage {
-            temp_dir: TempDir::new().expect("Failed to create temporary directory"),
+            temp_dir: Root::Owned(TempDir::new().expect("Failed to create temporary directory")),
         }
     }
 }
