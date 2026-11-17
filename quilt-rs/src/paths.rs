@@ -385,8 +385,7 @@ impl DomainPaths {
             .join(format!("{LINEAGE_FILE}.pre-refs"))
     }
 
-    /// A later move's own copy of `data.json`, which it migrates from, so
-    /// the first move's stays as it was.
+    /// Every move's frozen copy of `data.json`, which it migrates from.
     #[must_use]
     pub(crate) fn lineage_migrating(&self) -> PathBuf {
         self.dot_quilt_dir()

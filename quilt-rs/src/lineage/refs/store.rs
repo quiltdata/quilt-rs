@@ -267,6 +267,31 @@ impl RefStore {
         Ok(())
     }
 
+    /// Writes the locked package's first ref, `new_ref`, after the tip cache
+    /// `lineage` wants beside it, whatever the domain config says: the move
+    /// from `data.json` writes refs before the config says done.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "nothing outside tests runs the move yet")
+    )]
+    pub(super) async fn create_moved(
+        &self,
+        storage: &(impl Storage + Sync),
+        held: &PackageLock,
+        new_ref: &PackageRef,
+        lineage: &PackageLineage,
+    ) -> Res {
+        let namespace = held.namespace();
+        self.create_folders(storage, namespace).await?;
+        let tip = self.read_tip(storage, namespace).await;
+        let had_tip = tip.is_some();
+        let (tip, fresh) = wanted_tip(new_ref, lineage, tip);
+        self.change_tip(storage, namespace, tip.as_ref(), fresh, had_tip)
+            .await?;
+        let path = self.paths.package_ref(namespace);
+        put(storage, &path, new_ref.to_vec()?, Some("ref")).await
+    }
+
     /// Removes the locked package's ref, then its tip. A ref that does not
     /// parse is removed too; one in a format or state this build does not
     /// support is refused, since it may be a newer build's to remove.

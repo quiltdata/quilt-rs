@@ -54,6 +54,8 @@ pub(crate) async fn down(storage: &(impl Storage + Sync), paths: &DomainPaths) -
             for namespace in store.listed(storage).await? {
                 read(storage, &store, &namespace).await?;
             }
+            // A move killed once done may not have kept its frozen copy yet.
+            super::migrate::keep_frozen_copy(storage, paths).await?;
             let archive = begin(storage, paths).await?;
             crate::failpoint::hit("migrate.down.after-state");
             (archive, false, false)
@@ -64,7 +66,7 @@ pub(crate) async fn down(storage: &(impl Storage + Sync), paths: &DomainPaths) -
             published,
         } => (archive, archived, published),
         DomainState::Legacy => return Err(not_on_refs(paths, "has not started")),
-        DomainState::StubOnly { .. } | DomainState::Migrating { .. } => {
+        DomainState::StubOnly | DomainState::Migrating => {
             return Err(not_on_refs(paths, "is in progress"));
         }
     };
