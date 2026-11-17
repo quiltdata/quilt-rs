@@ -172,6 +172,9 @@ impl Outside {
                     // pending, so a stop waits for it.
                     if let Some(draft) = saw(&mut state.seen, namespace, Some(lineage)) {
                         self.record.insert_later(self.record.number(draft));
+                        // Saved with it: a stop before `finish` must not
+                        // leave the move to be recorded again.
+                        self.save(&mut state);
                     }
                 },
                 |installed| {

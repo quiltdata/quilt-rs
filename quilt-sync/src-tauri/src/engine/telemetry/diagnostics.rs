@@ -197,8 +197,12 @@ pub fn save_diagnostic_zip(info: &DiagnosticInfo) -> Result<PathBuf, Error> {
         zip_writer.write_all(&contents)?;
     }
 
-    // The lineage of a domain that keeps a ref per package
-    if let Ok(contents) = std::fs::read(domain_paths.domain_config()) {
+    // The lineage of a domain that keeps a ref per package; a link could
+    // lead out of the domain
+    let domain_config = domain_paths.domain_config();
+    if std::fs::symlink_metadata(&domain_config).is_ok_and(|meta| meta.is_file())
+        && let Ok(contents) = std::fs::read(&domain_config)
+    {
         zip_writer.start_file("domain.json", options)?;
         zip_writer.write_all(&contents)?;
     }
@@ -474,9 +478,9 @@ mod tests {
         }
     }
 
-    /// A link named as a ref is left out, so the bundle never carries a file
-    /// from elsewhere, and so is a ref that can't be read, without failing
-    /// the bundle.
+    /// A domain config or a ref that is a link is left out, so the bundle
+    /// never carries a file from elsewhere, and so is a ref that can't be
+    /// read, without failing the bundle.
     #[cfg(unix)]
     #[test]
     fn a_link_or_a_ref_that_cant_be_read_is_left_out() {
@@ -484,14 +488,15 @@ mod tests {
 
         let data_tmp = TempDir::new().expect("data tempdir");
         let logs_tmp = TempDir::new().expect("logs tempdir");
-        let owner = DomainPaths::new(data_tmp.path().to_path_buf())
-            .refs_dir()
-            .join("acme");
+        let paths = DomainPaths::new(data_tmp.path().to_path_buf());
+        let owner = paths.refs_dir().join("acme");
         let private = data_tmp.path().join("private.json");
         write_file(&private, br#"{"secret":true}"#);
         std::fs::create_dir_all(&owner).expect("create owner dir");
         std::os::unix::fs::symlink(&private, owner.join("linked.json"))
             .expect("link a ref to the private file");
+        std::os::unix::fs::symlink(&private, paths.domain_config())
+            .expect("link the domain config to the private file");
         let locked = owner.join("locked.json");
         write_file(&locked, b"{}");
         std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000))
