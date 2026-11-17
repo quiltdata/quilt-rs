@@ -6,8 +6,9 @@
 //! cargo test --release -p quilt-rs --lib lineage_timing -- --ignored --nocapture
 //! ```
 //!
-//! It fails where refs' median is above `data.json`'s slowest run: the spec
-//! allows `list` and `status` no slowdown, and gives no number for noise.
+//! It fails where even refs' fastest run is slower than `data.json`'s median:
+//! the spec allows `list` and `status` no slowdown, and gives no number for
+//! noise.
 
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -176,11 +177,11 @@ fn bytes_under(dir: &Path) -> Res<u64> {
     Ok(bytes)
 }
 
-/// The median and the worst of `RUNS` timings of `op`, after one untimed
-/// run.
+/// The fastest, the median and the worst of `RUNS` timings of `op`, after
+/// one untimed run.
 async fn time<T, F: Future<Output = Res<T>>>(
     mut op: impl FnMut() -> F,
-) -> Res<(Duration, Duration)> {
+) -> Res<(Duration, Duration, Duration)> {
     op().await?;
     let mut runs = Vec::with_capacity(RUNS);
     for _ in 0..RUNS {
@@ -189,7 +190,7 @@ async fn time<T, F: Future<Output = Res<T>>>(
         runs.push(start.elapsed());
     }
     runs.sort();
-    Ok((runs[RUNS / 2], runs[RUNS - 1]))
+    Ok((runs[0], runs[RUNS / 2], runs[RUNS - 1]))
 }
 
 /// What `quilt list` reads: every package's lineage.
@@ -220,13 +221,13 @@ fn ms(duration: Duration) -> String {
 #[ignore = "a measurement: run on demand, in release mode"]
 async fn lineage_timing() -> Res {
     let mut table = vec![format!(
-        "{:<8} {:<10} {:<10} {:>12} {:>12}",
-        "shape", "operation", "store", "median", "worst"
+        "{:<8} {:<10} {:<10} {:>12} {:>12} {:>12}",
+        "shape", "operation", "store", "fastest", "median", "worst"
     )];
     let mut slower = Vec::new();
     for shape in [real(), stress()] {
         let paths: usize = shape.packages.iter().sum();
-        let mut worst_on_data_json = BTreeMap::new();
+        let mut median_on_data_json = BTreeMap::new();
         for (store_name, store) in STORES {
             let Fixture {
                 domain,
@@ -244,7 +245,9 @@ async fn lineage_timing() -> Res {
             assert_eq!(listed.len(), shape.packages.len());
             let mut listed_paths = 0;
             for lineage in listed.into_values() {
-                listed_paths += lineage?.paths.len();
+                let lineage = lineage?;
+                assert_eq!(lineage.latest_hash, LATEST);
+                listed_paths += lineage.paths.len();
             }
             assert_eq!(listed_paths, paths);
             let status_of_largest = status(&domain, &largest).await?;
@@ -253,19 +256,20 @@ async fn lineage_timing() -> Res {
                 WorkingCopy::Unavailable(_)
             ));
 
-            for (operation, (median, worst)) in [
+            for (operation, (fastest, median, worst)) in [
                 ("list", time(|| list(&domain)).await?),
                 ("status", time(|| status(&domain, &largest)).await?),
             ] {
                 table.push(format!(
-                    "{:<8} {operation:<10} {store_name:<10} {:>12} {:>12}",
+                    "{:<8} {operation:<10} {store_name:<10} {:>12} {:>12} {:>12}",
                     shape.name,
+                    ms(fastest),
                     ms(median),
                     ms(worst),
                 ));
                 if store == LineageStore::DataJson {
-                    worst_on_data_json.insert(operation, worst);
-                } else if median > worst_on_data_json[operation] {
+                    median_on_data_json.insert(operation, median);
+                } else if fastest > median_on_data_json[operation] {
                     slower.push(format!("{} {operation}", shape.name));
                 }
             }
