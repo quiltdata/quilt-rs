@@ -6,8 +6,8 @@
 //! cargo test --release -p quilt-rs --lib lineage_timing -- --ignored --nocapture
 //! ```
 //!
-//! It fails where even refs' fastest run is slower than `data.json`'s median:
-//! the spec allows `list` and `status` no slowdown, and gives no number for
+//! It fails where refs' median is above `data.json`'s upper quartile: the
+//! spec allows `list` and `status` no slowdown, and gives no number for
 //! noise.
 
 use std::collections::BTreeMap;
@@ -177,8 +177,8 @@ fn bytes_under(dir: &Path) -> Res<u64> {
     Ok(bytes)
 }
 
-/// The fastest, the median and the worst of `RUNS` timings of `op`, after
-/// one untimed run.
+/// The median, the upper quartile and the worst of `RUNS` timings of `op`,
+/// after one untimed run.
 async fn time<T, F: Future<Output = Res<T>>>(
     mut op: impl FnMut() -> F,
 ) -> Res<(Duration, Duration, Duration)> {
@@ -190,7 +190,7 @@ async fn time<T, F: Future<Output = Res<T>>>(
         runs.push(start.elapsed());
     }
     runs.sort();
-    Ok((runs[0], runs[RUNS / 2], runs[RUNS - 1]))
+    Ok((runs[RUNS / 2], runs[RUNS * 3 / 4], runs[RUNS - 1]))
 }
 
 /// What `quilt list` reads: every package's lineage.
@@ -222,12 +222,12 @@ fn ms(duration: Duration) -> String {
 async fn lineage_timing() -> Res {
     let mut table = vec![format!(
         "{:<8} {:<10} {:<10} {:>12} {:>12} {:>12}",
-        "shape", "operation", "store", "fastest", "median", "worst"
+        "shape", "operation", "store", "median", "quartile", "worst"
     )];
     let mut slower = Vec::new();
     for shape in [real(), stress()] {
         let paths: usize = shape.packages.iter().sum();
-        let mut median_on_data_json = BTreeMap::new();
+        let mut quartile_on_data_json = BTreeMap::new();
         for (store_name, store) in STORES {
             let Fixture {
                 domain,
@@ -256,20 +256,20 @@ async fn lineage_timing() -> Res {
                 WorkingCopy::Unavailable(_)
             ));
 
-            for (operation, (fastest, median, worst)) in [
+            for (operation, (median, quartile, worst)) in [
                 ("list", time(|| list(&domain)).await?),
                 ("status", time(|| status(&domain, &largest)).await?),
             ] {
                 table.push(format!(
                     "{:<8} {operation:<10} {store_name:<10} {:>12} {:>12} {:>12}",
                     shape.name,
-                    ms(fastest),
                     ms(median),
+                    ms(quartile),
                     ms(worst),
                 ));
                 if store == LineageStore::DataJson {
-                    median_on_data_json.insert(operation, median);
-                } else if fastest > median_on_data_json[operation] {
+                    quartile_on_data_json.insert(operation, quartile);
+                } else if median > quartile_on_data_json[operation] {
                     slower.push(format!("{} {operation}", shape.name));
                 }
             }
