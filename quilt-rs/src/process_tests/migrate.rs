@@ -204,8 +204,8 @@ mod killed {
     }
 
     /// A move killed at each step, on a domain with packages and on a fresh
-    /// one, resumes to the refs and the `data.json.pre-refs` an uninterrupted
-    /// move leaves, and no kill leaves a ref that does not read.
+    /// one, resumes to the refs, domain config and `data.json.pre-refs` an
+    /// uninterrupted move leaves, and no kill leaves a ref that does not read.
     #[test(tokio::test)]
     async fn a_move_killed_at_each_step_resumes_to_the_same_refs() -> Res {
         let with_packages = TempDir::new()?;
@@ -218,6 +218,7 @@ mod killed {
             let whole = copy(&start, &whole_dir)?;
             up(&whole).await?;
             let expected = refs(&whole).await?;
+            let config = std::fs::read(paths(&whole).domain_config())?;
             // The `data.json` the move found, or the empty lineage it froze.
             let pre_refs = match std::fs::read(paths(&start).lineage()) {
                 Ok(lineage) => lineage,
@@ -243,6 +244,11 @@ mod killed {
                 up(&world).await?;
 
                 assert_moved(&world, &expected).await?;
+                assert_eq!(
+                    std::fs::read(paths(&world).domain_config()).ok(),
+                    Some(config.clone()),
+                    "{name}"
+                );
                 assert_eq!(
                     std::fs::read(paths(&world).lineage_pre_refs()).ok(),
                     Some(pre_refs.clone()),
