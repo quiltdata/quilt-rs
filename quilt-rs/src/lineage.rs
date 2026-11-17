@@ -234,12 +234,10 @@ impl DomainLineageIo {
         }
     }
 
-    /// On refs, moves the domain's lineage there from `data.json` the first
-    /// time this handle or a clone finds it elsewhere, and only then: a
-    /// handle that has found the domain on refs never moves it again, so a
-    /// running app does not undo a rollback. A rollback that was interrupted
-    /// is refused with [`LineageError::RollingBack`]. The move takes package
-    /// locks, so the caller must hold none.
+    /// On refs, moves the lineage there from `data.json` until this handle or
+    /// a clone first finds it there, so a running app never undoes a
+    /// rollback; an interrupted one is [`LineageError::RollingBack`]. The
+    /// move takes package locks: the caller holds none.
     #[cfg_attr(
         not(any(test, feature = "ref-store-preview")),
         expect(
