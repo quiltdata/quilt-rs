@@ -66,6 +66,19 @@ impl Gate {
 }
 
 impl MockRemote {
+    /// A remote whose objects are kept in `root`, which every `MockRemote` at
+    /// the same `root` shares, in this process or another.
+    #[cfg(test)]
+    pub(crate) fn at(root: std::path::PathBuf) -> Self {
+        Self {
+            storage: MockStorage {
+                temp_dir: crate::io::storage::mocks::Root::Shared(root),
+            },
+            get_object_calls: Arc::default(),
+            parked: Arc::default(),
+        }
+    }
+
     /// How many times `get_object_stream` was called for `uri`.
     ///
     /// # Panics

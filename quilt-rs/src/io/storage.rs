@@ -22,6 +22,7 @@ pub(crate) mod lock;
 pub(crate) use local::tests::Logged;
 
 pub use local::LocalStorage;
+pub(crate) use local::temp_name;
 pub use lock::LockGuard;
 
 // Mock storage is available during testing, or to downstream crates via the

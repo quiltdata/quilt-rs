@@ -165,7 +165,7 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
     }
 
     /// Deletes the temp files that killed lineage writes left, each package's
-    /// only while its lock is free. `data.json` leaves none.
+    /// only while its lock is free. A temp beside `data.json` is not swept.
     pub async fn sweep_leftovers(&self) -> Res {
         self.lineage.sweep(&self.storage).await
     }
