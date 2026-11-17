@@ -26,7 +26,6 @@ mod history;
 mod home;
 mod install;
 mod keep;
-#[cfg(any(test, feature = "ref-store-preview"))]
 mod lineage;
 mod list;
 mod login;
@@ -126,20 +125,6 @@ fn get_domain_dir(dir_arg: Option<PathBuf>) -> Result<PathBuf, Error> {
         Some(user_specified_dir) => Ok(user_specified_dir),
         None => default_domain_dir().ok_or(Error::Domain),
     }
-}
-
-/// Hidden: `refs` selects the ref-store preview, in a build that has it.
-#[cfg(any(test, feature = "ref-store-preview"))]
-const LINEAGE_ENV: &str = "QUILT_LINEAGE";
-
-/// The domain at `root`, its lineage where `QUILT_LINEAGE` says.
-pub(crate) fn open_domain(root: impl AsRef<Path>) -> quilt_rs::LocalDomain {
-    let domain = quilt_rs::LocalDomain::new(root);
-    #[cfg(any(test, feature = "ref-store-preview"))]
-    if std::env::var_os(LINEAGE_ENV).is_some_and(|value| value == "refs") {
-        return domain.with_ref_store();
-    }
-    domain
 }
 
 /// The domain used when neither `--domain` nor `QUILT_DOMAIN` names one.
@@ -406,14 +391,13 @@ impl PackageRef {
     }
 }
 
-#[cfg(any(test, feature = "ref-store-preview"))]
 #[derive(Subcommand, Debug)]
 enum LineageAction {
     /// Move this domain's lineage back from per-package refs to data.json,
     /// or finish a rollback that was interrupted
     ///
-    /// A quilt or `QuiltSync` that keeps lineage in refs moves it there again
-    /// the next time it opens the domain.
+    /// This quilt, and every quilt or `QuiltSync` that keeps lineage in refs,
+    /// moves it there again the next time it opens the domain.
     Rollback,
 }
 
@@ -569,7 +553,6 @@ enum Commands {
         no_download: bool,
     },
     /// Where this domain keeps its lineage
-    #[cfg(any(test, feature = "ref-store-preview"))]
     Lineage {
         #[command(subcommand)]
         action: LineageAction,
@@ -820,7 +803,6 @@ pub async fn init(args: Args) -> Result<Std, Error> {
     let m = Model::from(root_dir);
     // Every other command refuses a rollback that was interrupted, so this
     // one runs before anything reads the lineage.
-    #[cfg(any(test, feature = "ref-store-preview"))]
     if let Commands::Lineage {
         action: LineageAction::Rollback,
     } = args.command
@@ -1046,7 +1028,6 @@ pub async fn init(args: Args) -> Result<Std, Error> {
         }
         Commands::Upgrade => Ok(upgrade::command()),
         Commands::Version { .. } => unreachable!("handled before the domain is opened"),
-        #[cfg(any(test, feature = "ref-store-preview"))]
         Commands::Lineage { .. } => unreachable!("handled before the lineage is read"),
     }
 }
@@ -1825,55 +1806,27 @@ mod tests {
         })
     }
 
-    const LINEAGE_CHILD_DOMAIN: &str = "QUILT_TEST_LINEAGE_DOMAIN";
+    /// A domain's first command leaves `data.json` the stub an older quilt
+    /// fails on, and the package in its own ref.
+    #[test(tokio::test)]
+    async fn a_new_domain_keeps_its_lineage_in_refs_behind_the_stub() -> Result<(), Error> {
+        let domain = tempfile::TempDir::new()?;
+        let root = domain.path().to_string_lossy().to_string();
+        let args = Args::try_parse_from(["quilt", "--domain", &root, "create", "-n", "acme/x"])
+            .map_err(|err| Error::Test(err.to_string()))?;
 
-    /// The child half of `quilt_lineage_refs_keeps_the_lineage_in_refs`; a
-    /// no-op when run directly. It creates `acme/x` in its domain.
-    #[test]
-    fn lineage_child() {
-        let Ok(domain) = std::env::var(LINEAGE_CHILD_DOMAIN) else {
-            return;
-        };
-        let args = Args::try_parse_from(["quilt", "--domain", &domain, "create", "-n", "acme/x"])
-            .expect("parses");
-        let runtime = tokio::runtime::Runtime::new().expect("a runtime");
-        runtime.block_on(init(args)).expect("the create runs");
-    }
+        init(args).await?;
 
-    /// Runs `lineage_child` with `QUILT_LINEAGE` as `lineage`, and returns
-    /// what its domain's `data.json` then is, a lineage or the stub a move to
-    /// refs leaves, and whether it has a `domain.json`.
-    fn create_under_lineage(lineage: Option<&str>) -> (&'static str, bool) {
-        let domain = tempfile::TempDir::new().expect("a temp domain");
-        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
-        child
-            .args(["cli::tests::lineage_child", "--exact", "--nocapture"])
-            .env(LINEAGE_CHILD_DOMAIN, domain.path());
-        match lineage {
-            Some(value) => child.env(LINEAGE_ENV, value),
-            None => child.env_remove(LINEAGE_ENV),
-        };
-        let output = child.output().expect("spawn the child");
-        assert!(output.status.success(), "{output:?}");
         let dot_quilt = domain.path().join(".quilt");
-        let data_json = std::fs::read(dot_quilt.join("data.json")).unwrap_or_default();
-        let found = if quilt_rs::lineage::DomainLineage::from_slice(&data_json).is_ok() {
-            "lineage"
-        } else if serde_json::from_slice::<serde_json::Value>(&data_json)
-            .is_ok_and(|record| record["lineage"] == "refs")
-        {
-            "stub"
-        } else {
-            "neither"
-        };
-        (found, dot_quilt.join("domain.json").exists())
-    }
-
-    #[test]
-    fn quilt_lineage_refs_keeps_the_lineage_in_refs() {
-        assert_eq!(create_under_lineage(Some("refs")), ("stub", true));
-        assert_eq!(create_under_lineage(None), ("lineage", false));
-        assert_eq!(create_under_lineage(Some("data.json")), ("lineage", false));
+        let data_json = std::fs::read(dot_quilt.join("data.json"))?;
+        let stub: serde_json::Value = serde_json::from_slice(&data_json)?;
+        assert_eq!(stub["lineage"], "refs", "{stub}");
+        assert!(quilt_rs::lineage::DomainLineage::from_slice(&data_json).is_err());
+        let config: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(dot_quilt.join("domain.json"))?)?;
+        assert_eq!(config["migration"], "done", "{config}");
+        assert!(dot_quilt.join("refs/acme/x.json").is_file());
+        Ok(())
     }
 
     const ENV_CHILD_ARGV: &str = "QUILT_TEST_ENV_ARGV";
@@ -2311,14 +2264,10 @@ mod tests {
 
             let _ = init(args).await;
 
-            let stored = quilt_rs::LocalDomain::new(domain.path()).get_home().await;
-            assert!(
-                matches!(
-                    stored,
-                    Err(quilt_rs::Error::Lineage(quilt_rs::LineageError::Missing))
-                ),
-                "no home is stored: {stored:?}"
-            );
+            let stored = quilt_rs::LocalDomain::new(domain.path())
+                .stored_home()
+                .await;
+            assert!(matches!(stored, Ok(None)), "no home is stored: {stored:?}");
         }
         Ok(())
     }

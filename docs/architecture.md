@@ -40,7 +40,8 @@ in code by `LocalDomain`. Its on-disk layout:
 ├── packages/           # Immutable cache of remote manifests, by bucket
 ├── installed/          # Local package installations, by namespace
 ├── objects/            # Content-addressed object store (deduplicated)
-└── data.json           # Installation, modification, and commit tracking
+├── refs/               # Each installed package's origin and commit tracking
+└── domain.json         # The home directory
 ```
 
 The load-bearing choice is that a checked-out working file is a **mutable

@@ -50,7 +50,6 @@ mod home;
 pub use home::DEFAULT_HOME_DIR_NAME;
 pub use home::Home;
 
-#[cfg(any(test, feature = "ref-store-preview"))]
 pub(crate) mod refs;
 
 /// It's essentially just a map of `PackageLineage`.
@@ -131,11 +130,11 @@ fn edit_entry<'a>(
 
 type HookFn = dyn Fn(&Namespace, Option<&PackageLineage>, Option<&PackageLineage>) + Send + Sync;
 
-/// Told of each package entry a write of `data.json` changed: the entry as
-/// the write found it and as it left it, `None` when not installed.
+/// Told of each package entry a lineage write changed: the entry as the
+/// write found it and as it left it, `None` when not installed.
 ///
-/// It runs under the short lock, after the write landed, so it must return
-/// at once. It sees only this process's writes: another process, the quilt
+/// It runs under the lock the write took, after the write landed, so it must
+/// return at once. It sees only this process's writes: another process, the quilt
 /// CLI among them, writes without it.
 #[derive(Clone)]
 pub struct LineageHook(Arc<HookFn>);
@@ -169,63 +168,44 @@ impl Eq for LineageHook {}
 #[cfg(any(test, feature = "testing"))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LineageStore {
-    /// `.quilt/data.json`, every package's lineage in one file.
+    /// `.quilt/data.json`, every package's lineage in one file, as a build
+    /// from before refs keeps it.
     DataJson,
-    /// A ref per package under `.quilt/refs/`: a preview no default build
-    /// selects.
-    #[cfg(any(test, feature = "ref-store-preview"))]
+    /// A ref per package under `.quilt/refs/`.
     Refs,
 }
 
-/// Reads and writes the lineage of a domain's packages: `data.json`, or
-/// with the `ref-store-preview` feature a ref per package.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+/// Reads and writes the lineage of a domain's packages: a ref per package,
+/// or, for tests standing in for an older build, `data.json`.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DomainLineageIo {
     path: PathBuf,
     hook: Option<LineageHook>,
     /// Set, `path` is not used.
-    #[cfg(any(test, feature = "ref-store-preview"))]
     refs: Option<refs::RefStore>,
-    #[cfg(any(test, feature = "ref-store-preview"))]
     ready: Ready,
 }
 
 /// Whether a handle or one of its clones has found its domain on refs; see
 /// [`DomainLineageIo::ready`].
-#[cfg(any(test, feature = "ref-store-preview"))]
 #[derive(Clone, Debug, Default)]
 struct Ready(Arc<tokio::sync::OnceCell<()>>);
 
 /// What a handle has seen is no part of which domain it is.
-#[cfg(any(test, feature = "ref-store-preview"))]
 impl PartialEq for Ready {
     fn eq(&self, _: &Self) -> bool {
         true
     }
 }
 
-#[cfg(any(test, feature = "ref-store-preview"))]
 impl Eq for Ready {}
 
 // TODO impl std::io::Write and std::io::Read for DomainLineageIo
 impl DomainLineageIo {
-    #[must_use]
-    pub(crate) fn new(path: PathBuf) -> Self {
-        DomainLineageIo {
-            path,
-            hook: None,
-            #[cfg(any(test, feature = "ref-store-preview"))]
-            refs: None,
-            #[cfg(any(test, feature = "ref-store-preview"))]
-            ready: Ready::default(),
-        }
-    }
-
     /// The domain at `paths` with a ref per package, moved there from
     /// `data.json` on first use: see [`Self::ready`].
-    #[cfg(any(test, feature = "ref-store-preview"))]
     #[must_use]
-    pub(crate) fn refs(paths: paths::DomainPaths) -> Self {
+    pub(crate) fn new(paths: paths::DomainPaths) -> Self {
         DomainLineageIo {
             path: PathBuf::new(),
             hook: None,
@@ -234,39 +214,51 @@ impl DomainLineageIo {
         }
     }
 
+    /// The lineage in the `data.json` at `path`. Outside tests only
+    /// [`Self::stored_home`] reads through it.
+    #[must_use]
+    pub(crate) fn data_json(path: PathBuf) -> Self {
+        DomainLineageIo {
+            path,
+            hook: None,
+            refs: None,
+            ready: Ready::default(),
+        }
+    }
+
     /// On refs, moves the lineage there from `data.json` until this handle or
     /// a clone first finds it there, one at a time, so a running app never
     /// undoes a rollback; an interrupted one is [`LineageError::RollingBack`].
     /// The move takes package locks: the caller holds none.
-    #[cfg_attr(
-        not(any(test, feature = "ref-store-preview")),
-        expect(
-            clippy::unused_async,
-            clippy::unused_async_trait_impl,
-            reason = "only a domain on refs is moved"
-        )
-    )]
     async fn ready(&self, storage: &(impl Storage + Sync)) -> Res {
-        #[cfg(any(test, feature = "ref-store-preview"))]
         if let Some(store) = &self.refs {
             let paths = store.paths();
             self.ready
                 .0
                 .get_or_try_init(|| async {
-                    if refs::state::detect(storage, paths).await? != refs::state::DomainState::Refs
-                    {
-                        let migrated = refs::migrate::up(storage, paths).await?;
-                        log::info!(
-                            "Moved the lineage of {} packages to refs, leaving out {}",
-                            migrated.written.len(),
-                            migrated.skipped.len()
-                        );
+                    match refs::state::detect(storage, paths).await? {
+                        refs::state::DomainState::Refs => {}
+                        // Waiting for the rollback's lock would move the
+                        // domain back once it finished.
+                        refs::state::DomainState::RollingBack { .. } => {
+                            return Err(LineageError::RollingBack {
+                                path: paths.domain_config(),
+                            }
+                            .into());
+                        }
+                        _ => {
+                            let migrated = refs::migrate::up(storage, paths).await?;
+                            log::info!(
+                                "Moved the lineage of {} packages to refs, leaving out {}",
+                                migrated.written.len(),
+                                migrated.skipped.len()
+                            );
+                        }
                     }
                     Ok::<_, Error>(())
                 })
                 .await?;
         }
-        let _ = storage;
         Ok(())
     }
 
@@ -294,25 +286,20 @@ impl DomainLineageIo {
         PackageLock::try_take(storage, paths, namespace).await
     }
 
-    /// This handle, with its hook, on the domain at `paths` with a ref per
-    /// package.
-    #[cfg(any(test, feature = "ref-store-preview"))]
+    /// This handle, with its hook, on the `data.json` at `path`.
+    #[cfg(any(test, feature = "testing"))]
     #[must_use]
-    pub(crate) fn into_refs(self, paths: paths::DomainPaths) -> Self {
-        let refs = Self::refs(paths);
-        match self.hook {
-            Some(hook) => refs.with_hook(hook),
-            None => refs,
+    pub(crate) fn into_data_json(self, path: PathBuf) -> Self {
+        Self {
+            hook: self.hook,
+            ..Self::data_json(path)
         }
     }
 
     /// Tell `hook` of every package entry this handle's writes change.
     #[must_use]
     pub fn with_hook(mut self, hook: LineageHook) -> Self {
-        #[cfg(any(test, feature = "ref-store-preview"))]
-        {
-            self.refs = self.refs.map(|store| store.with_hook(hook.clone()));
-        }
+        self.refs = self.refs.map(|store| store.with_hook(hook.clone()));
         self.hook = Some(hook);
         self
     }
@@ -333,7 +320,6 @@ impl DomainLineageIo {
         finish: impl FnOnce(Option<&BTreeSet<Namespace>>) -> T,
     ) -> Res<T> {
         self.ready(storage).await?;
-        #[cfg(any(test, feature = "ref-store-preview"))]
         if let Some(store) = &self.refs {
             return store.check_each(storage, look, finish).await;
         }
@@ -355,7 +341,6 @@ impl DomainLineageIo {
         }
 
         self.ready(storage).await?;
-        #[cfg(any(test, feature = "ref-store-preview"))]
         if let Some(store) = &self.refs {
             let home = store.home(storage).await?;
             if home.as_ref().as_os_str().is_empty() {
@@ -371,7 +356,6 @@ impl DomainLineageIo {
     /// exists but can't be read, such as for lack of permission, is an error.
     /// It only reads: on refs, a domain not yet moved there is not moved.
     pub async fn stored_home(&self, storage: &(impl Storage + Sync)) -> Res<Option<Home>> {
-        #[cfg(any(test, feature = "ref-store-preview"))]
         if let Some(store) = &self.refs {
             use refs::state::DomainState;
 
@@ -384,7 +368,7 @@ impl DomainLineageIo {
                     return Ok(Some(home).filter(|home| !home.as_ref().as_os_str().is_empty()));
                 }
             };
-            return Self::new(legacy).stored_legacy_home(storage).await;
+            return Self::data_json(legacy).stored_legacy_home(storage).await;
         }
         self.stored_legacy_home(storage).await
     }
@@ -408,7 +392,6 @@ impl DomainLineageIo {
 
     pub async fn namespaces(&self, storage: &(impl Storage + Sync)) -> Res<BTreeSet<Namespace>> {
         self.ready(storage).await?;
-        #[cfg(any(test, feature = "ref-store-preview"))]
         if let Some(store) = &self.refs {
             return store.namespaces(storage).await;
         }
@@ -423,7 +406,6 @@ impl DomainLineageIo {
         namespace: &Namespace,
     ) -> Res<bool> {
         self.ready(storage).await?;
-        #[cfg(any(test, feature = "ref-store-preview"))]
         if let Some(store) = &self.refs {
             return Ok(store.contains(storage, namespace).await);
         }
@@ -439,7 +421,6 @@ impl DomainLineageIo {
         namespace: &Namespace,
     ) -> Res<bool> {
         let installed = self.contains(storage, namespace).await?;
-        #[cfg(any(test, feature = "ref-store-preview"))]
         if let Some(store) = &self.refs {
             store.writable_config(storage).await?;
         }
@@ -453,7 +434,6 @@ impl DomainLineageIo {
         storage: &(impl Storage + Sync),
         namespace: &Namespace,
     ) -> Res<bool> {
-        #[cfg(any(test, feature = "ref-store-preview"))]
         if let Some(store) = &self.refs {
             return store.removable(storage, namespace).await;
         }
@@ -475,7 +455,6 @@ impl DomainLineageIo {
         }
 
         self.ready(storage).await?;
-        #[cfg(any(test, feature = "ref-store-preview"))]
         if let Some(store) = &self.refs {
             return store.read_all(storage).await;
         }
@@ -502,11 +481,9 @@ impl DomainLineageIo {
         lineage: PackageLineage,
         placed: &Home,
     ) -> Res {
-        #[cfg(any(test, feature = "ref-store-preview"))]
         if let Some(store) = &self.refs {
             return store.create(storage, held, &lineage, placed).await;
         }
-        let _ = placed;
         self.update_locked(storage, held, |entry| {
             *entry = Some(lineage);
             Ok(())
@@ -520,7 +497,6 @@ impl DomainLineageIo {
         storage: &(impl Storage + Sync),
         held: &PackageLock,
     ) -> Res {
-        #[cfg(any(test, feature = "ref-store-preview"))]
         if let Some(store) = &self.refs {
             return store.remove(storage, held).await;
         }
@@ -539,7 +515,6 @@ impl DomainLineageIo {
         held: &PackageLock,
         step: impl FnOnce(&mut Option<PackageLineage>) -> Res<T>,
     ) -> Res<T> {
-        #[cfg(any(test, feature = "ref-store-preview"))]
         if let Some(store) = &self.refs {
             return store.update_entry(storage, held, step).await;
         }
@@ -548,43 +523,23 @@ impl DomainLineageIo {
 
     /// Delete the leftovers of writes a kill interrupted, on refs. A temp a
     /// kill leaves beside `data.json` is not swept.
-    #[cfg_attr(
-        not(any(test, feature = "ref-store-preview")),
-        expect(
-            clippy::unused_async,
-            clippy::unused_async_trait_impl,
-            reason = "only refs' temps are swept"
-        )
-    )]
     pub(crate) async fn sweep(&self, storage: &(impl Storage + Sync)) -> Res {
-        #[cfg(any(test, feature = "ref-store-preview"))]
         if let Some(store) = &self.refs {
             return store.sweep(storage).await;
         }
-        let _ = storage;
         Ok(())
     }
 
     /// [`Self::sweep`] by a caller holding the locks in `held`, sweeping only
     /// those packages'.
-    #[cfg_attr(
-        not(any(test, feature = "ref-store-preview")),
-        expect(
-            clippy::unused_async,
-            clippy::unused_async_trait_impl,
-            reason = "only refs' temps are swept"
-        )
-    )]
     pub(crate) async fn sweep_held(
         &self,
         storage: &(impl Storage + Sync),
         held: &[PackageLock],
     ) -> Res {
-        #[cfg(any(test, feature = "ref-store-preview"))]
         if let Some(store) = &self.refs {
             return store.sweep_held(storage, held).await;
         }
-        let _ = (storage, held);
         Ok(())
     }
 
@@ -629,7 +584,6 @@ impl DomainLineageIo {
         namespace: &Namespace,
     ) -> Res<(PathBuf, PackageLineage)> {
         self.ready(storage).await?;
-        #[cfg(any(test, feature = "ref-store-preview"))]
         if let Some(store) = &self.refs {
             let lineage = store.read(storage, namespace).await?;
             let home = self.home(storage).await?;
@@ -697,7 +651,6 @@ impl DomainLineageIo {
         namespace: &Namespace,
         step: impl FnOnce(&mut Option<PackageLineage>) -> Res<T>,
     ) -> Res<T> {
-        #[cfg(any(test, feature = "ref-store-preview"))]
         if let Some(store) = &self.refs {
             let held = self.lock_package(storage, store.paths(), namespace).await?;
             return store.update_entry(storage, &held, step).await;
@@ -773,7 +726,6 @@ impl DomainLineageIo {
         home: impl AsRef<Path>,
         overwrite: bool,
     ) -> Res<Home> {
-        #[cfg(any(test, feature = "ref-store-preview"))]
         if let Some(store) = &self.refs {
             self.ready(storage).await?;
             let home = Home::from(home);
@@ -874,7 +826,7 @@ impl DomainLineageIo {
         let home = Home::from(home);
         match store {
             LineageStore::DataJson => {
-                let io = Self::new(paths.lineage());
+                let io = Self::data_json(paths.lineage());
                 let lineage = DomainLineage {
                     packages: packages.into_iter().collect(),
                     home,
@@ -882,7 +834,6 @@ impl DomainLineageIo {
                 io.write(storage, lineage).await?;
                 Ok(io)
             }
-            #[cfg(any(test, feature = "ref-store-preview"))]
             LineageStore::Refs => {
                 let refs = refs::RefStore::new(paths.clone());
                 refs.replace_fixture(storage, &home).await?;
@@ -890,7 +841,7 @@ impl DomainLineageIo {
                     let held = PackageLock::take(storage, paths, &namespace).await?;
                     refs.create(storage, &held, &lineage, &home).await?;
                 }
-                Ok(Self::refs(paths.clone()))
+                Ok(Self::new(paths.clone()))
             }
         }
     }
@@ -902,7 +853,6 @@ impl DomainLineageIo {
         storage: &(impl Storage + Sync),
         namespace: &Namespace,
     ) -> Res {
-        #[cfg(any(test, feature = "ref-store-preview"))]
         if let Some(store) = &self.refs {
             return store.damage_fixture(storage, namespace).await;
         }
@@ -1272,7 +1222,7 @@ mod tests {
                 ByteStream::from_static(br#"{"packages":{},"home":"/home/directory"}"#),
             )
             .await?;
-        let lineage = DomainLineageIo::new(file_path).read(&storage).await?;
+        let lineage = DomainLineageIo::data_json(file_path).read(&storage).await?;
         assert_eq!(lineage, DomainLineage::new("/home/directory"));
         Ok(())
     }
@@ -1288,7 +1238,7 @@ mod tests {
             )
             .await?;
 
-        let io = DomainLineageIo::new(file_path);
+        let io = DomainLineageIo::data_json(file_path);
         let home = io.set_home(&storage, "/home/directory").await?;
 
         assert_eq!(home, Home::from("/home/directory"));
@@ -1310,7 +1260,7 @@ mod tests {
             .write_byte_stream(&file_path, ByteStream::from_static(stored))
             .await?;
 
-        let home = DomainLineageIo::new(file_path.clone())
+        let home = DomainLineageIo::data_json(file_path.clone())
             .set_home(&storage, "/home/directory")
             .await?;
 
@@ -1334,7 +1284,7 @@ mod tests {
             .write_byte_stream(&file_path, ByteStream::from_static(ONE_INSTALLED))
             .await?;
 
-        let err = DomainLineageIo::new(file_path.clone())
+        let err = DomainLineageIo::data_json(file_path.clone())
             .set_home(&storage, "/new/home")
             .await
             .unwrap_err();
@@ -1367,7 +1317,7 @@ mod tests {
             .write_byte_stream(&file_path, ByteStream::from_static(ONE_INSTALLED))
             .await?;
 
-        let home = DomainLineageIo::new(file_path)
+        let home = DomainLineageIo::data_json(file_path)
             .set_home(&storage, "/old/home")
             .await?;
 
@@ -1382,7 +1332,7 @@ mod tests {
         storage
             .write_byte_stream(&file_path, ByteStream::from_static(ONE_INSTALLED))
             .await?;
-        let io = DomainLineageIo::new(file_path);
+        let io = DomainLineageIo::data_json(file_path);
 
         io.overwrite_home(&storage, "/new/home").await?;
 
@@ -1396,7 +1346,7 @@ mod tests {
     async fn set_home_creates_the_home_folder() -> Res {
         let storage = MockStorage::default();
 
-        DomainLineageIo::new(PathBuf::from("foo"))
+        DomainLineageIo::data_json(PathBuf::from("foo"))
             .set_home(&storage, "/new/home")
             .await?;
 
@@ -1412,7 +1362,7 @@ mod tests {
             .write_byte_stream(&file_path, ByteStream::from_static(ONE_INSTALLED))
             .await?;
 
-        DomainLineageIo::new(file_path)
+        DomainLineageIo::data_json(file_path)
             .overwrite_home(&storage, "/new/home")
             .await?;
 
@@ -1433,7 +1383,7 @@ mod tests {
             .write_byte_stream(&file_path, ByteStream::from_static(ONE_INSTALLED))
             .await?;
 
-        DomainLineageIo::new(file_path.clone())
+        DomainLineageIo::data_json(file_path.clone())
             .overwrite_home(&storage, "/blocked/home")
             .await
             .unwrap_err();
@@ -1453,7 +1403,7 @@ mod tests {
             .await?;
         let file_path = PathBuf::from("foo");
 
-        DomainLineageIo::new(file_path.clone())
+        DomainLineageIo::data_json(file_path.clone())
             .set_home(&storage, "/blocked/home")
             .await
             .unwrap_err();
@@ -1477,7 +1427,7 @@ mod tests {
     #[test(tokio::test)]
     async fn test_domain_lineage_from_nothing() -> Res {
         let storage = MockStorage::default();
-        let lineage = DomainLineageIo::new(PathBuf::from("does-not-exist"))
+        let lineage = DomainLineageIo::data_json(PathBuf::from("does-not-exist"))
             .read(&storage)
             .await
             .unwrap_err();
@@ -1492,7 +1442,7 @@ mod tests {
         assert!(!storage.exists(&file_path).await);
         let bytes = "0123456789abcdef".as_bytes();
         let working_dir = PathBuf::from("/tmp/working_dir");
-        DomainLineageIo::new(file_path.clone())
+        DomainLineageIo::data_json(file_path.clone())
             .write(
                 &storage,
                 DomainLineage {
@@ -1583,7 +1533,7 @@ mod tests {
         };
 
         // Write it to storage
-        let lineage_io = DomainLineageIo::new(file_path.clone());
+        let lineage_io = DomainLineageIo::data_json(file_path.clone());
         lineage_io.write(&storage, lineage).await?;
 
         // Read the package lineage
@@ -1625,7 +1575,7 @@ mod tests {
             )
             .await?;
 
-        let packages = DomainLineageIo::new(file_path)
+        let packages = DomainLineageIo::data_json(file_path)
             .read_packages(&storage)
             .await;
 
@@ -1651,7 +1601,7 @@ mod tests {
     async fn test_update_package_lineage() -> Res {
         let storage = MockStorage::default();
         let file_path = PathBuf::from("lineage.json");
-        let lineage_io = DomainLineageIo::new(file_path.clone());
+        let lineage_io = DomainLineageIo::data_json(file_path.clone());
 
         // Create an initial domain lineage with home directory
         let initial_lineage = DomainLineage {
@@ -1738,7 +1688,7 @@ mod tests {
     async fn edit_package_lineage_preserves_the_rest_of_the_entry() -> Res {
         let storage = MockStorage::default();
         let namespace = Namespace::from(("foo", "bar"));
-        let lineage_io = DomainLineageIo::new(PathBuf::from("lineage.json"));
+        let lineage_io = DomainLineageIo::data_json(PathBuf::from("lineage.json"));
         lineage_io
             .write(
                 &storage,
@@ -1774,7 +1724,7 @@ mod tests {
     #[test(tokio::test)]
     async fn edit_package_lineage_refuses_an_unknown_namespace() -> Res {
         let storage = MockStorage::default();
-        let lineage_io = DomainLineageIo::new(PathBuf::from("lineage.json"));
+        let lineage_io = DomainLineageIo::data_json(PathBuf::from("lineage.json"));
         lineage_io
             .write(&storage, DomainLineage::new("/home/user/quilt"))
             .await?;
@@ -1799,15 +1749,15 @@ mod tests {
     fn hooked() -> (DomainLineageIo, Arc<Told>) {
         let told = Arc::new(Told::default());
         let noted = Arc::clone(&told);
-        let io = DomainLineageIo::new(PathBuf::from("lineage.json")).with_hook(LineageHook::new(
-            move |namespace, was, is| {
+        let io = DomainLineageIo::data_json(PathBuf::from("lineage.json")).with_hook(
+            LineageHook::new(move |namespace, was, is| {
                 noted.lock().unwrap().push((
                     namespace.clone(),
                     was.map(|l| l.base_hash.clone()),
                     is.map(|l| l.base_hash.clone()),
                 ));
-            },
-        ));
+            }),
+        );
         (io, told)
     }
 
@@ -1866,7 +1816,7 @@ mod tests {
         io.write(&storage, DomainLineage::new("/home/user/quilt"))
             .await?;
         let foo = Namespace::from(("foo", "bar"));
-        DomainLineageIo::new(PathBuf::from("lineage.json"))
+        DomainLineageIo::data_json(PathBuf::from("lineage.json"))
             .update_package_lineage(&storage, &foo, |e| {
                 *e = Some(PackageLineage::default());
                 Ok(())
@@ -1880,7 +1830,7 @@ mod tests {
     #[test(tokio::test)]
     async fn test_domain_lineage_create_package_lineage() -> Res {
         let namespace = ("foo", "bar");
-        let domain_lineage = DomainLineageIo::default();
+        let domain_lineage = DomainLineageIo::data_json(PathBuf::new());
         let lineage = domain_lineage.create_package_lineage(namespace.into());
         assert_eq!(
             lineage,

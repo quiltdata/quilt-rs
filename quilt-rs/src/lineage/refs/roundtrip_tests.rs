@@ -86,12 +86,13 @@ impl Domain {
 
     /// The domain as a build with refs opens it.
     fn on_refs(&self) -> LocalDomain {
-        LocalDomain::new(self.root.path().join("domain")).with_ref_store()
+        LocalDomain::new(self.root.path().join("domain"))
     }
 
     /// The domain as the older client, a build on `data.json`, opens it.
     fn on_data_json(&self) -> LocalDomain {
         LocalDomain::new(self.root.path().join("domain"))
+            .with_lineage_store(crate::lineage::LineageStore::DataJson)
     }
 
     fn data_json(&self) -> Res<Value> {

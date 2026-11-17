@@ -14,7 +14,7 @@ impl std::fmt::Display for Output {
         write!(
             f,
             "Rolled this domain's lineage back to data.json; the refs are kept in {}.\n\
-             A quilt or QuiltSync that keeps lineage in refs moves it there again the next time it opens this domain.",
+             This quilt, and every quilt or QuiltSync that keeps lineage in refs, moves it there again the next time it opens this domain.",
             self.archive.display()
         )
     }
@@ -45,11 +45,12 @@ mod tests {
 
     use crate::cli::Args;
     use crate::cli::init;
-    use crate::cli::model::create_ref_store_model_in_temp_dir;
+    use crate::cli::model::create_model_in_temp_dir;
+    use quilt_rs::lineage::LineageStore;
 
     #[test(tokio::test)]
     async fn rollback_hands_the_lineage_back_and_says_it_moves_again() -> Result<(), Error> {
-        let (m, temp_dir) = create_ref_store_model_in_temp_dir().await?;
+        let (m, temp_dir) = create_model_in_temp_dir().await?;
         let namespace: quilt_uri::Namespace = ("test", "kept").into();
         m.create(crate::cli::create::Input {
             namespace: namespace.clone(),
@@ -61,7 +62,8 @@ mod tests {
 
         let output = m.lineage_rollback().await?;
 
-        let on_data_json = quilt_rs::LocalDomain::new(temp_dir.path());
+        let on_data_json =
+            quilt_rs::LocalDomain::new(temp_dir.path()).with_lineage_store(LineageStore::DataJson);
         assert!(
             on_data_json
                 .get_installed_package(&namespace)
@@ -86,7 +88,7 @@ mod tests {
     /// one finishes it before the home is read or the leftovers swept.
     #[test(tokio::test)]
     async fn an_interrupted_rollback_is_finished_before_the_home_is_read() -> Result<(), Error> {
-        let (m, temp_dir) = create_ref_store_model_in_temp_dir().await?;
+        let (m, temp_dir) = create_model_in_temp_dir().await?;
         let dot_quilt = temp_dir.path().join(".quilt");
         let config = serde_json::json!({
             "format": 1,
@@ -105,6 +107,7 @@ mod tests {
         assert!(!dot_quilt.join("domain.json").exists());
         assert!(
             quilt_rs::LocalDomain::new(temp_dir.path())
+                .with_lineage_store(LineageStore::DataJson)
                 .get_home()
                 .await
                 .is_ok()

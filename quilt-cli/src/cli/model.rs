@@ -124,7 +124,6 @@ pub trait Commands {
         uninstall::model(local_domain, args).await
     }
 
-    #[cfg(any(test, feature = "ref-store-preview"))]
     async fn lineage_rollback(&self) -> Result<crate::cli::lineage::Output, Error> {
         crate::cli::lineage::model(self.get_local_domain()).await
     }
@@ -158,7 +157,8 @@ impl Model {
 
 impl From<PathBuf> for Model {
     fn from(root: PathBuf) -> Self {
-        Model::new(crate::cli::open_domain(root))
+        let local_domain = quilt_rs::LocalDomain::new(root);
+        Model::new(local_domain)
     }
 }
 
@@ -215,15 +215,6 @@ pub async fn install_paths_into_temp_dir(
 #[cfg(test)]
 pub async fn create_model_in_temp_dir() -> Result<(Model, TempDir), Error> {
     let (model, temp_dir) = Model::from_temp_dir()?;
-    model.set_home(temp_dir.path()).await?;
-    Ok((model, temp_dir))
-}
-
-/// [`create_model_in_temp_dir`] with a ref per package.
-#[cfg(test)]
-pub async fn create_ref_store_model_in_temp_dir() -> Result<(Model, TempDir), Error> {
-    let temp_dir = TempDir::new()?;
-    let model = Model::new(quilt_rs::LocalDomain::new(temp_dir.path()).with_ref_store());
     model.set_home(temp_dir.path()).await?;
     Ok((model, temp_dir))
 }
