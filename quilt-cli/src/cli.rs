@@ -26,6 +26,8 @@ mod history;
 mod home;
 mod install;
 mod keep;
+#[cfg(any(test, feature = "ref-store-preview"))]
+mod lineage;
 mod list;
 mod login;
 mod model;
@@ -404,6 +406,17 @@ impl PackageRef {
     }
 }
 
+#[cfg(any(test, feature = "ref-store-preview"))]
+#[derive(Subcommand, Debug)]
+enum LineageAction {
+    /// Move this domain's lineage back from per-package refs to data.json,
+    /// or finish a rollback that was interrupted
+    ///
+    /// A quilt or `QuiltSync` that keeps lineage in refs moves it there again
+    /// the next time it opens the domain.
+    Rollback,
+}
+
 #[derive(Subcommand, Debug)]
 enum CatalogAction {
     /// Make this Quilt stack the default
@@ -554,6 +567,12 @@ enum Commands {
         /// downloading anything
         #[arg(long, requires = "keep")]
         no_download: bool,
+    },
+    /// Where this domain keeps its lineage
+    #[cfg(any(test, feature = "ref-store-preview"))]
+    Lineage {
+        #[command(subcommand)]
+        action: LineageAction,
     },
     /// Show or set which of a package's files this copy keeps
     ///
@@ -799,6 +818,15 @@ pub async fn init(args: Args) -> Result<Std, Error> {
     }
     let root_dir = get_domain_dir(args.domain)?;
     let m = Model::from(root_dir);
+    // Every other command refuses a rollback that was interrupted, so this
+    // one runs before anything reads the lineage.
+    #[cfg(any(test, feature = "ref-store-preview"))]
+    if let Commands::Lineage {
+        action: LineageAction::Rollback,
+    } = args.command
+    {
+        return Ok(lineage::command(m).await);
+    }
     if let Err(err) = m.get_local_domain().sweep_leftovers().await {
         log::warn!("Could not sweep what killed lineage writes left: {err}");
     }
@@ -1018,6 +1046,8 @@ pub async fn init(args: Args) -> Result<Std, Error> {
         }
         Commands::Upgrade => Ok(upgrade::command()),
         Commands::Version { .. } => unreachable!("handled before the domain is opened"),
+        #[cfg(any(test, feature = "ref-store-preview"))]
+        Commands::Lineage { .. } => unreachable!("handled before the lineage is read"),
     }
 }
 
@@ -1811,7 +1841,8 @@ mod tests {
     }
 
     /// Runs `lineage_child` with `QUILT_LINEAGE` as `lineage`, and returns
-    /// which of `data.json` and `domain.json` its domain then has.
+    /// whether its domain's `data.json` then holds a lineage, and whether it
+    /// has a `domain.json`.
     fn create_under_lineage(lineage: Option<&str>) -> (bool, bool) {
         let domain = tempfile::TempDir::new().expect("a temp domain");
         let mut child = std::process::Command::new(std::env::current_exe().unwrap());
@@ -1825,8 +1856,9 @@ mod tests {
         let output = child.output().expect("spawn the child");
         assert!(output.status.success(), "{output:?}");
         let dot_quilt = domain.path().join(".quilt");
+        let data_json = std::fs::read(dot_quilt.join("data.json")).expect("a data.json");
         (
-            dot_quilt.join("data.json").exists(),
+            quilt_rs::lineage::DomainLineage::from_slice(&data_json).is_ok(),
             dot_quilt.join("domain.json").exists(),
         )
     }

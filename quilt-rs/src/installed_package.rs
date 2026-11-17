@@ -175,6 +175,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
     /// caller's future, and the CLI's command future then outgrows the
     /// compiler's layout depth limit.
     pub async fn lock(&self) -> Res<LockedPackage<S, R>> {
+        self.lineage.domain().ready(&self.storage).await?;
         let held = PackageLock::take(&self.storage, &self.paths, &self.namespace).await?;
         Ok(LockedPackage {
             package: self.clone(),
@@ -184,6 +185,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
 
     /// [`Self::lock`] without the wait: `None` while another writer holds it.
     pub async fn try_lock(&self) -> Res<Option<LockedPackage<S, R>>> {
+        self.lineage.domain().ready(&self.storage).await?;
         let held = PackageLock::try_take(&self.storage, &self.paths, &self.namespace).await?;
         Ok(held.map(|held| LockedPackage {
             package: self.clone(),

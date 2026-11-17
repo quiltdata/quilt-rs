@@ -377,6 +377,15 @@ pub enum LineageError {
     #[error("Cannot roll the lineage back to data.json: {0}")]
     RollbackRefused(Box<LineageError>),
 
+    /// `data.json` beside refs is not the stub the move leaves, so a
+    /// rollback would take it for one it had already published.
+    #[cfg(any(test, feature = "ref-store-preview"))]
+    #[error(
+        "{} is not the stub the move to per-package refs leaves, so it may hold a lineage the refs do not; move it aside to roll back",
+        path.display()
+    )]
+    NotTheStub { path: PathBuf },
+
     /// A rollback was interrupted, and only the command that started it
     /// finishes it.
     #[cfg(any(test, feature = "ref-store-preview"))]

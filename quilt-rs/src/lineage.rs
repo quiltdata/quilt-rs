@@ -186,7 +186,26 @@ pub struct DomainLineageIo {
     /// Set, `path` is not used.
     #[cfg(any(test, feature = "ref-store-preview"))]
     refs: Option<refs::RefStore>,
+    #[cfg(any(test, feature = "ref-store-preview"))]
+    ready: Ready,
 }
+
+/// Whether a handle or one of its clones has found its domain on refs; see
+/// [`DomainLineageIo::ready`].
+#[cfg(any(test, feature = "ref-store-preview"))]
+#[derive(Clone, Debug, Default)]
+struct Ready(Arc<std::sync::atomic::AtomicBool>);
+
+/// What a handle has seen is no part of which domain it is.
+#[cfg(any(test, feature = "ref-store-preview"))]
+impl PartialEq for Ready {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+#[cfg(any(test, feature = "ref-store-preview"))]
+impl Eq for Ready {}
 
 // TODO impl std::io::Write and std::io::Read for DomainLineageIo
 impl DomainLineageIo {
@@ -197,11 +216,13 @@ impl DomainLineageIo {
             hook: None,
             #[cfg(any(test, feature = "ref-store-preview"))]
             refs: None,
+            #[cfg(any(test, feature = "ref-store-preview"))]
+            ready: Ready::default(),
         }
     }
 
-    /// The domain at `paths` with a ref per package. It never reads or
-    /// writes `data.json`.
+    /// The domain at `paths` with a ref per package, moved there from
+    /// `data.json` on first use: see [`Self::ready`].
     #[cfg(any(test, feature = "ref-store-preview"))]
     #[must_use]
     pub(crate) fn refs(paths: paths::DomainPaths) -> Self {
@@ -209,7 +230,51 @@ impl DomainLineageIo {
             path: PathBuf::new(),
             hook: None,
             refs: Some(refs::RefStore::new(paths)),
+            ready: Ready::default(),
         }
+    }
+
+    /// On refs, moves the domain's lineage there from `data.json` the first
+    /// time this handle or a clone finds it elsewhere, and only then: a
+    /// handle that has found the domain on refs never moves it again, so a
+    /// running app does not undo a rollback. A rollback that was interrupted
+    /// is refused with [`LineageError::RollingBack`]. The move takes package
+    /// locks, so the caller must hold none.
+    #[cfg_attr(
+        not(any(test, feature = "ref-store-preview")),
+        expect(
+            clippy::unused_async,
+            clippy::unused_async_trait_impl,
+            reason = "only a domain on refs is moved"
+        )
+    )]
+    pub(crate) async fn ready(&self, storage: &(impl Storage + Sync)) -> Res {
+        #[cfg(any(test, feature = "ref-store-preview"))]
+        if let Some(store) = &self.refs
+            && !self.ready.0.load(std::sync::atomic::Ordering::Acquire)
+        {
+            let paths = store.paths();
+            if refs::state::detect(storage, paths).await? != refs::state::DomainState::Refs {
+                let migrated = refs::migrate::up(storage, paths).await?;
+                log::info!(
+                    "Moved the lineage of {} packages to refs, leaving out {}",
+                    migrated.written.len(),
+                    migrated.skipped.len()
+                );
+            }
+            self.found_on_refs();
+        }
+        let _ = storage;
+        Ok(())
+    }
+
+    /// Marks this handle and its clones as having found the domain on refs,
+    /// as a rollback through it has.
+    #[cfg(any(test, feature = "ref-store-preview"))]
+    pub(crate) fn found_on_refs(&self) {
+        self.ready
+            .0
+            .store(true, std::sync::atomic::Ordering::Release);
     }
 
     /// This handle, with its hook, on the domain at `paths` with a ref per
@@ -250,6 +315,7 @@ impl DomainLineageIo {
         mut look: impl FnMut(&Namespace, &PackageLineage),
         finish: impl FnOnce(Option<&BTreeSet<Namespace>>) -> T,
     ) -> Res<T> {
+        self.ready(storage).await?;
         #[cfg(any(test, feature = "ref-store-preview"))]
         if let Some(store) = &self.refs {
             return store.check_each(storage, look, finish).await;
@@ -271,6 +337,7 @@ impl DomainLineageIo {
             home: Home,
         }
 
+        self.ready(storage).await?;
         #[cfg(any(test, feature = "ref-store-preview"))]
         if let Some(store) = &self.refs {
             let home = store.home(storage).await?;
@@ -285,13 +352,31 @@ impl DomainLineageIo {
 
     /// The stored home, or `None` when the domain has none yet. A record that
     /// exists but can't be read, such as for lack of permission, is an error.
+    /// It only reads: on refs, a domain not yet moved there is not moved.
     pub async fn stored_home(&self, storage: &(impl Storage + Sync)) -> Res<Option<Home>> {
+        #[cfg(any(test, feature = "ref-store-preview"))]
+        if let Some(store) = &self.refs {
+            use refs::state::DomainState;
+
+            let paths = store.paths();
+            let legacy = match refs::state::detect(storage, paths).await? {
+                DomainState::Legacy => paths.lineage(),
+                DomainState::StubOnly => paths.lineage_migrating(),
+                _ => {
+                    let home = store.home(storage).await?;
+                    return Ok(Some(home).filter(|home| !home.as_ref().as_os_str().is_empty()));
+                }
+            };
+            return Self::new(legacy).stored_legacy_home(storage).await;
+        }
+        self.stored_legacy_home(storage).await
+    }
+
+    /// [`Self::stored_home`] from `data.json`.
+    async fn stored_legacy_home(&self, storage: &(impl Storage + Sync)) -> Res<Option<Home>> {
         match self.home(storage).await {
             Ok(home) => Ok(Some(home)),
             Err(Error::Lineage(LineageError::MissingHome)) => Ok(None),
-            // No domain config: the store tells it from one it can't read.
-            #[cfg(any(test, feature = "ref-store-preview"))]
-            Err(Error::Lineage(LineageError::Missing)) if self.refs.is_some() => Ok(None),
             // `Missing` also covers a record whose folder can't be looked into.
             Err(Error::Lineage(LineageError::Missing)) => {
                 match storage.open_file(&self.path).await {
@@ -305,6 +390,7 @@ impl DomainLineageIo {
     }
 
     pub async fn namespaces(&self, storage: &(impl Storage + Sync)) -> Res<BTreeSet<Namespace>> {
+        self.ready(storage).await?;
         #[cfg(any(test, feature = "ref-store-preview"))]
         if let Some(store) = &self.refs {
             return store.namespaces(storage).await;
@@ -319,11 +405,27 @@ impl DomainLineageIo {
         storage: &(impl Storage + Sync),
         namespace: &Namespace,
     ) -> Res<bool> {
+        self.ready(storage).await?;
         #[cfg(any(test, feature = "ref-store-preview"))]
         if let Some(store) = &self.refs {
             return Ok(store.contains(storage, namespace).await);
         }
         Ok(self.read(storage).await?.packages.contains_key(namespace))
+    }
+
+    /// [`Self::contains`] for a writer about to place a package's files,
+    /// refusing first while its lineage can't be written: on refs, until the
+    /// move there is done, so nothing is placed only to be removed.
+    pub(crate) async fn contains_to_write(
+        &self,
+        storage: &(impl Storage + Sync),
+        namespace: &Namespace,
+    ) -> Res<bool> {
+        #[cfg(any(test, feature = "ref-store-preview"))]
+        if let Some(store) = &self.refs {
+            store.writable_config(storage).await?;
+        }
+        self.contains(storage, namespace).await
     }
 
     /// [`Self::contains`], refusing a package this build can't remove: on
@@ -354,6 +456,7 @@ impl DomainLineageIo {
             home: Home,
         }
 
+        self.ready(storage).await?;
         #[cfg(any(test, feature = "ref-store-preview"))]
         if let Some(store) = &self.refs {
             return store.read_all(storage).await;
@@ -507,6 +610,7 @@ impl DomainLineageIo {
         storage: &(impl Storage + Sync),
         namespace: &Namespace,
     ) -> Res<(PathBuf, PackageLineage)> {
+        self.ready(storage).await?;
         #[cfg(any(test, feature = "ref-store-preview"))]
         if let Some(store) = &self.refs {
             let lineage = store.read(storage, namespace).await?;
@@ -577,6 +681,7 @@ impl DomainLineageIo {
     ) -> Res<T> {
         #[cfg(any(test, feature = "ref-store-preview"))]
         if let Some(store) = &self.refs {
+            self.ready(storage).await?;
             let held = PackageLock::take(storage, store.paths(), namespace).await?;
             return store.update_entry(storage, &held, step).await;
         }
@@ -653,13 +758,12 @@ impl DomainLineageIo {
     ) -> Res<Home> {
         #[cfg(any(test, feature = "ref-store-preview"))]
         if let Some(store) = &self.refs {
+            self.ready(storage).await?;
             let home = Home::from(home);
-            if !store.start(storage, &home).await? {
-                if overwrite {
-                    store.overwrite_home(storage, &home).await?;
-                } else {
-                    store.set_home(storage, &home).await?;
-                }
+            if overwrite {
+                store.overwrite_home(storage, &home).await?;
+            } else {
+                store.set_home(storage, &home).await?;
             }
             return Ok(home);
         }

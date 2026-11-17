@@ -12,7 +12,6 @@ use std::path::PathBuf;
 
 use super::RefEntry;
 use super::format::DomainConfig;
-use super::format::Extra;
 use super::format::MigrationState;
 use super::format::PackageRef;
 use super::format::TipCache;
@@ -61,24 +60,8 @@ impl RefStore {
         self
     }
 
-    #[cfg(any(test, feature = "testing"))]
     pub(crate) fn paths(&self) -> &DomainPaths {
         &self.paths
-    }
-
-    /// Stands the domain up on refs, at `home`, if it has no domain config:
-    /// the preview's way in, since only the move from `data.json` writes a
-    /// config otherwise. Returns whether it did.
-    pub(crate) async fn start(&self, storage: &(impl Storage + Sync), home: &Home) -> Res<bool> {
-        let _domain = storage
-            .lock_exclusive(self.paths.domain_file_lock())
-            .await?;
-        if self.read_config(storage).await?.is_some() {
-            return Ok(false);
-        }
-        storage.create_dir_all(home.as_ref()).await?;
-        self.put_config(storage, home).await?;
-        Ok(true)
     }
 
     /// Shows `look` each package's lineage, read under its lock, then hands
@@ -270,10 +253,6 @@ impl RefStore {
     /// Writes the locked package's first ref, `new_ref`, after the tip cache
     /// `lineage` wants beside it, whatever the domain config says: the move
     /// from `data.json` writes refs before the config says done.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "nothing outside tests runs the move yet")
-    )]
     pub(super) async fn create_moved(
         &self,
         storage: &(impl Storage + Sync),
@@ -466,18 +445,7 @@ impl RefStore {
         read_config(storage, &self.paths).await
     }
 
-    /// Writes a domain config at `home` whose move to refs is done.
-    async fn put_config(&self, storage: &(impl Storage + Sync), home: &Home) -> Res {
-        let config = DomainConfig {
-            format: DomainConfig::FORMAT,
-            home: home.clone(),
-            migration: Some(MigrationState::Done),
-            extra: Extra::new(),
-        };
-        put(storage, &self.paths.domain_config(), config.to_vec()?, None).await
-    }
-
-    /// Leaves a test's domain at `home` with no package.
+    /// Leaves a test's domain on refs at `home` with no package.
     #[cfg(any(test, feature = "testing"))]
     pub(crate) async fn replace_fixture(
         &self,
@@ -488,7 +456,13 @@ impl RefStore {
         if storage.exists(&refs).await {
             storage.remove_dir_all(&refs).await?;
         }
-        self.put_config(storage, home).await
+        let config = DomainConfig {
+            format: DomainConfig::FORMAT,
+            home: home.clone(),
+            migration: Some(MigrationState::Done),
+            extra: super::format::Extra::new(),
+        };
+        put(storage, &self.paths.domain_config(), config.to_vec()?, None).await
     }
 
     /// Leaves `namespace`'s ref one no reader can parse.
@@ -510,7 +484,10 @@ impl RefStore {
     /// domain's lineage has moved to refs, so neither that move nor its
     /// rollback meets a ref or the home changing under it. Each writer reads
     /// it again under the lock its write is made under.
-    async fn writable_config(&self, storage: &(impl Storage + Sync)) -> Res<DomainConfig> {
+    pub(crate) async fn writable_config(
+        &self,
+        storage: &(impl Storage + Sync),
+    ) -> Res<DomainConfig> {
         self.writable(self.read_config(storage).await?)
     }
 

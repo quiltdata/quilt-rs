@@ -14,6 +14,9 @@ pub(crate) mod rollback;
 pub(crate) mod state;
 mod store;
 
+#[cfg(test)]
+mod roundtrip_tests;
+
 pub(crate) use store::RefStore;
 
 /// What a file in `refs/<owner>/` is, read from its name.

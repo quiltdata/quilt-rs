@@ -2,11 +2,6 @@
 //! The down-migration: hands a domain's lineage back from the refs to
 //! `data.json`, in steps a killed run resumes from what it finds.
 
-#![cfg_attr(
-    not(test),
-    expect(dead_code, reason = "`quilt lineage rollback` calls it")
-)]
-
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -24,6 +19,7 @@ use super::state;
 use super::state::DomainState;
 use super::store::put;
 use super::store::read_config;
+use super::store::read_if_exists;
 use super::store::remove_if_present;
 use crate::Error;
 use crate::InstallPackageError;
@@ -51,6 +47,14 @@ pub(crate) async fn down(storage: &(impl Storage + Sync), paths: &DomainPaths) -
     let store = RefStore::new(paths.clone());
     let (archive, archived, published) = match state::detect(storage, paths).await? {
         DomainState::Refs => {
+            let lineage = paths.lineage();
+            if read_if_exists(storage, &lineage)
+                .await?
+                .is_some_and(|bytes| !state::is_stub(&bytes))
+            {
+                let refused = LineageError::NotTheStub { path: lineage };
+                return Err(LineageError::RollbackRefused(Box::new(refused)).into());
+            }
             for namespace in store.listed(storage).await? {
                 read(storage, &store, &namespace).await?;
             }
@@ -617,6 +621,33 @@ mod tests {
             assert_eq!(std::fs::read(domain.paths.domain_config())?, config);
             domain.assert_on_refs().await?;
         }
+        Ok(())
+    }
+
+    /// A domain stood up on refs beside a `data.json` that is not the stub,
+    /// as the preview's first builds did: a resumed rollback would take that
+    /// file for the one it published and drop what the refs hold.
+    #[test(tokio::test)]
+    async fn a_data_json_beside_the_refs_that_is_not_the_stub_refuses_the_rollback() -> Res {
+        let domain = Domain::new()?;
+        domain.put_ref("x", &pushed("x"))?;
+        std::fs::write(domain.paths.lineage(), STALE)?;
+        let config = std::fs::read(domain.paths.domain_config())?;
+
+        let refused = domain.down().await;
+
+        assert!(
+            matches!(
+                &refused,
+                Err(Error::Lineage(LineageError::RollbackRefused(reason)))
+                    if matches!(&**reason, LineageError::NotTheStub { path } if *path == domain.paths.lineage())
+            ),
+            "{refused:?}"
+        );
+        assert_eq!(std::fs::read(domain.paths.domain_config())?, config);
+        assert_eq!(std::fs::read(domain.paths.lineage())?, STALE);
+        assert!(domain.paths.package_ref(&package("x")).is_file());
+        assert_eq!(archives(&domain.paths)?, Vec::<PathBuf>::new());
         Ok(())
     }
 

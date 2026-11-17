@@ -366,10 +366,6 @@ impl DomainPaths {
 
 /// The files of the move from `data.json` to refs and back.
 #[cfg(any(test, feature = "ref-store-preview"))]
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the cut-over and the rollback use them")
-)]
 impl DomainPaths {
     /// Held throughout by the one process moving the domain either way.
     #[must_use]

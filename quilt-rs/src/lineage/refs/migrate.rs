@@ -3,11 +3,6 @@
 //! at any point resumes from: freeze `data.json` and put the stub in its
 //! place, write each package's ref, then mark the move done.
 
-#![cfg_attr(
-    not(test),
-    expect(dead_code, reason = "nothing outside tests runs the move yet")
-)]
-
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::path::Path;

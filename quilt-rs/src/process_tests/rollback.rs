@@ -256,6 +256,9 @@ async fn a_home_change_after_the_rollback_begins_is_refused() -> Res {
     let dir = TempDir::new()?;
     let (world, _) = World::migrated(&dir, true).await?;
     let before = world.on_refs().await?;
+    // Open before the rollback begins, as a running app is.
+    let domain = world.domain();
+    domain.get_home().await?;
     let rollback = Parked::start(
         &world,
         Operation::MigrateDown,
@@ -263,7 +266,7 @@ async fn a_home_change_after_the_rollback_begins_is_refused() -> Res {
         "migrate.down.after-state",
     )?;
 
-    let moved = world.domain().set_home(world.root.join("elsewhere")).await;
+    let moved = domain.set_home(world.root.join("elsewhere")).await;
 
     assert!(
         matches!(
