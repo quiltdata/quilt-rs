@@ -1,3 +1,4 @@
+use chrono::DateTime;
 use chrono::Utc;
 use tempfile::TempDir;
 use test_log::test;
@@ -14,7 +15,12 @@ async fn current_revision_reads_only_the_selected_installed_manifest() -> Res {
     domain.set_home(temp_dir.path()).await?;
 
     let namespace: Namespace = ("demo", "sales").into();
-    let before = Utc::now();
+    // The revision time is the manifest file's modified time. Some Linux
+    // filesystems stamp files from a clock that lags `Utc::now()` by a few
+    // milliseconds, so the lower bound is a file written just before.
+    let marker = temp_dir.path().join("before");
+    tokio::fs::write(&marker, b"").await?;
+    let before: DateTime<Utc> = tokio::fs::metadata(&marker).await?.modified()?.into();
     let (package, _) = domain
         .create_package(
             namespace.clone(),
