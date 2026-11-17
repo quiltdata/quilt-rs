@@ -128,7 +128,7 @@ pub(crate) async fn up(storage: &(impl Storage + Sync), paths: &DomainPaths) -> 
 /// Older builds then fail on the stub, so the copy stays as it was frozen.
 async fn freeze(storage: &(impl Storage + Sync), paths: &DomainPaths) -> Res<(PathBuf, Frozen)> {
     let lineage = paths.lineage();
-    let _short = storage.lock_exclusive(short_lock(paths)).await?;
+    let _short = storage.lock_exclusive(paths.lineage_lock()).await?;
     let bytes = match read_if_exists(storage, &lineage).await? {
         Some(bytes) => bytes,
         None => serde_json::to_vec(&DomainLineage::default())?,
@@ -151,13 +151,6 @@ async fn freeze(storage: &(impl Storage + Sync), paths: &DomainPaths) -> Res<(Pa
     crate::failpoint::hit("migrate.up.after-stub");
     begin(storage, paths, &frozen.home).await?;
     Ok((source, frozen))
-}
-
-/// `data.json.lock`, as `DomainLineageIo` names it.
-fn short_lock(paths: &DomainPaths) -> PathBuf {
-    let mut path = paths.lineage().into_os_string();
-    path.push(".lock");
-    PathBuf::from(path)
 }
 
 /// Moves aside a `refs/` found before the move began. No ref is written
@@ -721,7 +714,7 @@ mod tests {
         let rolling_back = bytes(&json!({
             "format": 1,
             "home": "/home",
-            "migration": {"rolling_back": {"archive": "refs.rolled-back-x"}}
+            "migration": {"rolling_back": {"archive": state::archive_name(Uuid::new_v4())}}
         }));
         write(&paths.lineage(), state::STUB)?;
         write(&paths.domain_config(), &rolling_back)?;
