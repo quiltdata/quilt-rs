@@ -35,6 +35,8 @@ use quilt_uri::S3Uri;
 mod concurrent;
 #[cfg(unix)]
 mod killed;
+mod migrate;
+mod rollback;
 
 const BUCKET: &str = "b";
 
@@ -64,12 +66,17 @@ struct World {
 }
 
 impl World {
-    /// A domain on `store` holding [`bystander`], created locally.
-    async fn new(dir: &TempDir, store: LineageStore) -> Res<Self> {
-        let world = Self {
+    /// A domain on `store` that no command has used: it has no home.
+    fn empty(dir: &TempDir, store: LineageStore) -> Self {
+        Self {
             root: dir.path().to_path_buf(),
             store,
-        };
+        }
+    }
+
+    /// A domain on `store` holding [`bystander`], created locally.
+    async fn new(dir: &TempDir, store: LineageStore) -> Res<Self> {
+        let world = Self::empty(dir, store);
         let domain = world.domain();
         domain.set_home(world.root.join("home")).await?;
         let source = world.root.join("source");
@@ -82,10 +89,16 @@ impl World {
     }
 
     fn domain(&self) -> Domain {
+        self.domain_on(self.store)
+    }
+
+    /// The same domain opened on `store`, as a build that keeps its lineage
+    /// there would open it.
+    fn domain_on(&self, store: LineageStore) -> Domain {
         let paths = DomainPaths::new(self.root.join("domain"));
         let lineage = DomainLineageIo::new(paths.lineage());
         LocalDomain::with_parts(paths, lineage, LocalStorage::new(), Arc::new(self.remote()))
-            .with_lineage_store(self.store)
+            .with_lineage_store(store)
     }
 
     fn remote(&self) -> MockRemote {
@@ -169,6 +182,14 @@ enum Operation {
     /// Creates the package the argument names, then commits a new file to
     /// it [`COMMITS`] times.
     CreateAndCommit,
+    /// Moves the domain's lineage from `data.json` to refs.
+    MigrateUp,
+    /// Moves the domain's lineage from refs back to `data.json`.
+    MigrateDown,
+    /// [`Operation::Install`] by a build that keeps lineage in `data.json`.
+    LegacyInstall,
+    /// [`Operation::Commit`] by a build that keeps lineage in `data.json`.
+    LegacyCommit,
 }
 
 const COMMITS: usize = 3;
@@ -183,6 +204,10 @@ impl Operation {
             Operation::Uninstall => "uninstall",
             Operation::PullAndDownload => "pull-and-download",
             Operation::CreateAndCommit => "create-and-commit",
+            Operation::MigrateUp => "migrate-up",
+            Operation::MigrateDown => "migrate-down",
+            Operation::LegacyInstall => "legacy-install",
+            Operation::LegacyCommit => "legacy-commit",
         }
     }
 
@@ -195,6 +220,10 @@ impl Operation {
             Operation::Uninstall,
             Operation::PullAndDownload,
             Operation::CreateAndCommit,
+            Operation::MigrateUp,
+            Operation::MigrateDown,
+            Operation::LegacyInstall,
+            Operation::LegacyCommit,
         ]
         .into_iter()
         .find(|operation| operation.name() == name)
@@ -222,6 +251,21 @@ impl Operation {
                     .install_package(&revision(arg.to_string()))
                     .await?;
             }
+            Operation::LegacyInstall => {
+                world
+                    .domain_on(LineageStore::DataJson)
+                    .install_package(&revision(arg.to_string()))
+                    .await?;
+            }
+            Operation::LegacyCommit => {
+                world
+                    .domain_on(LineageStore::DataJson)
+                    .create_installed_package(target())
+                    .commit("edit".to_string(), UserMeta::Keep, None, host_config)
+                    .await?;
+            }
+            Operation::MigrateUp => migrate::up(world).await?,
+            Operation::MigrateDown => rollback::down(world).await?,
             Operation::Push => {
                 package.push(host_config).await?;
             }

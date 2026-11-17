@@ -83,14 +83,19 @@ impl RefStore {
     /// Shows `look` each package's lineage, read under its lock, then hands
     /// `finish` the packages installed now, listed under the domain file
     /// lock, or `None` if it is busy or that fails. A package whose lock is
-    /// busy or can't be taken, or whose ref can't be read, is not shown.
+    /// busy or can't be taken, or whose ref can't be read, is not shown, and
+    /// none is while the refs can't be listed.
     pub(crate) async fn check_each<T>(
         &self,
         storage: &(impl Storage + Sync),
         mut look: impl FnMut(&Namespace, &PackageLineage),
         finish: impl FnOnce(Option<&BTreeSet<Namespace>>) -> T,
     ) -> Res<T> {
-        let namespaces = self.namespaces(storage).await?;
+        let namespaces = match self.namespaces(storage).await {
+            Ok(namespaces) => namespaces,
+            Err(Error::Lineage(LineageError::RefsNotWritable { .. })) => return Ok(finish(None)),
+            Err(err) => return Err(err),
+        };
         for namespace in &namespaces {
             let _held = match PackageLock::try_take(storage, &self.paths, namespace).await {
                 Ok(Some(held)) => held,
@@ -106,7 +111,10 @@ impl RefStore {
         }
         match self.list_locked(storage).await {
             Ok(Some((_domain, installed))) => Ok(finish(Some(&installed))),
-            Ok(None) => Ok(finish(None)),
+            // Busy, or a rollback began meanwhile.
+            Ok(None) | Err(Error::Lineage(LineageError::RefsNotWritable { .. })) => {
+                Ok(finish(None))
+            }
             Err(err) => {
                 warn!("❌ Could not list the packages again after the check: {err}");
                 Ok(finish(None))
@@ -138,11 +146,23 @@ impl RefStore {
 
     /// Every package with a ref, whether or not it parses. Leftover temps,
     /// tip caches and names that are no namespace are skipped, as
-    /// `lock_every_package` skips lock files.
+    /// `lock_every_package` skips lock files. Refused until the move to refs
+    /// is done, since until then the refs are not all the packages, and
+    /// [`LineageError::Missing`] with no domain config, as [`Self::home`] is.
     pub(crate) async fn namespaces(
         &self,
         storage: &(impl Storage + Sync),
     ) -> Res<BTreeSet<Namespace>> {
+        let Some(config) = self.read_config(storage).await? else {
+            return Err(LineageError::Missing.into());
+        };
+        self.writable(Some(config))?;
+        self.listed(storage).await
+    }
+
+    /// [`Self::namespaces`], whatever the domain config says, for a move or a
+    /// rollback, which lists the refs before the config says done.
+    pub(crate) async fn listed(&self, storage: &(impl Storage + Sync)) -> Res<BTreeSet<Namespace>> {
         Ok(self
             .files(storage)
             .await?
@@ -411,11 +431,7 @@ impl RefStore {
     }
 
     async fn read_config(&self, storage: &(impl Storage + Sync)) -> Res<Option<DomainConfig>> {
-        let path = self.paths.domain_config();
-        read_if_exists(storage, &path)
-            .await?
-            .map(|bytes| DomainConfig::from_slice(&path, &bytes))
-            .transpose()
+        read_config(storage, &self.paths).await
     }
 
     /// Writes a domain config at `home` whose move to refs is done.
@@ -463,7 +479,11 @@ impl RefStore {
     /// rollback meets a ref or the home changing under it. Each writer reads
     /// it again under the lock its write is made under.
     async fn writable_config(&self, storage: &(impl Storage + Sync)) -> Res<DomainConfig> {
-        let config = self.read_config(storage).await?;
+        self.writable(self.read_config(storage).await?)
+    }
+
+    /// [`Self::writable_config`] on `config` as read.
+    fn writable(&self, config: Option<DomainConfig>) -> Res<DomainConfig> {
         let state = match config.as_ref().and_then(|config| config.migration.as_ref()) {
             Some(MigrationState::Done) => return Ok(config.expect("a config says done")),
             Some(MigrationState::InProgress) => "is in progress",
@@ -635,7 +655,7 @@ impl RefStore {
             return storage.create_dir_all(home.as_ref()).await;
         }
         if !overwrite && !config.home.as_ref().as_os_str().is_empty() {
-            let installed = self.namespaces(storage).await?.len();
+            let installed = self.listed(storage).await?.len();
             if installed > 0 {
                 return Err(LineageError::HomeInUse {
                     home: config.home.as_ref().clone(),
@@ -682,8 +702,23 @@ impl RefStore {
     }
 }
 
+/// The domain config, `None` when there is none.
+pub(super) async fn read_config(
+    storage: &(impl Storage + Sync),
+    paths: &DomainPaths,
+) -> Res<Option<DomainConfig>> {
+    let path = paths.domain_config();
+    read_if_exists(storage, &path)
+        .await?
+        .map(|bytes| DomainConfig::from_slice(&path, &bytes))
+        .transpose()
+}
+
 /// The bytes of `path`, or `None` when there is no such file.
-async fn read_if_exists(storage: &(impl Storage + Sync), path: &Path) -> Res<Option<Vec<u8>>> {
+pub(super) async fn read_if_exists(
+    storage: &(impl Storage + Sync),
+    path: &Path,
+) -> Res<Option<Vec<u8>>> {
     match storage.read_bytes(path).await {
         Ok(bytes) => Ok(Some(bytes)),
         // Not `exists`, which is false also for a file in a folder that
@@ -1346,7 +1381,7 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn nothing_is_written_unless_the_move_to_refs_is_done() -> Res {
+    async fn nothing_is_listed_or_written_unless_the_move_to_refs_is_done() -> Res {
         for (migration, state) in [
             (None, "has not started"),
             (Some(None), "has not started"),
@@ -1401,6 +1436,40 @@ mod tests {
                 refused(store.overwrite_home(storage, &moved).await),
                 "overwrite_home, {state}"
             );
+            // With no domain config, the domain reads as one no command has
+            // used, as on `data.json`.
+            let missing =
+                |result: &Res| matches!(result, Err(Error::Lineage(LineageError::Missing)));
+            let unlisted = |result: Res| match config {
+                None => missing(&result),
+                Some(_) => refused(result),
+            };
+            assert!(
+                unlisted(store.namespaces(storage).await.map(drop)),
+                "namespaces, {state}"
+            );
+            assert!(
+                unlisted(store.read_all(storage).await.map(drop)),
+                "read_all, {state}"
+            );
+            let mut shown = Vec::new();
+            let checked = store
+                .check_each(
+                    storage,
+                    |namespace, _| shown.push(namespace.clone()),
+                    listing,
+                )
+                .await;
+            let forgot_nothing = match config {
+                None => matches!(checked, Err(Error::Lineage(LineageError::Missing))),
+                Some(_) => matches!(checked, Ok(None)),
+            };
+            assert!(
+                shown.is_empty() && forgot_nothing,
+                "check_each, {state}: {shown:?}, {checked:?}"
+            );
+            let x = store.read(storage, &package("x")).await;
+            assert!(x.is_ok(), "one package is read, {state}: {x:?}");
 
             assert_eq!(
                 std::fs::read(domain.paths.package_ref(&package("x")))?,

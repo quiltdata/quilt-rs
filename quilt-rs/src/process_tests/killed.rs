@@ -200,9 +200,12 @@ impl World {
                 Operation::Pull => synced && has("a.txt", b"two") && has("b.txt", b"same"),
                 Operation::Install => synced,
                 Operation::Uninstall => false,
-                Operation::PullAndDownload | Operation::CreateAndCommit => {
-                    unreachable!("not in the kill matrix")
-                }
+                Operation::PullAndDownload
+                | Operation::CreateAndCommit
+                | Operation::MigrateUp
+                | Operation::MigrateDown
+                | Operation::LegacyInstall
+                | Operation::LegacyCommit => unreachable!("not in the kill matrix"),
             };
         Ok((done, lost))
     }

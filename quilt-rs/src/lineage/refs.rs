@@ -9,6 +9,7 @@ use std::ffi::OsString;
 use uuid::Uuid;
 
 mod format;
+pub(crate) mod state;
 mod store;
 
 pub(crate) use store::RefStore;
