@@ -164,6 +164,7 @@ impl HttpConnector for ResponseTimeoutConnector {
 /// so it drains in a few round trips. What is left is hyper's 128 KiB, which
 /// only a link slower than about 2 KB/s takes longer than 60 s to send.
 const PIECE: usize = 8 * 1024;
+const _: () = assert!(PIECE * 16 <= 128 * 1024, "hyper may still hold 16 pieces");
 
 /// A request body that hands its data over in [`PIECE`]s and drops `sent`
 /// once it has nothing more to send.
@@ -541,6 +542,35 @@ mod tests {
 
         result.expect("a slow upload that keeps moving must succeed");
         assert!(elapsed >= SLOW, "the body was not slow: {elapsed:?}");
+    }
+
+    /// An in-memory body is handed over in pieces of at most [`PIECE`], and
+    /// the clock may start only once the last one is.
+    #[test(tokio::test)]
+    async fn in_memory_body_is_handed_over_in_pieces() {
+        let len = PIECE * 3 + 1;
+        let (sent_tx, mut sent) = oneshot::channel::<()>();
+        let mut body = NotifyWhenSent {
+            inner: SdkBody::from(vec![b'x'; len]),
+            pending: bytes::Bytes::new(),
+            sent: Some(sent_tx),
+        };
+
+        let mut handed = 0;
+        while handed < len {
+            assert_eq!(sent.try_recv(), Err(oneshot::error::TryRecvError::Empty));
+            let frame =
+                std::future::poll_fn(|cx| http_body::Body::poll_frame(Pin::new(&mut body), cx))
+                    .await
+                    .expect("the body is not done yet")
+                    .expect("an in-memory body does not fail");
+            let piece = frame.into_data().expect("a data frame");
+            assert!(piece.len() <= PIECE, "a piece of {} bytes", piece.len());
+            handed += piece.len();
+        }
+
+        assert_eq!(handed, len);
+        assert_eq!(sent.try_recv(), Err(oneshot::error::TryRecvError::Closed));
     }
 
     /// Answer with `head`, then send `body` one byte every [`TICK`].
