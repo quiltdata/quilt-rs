@@ -20,7 +20,7 @@ use crate::lineage;
 use crate::lineage::Home;
 use crate::manifest::Manifest;
 use crate::manifest::ManifestHeader;
-use crate::package_lock;
+use crate::package_lock::PackageLock;
 use crate::paths;
 use crate::state_store::PackageStateStore;
 use quilt_uri::Host;
@@ -251,7 +251,7 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
     pub async fn install_package(&self, manifest_uri: &ManifestUri) -> Res<InstalledPackage<S, R>> {
         info!("Installing package: {}", manifest_uri.namespace);
         debug!("Installing from manifest: {}", manifest_uri.display());
-        let _held = package_lock::lock(&self.storage, &self.paths, &manifest_uri.namespace).await?;
+        let held = PackageLock::take(&self.storage, &self.paths, &manifest_uri.namespace).await?;
 
         // Read before anything is created: a record that does not parse
         // stops it here.
@@ -279,7 +279,7 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
 
         debug!("Updating domain lineage");
         self.lineage
-            .create_package(&self.storage, &manifest_uri.namespace, lineage)
+            .create_package(&self.storage, &held, lineage)
             .await?;
 
         info!("Successfully installed package: {}", manifest_uri.namespace);
@@ -294,7 +294,7 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
         user_meta: flow::UserMeta,
     ) -> Res<(InstalledPackage<S, R>, flow::LeftOut)> {
         info!("Creating package: {}", namespace);
-        let _held = package_lock::lock(&self.storage, &self.paths, &namespace).await?;
+        let held = PackageLock::take(&self.storage, &self.paths, &namespace).await?;
 
         let home = self.get_home().await?;
         let installed = self.lineage.contains(&self.storage, &namespace).await?;
@@ -312,7 +312,7 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
         .await?;
 
         self.lineage
-            .create_package(&self.storage, &namespace, lineage)
+            .create_package(&self.storage, &held, lineage)
             .await?;
 
         info!("Successfully created package: {}", namespace);
@@ -321,8 +321,8 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
 
     pub async fn uninstall_package(&self, namespace: Namespace) -> Res<()> {
         info!("Uninstalling package: {}", namespace);
-        let _held = package_lock::lock(&self.storage, &self.paths, &namespace).await?;
-        self.uninstall_locked(&namespace).await
+        let held = PackageLock::take(&self.storage, &self.paths, &namespace).await?;
+        self.uninstall_locked(&held).await
     }
 
     /// Uninstall, then delete the package's objects that no other installed
@@ -338,9 +338,9 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
     pub async fn uninstall_package_pruning(&self, namespace: Namespace) -> Res<flow::Pruned> {
         info!("Uninstalling package and its objects: {}", namespace);
         let (candidates, unread) = {
-            let _held = package_lock::lock(&self.storage, &self.paths, &namespace).await?;
+            let held = PackageLock::take(&self.storage, &self.paths, &namespace).await?;
             let found = flow::package_objects(&self.paths, &self.storage, &namespace).await?;
-            self.uninstall_locked(&namespace).await?;
+            self.uninstall_locked(&held).await?;
             found
         };
         // The package's own lock is released above: the prune try-locks
@@ -369,8 +369,9 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
             .map_err(|(err, busy)| Error::PruneFailed(namespace, Box::new(err), busy))
     }
 
-    /// Uninstall `namespace`, whose lock the caller holds.
-    async fn uninstall_locked(&self, namespace: &Namespace) -> Res<()> {
+    /// Uninstall the package whose lock the caller holds.
+    async fn uninstall_locked(&self, held: &PackageLock) -> Res<()> {
+        let namespace = held.namespace();
         let installed = self.lineage.contains(&self.storage, namespace).await?;
         debug!("Preparing paths for uninstallation");
         let home = self.scaffold_paths_for_installing(namespace).await?;
@@ -386,9 +387,7 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
         .await?;
 
         debug!("Updating domain lineage after uninstallation");
-        self.lineage
-            .remove_package(&self.storage, namespace)
-            .await?;
+        self.lineage.remove_package(&self.storage, held).await?;
 
         info!("Successfully uninstalled package: {}", namespace);
         Ok(())

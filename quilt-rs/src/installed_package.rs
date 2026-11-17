@@ -27,7 +27,6 @@ use crate::io::remote::fetch_workflows_config;
 use crate::io::remote::resolve_workflow;
 use crate::io::remote::resolve_workflow_from_config;
 use crate::io::storage::LocalStorage;
-use crate::io::storage::LockGuard;
 use crate::io::storage::Storage;
 use crate::lineage;
 use crate::lineage::CommitState;
@@ -37,7 +36,7 @@ use crate::lineage::SyncScope;
 use crate::lineage::UpstreamState;
 use crate::manifest::Manifest;
 use crate::manifest::Workflow;
-use crate::package_lock;
+use crate::package_lock::PackageLock;
 use crate::paths;
 use crate::paths::copy_cached_to_installed;
 use crate::quiltignore;
@@ -158,7 +157,7 @@ impl<S: Storage + Clone, R: Remote> Clone for InstalledPackage<S, R> {
 #[derive(Debug)]
 pub struct LockedPackage<S: Storage = LocalStorage, R: Remote = RemoteS3> {
     package: InstalledPackage<S, R>,
-    _held: LockGuard,
+    held: PackageLock,
 }
 
 impl std::fmt::Display for InstalledPackage {
@@ -176,19 +175,19 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
     /// caller's future, and the CLI's command future then outgrows the
     /// compiler's layout depth limit.
     pub async fn lock(&self) -> Res<LockedPackage<S, R>> {
-        let held = package_lock::lock(&self.storage, &self.paths, &self.namespace).await?;
+        let held = PackageLock::take(&self.storage, &self.paths, &self.namespace).await?;
         Ok(LockedPackage {
             package: self.clone(),
-            _held: held,
+            held,
         })
     }
 
     /// [`Self::lock`] without the wait: `None` while another writer holds it.
     pub async fn try_lock(&self) -> Res<Option<LockedPackage<S, R>>> {
-        let held = package_lock::try_lock(&self.storage, &self.paths, &self.namespace).await?;
+        let held = PackageLock::try_take(&self.storage, &self.paths, &self.namespace).await?;
         Ok(held.map(|held| LockedPackage {
             package: self.clone(),
-            _held: held,
+            held,
         }))
     }
 
@@ -797,7 +796,11 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         Box::pin(self.lock().await?.install_paths(paths)).await
     }
 
-    async fn install_paths_unlocked(&self, paths: &[PathBuf]) -> Res<flow::InstallPathsReport> {
+    async fn install_paths_unlocked(
+        &self,
+        held: &PackageLock,
+        paths: &[PathBuf],
+    ) -> Res<flow::InstallPathsReport> {
         self.scaffold_paths().await?;
 
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
@@ -820,7 +823,10 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
             &paths.iter().collect::<Vec<&PathBuf>>(),
         )
         .await?;
-        let lineage = self.lineage.write(&self.storage, lineage).await?;
+        let lineage = self
+            .lineage
+            .write_locked(&self.storage, held, lineage)
+            .await?;
         Ok(flow::InstallPathsReport {
             paths: lineage.paths,
             ..report
@@ -831,10 +837,17 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         Box::pin(self.lock().await?.uninstall_paths(paths)).await
     }
 
-    async fn uninstall_paths_unlocked(&self, paths: &Vec<PathBuf>) -> Res<LineagePaths> {
+    async fn uninstall_paths_unlocked(
+        &self,
+        held: &PackageLock,
+        paths: &Vec<PathBuf>,
+    ) -> Res<LineagePaths> {
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
         let lineage = flow::uninstall_paths(lineage, package_home, &self.storage, paths).await?;
-        let lineage = self.lineage.write(&self.storage, lineage).await?;
+        let lineage = self
+            .lineage
+            .write_locked(&self.storage, held, lineage)
+            .await?;
         Ok(lineage.paths)
     }
 
@@ -866,6 +879,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
 
     async fn commit_unlocked(
         &self,
+        held: &PackageLock,
         message: String,
         user_meta: UserMeta,
         workflow: Option<Workflow>,
@@ -913,7 +927,9 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
             workflow,
         )
         .await?;
-        self.lineage.write(&self.storage, lineage).await?;
+        self.lineage
+            .write_locked(&self.storage, held, lineage)
+            .await?;
         Ok(commit)
     }
 
@@ -941,6 +957,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
 
     async fn publish_unlocked(
         &self,
+        held: &PackageLock,
         message: String,
         user_meta: UserMeta,
         workflow: Option<Workflow>,
@@ -1007,7 +1024,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         let certified_latest = push_result.certified_latest;
         let lineage = self
             .lineage
-            .write(&self.storage, push_result.lineage)
+            .write_locked(&self.storage, held, push_result.lineage)
             .await?;
         let push = PushOutcome {
             manifest_uri: lineage.remote()?.clone(),
@@ -1025,15 +1042,20 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         Box::pin(self.lock().await?.push(host_config_opt)).await
     }
 
-    async fn push_unlocked(&self, host_config_opt: Option<HostConfig>) -> Res<Pushed> {
+    async fn push_unlocked(
+        &self,
+        held: &PackageLock,
+        host_config_opt: Option<HostConfig>,
+    ) -> Res<Pushed> {
         let (_, lineage) = self.lineage.read(&self.storage).await?;
-        Ok(self.push_from(lineage, host_config_opt).await?.0)
+        Ok(self.push_from(held, lineage, host_config_opt).await?.0)
     }
 
     /// Pushes from the entry the caller read under the lock, and returns the
     /// entry it wrote with the outcome.
     async fn push_from(
         &self,
+        held: &PackageLock,
         lineage: lineage::PackageLineage,
         host_config_opt: Option<HostConfig>,
     ) -> Res<(Pushed, lineage::PackageLineage)> {
@@ -1075,7 +1097,10 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         )
         .await?;
         let certified_latest = result.certified_latest;
-        let lineage = self.lineage.write(&self.storage, result.lineage).await?;
+        let lineage = self
+            .lineage
+            .write_locked(&self.storage, held, result.lineage)
+            .await?;
         let outcome = PushOutcome {
             manifest_uri: lineage.remote()?.clone(),
             certified_latest,
@@ -1096,9 +1121,9 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         Box::pin(self.lock().await?.set_sync_scope(scope)).await
     }
 
-    async fn set_sync_scope_unlocked(&self, scope: SyncScope) -> Res<()> {
+    async fn set_sync_scope_unlocked(&self, held: &PackageLock, scope: SyncScope) -> Res<()> {
         self.lineage
-            .edit(&self.storage, |l| l.sync_scope = scope)
+            .edit_locked(&self.storage, held, |l| l.sync_scope = scope)
             .await?;
         Ok(())
     }
@@ -1110,14 +1135,19 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         Box::pin(self.lock().await?.keep(scope, download)).await
     }
 
-    async fn keep_unlocked(&self, scope: SyncScope, download: bool) -> Res<KeepReport> {
-        self.set_sync_scope_unlocked(scope).await?;
+    async fn keep_unlocked(
+        &self,
+        held: &PackageLock,
+        scope: SyncScope,
+        download: bool,
+    ) -> Res<KeepReport> {
+        self.set_sync_scope_unlocked(held, scope).await?;
         let kept = self.kept_unlocked().await?;
         if !download || kept.outstanding == 0 {
             return Ok(kept);
         }
         let backlog = self.backlog().await?;
-        let report = self.install_paths_unlocked(&backlog).await?;
+        let report = self.install_paths_unlocked(held, &backlog).await?;
         Ok(KeepReport {
             scope: kept.scope,
             downloaded: backlog
@@ -1213,6 +1243,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
 
     async fn pull_unlocked(
         &self,
+        held: &PackageLock,
         host_config_opt: Option<HostConfig>,
         scope: SyncScope,
     ) -> Res<flow::Pulled> {
@@ -1243,7 +1274,9 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         // Nothing to pull, but the lineage still carries the `latest_hash` the
         // tag read refreshed.
         let Some(snapshot) = snapshot else {
-            self.lineage.write(&self.storage, lineage).await?;
+            self.lineage
+                .write_locked(&self.storage, held, lineage)
+                .await?;
             return Ok(flow::Pulled::UpToDate);
         };
         let (lineage, pulled) = flow::pull(
@@ -1258,11 +1291,18 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
             scope,
         )
         .await?;
-        self.lineage.write(&self.storage, lineage).await?;
+        self.lineage
+            .write_locked(&self.storage, held, lineage)
+            .await?;
         Ok(pulled)
     }
 
-    async fn move_to_unlocked(&self, target: ManifestUri, scope: SyncScope) -> Res<flow::Pulled> {
+    async fn move_to_unlocked(
+        &self,
+        held: &PackageLock,
+        target: ManifestUri,
+        scope: SyncScope,
+    ) -> Res<flow::Pulled> {
         self.scaffold_paths().await?;
 
         let (package_home, mut lineage) = self.lineage.read(&self.storage).await?;
@@ -1305,7 +1345,9 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
             scope,
         )
         .await?;
-        self.lineage.write(&self.storage, lineage).await?;
+        self.lineage
+            .write_locked(&self.storage, held, lineage)
+            .await?;
         Ok(pulled)
     }
 
@@ -1476,20 +1518,23 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         Box::pin(self.lock().await?.certify_latest()).await
     }
 
-    async fn certify_latest_unlocked(&self) -> Res<ManifestUri> {
+    async fn certify_latest_unlocked(&self, held: &PackageLock) -> Res<ManifestUri> {
         let (_, lineage) = self.lineage.read(&self.storage).await?;
 
         // Push first so the hash we tag exists on remote, under the lock this
         // call already holds, and carry on from the entry the push wrote.
         let lineage = if lineage.commit.is_some() {
-            self.push_from(lineage, None).await?.1
+            self.push_from(held, lineage, None).await?.1
         } else {
             lineage
         };
 
         let pushed_manifest_uri = lineage.remote()?.clone();
         let lineage = flow::certify_latest(lineage, &*self.remote, pushed_manifest_uri).await?;
-        let lineage = self.lineage.write(&self.storage, lineage).await?;
+        let lineage = self
+            .lineage
+            .write_locked(&self.storage, held, lineage)
+            .await?;
         Ok(lineage.remote()?.clone())
     }
 
@@ -1497,7 +1542,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         Box::pin(self.lock().await?.reset_to_latest()).await
     }
 
-    async fn reset_to_latest_unlocked(&self) -> Res<ManifestUri> {
+    async fn reset_to_latest_unlocked(&self, held: &PackageLock) -> Res<ManifestUri> {
         self.scaffold_paths().await?;
 
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
@@ -1516,7 +1561,10 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
             self.namespace.clone(),
         )
         .await?;
-        let lineage = self.lineage.write(&self.storage, lineage).await?;
+        let lineage = self
+            .lineage
+            .write_locked(&self.storage, held, lineage)
+            .await?;
         Ok(lineage.remote()?.clone())
     }
 
@@ -1530,7 +1578,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         Box::pin(self.lock().await?.undo_commit()).await
     }
 
-    async fn undo_commit_unlocked(&self) -> Res<CommitState> {
+    async fn undo_commit_unlocked(&self, held: &PackageLock) -> Res<CommitState> {
         self.scaffold_paths().await?;
 
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
@@ -1553,7 +1601,9 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
             self.namespace.clone(),
         )
         .await?;
-        self.lineage.write(&self.storage, lineage).await?;
+        self.lineage
+            .write_locked(&self.storage, held, lineage)
+            .await?;
         Ok(commit)
     }
 
@@ -1568,6 +1618,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
 
     async fn set_remote_unlocked(
         &self,
+        held: &PackageLock,
         bucket: String,
         origin: Option<Host>,
         workflow: WorkflowIntent,
@@ -1615,7 +1666,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         // decides what, if anything, is saved.
         if lineage.commit.is_some() {
             return match self
-                .recommit_for_remote(lineage.clone(), origin, bucket, workflow)
+                .recommit_for_remote(held, lineage.clone(), origin, bucket, workflow)
                 .await
             {
                 Ok(()) => Ok(SetRemoteOutcome::default()),
@@ -1628,7 +1679,9 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
                     // A resolution or transient failure (e.g. not logged in
                     // yet, or an unknown workflow id): persist the remote so
                     // the user can fix the problem and retry.
-                    self.lineage.write(&self.storage, lineage).await?;
+                    self.lineage
+                        .write_locked(&self.storage, held, lineage)
+                        .await?;
                     if explicit_workflow {
                         // The remote is persisted, but the chosen workflow
                         // could not be applied. Fail loudly so the user can
@@ -1660,7 +1713,9 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         }
 
         // No local commit — nothing to recommit or validate.
-        self.lineage.write(&self.storage, lineage).await?;
+        self.lineage
+            .write_locked(&self.storage, held, lineage)
+            .await?;
 
         Ok(SetRemoteOutcome::default())
     }
@@ -1673,7 +1728,11 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         Box::pin(self.lock().await?.change_catalog(origin)).await
     }
 
-    async fn change_catalog_unlocked(&self, origin: Option<Host>) -> Res<ManifestUri> {
+    async fn change_catalog_unlocked(
+        &self,
+        held: &PackageLock,
+        origin: Option<Host>,
+    ) -> Res<ManifestUri> {
         let (_, mut lineage) = self.lineage.read(&self.storage).await?;
         let Some(remote) = lineage.remote_uri.as_mut().filter(|r| !r.bucket.is_empty()) else {
             return Err(Error::PackageOp(PackageOpError::Package(
@@ -1684,12 +1743,16 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
             return Ok(remote.clone());
         }
         remote.origin = origin;
-        let lineage = self.lineage.write(&self.storage, lineage).await?;
+        let lineage = self
+            .lineage
+            .write_locked(&self.storage, held, lineage)
+            .await?;
         Ok(lineage.remote()?.clone())
     }
 
     async fn recommit_for_remote(
         &self,
+        held: &PackageLock,
         lineage: lineage::PackageLineage,
         host: Option<Host>,
         bucket: String,
@@ -1735,7 +1798,9 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
             workflows_config.as_ref(),
         )
         .await?;
-        self.lineage.write(&self.storage, lineage).await?;
+        self.lineage
+            .write_locked(&self.storage, held, lineage)
+            .await?;
         Ok(())
     }
 
@@ -1850,11 +1915,13 @@ impl<S: Storage + Clone + Sync, R: Remote> LockedPackage<S, R> {
     }
 
     pub async fn install_paths(&self, paths: &[PathBuf]) -> Res<flow::InstallPathsReport> {
-        self.package.install_paths_unlocked(paths).await
+        self.package.install_paths_unlocked(&self.held, paths).await
     }
 
     pub async fn uninstall_paths(&self, paths: &Vec<PathBuf>) -> Res<LineagePaths> {
-        self.package.uninstall_paths_unlocked(paths).await
+        self.package
+            .uninstall_paths_unlocked(&self.held, paths)
+            .await
     }
 
     pub async fn commit(
@@ -1865,7 +1932,7 @@ impl<S: Storage + Clone + Sync, R: Remote> LockedPackage<S, R> {
         host_config_opt: Option<HostConfig>,
     ) -> Res<flow::Committed> {
         self.package
-            .commit_unlocked(message, user_meta, workflow, host_config_opt)
+            .commit_unlocked(&self.held, message, user_meta, workflow, host_config_opt)
             .await
     }
 
@@ -1882,20 +1949,33 @@ impl<S: Storage + Clone + Sync, R: Remote> LockedPackage<S, R> {
         status_opt: Option<InstalledPackageStatus>,
     ) -> Res<PublishOutcome> {
         self.package
-            .publish_unlocked(message, user_meta, workflow, host_config_opt, status_opt)
+            .publish_unlocked(
+                &self.held,
+                message,
+                user_meta,
+                workflow,
+                host_config_opt,
+                status_opt,
+            )
             .await
     }
 
     pub async fn push(&self, host_config_opt: Option<HostConfig>) -> Res<Pushed> {
-        self.package.push_unlocked(host_config_opt).await
+        self.package
+            .push_unlocked(&self.held, host_config_opt)
+            .await
     }
 
     pub async fn set_sync_scope(&self, scope: SyncScope) -> Res<()> {
-        self.package.set_sync_scope_unlocked(scope).await
+        self.package
+            .set_sync_scope_unlocked(&self.held, scope)
+            .await
     }
 
     pub async fn keep(&self, scope: SyncScope, download: bool) -> Res<KeepReport> {
-        self.package.keep_unlocked(scope, download).await
+        self.package
+            .keep_unlocked(&self.held, scope, download)
+            .await
     }
 
     pub async fn kept(&self) -> Res<KeepReport> {
@@ -1922,7 +2002,9 @@ impl<S: Storage + Clone + Sync, R: Remote> LockedPackage<S, R> {
         host_config_opt: Option<HostConfig>,
         scope: SyncScope,
     ) -> Res<flow::Pulled> {
-        self.package.pull_unlocked(host_config_opt, scope).await
+        self.package
+            .pull_unlocked(&self.held, host_config_opt, scope)
+            .await
     }
 
     /// Moves a copy whose pushed revision `target` already holds onto
@@ -1931,19 +2013,21 @@ impl<S: Storage + Clone + Sync, R: Remote> LockedPackage<S, R> {
     /// at one of them refuses the whole move with a
     /// [`PackageOpError::PullConflict`]. Any other local change is kept.
     pub async fn move_to(&self, target: ManifestUri, scope: SyncScope) -> Res<flow::Pulled> {
-        self.package.move_to_unlocked(target, scope).await
+        self.package
+            .move_to_unlocked(&self.held, target, scope)
+            .await
     }
 
     pub async fn certify_latest(&self) -> Res<ManifestUri> {
-        self.package.certify_latest_unlocked().await
+        self.package.certify_latest_unlocked(&self.held).await
     }
 
     pub async fn reset_to_latest(&self) -> Res<ManifestUri> {
-        self.package.reset_to_latest_unlocked().await
+        self.package.reset_to_latest_unlocked(&self.held).await
     }
 
     pub async fn undo_commit(&self) -> Res<CommitState> {
-        self.package.undo_commit_unlocked().await
+        self.package.undo_commit_unlocked(&self.held).await
     }
 
     pub async fn set_remote(
@@ -1953,12 +2037,14 @@ impl<S: Storage + Clone + Sync, R: Remote> LockedPackage<S, R> {
         workflow: WorkflowIntent,
     ) -> Res<SetRemoteOutcome> {
         self.package
-            .set_remote_unlocked(bucket, origin, workflow)
+            .set_remote_unlocked(&self.held, bucket, origin, workflow)
             .await
     }
 
     pub async fn change_catalog(&self, origin: Option<Host>) -> Res<ManifestUri> {
-        self.package.change_catalog_unlocked(origin).await
+        self.package
+            .change_catalog_unlocked(&self.held, origin)
+            .await
     }
 }
 
