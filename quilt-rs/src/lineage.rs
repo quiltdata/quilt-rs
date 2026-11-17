@@ -194,7 +194,7 @@ pub struct DomainLineageIo {
 /// [`DomainLineageIo::ready`].
 #[cfg(any(test, feature = "ref-store-preview"))]
 #[derive(Clone, Debug, Default)]
-struct Ready(Arc<std::sync::atomic::AtomicBool>);
+struct Ready(Arc<tokio::sync::OnceCell<()>>);
 
 /// What a handle has seen is no part of which domain it is.
 #[cfg(any(test, feature = "ref-store-preview"))]
@@ -235,9 +235,9 @@ impl DomainLineageIo {
     }
 
     /// On refs, moves the lineage there from `data.json` until this handle or
-    /// a clone first finds it there, so a running app never undoes a
-    /// rollback; an interrupted one is [`LineageError::RollingBack`]. The
-    /// move takes package locks: the caller holds none.
+    /// a clone first finds it there, one at a time, so a running app never
+    /// undoes a rollback; an interrupted one is [`LineageError::RollingBack`].
+    /// The move takes package locks: the caller holds none.
     #[cfg_attr(
         not(any(test, feature = "ref-store-preview")),
         expect(
@@ -248,21 +248,23 @@ impl DomainLineageIo {
     )]
     async fn ready(&self, storage: &(impl Storage + Sync)) -> Res {
         #[cfg(any(test, feature = "ref-store-preview"))]
-        if let Some(store) = &self.refs
-            && !self.ready.0.load(std::sync::atomic::Ordering::Acquire)
-        {
+        if let Some(store) = &self.refs {
             let paths = store.paths();
-            if refs::state::detect(storage, paths).await? != refs::state::DomainState::Refs {
-                let migrated = refs::migrate::up(storage, paths).await?;
-                log::info!(
-                    "Moved the lineage of {} packages to refs, leaving out {}",
-                    migrated.written.len(),
-                    migrated.skipped.len()
-                );
-            }
             self.ready
                 .0
-                .store(true, std::sync::atomic::Ordering::Release);
+                .get_or_try_init(|| async {
+                    if refs::state::detect(storage, paths).await? != refs::state::DomainState::Refs
+                    {
+                        let migrated = refs::migrate::up(storage, paths).await?;
+                        log::info!(
+                            "Moved the lineage of {} packages to refs, leaving out {}",
+                            migrated.written.len(),
+                            migrated.skipped.len()
+                        );
+                    }
+                    Ok::<_, Error>(())
+                })
+                .await?;
         }
         let _ = storage;
         Ok(())

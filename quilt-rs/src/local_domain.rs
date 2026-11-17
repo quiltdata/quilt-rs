@@ -1222,6 +1222,44 @@ mod ref_store_tests {
         Ok(())
     }
 
+    /// Two first uses at once by clones of one domain value move the domain
+    /// once: a rollback that lands between them is not undone by the second.
+    #[test(tokio::test(flavor = "multi_thread"))]
+    async fn clones_used_first_at_once_move_the_domain_once() -> Res<()> {
+        let root = TempDir::new()?;
+        on_data_json(root.path()).await?;
+        let running = LocalDomain::new(root.path().join("domain")).with_ref_store();
+        let held = LocalStorage::new()
+            .lock_exclusive(running.paths.migrate_lock())
+            .await?;
+        let settle = || tokio::time::sleep(Duration::from_millis(200));
+        let first = tokio::spawn({
+            let running = running.clone();
+            async move { running.list_installed_packages().await.map(drop) }
+        });
+        settle().await;
+        let rollback = tokio::spawn({
+            let domain = LocalDomain::new(root.path().join("domain"));
+            async move { domain.rollback_lineage().await.map(drop) }
+        });
+        settle().await;
+        let second = tokio::spawn({
+            let running = running.clone();
+            async move { running.list_installed_packages().await.map(drop) }
+        });
+        settle().await;
+
+        drop(held);
+        first.await.expect("the task ran")?;
+        rollback.await.expect("the task ran")?;
+        // Listed before or after the rollback, as it happens to land.
+        let _ = second.await.expect("the task ran");
+
+        assert!(!is_stub(&running.paths.lineage()));
+        assert!(!running.paths.domain_config().exists());
+        Ok(())
+    }
+
     /// Reading the home moves nothing: a domain not yet on refs, or one whose
     /// move stopped before its config, is read where its home is now.
     #[test(tokio::test)]
