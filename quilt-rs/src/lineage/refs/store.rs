@@ -160,7 +160,10 @@ impl RefStore {
             return Err(LineageError::Missing.into());
         };
         self.writable(Some(config))?;
-        self.listed(storage).await
+        let listed = self.listed(storage).await?;
+        // A rollback begun meanwhile may have archived the refs listed.
+        self.writable_config(storage).await?;
+        Ok(listed)
     }
 
     /// [`Self::namespaces`], whatever the domain config says, for a move or a
