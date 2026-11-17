@@ -266,6 +266,31 @@ impl RefStore {
         Ok(())
     }
 
+    /// Writes the locked package's first ref, `new_ref`, after the tip cache
+    /// `lineage` wants beside it, whatever the domain config says: the move
+    /// from `data.json` writes refs before the config says done.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "nothing outside tests runs the move yet")
+    )]
+    pub(super) async fn create_moved(
+        &self,
+        storage: &(impl Storage + Sync),
+        held: &PackageLock,
+        new_ref: &PackageRef,
+        lineage: &PackageLineage,
+    ) -> Res {
+        let namespace = held.namespace();
+        self.create_folders(storage, namespace).await?;
+        let tip = self.read_tip(storage, namespace).await;
+        let had_tip = tip.is_some();
+        let (tip, fresh) = wanted_tip(new_ref, lineage, tip);
+        self.change_tip(storage, namespace, tip.as_ref(), fresh, had_tip)
+            .await?;
+        let path = self.paths.package_ref(namespace);
+        put(storage, &path, new_ref.to_vec()?, Some("ref")).await
+    }
+
     /// Removes the locked package's ref, then its tip. A ref that does not
     /// parse is removed too; one in a format or state this build does not
     /// support is refused, since it may be a newer build's to remove.
@@ -739,7 +764,7 @@ pub(super) async fn read_if_exists(
 
 /// Writes `bytes` over `path` through a temp named after it, so a sweep can
 /// tell whose leftover it is.
-async fn put(
+pub(super) async fn put(
     storage: &impl Storage,
     path: &Path,
     bytes: Vec<u8>,
@@ -772,7 +797,10 @@ fn wanted_tip(
 }
 
 /// `false` when there was no such file.
-async fn remove_if_present(storage: &impl Storage, path: &Path) -> std::io::Result<bool> {
+pub(super) async fn remove_if_present(
+    storage: &impl Storage,
+    path: &Path,
+) -> std::io::Result<bool> {
     match storage.remove_file(path).await {
         Ok(()) => Ok(true),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
