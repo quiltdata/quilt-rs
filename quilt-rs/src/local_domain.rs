@@ -1155,6 +1155,24 @@ mod ref_store_tests {
         Ok(())
     }
 
+    /// A new domain's packages can't be listed until it has a home, as on
+    /// `data.json`, so an app sends its user to set one up.
+    #[test(tokio::test)]
+    async fn a_new_domain_is_listed_only_once_it_has_a_home() -> Res<()> {
+        let root = TempDir::new()?;
+        let domain = LocalDomain::new(root.path().join("domain"));
+
+        let listed = domain.list_installed_packages().await.map(drop);
+
+        assert!(
+            matches!(listed, Err(Error::Lineage(LineageError::MissingHome))),
+            "{listed:?}"
+        );
+        domain.set_home(root.path().join("home")).await?;
+        assert!(domain.list_installed_packages().await?.is_empty());
+        Ok(())
+    }
+
     /// A domain first used while a rollback runs is refused at once, rather
     /// than waiting to move the domain back once the rollback is done.
     #[test(tokio::test)]
