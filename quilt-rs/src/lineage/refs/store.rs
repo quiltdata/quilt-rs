@@ -92,9 +92,13 @@ impl RefStore {
     ) -> Res<T> {
         let namespaces = self.namespaces(storage).await?;
         for namespace in &namespaces {
-            let Ok(Some(_held)) = PackageLock::try_take(storage, &self.paths, namespace).await
-            else {
-                continue;
+            let _held = match PackageLock::try_take(storage, &self.paths, namespace).await {
+                Ok(Some(held)) => held,
+                Ok(None) => continue,
+                Err(err) => {
+                    warn!("❌ Could not take the lock of {namespace} to check it: {err}");
+                    continue;
+                }
             };
             if let Ok(lineage) = self.read(storage, namespace).await {
                 look(namespace, &lineage);

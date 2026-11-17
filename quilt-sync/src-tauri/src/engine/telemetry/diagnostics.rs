@@ -229,6 +229,9 @@ fn add_refs(
     dir: &Path,
     name: &str,
 ) -> Result<(), Error> {
+    if std::fs::symlink_metadata(dir).is_ok_and(|meta| meta.file_type().is_symlink()) {
+        return Ok(());
+    }
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Ok(());
     };
@@ -493,6 +496,28 @@ mod tests {
         write_file(&locked, b"{}");
         std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000))
             .expect("make the ref unreadable");
+
+        let info = make_info(
+            data_tmp.path().to_path_buf(),
+            logs_tmp.path().to_path_buf(),
+            Vec::new(),
+        );
+        let entries = read_zip_entries(&save_diagnostic_zip(&info).expect("save zip"));
+        let names: Vec<&str> = entries.keys().map(String::as_str).collect();
+        assert_eq!(names, ["metadata.json"]);
+    }
+
+    /// A refs folder that is a link is left out with all it leads to.
+    #[cfg(unix)]
+    #[test]
+    fn a_linked_refs_folder_is_left_out() {
+        let data_tmp = TempDir::new().expect("data tempdir");
+        let logs_tmp = TempDir::new().expect("logs tempdir");
+        let elsewhere = data_tmp.path().join("elsewhere");
+        write_file(&elsewhere.join("acme/data.json"), b"{}");
+        let refs = DomainPaths::new(data_tmp.path().to_path_buf()).refs_dir();
+        std::fs::create_dir_all(refs.parent().expect("refs has a parent")).expect("create .quilt");
+        std::os::unix::fs::symlink(&elsewhere, &refs).expect("link the refs folder");
 
         let info = make_info(
             data_tmp.path().to_path_buf(),
