@@ -270,10 +270,7 @@ mod tests {
         let parsed = DomainLineage::from_slice(STUB);
         assert!(unparsed(&parsed), "{parsed:?}");
         let told = parsed.unwrap_err().to_string();
-        assert!(
-            told.contains("too old to read it: upgrade quilt"),
-            "{told}"
-        );
+        assert!(told.contains("too old to read it: upgrade quilt"), "{told}");
         let home = io.home(&storage).await;
         assert!(unparsed(&home), "{home:?}");
         let packages = io.read_packages(&storage).await;
