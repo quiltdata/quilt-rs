@@ -61,6 +61,7 @@ impl RefStore {
         self
     }
 
+    #[cfg(any(test, feature = "testing"))]
     pub(crate) fn paths(&self) -> &DomainPaths {
         &self.paths
     }
