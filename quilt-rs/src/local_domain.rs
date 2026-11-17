@@ -1240,7 +1240,15 @@ mod ref_store_tests {
         settle().await;
         let rollback = tokio::spawn({
             let domain = LocalDomain::new(root.path().join("domain"));
-            async move { domain.rollback_lineage().await.map(drop) }
+            async move {
+                // Refused if it gets the lock before the first move.
+                loop {
+                    match domain.rollback_lineage().await {
+                        Err(Error::Lineage(LineageError::RollbackRefused(_))) => settle().await,
+                        rolled => break rolled.map(drop),
+                    }
+                }
+            }
         });
         settle().await;
         let second = tokio::spawn({
@@ -1250,10 +1258,19 @@ mod ref_store_tests {
         settle().await;
 
         drop(held);
-        first.await.expect("the task ran")?;
-        rollback.await.expect("the task ran")?;
-        // Listed before or after the rollback, as it happens to land.
-        let _ = second.await.expect("the task ran");
+        let (first, rollback, second) = tokio::time::timeout(Duration::from_secs(30), async {
+            (first.await, rollback.await, second.await)
+        })
+        .await
+        .expect("no task waits forever");
+        first.expect("the task ran")?;
+        rollback.expect("the task ran")?;
+        // Listed before the rollback, or refused after it.
+        let second = second.expect("the task ran");
+        assert!(
+            matches!(second, Ok(()) | Err(Error::Lineage(_))),
+            "{second:?}"
+        );
 
         assert!(!is_stub(&running.paths.lineage()));
         assert!(!running.paths.domain_config().exists());
