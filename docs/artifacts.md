@@ -33,7 +33,7 @@ package's remote origin and local commit state. Path is hardcoded relative to
 
 | Artifact | Path | Written |
 |----------|------|---------|
-| Package ref | `.quilt/refs/<owner>/<package>.json` | Under the package's lock; created and removed under the domain lock too |
+| Package ref | `.quilt/refs/<owner>/<package>.json` | Under the package's lock; an install or uninstall also takes the domain lock |
 | Remote tip cache | `.quilt/refs/<owner>/<package>.json.latest` | Under the package's lock; may be missing or stale |
 | Domain config | `.quilt/domain.json` | Under the domain lock |
 | Package lock | `.quilt/locks/<owner>/<package>.lock` | Created by its first holder, never deleted |

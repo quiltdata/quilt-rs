@@ -5,7 +5,7 @@
 //! to its write. Two writers of one package then run one after the other, so
 //! the entry a writer writes is always the one it read. Different packages
 //! have different lock files and never wait on each other: each has a ref of
-//! its own, and only creating or removing one takes the domain lock,
+//! its own, and only an install or uninstall also takes the domain lock,
 //! `.quilt/domain.lock`.
 //!
 //! Lock order is fixed: `.quilt/migrate.lock`, held by a move between

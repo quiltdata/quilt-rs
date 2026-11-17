@@ -43,7 +43,7 @@ in code by `LocalDomain`. Its on-disk layout:
 ├── refs/               # Each installed package's origin and commit tracking
 ├── locks/              # One lock per package, held by each of its writers
 ├── domain.json         # The home directory, and where a move of the lineage stands
-└── domain.lock         # Held to add or remove a ref, or to change domain.json
+└── domain.lock         # Held to install, uninstall or change domain.json
 ```
 
 Each package's lineage is a ref of its own, `refs/<owner>/<name>.json`,
