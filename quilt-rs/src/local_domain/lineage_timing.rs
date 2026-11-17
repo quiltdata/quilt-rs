@@ -133,7 +133,8 @@ async fn build(store: LineageStore, shape: &Shape) -> Res<Fixture> {
     let remote_store = MockRemote::default();
     let mut packages = Vec::new();
     for (package, &files) in shape.packages.iter().enumerate() {
-        let namespace = Namespace::from(("timing", format!("package-{package:03}").as_str()));
+        // An owner each: on refs, the most folders a listing can read.
+        let namespace = Namespace::from((format!("owner-{package:03}").as_str(), "package"));
         tag_latest(&remote_store, &remote(&namespace, LATEST)).await?;
         packages.push((namespace.clone(), lineage(&namespace, package, files)?));
     }
