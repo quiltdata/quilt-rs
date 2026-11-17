@@ -512,7 +512,7 @@ impl RefStore {
         Ok((held, self.writable_config(storage).await?))
     }
 
-    async fn read_ref(
+    pub(super) async fn read_ref(
         &self,
         storage: &(impl Storage + Sync),
         namespace: &Namespace,
@@ -740,7 +740,7 @@ pub(super) async fn read_if_exists(
 
 /// Writes `bytes` over `path` through a temp named after it, so a sweep can
 /// tell whose leftover it is.
-async fn put(
+pub(super) async fn put(
     storage: &impl Storage,
     path: &Path,
     bytes: Vec<u8>,
@@ -773,7 +773,10 @@ fn wanted_tip(
 }
 
 /// `false` when there was no such file.
-async fn remove_if_present(storage: &impl Storage, path: &Path) -> std::io::Result<bool> {
+pub(super) async fn remove_if_present(
+    storage: &impl Storage,
+    path: &Path,
+) -> std::io::Result<bool> {
     match storage.remove_file(path).await {
         Ok(()) => Ok(true),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
