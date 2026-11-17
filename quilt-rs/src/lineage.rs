@@ -240,10 +240,10 @@ impl DomainLineageIo {
     /// installed package's namespace before that lock is released.
     ///
     /// With a ref per package, each package is read under its own lock, and
-    /// `finish` runs after the last, under the lock that installing and
-    /// uninstalling take, or with `None` when that lock is busy or the
-    /// packages can't be listed. A package whose lock is busy, or whose ref
-    /// can't be read, is not shown to `look` but is handed to `finish`.
+    /// one whose lock is busy, or whose ref can't be read, is not shown to
+    /// `look`. `finish` runs after the last, under the lock that installing
+    /// and uninstalling take, with every installed package, or with `None`
+    /// when that lock is busy or the packages can't be listed.
     pub async fn check_each<T>(
         &self,
         storage: &(impl Storage + Sync),
