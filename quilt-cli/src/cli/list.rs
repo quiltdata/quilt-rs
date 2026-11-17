@@ -984,6 +984,51 @@ mod tests {
         Ok(())
     }
 
+    /// With a ref per package, a damaged package costs only its own row:
+    /// under `--fetch` the healthy one beside it reads as it does alone.
+    #[test(tokio::test)]
+    async fn test_model_fetches_past_a_damaged_ref() -> Result<(), Error> {
+        let (alone, _alone_dir) = crate::cli::model::create_ref_store_model_in_temp_dir().await?;
+        let (m, _temp_dir) = crate::cli::model::create_ref_store_model_in_temp_dir().await?;
+        for model in [&alone, &m] {
+            model
+                .create(crate::cli::create::Input {
+                    namespace: ("example", "local").into(),
+                    source: None,
+                    message: None,
+                    user_meta: UserMeta::Clear,
+                })
+                .await?;
+        }
+        m.create(crate::cli::create::Input {
+            namespace: ("example", "damaged").into(),
+            source: None,
+            message: None,
+            user_meta: UserMeta::Clear,
+        })
+        .await?;
+        let local_domain = m.get_local_domain();
+        local_domain
+            .lineage_io()
+            .damage_fixture(
+                &quilt_rs::io::storage::LocalStorage::new(),
+                &("example", "damaged").into(),
+            )
+            .await?;
+
+        let fetched = model(local_domain, Input { fetch: true }).await?.to_json();
+        let healthy_alone = model(alone.get_local_domain(), Input { fetch: true })
+            .await?
+            .to_json();
+
+        let damaged = &fetched["packages"][0];
+        assert_eq!(damaged["namespace"], "example/damaged");
+        assert!(damaged["error"].is_string(), "{damaged}");
+        assert_eq!(fetched["packages"][1], healthy_alone["packages"][0]);
+        assert_eq!(fetched["packages"][1].get("error"), None);
+        Ok(())
+    }
+
     /// Verifies that list model returns correct output for both empty and populated states:
     ///   * empty list shows "No installed packages" message
     ///   * after installing a package, shows its bucket, namespace and status

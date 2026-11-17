@@ -33,6 +33,7 @@ async fn test_set_remote_on_local_package() -> Res {
         .await?;
 
     let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
         &storage,
         &paths,
         "/tmp/working_dir",
@@ -86,6 +87,7 @@ async fn test_set_remote_empty_bucket_error() -> Res {
         .await?;
 
     let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
         &storage,
         &paths,
         "/tmp/working_dir",
@@ -198,6 +200,7 @@ async fn test_set_remote_rejects_unreachable_bucket() -> Res {
         .await?;
 
     let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
         &storage,
         &paths,
         "/tmp/working_dir",
@@ -252,6 +255,7 @@ async fn set_remote_refuses_a_bucket_name_s3_does_not_allow() -> Res {
         .scaffold_for_installing(&storage, &home, &namespace)
         .await?;
     let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
         &storage,
         &paths,
         "/tmp/working_dir",
@@ -302,6 +306,7 @@ async fn test_set_remote_rejects_change_on_pushed_package() -> Res {
 
     let hash = "abcdef0000000000000000000000000000000000000000000000000000000000";
     let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
         &storage,
         &paths,
         "/tmp/working_dir",
@@ -361,6 +366,7 @@ async fn test_set_remote_is_idempotent_on_pushed_package() -> Res {
 
     let hash = "abcdef0000000000000000000000000000000000000000000000000000000000";
     let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
         &storage,
         &paths,
         "/tmp/working_dir",
@@ -421,6 +427,7 @@ async fn test_set_remote_overwrites_unpushed_remote() -> Res {
         .await?;
 
     let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
         &storage,
         &paths,
         "/tmp/working_dir",
@@ -483,6 +490,7 @@ async fn test_set_remote_recommits_existing_commit() -> Res {
 
     // Start with no remote and no commit
     let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
         &storage,
         &paths,
         "/tmp/working_dir",
@@ -591,6 +599,7 @@ async fn test_resolve_workflow_without_remote_is_none_for_every_intent() -> Res 
         .await?;
 
     let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
         &storage,
         &paths,
         "/tmp/working_dir",
@@ -655,6 +664,7 @@ schemas:
 
     // Start with no remote and no commit
     let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
         &storage,
         &paths,
         "/tmp/working_dir",
@@ -763,6 +773,7 @@ schemas:
     remote.put_object(None, &schema_uri, b"{}".to_vec()).await?;
 
     let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
         &storage,
         &paths,
         "/tmp/working_dir",
@@ -860,6 +871,7 @@ schemas:
     remote.put_object(None, &schema_uri, b"{}".to_vec()).await?;
 
     let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
         &storage,
         &paths,
         "/tmp/working_dir",
@@ -956,6 +968,7 @@ async fn package_with_config(
         .await?;
 
     let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
         &storage,
         &paths,
         "/tmp/working_dir",

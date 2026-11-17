@@ -329,10 +329,7 @@ impl DomainPaths {
     }
 }
 
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the ref store that uses them is not used yet")
-)]
+#[cfg(any(test, feature = "ref-store-preview"))]
 impl DomainPaths {
     /// Directory holding every package's ref, `refs/<owner>/<name>.json`.
     #[must_use]

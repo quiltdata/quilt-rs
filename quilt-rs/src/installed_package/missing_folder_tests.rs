@@ -11,7 +11,7 @@ use crate::local_domain::LocalDomain;
 
 /// A package with `a.txt` and `sub/b.txt` committed, and its working folder.
 async fn committed_package(temp_dir: &TempDir) -> Res<(LocalDomain, InstalledPackage)> {
-    let domain = LocalDomain::new(temp_dir.path());
+    let domain = LocalDomain::new(temp_dir.path()).with_lineage_store(BACKEND);
     domain.set_home(temp_dir.path()).await?;
     let (package, _) = domain
         .create_package(
@@ -126,7 +126,9 @@ async fn files_deleted_from_an_existing_folder_are_still_removed() -> Res {
 async fn an_unavailable_walk_leaves_the_stat_cache_alone() -> Res {
     let temp_dir = TempDir::new()?;
     let store = Arc::new(PackageStateStore::in_memory());
-    let domain = LocalDomain::new(temp_dir.path()).with_state_store(Arc::clone(&store));
+    let domain = LocalDomain::new(temp_dir.path())
+        .with_lineage_store(BACKEND)
+        .with_state_store(Arc::clone(&store));
     domain.set_home(temp_dir.path()).await?;
     let namespace: Namespace = ("demo", "pkg").into();
     let (package, _) = domain
@@ -219,7 +221,7 @@ async fn stop_ignoring_in_this_package_refuses_a_missing_folder() -> Res {
 #[test(tokio::test)]
 async fn a_package_tracking_nothing_still_takes_a_rule_in_a_missing_folder() -> Res {
     let temp_dir = TempDir::new()?;
-    let domain = LocalDomain::new(temp_dir.path());
+    let domain = LocalDomain::new(temp_dir.path()).with_lineage_store(BACKEND);
     domain.set_home(temp_dir.path()).await?;
     let (package, _) = domain
         .create_package(

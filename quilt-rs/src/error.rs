@@ -338,12 +338,19 @@ pub enum LineageError {
     )]
     UnsupportedCopies { path: PathBuf, found: &'static str },
 
+    /// What was placed for the package is removed, but for `kept`, the
+    /// files edited while it was placed.
     #[error(
-        "The home changed from {} to {} while the package was being placed, so it was not recorded",
+        "The home changed from {} to {} while the package was being placed, so it was not recorded{}",
         placed.display(),
-        home.display()
+        home.display(),
+        kept_files(kept)
     )]
-    HomeChanged { placed: PathBuf, home: PathBuf },
+    HomeChanged {
+        placed: PathBuf,
+        home: PathBuf,
+        kept: Vec<PathBuf>,
+    },
 
     /// The domain config, at `path`, does not say the domain's lineage has
     /// moved to refs, so no ref is written.
@@ -352,6 +359,18 @@ pub enum LineageError {
         path.display()
     )]
     RefsNotWritable { path: PathBuf, state: &'static str },
+}
+
+/// The tail of [`LineageError::HomeChanged`]'s message naming `kept`.
+fn kept_files(kept: &[PathBuf]) -> String {
+    if kept.is_empty() {
+        return String::new();
+    }
+    let files: Vec<String> = kept.iter().map(|file| file.display().to_string()).collect();
+    format!(
+        "; edited meanwhile, these stay where they are: {}",
+        files.join(", ")
+    )
 }
 
 #[derive(Error, Debug, PartialEq)]
@@ -802,10 +821,25 @@ mod tests {
         let err = LineageError::HomeChanged {
             placed: PathBuf::from("/old/home"),
             home: PathBuf::from("/new/home"),
+            kept: Vec::new(),
         };
         assert_eq!(
             err.to_string(),
             "The home changed from /old/home to /new/home while the package was being placed, so it was not recorded"
+        );
+    }
+
+    #[test]
+    fn a_changed_home_names_the_files_kept() {
+        let err = LineageError::HomeChanged {
+            placed: PathBuf::from("/old/home"),
+            home: PathBuf::from("/new/home"),
+            kept: vec![PathBuf::from("/old/home/a/b/x.csv")],
+        };
+        assert!(
+            err.to_string()
+                .ends_with("; edited meanwhile, these stay where they are: /old/home/a/b/x.csv"),
+            "{err}"
         );
     }
 }

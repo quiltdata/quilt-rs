@@ -72,6 +72,7 @@ async fn test_spamming_commit_writes() -> Res {
         ..PackageLineage::default()
     };
     let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
         &storage,
         &paths,
         "/tmp/working_dir",
@@ -163,6 +164,7 @@ async fn test_certify_latest_pushes_pending_commit_then_tags() -> Res {
         )
     };
     let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
         &storage,
         &paths,
         "/tmp/working_dir",
@@ -272,6 +274,7 @@ async fn test_certify_latest_skips_push_when_no_pending_commit() -> Res {
     paths.scaffold_for_caching(&storage, bucket).await?;
 
     let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
         &storage,
         &paths,
         "/tmp/working_dir",
@@ -363,6 +366,7 @@ async fn package_without_commit(
         ..PackageLineage::default()
     };
     let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
         &storage,
         &paths,
         home.as_ref(),
@@ -441,6 +445,7 @@ async fn test_manifest_recovery_from_corruption() -> Res {
         ..PackageLineage::default()
     };
     let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
         &storage,
         &paths,
         "/tmp/working_dir",
@@ -572,7 +577,7 @@ fn rejected_credential() -> Error {
     })
 }
 
-pub(super) struct LoggedOutRemote;
+pub(in crate::installed_package) struct LoggedOutRemote;
 
 impl crate::io::remote::Remote for LoggedOutRemote {
     fn exists(&self, _host: Option<&Host>, _s3_uri: &S3Uri) -> impl Future<Output = Res<bool>> {
@@ -639,7 +644,7 @@ impl crate::io::remote::Remote for LoggedOutRemote {
 /// A remote that refuses every read with `AccessDenied`, simulating a role
 /// that cannot reach the bucket. Distinct from [`LoggedOutRemote`]: the
 /// credentials are valid, the request arrived, and it was refused.
-pub(super) struct DeniedRemote;
+pub(in crate::installed_package) struct DeniedRemote;
 
 impl crate::io::remote::Remote for DeniedRemote {
     fn exists(&self, _host: Option<&Host>, s3_uri: &S3Uri) -> impl Future<Output = Res<bool>> {
@@ -739,6 +744,7 @@ async fn test_status_propagates_access_denied_from_the_latest_hash_read() -> Res
     // the only remote read `status` needs is the latest-hash pointer.
     let installed_hash = TIP;
     let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
         &storage,
         &paths,
         "/tmp/working_dir",
@@ -802,6 +808,7 @@ async fn test_status_propagates_a_rejected_credential() -> Res {
 
     // Package with remote configured but never pushed (empty hash)
     let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
         &storage,
         &paths,
         "/tmp/working_dir",
@@ -843,6 +850,7 @@ async fn test_status_propagates_login_required() -> Res {
 
     // Package with remote configured but never pushed (empty hash)
     let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
         &storage,
         &paths,
         "/tmp/working_dir",
@@ -897,6 +905,7 @@ async fn test_pull_refreshes_latest_hash_when_remote_moved() -> Res {
     // == remote.hash. Without the refresh inside `pull` this state
     // alone short-circuits the up-to-date guard.
     let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
         &storage,
         &paths,
         home.as_ref(),
@@ -968,6 +977,7 @@ async fn test_pull_up_to_date_returns_up_to_date_and_writes_latest_hash() -> Res
         .await?;
 
     let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
         &storage,
         &paths,
         home.as_ref(),
@@ -1041,6 +1051,7 @@ async fn behind_package(
     // remote `latest` tag (staged below) has moved, so `status`'s refresh
     // turns this into a `Behind` state.
     let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
         &storage,
         &paths,
         home.as_ref(),
@@ -1362,6 +1373,7 @@ async fn test_pull_outcome_local_no_remote_is_up_to_date() -> Res {
 
     // No remote → `UpstreamState::Local`.
     let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
         &storage,
         &paths,
         home.as_ref(),
@@ -1414,6 +1426,7 @@ async fn test_pull_outcome_diverged_by_hash_is_up_to_date_no_network() -> Res {
         ..PackageLineage::default()
     };
     let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
         &storage,
         &paths,
         home.as_ref(),
@@ -1470,6 +1483,7 @@ async fn test_pull_outcome_never_pushed_remote_is_up_to_date() -> Res {
     // `UpstreamState::Local`. No `latest` tag is staged on the mock remote, so
     // any tag read would 404.
     let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
         &storage,
         &paths,
         home.as_ref(),
@@ -1523,6 +1537,7 @@ async fn test_status_reports_whether_the_latest_tip_was_read() -> Res {
             ..PackageLineage::default()
         };
         let domain_lineage_io = DomainLineageIo::write_fixture(
+            BACKEND,
             &storage,
             &paths,
             home.as_ref(),
@@ -1603,6 +1618,7 @@ async fn state_with(
         ..PackageLineage::default()
     };
     let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
         &storage,
         &paths,
         home.as_ref(),
@@ -1703,6 +1719,7 @@ async fn test_status_from_walk_keeps_the_changes_under_a_fresh_tip() -> Res {
         .scaffold_for_installing(&storage, &home, &namespace)
         .await?;
     let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
         &storage,
         &paths,
         home.as_ref(),
@@ -1810,6 +1827,7 @@ async fn test_commit_and_push_key_a_file_in_a_folder_with_slashes() -> Res {
         .scaffold_for_installing(&storage, &home, &namespace)
         .await?;
     let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
         &storage,
         &paths,
         home.as_ref(),
@@ -1930,6 +1948,7 @@ async fn first_push_package(
         ..PackageLineage::from(bucket_remote(bucket, &namespace, ""))
     };
     let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
         &storage,
         &paths,
         home.as_ref(),
@@ -2081,10 +2100,10 @@ async fn test_first_push_certifies_without_another_latest() -> Res {
 }
 
 /// A local package with `data.txt` committed.
-async fn committed_data_txt() -> Res<(InstalledPackage<LocalStorage, RemoteS3>, tempfile::TempDir)>
-{
+pub(in crate::installed_package) async fn committed_data_txt()
+-> Res<(InstalledPackage<LocalStorage, RemoteS3>, tempfile::TempDir)> {
     let temp_dir = tempfile::TempDir::new()?;
-    let domain = crate::local_domain::LocalDomain::new(temp_dir.path());
+    let domain = crate::local_domain::LocalDomain::new(temp_dir.path()).with_lineage_store(BACKEND);
     domain.set_home(temp_dir.path()).await?;
     let (package, _) = domain
         .create_package(
@@ -2104,17 +2123,6 @@ async fn committed_data_txt() -> Res<(InstalledPackage<LocalStorage, RemoteS3>, 
         )
         .await?;
     Ok((package, temp_dir))
-}
-
-/// Builds that require `paths[].hash` cannot load an entry without it.
-#[test(tokio::test)]
-async fn a_committed_file_is_stored_with_its_hash() -> Res {
-    let (package, _temp_dir) = committed_data_txt().await?;
-    let record: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(package.paths.lineage())?)?;
-    let entry = &record["packages"]["demo/tracked"]["paths"]["data.txt"];
-    assert!(entry["hash"].is_string(), "{entry}");
-    Ok(())
 }
 
 /// A later release stops writing `paths[].hash`.

@@ -8,6 +8,8 @@ use tracing::{debug, info, trace, warn};
 
 use crate::Error;
 use crate::Res;
+use crate::checksum;
+use crate::error::LineageError;
 use crate::flow;
 use crate::installed_package::InstalledPackage;
 use crate::io::manifest::RowsStream;
@@ -18,6 +20,8 @@ use crate::io::storage::LocalStorage;
 use crate::io::storage::Storage;
 use crate::lineage;
 use crate::lineage::Home;
+use crate::lineage::LineagePaths;
+use crate::lineage::PathState;
 use crate::manifest::Manifest;
 use crate::manifest::ManifestHeader;
 use crate::package_lock::PackageLock;
@@ -139,6 +143,33 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
         self
     }
 
+    /// The domain with its lineage in a ref per package under `.quilt/refs/`,
+    /// a preview: it never reads or writes `data.json`, so a domain whose
+    /// packages are there reads as having none. Setting the home of a domain
+    /// with no `.quilt/domain.json` writes one. Keeps the hook set so far.
+    #[cfg(any(test, feature = "ref-store-preview"))]
+    #[must_use]
+    pub fn with_ref_store(mut self) -> Self {
+        self.lineage = self.lineage.into_refs(self.paths.clone());
+        self
+    }
+
+    /// The domain with its lineage in `store`.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn with_lineage_store(self, store: lineage::LineageStore) -> Self {
+        match store {
+            lineage::LineageStore::DataJson => self,
+            lineage::LineageStore::Refs => self.with_ref_store(),
+        }
+    }
+
+    /// Deletes the temp files that killed lineage writes left, each package's
+    /// only while its lock is free. `data.json` leaves none.
+    pub async fn sweep_leftovers(&self) -> Res {
+        self.lineage.sweep(&self.storage).await
+    }
+
     /// The handle this domain's lineage reads and writes go through, telling
     /// the hook set so far.
     #[must_use]
@@ -251,19 +282,21 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
     pub async fn install_package(&self, manifest_uri: &ManifestUri) -> Res<InstalledPackage<S, R>> {
         info!("Installing package: {}", manifest_uri.namespace);
         debug!("Installing from manifest: {}", manifest_uri.display());
-        let held = PackageLock::take(&self.storage, &self.paths, &manifest_uri.namespace).await?;
+        let namespace = &manifest_uri.namespace;
+        let held = PackageLock::take(&self.storage, &self.paths, namespace).await?;
 
         // Read before anything is created: a record that does not parse
         // stops it here.
-        let installed = self
-            .lineage
-            .contains(&self.storage, &manifest_uri.namespace)
-            .await?;
+        let installed = self.lineage.contains(&self.storage, namespace).await?;
         debug!("Preparing paths for installation");
         self.scaffold_paths_for_caching(&manifest_uri.bucket)
             .await?;
-        let home = self
-            .scaffold_paths_for_installing(&manifest_uri.namespace)
+        let home = self.get_home().await?;
+        let placed = Placed::before(&self.storage, &home, namespace).await;
+        let manifest = self.paths.installed_manifest(namespace, &manifest_uri.hash);
+        let manifest = (!self.storage.exists(&manifest).await).then_some(manifest);
+        self.paths
+            .scaffold_for_installing(&self.storage, &home, namespace)
             .await?;
 
         debug!("Executing package installation flow");
@@ -278,12 +311,17 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
         .await?;
 
         debug!("Updating domain lineage");
-        self.lineage
-            .create_package(&self.storage, &held, lineage)
+        crate::failpoint::hit("flow.install.before-create");
+        let created = self
+            .lineage
+            .create_package(&self.storage, &held, lineage, &home)
+            .await;
+        placed
+            .undo_if_unrecorded(&self.storage, created, &LineagePaths::new(), manifest)
             .await?;
 
-        info!("Successfully installed package: {}", manifest_uri.namespace);
-        Ok(self.create_installed_package(manifest_uri.namespace.clone()))
+        info!("Successfully installed package: {}", namespace);
+        Ok(self.create_installed_package(namespace.clone()))
     }
 
     pub async fn create_package(
@@ -298,6 +336,7 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
 
         let home = self.get_home().await?;
         let installed = self.lineage.contains(&self.storage, &namespace).await?;
+        let placed = Placed::before(&self.storage, &home, &namespace).await;
 
         let (lineage, left_out) = flow::create(
             &home,
@@ -311,8 +350,17 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
         )
         .await?;
 
-        self.lineage
-            .create_package(&self.storage, &held, lineage)
+        let files = lineage.paths.clone();
+        let manifest = lineage
+            .commit
+            .as_ref()
+            .map(|commit| self.paths.installed_manifest(&namespace, &commit.hash));
+        let created = self
+            .lineage
+            .create_package(&self.storage, &held, lineage, &home)
+            .await;
+        placed
+            .undo_if_unrecorded(&self.storage, created, &files, manifest)
             .await?;
 
         info!("Successfully created package: {}", namespace);
@@ -372,7 +420,9 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
     /// Uninstall the package whose lock the caller holds.
     async fn uninstall_locked(&self, held: &PackageLock) -> Res<()> {
         let namespace = held.namespace();
-        let installed = self.lineage.contains(&self.storage, namespace).await?;
+        // Before any file goes: a package whose lineage can't be removed
+        // keeps its files too.
+        let installed = self.lineage.removable(&self.storage, namespace).await?;
         debug!("Preparing paths for uninstallation");
         let home = self.scaffold_paths_for_installing(namespace).await?;
 
@@ -399,7 +449,10 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
     /// [`Error::PackageBusy`] and nothing deleted.
     pub async fn gc(&self) -> Res<flow::GcReport> {
         let installed = self.lineage.namespaces(&self.storage).await?;
-        flow::gc(&self.paths, &self.storage, &installed).await
+        flow::gc_under(&self.paths, &self.storage, &installed, async |held| {
+            self.lineage.sweep_held(&self.storage, held).await
+        })
+        .await
     }
 
     /// How much `.quilt/` holds, and what [`Self::gc`] would free now. See
@@ -463,14 +516,90 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
     }
 }
 
+/// The folder an install or a create places a package's files in, and
+/// whether it was there before.
+struct Placed {
+    folder: PathBuf,
+    existed: bool,
+}
+
+impl Placed {
+    async fn before(storage: &impl Storage, home: &Home, namespace: &Namespace) -> Self {
+        let folder = paths::package_home(home, namespace);
+        Self {
+            existed: storage.exists(&folder).await,
+            folder,
+        }
+    }
+
+    /// `created`, unless the home changed before the package was recorded:
+    /// then it removes what was placed, `files` in the folder and the
+    /// `manifest` installed, keeps each file edited since and names it in
+    /// the error. Nothing else refers to them while the package has no ref.
+    /// In a folder that was there before, a file may be the user's own with
+    /// the same bytes, so none is removed.
+    async fn undo_if_unrecorded(
+        self,
+        storage: &(impl Storage + Sync),
+        created: Res,
+        files: &LineagePaths,
+        manifest: Option<PathBuf>,
+    ) -> Res {
+        let Err(Error::Lineage(LineageError::HomeChanged { placed, home, .. })) = created else {
+            return created;
+        };
+        let mut kept = Vec::new();
+        let placed_files = if self.existed { None } else { Some(files) };
+        for (key, state) in placed_files.into_iter().flatten() {
+            let Ok(key) = crate::LogicalKey::new(key) else {
+                continue;
+            };
+            let file = key.join_to(&self.folder);
+            if !holds(storage, &file, state).await {
+                if storage.exists(&file).await {
+                    kept.push(file);
+                }
+            } else if let Err(err) = storage.remove_file(&file).await {
+                warn!("Could not remove {}: {err}", file.display());
+            } else {
+                // `remove_dir` refuses a folder something was written into.
+                for folder in file.ancestors().skip(1) {
+                    if folder == self.folder || storage.remove_dir(folder).await.is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+        if let Some(manifest) = manifest
+            && let Err(err) = storage.remove_file(&manifest).await
+        {
+            warn!("Could not remove {}: {err}", manifest.display());
+        }
+        if !self.existed {
+            // Not empty when a file in it was kept.
+            let _ = storage.remove_dir(&self.folder).await;
+        }
+        Err(LineageError::HomeChanged { placed, home, kept }.into())
+    }
+}
+
+/// Whether `file` still holds the bytes `state` was hashed from.
+async fn holds(storage: &impl Storage, file: &Path, state: &PathState) -> bool {
+    let Some(hash) = &state.hash else {
+        return false;
+    };
+    match checksum::hash_file(storage, file, hash.code()).await {
+        Ok((found, _)) => multihash::Multihash::<256>::from(found) == *hash,
+        Err(_) => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     use tempfile::TempDir;
     use test_log::test;
-
-    use crate::lineage::PackageLineage;
 
     /// Setting the built-in rules waits for the user-wide file's lock, which
     /// *Stop ignoring* for all packages holds across its read and write.
@@ -497,93 +626,8 @@ mod tests {
         Ok(())
     }
 
-    /// A domain that was never used, not even its folder, has no home, and
-    /// reading that creates nothing.
-    #[test(tokio::test)]
-    async fn stored_home_on_a_missing_domain_is_none_and_creates_nothing() -> Res<()> {
-        let temp_dir = TempDir::new()?;
-        let root = temp_dir.path().join("missing");
-        let domain = LocalDomain::new(&root);
-
-        assert_eq!(domain.stored_home().await?, None);
-        assert!(!root.exists());
-        Ok(())
-    }
-
-    /// A domain whose folder can't be looked into is not reported as having
-    /// no home.
-    #[cfg(unix)]
-    #[test(tokio::test)]
-    async fn stored_home_on_an_unreadable_domain_is_an_error() -> Res<()> {
-        use std::os::unix::fs::PermissionsExt;
-
-        let temp_dir = TempDir::new()?;
-        let domain = LocalDomain::new(temp_dir.path());
-        domain.set_home(temp_dir.path()).await?;
-        let folder = domain.paths.dot_quilt_dir();
-        std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o000))?;
-        let readable = std::fs::read_dir(&folder).is_ok();
-
-        let result = domain.stored_home().await;
-
-        std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o700))?;
-        // Root reads it anyway.
-        if !readable {
-            assert!(result.is_err(), "{result:?}");
-        }
-        Ok(())
-    }
-
-    #[test(tokio::test)]
-    async fn stored_home_reads_the_home_that_was_set() -> Res<()> {
-        let temp_dir = TempDir::new()?;
-        let domain = LocalDomain::new(temp_dir.path());
-        domain.set_home(temp_dir.path()).await?;
-
-        assert_eq!(
-            domain.stored_home().await?,
-            Some(Home::from(temp_dir.path()))
-        );
-        Ok(())
-    }
-
-    /// Creating a package that is installed already is refused, and the
-    /// installed one keeps its lineage.
-    #[test(tokio::test)]
-    async fn creating_an_installed_package_again_is_refused() -> Res<()> {
-        let temp_dir = TempDir::new()?;
-        let domain = LocalDomain::new(temp_dir.path());
-        domain.set_home(temp_dir.path()).await?;
-        let namespace = Namespace::from(("foo", "bar"));
-        let (package, _) = domain
-            .create_package(namespace.clone(), None, None, flow::UserMeta::Clear)
-            .await?;
-        let first = package.lineage().await?;
-
-        let again = domain
-            .create_package(
-                namespace.clone(),
-                None,
-                Some("again".to_string()),
-                flow::UserMeta::Clear,
-            )
-            .await;
-
-        assert!(
-            matches!(
-                again,
-                Err(Error::InstallPackage(
-                    crate::InstallPackageError::AlreadyInstalled(ref ns)
-                )) if *ns == namespace
-            ),
-            "{again:?}"
-        );
-        assert_eq!(package.lineage().await?, first);
-        Ok(())
-    }
-
-    /// An install over a record that does not parse fails before it creates
-    /// the package's folder.
+    /// An install over a `data.json` that does not parse fails before it
+    /// creates the package's folder.
     #[test(tokio::test)]
     async fn an_install_over_an_unreadable_record_creates_no_folder() -> Res<()> {
         let temp_dir = TempDir::new()?;
@@ -611,65 +655,419 @@ mod tests {
         assert!(!temp_dir.path().join("foo").join("bar").exists());
         Ok(())
     }
+}
+
+/// What only the ref store does.
+#[cfg(test)]
+mod ref_store_tests {
+    use std::str::FromStr;
+    use std::time::Duration;
+
+    use aws_sdk_s3::primitives::ByteStream;
+    use tempfile::TempDir;
+    use test_log::test;
+
+    use super::*;
+    use crate::io::remote::mocks::MockRemote;
+    use crate::lineage::LineageHook;
+    use crate::manifest::TopHasher;
+    use quilt_uri::S3Uri;
+
+    const BUCKET: &str = "b";
+
+    /// A domain on refs under `root`, its home `root/home`.
+    async fn domain(root: &Path) -> Res<LocalDomain> {
+        let domain = LocalDomain::new(root.join("domain")).with_ref_store();
+        domain.set_home(root.join("home")).await?;
+        Ok(domain)
+    }
+
+    /// A remote holding one revision of `acme/x` with no files, `latest`.
+    async fn remote_with_one_revision() -> Res<(MockRemote, ManifestUri)> {
+        let remote = MockRemote::default();
+        let manifest = Manifest::default();
+        let mut hasher = TopHasher::new();
+        hasher.append_header(&manifest.header)?;
+        let hash = hasher.finalize();
+        let at = |key: &str| S3Uri::from_str(&format!("s3://{BUCKET}/.quilt/{key}"));
+        remote
+            .put_object(
+                None,
+                &at(&format!("packages/{hash}"))?,
+                ByteStream::from(&manifest),
+            )
+            .await?;
+        remote
+            .put_object(
+                None,
+                &at("named_packages/acme/x/latest")?,
+                hash.as_bytes().to_vec(),
+            )
+            .await?;
+        let uri = ManifestUri {
+            origin: None,
+            bucket: BUCKET.to_string(),
+            namespace: ("acme", "x").into(),
+            hash,
+        };
+        Ok((remote, uri))
+    }
+
+    /// Holds the domain file lock until `placed`, which the placing makes
+    /// true last, as a home change in another process would, runs
+    /// `meanwhile`, moves the home to `root/moved`, then lets `placing` go
+    /// on to record the package.
+    async fn move_home_once_placed<T>(
+        domain: &LocalDomain<impl Storage + Clone + Sync, impl Remote>,
+        root: &Path,
+        placed: impl Fn() -> bool,
+        placing: tokio::task::JoinHandle<Res<T>>,
+        meanwhile: impl FnOnce() -> std::io::Result<()>,
+    ) -> Res<T> {
+        let held = LocalStorage::new()
+            .lock_exclusive(domain.paths.domain_file_lock())
+            .await?;
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        while !placed() && std::time::Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        meanwhile()?;
+        let config = serde_json::json!({
+            "format": 1,
+            "home": root.join("moved"),
+            "migration": "done",
+        });
+        std::fs::write(domain.paths.domain_config(), serde_json::to_vec(&config)?)?;
+        drop(held);
+        placing.await.expect("the task ran")
+    }
+
+    fn home_changed(root: &Path, result: &Res<impl std::fmt::Debug>) -> Option<Vec<PathBuf>> {
+        match result {
+            Err(Error::Lineage(LineageError::HomeChanged { placed, home, kept }))
+                if *placed == root.join("home") && *home == root.join("moved") =>
+            {
+                Some(kept.clone())
+            }
+            _ => None,
+        }
+    }
 
     #[test(tokio::test)]
-    async fn test_list_installed_packages() -> Res<()> {
-        // Create a temporary directory for testing
-        let temp_dir = TempDir::new()?;
-        let local_domain = super::LocalDomain::new(temp_dir.path());
+    async fn a_home_changed_under_an_install_records_nothing_and_removes_what_it_placed() -> Res<()>
+    {
+        let root = TempDir::new()?;
+        let (remote, uri) = remote_with_one_revision().await?;
+        let paths = paths::DomainPaths::new(root.path().join("domain"));
+        let domain = LocalDomain::with_parts(
+            paths.clone(),
+            lineage::DomainLineageIo::refs(paths.clone()),
+            LocalStorage::new(),
+            Arc::new(remote),
+        );
+        domain.set_home(root.path().join("home")).await?;
+        let manifest = paths.installed_manifest(&uri.namespace, &uri.hash);
 
-        // Set home directory
-        local_domain.set_home(&temp_dir.path()).await?;
-
-        // Initially there should be no packages
-        let packages = local_domain.list_installed_packages().await?;
-        assert!(packages.is_empty());
-
-        // Add some packages to the lineage
-        let namespaces = [
-            Namespace::from(("foo", "bar")),
-            Namespace::from(("test", "package")),
-            Namespace::from(("abc", "xyz")),
-        ];
-
-        let packages = namespaces.iter().map(|namespace| {
-            (
-                namespace.clone(),
-                PackageLineage {
-                    commit: None,
-                    remote_uri: Some(ManifestUri {
-                        bucket: "test-bucket".to_string(),
-                        namespace: namespace.clone(),
-                        hash: "abcdef0000000000000000000000000000000000000000000000000000000000"
-                            .to_string(),
-                        origin: None,
-                    }),
-                    base_hash: "abcdef0000000000000000000000000000000000000000000000000000000000"
-                        .to_string(),
-                    latest_hash: "abcdef0000000000000000000000000000000000000000000000000000000000"
-                        .to_string(),
-                    paths: std::collections::BTreeMap::new(),
-                    ..PackageLineage::default()
-                },
-            )
+        let installing = tokio::spawn({
+            let (domain, uri) = (domain.clone(), uri.clone());
+            async move { domain.install_package(&uri).await.map(drop) }
         });
-        lineage::DomainLineageIo::write_fixture(
-            &local_domain.storage,
-            &local_domain.paths,
-            temp_dir.path(),
-            packages,
+        let result = move_home_once_placed(
+            &domain,
+            root.path(),
+            || manifest.is_file(),
+            installing,
+            || Ok(()),
         )
-        .await?;
+        .await;
 
-        // Now list_installed_packages should return packages in sorted order
-        let packages = local_domain.list_installed_packages().await?;
-        assert_eq!(packages.len(), 3);
-
-        // Check that packages are returned in sorted order by namespace
-        assert_eq!(packages[0].namespace, Namespace::from(("abc", "xyz")));
-        assert_eq!(packages[1].namespace, Namespace::from(("foo", "bar")));
-        assert_eq!(packages[2].namespace, Namespace::from(("test", "package")));
-
+        assert_eq!(
+            home_changed(root.path(), &result),
+            Some(Vec::new()),
+            "{result:?}"
+        );
+        assert!(
+            !domain
+                .lineage
+                .contains(&domain.storage, &uri.namespace)
+                .await?
+        );
+        assert!(!manifest.exists());
+        assert!(!root.path().join("home/acme/x").exists());
         Ok(())
     }
+
+    #[test(tokio::test)]
+    async fn a_home_changed_under_a_create_keeps_only_the_files_edited_meanwhile() -> Res<()> {
+        let root = TempDir::new()?;
+        let source = root.path().join("source");
+        std::fs::create_dir_all(source.join("sub"))?;
+        std::fs::write(source.join("sub/kept.txt"), b"placed")?;
+        std::fs::write(source.join("sub/gone.txt"), b"placed")?;
+        let domain = domain(root.path()).await?;
+        let namespace: Namespace = ("acme", "x").into();
+        let manifests = domain.paths.installed_manifests_dir(&namespace);
+        let placed = root.path().join("home/acme/x");
+
+        let creating = tokio::spawn({
+            let (domain, namespace) = (domain.clone(), namespace.clone());
+            async move {
+                domain
+                    .create_package(namespace, Some(source), None, flow::UserMeta::Clear)
+                    .await
+                    .map(drop)
+            }
+        });
+        let edited = placed.join("sub/kept.txt");
+        let built = || std::fs::read_dir(&manifests).is_ok_and(|mut found| found.next().is_some());
+        let result = move_home_once_placed(&domain, root.path(), built, creating, || {
+            std::fs::write(&edited, b"edited")
+        })
+        .await;
+
+        assert_eq!(
+            home_changed(root.path(), &result),
+            Some(vec![edited.clone()]),
+            "{result:?}"
+        );
+        assert!(!domain.lineage.contains(&domain.storage, &namespace).await?);
+        assert_eq!(std::fs::read(&edited)?, b"edited");
+        assert!(!placed.join("sub/gone.txt").exists());
+        assert_eq!(std::fs::read_dir(&manifests)?.count(), 0);
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn a_ref_that_does_not_parse_is_uninstalled_and_one_unsupported_is_not() -> Res<()> {
+        let root = TempDir::new()?;
+        let domain = domain(root.path()).await?;
+        for name in ["damaged", "newer"] {
+            domain
+                .create_package(("acme", name).into(), None, None, flow::UserMeta::Clear)
+                .await?;
+        }
+        let newer = domain.paths.package_ref(&("acme", "newer").into());
+        std::fs::write(domain.paths.package_ref(&("acme", "damaged").into()), b"{")?;
+        std::fs::write(&newer, br#"{"format": 2}"#)?;
+
+        domain.uninstall_package(("acme", "damaged").into()).await?;
+        let refused = domain.uninstall_package(("acme", "newer").into()).await;
+
+        assert!(!root.path().join("home/acme/damaged").exists());
+        assert!(
+            matches!(
+                refused,
+                Err(Error::Lineage(LineageError::UnsupportedFormat {
+                    found: 2,
+                    ..
+                }))
+            ),
+            "{refused:?}"
+        );
+        assert!(root.path().join("home/acme/newer").exists());
+        assert_eq!(std::fs::read(&newer)?, br#"{"format": 2}"#);
+        assert_eq!(
+            domain.lineage.namespaces(&domain.storage).await?,
+            std::collections::BTreeSet::from([("acme", "newer").into()])
+        );
+        Ok(())
+    }
+
+    /// A package created into a folder that was there may hold the user's
+    /// own files with the same bytes, so none is removed.
+    #[test(tokio::test)]
+    async fn a_home_changed_under_a_create_into_an_existing_folder_removes_no_file() -> Res<()> {
+        let root = TempDir::new()?;
+        let placed = root.path().join("home/acme/x");
+        let source = root.path().join("source");
+        for folder in [&placed, &source] {
+            std::fs::create_dir_all(folder)?;
+            std::fs::write(folder.join("own.txt"), b"own")?;
+        }
+        let domain = domain(root.path()).await?;
+        let namespace: Namespace = ("acme", "x").into();
+        let manifests = domain.paths.installed_manifests_dir(&namespace);
+
+        let creating = tokio::spawn({
+            let (domain, namespace) = (domain.clone(), namespace.clone());
+            async move {
+                domain
+                    .create_package(namespace, Some(source), None, flow::UserMeta::Clear)
+                    .await
+                    .map(drop)
+            }
+        });
+        let built = || std::fs::read_dir(&manifests).is_ok_and(|mut found| found.next().is_some());
+        let result = move_home_once_placed(&domain, root.path(), built, creating, || Ok(())).await;
+
+        assert_eq!(
+            home_changed(root.path(), &result),
+            Some(Vec::new()),
+            "{result:?}"
+        );
+        assert_eq!(std::fs::read(placed.join("own.txt"))?, b"own");
+        Ok(())
+    }
+
+    /// Only once the domain's move to refs is done is a ref removed, so a
+    /// package's files go only then.
+    #[test(tokio::test)]
+    async fn an_uninstall_keeps_the_files_while_refs_cannot_be_written() -> Res<()> {
+        let root = TempDir::new()?;
+        let domain = domain(root.path()).await?;
+        domain
+            .create_package(("acme", "x").into(), None, None, flow::UserMeta::Clear)
+            .await?;
+        let config = serde_json::json!({
+            "format": 1,
+            "home": root.path().join("home"),
+            "migration": "in_progress",
+        });
+        std::fs::write(domain.paths.domain_config(), serde_json::to_vec(&config)?)?;
+
+        let refused = domain.uninstall_package(("acme", "x").into()).await;
+
+        assert!(
+            matches!(
+                refused,
+                Err(Error::Lineage(LineageError::RefsNotWritable { .. }))
+            ),
+            "{refused:?}"
+        );
+        assert!(root.path().join("home/acme/x").exists());
+        Ok(())
+    }
+
+    /// A pull that finds nothing to pull but a moved tip caches the tip and
+    /// leaves the ref and the hook alone.
+    #[test(tokio::test)]
+    async fn a_pull_that_only_moves_the_tip_writes_only_the_tip_cache() -> Res<()> {
+        let root = TempDir::new()?;
+        let (remote, uri) = remote_with_one_revision().await?;
+        let paths = paths::DomainPaths::new(root.path().join("domain"));
+        let told = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let hook = LineageHook::new({
+            let told = Arc::clone(&told);
+            move |_, _, _| {
+                told.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+        });
+        let domain = LocalDomain::with_parts(
+            paths.clone(),
+            lineage::DomainLineageIo::refs(paths.clone()),
+            LocalStorage::new(),
+            Arc::new(remote),
+        )
+        .with_lineage_hook(hook);
+        domain.set_home(root.path().join("home")).await?;
+        let package = domain.install_package(&uri).await?;
+        let stale = "f".repeat(64);
+        package
+            .lineage
+            .edit(&package.storage, |lineage| {
+                lineage.latest_hash.clone_from(&stale);
+            })
+            .await?;
+        let ref_file = paths.package_ref(&uri.namespace);
+        let (before, told_before) = (
+            std::fs::read(&ref_file)?,
+            told.load(std::sync::atomic::Ordering::SeqCst),
+        );
+        assert_eq!(package.lineage().await?.latest_hash, stale);
+
+        package
+            .pull(
+                Some(crate::io::remote::HostConfig::default()),
+                lineage::SyncScope::IndividualFiles,
+            )
+            .await?;
+
+        assert_eq!(package.lineage().await?.latest_hash, uri.hash);
+        assert_eq!(std::fs::read(&ref_file)?, before);
+        assert_eq!(told.load(std::sync::atomic::Ordering::SeqCst), told_before);
+        Ok(())
+    }
+
+    /// A temp a killed write left is swept at start and by gc, which holds
+    /// the package's lock already.
+    #[test(tokio::test)]
+    async fn leftover_temps_are_swept_at_start_and_by_gc() -> Res<()> {
+        let root = TempDir::new()?;
+        let domain = domain(root.path()).await?;
+        domain
+            .create_package(("acme", "x").into(), None, None, flow::UserMeta::Clear)
+            .await?;
+        let owner = domain.paths.refs_dir().join("acme");
+        let leftover = || {
+            let path = owner.join(format!("x.json.tmp-{}", uuid::Uuid::new_v4()));
+            std::fs::write(&path, b"{").map(|()| path)
+        };
+
+        let at_start = leftover()?;
+        domain.sweep_leftovers().await?;
+        assert!(!at_start.exists());
+
+        let before_gc = leftover()?;
+        domain.gc().await?;
+        assert!(!before_gc.exists());
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let dot_quilt = domain.paths.dot_quilt_dir();
+            let stuck = [
+                leftover()?,
+                dot_quilt.join(format!("domain.json.tmp-{}", uuid::Uuid::new_v4())),
+            ];
+            std::fs::write(&stuck[1], b"{")?;
+            let mode = |mode| std::fs::Permissions::from_mode(mode);
+            std::fs::set_permissions(&owner, mode(0o500))?;
+            std::fs::set_permissions(&dot_quilt, mode(0o500))?;
+            // Root removes them despite the modes.
+            let enforced = std::fs::write(owner.join("probe"), b"").is_err();
+            let swept = domain.sweep_leftovers().await;
+            let collected = domain.gc().await;
+            std::fs::set_permissions(&dot_quilt, mode(0o700))?;
+            std::fs::set_permissions(&owner, mode(0o700))?;
+            if enforced {
+                assert!(stuck.iter().all(|path| path.exists()), "they stay");
+            }
+            assert!(swept.is_ok(), "a temp that stays fails no start: {swept:?}");
+            assert!(
+                collected.is_ok(),
+                "a temp that stays stops no gc: {collected:?}"
+            );
+            for path in stuck {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+        assert!(
+            domain
+                .lineage
+                .contains(&domain.storage, &("acme", "x").into())
+                .await?
+        );
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+#[path = "local_domain"]
+mod on_data_json {
+    use super::*;
+
+    const BACKEND: lineage::LineageStore = lineage::LineageStore::DataJson;
+
+    mod backend_tests;
+}
+#[cfg(test)]
+#[path = "local_domain"]
+#[expect(clippy::duplicate_mod, reason = "the tests run once on each store")]
+mod on_refs {
+    use super::*;
+
+    const BACKEND: lineage::LineageStore = lineage::LineageStore::Refs;
+
+    mod backend_tests;
 }

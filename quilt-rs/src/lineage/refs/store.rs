@@ -12,6 +12,7 @@ use std::path::PathBuf;
 
 use super::RefEntry;
 use super::format::DomainConfig;
+use super::format::Extra;
 use super::format::MigrationState;
 use super::format::PackageRef;
 use super::format::TipCache;
@@ -31,9 +32,11 @@ use crate::paths::DomainPaths;
 use quilt_uri::ManifestUri;
 use quilt_uri::Namespace;
 use quilt_uri::S3PackageHandle;
+use tracing::info;
 use tracing::warn;
 
 /// The refs, tip caches and domain config of one domain.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct RefStore {
     paths: DomainPaths,
     hook: Option<LineageHook>,
@@ -56,6 +59,46 @@ impl RefStore {
     pub(crate) fn with_hook(mut self, hook: LineageHook) -> Self {
         self.hook = Some(hook);
         self
+    }
+
+    pub(crate) fn paths(&self) -> &DomainPaths {
+        &self.paths
+    }
+
+    /// Stands the domain up on refs, at `home`, if it has no domain config:
+    /// the preview's way in, since only the move from `data.json` writes a
+    /// config otherwise. Returns whether it did.
+    pub(crate) async fn start(&self, storage: &(impl Storage + Sync), home: &Home) -> Res<bool> {
+        let _domain = storage
+            .lock_exclusive(self.paths.domain_file_lock())
+            .await?;
+        if self.read_config(storage).await?.is_some() {
+            return Ok(false);
+        }
+        storage.create_dir_all(home.as_ref()).await?;
+        self.put_config(storage, home).await?;
+        Ok(true)
+    }
+
+    /// Each package's lineage, read under its lock, shown to `look`, then
+    /// every package's namespace handed to `finish`. A package whose lock
+    /// is busy, or whose ref can't be read, is not shown.
+    pub(crate) async fn check_each<T>(
+        &self,
+        storage: &(impl Storage + Sync),
+        mut look: impl FnMut(&Namespace, &PackageLineage),
+        finish: impl FnOnce(&BTreeSet<Namespace>) -> T,
+    ) -> Res<T> {
+        let namespaces = self.namespaces(storage).await?;
+        for namespace in &namespaces {
+            let Some(_held) = PackageLock::try_take(storage, &self.paths, namespace).await? else {
+                continue;
+            };
+            if let Ok(lineage) = self.read(storage, namespace).await {
+                look(namespace, &lineage);
+            }
+        }
+        Ok(finish(&namespaces))
     }
 
     /// The home in the domain config, empty when the config has none.
@@ -152,6 +195,7 @@ impl RefStore {
             return Err(LineageError::HomeChanged {
                 placed: placed.as_ref().clone(),
                 home: config.home.as_ref().clone(),
+                kept: Vec::new(),
             }
             .into());
         }
@@ -175,11 +219,7 @@ impl RefStore {
     pub(crate) async fn remove(&self, storage: &(impl Storage + Sync), held: &PackageLock) -> Res {
         let namespace = held.namespace();
         let _domain = self.lock_domain(storage).await?;
-        let was = match self.read(storage, namespace).await {
-            Ok(lineage) => Some(lineage),
-            Err(Error::Lineage(LineageError::FileParse { .. })) => None,
-            Err(err) => return Err(err),
-        };
+        let was = self.read_to_remove(storage, namespace).await?;
         let path = self.paths.package_ref(namespace);
         storage.remove_file(&path).await?;
         crate::failpoint::hit("ref.remove.after-unlink");
@@ -187,6 +227,69 @@ impl RefStore {
         self.remove_tip(storage, namespace).await;
         self.tell(namespace, was.as_ref(), None);
         Ok(())
+    }
+
+    /// Whether the package has a ref [`Self::remove`] removes: a ref that
+    /// does not parse counts, and one it refuses is an error.
+    pub(crate) async fn removable(
+        &self,
+        storage: &(impl Storage + Sync),
+        namespace: &Namespace,
+    ) -> Res<bool> {
+        self.writable_config(storage).await?;
+        match self.read_to_remove(storage, namespace).await {
+            Ok(_) => Ok(true),
+            Err(Error::InstallPackage(InstallPackageError::NotInstalled(_))) => Ok(false),
+            Err(err) => Err(err),
+        }
+    }
+
+    /// The package's lineage as [`Self::remove`] reads it: `None` for a ref
+    /// that does not parse, which it removes all the same.
+    async fn read_to_remove(
+        &self,
+        storage: &(impl Storage + Sync),
+        namespace: &Namespace,
+    ) -> Res<Option<PackageLineage>> {
+        match self.read(storage, namespace).await {
+            Ok(lineage) => Ok(Some(lineage)),
+            Err(Error::Lineage(LineageError::FileParse { .. })) => Ok(None),
+            Err(err) => Err(err),
+        }
+    }
+
+    /// The locked package's lineage, `None` with no ref, passed to `step`:
+    /// what `step` leaves is updated, created under the domain's home, or,
+    /// left `None`, removed.
+    pub(crate) async fn update_entry<T>(
+        &self,
+        storage: &(impl Storage + Sync),
+        held: &PackageLock,
+        step: impl FnOnce(&mut Option<PackageLineage>) -> Res<T>,
+    ) -> Res<T> {
+        let mut entry = match self.read(storage, held.namespace()).await {
+            Ok(lineage) => Some(lineage),
+            Err(Error::InstallPackage(InstallPackageError::NotInstalled(_))) => None,
+            Err(err) => return Err(err),
+        };
+        let installed = entry.is_some();
+        let out = step(&mut entry)?;
+        match (installed, entry) {
+            (true, Some(lineage)) => {
+                self.update(storage, held, |stored| {
+                    *stored = lineage;
+                    Ok(())
+                })
+                .await?;
+            }
+            (true, None) => self.remove(storage, held).await?,
+            (false, Some(lineage)) => {
+                let home = self.home(storage).await?;
+                self.create(storage, held, &lineage, &home).await?;
+            }
+            (false, None) => {}
+        }
+        Ok(out)
     }
 
     /// Points the domain at `home`, creating its folder first. Refuses with
@@ -208,18 +311,46 @@ impl RefStore {
     /// waits for the next sweep. It takes package locks, so a caller holding
     /// one would see its own package busy.
     pub(crate) async fn sweep(&self, storage: &(impl Storage + Sync)) -> Res {
+        for (namespace, paths) in self.leftovers(storage).await? {
+            if let Some(_held) = PackageLock::try_take(storage, &self.paths, &namespace).await? {
+                remove_leftovers(storage, &paths).await;
+            }
+        }
+        self.sweep_config(storage).await
+    }
+
+    /// [`Self::sweep`] for a caller holding the locks in `held`, which it
+    /// sweeps only those packages' temps under.
+    pub(crate) async fn sweep_held(
+        &self,
+        storage: &(impl Storage + Sync),
+        held: &[PackageLock],
+    ) -> Res {
+        let mut leftovers = self.leftovers(storage).await?;
+        for lock in held {
+            if let Some(paths) = leftovers.remove(lock.namespace()) {
+                remove_leftovers(storage, &paths).await;
+            }
+        }
+        self.sweep_config(storage).await
+    }
+
+    /// Each package's leftover temps.
+    async fn leftovers(
+        &self,
+        storage: &(impl Storage + Sync),
+    ) -> Res<BTreeMap<Namespace, Vec<PathBuf>>> {
         let mut temps: BTreeMap<Namespace, Vec<PathBuf>> = BTreeMap::new();
         for file in self.files(storage).await? {
             if matches!(file.entry, RefEntry::RefTemp(_) | RefEntry::TipTemp(_)) {
                 temps.entry(file.namespace).or_default().push(file.path);
             }
         }
-        for (namespace, paths) in temps {
-            if let Some(_held) = PackageLock::try_take(storage, &self.paths, &namespace).await? {
-                remove_leftovers(storage, &paths).await?;
-            }
-        }
+        Ok(temps)
+    }
 
+    /// The domain config's leftover temps, while the domain file lock is free.
+    async fn sweep_config(&self, storage: &(impl Storage + Sync)) -> Res {
         let config_temps: Vec<PathBuf> = entries(storage, &self.paths.dot_quilt_dir())
             .await?
             .into_iter()
@@ -236,7 +367,7 @@ impl RefStore {
                 .try_lock_exclusive(self.paths.domain_file_lock())
                 .await?
         {
-            remove_leftovers(storage, &config_temps).await?;
+            remove_leftovers(storage, &config_temps).await;
         }
         Ok(())
     }
@@ -258,6 +389,46 @@ impl RefStore {
             .await?
             .map(|bytes| DomainConfig::from_slice(&path, &bytes))
             .transpose()
+    }
+
+    /// Writes a domain config at `home` whose move to refs is done.
+    async fn put_config(&self, storage: &(impl Storage + Sync), home: &Home) -> Res {
+        let config = DomainConfig {
+            format: DomainConfig::FORMAT,
+            home: home.clone(),
+            migration: Some(MigrationState::Done),
+            extra: Extra::new(),
+        };
+        put(storage, &self.paths.domain_config(), config.to_vec()?, None).await
+    }
+
+    /// Leaves a test's domain at `home` with no package.
+    #[cfg(any(test, feature = "testing"))]
+    pub(crate) async fn replace_fixture(
+        &self,
+        storage: &(impl Storage + Sync),
+        home: &Home,
+    ) -> Res {
+        let refs = self.paths.refs_dir();
+        if storage.exists(&refs).await {
+            storage.remove_dir_all(&refs).await?;
+        }
+        self.put_config(storage, home).await
+    }
+
+    /// Leaves `namespace`'s ref one no reader can parse.
+    #[cfg(any(test, feature = "testing"))]
+    pub(crate) async fn damage_fixture(
+        &self,
+        storage: &(impl Storage + Sync),
+        namespace: &Namespace,
+    ) -> Res {
+        storage
+            .write_byte_stream(
+                self.paths.package_ref(namespace),
+                ByteStream::from_static(b"{"),
+            )
+            .await
     }
 
     /// The domain config, if it lets lineage be written: only once the
@@ -488,8 +659,13 @@ impl RefStore {
 async fn read_if_exists(storage: &(impl Storage + Sync), path: &Path) -> Res<Option<Vec<u8>>> {
     match storage.read_bytes(path).await {
         Ok(bytes) => Ok(Some(bytes)),
-        Err(_) if !storage.exists(path).await => Ok(None),
-        Err(err) => Err(err),
+        // Not `exists`, which is false also for a file in a folder that
+        // can't be looked into.
+        Err(err) => match storage.open_file(path).await {
+            Err(missing) if missing.is_not_found() => Ok(None),
+            Err(unreadable) => Err(unreadable),
+            Ok(_) => Err(err),
+        },
     }
 }
 
@@ -559,11 +735,15 @@ async fn entries(storage: &(impl Storage + Sync), dir: &Path) -> Res<Vec<(PathBu
     Ok(entries)
 }
 
-async fn remove_leftovers(storage: &impl Storage, paths: &[PathBuf]) -> Res {
+/// Removes each of `paths`, logging one that stays: a temp left in place
+/// costs nothing, so it stops neither a start nor a gc.
+async fn remove_leftovers(storage: &impl Storage, paths: &[PathBuf]) {
     for path in paths {
-        remove_if_present(storage, path).await?;
+        match remove_if_present(storage, path).await {
+            Ok(_) => info!("Swept {}", path.display()),
+            Err(err) => warn!("❌ Could not sweep {}: {err}", path.display()),
+        }
     }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -740,6 +920,34 @@ mod tests {
         Ok(())
     }
 
+    /// A package busy in a writer, or whose ref can't be read, is not shown,
+    /// but every package is handed to `finish`.
+    #[test(tokio::test)]
+    async fn each_package_is_checked_under_its_lock_unless_busy_or_unreadable() -> Res {
+        let domain = Domain::new()?;
+        for name in ["busy", "damaged", "free"] {
+            domain.install(&lineage(name, BASE, BASE)).await?;
+        }
+        std::fs::write(domain.paths.package_ref(&package("damaged")), b"{")?;
+        let _busy = domain.lock(&package("busy")).await?;
+
+        let mut shown = Vec::new();
+        let all = domain
+            .store
+            .check_each(
+                &domain.storage,
+                |namespace, _| shown.push(namespace.clone()),
+                Clone::clone,
+            )
+            .await?;
+        assert_eq!(shown, [package("free")]);
+        assert_eq!(
+            all,
+            BTreeSet::from([package("busy"), package("damaged"), package("free")])
+        );
+        Ok(())
+    }
+
     #[test(tokio::test)]
     async fn a_package_without_a_ref_is_not_installed() -> Res {
         let domain = Domain::new()?;
@@ -803,7 +1011,7 @@ mod tests {
         assert!(
             matches!(
                 &created,
-                Err(Error::Lineage(LineageError::HomeChanged { placed: was, home }))
+                Err(Error::Lineage(LineageError::HomeChanged { placed: was, home, .. }))
                     if was == placed.as_ref() && home == moved.as_ref()
             ),
             "{created:?}"

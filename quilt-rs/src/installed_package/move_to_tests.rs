@@ -77,6 +77,7 @@ impl Diverged {
         )
         .await?;
         let domain_io = DomainLineageIo::write_fixture(
+            BACKEND,
             &storage,
             &paths,
             home.as_ref(),

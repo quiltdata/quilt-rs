@@ -127,6 +127,9 @@ impl Services {
         let record = Arc::new(Record::open(&data_dir, events.clone()).await);
         debug!("Root directory is {data_dir:?}");
         let domain = quilt::LocalDomain::new(&data_dir).with_state_store(state_store);
+        if let Err(err) = domain.sweep_leftovers().await {
+            error!("Failed to sweep what killed lineage writes left: {err}");
+        }
         // Every lineage write of this process goes through its hook, so a
         // revision that moved without it was moved by another tool.
         let outside =
