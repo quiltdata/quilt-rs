@@ -21,7 +21,7 @@ use crate::paths::DomainPaths;
 /// home change repairs it, and quotes the first field it fails on, so
 /// `packages` comes first and holds the instruction.
 pub(crate) const STUB: &[u8] = br#"{
-  "packages": "This domain's lineage has moved to .quilt/refs/ and this quilt is too old to read it: upgrade quilt, or run `quilt lineage rollback` with a newer quilt to move it back.",
+  "packages": "This domain's lineage has moved to .quilt/refs/ and this quilt is too old to read it: upgrade quilt.",
   "home": null,
   "lineage": "refs"
 }
@@ -271,7 +271,7 @@ mod tests {
         assert!(unparsed(&parsed), "{parsed:?}");
         let told = parsed.unwrap_err().to_string();
         assert!(
-            told.contains("upgrade quilt, or run `quilt lineage rollback`"),
+            told.contains("too old to read it: upgrade quilt"),
             "{told}"
         );
         let home = io.home(&storage).await;
