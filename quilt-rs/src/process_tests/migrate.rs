@@ -86,7 +86,7 @@ async fn install_by_an_older_build(world: &World) -> Res<(String, Vec<u8>)> {
 /// the resumed move found, not the copy the stopped one froze.
 async fn assert_installed(world: &World, (hash, moved): (String, Vec<u8>)) -> Res {
     let paths = paths(world);
-    assert_eq!(std::fs::read(paths.lineage_pre_refs())?, moved);
+    assert_eq!(std::fs::read(paths.lineage_pre_refs()).ok(), Some(moved));
     let store = RefStore::new(paths.clone());
     let storage = LocalStorage::new();
     let lineage = store.read(&storage, &target()).await?;
@@ -218,7 +218,11 @@ mod killed {
             let whole = copy(&start, &whole_dir)?;
             up(&whole).await?;
             let expected = refs(&whole).await?;
-            let pre_refs = std::fs::read(paths(&whole).lineage_pre_refs())?;
+            // The `data.json` the move found, or the empty lineage it froze.
+            let pre_refs = match std::fs::read(paths(&start).lineage()) {
+                Ok(lineage) => lineage,
+                Err(_) => serde_json::to_vec(&crate::lineage::DomainLineage::default())?,
+            };
             assert_eq!(expected.is_empty(), !has_packages);
             for step in [
                 "after-freeze",
@@ -240,8 +244,8 @@ mod killed {
 
                 assert_moved(&world, &expected).await?;
                 assert_eq!(
-                    std::fs::read(paths(&world).lineage_pre_refs())?,
-                    pre_refs,
+                    std::fs::read(paths(&world).lineage_pre_refs()).ok(),
+                    Some(pre_refs.clone()),
                     "{name}"
                 );
             }
@@ -312,8 +316,8 @@ mod killed {
             .expect("packages")
             .remove(&target().to_string());
         let second = serde_json::to_vec(&second)?;
+        let first = std::fs::read(paths.lineage())?;
         up(&world).await?;
-        let first = std::fs::read(paths.lineage_pre_refs())?;
         let bystander_ref = std::fs::read(paths.package_ref(&bystander()))?;
         // Rolled back as the down-migration leaves a domain, after which an
         // older build uninstalled the target.
@@ -331,7 +335,7 @@ mod killed {
         up(&world).await?;
 
         assert_moved(&world, &BTreeMap::from([(bystander(), bystander_ref)])).await?;
-        assert_eq!(std::fs::read(paths.lineage_pre_refs())?, first);
+        assert_eq!(std::fs::read(paths.lineage_pre_refs()).ok(), Some(first));
         Ok(())
     }
 }
