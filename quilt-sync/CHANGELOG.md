@@ -30,9 +30,12 @@
 ### Changed
 
 - QuiltSync starts faster with many packages: at launch it checks up to eight packages at once instead of one after another (<https://github.com/quiltdata/quilt-rs/pull/1376>)
+- The main page no longer has a **Recent files** view. A package's time on the main page is when it last changed: an edit or commit not yet published, otherwise when QuiltSync last installed, pulled, downloaded or committed its files (<https://github.com/quiltdata/quilt-rs/pull/1403>)
+- QuiltSync keeps each package's lineage in a file of its own under `.quilt/refs/`, so a damaged one costs only that package: its first use of a domain moves the lineage there from `data.json`, keeps that file as `data.json.pre-refs`, and leaves in its place a stub that an older QuiltSync or `quilt` refuses to read; `quilt lineage rollback` moves it back. The diagnostics bundle carries those files and the copies of `data.json` a move keeps (<https://github.com/quiltdata/quilt-rs/pull/1412>, <https://github.com/quiltdata/quilt-rs/pull/1420>, <https://github.com/quiltdata/quilt-rs/pull/1424>)
 
 ### Fixed
 
+- Listing and changing packages no longer fails now and then with a parse error while `quilt` writes the same packages' lineage (<https://github.com/quiltdata/quilt-rs/pull/1416>)
 - Publishing a new package no longer replaces the latest revision someone else already published under the same name: the package shows the conflict, and you choose which revision stays latest (<https://github.com/quiltdata/quilt-rs/pull/1373>)
 - A package whose folder was deleted, or is on a disk that is not mounted, no longer shows every file as removed, and autosync no longer commits and publishes an empty revision for it; it reports the folder, and the package works again once the folder is back; adding a pattern to `.quiltignore` no longer recreates the folder holding only that file (<https://github.com/quiltdata/quilt-rs/pull/1397>)
 

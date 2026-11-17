@@ -18,7 +18,7 @@ use crate::io::manifest::build_manifest_from_rows_stream;
 use crate::io::remote::HostConfig;
 use crate::io::storage::Storage;
 use crate::lineage::CommitState;
-use crate::lineage::DomainLineage;
+use crate::lineage::Home;
 use crate::lineage::PackageLineage;
 use crate::lineage::PathState;
 use crate::manifest::HeaderMessage;
@@ -135,18 +135,22 @@ async fn walk_source_dir(
 /// commit, except `Keep` is treated as `Clear`: there is no previous revision,
 /// so the header has no `user_meta` key unless `Set` provides one.
 ///
-/// Also returns what the ignore rules left out of `source`: those files stay
-/// there, and the new package never sees them.
+/// Returns the package's lineage for the caller to store, and what the ignore
+/// rules left out of `source`: those files stay there, and the new package
+/// never sees them. `installed` says whether the domain has the package
+/// already.
+#[allow(clippy::too_many_arguments, reason = "the parts a create uses")]
 pub async fn create_package(
-    lineage: DomainLineage,
+    home: &Home,
+    installed: bool,
     paths: &DomainPaths,
     storage: &(impl Storage + Sync),
     namespace: Namespace,
     source: Option<PathBuf>,
     message: Option<String>,
     user_meta: UserMeta,
-) -> Res<(DomainLineage, LeftOut)> {
-    if lineage.packages.contains_key(&namespace) {
+) -> Res<(PackageLineage, LeftOut)> {
+    if installed {
         return Err(Error::InstallPackage(
             InstallPackageError::AlreadyInstalled(namespace),
         ));
@@ -155,10 +159,10 @@ pub async fn create_package(
     info!("⏳ Creating package: {}", namespace);
 
     paths
-        .scaffold_for_installing(storage, &lineage.home, &namespace)
+        .scaffold_for_installing(storage, home, &namespace)
         .await?;
 
-    let package_home = crate::paths::package_home(&lineage.home, &namespace);
+    let package_home = crate::paths::package_home(home, &namespace);
     let objects_dir = paths.objects_dir();
     let host_config = HostConfig::default();
 
@@ -209,7 +213,7 @@ pub async fn create_package(
                 relative_path,
                 PathState {
                     timestamp: storage.modified_timestamp(&work_dest).await?,
-                    hash: row.hash.into(),
+                    hash: Some(row.hash.into()),
                 },
             );
 
@@ -252,11 +256,8 @@ pub async fn create_package(
         ..PackageLineage::default()
     };
 
-    let mut lineage = lineage;
-    lineage.packages.insert(namespace.clone(), package_lineage);
-
     info!("✔️ Successfully created package: {}", namespace);
-    Ok((lineage, left_out))
+    Ok((package_lineage, left_out))
 }
 
 #[cfg(test)]
@@ -267,18 +268,18 @@ mod tests {
     use aws_sdk_s3::primitives::ByteStream;
 
     use crate::io::storage::mocks::MockStorage;
-    use crate::lineage::DomainLineage;
     use crate::manifest::Manifest;
 
     #[test(tokio::test)]
     async fn test_create_empty_package() -> Res {
-        let (lineage, _temp_dir) = DomainLineage::from_temp_dir()?;
+        let (home, _temp_dir) = Home::from_temp_dir()?;
         let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
         let storage = MockStorage::default();
         let namespace: Namespace = ("test", "pkg").into();
 
-        let (lineage, _) = create_package(
-            lineage,
+        let (pkg, _) = create_package(
+            &home,
+            false,
             &paths,
             &storage,
             namespace.clone(),
@@ -288,8 +289,6 @@ mod tests {
         )
         .await?;
 
-        assert!(lineage.packages.contains_key(&namespace));
-        let pkg = lineage.packages.get(&namespace).unwrap();
         assert!(pkg.commit.is_some());
         assert!(pkg.remote_uri.is_none());
         assert!(pkg.paths.is_empty());
@@ -300,24 +299,14 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_create_duplicate_namespace() -> Res {
-        let (lineage, _temp_dir) = DomainLineage::from_temp_dir()?;
+        let (home, _temp_dir) = Home::from_temp_dir()?;
         let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
         let storage = MockStorage::default();
         let namespace: Namespace = ("test", "pkg").into();
 
-        let (lineage, _) = create_package(
-            lineage,
-            &paths,
-            &storage,
-            namespace.clone(),
-            None,
-            None,
-            UserMeta::Clear,
-        )
-        .await?;
-
         let result = create_package(
-            lineage,
+            &home,
+            true,
             &paths,
             &storage,
             namespace.clone(),
@@ -335,7 +324,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_create_with_source() -> Res {
-        let (lineage, _temp_dir) = DomainLineage::from_temp_dir()?;
+        let (home, _temp_dir) = Home::from_temp_dir()?;
         let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
         let storage = MockStorage::default();
         let namespace: Namespace = ("test", "src").into();
@@ -357,8 +346,9 @@ mod tests {
             )
             .await?;
 
-        let (lineage, _) = create_package(
-            lineage,
+        let (pkg, _) = create_package(
+            &home,
+            false,
             &paths,
             &storage,
             namespace.clone(),
@@ -367,8 +357,6 @@ mod tests {
             UserMeta::Clear,
         )
         .await?;
-
-        let pkg = lineage.packages.get(&namespace).unwrap();
         assert!(pkg.commit.is_some());
         assert_eq!(pkg.paths.len(), 2);
         assert!(pkg.paths.contains_key(&PathBuf::from("file1.txt")));
@@ -381,7 +369,7 @@ mod tests {
     /// separators as one, so a `PathBuf` comparison would pass either way.
     #[test(tokio::test)]
     async fn test_create_with_a_folder_uses_slash_keys() -> Res {
-        let (lineage, _temp_dir) = DomainLineage::from_temp_dir()?;
+        let (home, _temp_dir) = Home::from_temp_dir()?;
         let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
         let storage = MockStorage::default();
         let namespace: Namespace = ("test", "nested").into();
@@ -394,8 +382,9 @@ mod tests {
             )
             .await?;
 
-        let (lineage, _) = create_package(
-            lineage,
+        let (pkg, _) = create_package(
+            &home,
+            false,
             &paths,
             &storage,
             namespace.clone(),
@@ -404,8 +393,6 @@ mod tests {
             UserMeta::Clear,
         )
         .await?;
-
-        let pkg = lineage.packages.get(&namespace).unwrap();
         let keys: Vec<&str> = pkg
             .paths
             .keys()
@@ -426,7 +413,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_create_with_quiltignore() -> Res {
-        let (lineage, _temp_dir) = DomainLineage::from_temp_dir()?;
+        let (home, _temp_dir) = Home::from_temp_dir()?;
         let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
         let storage = MockStorage::default();
         let namespace: Namespace = ("test", "ignore").into();
@@ -454,8 +441,9 @@ mod tests {
             )
             .await?;
 
-        let (lineage, left_out) = create_package(
-            lineage,
+        let (pkg, left_out) = create_package(
+            &home,
+            false,
             &paths,
             &storage,
             namespace.clone(),
@@ -464,8 +452,6 @@ mod tests {
             UserMeta::Clear,
         )
         .await?;
-
-        let pkg = lineage.packages.get(&namespace).unwrap();
         assert!(
             pkg.paths.contains_key(&PathBuf::from("data.csv")),
             "data.csv should be included"
@@ -496,7 +482,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_create_skips_default_ignored_files() -> Res {
-        let (lineage, _temp_dir) = DomainLineage::from_temp_dir()?;
+        let (home, _temp_dir) = Home::from_temp_dir()?;
         let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
         let storage = MockStorage::default();
         let namespace: Namespace = ("test", "defaults").into();
@@ -508,8 +494,9 @@ mod tests {
                 .await?;
         }
 
-        let (lineage, left_out) = create_package(
-            lineage,
+        let (pkg, left_out) = create_package(
+            &home,
+            false,
             &paths,
             &storage,
             namespace.clone(),
@@ -518,8 +505,6 @@ mod tests {
             UserMeta::Clear,
         )
         .await?;
-
-        let pkg = lineage.packages.get(&namespace).unwrap();
         let keys: Vec<&PathBuf> = pkg.paths.keys().collect();
         assert_eq!(
             keys,
@@ -568,13 +553,14 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_create_with_custom_message() -> Res {
-        let (lineage, _temp_dir) = DomainLineage::from_temp_dir()?;
+        let (home, _temp_dir) = Home::from_temp_dir()?;
         let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
         let storage = MockStorage::default();
         let namespace: Namespace = ("test", "msg").into();
 
-        let (lineage, _) = create_package(
-            lineage,
+        let (pkg, _) = create_package(
+            &home,
+            false,
             &paths,
             &storage,
             namespace.clone(),
@@ -583,8 +569,6 @@ mod tests {
             UserMeta::Clear,
         )
         .await?;
-
-        let pkg = lineage.packages.get(&namespace).unwrap();
         let commit = pkg.commit.as_ref().unwrap();
         let manifest_path = paths.installed_manifest(&namespace, &commit.hash);
         let manifest = Manifest::from_path(&storage, &manifest_path).await?;
@@ -604,13 +588,14 @@ mod tests {
         const QUILT3_CREATE_NO_META: &str =
             "a8f353aa77baa68e9c15e50e26ab8894b319acd0a1e1289280aea98f391d3e8d";
 
-        let (lineage, _temp_dir) = DomainLineage::from_temp_dir()?;
+        let (home, _temp_dir) = Home::from_temp_dir()?;
         let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
         let storage = MockStorage::default();
         let namespace: Namespace = ("test", "no-meta").into();
 
-        let (lineage, _) = create_package(
-            lineage,
+        let (pkg, _) = create_package(
+            &home,
+            false,
             &paths,
             &storage,
             namespace.clone(),
@@ -619,8 +604,6 @@ mod tests {
             UserMeta::Clear,
         )
         .await?;
-
-        let pkg = lineage.packages.get(&namespace).unwrap();
         assert_eq!(
             pkg.commit.as_ref().unwrap().hash,
             QUILT3_CREATE_NO_META,
@@ -633,14 +616,15 @@ mod tests {
     /// exact number text, and `Keep` is treated as no key, like `Clear`.
     #[test(tokio::test)]
     async fn test_create_set_meta_keeps_exact_numbers() -> Res {
-        let (lineage, _temp_dir) = DomainLineage::from_temp_dir()?;
+        let (home, _temp_dir) = Home::from_temp_dir()?;
         let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
         let storage = MockStorage::default();
         let namespace: Namespace = ("test", "meta").into();
         let user_meta = UserMeta::parse(r#"{"n": 123456789012345678901234567890}"#)?;
 
-        let (lineage, _) = create_package(
-            lineage,
+        let (pkg, _) = create_package(
+            &home,
+            false,
             &paths,
             &storage,
             namespace.clone(),
@@ -649,8 +633,6 @@ mod tests {
             user_meta,
         )
         .await?;
-
-        let pkg = lineage.packages.get(&namespace).unwrap();
         let manifest = Manifest::from_path(
             &storage,
             &paths.installed_manifest(&namespace, &pkg.commit.as_ref().unwrap().hash),
@@ -663,11 +645,12 @@ mod tests {
                 .contains("123456789012345678901234567890")
         );
 
-        let (lineage, _temp_dir) = DomainLineage::from_temp_dir()?;
+        let (home, _temp_dir) = Home::from_temp_dir()?;
         let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
         let namespace: Namespace = ("test", "keep").into();
-        let (lineage, _) = create_package(
-            lineage,
+        let (pkg, _) = create_package(
+            &home,
+            false,
             &paths,
             &storage,
             namespace.clone(),
@@ -676,7 +659,6 @@ mod tests {
             UserMeta::Keep,
         )
         .await?;
-        let pkg = lineage.packages.get(&namespace).unwrap();
         let manifest = Manifest::from_path(
             &storage,
             &paths.installed_manifest(&namespace, &pkg.commit.as_ref().unwrap().hash),

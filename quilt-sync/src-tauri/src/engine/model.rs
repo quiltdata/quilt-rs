@@ -10,7 +10,6 @@ use tokio_stream::StreamExt;
 
 use crate::engine::error::Error;
 use crate::engine::quilt;
-use crate::engine::telemetry::prelude::*;
 
 use quilt_rs::RoleInfo;
 use quilt_rs::flow::UserMeta;
@@ -981,24 +980,10 @@ impl LockedOps for quilt_uri::Namespace {
 impl Model {
     #[cfg(test)]
     pub fn create(data_dir: impl AsRef<Path>) -> Self {
-        debug!("Root directory is {:?}", data_dir.as_ref());
-        let quilt = quilt::LocalDomain::new(data_dir);
-        Model {
-            quilt: sync::Mutex::new(quilt),
-        }
+        Self::from_domain(quilt::LocalDomain::new(data_dir))
     }
 
-    /// [`Self::create`], with the packages' walks using `store`'s stat cache,
-    /// and `hook` told of every write of a package's lineage.
-    pub fn create_with_state_store(
-        data_dir: impl AsRef<Path>,
-        store: std::sync::Arc<quilt::state_store::PackageStateStore>,
-        hook: quilt::lineage::LineageHook,
-    ) -> Self {
-        debug!("Root directory is {:?}", data_dir.as_ref());
-        let quilt = quilt::LocalDomain::new(data_dir)
-            .with_state_store(store)
-            .with_lineage_hook(hook);
+    pub fn from_domain(quilt: quilt::LocalDomain) -> Self {
         Model {
             quilt: sync::Mutex::new(quilt),
         }

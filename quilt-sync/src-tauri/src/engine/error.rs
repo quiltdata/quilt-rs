@@ -287,16 +287,30 @@ impl Error {
                 })
                 .to_string()
             }
-            Error::Quilt(quilt::Error::Lineage(
-                quilt::LineageError::Missing | quilt::LineageError::MissingHome,
-            )) => serde_json::json!({
-                "kind": "setup_required",
-                "message": self.to_string(),
-            })
-            .to_string(),
+            Error::Quilt(quilt::Error::Lineage(error)) => match lineage_kind(error) {
+                Some(kind) => serde_json::json!({
+                    "kind": kind,
+                    "message": self.to_string(),
+                })
+                .to_string(),
+                None => self.to_string(),
+            },
             Error::Quilt(quilt::Error::S3(error)) => s3_error_to_frontend(error),
             _ => self.to_string(),
         }
+    }
+}
+
+/// Not `setup_required` for a domain moving between `data.json` and refs:
+/// setting up again cannot finish or undo the move.
+fn lineage_kind(error: &quilt::LineageError) -> Option<&'static str> {
+    match error {
+        quilt::LineageError::Missing | quilt::LineageError::MissingHome => Some("setup_required"),
+        quilt::LineageError::RefsNotWritable { .. } => Some("lineage_not_writable"),
+        quilt::LineageError::MigrationRefused { .. } => Some("lineage_migration_refused"),
+        quilt::LineageError::RollbackRefused(_) => Some("lineage_rollback_refused"),
+        quilt::LineageError::RollingBack { .. } => Some("lineage_rolling_back"),
+        _ => None,
     }
 }
 
@@ -444,6 +458,45 @@ mod tests {
         let err = Error::Quilt(quilt::Error::Lineage(quilt::LineageError::MissingHome));
         let json: serde_json::Value = serde_json::from_str(&err.to_frontend_string()).unwrap();
         assert_eq!(json["kind"], "setup_required");
+    }
+
+    /// A domain moving between `data.json` and refs is not one to set up:
+    /// each state of the move is a kind of its own, worded as quilt words it,
+    /// so an interrupted rollback still names the command that finishes it.
+    #[test]
+    fn to_frontend_string_a_lineage_move_is_not_setup() {
+        let config = PathBuf::from("/d/.quilt/domain.json");
+        let unparsed = serde_json::from_str::<serde_json::Value>("{").unwrap_err();
+        for (error, kind) in [
+            (
+                quilt::LineageError::RefsNotWritable {
+                    path: config.clone(),
+                    state: "is in progress",
+                },
+                "lineage_not_writable",
+            ),
+            (
+                quilt::LineageError::MigrationRefused {
+                    path: PathBuf::from("/d/.quilt/data.json"),
+                    source: unparsed,
+                },
+                "lineage_migration_refused",
+            ),
+            (
+                quilt::LineageError::RollbackRefused(Box::new(quilt::LineageError::NoRemote)),
+                "lineage_rollback_refused",
+            ),
+            (
+                quilt::LineageError::RollingBack { path: config },
+                "lineage_rolling_back",
+            ),
+        ] {
+            let err = Error::Quilt(quilt::Error::Lineage(error));
+            let sent = err.to_frontend_string();
+            let json: serde_json::Value = serde_json::from_str(&sent).unwrap_or_default();
+            assert_eq!(json["kind"], kind, "{sent}");
+            assert_eq!(json["message"], err.to_string(), "{sent}");
+        }
     }
 
     #[test]

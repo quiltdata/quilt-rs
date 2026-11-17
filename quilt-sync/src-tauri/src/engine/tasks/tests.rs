@@ -316,7 +316,7 @@ impl Fixture {
         certified_latest: bool,
     ) {
         let model = self.model(meta, status, certified_latest);
-        let pkg = quilt::LocalDomain::new(PathBuf::new()).create_installed_package(namespace());
+        let pkg = crate::engine::model::mocks::nowhere().create_installed_package(namespace());
         check(&model, &self.tasks, &settings(), &pkg).await;
     }
 
@@ -756,7 +756,7 @@ async fn the_sweeps_outcome_that_is_not_latest_is_rebased_onto_it() -> Result<()
             certified_latest: true,
         })
     });
-    let pkg = quilt::LocalDomain::new(PathBuf::new()).create_installed_package(namespace());
+    let pkg = crate::engine::model::mocks::nowhere().create_installed_package(namespace());
 
     check(&model, &fixture.tasks, &settings(), &pkg).await;
 
@@ -938,7 +938,7 @@ async fn an_interrupted_claim_waits_while_latest_cannot_be_read() -> Result<(), 
 async fn autosync_leaves_our_own_interrupted_claim_to_the_sweep() -> Result<(), Error> {
     let fixture = Fixture::new();
     settings::remember_invocation(fixture.dir.path(), "ours").await?;
-    let pkg = quilt::LocalDomain::new(PathBuf::new()).create_installed_package(namespace());
+    let pkg = crate::engine::model::mocks::nowhere().create_installed_package(namespace());
     let awaits =
         async |model: &MockQuiltModel| fixture.tasks.awaits_sweep(model, &settings(), &pkg).await;
 
@@ -1081,7 +1081,7 @@ fn rereading_model(
     );
     model.expect_get_installed_package().returning(|ns| {
         Ok(Some(
-            quilt::LocalDomain::new(PathBuf::new()).create_installed_package(ns.clone()),
+            crate::engine::model::mocks::nowhere().create_installed_package(ns.clone()),
         ))
     });
     let status = quilt::lineage::InstalledPackageStatus {
@@ -1313,7 +1313,7 @@ fn finishing_model(
     let mut model = MockQuiltModel::new();
     model.expect_get_installed_package().returning(|ns| {
         Ok(Some(
-            quilt::LocalDomain::new(PathBuf::new()).create_installed_package(ns.clone()),
+            crate::engine::model::mocks::nowhere().create_installed_package(ns.clone()),
         ))
     });
     model

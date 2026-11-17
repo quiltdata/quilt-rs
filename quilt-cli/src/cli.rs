@@ -26,6 +26,7 @@ mod history;
 mod home;
 mod install;
 mod keep;
+mod lineage;
 mod list;
 mod login;
 mod model;
@@ -391,6 +392,16 @@ impl PackageRef {
 }
 
 #[derive(Subcommand, Debug)]
+enum LineageAction {
+    /// Move this domain's lineage back from per-package refs to data.json,
+    /// or finish a rollback that was interrupted
+    ///
+    /// This quilt, and every quilt or `QuiltSync` that keeps lineage in refs,
+    /// moves it there again the next time it opens the domain.
+    Rollback,
+}
+
+#[derive(Subcommand, Debug)]
 enum CatalogAction {
     /// Make this Quilt stack the default
     Set {
@@ -555,6 +566,11 @@ enum Commands {
         /// Logical key to install. You can provide multiple paths
         #[arg(short, long)]
         path: Option<Vec<PathBuf>>,
+    },
+    /// Where this domain keeps its lineage
+    Lineage {
+        #[command(subcommand)]
+        action: LineageAction,
     },
     /// Show or set which of a package's files this copy keeps
     ///
@@ -800,6 +816,17 @@ pub async fn init(args: Args) -> Result<Std, Error> {
     }
     let root_dir = get_domain_dir(args.domain)?;
     let m = Model::from(root_dir);
+    // Every other command refuses a rollback that was interrupted, so this
+    // one runs before anything reads the lineage.
+    if let Commands::Lineage {
+        action: LineageAction::Rollback,
+    } = args.command
+    {
+        return Ok(lineage::command(m).await);
+    }
+    if let Err(err) = m.get_local_domain().sweep_leftovers().await {
+        log::warn!("Could not sweep what killed lineage writes left: {err}");
+    }
 
     // Preserve an existing home, honor the deprecated --home, and set the
     // default for a new domain on first use.
@@ -1027,6 +1054,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
         }
         Commands::Upgrade => Ok(upgrade::command()),
         Commands::Version { .. } => unreachable!("handled before the domain is opened"),
+        Commands::Lineage { .. } => unreachable!("handled before the lineage is read"),
     }
 }
 
@@ -1840,6 +1868,29 @@ mod tests {
         })
     }
 
+    /// A domain's first command leaves `data.json` the stub an older quilt
+    /// fails on, and the package in its own ref.
+    #[test(tokio::test)]
+    async fn a_new_domain_keeps_its_lineage_in_refs_behind_the_stub() -> Result<(), Error> {
+        let domain = tempfile::TempDir::new()?;
+        let root = domain.path().to_string_lossy().to_string();
+        let args = Args::try_parse_from(["quilt", "--domain", &root, "create", "-n", "acme/x"])
+            .map_err(|err| Error::Test(err.to_string()))?;
+
+        init(args).await?;
+
+        let dot_quilt = domain.path().join(".quilt");
+        let data_json = std::fs::read(dot_quilt.join("data.json"))?;
+        let stub: serde_json::Value = serde_json::from_slice(&data_json)?;
+        assert_eq!(stub["lineage"], "refs", "{stub}");
+        assert!(quilt_rs::lineage::DomainLineage::from_slice(&data_json).is_err());
+        let config: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(dot_quilt.join("domain.json"))?)?;
+        assert_eq!(config["migration"], "done", "{config}");
+        assert!(dot_quilt.join("refs/acme/x.json").is_file());
+        Ok(())
+    }
+
     const ENV_CHILD_ARGV: &str = "QUILT_TEST_ENV_ARGV";
     const ENV_CHILD_MARKER: &str = "env-child-result:";
 
@@ -2275,14 +2326,13 @@ mod tests {
 
             let _ = init(args).await;
 
-            let stored = quilt_rs::LocalDomain::new(domain.path()).get_home().await;
-            assert!(
-                matches!(
-                    stored,
-                    Err(quilt_rs::Error::Lineage(quilt_rs::LineageError::Missing))
-                ),
-                "no home is stored: {stored:?}"
-            );
+            let stored = quilt_rs::LocalDomain::new(domain.path())
+                .stored_home()
+                .await;
+            assert!(matches!(stored, Ok(None)), "no home is stored: {stored:?}");
+            let dot_quilt = domain.path().join(".quilt");
+            assert!(!dot_quilt.join("domain.json").exists(), "no move ran");
+            assert!(!dot_quilt.join("data.json").exists(), "no move ran");
         }
         Ok(())
     }
@@ -2345,8 +2395,14 @@ mod tests {
     async fn test_missing_home_lineage_is_repaired_without_flag() -> Result<(), Error> {
         let (model, domain_temp_dir) = Model::from_temp_dir()?;
         let paths = quilt_rs::paths::DomainPaths::new(domain_temp_dir.path().to_path_buf());
-        std::fs::create_dir_all(paths.dot_quilt_dir())?;
-        std::fs::write(paths.lineage(), br#"{"packages":{},"home":""}"#)?;
+        quilt_rs::lineage::DomainLineageIo::write_fixture(
+            quilt_rs::lineage::LineageStore::DataJson,
+            &quilt_rs::io::storage::LocalStorage::new(),
+            &paths,
+            "",
+            [],
+        )
+        .await?;
 
         initialize_home(&model, None, &mut Vec::new()).await?;
 

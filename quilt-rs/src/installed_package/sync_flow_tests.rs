@@ -14,6 +14,7 @@ use crate::io::remote::mocks::MockRemote;
 use crate::io::storage::StorageExt;
 use crate::lineage::DomainLineageIo;
 use crate::lineage::Home;
+use crate::lineage::PackageLineage;
 use crate::lineage::PackageLineageIo;
 use crate::lineage::SyncScope;
 use crate::object_hash::ObjectHash;
@@ -23,6 +24,33 @@ const TIP: &str = "abcdef0000000000000000000000000000000000000000000000000000000
 const MOVED_TIP: &str = "fedcba0000000000000000000000000000000000000000000000000000000000";
 const NEW_HASH: &str = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
 const BASE_HASH: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+/// A local commit at `hash` with none before it.
+fn pending_commit(hash: &str) -> CommitState {
+    CommitState {
+        timestamp: "2024-01-01T00:00:00Z".parse().expect("a timestamp"),
+        hash: hash.to_string(),
+        prev_hashes: Vec::new(),
+    }
+}
+
+/// `namespace` at `hash` in `bucket`, with no catalog.
+fn bucket_remote(bucket: &str, namespace: &Namespace, hash: &str) -> ManifestUri {
+    ManifestUri {
+        bucket: bucket.to_string(),
+        namespace: namespace.clone(),
+        hash: hash.to_string(),
+        origin: None,
+    }
+}
+
+/// A package given a remote on the `quilt.test` catalog and never pushed.
+fn never_pushed_to(bucket: &str, namespace: &Namespace) -> PackageLineage {
+    PackageLineage::from(ManifestUri {
+        origin: Some(fixtures::host()),
+        ..bucket_remote(bucket, namespace, "")
+    })
+}
 
 #[test(tokio::test)]
 async fn test_spamming_commit_writes() -> Res {
@@ -37,29 +65,20 @@ async fn test_spamming_commit_writes() -> Res {
     paths
         .scaffold_for_installing(&storage, &home, &namespace)
         .await?;
-    // Initialize domain lineage file
-    let lineage_json = format!(
-        r#"{{
-            "packages": {{
-                "test/history": {{
-                    "commit": null,
-                    "remote": {{
-                        "bucket": "bucket",
-                        "namespace": "test/history",
-                        "hash": "{}",
-                        "catalog": "quilt.test"
-                    }},
-                    "base_hash": "{}",
-                    "latest_hash": "{}",
-                    "paths": {{}}
-                }}}},
-            "home": "/tmp/working_dir"
-            }}"#,
-        test_hash, "foo", "bar"
-    );
-    storage
-        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-        .await?;
+    let lineage = PackageLineage {
+        remote_uri: Some(bucket_remote("bucket", &namespace, &test_hash)),
+        base_hash: "foo".to_string(),
+        latest_hash: "bar".to_string(),
+        ..PackageLineage::default()
+    };
+    let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
+        &storage,
+        &paths,
+        "/tmp/working_dir",
+        [(namespace.clone(), lineage)],
+    )
+    .await?;
 
     // Copy manifest to the expected path
     let test_manifest_path = paths.installed_manifest(&namespace, &test_hash);
@@ -70,8 +89,6 @@ async fn test_spamming_commit_writes() -> Res {
             ByteStream::from_static(test_manifest.as_bytes()),
         )
         .await?;
-
-    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
 
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
@@ -139,31 +156,21 @@ async fn test_certify_latest_pushes_pending_commit_then_tags() -> Res {
         .await?;
     paths.scaffold_for_caching(&storage, bucket).await?;
 
-    let lineage_json = format!(
-        r#"{{
-            "packages": {{
-                "test/diverged": {{
-                    "commit": {{
-                        "timestamp": "2024-01-01T00:00:00Z",
-                        "hash": "{local_hash}",
-                        "prev_hashes": []
-                    }},
-                    "remote": {{
-                        "bucket": "{bucket}",
-                        "namespace": "test/diverged",
-                        "hash": "{install_hash}"
-                    }},
-                    "base_hash": "{install_hash}",
-                    "latest_hash": "{other_hash}",
-                    "paths": {{}}
-                }}
-            }},
-            "home": "/tmp/working_dir"
-        }}"#
-    );
-    storage
-        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-        .await?;
+    let lineage = PackageLineage {
+        commit: Some(pending_commit(local_hash)),
+        ..PackageLineage::from_remote(
+            bucket_remote(bucket, &namespace, install_hash),
+            other_hash.to_string(),
+        )
+    };
+    let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
+        &storage,
+        &paths,
+        "/tmp/working_dir",
+        [(namespace.clone(), lineage)],
+    )
+    .await?;
 
     // Local installed manifest at the commit hash — push reads it via
     // `self.manifest()`. These exact bytes are what make the rebuild
@@ -206,7 +213,6 @@ async fn test_certify_latest_pushes_pending_commit_then_tags() -> Res {
         )
         .await?;
 
-    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
@@ -267,27 +273,20 @@ async fn test_certify_latest_skips_push_when_no_pending_commit() -> Res {
         .await?;
     paths.scaffold_for_caching(&storage, bucket).await?;
 
-    let lineage_json = format!(
-        r#"{{
-            "packages": {{
-                "test/pushed": {{
-                    "commit": null,
-                    "remote": {{
-                        "bucket": "{bucket}",
-                        "namespace": "test/pushed",
-                        "hash": "{pushed_hash}"
-                    }},
-                    "base_hash": "{pushed_hash}",
-                    "latest_hash": "{other_hash}",
-                    "paths": {{}}
-                }}
-            }},
-            "home": "/tmp/working_dir"
-        }}"#
-    );
-    storage
-        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-        .await?;
+    let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
+        &storage,
+        &paths,
+        "/tmp/working_dir",
+        [(
+            namespace.clone(),
+            PackageLineage::from_remote(
+                bucket_remote(bucket, &namespace, pushed_hash),
+                other_hash.to_string(),
+            ),
+        )],
+    )
+    .await?;
 
     // Remote `latest` tag currently points at someone else's hash.
     remote
@@ -300,7 +299,6 @@ async fn test_certify_latest_skips_push_when_no_pending_commit() -> Res {
         )
         .await?;
 
-    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
@@ -348,7 +346,7 @@ async fn test_certify_latest_skips_push_when_no_pending_commit() -> Res {
 
 /// A package with no pending commit, its remote set or not.
 async fn package_without_commit(
-    remote: serde_json::Value,
+    remote_uri: Option<ManifestUri>,
 ) -> Res<(
     InstalledPackage<LocalStorage, MockRemote>,
     Vec<tempfile::TempDir>,
@@ -361,26 +359,21 @@ async fn package_without_commit(
     paths
         .scaffold_for_installing(&storage, &home, &namespace)
         .await?;
-    let lineage_json = serde_json::json!({
-        "packages": {
-            "test/nothing_to_push": {
-                "commit": null,
-                "remote": remote,
-                "base_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-                "latest_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-                "paths": {}
-            }
-        },
-        "home": home.as_ref(),
-    });
-    storage
-        .write_byte_stream(
-            &paths.lineage(),
-            lineage_json.to_string().into_bytes().into(),
-        )
-        .await?;
+    let lineage = PackageLineage {
+        remote_uri,
+        base_hash: BASE_HASH.to_string(),
+        latest_hash: BASE_HASH.to_string(),
+        ..PackageLineage::default()
+    };
+    let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
+        &storage,
+        &paths,
+        home.as_ref(),
+        [(namespace.clone(), lineage)],
+    )
+    .await?;
 
-    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
@@ -396,11 +389,11 @@ async fn package_without_commit(
 /// `Pushed::NothingToPush` and writes nothing, here or on the remote.
 #[test(tokio::test)]
 async fn test_push_without_commit_has_nothing_to_push() -> Res {
-    let (package, _temp_dirs) = package_without_commit(serde_json::json!({
-        "bucket": "bkt",
-        "namespace": "test/nothing_to_push",
-        "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-    }))
+    let (package, _temp_dirs) = package_without_commit(Some(bucket_remote(
+        "bkt",
+        &("test", "nothing_to_push").into(),
+        BASE_HASH,
+    )))
     .await?;
     let lineage_before = package.lineage().await?;
 
@@ -418,7 +411,7 @@ async fn test_push_without_commit_has_nothing_to_push() -> Res {
 /// setup problem, not nothing to do.
 #[test(tokio::test)]
 async fn test_push_without_remote_fails() -> Res {
-    let (package, _temp_dirs) = package_without_commit(serde_json::Value::Null).await?;
+    let (package, _temp_dirs) = package_without_commit(None).await?;
 
     let err = package.push(None).await.unwrap_err();
 
@@ -445,29 +438,20 @@ async fn test_manifest_recovery_from_corruption() -> Res {
         .await?;
     paths.scaffold_for_caching(&storage, "test-bucket").await?;
 
-    // Initialize domain lineage file
-    let lineage_json = format!(
-        r#"{{
-            "packages": {{
-                "test/recovery": {{
-                    "commit": null,
-                    "remote": {{
-                        "bucket": "test-bucket",
-                        "namespace": "test/recovery",
-                        "hash": "{}",
-                        "catalog": null
-                    }},
-                    "base_hash": "{}",
-                    "latest_hash": "{}",
-                    "paths": {{}}
-                }}}},
-            "home": "/tmp/working_dir"
-            }}"#,
-        test_hash, "foo", "bar"
-    );
-    storage
-        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-        .await?;
+    let lineage = PackageLineage {
+        remote_uri: Some(bucket_remote("test-bucket", &namespace, &test_hash)),
+        base_hash: "foo".to_string(),
+        latest_hash: "bar".to_string(),
+        ..PackageLineage::default()
+    };
+    let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
+        &storage,
+        &paths,
+        "/tmp/working_dir",
+        [(namespace.clone(), lineage)],
+    )
+    .await?;
 
     // Set up a valid cached manifest
     let reference_manifest = crate::fixtures::manifest::path();
@@ -489,7 +473,6 @@ async fn test_manifest_recovery_from_corruption() -> Res {
         )
         .await?;
 
-    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
@@ -594,7 +577,7 @@ fn rejected_credential() -> Error {
     })
 }
 
-pub(super) struct LoggedOutRemote;
+pub(in crate::installed_package) struct LoggedOutRemote;
 
 impl crate::io::remote::Remote for LoggedOutRemote {
     fn exists(&self, _host: Option<&Host>, _s3_uri: &S3Uri) -> impl Future<Output = Res<bool>> {
@@ -661,7 +644,7 @@ impl crate::io::remote::Remote for LoggedOutRemote {
 /// A remote that refuses every read with `AccessDenied`, simulating a role
 /// that cannot reach the bucket. Distinct from [`LoggedOutRemote`]: the
 /// credentials are valid, the request arrived, and it was refused.
-pub(super) struct DeniedRemote;
+pub(in crate::installed_package) struct DeniedRemote;
 
 impl crate::io::remote::Remote for DeniedRemote {
     fn exists(&self, _host: Option<&Host>, s3_uri: &S3Uri) -> impl Future<Output = Res<bool>> {
@@ -760,28 +743,20 @@ async fn test_status_propagates_access_denied_from_the_latest_hash_read() -> Res
     // An installed package with a remote and a manifest already on disk, so
     // the only remote read `status` needs is the latest-hash pointer.
     let installed_hash = TIP;
-    let lineage_json = format!(
-        r#"{{
-        "packages": {{
-            "test/denied": {{
-                "commit": null,
-                "remote": {{
-                    "bucket": "locked",
-                    "namespace": "test/denied",
-                    "hash": "{installed_hash}",
-                    "origin": "quilt.test"
-                }},
-                "base_hash": "{installed_hash}",
-                "latest_hash": "{installed_hash}",
-                "paths": {{}}
-            }}
-        }},
-        "home": "/tmp/working_dir"
-    }}"#
-    );
-    storage
-        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-        .await?;
+    let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
+        &storage,
+        &paths,
+        "/tmp/working_dir",
+        [(
+            namespace.clone(),
+            PackageLineage::from(ManifestUri {
+                origin: Some(fixtures::host()),
+                ..bucket_remote("locked", &namespace, installed_hash)
+            }),
+        )],
+    )
+    .await?;
     storage
         .write_byte_stream(
             &paths.installed_manifest(&namespace, installed_hash),
@@ -789,7 +764,6 @@ async fn test_status_propagates_access_denied_from_the_latest_hash_read() -> Res
         )
         .await?;
 
-    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
@@ -833,28 +807,15 @@ async fn test_status_propagates_a_rejected_credential() -> Res {
         .await?;
 
     // Package with remote configured but never pushed (empty hash)
-    let lineage_json = r#"{
-        "packages": {
-            "test/rejectedcred": {
-                "commit": null,
-                "remote": {
-                    "bucket": "my-bucket",
-                    "namespace": "test/rejectedcred",
-                    "hash": "",
-                    "origin": "quilt.test"
-                },
-                "base_hash": "",
-                "latest_hash": "",
-                "paths": {}
-            }
-        },
-        "home": "/tmp/working_dir"
-    }"#;
-    storage
-        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-        .await?;
+    let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
+        &storage,
+        &paths,
+        "/tmp/working_dir",
+        [(namespace.clone(), never_pushed_to("my-bucket", &namespace))],
+    )
+    .await?;
 
-    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
@@ -888,28 +849,15 @@ async fn test_status_propagates_login_required() -> Res {
         .await?;
 
     // Package with remote configured but never pushed (empty hash)
-    let lineage_json = r#"{
-        "packages": {
-            "test/needslogin": {
-                "commit": null,
-                "remote": {
-                    "bucket": "my-bucket",
-                    "namespace": "test/needslogin",
-                    "hash": "",
-                    "origin": "quilt.test"
-                },
-                "base_hash": "",
-                "latest_hash": "",
-                "paths": {}
-            }
-        },
-        "home": "/tmp/working_dir"
-    }"#;
-    storage
-        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-        .await?;
+    let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
+        &storage,
+        &paths,
+        "/tmp/working_dir",
+        [(namespace.clone(), never_pushed_to("my-bucket", &namespace))],
+    )
+    .await?;
 
-    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
@@ -956,29 +904,17 @@ async fn test_pull_refreshes_latest_hash_when_remote_moved() -> Res {
     // Disk lineage at the install-time hash: latest_hash == base_hash
     // == remote.hash. Without the refresh inside `pull` this state
     // alone short-circuits the up-to-date guard.
-    let lineage_json = format!(
-        r#"{{
-            "packages": {{
-                "test/pull_refresh": {{
-                    "commit": null,
-                    "remote": {{
-                        "bucket": "{bucket}",
-                        "namespace": "test/pull_refresh",
-                        "hash": "{install_hash}",
-                        "catalog": "quilt.test"
-                    }},
-                    "base_hash": "{install_hash}",
-                    "latest_hash": "{install_hash}",
-                    "paths": {{}}
-                }}
-            }},
-            "home": {}
-        }}"#,
-        serde_json::to_string(&home)?,
-    );
-    storage
-        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-        .await?;
+    let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
+        &storage,
+        &paths,
+        home.as_ref(),
+        [(
+            namespace.clone(),
+            PackageLineage::from(bucket_remote(bucket, &namespace, install_hash)),
+        )],
+    )
+    .await?;
 
     // Installed manifest at the install-time hash so `package.manifest()`
     // can resolve.
@@ -1001,7 +937,6 @@ async fn test_pull_refreshes_latest_hash_when_remote_moved() -> Res {
         )
         .await?;
 
-    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
@@ -1041,29 +976,20 @@ async fn test_pull_up_to_date_returns_up_to_date_and_writes_latest_hash() -> Res
         .scaffold_for_installing(&storage, &home, &namespace)
         .await?;
 
-    let lineage_json = format!(
-        r#"{{
-            "packages": {{
-                "test/pull_up_to_date": {{
-                    "commit": null,
-                    "remote": {{
-                        "bucket": "{bucket}",
-                        "namespace": "test/pull_up_to_date",
-                        "hash": "{base_hash}",
-                        "catalog": "quilt.test"
-                    }},
-                    "base_hash": "{base_hash}",
-                    "latest_hash": "{stale_hash}",
-                    "paths": {{}}
-                }}
-            }},
-            "home": {}
-        }}"#,
-        serde_json::to_string(&home)?,
-    );
-    storage
-        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-        .await?;
+    let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
+        &storage,
+        &paths,
+        home.as_ref(),
+        [(
+            namespace.clone(),
+            PackageLineage::from_remote(
+                bucket_remote(bucket, &namespace, base_hash),
+                stale_hash.to_string(),
+            ),
+        )],
+    )
+    .await?;
     storage
         .write_byte_stream(
             paths.installed_manifest(&namespace, base_hash),
@@ -1080,7 +1006,6 @@ async fn test_pull_up_to_date_returns_up_to_date_and_writes_latest_hash() -> Res
         )
         .await?;
 
-    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
@@ -1125,29 +1050,17 @@ async fn behind_package(
     // Disk lineage at the install-time hash: latest_hash == base_hash. The
     // remote `latest` tag (staged below) has moved, so `status`'s refresh
     // turns this into a `Behind` state.
-    let lineage_json = format!(
-        r#"{{
-            "packages": {{
-                "test/pull_outcome": {{
-                    "commit": null,
-                    "remote": {{
-                        "bucket": "{bucket}",
-                        "namespace": "test/pull_outcome",
-                        "hash": "{install_hash}",
-                        "catalog": "quilt.test"
-                    }},
-                    "base_hash": "{install_hash}",
-                    "latest_hash": "{install_hash}",
-                    "paths": {{}}
-                }}
-            }},
-            "home": {}
-        }}"#,
-        serde_json::to_string(&home)?,
-    );
-    storage
-        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-        .await?;
+    let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
+        &storage,
+        &paths,
+        home.as_ref(),
+        [(
+            namespace.clone(),
+            PackageLineage::from(bucket_remote(bucket, &namespace, install_hash)),
+        )],
+    )
+    .await?;
 
     // Installed (base) manifest with one tracked row.
     storage
@@ -1175,7 +1088,6 @@ async fn behind_package(
         )
         .await?;
 
-    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
@@ -1459,26 +1371,16 @@ async fn test_pull_outcome_local_no_remote_is_up_to_date() -> Res {
         .scaffold_for_installing(&storage, &home, &namespace)
         .await?;
 
-    // No `remote` key → `remote_uri` is `None` → `UpstreamState::Local`.
-    let lineage_json = format!(
-        r#"{{
-            "packages": {{
-                "test/local_no_remote": {{
-                    "commit": null,
-                    "base_hash": "",
-                    "latest_hash": "",
-                    "paths": {{}}
-                }}
-            }},
-            "home": {}
-        }}"#,
-        serde_json::to_string(&home)?,
-    );
-    storage
-        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-        .await?;
+    // No remote → `UpstreamState::Local`.
+    let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
+        &storage,
+        &paths,
+        home.as_ref(),
+        [(namespace.clone(), PackageLineage::default())],
+    )
+    .await?;
 
-    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
@@ -1517,29 +1419,20 @@ async fn test_pull_outcome_diverged_by_hash_is_up_to_date_no_network() -> Res {
 
     // remote.hash != base_hash and latest_hash != base_hash, no commit →
     // `UpstreamState::from` reports `Diverged` (ahead && behind) from disk.
-    let lineage_json = format!(
-        r#"{{
-            "packages": {{
-                "test/diverged_hash": {{
-                    "commit": null,
-                    "remote": {{
-                        "bucket": "{bucket}",
-                        "namespace": "test/diverged_hash",
-                        "hash": "{remote_hash}",
-                        "catalog": "quilt.test"
-                    }},
-                    "base_hash": "{base_hash}",
-                    "latest_hash": "{latest_hash}",
-                    "paths": {{}}
-                }}
-            }},
-            "home": {}
-        }}"#,
-        serde_json::to_string(&home)?,
-    );
-    storage
-        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-        .await?;
+    let lineage = PackageLineage {
+        remote_uri: Some(bucket_remote(bucket, &namespace, remote_hash)),
+        base_hash: base_hash.to_string(),
+        latest_hash: latest_hash.to_string(),
+        ..PackageLineage::default()
+    };
+    let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
+        &storage,
+        &paths,
+        home.as_ref(),
+        [(namespace.clone(), lineage)],
+    )
+    .await?;
 
     // Installed manifest at the current hash so that, WITHOUT the short-circuit,
     // `pull_outcome` would get past `manifest()` and pay for the tag read below.
@@ -1550,7 +1443,6 @@ async fn test_pull_outcome_diverged_by_hash_is_up_to_date_no_network() -> Res {
         )
         .await?;
 
-    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
@@ -1590,31 +1482,18 @@ async fn test_pull_outcome_never_pushed_remote_is_up_to_date() -> Res {
     // Remote set but never pushed: empty `hash` + empty `latest_hash` →
     // `UpstreamState::Local`. No `latest` tag is staged on the mock remote, so
     // any tag read would 404.
-    let lineage_json = format!(
-        r#"{{
-            "packages": {{
-                "test/never_pushed": {{
-                    "commit": null,
-                    "remote": {{
-                        "bucket": "{bucket}",
-                        "namespace": "test/never_pushed",
-                        "hash": "",
-                        "catalog": "quilt.test"
-                    }},
-                    "base_hash": "",
-                    "latest_hash": "",
-                    "paths": {{}}
-                }}
-            }},
-            "home": {}
-        }}"#,
-        serde_json::to_string(&home)?,
-    );
-    storage
-        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-        .await?;
+    let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
+        &storage,
+        &paths,
+        home.as_ref(),
+        [(
+            namespace.clone(),
+            PackageLineage::from(bucket_remote(bucket, &namespace, "")),
+        )],
+    )
+    .await?;
 
-    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
@@ -1636,8 +1515,8 @@ async fn test_pull_outcome_never_pushed_remote_is_up_to_date() -> Res {
 async fn test_status_reports_whether_the_latest_tip_was_read() -> Res {
     async fn status_with(
         tag: Option<&str>,
-        commit_json: &str,
-        remote_json: &str,
+        commit: Option<CommitState>,
+        remote_uri: Option<ManifestUri>,
         latest_hash: &str,
     ) -> Res<InstalledPackageStatus> {
         let (home, _temp_dir1) = Home::from_temp_dir()?;
@@ -1650,24 +1529,21 @@ async fn test_status_reports_whether_the_latest_tip_was_read() -> Res {
         paths
             .scaffold_for_installing(&storage, &home, &namespace)
             .await?;
-        let lineage_json = format!(
-            r#"{{
-                "packages": {{
-                    "test/refreshed": {{
-                        "commit": {commit_json},
-                        "remote": {remote_json},
-                        "base_hash": "{hash}",
-                        "latest_hash": "{latest_hash}",
-                        "paths": {{}}
-                    }}
-                }},
-                "home": {}
-            }}"#,
-            serde_json::to_string(&home)?,
-        );
-        storage
-            .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-            .await?;
+        let lineage = PackageLineage {
+            commit,
+            remote_uri,
+            base_hash: hash.to_string(),
+            latest_hash: latest_hash.to_string(),
+            ..PackageLineage::default()
+        };
+        let domain_lineage_io = DomainLineageIo::write_fixture(
+            BACKEND,
+            &storage,
+            &paths,
+            home.as_ref(),
+            [(namespace.clone(), lineage)],
+        )
+        .await?;
         storage
             .write_byte_stream(
                 paths.installed_manifest(&namespace, hash),
@@ -1685,10 +1561,7 @@ async fn test_status_reports_whether_the_latest_tip_was_read() -> Res {
         }
 
         let package = InstalledPackage {
-            lineage: PackageLineageIo::new(
-                DomainLineageIo::new(paths.lineage()),
-                namespace.clone(),
-            ),
+            lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
             paths,
             remote: std::sync::Arc::new(remote),
             storage,
@@ -1698,41 +1571,25 @@ async fn test_status_reports_whether_the_latest_tip_was_read() -> Res {
         package.status(None).await
     }
 
-    let remote_json = r#"{
-        "bucket": "bkt",
-        "namespace": "test/refreshed",
-        "hash": "abcdef0000000000000000000000000000000000000000000000000000000000",
-        "catalog": "quilt.test"
-    }"#;
+    let remote_at = |hash| Some(bucket_remote("bkt", &("test", "refreshed").into(), hash));
 
-    let reached = status_with(Some(TIP), "null", remote_json, TIP).await?;
+    let reached = status_with(Some(TIP), None, remote_at(TIP), TIP).await?;
     assert!(reached.latest_refreshed, "the tip was read this call");
     assert_eq!(reached.upstream_state, UpstreamState::UpToDate);
 
     // No `latest` tag to read: the refresh fails, is swallowed, and the
     // verdict comes from the last-known tip.
-    let unreachable = status_with(None, "null", remote_json, TIP).await?;
+    let unreachable = status_with(None, None, remote_at(TIP), TIP).await?;
     assert!(!unreachable.latest_refreshed, "the tip was not read");
     assert_eq!(unreachable.upstream_state, UpstreamState::UpToDate);
 
     // No `latest` tag, and none ever seen: the remote was read and says the
     // package was never published, which is a fresh answer, not an outage.
-    let committed_json = r#"{
-        "timestamp": "2024-01-01T00:00:00Z",
-        "hash": "abcdef0000000000000000000000000000000000000000000000000000000000",
-        "prev_hashes": []
-    }"#;
-    let unpublished_json = r#"{
-        "bucket": "bkt",
-        "namespace": "test/refreshed",
-        "hash": "",
-        "catalog": "quilt.test"
-    }"#;
-    let unpublished = status_with(None, committed_json, unpublished_json, "").await?;
+    let unpublished = status_with(None, Some(pending_commit(TIP)), remote_at(""), "").await?;
     assert!(unpublished.latest_refreshed, "the missing tag was read");
     assert_eq!(unpublished.upstream_state, UpstreamState::Local);
 
-    let local = status_with(None, "null", "null", TIP).await?;
+    let local = status_with(None, None, None, TIP).await?;
     assert!(!local.latest_refreshed, "no remote, nothing to read");
 
     Ok(())
@@ -1741,7 +1598,7 @@ async fn test_status_reports_whether_the_latest_tip_was_read() -> Res {
 /// The package's state, and how many times its `latest` tag was read.
 async fn state_with(
     tag: Option<&str>,
-    remote_json: &str,
+    remote_uri: Option<ManifestUri>,
 ) -> Res<(crate::lineage::PackageStateReport, usize)> {
     let (home, _temp_dir1) = Home::from_temp_dir()?;
     let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
@@ -1754,24 +1611,20 @@ async fn state_with(
     paths
         .scaffold_for_installing(&storage, &home, &namespace)
         .await?;
-    let lineage_json = format!(
-        r#"{{
-            "packages": {{
-                "test/state": {{
-                    "commit": null,
-                    "remote": {remote_json},
-                    "base_hash": "{hash}",
-                    "latest_hash": "{hash}",
-                    "paths": {{}}
-                }}
-            }},
-            "home": {}
-        }}"#,
-        serde_json::to_string(&home)?,
-    );
-    storage
-        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-        .await?;
+    let lineage = PackageLineage {
+        remote_uri,
+        base_hash: hash.to_string(),
+        latest_hash: hash.to_string(),
+        ..PackageLineage::default()
+    };
+    let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
+        &storage,
+        &paths,
+        home.as_ref(),
+        [(namespace.clone(), lineage)],
+    )
+    .await?;
     storage
         .write_byte_stream(
             paths.installed_manifest(&namespace, hash),
@@ -1785,7 +1638,7 @@ async fn state_with(
     }
 
     let package = InstalledPackage {
-        lineage: PackageLineageIo::new(DomainLineageIo::new(paths.lineage()), namespace.clone()),
+        lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
         remote: std::sync::Arc::new(remote),
         storage,
@@ -1803,16 +1656,14 @@ async fn test_state_short_circuits_and_resolves_the_status() -> Res {
     use crate::lineage::PackageState;
     use crate::lineage::PackageStateReport;
 
-    let (latest, reads) = state_with(
-        Some(TIP),
-        r#"{
-            "bucket": "bkt",
-            "namespace": "test/state",
-            "hash": "abcdef0000000000000000000000000000000000000000000000000000000000",
-            "origin": "quilt.test"
-        }"#,
-    )
-    .await?;
+    let remote_on = |origin| {
+        Some(ManifestUri {
+            origin,
+            ..bucket_remote("bkt", &("test", "state").into(), TIP)
+        })
+    };
+
+    let (latest, reads) = state_with(Some(TIP), remote_on(Some(fixtures::host()))).await?;
     assert_eq!(
         latest,
         PackageStateReport {
@@ -1826,15 +1677,7 @@ async fn test_state_short_circuits_and_resolves_the_status() -> Res {
 
     // No catalog host: read on the machine's own AWS credentials, like any
     // other remote.
-    let (catalog_less, reads) = state_with(
-        Some(TIP),
-        r#"{
-            "bucket": "bkt",
-            "namespace": "test/state",
-            "hash": "abcdef0000000000000000000000000000000000000000000000000000000000"
-        }"#,
-    )
-    .await?;
+    let (catalog_less, reads) = state_with(Some(TIP), remote_on(None)).await?;
     assert_eq!(
         catalog_less,
         PackageStateReport {
@@ -1847,7 +1690,7 @@ async fn test_state_short_circuits_and_resolves_the_status() -> Res {
     assert_eq!(reads, 1, "a remote with no catalog is asked too");
 
     // No remote: resolved from lineage, the working tree not walked.
-    let (local, _) = state_with(None, "null").await?;
+    let (local, _) = state_with(None, None).await?;
     assert_eq!(
         local,
         PackageStateReport {
@@ -1871,37 +1714,21 @@ async fn test_status_from_walk_keeps_the_changes_under_a_fresh_tip() -> Res {
     let remote = MockRemote::default();
     let namespace: Namespace = ("test", "kept").into();
     let latest = S3Uri::try_from("s3://bkt/.quilt/named_packages/test/kept/latest")?;
-    let write_lineage = async |commit_json: &str| -> Res {
-        let lineage_json = format!(
-            r#"{{
-                "packages": {{
-                    "test/kept": {{
-                        "commit": {commit_json},
-                        "remote": {{
-                            "bucket": "bkt",
-                            "namespace": "test/kept",
-                            "hash": "abcdef0000000000000000000000000000000000000000000000000000000000",
-                            "catalog": "quilt.test"
-                        }},
-                        "base_hash": "abcdef0000000000000000000000000000000000000000000000000000000000",
-                        "latest_hash": "abcdef0000000000000000000000000000000000000000000000000000000000",
-                        "paths": {{}}
-                    }}
-                }},
-                "home": {}
-            }}"#,
-            serde_json::to_string(&home)?,
-        );
-        storage
-            .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-            .await?;
-        Ok(())
-    };
 
     paths
         .scaffold_for_installing(&storage, &home, &namespace)
         .await?;
-    write_lineage("null").await?;
+    let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
+        &storage,
+        &paths,
+        home.as_ref(),
+        [(
+            namespace.clone(),
+            PackageLineage::from(bucket_remote("bkt", &namespace, TIP)),
+        )],
+    )
+    .await?;
     storage
         .write_byte_stream(
             paths.installed_manifest(&namespace, TIP),
@@ -1912,11 +1739,11 @@ async fn test_status_from_walk_keeps_the_changes_under_a_fresh_tip() -> Res {
         .put_object(None, &latest, TIP.as_bytes().to_vec())
         .await?;
     let package = InstalledPackage {
-        lineage: PackageLineageIo::new(DomainLineageIo::new(paths.lineage()), namespace.clone()),
-        paths: paths.clone(),
+        lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
+        paths,
         remote: std::sync::Arc::new(remote),
-        storage: storage.clone(),
-        namespace: namespace.clone(),
+        storage,
+        namespace,
         state_store: None,
     };
     let package_home = package.package_home().await?;
@@ -1940,14 +1767,12 @@ async fn test_status_from_walk_keeps_the_changes_under_a_fresh_tip() -> Res {
     assert!(kept.latest_refreshed);
     assert_eq!(kept.changes, walked.changes);
 
-    write_lineage(
-        r#"{
-            "timestamp": "2024-01-01T00:00:00Z",
-            "hash": "123456",
-            "prev_hashes": []
-        }"#,
-    )
-    .await?;
+    package
+        .lineage
+        .edit(&package.storage, |lineage| {
+            lineage.commit = Some(pending_commit("123456"));
+        })
+        .await?;
     assert!(
         package
             .status_from_walk(&walked_lineage, walked)
@@ -2001,24 +1826,16 @@ async fn test_commit_and_push_key_a_file_in_a_folder_with_slashes() -> Res {
     paths
         .scaffold_for_installing(&storage, &home, &namespace)
         .await?;
-    let lineage_json = serde_json::json!({
-        "packages": {
-            "test/slash": {
-                "commit": null,
-                "remote": null,
-                "base_hash": "",
-                "latest_hash": "",
-                "paths": {}
-            }
-        },
-        "home": &home,
-    })
-    .to_string();
-    storage
-        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-        .await?;
+    let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
+        &storage,
+        &paths,
+        home.as_ref(),
+        [(namespace.clone(), PackageLineage::default())],
+    )
+    .await?;
     let package = InstalledPackage {
-        lineage: PackageLineageIo::new(DomainLineageIo::new(paths.lineage()), namespace.clone()),
+        lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
         remote: std::sync::Arc::new(MockRemote::default()),
         storage,
@@ -2126,32 +1943,18 @@ async fn first_push_package(
         .scaffold_for_installing(&storage, &home, &namespace)
         .await?;
     paths.scaffold_for_caching(&storage, bucket).await?;
-    let lineage_json = serde_json::json!({
-        "packages": {
-            "test/first_push": {
-                "commit": {
-                    "timestamp": "2024-01-01T00:00:00Z",
-                    "hash": local_hash,
-                    "prev_hashes": []
-                },
-                "remote": {
-                    "bucket": bucket,
-                    "namespace": "test/first_push",
-                    "hash": ""
-                },
-                "base_hash": "",
-                "latest_hash": "",
-                "paths": {}
-            }
-        },
-        "home": home.as_ref(),
-    });
-    storage
-        .write_byte_stream(
-            &paths.lineage(),
-            lineage_json.to_string().into_bytes().into(),
-        )
-        .await?;
+    let lineage = PackageLineage {
+        commit: Some(pending_commit(local_hash)),
+        ..PackageLineage::from(bucket_remote(bucket, &namespace, ""))
+    };
+    let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
+        &storage,
+        &paths,
+        home.as_ref(),
+        [(namespace.clone(), lineage)],
+    )
+    .await?;
     let manifest = b"{\"version\":\"v0\",\"message\":\"\",\"user_meta\":null}\n".to_vec();
     storage
         .write_byte_stream(
@@ -2177,7 +1980,6 @@ async fn first_push_package(
             .await?;
     }
 
-    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
@@ -2294,5 +2096,56 @@ async fn test_first_push_certifies_without_another_latest() -> Res {
             "{latest:?}"
         );
     }
+    Ok(())
+}
+
+/// A local package with `data.txt` committed.
+pub(in crate::installed_package) async fn committed_data_txt()
+-> Res<(InstalledPackage<LocalStorage, RemoteS3>, tempfile::TempDir)> {
+    let temp_dir = tempfile::TempDir::new()?;
+    let domain = crate::local_domain::LocalDomain::new(temp_dir.path()).with_lineage_store(BACKEND);
+    domain.set_home(temp_dir.path()).await?;
+    let (package, _) = domain
+        .create_package(
+            ("demo", "tracked").into(),
+            None,
+            Some("empty".to_string()),
+            UserMeta::Clear,
+        )
+        .await?;
+    std::fs::write(package.package_home().await?.join("data.txt"), b"content")?;
+    package
+        .commit(
+            "add".to_string(),
+            UserMeta::Keep,
+            None,
+            Some(HostConfig::default()),
+        )
+        .await?;
+    Ok((package, temp_dir))
+}
+
+/// A later release stops writing `paths[].hash`.
+#[test(tokio::test)]
+async fn a_package_tracked_without_path_hashes_has_a_status() -> Res {
+    let (package, _temp_dir) = committed_data_txt().await?;
+    package
+        .lineage
+        .edit(&package.storage, |lineage| {
+            lineage
+                .paths
+                .get_mut(Path::new("data.txt"))
+                .expect("the commit tracks data.txt")
+                .hash = None;
+        })
+        .await?;
+
+    let status = package
+        .status(Some(HostConfig::default()))
+        .await
+        .expect("a package whose entries have no hash has a status");
+
+    assert_eq!(status.working_copy, crate::lineage::WorkingCopy::Available);
+    assert!(status.changes.is_empty(), "{:?}", status.changes);
     Ok(())
 }

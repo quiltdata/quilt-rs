@@ -8,7 +8,7 @@ use crate::flow;
 use crate::io::manifest::resolve_tag;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
-use crate::lineage::DomainLineage;
+use crate::lineage::Home;
 use crate::lineage::PackageLineage;
 use crate::lineage::WorkingCopyLocation;
 use crate::paths::DomainPaths;
@@ -17,18 +17,21 @@ use quilt_uri::ManifestUri;
 use quilt_uri::Tag;
 
 /// Installs the package.
-/// It fetches manifest and puts it into `installed_packages`.
-/// Also, start tracking this package in lineage.
+/// It fetches manifest and puts it into `installed_packages`, and returns the
+/// package's lineage for the caller to store; `installed` says whether the
+/// domain has the package already.
 /// DOES NOT install any paths!
 pub async fn install_package(
-    lineage: DomainLineage,
+    home: &Home,
+    installed: bool,
     paths: &DomainPaths,
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
     manifest_uri: &ManifestUri,
-) -> Res<DomainLineage> {
+) -> Res<PackageLineage> {
     install_package_as(
-        lineage,
+        home,
+        installed,
         paths,
         storage,
         remote,
@@ -39,19 +42,20 @@ pub async fn install_package(
 }
 
 /// [`install_package`] recording `working_copy`. With none, no folder is made.
-pub async fn install_package_as(
-    lineage: DomainLineage,
+pub(crate) async fn install_package_as(
+    home: &Home,
+    installed: bool,
     paths: &DomainPaths,
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
     manifest_uri: &ManifestUri,
     working_copy: WorkingCopyLocation,
-) -> Res<DomainLineage> {
+) -> Res<PackageLineage> {
     info!("⏳ Installing package: {}", manifest_uri.display());
 
     // TODO: if compatible (same remote), just return the installed package
     // Checked before any folder is made, as the package may have none.
-    if lineage.packages.contains_key(&manifest_uri.namespace) {
+    if installed {
         debug!("❌ Package already installed: {}", manifest_uri.namespace);
         return Err(Error::InstallPackage(
             InstallPackageError::AlreadyInstalled(manifest_uri.namespace.clone()),
@@ -59,12 +63,7 @@ pub async fn install_package_as(
     }
 
     paths
-        .scaffold_for(
-            storage,
-            &lineage.home,
-            &manifest_uri.namespace,
-            &working_copy,
-        )
+        .scaffold_for(storage, home, &manifest_uri.namespace, &working_copy)
         .await?;
     paths
         .scaffold_for_caching(storage, &manifest_uri.bucket)
@@ -92,19 +91,14 @@ pub async fn install_package_as(
     .await?;
     debug!("✔️ Latest hash is {}", latest.hash);
 
-    let mut lineage = lineage;
-    lineage.packages.insert(
-        manifest_uri.namespace.clone(),
-        PackageLineage {
-            working_copy,
-            ..PackageLineage::from_remote(manifest_uri.clone(), latest.hash)
-        },
-    );
     info!(
         "✔️ Successfully installed package: {}",
         manifest_uri.display()
     );
-    Ok(lineage)
+    Ok(PackageLineage {
+        working_copy,
+        ..PackageLineage::from_remote(manifest_uri.clone(), latest.hash)
+    })
 }
 
 #[cfg(test)]
@@ -112,27 +106,21 @@ mod tests {
     use super::*;
     use test_log::test;
 
-    use std::collections::BTreeMap;
     use std::path::PathBuf;
     use std::str::FromStr;
 
     use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::mocks::MockStorage;
-    use crate::lineage::Home;
     use quilt_uri::S3Uri;
 
     /// Verify that attempting to install a package that is already installed results in an error.
-    /// A package is considered installed if it is present in the lineage.
     #[test(tokio::test)]
     async fn test_if_already_installed() -> Res {
         let (home, _temp_dir) = Home::from_temp_dir()?;
         let namespace = ("foo", "bar");
-        let lineage = DomainLineage {
-            packages: BTreeMap::from([(namespace.into(), PackageLineage::default())]),
-            home,
-        };
         let result = install_package(
-            lineage,
+            &home,
+            true,
             &DomainPaths::default(),
             &MockStorage::default(),
             &MockRemote::default(),
@@ -154,7 +142,7 @@ mod tests {
     /// Package files are installed separately using `install_paths`.
     #[test(tokio::test)]
     async fn test_installing() -> Res {
-        let (lineage, _temp_dir) = DomainLineage::from_temp_dir()?;
+        let (home, _temp_dir) = Home::from_temp_dir()?;
         let test_hash = "deadbeef".repeat(8);
 
         let manifest_uri = ManifestUri {
@@ -196,9 +184,9 @@ mod tests {
 
         let storage = MockStorage::default();
         let paths = DomainPaths::new(PathBuf::from("/foo"));
-        let result = install_package(lineage, &paths, &storage, &remote, &manifest_uri).await?;
+        let installed_package =
+            install_package(&home, false, &paths, &storage, &remote, &manifest_uri).await?;
 
-        let installed_package = result.packages.get(&("f", "b").into()).unwrap();
         let tracked = installed_package.remote().unwrap().clone();
 
         assert_eq!(installed_package.latest_hash, test_hash);
@@ -250,11 +238,12 @@ mod tests {
             )
             .await?;
 
-        let (lineage, _temp_dir) = DomainLineage::from_temp_dir()?;
+        let (home, _temp_dir) = Home::from_temp_dir()?;
 
         let storage = LocalStorage::new();
         let result = install_package(
-            lineage,
+            &home,
+            false,
             &DomainPaths::new(PathBuf::from("/")),
             &storage,
             &remote,

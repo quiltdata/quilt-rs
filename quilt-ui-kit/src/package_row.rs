@@ -2,14 +2,10 @@
 //!
 //! # The whole row is one link
 //!
-//! An `<a>`, not a `div` with a click handler, and that is the difference from
-//! [`FileRow`](super::FileRow) rather than a detail of it. A package is a *place
-//! you go*; a file is a *thing you act on*. So this row has one destination and no
-//! controls at all — which is what lets it be a real anchor, with middle-click,
-//! open-in-new-tab, the status bar preview and keyboard activation for free.
-//!
-//! `FileRow` cannot do that: it has two destinations and three actions, and nested
-//! `<a>` is invalid, so it pays for its children with a `role="button"` div.
+//! An `<a>`, not a `div` with a click handler. A package is a *place you go*, so
+//! this row has one destination and no controls at all — which is what lets it
+//! be a real anchor, with middle-click, open-in-new-tab, the status bar preview
+//! and keyboard activation for free.
 //!
 //! # Plain at rest
 //!
@@ -46,9 +42,8 @@ stylance::import_crate_style!(style, "src/package_row.module.css");
 
 #[component]
 pub fn PackageRow(
-    /// `owner/name`. Truncates from the **right**, unlike `FileRow`'s path: a
-    /// namespace is distinguished by its start, and there is no filename at the end
-    /// worth saving.
+    /// `owner/name`. Truncates from the **right**: a namespace is distinguished by
+    /// its start, and there is no filename at the end worth saving.
     #[prop(into)]
     namespace: String,
     /// The package page. A real `href`, so the browser owns the navigation.

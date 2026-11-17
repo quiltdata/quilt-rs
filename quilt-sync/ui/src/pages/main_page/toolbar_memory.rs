@@ -8,7 +8,6 @@
 use super::GROUP_BUCKET;
 use super::GROUP_CATALOG;
 use super::GROUP_NONE;
-use super::GROUP_PACKAGE;
 use super::GROUP_PREFIX;
 use super::SORT_CHANGED;
 use super::SORT_NAME;
@@ -33,11 +32,6 @@ pub(super) const PACKAGES_GROUP: Choice = Choice {
 pub(super) const PACKAGES_SORT: Choice = Choice {
     key: "quilt-sync.main-page.sort",
     options: &[("changed", SORT_CHANGED), ("name", SORT_NAME)],
-};
-
-pub(super) const FILES_GROUP: Choice = Choice {
-    key: "quilt-sync.main-page.group-files",
-    options: &[("none", GROUP_NONE), ("package", GROUP_PACKAGE)],
 };
 
 impl Choice {

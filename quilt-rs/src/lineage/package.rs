@@ -16,20 +16,28 @@ use crate::lineage::status::UpstreamState;
 use quilt_uri::ManifestUri;
 use quilt_uri::Namespace;
 
+#[allow(
+    clippy::ref_option,
+    reason = "serde's `serialize_with` passes the field by reference"
+)]
 fn multihash_to_str<S: ser::Serializer>(
-    hash: &Multihash<256>,
+    hash: &Option<Multihash<256>>,
     serializer: S,
 ) -> Result<S::Ok, S::Error> {
-    let s = hex::encode(hash.to_bytes());
-    serializer.serialize_str(&s)
+    hash.as_ref()
+        .map(|hash| hex::encode(hash.to_bytes()))
+        .serialize(serializer)
 }
 
 fn str_to_multihash<'de, D: de::Deserializer<'de>>(
     deserializer: D,
-) -> Result<Multihash<256>, D::Error> {
-    let s = String::deserialize(deserializer)?;
-    let bytes = hex::decode(s).map_err(de::Error::custom)?;
-    Multihash::from_bytes(&bytes).map_err(de::Error::custom)
+) -> Result<Option<Multihash<256>>, D::Error> {
+    Option::<String>::deserialize(deserializer)?
+        .map(|s| {
+            let bytes = hex::decode(s).map_err(de::Error::custom)?;
+            Multihash::from_bytes(&bytes).map_err(de::Error::custom)
+        })
+        .transpose()
 }
 
 /// State of the file tracked in lineage
@@ -41,11 +49,16 @@ pub struct PathState {
     /// Last tracked hash.
     /// We don't track files modifications in real time.
     /// We calculate hash when we commit or install file.
+    ///
+    /// `None` when the entry has no hash, absent or `null`; written back without
+    /// one, since `Multihash::default()` would store a hash of no file.
     #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
         serialize_with = "multihash_to_str",
         deserialize_with = "str_to_multihash"
     )]
-    pub hash: Multihash<256>,
+    pub hash: Option<Multihash<256>>,
 }
 
 /// A map of paths to their state
@@ -211,19 +224,18 @@ fn holds(outer: &str, inner: &str) -> bool {
 
 /// Where a package's files are placed and read from.
 ///
-/// A package whose working copy is not at the home is never written to
-/// `data.json`, where a build that predates this field would read it as one
-/// whose files are all gone; see [`DomainLineageIo`](crate::lineage::DomainLineageIo).
-#[derive(Clone, Debug, PartialEq, Default)]
+/// Only a ref can hold a package with no working copy: `data.json` has no
+/// way to say so, and a build that reads it would take such a package for a
+/// working copy whose files are all gone. So the field is never serialized,
+/// and a write of `data.json` refuses a package without one; see
+/// [`DomainLineageIo`](crate::lineage::DomainLineageIo).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum WorkingCopyLocation {
     /// The folder `<home>/<namespace>`.
     #[default]
     Home,
     /// None: the package is tracked in the store alone.
     None,
-    /// What a later version recorded, kept as written. No flow reads or
-    /// places its files.
-    Unrecognized(serde_json::Value),
 }
 
 impl WorkingCopyLocation {
@@ -231,27 +243,6 @@ impl WorkingCopyLocation {
     #[must_use]
     pub fn is_home(&self) -> bool {
         matches!(self, Self::Home)
-    }
-}
-
-impl Serialize for WorkingCopyLocation {
-    fn serialize<S: ser::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        match self {
-            Self::Home => serializer.serialize_str("home"),
-            Self::None => serializer.serialize_str("none"),
-            Self::Unrecognized(value) => value.serialize(serializer),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for WorkingCopyLocation {
-    fn deserialize<D: de::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let value = serde_json::Value::deserialize(deserializer)?;
-        Ok(match value.as_str() {
-            Some("home") => Self::Home,
-            Some("none") => Self::None,
-            _ => Self::Unrecognized(value),
-        })
     }
 }
 
@@ -280,9 +271,8 @@ pub struct PackageLineage {
     /// package on the default scope; see [`SyncScope`].
     #[serde(default, skip_serializing_if = "SyncScope::is_default")]
     pub sync_scope: SyncScope,
-    /// Absent for a working copy at the home, so `data.json` keeps the shape
-    /// every build reads.
-    #[serde(default, skip_serializing_if = "WorkingCopyLocation::is_home")]
+    /// Kept in a ref as its `copies` list, never in `data.json`.
+    #[serde(skip)]
     pub working_copy: WorkingCopyLocation,
 }
 
@@ -391,9 +381,6 @@ impl PackageLineage {
         match self.working_copy {
             WorkingCopyLocation::Home => Ok(()),
             WorkingCopyLocation::None => Err(LineageError::NoWorkingCopy(namespace.clone()).into()),
-            WorkingCopyLocation::Unrecognized(_) => {
-                Err(LineageError::UnrecognizedWorkingCopy(namespace.clone()).into())
-            }
         }
     }
 

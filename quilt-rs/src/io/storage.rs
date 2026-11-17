@@ -11,14 +11,20 @@ use chrono::DateTime;
 use chrono::Utc;
 use tokio::fs::File;
 use tokio::fs::ReadDir;
+use tokio::io::AsyncReadExt;
 
 use crate::Res;
+use crate::error::FsError;
 
 pub mod auth;
 mod local;
 pub(crate) mod lock;
 
+#[cfg(all(test, unix))]
+pub(crate) use local::tests::Logged;
+
 pub use local::LocalStorage;
+pub(crate) use local::temp_name;
 pub use lock::LockGuard;
 
 // Mock storage is available during testing, or to downstream crates via the
@@ -114,6 +120,44 @@ pub trait Storage {
         path: impl AsRef<Path> + Send + Sync,
         body: ByteStream,
     ) -> impl Future<Output = Res> + Send + Sync;
+
+    /// [`Self::write_byte_stream`] for a file renamed elsewhere right after it
+    /// lands, such as a download staged until it is checked: the folder it
+    /// lands in is not synced, since nothing needs it there after a power loss.
+    fn write_staged_byte_stream(
+        &self,
+        path: impl AsRef<Path> + Send + Sync,
+        body: ByteStream,
+    ) -> impl Future<Output = Res> + Send + Sync {
+        self.write_byte_stream(path, body)
+    }
+
+    /// [`Self::write_byte_stream`] through a temp file named `temp_name` in
+    /// `path`'s folder, so a leftover from a killed write can be traced to its
+    /// target. The name is a bare file name, not the target's, and unique to
+    /// this write: the write truncates a file already there, and removes it on
+    /// failure. With a `tag`, the write passes the failpoints
+    /// `<tag>.before-temp`, `<tag>.after-temp` and `<tag>.after-rename`. A
+    /// storage that does not override this ignores both.
+    fn write_byte_stream_via(
+        &self,
+        path: impl AsRef<Path> + Send + Sync,
+        temp_name: impl AsRef<Path> + Send + Sync,
+        body: ByteStream,
+        tag: Option<&'static str>,
+    ) -> impl Future<Output = Res> + Send + Sync {
+        let _ = (temp_name, tag);
+        self.write_byte_stream(path, body)
+    }
+
+    /// Makes the entries created, renamed or removed in the folder `path`
+    /// survive a power loss. A failure is logged, not returned. On Windows,
+    /// which has no folder sync, and in a storage that does not override this,
+    /// it does nothing.
+    fn sync_dir(&self, path: impl AsRef<Path> + Send) -> impl Future<Output = ()> + Send {
+        let _ = path;
+        async {}
+    }
 
     /// Creates the directory `path` and any missing parent. On Unix `path` is
     /// created 0700, and one that already existed is set to 0700 where the
@@ -214,6 +258,30 @@ impl<S: Storage + Send + Sync> Storage for Arc<S> {
         (**self).write_byte_stream(path, body).await
     }
 
+    async fn write_staged_byte_stream(
+        &self,
+        path: impl AsRef<Path> + Send + Sync,
+        body: ByteStream,
+    ) -> Res {
+        (**self).write_staged_byte_stream(path, body).await
+    }
+
+    async fn write_byte_stream_via(
+        &self,
+        path: impl AsRef<Path> + Send + Sync,
+        temp_name: impl AsRef<Path> + Send + Sync,
+        body: ByteStream,
+        tag: Option<&'static str>,
+    ) -> Res {
+        (**self)
+            .write_byte_stream_via(path, temp_name, body, tag)
+            .await
+    }
+
+    async fn sync_dir(&self, path: impl AsRef<Path> + Send) {
+        (**self).sync_dir(path).await;
+    }
+
     async fn create_private_dir(&self, path: impl AsRef<Path> + Send) -> Res {
         (**self).create_private_dir(path).await
     }
@@ -243,11 +311,24 @@ pub trait StorageExt: Storage {
     fn read_bytes(
         &self,
         path: impl AsRef<Path> + Send + Sync,
-    ) -> impl Future<Output = Res<Vec<u8>>> + Send + Sync;
+    ) -> impl Future<Output = Res<Vec<u8>>> + Send;
 }
 
 impl<T: Storage + Sync> StorageExt for T {
+    // Not through `read_byte_stream`: it takes the length before it opens the
+    // file, so a file renamed over `path` in between reads cut to the old size.
     async fn read_bytes(&self, path: impl AsRef<Path> + Send + Sync) -> Res<Vec<u8>> {
-        Ok(self.read_byte_stream(path).await?.collect().await?.to_vec())
+        let path = path.as_ref();
+        let mut file = self.open_file(path).await?;
+        // Unsized, tokio reads in doubling chunks, each a blocking call.
+        let size = file.metadata().await.map_or(0, |m| m.len());
+        let mut bytes = Vec::with_capacity(usize::try_from(size).unwrap_or(0));
+        file.read_to_end(&mut bytes)
+            .await
+            .map_err(|source| FsError::Read {
+                path: path.to_path_buf(),
+                source,
+            })?;
+        Ok(bytes)
     }
 }

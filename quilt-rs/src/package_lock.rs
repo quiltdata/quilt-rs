@@ -44,7 +44,7 @@ pub fn on_package_lock_wait(notice: impl Fn() + Send + Sync + 'static) {
 }
 
 /// Takes `namespace`'s lock, waiting for it if another writer holds it.
-pub(crate) async fn lock(
+async fn lock(
     storage: &impl Storage,
     paths: &DomainPaths,
     namespace: &Namespace,
@@ -62,7 +62,7 @@ pub(crate) async fn lock(
 
 /// Takes `namespace`'s lock if it is free now; `None` when another writer
 /// holds it.
-pub(crate) async fn try_lock(
+async fn try_lock(
     storage: &impl Storage,
     paths: &DomainPaths,
     namespace: &Namespace,
@@ -70,6 +70,47 @@ pub(crate) async fn try_lock(
     storage
         .try_lock_exclusive(paths.package_lock(namespace))
         .await
+}
+
+/// A package's lock, held until this drops. Only [`Self::take`] and
+/// [`Self::try_take`] make one, so a function given one knows the lock is
+/// held, and need not take it again, which would wait on itself.
+#[derive(Debug)]
+pub(crate) struct PackageLock {
+    namespace: Namespace,
+    _guard: LockGuard,
+}
+
+impl PackageLock {
+    /// [`lock`], kept as proof.
+    pub(crate) async fn take(
+        storage: &impl Storage,
+        paths: &DomainPaths,
+        namespace: &Namespace,
+    ) -> Res<Self> {
+        Ok(Self {
+            namespace: namespace.clone(),
+            _guard: lock(storage, paths, namespace).await?,
+        })
+    }
+
+    /// [`try_lock`], kept as proof.
+    pub(crate) async fn try_take(
+        storage: &impl Storage,
+        paths: &DomainPaths,
+        namespace: &Namespace,
+    ) -> Res<Option<Self>> {
+        Ok(try_lock(storage, paths, namespace)
+            .await?
+            .map(|guard| Self {
+                namespace: namespace.clone(),
+                _guard: guard,
+            }))
+    }
+
+    pub(crate) fn namespace(&self) -> &Namespace {
+        &self.namespace
+    }
 }
 
 #[cfg(test)]

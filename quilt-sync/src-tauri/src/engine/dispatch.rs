@@ -17,9 +17,9 @@ use crate::engine::autopull::activity::AutopullActivity;
 use crate::engine::commands::{
     AccountHost, AutosyncPatch, CommitData, CommitViolation, CommitWorkflows, FreedSpace,
     KeepingScope, LoginData, LoginErrorData, MainPageAccounts, MainPagePackageRefresh,
-    MainPagePackages, MainPageRecentFiles, MainPageWatcher, NotDownloaded, PackagePageData,
-    PathCheck, RecordRow, RemotePackageResult, RevisionHistoryData, RolesData, SetRemoteResponse,
-    SettingsData, SetupData, StopIgnoringPreview, StopIgnoringScope, StorageSize,
+    MainPagePackages, MainPageWatcher, NotDownloaded, PackagePageData, PathCheck, RecordRow,
+    RemotePackageResult, RevisionHistoryData, RolesData, SetRemoteResponse, SettingsData,
+    SetupData, StopIgnoringPreview, StopIgnoringScope, StorageSize,
 };
 use crate::engine::desktop::{Desktop, ForeignHandler, NOT_AVAILABLE};
 use crate::engine::log_settings::LogLevel;
@@ -166,7 +166,6 @@ commands! {
         refresh_main_page_account(host: String) -> AccountHost;
         refresh_main_page_package(namespace: String) -> MainPagePackageRefresh;
         get_main_page_watcher() -> MainPageWatcher;
-        get_main_page_recent_files() -> MainPageRecentFiles;
         package_commit(namespace: String, message: String, metadata: String, workflow: WorkflowIntent, uri: Option<S3PackageUri>) -> String;
         certify_latest(namespace: String, uri: Option<S3PackageUri>) -> String;
         reset_local(namespace: String, uri: Option<S3PackageUri>) -> String;

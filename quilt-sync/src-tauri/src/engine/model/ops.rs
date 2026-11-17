@@ -506,7 +506,7 @@ mod tests {
 
     /// Publish `settings` through `model` on a mocked lock.
     async fn publish_with(model: &MockQuiltModel, settings: &PublishSettings) -> Result<(), Error> {
-        let installed = quilt::LocalDomain::new(std::path::PathBuf::new())
+        let installed = crate::engine::model::mocks::nowhere()
             .create_installed_package(("acme", "demo").into());
         let locked = installed.namespace.clone();
         let status = quilt::lineage::InstalledPackageStatus::default();
@@ -564,7 +564,7 @@ mod tests {
         let mut model = MockQuiltModel::new();
         model.expect_get_installed_package().returning(|_| {
             Ok(Some(
-                quilt::LocalDomain::new(std::path::PathBuf::new())
+                crate::engine::model::mocks::nowhere()
                     .create_installed_package(("acme", "demo").into()),
             ))
         });
@@ -604,7 +604,7 @@ mod tests {
         let mut model = MockQuiltModel::new();
         model.expect_get_installed_package().returning(|_| {
             Ok(Some(
-                quilt::LocalDomain::new(std::path::PathBuf::new())
+                crate::engine::model::mocks::nowhere()
                     .create_installed_package(("acme", "demo").into()),
             ))
         });

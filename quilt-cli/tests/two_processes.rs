@@ -179,14 +179,26 @@ fn two_processes_committing_one_package_keep_both_commits() {
         messages.insert(commit_hash(&stdout), message);
     }
 
-    let lineage: serde_json::Value =
-        serde_json::from_slice(&fs::read(paths.lineage()).expect("data.json")).expect("its JSON");
-    let head = &lineage["packages"]["test/pkg"]["commit"];
-    let last = head["hash"].as_str().expect("the head's hash");
-    let first = head["prev_hashes"][0].as_str().expect("the head's parent");
+    let lineage = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("a runtime")
+        .block_on(async {
+            quilt_rs::LocalDomain::new(&domain)
+                .get_installed_package(&namespace)
+                .await
+                .expect("the domain reads")
+                .expect("installed")
+                .lineage()
+                .await
+                .expect("its lineage")
+        });
+    let head = lineage.commit.expect("a commit");
+    let last = head.hash.as_str();
+    let first = head.prev_hashes[0].as_str();
     assert!(
         messages.contains_key(last) && messages.contains_key(first) && first != last,
-        "the last commit builds on the first: {head}"
+        "the last commit builds on the first: {head:?}"
     );
 
     let log: serde_json::Value = serde_json::from_slice(

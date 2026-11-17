@@ -3,11 +3,12 @@ use test_log::test;
 
 use super::*;
 
-use super::sync_flow_tests::DeniedRemote;
-use super::sync_flow_tests::LoggedOutRemote;
+use super::on_data_json::sync_flow_tests::DeniedRemote;
+use super::on_data_json::sync_flow_tests::LoggedOutRemote;
 use crate::io::remote::mocks::MockRemote;
 use crate::lineage::DomainLineageIo;
 use crate::lineage::Home;
+use crate::lineage::PackageLineage;
 use crate::lineage::PackageLineageIo;
 use crate::local_domain::LocalDomain;
 use crate::paths::DomainPaths;
@@ -91,26 +92,28 @@ async fn a_stranded_temp_file_is_not_a_revision() -> Res {
 /// The revision the remote is at, as its hash.
 const PUBLISHED: &str = "9999999999999999999999999999999999999999999999999999999999999999";
 
-const REMOTE: &str = r#"{
-    "bucket": "bucket",
-    "namespace": "test/history",
-    "hash": "9999999999999999999999999999999999999999999999999999999999999999",
-    "origin": "quilt.test"
-}"#;
+fn remote_with_catalog() -> Option<ManifestUri> {
+    remote_without_catalog().map(|remote| ManifestUri {
+        origin: Some(quilt_uri::fixtures::host()),
+        ..remote
+    })
+}
 
-/// `ManifestUri` spells the catalog host `origin`; leaving it out is the
-/// bucket-only remote a no-catalog push records.
-const REMOTE_WITHOUT_CATALOG: &str = r#"{
-    "bucket": "bucket",
-    "namespace": "test/history",
-    "hash": "9999999999999999999999999999999999999999999999999999999999999999"
-}"#;
+/// The bucket-only remote a no-catalog push records.
+fn remote_without_catalog() -> Option<ManifestUri> {
+    Some(ManifestUri {
+        bucket: "bucket".to_string(),
+        namespace: ("test", "history").into(),
+        hash: PUBLISHED.to_string(),
+        origin: None,
+    })
+}
 
-/// An installed `test/history` whose lineage has `remote_json` as its remote,
+/// An installed `test/history` whose lineage has `remote_uri` as its remote,
 /// over `remote`. The temp dirs must outlive the package.
 async fn package_over<R: Remote>(
     remote: R,
-    remote_json: &str,
+    remote_uri: Option<ManifestUri>,
 ) -> Res<(InstalledPackage<LocalStorage, R>, [TempDir; 2])> {
     let (home, home_dir) = Home::from_temp_dir()?;
     let (paths, paths_dir) = DomainPaths::from_temp_dir()?;
@@ -120,25 +123,23 @@ async fn package_over<R: Remote>(
     paths
         .scaffold_for_installing(&storage, &home, &namespace)
         .await?;
-    let lineage_json = format!(
-        r#"{{
-            "packages": {{
-                "test/history": {{
-                    "commit": null,
-                    "remote": {remote_json},
-                    "base_hash": "{PUBLISHED}",
-                    "latest_hash": "{PUBLISHED}",
-                    "paths": {{}}
-                }}}},
-            "home": "/tmp/working_dir"
-            }}"#
-    );
-    storage
-        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-        .await?;
+    let lineage = PackageLineage {
+        remote_uri,
+        base_hash: PUBLISHED.to_string(),
+        latest_hash: PUBLISHED.to_string(),
+        ..PackageLineage::default()
+    };
+    let domain_lineage_io = DomainLineageIo::write_fixture(
+        crate::lineage::LineageStore::DataJson,
+        &storage,
+        &paths,
+        "/tmp/working_dir",
+        [(namespace.clone(), lineage)],
+    )
+    .await?;
 
     let package = InstalledPackage {
-        lineage: PackageLineageIo::new(DomainLineageIo::new(paths.lineage()), namespace.clone()),
+        lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
         remote: Arc::new(remote),
         storage,
@@ -189,7 +190,7 @@ async fn only_the_revisions_the_registry_lists_are_published() -> Res {
             b"{}".to_vec(),
         )
         .await?;
-    let (package, _dirs) = package_over(remote, REMOTE).await?;
+    let (package, _dirs) = package_over(remote, remote_with_catalog()).await?;
     install_manifest(&package, PUBLISHED, r#"{"version":"v0","message":"Sent"}"#).await?;
     install_manifest(
         &package,
@@ -225,7 +226,7 @@ async fn only_the_revisions_the_registry_lists_are_published() -> Res {
 /// the history.
 #[test(tokio::test)]
 async fn a_local_only_package_asks_the_remote_nothing() -> Res {
-    let (package, _dirs) = package_over(LoggedOutRemote, "null").await?;
+    let (package, _dirs) = package_over(LoggedOutRemote, None).await?;
     install_manifest(
         &package,
         "local-rev",
@@ -273,7 +274,7 @@ async fn a_catalog_less_package_reads_its_pointers_from_the_bucket() -> Res {
         ],
     )
     .await?;
-    let (package, _dirs) = package_over(remote, REMOTE_WITHOUT_CATALOG).await?;
+    let (package, _dirs) = package_over(remote, remote_without_catalog()).await?;
     for (hash, message) in [
         ("first-rev", "First"),
         (PUBLISHED, "Sent"),
@@ -307,12 +308,12 @@ async fn a_catalog_less_package_reads_its_pointers_from_the_bucket() -> Res {
 /// to the bucket when there is none.
 #[test(tokio::test)]
 async fn the_listing_asks_the_registry_only_with_a_catalog() -> Res {
-    for (remote_json, asked) in [
-        (REMOTE, Some("quilt.test".parse::<Host>()?)),
-        (REMOTE_WITHOUT_CATALOG, None),
+    for (remote_uri, asked) in [
+        (remote_with_catalog(), Some(quilt_uri::fixtures::host())),
+        (remote_without_catalog(), None),
     ] {
         let remote = ListingRemote::default();
-        let (package, _dirs) = package_over(remote, remote_json).await?;
+        let (package, _dirs) = package_over(remote, remote_uri).await?;
         install_manifest(&package, PUBLISHED, r#"{"version":"v0"}"#).await?;
 
         let lineage = package.lineage().await?;
@@ -393,7 +394,7 @@ impl Remote for ListingRemote {
 /// the way a lost session fails the registry's.
 #[test(tokio::test)]
 async fn unusable_ambient_credentials_fail_a_catalog_less_history() -> Res {
-    let (package, _dirs) = package_over(LoggedOutRemote, REMOTE_WITHOUT_CATALOG).await?;
+    let (package, _dirs) = package_over(LoggedOutRemote, remote_without_catalog()).await?;
     install_manifest(&package, PUBLISHED, r#"{"version":"v0"}"#).await?;
 
     let lineage = package.lineage().await?;
@@ -409,7 +410,7 @@ async fn unusable_ambient_credentials_fail_a_catalog_less_history() -> Res {
 /// The refusal the popover draws: a refused listing refuses the whole list.
 #[test(tokio::test)]
 async fn a_refused_listing_fails_the_history() -> Res {
-    let (package, _dirs) = package_over(DeniedRemote, REMOTE).await?;
+    let (package, _dirs) = package_over(DeniedRemote, remote_with_catalog()).await?;
     install_manifest(&package, PUBLISHED, r#"{"version":"v0","message":"Sent"}"#).await?;
 
     let lineage = package.lineage().await?;
@@ -426,12 +427,12 @@ async fn a_refused_listing_fails_the_history() -> Res {
 /// and old; `local-rev` was never published.
 async fn package_with_old_revisions()
 -> Res<(InstalledPackage<LocalStorage, MockRemote>, [TempDir; 2])> {
-    package_with_old_revisions_on(REMOTE).await
+    package_with_old_revisions_on(remote_with_catalog()).await
 }
 
-/// [`package_with_old_revisions`] with `remote_json` as its remote.
+/// [`package_with_old_revisions`] with `remote_uri` as its remote.
 async fn package_with_old_revisions_on(
-    remote_json: &str,
+    remote_uri: Option<ManifestUri>,
 ) -> Res<(InstalledPackage<LocalStorage, MockRemote>, [TempDir; 2])> {
     let remote = MockRemote::default();
     seed_pointers(
@@ -439,7 +440,7 @@ async fn package_with_old_revisions_on(
         &[("1758500000", PUBLISHED), ("1758400000", "old-rev")],
     )
     .await?;
-    let (package, dirs) = package_over(remote, remote_json).await?;
+    let (package, dirs) = package_over(remote, remote_uri).await?;
     for hash in [PUBLISHED, "old-rev", "local-rev"] {
         install_manifest(&package, hash, r#"{"version":"v0"}"#).await?;
     }
@@ -474,7 +475,7 @@ async fn an_old_published_revision_is_removed() -> Res {
 
 #[test(tokio::test)]
 async fn an_old_revision_of_a_catalog_less_package_is_removed() -> Res {
-    let (package, _dirs) = package_with_old_revisions_on(REMOTE_WITHOUT_CATALOG).await?;
+    let (package, _dirs) = package_with_old_revisions_on(remote_without_catalog()).await?;
 
     let report = package.remove_revisions(&hashes(&["old-rev"])).await?;
 
@@ -533,7 +534,7 @@ async fn a_busy_package_refuses_the_removal() -> Res {
 /// Without a listing, an unpublished revision cannot be told apart.
 #[test(tokio::test)]
 async fn a_refused_listing_refuses_the_removal() -> Res {
-    let (package, _dirs) = package_over(DeniedRemote, REMOTE).await?;
+    let (package, _dirs) = package_over(DeniedRemote, remote_with_catalog()).await?;
     install_manifest(&package, "old-rev", r#"{"version":"v0"}"#).await?;
 
     assert!(

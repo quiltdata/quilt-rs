@@ -31,12 +31,15 @@
 
 ### Changed
 
+- `quilt` keeps each package's lineage in a file of its own under `.quilt/refs/`, so a damaged one costs only that package: the first command on a domain moves the lineage there from `data.json`, keeps that file as `data.json.pre-refs`, and leaves in its place a stub on which an older `quilt` stops, saying to upgrade. `quilt lineage rollback` moves it back to `data.json`, which a build from before this change reads; the file keeps no per-file hashes, so v0.41.0 and older cannot read it once a package tracks a file (<https://github.com/quiltdata/quilt-rs/pull/1410>, <https://github.com/quiltdata/quilt-rs/pull/1423>, <https://github.com/quiltdata/quilt-rs/pull/1424>)
+- `quilt list` shows a package whose lineage can't be read as a row naming the error (`unreadable: …`, and `error` in `--json`) and lists the others, where that package failed the whole list (<https://github.com/quiltdata/quilt-rs/pull/1402>)
 - `quilt create` without `--meta` writes no `user_meta` key, where it previously wrote `"user_meta": {}` (<https://github.com/quiltdata/quilt-rs/pull/1394>)
 - Building from source now requires Rust 1.99 or newer (<https://github.com/quiltdata/quilt-rs/pull/1370>)
 - `quilt push` of a new package no longer replaces a `latest` someone else already published under the same name: it uploads the revision and warns that `latest` was not updated (<https://github.com/quiltdata/quilt-rs/pull/1373>)
 
 ### Fixed
 
+- `quilt list`, `quilt status` and the commands that write lineage no longer fail now and then with a parse error such as `EOF while parsing` while another `quilt` or QuiltSync writes the same domain's lineage (<https://github.com/quiltdata/quilt-rs/pull/1416>)
 - `quilt status` of a package whose folder is missing says the working copy is unavailable and lists no changes, where it listed every file as removed, and `quilt commit` refuses, naming the folder, where it recorded an empty revision (<https://github.com/quiltdata/quilt-rs/pull/1397>)
 
 ### quilt-rs

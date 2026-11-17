@@ -207,6 +207,8 @@ pub struct WatcherFacts {
     pub publish_enabled: bool,
     /// Every paused namespace with its reason, from one read of the map.
     pub paused: Vec<(Namespace, PausedReason)>,
+    /// Each package's last-change time, the one autopublish waits from.
+    pub last_changes: BTreeMap<Namespace, SystemTime>,
     pub next_pull_at: Option<DateTime<Utc>>,
     /// Each package with something to show, by namespace.
     pub packages: Vec<(Namespace, PackageAutosync)>,
@@ -579,11 +581,20 @@ impl Watcher {
         let settings = self.inner.settings.read().await.clone();
         let wait = Duration::from_secs(settings.push.idle_timeout_secs);
         let paused: BTreeMap<Namespace, PausedReason> = self.inner.paused.read().await.clone();
+        let last_changes = last_change_times(&self.inner).await;
         WatcherFacts {
             pull_enabled: settings.pull.enabled,
             publish_enabled: settings.push.enabled,
-            packages: package_states(&self.inner, &paused, settings.push.enabled, wait).await,
+            packages: package_states(
+                &self.inner,
+                &paused,
+                &last_changes,
+                settings.push.enabled,
+                wait,
+            )
+            .await,
             paused: paused.into_iter().collect(),
+            last_changes,
             next_pull_at: *self.inner.clocks.next_pull_at.read().await,
             pull_interval: pull_cadence(&settings.pull),
             publish_interval: wait,
@@ -679,6 +690,16 @@ pub(crate) async fn arm_next_pull(inner: &WatcherInner, cadence: Duration) {
     *inner.clocks.next_pull_at.write().await = Some(Utc::now() + cadence);
 }
 
+async fn last_change_times(inner: &WatcherInner) -> BTreeMap<Namespace, SystemTime> {
+    let mut times = BTreeMap::new();
+    for namespace in inner.last_change.namespaces().await {
+        if let Some(at) = inner.last_change.get(&namespace).await {
+            times.insert(namespace, at);
+        }
+    }
+    times
+}
+
 /// Each package's autosync state, with `wait` as it is now. The first that
 /// holds wins: publishing, paused, off (publishing off and changes found),
 /// retrying (in backoff with changes), waiting. Any other package is left out.
@@ -689,6 +710,7 @@ pub(crate) async fn arm_next_pull(inner: &WatcherInner, cadence: Duration) {
 pub(crate) async fn package_states(
     inner: &WatcherInner,
     paused: &BTreeMap<Namespace, PausedReason>,
+    last_changes: &BTreeMap<Namespace, SystemTime>,
     push_enabled: bool,
     wait: Duration,
 ) -> Vec<(Namespace, PackageAutosync)> {
@@ -699,8 +721,7 @@ pub(crate) async fn package_states(
         .map(|activity| activity.namespace);
     let waiting = inner.clocks.publish_waiting.read().await.clone();
     let backoff = inner.backoff.read().await.clone();
-    let mut namespaces: BTreeSet<Namespace> =
-        inner.last_change.namespaces().await.into_iter().collect();
+    let mut namespaces: BTreeSet<Namespace> = last_changes.keys().cloned().collect();
     namespaces.extend(waiting.iter().cloned());
     namespaces.extend(paused.keys().cloned());
     namespaces.extend(backoff.keys().cloned());
@@ -709,7 +730,7 @@ pub(crate) async fn package_states(
     let (now, wall) = (std::time::Instant::now(), Utc::now());
     let mut states = Vec::new();
     for namespace in namespaces {
-        let last_change = inner.last_change.get(&namespace).await;
+        let last_change = last_changes.get(&namespace).copied();
         let has_changes = waiting.contains(&namespace) || last_change.is_some();
         let state = if publishing.as_ref() == Some(&namespace) {
             PackageAutosync::Publishing
@@ -744,7 +765,8 @@ pub(crate) async fn package_states(
 pub(crate) async fn next_publish_at(inner: &WatcherInner, wait: Duration) -> Option<DateTime<Utc>> {
     let paused = inner.paused.read().await.clone();
     let push_enabled = inner.settings.read().await.push.enabled;
-    package_states(inner, &paused, push_enabled, wait)
+    let last_changes = last_change_times(inner).await;
+    package_states(inner, &paused, &last_changes, push_enabled, wait)
         .await
         .into_iter()
         .filter_map(|(_, state)| match state {
@@ -873,15 +895,13 @@ mod tests {
                 Ok(listed
                     .iter()
                     .map(|ns| {
-                        crate::engine::quilt::LocalDomain::new(std::path::PathBuf::new())
-                            .create_installed_package(ns.clone())
+                        crate::engine::model::mocks::nowhere().create_installed_package(ns.clone())
                     })
                     .collect())
             });
         model.expect_get_installed_package().returning(|ns| {
             Ok(Some(
-                crate::engine::quilt::LocalDomain::new(std::path::PathBuf::new())
-                    .create_installed_package(ns.clone()),
+                crate::engine::model::mocks::nowhere().create_installed_package(ns.clone()),
             ))
         });
         model
@@ -923,9 +943,7 @@ mod tests {
     impl SlowWalks {
         fn new(count: usize) -> Self {
             Self {
-                quilt: tokio::sync::Mutex::new(crate::engine::quilt::LocalDomain::new(
-                    std::path::PathBuf::new(),
-                )),
+                quilt: tokio::sync::Mutex::new(crate::engine::model::mocks::nowhere()),
                 packages: (0..count)
                     .map(|i| ("acme", format!("pkg{i}").as_str()).into())
                     .collect(),
@@ -935,8 +953,7 @@ mod tests {
         }
 
         fn package(namespace: &Namespace) -> crate::engine::quilt::InstalledPackage {
-            crate::engine::quilt::LocalDomain::new(std::path::PathBuf::new())
-                .create_installed_package(namespace.clone())
+            crate::engine::model::mocks::nowhere().create_installed_package(namespace.clone())
         }
     }
 
@@ -1240,8 +1257,7 @@ mod tests {
         let mut model = crate::engine::model::MockQuiltModel::new();
         model.expect_get_installed_package().returning(|ns| {
             Ok(Some(
-                crate::engine::quilt::LocalDomain::new(std::path::PathBuf::new())
-                    .create_installed_package(ns.clone()),
+                crate::engine::model::mocks::nowhere().create_installed_package(ns.clone()),
             ))
         });
         model
@@ -1569,6 +1585,28 @@ mod tests {
             .await
             .expect("the card counts down to the push");
         assert!(deadline >= before + Duration::from_secs(600));
+    }
+
+    #[tokio::test]
+    async fn the_last_changes_are_the_times_autopublish_waits_from() {
+        let watcher = Watcher::new_for_test(Arc::new(LogReporter));
+        let ns: Namespace = ("acme", "demo").into();
+        let at = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        watcher
+            .inner_for_test()
+            .last_change
+            .store_for_test()
+            .record_change(
+                &ns,
+                at,
+                crate::engine::quilt::state_store::ChangeSource::Edit,
+            )
+            .await;
+
+        assert_eq!(
+            watcher.main_page_facts().await.last_changes,
+            BTreeMap::from([(ns, at)])
+        );
     }
 
     #[tokio::test]

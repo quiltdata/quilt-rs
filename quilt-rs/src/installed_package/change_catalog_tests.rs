@@ -11,6 +11,7 @@ use crate::io::remote::WorkflowIntent;
 use crate::io::remote::mocks::MockRemote;
 use crate::lineage::DomainLineageIo;
 use crate::lineage::Home;
+use crate::lineage::PackageLineage;
 use crate::lineage::PackageLineageIo;
 use crate::lineage::UpstreamState;
 use crate::paths::DomainPaths;
@@ -21,7 +22,7 @@ const HASH: &str = "abcdef000000000000000000000000000000000000000000000000000000
 /// `latest`, holding a pending commit on top. `catalog` is the remote's
 /// catalog, if any.
 async fn published(
-    catalog: Option<&str>,
+    catalog: Option<Host>,
 ) -> Res<(
     InstalledPackage<LocalStorage, MockRemote>,
     tempfile::TempDir,
@@ -36,34 +37,27 @@ async fn published(
     paths
         .scaffold_for_installing(&storage, &home, &namespace)
         .await?;
-    let catalog = catalog.map_or(String::new(), |c| format!(r#", "catalog": "{c}""#));
-    let lineage_json = format!(
-        r#"{{
-            "packages": {{
-                "test/survey": {{
-                    "commit": {{
-                        "timestamp": "2024-01-01T00:00:00Z",
-                        "hash": "{HASH}",
-                        "prev_hashes": ["older"]
-                    }},
-                    "remote": {{
-                        "bucket": "bkt",
-                        "namespace": "test/survey",
-                        "hash": "{HASH}"{catalog}
-                    }},
-                    "base_hash": "{HASH}",
-                    "latest_hash": "{HASH}",
-                    "paths": {{}}
-                }}
-            }},
-            "home": {}
-        }}"#,
-        // Serialized, so a Windows path's backslashes are escaped.
-        serde_json::to_string(home.as_ref())?,
-    );
-    storage
-        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-        .await?;
+    let lineage = PackageLineage {
+        commit: Some(CommitState {
+            timestamp: "2024-01-01T00:00:00Z".parse().expect("a timestamp"),
+            hash: HASH.to_string(),
+            prev_hashes: vec!["older".to_string()],
+        }),
+        ..PackageLineage::from(ManifestUri {
+            bucket: "bkt".to_string(),
+            namespace: namespace.clone(),
+            hash: HASH.to_string(),
+            origin: catalog,
+        })
+    };
+    let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
+        &storage,
+        &paths,
+        home.as_ref(),
+        [(namespace.clone(), lineage)],
+    )
+    .await?;
     storage
         .write_byte_stream(
             paths.installed_manifest(&namespace, HASH),
@@ -79,7 +73,7 @@ async fn published(
         .await?;
 
     let package = InstalledPackage {
-        lineage: PackageLineageIo::new(DomainLineageIo::new(paths.lineage()), namespace.clone()),
+        lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
         remote: std::sync::Arc::new(remote),
         storage,
@@ -127,7 +121,7 @@ async fn adding_a_catalog_keeps_the_published_package() -> Res {
 /// Removing the catalog is the same narrow change the other way.
 #[test(tokio::test)]
 async fn removing_the_catalog_keeps_the_published_package() -> Res {
-    let (package, _home, _paths) = published(Some("quilt.test")).await?;
+    let (package, _home, _paths) = published(Some(fixtures::host())).await?;
     let before = kept(&package).await?;
 
     let remote = package.change_catalog(None).await?;
@@ -142,7 +136,7 @@ async fn removing_the_catalog_keeps_the_published_package() -> Res {
 /// One catalog for another.
 #[test(tokio::test)]
 async fn changing_the_catalog_keeps_the_published_package() -> Res {
-    let (package, _home, _paths) = published(Some("quilt.test")).await?;
+    let (package, _home, _paths) = published(Some(fixtures::host())).await?;
     let before = kept(&package).await?;
 
     let remote = package
@@ -165,23 +159,16 @@ async fn a_package_without_a_remote_is_refused() -> Res {
     paths
         .scaffold_for_installing(&storage, &home, &namespace)
         .await?;
-    let lineage_json = r#"{
-        "packages": {
-            "test/local": {
-                "commit": null,
-                "remote": null,
-                "base_hash": "",
-                "latest_hash": "",
-                "paths": {}
-            }
-        },
-        "home": "/tmp/working_dir"
-    }"#;
-    storage
-        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-        .await?;
+    let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
+        &storage,
+        &paths,
+        "/tmp/working_dir",
+        [(namespace.clone(), PackageLineage::default())],
+    )
+    .await?;
     let package = InstalledPackage {
-        lineage: PackageLineageIo::new(DomainLineageIo::new(paths.lineage()), namespace.clone()),
+        lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
         remote: std::sync::Arc::new(MockRemote::default()),
         storage,
@@ -203,7 +190,7 @@ async fn a_package_without_a_remote_is_refused() -> Res {
 /// new bucket, even with the same catalog.
 #[test(tokio::test)]
 async fn set_remote_still_refuses_a_new_bucket_once_published() -> Res {
-    let (package, _home, _paths) = published(Some("quilt.test")).await?;
+    let (package, _home, _paths) = published(Some(fixtures::host())).await?;
 
     let result = package
         .set_remote(

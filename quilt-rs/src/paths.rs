@@ -216,6 +216,19 @@ impl DomainPaths {
         self.dot_quilt_dir().join(LINEAGE_FILE)
     }
 
+    /// Directory holding every package's ref, `refs/<owner>/<name>.json`,
+    /// and beside each its cache of the remote's tip.
+    #[must_use]
+    pub fn refs_dir(&self) -> PathBuf {
+        self.dot_quilt_dir().join("refs")
+    }
+
+    /// The home and migration state of a domain whose packages keep refs.
+    #[must_use]
+    pub fn domain_config(&self) -> PathBuf {
+        self.dot_quilt_dir().join("domain.json")
+    }
+
     /// The package's lock file, `.quilt/locks/<owner>/<name>.lock`; see
     /// [`InstalledPackage::lock`](crate::InstalledPackage::lock).
     #[must_use]
@@ -346,6 +359,73 @@ impl DomainPaths {
     }
 }
 
+impl DomainPaths {
+    /// `RefEntry::classify` reads these names back.
+    #[must_use]
+    pub(crate) fn package_ref(&self, namespace: &Namespace) -> PathBuf {
+        self.refs_dir().join(format!("{namespace}.json"))
+    }
+
+    /// The package's cache of the remote's tip, beside its ref.
+    #[must_use]
+    pub(crate) fn package_tip(&self, namespace: &Namespace) -> PathBuf {
+        self.refs_dir().join(format!("{namespace}.json.latest"))
+    }
+
+    /// Taken to create or remove a ref and to change the home. A file lock,
+    /// not the desktop app's in-process domain lock.
+    #[must_use]
+    pub(crate) fn domain_file_lock(&self) -> PathBuf {
+        self.dot_quilt_dir().join("domain.lock")
+    }
+}
+
+/// The files of the move from `data.json` to refs and back.
+impl DomainPaths {
+    /// Held throughout by the one process moving the domain either way.
+    #[must_use]
+    pub(crate) fn migrate_lock(&self) -> PathBuf {
+        self.dot_quilt_dir().join("migrate.lock")
+    }
+
+    /// `data.json` as the domain's first move to refs found it, which no
+    /// later move overwrites.
+    #[must_use]
+    pub(crate) fn lineage_pre_refs(&self) -> PathBuf {
+        self.dot_quilt_dir()
+            .join(format!("{LINEAGE_FILE}.pre-refs"))
+    }
+
+    /// Every move's frozen copy of `data.json`, which it migrates from.
+    #[must_use]
+    pub(crate) fn lineage_migrating(&self) -> PathBuf {
+        self.dot_quilt_dir()
+            .join(format!("{LINEAGE_FILE}.migrating"))
+    }
+
+    /// The `data.json` a rollback builds from the refs, before it replaces
+    /// the stub.
+    #[must_use]
+    pub(crate) fn lineage_rollback(&self) -> PathBuf {
+        self.dot_quilt_dir()
+            .join(format!("{LINEAGE_FILE}.rollback"))
+    }
+
+    /// The short lock, `data.json.lock`, every build that writes `data.json`
+    /// takes; `DomainLineageIo` names it too.
+    #[must_use]
+    pub(crate) fn lineage_lock(&self) -> PathBuf {
+        self.dot_quilt_dir().join(format!("{LINEAGE_FILE}.lock"))
+    }
+
+    /// Where a rollback moves `refs/`, under the name the domain config
+    /// records.
+    #[must_use]
+    pub(crate) fn refs_archive(&self, name: &str) -> PathBuf {
+        self.dot_quilt_dir().join(name)
+    }
+}
+
 pub async fn copy_cached_to_installed(
     paths: &DomainPaths,
     storage: &impl Storage,
@@ -444,6 +524,47 @@ mod tests {
             PathBuf::from("foo/bar/.quilt/installed")
         );
         assert_eq!(paths.locks_dir(), PathBuf::from("foo/bar/.quilt/locks"));
+        assert_eq!(paths.refs_dir(), PathBuf::from("foo/bar/.quilt/refs"));
+        assert_eq!(
+            paths.package_ref(&("acme", "demo").into()),
+            PathBuf::from("foo/bar/.quilt/refs/acme/demo.json")
+        );
+        assert_eq!(
+            paths.package_tip(&("acme", "demo").into()),
+            PathBuf::from("foo/bar/.quilt/refs/acme/demo.json.latest")
+        );
+        assert_eq!(
+            paths.domain_config(),
+            PathBuf::from("foo/bar/.quilt/domain.json")
+        );
+        assert_eq!(
+            paths.domain_file_lock(),
+            PathBuf::from("foo/bar/.quilt/domain.lock")
+        );
+        assert_eq!(
+            paths.migrate_lock(),
+            PathBuf::from("foo/bar/.quilt/migrate.lock")
+        );
+        assert_eq!(
+            paths.lineage_pre_refs(),
+            PathBuf::from("foo/bar/.quilt/data.json.pre-refs")
+        );
+        assert_eq!(
+            paths.lineage_migrating(),
+            PathBuf::from("foo/bar/.quilt/data.json.migrating")
+        );
+        assert_eq!(
+            paths.lineage_rollback(),
+            PathBuf::from("foo/bar/.quilt/data.json.rollback")
+        );
+        assert_eq!(
+            paths.lineage_lock(),
+            PathBuf::from("foo/bar/.quilt/data.json.lock")
+        );
+        assert_eq!(
+            paths.refs_archive("refs.rolled-back-x"),
+            PathBuf::from("foo/bar/.quilt/refs.rolled-back-x")
+        );
         assert_eq!(
             paths.cached_manifests_root(),
             PathBuf::from("foo/bar/.quilt/packages")

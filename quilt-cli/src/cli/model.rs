@@ -127,6 +127,10 @@ pub trait Commands {
         let local_domain = self.get_local_domain();
         uninstall::model(local_domain, args).await
     }
+
+    async fn lineage_rollback(&self) -> Result<crate::cli::lineage::Output, Error> {
+        crate::cli::lineage::model(self.get_local_domain()).await
+    }
 }
 
 impl Commands for Model {

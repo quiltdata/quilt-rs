@@ -37,7 +37,7 @@ pub(crate) use quilt_sync_ui::{commands, components, pages};
 // that one list.
 mod gallery {
     // The kit's stories this gallery's scenes read fixtures from.
-    pub use quilt_ui_kit::stories::{button_group, inbox, queue_parts, recent_files_parts};
+    pub use quilt_ui_kit::stories::{button_group, inbox, queue_parts};
 
     pub mod commit_page;
     pub mod context_pane;
@@ -53,7 +53,6 @@ mod gallery {
     pub mod packages;
     pub mod page;
     pub mod queue;
-    pub mod recent_files;
     pub mod settings_page;
     pub mod small_pages;
     pub mod state_strip;
@@ -177,11 +176,6 @@ const ENTRIES: &[Entry] = &[
         SCENES / "Main page",
         "List toolbar",
         kit list_toolbar::ListToolbarScene
-    ),
-    entry!(
-        SCENES / "Main page",
-        "Recent files",
-        recent_files::RecentFilesScene
     ),
     entry!(SCENES / "Main page", "Packages", packages::PackagesScene),
     entry!(

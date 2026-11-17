@@ -13,6 +13,14 @@ pub fn create() -> MockQuiltModel {
     MockQuiltModel::new()
 }
 
+/// A domain on no folder. On `data.json`, its lineage reads fail as a
+/// domain's that was never set up, where on refs the first one would move a
+/// domain into the working directory.
+pub fn nowhere() -> quilt::LocalDomain {
+    quilt::LocalDomain::new(PathBuf::new())
+        .with_lineage_store(quilt::lineage::LineageStore::DataJson)
+}
+
 pub fn create_remote_manifest() -> quilt::manifest::Manifest {
     quilt::manifest::Manifest {
         header: quilt::manifest::ManifestHeader {
@@ -36,7 +44,7 @@ pub fn mock_installed_package(model: &mut MockQuiltModel) -> &MockQuiltModel {
     };
     model.expect_get_installed_package().returning(move |_| {
         Ok(Some(
-            quilt::LocalDomain::new(PathBuf::new()).create_installed_package(("foo", "bar").into()),
+            nowhere().create_installed_package(("foo", "bar").into()),
         ))
     });
     model
@@ -76,7 +84,7 @@ pub fn mock_remote_package_different_version(model: &mut MockQuiltModel) -> &Moc
     // These are needed for ViewInstalledPackage::create after the error is caught
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
-            quilt::LocalDomain::new(PathBuf::new()).create_installed_package(("foo", "bar").into()),
+            nowhere().create_installed_package(("foo", "bar").into()),
         ))
     });
 
@@ -121,7 +129,7 @@ pub fn mock_remote_package_local_only(model: &mut MockQuiltModel) -> &MockQuiltM
         .returning(|_| Ok(InstallCheck::LocalOnly));
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
-            quilt::LocalDomain::new(PathBuf::new()).create_installed_package(("foo", "bar").into()),
+            nowhere().create_installed_package(("foo", "bar").into()),
         ))
     });
 

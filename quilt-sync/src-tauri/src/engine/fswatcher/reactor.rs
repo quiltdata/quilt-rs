@@ -334,10 +334,7 @@ pub(crate) async fn snapshot_mappings(model: &impl QuiltModel) -> Option<Mapping
                 ),
             )),
             // No folder to watch.
-            Err(quilt::Error::Lineage(
-                quilt::LineageError::NoWorkingCopy(_)
-                | quilt::LineageError::UnrecognizedWorkingCopy(_),
-            )) => {}
+            Err(quilt::Error::Lineage(quilt::LineageError::NoWorkingCopy(_))) => {}
             Err(err) => warn!(
                 "fswatcher: cannot read the lineage of {}: {err}",
                 pkg.namespace
@@ -726,7 +723,7 @@ mod tests {
     }
 
     fn fresh_pkg() -> quilt::InstalledPackage {
-        quilt::LocalDomain::new(PathBuf::new()).create_installed_package(("acme", "demo").into())
+        crate::engine::model::mocks::nowhere().create_installed_package(("acme", "demo").into())
     }
 
     #[tokio::test]

@@ -274,7 +274,7 @@ mod tests {
                 logical_key,
                 PathState {
                     timestamp: chrono::Utc::now(),
-                    hash: row.hash.into(),
+                    hash: Some(row.hash.into()),
                 },
             )]),
             ..PackageLineage::default()

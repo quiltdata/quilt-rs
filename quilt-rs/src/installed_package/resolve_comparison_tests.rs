@@ -3,27 +3,31 @@ use test_log::test;
 
 use super::*;
 
-use super::sync_flow_tests::DeniedRemote;
+use super::on_data_json::sync_flow_tests::DeniedRemote;
 use crate::error::LineageError;
 use crate::io::remote::mocks::MockRemote;
 use crate::lineage::DomainLineageIo;
 use crate::lineage::Home;
+use crate::lineage::PackageLineage;
 use crate::lineage::PackageLineageIo;
 use crate::paths::DomainPaths;
 use crate::paths::tag_key;
 
-const REMOTE: &str = r#"{
-    "bucket": "bucket",
-    "namespace": "test/resolve",
-    "hash": "1111111111111111111111111111111111111111111111111111111111111111",
-    "origin": "quilt.test"
-}"#;
+fn remote_with_catalog() -> Option<ManifestUri> {
+    remote_without_catalog().map(|remote| ManifestUri {
+        origin: Some(quilt_uri::fixtures::host()),
+        ..remote
+    })
+}
 
-const REMOTE_WITHOUT_CATALOG: &str = r#"{
-    "bucket": "bucket",
-    "namespace": "test/resolve",
-    "hash": "1111111111111111111111111111111111111111111111111111111111111111"
-}"#;
+fn remote_without_catalog() -> Option<ManifestUri> {
+    Some(ManifestUri {
+        bucket: "bucket".to_string(),
+        namespace: ("test", "resolve").into(),
+        hash: BASE_REV.to_string(),
+        origin: None,
+    })
+}
 
 /// The revision this copy is based on, and its remote's hash.
 const BASE_REV: &str = "1111111111111111111111111111111111111111111111111111111111111111";
@@ -49,12 +53,12 @@ fn manifest(message: &str, rows: &[(&str, &str)]) -> String {
 }
 
 /// An installed `test/resolve` with a two-revision pending chain
-/// (`local-1` then `local-2`) over `remote_json`, whose on-disk
+/// (`local-1` then `local-2`) over `remote_uri`, whose stored
 /// `latest_hash` is the stale `BASE_REV`. The temp dirs must outlive the
 /// package.
 async fn diverged_over<R: Remote>(
     remote: R,
-    remote_json: &str,
+    remote_uri: Option<ManifestUri>,
 ) -> Res<(InstalledPackage<LocalStorage, R>, [TempDir; 2])> {
     let (home, home_dir) = Home::from_temp_dir()?;
     let (paths, paths_dir) = DomainPaths::from_temp_dir()?;
@@ -64,26 +68,25 @@ async fn diverged_over<R: Remote>(
     paths
         .scaffold_for_installing(&storage, &home, &namespace)
         .await?;
-    let lineage_json = format!(
-        r#"{{
-            "packages": {{
-                "test/resolve": {{
-                    "commit": {{
-                        "timestamp": "2024-01-01T00:00:00Z",
-                        "hash": "local-2",
-                        "prev_hashes": ["local-1"]
-                    }},
-                    "remote": {remote_json},
-                    "base_hash": "{BASE_REV}",
-                    "latest_hash": "{BASE_REV}",
-                    "paths": {{}}
-                }}}},
-            "home": "/tmp/working_dir"
-            }}"#
-    );
-    storage
-        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-        .await?;
+    let lineage = PackageLineage {
+        commit: Some(CommitState {
+            timestamp: "2024-01-01T00:00:00Z".parse().expect("a timestamp"),
+            hash: "local-2".to_string(),
+            prev_hashes: vec!["local-1".to_string()],
+        }),
+        remote_uri,
+        base_hash: BASE_REV.to_string(),
+        latest_hash: BASE_REV.to_string(),
+        ..PackageLineage::default()
+    };
+    let domain_lineage_io = DomainLineageIo::write_fixture(
+        crate::lineage::LineageStore::DataJson,
+        &storage,
+        &paths,
+        "/tmp/working_dir",
+        [(namespace.clone(), lineage)],
+    )
+    .await?;
     storage
         .write_byte_stream(
             paths.installed_manifest(&namespace, "local-2"),
@@ -94,7 +97,7 @@ async fn diverged_over<R: Remote>(
         .await?;
 
     let package = InstalledPackage {
-        lineage: PackageLineageIo::new(DomainLineageIo::new(paths.lineage()), namespace.clone()),
+        lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
         remote: Arc::new(remote),
         storage,
@@ -149,7 +152,7 @@ async fn published_remote() -> Res<MockRemote> {
 
 #[test(tokio::test)]
 async fn the_comparison_reads_the_published_latest_and_the_registry() -> Res {
-    let (package, _dirs) = diverged_over(published_remote().await?, REMOTE).await?;
+    let (package, _dirs) = diverged_over(published_remote().await?, remote_with_catalog()).await?;
 
     let lineage = package.lineage().await?;
     let comparison = package.resolve_comparison(&lineage).await?;
@@ -164,7 +167,8 @@ async fn the_comparison_reads_the_published_latest_and_the_registry() -> Res {
 /// would, so it is subtracted.
 #[test(tokio::test)]
 async fn without_a_catalog_host_the_bucket_is_listed() -> Res {
-    let (package, _dirs) = diverged_over(published_remote().await?, REMOTE_WITHOUT_CATALOG).await?;
+    let (package, _dirs) =
+        diverged_over(published_remote().await?, remote_without_catalog()).await?;
 
     let lineage = package.lineage().await?;
     let comparison = package.resolve_comparison(&lineage).await?;
@@ -176,7 +180,7 @@ async fn without_a_catalog_host_the_bucket_is_listed() -> Res {
 
 #[test(tokio::test)]
 async fn a_local_only_package_has_nothing_to_compare() -> Res {
-    let (package, _dirs) = diverged_over(published_remote().await?, "null").await?;
+    let (package, _dirs) = diverged_over(published_remote().await?, None).await?;
 
     let lineage = package.lineage().await?;
     let result = package.resolve_comparison(&lineage).await;
@@ -192,7 +196,7 @@ async fn a_local_only_package_has_nothing_to_compare() -> Res {
 /// `Err` as the refused comparison.
 #[test(tokio::test)]
 async fn a_refusing_remote_refuses_the_comparison() -> Res {
-    let (package, _dirs) = diverged_over(DeniedRemote, REMOTE).await?;
+    let (package, _dirs) = diverged_over(DeniedRemote, remote_with_catalog()).await?;
 
     let lineage = package.lineage().await?;
     let err = package

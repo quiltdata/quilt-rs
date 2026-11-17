@@ -300,9 +300,6 @@ pub enum LineageError {
     #[error("Package {0} has no working copy; open it as a working copy first")]
     NoWorkingCopy(Namespace),
 
-    #[error("Package {0} has a working copy recorded by a newer version; update to use it")]
-    UnrecognizedWorkingCopy(Namespace),
-
     /// Opening a working copy takes only an empty folder, which it then owns.
     #[error(
         "{} already holds files; move them away to open the package there",
@@ -324,6 +321,97 @@ pub enum LineageError {
         "Folder {0:?} is not inside the package: name it from the package root, without \"..\""
     )]
     FolderOutsidePackage(String),
+
+    /// A package's ref or the domain config does not parse.
+    #[error("Failed to parse {}: {source}", path.display())]
+    FileParse {
+        path: PathBuf,
+        source: serde_json::Error,
+    },
+
+    /// A file written in a format this version does not read, most likely by
+    /// a newer one, which may have added fields this version would drop.
+    #[error(
+        "{} is in format {found}, and this version of quilt reads format {supported}",
+        path.display()
+    )]
+    UnsupportedFormat {
+        path: PathBuf,
+        found: u32,
+        supported: u32,
+    },
+
+    /// A package's ref records working copies a later version may write.
+    #[error(
+        "{} records {found}, and this version of quilt supports only one working copy, in the package's folder, at its base",
+        path.display()
+    )]
+    UnsupportedCopies { path: PathBuf, found: &'static str },
+
+    /// What was placed for the package is removed, but for `kept`, the
+    /// files edited while it was placed.
+    #[error(
+        "The home changed from {} to {} while the package was being placed, so it was not recorded{}",
+        placed.display(),
+        home.display(),
+        kept_files(kept)
+    )]
+    HomeChanged {
+        placed: PathBuf,
+        home: PathBuf,
+        kept: Vec<PathBuf>,
+    },
+
+    /// The domain config, at `path`, does not say the domain's lineage has
+    /// moved to refs, so its packages are neither listed nor written.
+    #[error(
+        "Lineage cannot be listed or written while the move to per-package refs {state} ({})",
+        path.display()
+    )]
+    RefsNotWritable { path: PathBuf, state: &'static str },
+
+    /// `data.json` does not parse, so its lineage is not moved to refs and
+    /// nothing is changed.
+    #[error(
+        "Cannot move the lineage in {} to per-package refs: it does not parse: {source}",
+        path.display()
+    )]
+    MigrationRefused {
+        path: PathBuf,
+        source: serde_json::Error,
+    },
+
+    /// A ref `data.json` cannot hold, so the lineage stays on refs.
+    #[error("Cannot roll the lineage back to data.json: {0}")]
+    RollbackRefused(Box<LineageError>),
+
+    /// `data.json` beside refs is not the stub the move leaves, so a
+    /// rollback would take it for one it had already published.
+    #[error(
+        "{} is not the stub the move to per-package refs leaves, so it may hold a lineage the refs do not; move it aside to roll back",
+        path.display()
+    )]
+    NotTheStub { path: PathBuf },
+
+    /// A rollback was interrupted, and only the command that started it
+    /// finishes it.
+    #[error(
+        "The lineage is being rolled back to data.json; run `quilt lineage rollback` to finish ({})",
+        path.display()
+    )]
+    RollingBack { path: PathBuf },
+}
+
+/// The tail of [`LineageError::HomeChanged`]'s message naming `kept`.
+fn kept_files(kept: &[PathBuf]) -> String {
+    if kept.is_empty() {
+        return String::new();
+    }
+    let files: Vec<String> = kept.iter().map(|file| file.display().to_string()).collect();
+    format!(
+        "; edited meanwhile, these stay where they are: {}",
+        files.join(", ")
+    )
 }
 
 #[derive(Error, Debug, PartialEq)]
@@ -766,6 +854,44 @@ mod tests {
         assert!(
             !Error::S3(S3Error::new(S3ErrorKind::AccessDenied("no".to_string())))
                 .is_ambient_session_absent()
+        );
+    }
+
+    #[test]
+    fn a_changed_home_names_both_folders() {
+        let err = LineageError::HomeChanged {
+            placed: PathBuf::from("/old/home"),
+            home: PathBuf::from("/new/home"),
+            kept: Vec::new(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "The home changed from /old/home to /new/home while the package was being placed, so it was not recorded"
+        );
+    }
+
+    #[test]
+    fn an_interrupted_rollback_names_the_command_that_finishes_it() {
+        let err = LineageError::RollingBack {
+            path: PathBuf::from("/d/.quilt/domain.json"),
+        };
+        assert!(
+            err.to_string().contains("run `quilt lineage rollback`"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_changed_home_names_the_files_kept() {
+        let err = LineageError::HomeChanged {
+            placed: PathBuf::from("/old/home"),
+            home: PathBuf::from("/new/home"),
+            kept: vec![PathBuf::from("/old/home/a/b/x.csv")],
+        };
+        assert!(
+            err.to_string()
+                .ends_with("; edited meanwhile, these stay where they are: /old/home/a/b/x.csv"),
+            "{err}"
         );
     }
 }

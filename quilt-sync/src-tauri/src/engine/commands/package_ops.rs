@@ -2243,7 +2243,7 @@ mod tests {
         let mut model = MockQuiltModel::new();
         model.expect_get_installed_package().returning(|_| {
             Ok(Some(
-                quilt::LocalDomain::new(std::path::PathBuf::new())
+                crate::engine::model::mocks::nowhere()
                     .create_installed_package(("acme", "demo").into()),
             ))
         });

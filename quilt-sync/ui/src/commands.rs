@@ -1004,9 +1004,6 @@ pub struct MainPagePackageRefreshData {
     pub role_switch_host: Option<String>,
     /// `None` when the status check did not run or failed.
     pub downloads: Option<MainPageDownloadsData>,
-    /// Files changed here since the last commit; `None` when the status check
-    /// did not run or failed. Apart from `state`, which can hide it.
-    pub changed_files: Option<usize>,
 }
 
 /// What a copy holds of its current revision. Mirrors `MainPageDownloads` on
@@ -1070,9 +1067,8 @@ pub struct MainPagePackagesData {
 pub struct MainPagePackageData {
     pub namespace: Namespace,
     pub state: quilt_ui_kit::PackageState,
-    /// Epoch milliseconds, from the last commit or the last installed path — see
-    /// `last_changed` on the engine's side. `None` only when nothing has ever been
-    /// written to the package.
+    /// Epoch milliseconds — see `last_changed` on the engine's side. `None` when
+    /// none of the times it reads is known.
     pub changed_at: Option<f64>,
     /// The queue's group key for `RoleDenied` (§4.3, R2): one host can hold
     /// both readable and unreadable buckets, so `derive_queue` groups a
@@ -1295,38 +1291,6 @@ pub async fn refresh_main_page_account(host: String) -> Result<AccountHostData, 
         host: String,
     }
     engine::invoke("refresh_main_page_account", &Args { host }).await
-}
-
-/// One installed or published file, flat across every package. Mirrors the
-/// backend's `MainPageFile`; the owning package travels with the row rather
-/// than grouping it.
-#[derive(Clone, Debug, PartialEq, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MainPageFileData {
-    pub path: String,
-    pub namespace: Namespace,
-    /// Epoch milliseconds. Never re-sorted or re-capped on this side — see
-    /// `pages::main_page::recent_files::RecentFilesRegion`.
-    pub changed_at: f64,
-    /// The revision the package holds, when its remote has it and the package
-    /// has no unpublished revision; the catalog link and the copied URI name
-    /// it. `None` otherwise. Read from the lineage alone.
-    pub published_hash: Option<String>,
-}
-
-/// Payload of `get_main_page_recent_files`: §3.2's flat feed, already newest
-/// first and already bounded by the backend (§4.5).
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MainPageRecentFilesData {
-    pub files: Vec<MainPageFileData>,
-}
-
-/// The recent files feed, single-phase: drawn by
-/// `pages::main_page::recent_files::RecentFilesRegion`, and read by the main
-/// page's own resource only once the reader asks for that view.
-pub async fn get_main_page_recent_files() -> Result<MainPageRecentFilesData, String> {
-    engine::invoke_unit("get_main_page_recent_files").await
 }
 
 /// Payload of the `package-status-changed` engine event, with the namespace
@@ -2729,25 +2693,6 @@ mod tests {
         assert_eq!(pkg.host.as_deref(), Some("quilt.test"));
         assert!(pkg.provisional);
         assert_eq!(pkg.role_switch_host, None);
-    }
-
-    /// The mirror struct must deserialize the exact camelCase JSON the
-    /// backend's `MainPageFile`/`MainPageRecentFiles`
-    /// (`#[serde(rename_all = "camelCase")]`, both plain `Serialize`) produce.
-    /// If the two drift, the feed silently fails to deserialize at the engine
-    /// boundary.
-    #[test]
-    fn main_page_recent_files_data_wire_form_is_verbatim() {
-        let data = serde_json::from_str::<super::MainPageRecentFilesData>(
-            r#"{"files":[{"path":"a/one.csv","namespace":"user/alpha","changedAt":1000.0,"publishedHash":"abc123"}]}"#,
-        )
-        .unwrap();
-        assert_eq!(data.files.len(), 1);
-        let file = &data.files[0];
-        assert_eq!(file.path, "a/one.csv");
-        assert_eq!(file.namespace.to_string(), "user/alpha");
-        assert!((file.changed_at - 1000.0).abs() < f64::EPSILON);
-        assert_eq!(file.published_hash.as_deref(), Some("abc123"));
     }
 
     /// The mirror struct must deserialize the heavy phase's two never-before-seen

@@ -40,15 +40,15 @@ in code by `LocalDomain`. Its on-disk layout:
 ├── packages/           # Immutable cache of remote manifests, by bucket
 ├── installed/          # Local package installations, by namespace
 ├── objects/            # Content-addressed object store (deduplicated)
-├── data.json           # Installation, modification, and commit tracking
-└── data-ext.json       # The same, for packages with no working copy at the home
+├── refs/               # Each installed package's origin and commit tracking
+└── domain.json         # The home directory
 ```
 
 The load-bearing choice is that a checked-out working file is a **mutable
 copy out of `objects/`**, never the canonical object itself. Editing a
-working file cannot corrupt the store, and modification detection is a
-cheap timestamp-plus-hash comparison against the recorded `PathState`
-rather than a re-hash of the store.
+working file cannot corrupt the store, and modification detection compares
+a working file's hash with its row in the installed manifest rather than
+re-hashing the store.
 
 The consequence accepted with it: content may be shared across packages and
 there is no reference counting, so no reset or pull deletes an object. Only

@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use tracing::log;
 
 use crate::Error;
+use crate::InstallPackageError;
 use crate::Res;
 use crate::error::LoginError;
 use crate::error::PackageOpError;
@@ -26,7 +27,6 @@ use crate::io::remote::fetch_workflows_config;
 use crate::io::remote::resolve_workflow;
 use crate::io::remote::resolve_workflow_from_config;
 use crate::io::storage::LocalStorage;
-use crate::io::storage::LockGuard;
 use crate::io::storage::Storage;
 use crate::lineage;
 use crate::lineage::CommitState;
@@ -38,7 +38,7 @@ use crate::lineage::WorkingCopy;
 use crate::lineage::WorkingCopyLocation;
 use crate::manifest::Manifest;
 use crate::manifest::Workflow;
-use crate::package_lock;
+use crate::package_lock::PackageLock;
 use crate::paths;
 use crate::paths::copy_cached_to_installed;
 use crate::quiltignore;
@@ -111,6 +111,17 @@ async fn holds_files(storage: &impl Storage, folder: &Path) -> Res<bool> {
     Ok(false)
 }
 
+/// The status of a package with no working copy, which the lineage alone
+/// answers, reading no folder; `None` for one with a working copy.
+fn absent_status(lineage: &lineage::PackageLineage) -> Option<InstalledPackageStatus> {
+    (!lineage.working_copy.is_home()).then(|| InstalledPackageStatus {
+        upstream_state: lineage.clone().into(),
+        latest_hash: lineage.latest_hash.clone(),
+        working_copy: WorkingCopy::Absent,
+        ..InstalledPackageStatus::default()
+    })
+}
+
 /// Every early return from the dry run means the same thing — nothing for a
 /// pull to do, and so no incoming paths or newer revision to name.
 fn nothing_to_pull() -> flow::PullPreview {
@@ -178,7 +189,7 @@ impl<S: Storage + Clone, R: Remote> Clone for InstalledPackage<S, R> {
 #[derive(Debug)]
 pub struct LockedPackage<S: Storage = LocalStorage, R: Remote = RemoteS3> {
     package: InstalledPackage<S, R>,
-    _held: LockGuard,
+    held: PackageLock,
 }
 
 impl std::fmt::Display for InstalledPackage {
@@ -196,19 +207,28 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
     /// caller's future, and the CLI's command future then outgrows the
     /// compiler's layout depth limit.
     pub async fn lock(&self) -> Res<LockedPackage<S, R>> {
-        let held = package_lock::lock(&self.storage, &self.paths, &self.namespace).await?;
+        let held = self
+            .lineage
+            .domain()
+            .lock_package(&self.storage, &self.paths, &self.namespace)
+            .await?;
         Ok(LockedPackage {
             package: self.clone(),
-            _held: held,
+            held,
         })
     }
 
     /// [`Self::lock`] without the wait: `None` while another writer holds it.
+    /// On refs, a domain's move on first use still waits.
     pub async fn try_lock(&self) -> Res<Option<LockedPackage<S, R>>> {
-        let held = package_lock::try_lock(&self.storage, &self.paths, &self.namespace).await?;
+        let held = self
+            .lineage
+            .domain()
+            .try_lock_package(&self.storage, &self.paths, &self.namespace)
+            .await?;
         Ok(held.map(|held| LockedPackage {
             package: self.clone(),
-            _held: held,
+            held,
         }))
     }
 
@@ -217,24 +237,21 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
     /// existing one needs no creating, and a missing one made empty would read
     /// as every file deleted.
     pub async fn scaffold_paths(&self) -> Res {
-        let domain = self.lineage.read_domain(&self.storage).await?;
-        let make_folder = domain
-            .packages
-            .get(&self.namespace)
-            .is_none_or(|package| package.working_copy.is_home() && package.paths.is_empty());
-        if make_folder {
-            self.paths
-                .scaffold_for_installing(&self.storage, &domain.home, &self.namespace)
-                .await
-        } else {
-            self.paths
-                .scaffold_for_installing_without_package_home(
-                    &self.storage,
-                    &domain.home,
-                    &self.namespace,
-                )
-                .await
+        let home = self.lineage.domain_home(&self.storage).await?;
+        let needs_no_folder = match self.lineage.read_entry(&self.storage).await {
+            Ok(lineage) => !lineage.working_copy.is_home() || !lineage.paths.is_empty(),
+            Err(Error::InstallPackage(InstallPackageError::NotInstalled(_))) => false,
+            Err(err) => return Err(err),
+        };
+        if needs_no_folder {
+            return self
+                .paths
+                .scaffold_for_installing_without_package_home(&self.storage, &home, &self.namespace)
+                .await;
         }
+        self.paths
+            .scaffold_for_installing(&self.storage, &home, &self.namespace)
+            .await
     }
 
     pub async fn scaffold_paths_for_caching(&self, bucket: &str) -> Res {
@@ -320,8 +337,15 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
                 why,
             });
         }
-        let domain = self.lineage.read_domain(&self.storage).await?;
-        flow::remove_revisions(&self.paths, &self.storage, &domain, &self.namespace, hashes).await
+        let installed = self.lineage.domain().namespaces(&self.storage).await?;
+        flow::remove_revisions(
+            &self.paths,
+            &self.storage,
+            &installed,
+            &self.namespace,
+            hashes,
+        )
+        .await
     }
 
     /// The revisions `lineage`'s remote lists: its catalog's registry, or
@@ -585,40 +609,29 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         &self,
         host_config_opt: Option<HostConfig>,
     ) -> Res<InstalledPackageStatus> {
-        let (home, lineage) = self.lineage.read_home_and_entry(&self.storage).await?;
+        let lineage = self.lineage.read_entry(&self.storage).await?;
+        if let Some(status) = absent_status(&lineage) {
+            return Ok(status);
+        }
+        let package_home = self.working_folder().await?;
         let manifest = self.manifest().await?;
 
+        let host_config = match host_config_opt {
+            Some(hc) => hc,
+            None => self.status_host_config(&lineage, &manifest).await,
+        };
+
         let (_, status) = self
-            .walk_if_any(&home, lineage, &manifest, host_config_opt)
+            .walk(lineage, &manifest, &package_home, host_config)
             .await?;
         Ok(status)
     }
 
-    /// [`Self::walk`] the working copy at the home. With none, the status the
-    /// lineage alone answers, and no folder is read.
-    async fn walk_if_any(
-        &self,
-        home: &lineage::Home,
-        lineage: lineage::PackageLineage,
-        manifest: &Manifest,
-        host_config_opt: Option<HostConfig>,
-    ) -> Res<(lineage::PackageLineage, InstalledPackageStatus)> {
-        if !lineage.working_copy.is_home() {
-            let status = InstalledPackageStatus {
-                upstream_state: lineage.clone().into(),
-                latest_hash: lineage.latest_hash.clone(),
-                working_copy: WorkingCopy::Absent,
-                ..InstalledPackageStatus::default()
-            };
-            return Ok((lineage, status));
-        }
-        let host_config = match host_config_opt {
-            Some(hc) => hc,
-            None => self.status_host_config(&lineage, manifest).await,
-        };
-        let package_home = paths::package_home(home, &self.namespace);
-        self.walk(lineage, manifest, &package_home, host_config)
-            .await
+    /// The folder of the working copy at the home, without reading the
+    /// lineage again.
+    async fn working_folder(&self) -> Res<PathBuf> {
+        let home = self.lineage.domain_home(&self.storage).await?;
+        Ok(paths::package_home(&home, &self.namespace))
     }
 
     /// The host config a status hashes new and changed files with.
@@ -695,12 +708,28 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         &self,
         host_config_opt: Option<HostConfig>,
     ) -> Res<(lineage::PackageLineage, Manifest, InstalledPackageStatus)> {
-        let (home, lineage) = self.lineage.read_home_and_entry(&self.storage).await?;
+        let lineage = self.lineage.read_entry(&self.storage).await?;
         let (lineage, latest_refreshed) = self.refresh_latest(lineage).await?;
         let manifest = self.manifest().await?;
+        if let Some(status) = absent_status(&lineage) {
+            return Ok((
+                lineage,
+                manifest,
+                InstalledPackageStatus {
+                    latest_refreshed,
+                    ..status
+                },
+            ));
+        }
+        let package_home = self.working_folder().await?;
+
+        let host_config = match host_config_opt {
+            Some(hc) => hc,
+            None => self.status_host_config(&lineage, &manifest).await,
+        };
 
         let (lineage, status) = self
-            .walk_if_any(&home, lineage, &manifest, host_config_opt)
+            .walk(lineage, &manifest, &package_home, host_config)
             .await?;
         Ok((
             lineage,
@@ -829,7 +858,11 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         Box::pin(self.lock().await?.install_paths(paths)).await
     }
 
-    async fn install_paths_unlocked(&self, paths: &[PathBuf]) -> Res<flow::InstallPathsReport> {
+    async fn install_paths_unlocked(
+        &self,
+        held: &PackageLock,
+        paths: &[PathBuf],
+    ) -> Res<flow::InstallPathsReport> {
         self.scaffold_paths().await?;
 
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
@@ -852,7 +885,10 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
             &paths.iter().collect::<Vec<&PathBuf>>(),
         )
         .await?;
-        let lineage = self.lineage.write(&self.storage, lineage).await?;
+        let lineage = self
+            .lineage
+            .write_locked(&self.storage, held, lineage)
+            .await?;
         Ok(flow::InstallPathsReport {
             paths: lineage.paths,
             ..report
@@ -873,21 +909,14 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
 
     async fn open_working_copy_unlocked(
         &self,
+        held: &PackageLock,
         paths: Option<&[PathBuf]>,
     ) -> Res<flow::InstallPathsReport> {
-        let (home, lineage) = self.lineage.read_home_and_entry(&self.storage).await?;
-        match lineage.working_copy {
-            WorkingCopyLocation::None => {}
-            WorkingCopyLocation::Home => {
-                return Err(Error::InstallPackage(
-                    crate::InstallPackageError::AlreadyInstalled(self.namespace.clone()),
-                ));
-            }
-            WorkingCopyLocation::Unrecognized(_) => {
-                return Err(
-                    crate::LineageError::UnrecognizedWorkingCopy(self.namespace.clone()).into(),
-                );
-            }
+        let lineage = self.lineage.read_entry(&self.storage).await?;
+        if lineage.working_copy.is_home() {
+            return Err(Error::InstallPackage(
+                crate::InstallPackageError::AlreadyInstalled(self.namespace.clone()),
+            ));
         }
         let keys: Vec<PathBuf> = match paths {
             Some(paths) => paths.to_vec(),
@@ -900,7 +929,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
                 .collect(),
         };
         // Files already there would read as the package's own changes.
-        let folder = paths::package_home(&home, &self.namespace);
+        let folder = self.working_folder().await?;
         if holds_files(&self.storage, &folder).await? {
             return Err(crate::LineageError::FolderNotEmpty(folder).into());
         }
@@ -908,14 +937,14 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         // a working copy whose folder is missing.
         self.storage.create_dir_all(&folder).await?;
         self.lineage
-            .edit(&self.storage, |entry| {
+            .edit_locked(&self.storage, held, |entry| {
                 entry.working_copy = WorkingCopyLocation::Home;
             })
             .await?;
         let placed = if keys.is_empty() {
             Ok(flow::InstallPathsReport::default())
         } else {
-            self.install_paths_unlocked(&keys).await
+            self.install_paths_unlocked(held, &keys).await
         };
         let err = match placed {
             Ok(report) => return Ok(report),
@@ -928,7 +957,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         }
         if let Err(undo) = self
             .lineage
-            .edit(&self.storage, |entry| {
+            .edit_locked(&self.storage, held, |entry| {
                 entry.working_copy = WorkingCopyLocation::None;
             })
             .await
@@ -947,10 +976,17 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         Box::pin(self.lock().await?.uninstall_paths(paths)).await
     }
 
-    async fn uninstall_paths_unlocked(&self, paths: &Vec<PathBuf>) -> Res<LineagePaths> {
+    async fn uninstall_paths_unlocked(
+        &self,
+        held: &PackageLock,
+        paths: &Vec<PathBuf>,
+    ) -> Res<LineagePaths> {
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
         let lineage = flow::uninstall_paths(lineage, package_home, &self.storage, paths).await?;
-        let lineage = self.lineage.write(&self.storage, lineage).await?;
+        let lineage = self
+            .lineage
+            .write_locked(&self.storage, held, lineage)
+            .await?;
         Ok(lineage.paths)
     }
 
@@ -982,6 +1018,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
 
     async fn commit_unlocked(
         &self,
+        held: &PackageLock,
         message: String,
         user_meta: UserMeta,
         workflow: Option<Workflow>,
@@ -1029,7 +1066,10 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
             workflow,
         )
         .await?;
-        self.lineage.write(&self.storage, lineage).await?;
+        crate::failpoint::hit("flow.commit.before-lineage");
+        self.lineage
+            .write_locked(&self.storage, held, lineage)
+            .await?;
         Ok(commit)
     }
 
@@ -1057,6 +1097,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
 
     async fn publish_unlocked(
         &self,
+        held: &PackageLock,
         message: String,
         user_meta: UserMeta,
         workflow: Option<Workflow>,
@@ -1121,9 +1162,10 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
             flow::PublishOutcome::NothingToPublish => return Ok(PublishOutcome::NothingToPublish),
         };
         let certified_latest = push_result.certified_latest;
+        crate::failpoint::hit("flow.push.before-lineage");
         let lineage = self
             .lineage
-            .write(&self.storage, push_result.lineage)
+            .write_locked(&self.storage, held, push_result.lineage)
             .await?;
         let push = PushOutcome {
             manifest_uri: lineage.remote()?.clone(),
@@ -1141,15 +1183,20 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         Box::pin(self.lock().await?.push(host_config_opt)).await
     }
 
-    async fn push_unlocked(&self, host_config_opt: Option<HostConfig>) -> Res<Pushed> {
+    async fn push_unlocked(
+        &self,
+        held: &PackageLock,
+        host_config_opt: Option<HostConfig>,
+    ) -> Res<Pushed> {
         let lineage = self.lineage.read_entry(&self.storage).await?;
-        Ok(self.push_from(lineage, host_config_opt).await?.0)
+        Ok(self.push_from(held, lineage, host_config_opt).await?.0)
     }
 
     /// Pushes from the entry the caller read under the lock, and returns the
     /// entry it wrote with the outcome.
     async fn push_from(
         &self,
+        held: &PackageLock,
         lineage: lineage::PackageLineage,
         host_config_opt: Option<HostConfig>,
     ) -> Res<(Pushed, lineage::PackageLineage)> {
@@ -1191,7 +1238,11 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         )
         .await?;
         let certified_latest = result.certified_latest;
-        let lineage = self.lineage.write(&self.storage, result.lineage).await?;
+        crate::failpoint::hit("flow.push.before-lineage");
+        let lineage = self
+            .lineage
+            .write_locked(&self.storage, held, result.lineage)
+            .await?;
         let outcome = PushOutcome {
             manifest_uri: lineage.remote()?.clone(),
             certified_latest,
@@ -1212,11 +1263,11 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         Box::pin(self.lock().await?.set_sync_scope(scope)).await
     }
 
-    async fn set_sync_scope_unlocked(&self, scope: SyncScope) -> Res<()> {
+    async fn set_sync_scope_unlocked(&self, held: &PackageLock, scope: SyncScope) -> Res<()> {
         // A scope is the working copy's: refuse a package with none.
         self.lineage.read(&self.storage).await?;
         self.lineage
-            .edit(&self.storage, |l| l.sync_scope = scope)
+            .edit_locked(&self.storage, held, |l| l.sync_scope = scope)
             .await?;
         Ok(())
     }
@@ -1228,14 +1279,19 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         Box::pin(self.lock().await?.keep(scope, download)).await
     }
 
-    async fn keep_unlocked(&self, scope: SyncScope, download: bool) -> Res<KeepReport> {
-        self.set_sync_scope_unlocked(scope).await?;
+    async fn keep_unlocked(
+        &self,
+        held: &PackageLock,
+        scope: SyncScope,
+        download: bool,
+    ) -> Res<KeepReport> {
+        self.set_sync_scope_unlocked(held, scope).await?;
         let kept = self.kept_unlocked().await?;
         if !download || kept.outstanding == 0 {
             return Ok(kept);
         }
         let backlog = self.backlog().await?;
-        let report = self.install_paths_unlocked(&backlog).await?;
+        let report = self.install_paths_unlocked(held, &backlog).await?;
         Ok(KeepReport {
             scope: kept.scope,
             downloaded: backlog
@@ -1328,8 +1384,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         if !lineage.working_copy.is_home() {
             return Ok(BTreeSet::new());
         }
-        let home = self.lineage.domain_home(&self.storage).await?;
-        let package_home = paths::package_home(&home, &self.namespace);
+        let package_home = self.working_folder().await?;
         Ok(self
             .untracked_on_disk(&package_home, lineage, manifest)
             .await)
@@ -1348,6 +1403,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
 
     async fn pull_unlocked(
         &self,
+        held: &PackageLock,
         host_config_opt: Option<HostConfig>,
         scope: SyncScope,
     ) -> Res<flow::Pulled> {
@@ -1378,7 +1434,9 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         // Nothing to pull, but the lineage still carries the `latest_hash` the
         // tag read refreshed.
         let Some(snapshot) = snapshot else {
-            self.lineage.write(&self.storage, lineage).await?;
+            self.lineage
+                .write_locked(&self.storage, held, lineage)
+                .await?;
             return Ok(flow::Pulled::UpToDate);
         };
         let (lineage, pulled) = flow::pull(
@@ -1393,11 +1451,19 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
             scope,
         )
         .await?;
-        self.lineage.write(&self.storage, lineage).await?;
+        crate::failpoint::hit("flow.pull.before-lineage");
+        self.lineage
+            .write_locked(&self.storage, held, lineage)
+            .await?;
         Ok(pulled)
     }
 
-    async fn move_to_unlocked(&self, target: ManifestUri, scope: SyncScope) -> Res<flow::Pulled> {
+    async fn move_to_unlocked(
+        &self,
+        held: &PackageLock,
+        target: ManifestUri,
+        scope: SyncScope,
+    ) -> Res<flow::Pulled> {
         self.scaffold_paths().await?;
 
         let (package_home, mut lineage) = self.lineage.read(&self.storage).await?;
@@ -1440,7 +1506,9 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
             scope,
         )
         .await?;
-        self.lineage.write(&self.storage, lineage).await?;
+        self.lineage
+            .write_locked(&self.storage, held, lineage)
+            .await?;
         Ok(pulled)
     }
 
@@ -1611,20 +1679,23 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         Box::pin(self.lock().await?.certify_latest()).await
     }
 
-    async fn certify_latest_unlocked(&self) -> Res<ManifestUri> {
+    async fn certify_latest_unlocked(&self, held: &PackageLock) -> Res<ManifestUri> {
         let lineage = self.lineage.read_entry(&self.storage).await?;
 
         // Push first so the hash we tag exists on remote, under the lock this
         // call already holds, and carry on from the entry the push wrote.
         let lineage = if lineage.commit.is_some() {
-            self.push_from(lineage, None).await?.1
+            self.push_from(held, lineage, None).await?.1
         } else {
             lineage
         };
 
         let pushed_manifest_uri = lineage.remote()?.clone();
         let lineage = flow::certify_latest(lineage, &*self.remote, pushed_manifest_uri).await?;
-        let lineage = self.lineage.write(&self.storage, lineage).await?;
+        let lineage = self
+            .lineage
+            .write_locked(&self.storage, held, lineage)
+            .await?;
         Ok(lineage.remote()?.clone())
     }
 
@@ -1632,7 +1703,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         Box::pin(self.lock().await?.reset_to_latest()).await
     }
 
-    async fn reset_to_latest_unlocked(&self) -> Res<ManifestUri> {
+    async fn reset_to_latest_unlocked(&self, held: &PackageLock) -> Res<ManifestUri> {
         self.scaffold_paths().await?;
 
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
@@ -1651,7 +1722,10 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
             self.namespace.clone(),
         )
         .await?;
-        let lineage = self.lineage.write(&self.storage, lineage).await?;
+        let lineage = self
+            .lineage
+            .write_locked(&self.storage, held, lineage)
+            .await?;
         Ok(lineage.remote()?.clone())
     }
 
@@ -1665,7 +1739,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         Box::pin(self.lock().await?.undo_commit()).await
     }
 
-    async fn undo_commit_unlocked(&self) -> Res<CommitState> {
+    async fn undo_commit_unlocked(&self, held: &PackageLock) -> Res<CommitState> {
         self.scaffold_paths().await?;
 
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
@@ -1688,7 +1762,9 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
             self.namespace.clone(),
         )
         .await?;
-        self.lineage.write(&self.storage, lineage).await?;
+        self.lineage
+            .write_locked(&self.storage, held, lineage)
+            .await?;
         Ok(commit)
     }
 
@@ -1703,6 +1779,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
 
     async fn set_remote_unlocked(
         &self,
+        held: &PackageLock,
         bucket: String,
         origin: Option<Host>,
         workflow: WorkflowIntent,
@@ -1750,7 +1827,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         // decides what, if anything, is saved.
         if lineage.commit.is_some() {
             return match self
-                .recommit_for_remote(lineage.clone(), origin, bucket, workflow)
+                .recommit_for_remote(held, lineage.clone(), origin, bucket, workflow)
                 .await
             {
                 Ok(()) => Ok(SetRemoteOutcome::default()),
@@ -1763,7 +1840,9 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
                     // A resolution or transient failure (e.g. not logged in
                     // yet, or an unknown workflow id): persist the remote so
                     // the user can fix the problem and retry.
-                    self.lineage.write(&self.storage, lineage).await?;
+                    self.lineage
+                        .write_locked(&self.storage, held, lineage)
+                        .await?;
                     if explicit_workflow {
                         // The remote is persisted, but the chosen workflow
                         // could not be applied. Fail loudly so the user can
@@ -1795,7 +1874,9 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         }
 
         // No local commit — nothing to recommit or validate.
-        self.lineage.write(&self.storage, lineage).await?;
+        self.lineage
+            .write_locked(&self.storage, held, lineage)
+            .await?;
 
         Ok(SetRemoteOutcome::default())
     }
@@ -1808,7 +1889,11 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         Box::pin(self.lock().await?.change_catalog(origin)).await
     }
 
-    async fn change_catalog_unlocked(&self, origin: Option<Host>) -> Res<ManifestUri> {
+    async fn change_catalog_unlocked(
+        &self,
+        held: &PackageLock,
+        origin: Option<Host>,
+    ) -> Res<ManifestUri> {
         let mut lineage = self.lineage.read_entry(&self.storage).await?;
         let Some(remote) = lineage.remote_uri.as_mut().filter(|r| !r.bucket.is_empty()) else {
             return Err(Error::PackageOp(PackageOpError::Package(
@@ -1819,12 +1904,16 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
             return Ok(remote.clone());
         }
         remote.origin = origin;
-        let lineage = self.lineage.write(&self.storage, lineage).await?;
+        let lineage = self
+            .lineage
+            .write_locked(&self.storage, held, lineage)
+            .await?;
         Ok(lineage.remote()?.clone())
     }
 
     async fn recommit_for_remote(
         &self,
+        held: &PackageLock,
         lineage: lineage::PackageLineage,
         host: Option<Host>,
         bucket: String,
@@ -1870,7 +1959,9 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
             workflows_config.as_ref(),
         )
         .await?;
-        self.lineage.write(&self.storage, lineage).await?;
+        self.lineage
+            .write_locked(&self.storage, held, lineage)
+            .await?;
         Ok(())
     }
 
@@ -1985,18 +2076,22 @@ impl<S: Storage + Clone + Sync, R: Remote> LockedPackage<S, R> {
     }
 
     pub async fn install_paths(&self, paths: &[PathBuf]) -> Res<flow::InstallPathsReport> {
-        self.package.install_paths_unlocked(paths).await
+        self.package.install_paths_unlocked(&self.held, paths).await
     }
 
     pub async fn open_working_copy(
         &self,
         paths: Option<&[PathBuf]>,
     ) -> Res<flow::InstallPathsReport> {
-        self.package.open_working_copy_unlocked(paths).await
+        self.package
+            .open_working_copy_unlocked(&self.held, paths)
+            .await
     }
 
     pub async fn uninstall_paths(&self, paths: &Vec<PathBuf>) -> Res<LineagePaths> {
-        self.package.uninstall_paths_unlocked(paths).await
+        self.package
+            .uninstall_paths_unlocked(&self.held, paths)
+            .await
     }
 
     pub async fn commit(
@@ -2007,7 +2102,7 @@ impl<S: Storage + Clone + Sync, R: Remote> LockedPackage<S, R> {
         host_config_opt: Option<HostConfig>,
     ) -> Res<flow::Committed> {
         self.package
-            .commit_unlocked(message, user_meta, workflow, host_config_opt)
+            .commit_unlocked(&self.held, message, user_meta, workflow, host_config_opt)
             .await
     }
 
@@ -2024,20 +2119,33 @@ impl<S: Storage + Clone + Sync, R: Remote> LockedPackage<S, R> {
         status_opt: Option<InstalledPackageStatus>,
     ) -> Res<PublishOutcome> {
         self.package
-            .publish_unlocked(message, user_meta, workflow, host_config_opt, status_opt)
+            .publish_unlocked(
+                &self.held,
+                message,
+                user_meta,
+                workflow,
+                host_config_opt,
+                status_opt,
+            )
             .await
     }
 
     pub async fn push(&self, host_config_opt: Option<HostConfig>) -> Res<Pushed> {
-        self.package.push_unlocked(host_config_opt).await
+        self.package
+            .push_unlocked(&self.held, host_config_opt)
+            .await
     }
 
     pub async fn set_sync_scope(&self, scope: SyncScope) -> Res<()> {
-        self.package.set_sync_scope_unlocked(scope).await
+        self.package
+            .set_sync_scope_unlocked(&self.held, scope)
+            .await
     }
 
     pub async fn keep(&self, scope: SyncScope, download: bool) -> Res<KeepReport> {
-        self.package.keep_unlocked(scope, download).await
+        self.package
+            .keep_unlocked(&self.held, scope, download)
+            .await
     }
 
     pub async fn kept(&self) -> Res<KeepReport> {
@@ -2064,7 +2172,9 @@ impl<S: Storage + Clone + Sync, R: Remote> LockedPackage<S, R> {
         host_config_opt: Option<HostConfig>,
         scope: SyncScope,
     ) -> Res<flow::Pulled> {
-        self.package.pull_unlocked(host_config_opt, scope).await
+        self.package
+            .pull_unlocked(&self.held, host_config_opt, scope)
+            .await
     }
 
     /// Moves a copy whose pushed revision `target` already holds onto
@@ -2073,19 +2183,21 @@ impl<S: Storage + Clone + Sync, R: Remote> LockedPackage<S, R> {
     /// at one of them refuses the whole move with a
     /// [`PackageOpError::PullConflict`]. Any other local change is kept.
     pub async fn move_to(&self, target: ManifestUri, scope: SyncScope) -> Res<flow::Pulled> {
-        self.package.move_to_unlocked(target, scope).await
+        self.package
+            .move_to_unlocked(&self.held, target, scope)
+            .await
     }
 
     pub async fn certify_latest(&self) -> Res<ManifestUri> {
-        self.package.certify_latest_unlocked().await
+        self.package.certify_latest_unlocked(&self.held).await
     }
 
     pub async fn reset_to_latest(&self) -> Res<ManifestUri> {
-        self.package.reset_to_latest_unlocked().await
+        self.package.reset_to_latest_unlocked(&self.held).await
     }
 
     pub async fn undo_commit(&self) -> Res<CommitState> {
-        self.package.undo_commit_unlocked().await
+        self.package.undo_commit_unlocked(&self.held).await
     }
 
     pub async fn set_remote(
@@ -2095,38 +2207,64 @@ impl<S: Storage + Clone + Sync, R: Remote> LockedPackage<S, R> {
         workflow: WorkflowIntent,
     ) -> Res<SetRemoteOutcome> {
         self.package
-            .set_remote_unlocked(bucket, origin, workflow)
+            .set_remote_unlocked(&self.held, bucket, origin, workflow)
             .await
     }
 
     pub async fn change_catalog(&self, origin: Option<Host>) -> Res<ManifestUri> {
-        self.package.change_catalog_unlocked(origin).await
+        self.package
+            .change_catalog_unlocked(&self.held, origin)
+            .await
     }
 }
 
+// The package-flow suites, run once against each lineage store from the same
+// files in `installed_package/`. A suite names the store as `BACKEND`.
 #[cfg(test)]
-mod change_catalog_tests;
+#[path = "installed_package"]
+mod on_data_json {
+    use super::*;
+
+    const BACKEND: lineage::LineageStore = lineage::LineageStore::DataJson;
+
+    mod change_catalog_tests;
+    mod missing_folder_tests;
+    mod move_to_tests;
+    mod older_revision_tests;
+    mod ordered_writers_tests;
+    mod set_remote_tests;
+    pub(super) mod sync_flow_tests;
+    mod tracked_set_tests;
+}
+#[cfg(test)]
+#[path = "installed_package"]
+#[expect(clippy::duplicate_mod, reason = "the suites run once on each store")]
+mod on_refs {
+    use super::*;
+
+    const BACKEND: lineage::LineageStore = lineage::LineageStore::Refs;
+
+    mod change_catalog_tests;
+    mod missing_folder_tests;
+    mod move_to_tests;
+    // Refs alone can hold a package with no working copy.
+    mod no_working_copy_tests;
+    mod older_revision_tests;
+    mod ordered_writers_tests;
+    mod set_remote_tests;
+    mod sync_flow_tests;
+    mod tracked_set_tests;
+}
+
 #[cfg(test)]
 mod current_revision_tests;
 #[cfg(test)]
-mod missing_folder_tests;
-#[cfg(test)]
-mod move_to_tests;
-#[cfg(test)]
-mod no_working_copy_tests;
-#[cfg(test)]
-mod older_revision_tests;
-#[cfg(test)]
-mod ordered_writers_tests;
+mod data_json_tests;
 #[cfg(test)]
 mod resolve_comparison_tests;
 #[cfg(test)]
 mod revision_history_tests;
 #[cfg(test)]
-mod set_remote_tests;
-#[cfg(test)]
 mod stat_cache_tests;
-#[cfg(test)]
-mod sync_flow_tests;
 #[cfg(test)]
 mod unreachable_host_tests;

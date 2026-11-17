@@ -21,22 +21,27 @@ Where package files (working copies) live. Each installed package occupies
 which has no folder.
 
 *QuiltSync*: set by the user on the Setup page on first launch, then stored in
-`$DATA_DIR/.quilt/data.json` and read from there on subsequent starts.
+`$DATA_DIR/.quilt/domain.json` and read from there on subsequent starts.
 Defaults to `~/QuiltSync` if the user has not configured it yet.
 *CLI/library*: the caller provides the path.
 
-## Domain (`$DATA_DIR/.quilt/data.json`)
+## Domain (`$DATA_DIR/.quilt/domain.json`, `$DATA_DIR/.quilt/refs/`)
 
-*All components (quilt-rs, quilt-cli, QuiltSync).* Tracks all installed
-packages, their remote origins, local commit state, and the home directory
-path. Path is hardcoded relative to `$DATA_DIR`.
+*All components (quilt-rs, quilt-cli, QuiltSync).* `domain.json` holds the
+home directory path; `refs/<owner>/<package>.json` holds one installed
+package's remote origin and local commit state. Path is hardcoded relative to
+`$DATA_DIR`.
 
-A package whose working copy is not at `<home>/<owner>/<package>/`, so far
-only one tracked with no working copy, is kept in `$DATA_DIR/.quilt/data-ext.json`
-instead, in the same record shape with a `working_copy` field. A build older
-than this split reads only `data.json`, so it neither lists such a package nor
-reads its missing folder as every file removed, and its rewrites of `data.json`
-leave the other file alone.
+A domain kept in `data.json` by an earlier version moves here on its first
+use, which keeps that file as `data.json.pre-refs` and leaves in `data.json` a
+stub that earlier versions fail to read. `quilt lineage rollback` moves the
+domain back to `data.json`.
+
+A package tracked with no working copy has a ref with an empty `copies` list,
+written in format 2. A build that reads only format 1 refuses that one ref, so
+it never reads the package as a working copy whose files are all gone, and the
+domain's other packages stay readable to it. `data.json` cannot hold such a
+package, so `quilt lineage rollback` is refused while one is tracked.
 
 ## Package state (`$DATA_DIR/.quilt/`)
 

@@ -14,7 +14,7 @@ use crate::LineageError;
 use crate::LocalDomain;
 use crate::io::manifest::tag_latest;
 use crate::io::remote::mocks::MockRemote;
-use crate::lineage::DomainLineage;
+use crate::lineage::DomainLineageIo;
 use crate::lineage::Home;
 use crate::paths::DomainPaths;
 use quilt_uri::Namespace;
@@ -46,7 +46,12 @@ impl Tracked {
 
         let (paths, paths_dir) = DomainPaths::from_temp_dir()?;
         let (home, home_dir) = Home::from_temp_dir()?;
-        let domain = LocalDomain::with_parts(paths.clone(), LocalStorage::new(), Arc::new(remote));
+        let domain = LocalDomain::with_parts(
+            paths.clone(),
+            DomainLineageIo::new(paths.clone()),
+            LocalStorage::new(),
+            Arc::new(remote),
+        );
         domain.set_home(home.as_ref()).await?;
         let package = domain.track_package(&manifest_uri).await?;
         Ok(Self {
@@ -62,9 +67,10 @@ impl Tracked {
         paths::package_home(&self.home, &self.package.namespace)
     }
 
-    /// `data.json` as a build that predates working copies reads it.
-    fn data_json(&self) -> Res<DomainLineage> {
-        DomainLineage::from_slice(&std::fs::read(self.paths.lineage())?)
+    /// The package's ref as it is on disk.
+    fn stored_ref(&self) -> Res<serde_json::Value> {
+        let path = self.paths.package_ref(&self.package.namespace);
+        Ok(serde_json::from_slice(&std::fs::read(path)?)?)
     }
 }
 
@@ -87,13 +93,39 @@ async fn a_tracked_package_is_listed_with_no_folder() -> Res {
     Ok(())
 }
 
-/// An older build reads `data.json` alone, so it never sees the package and
-/// so never reads its missing folder as every file removed.
+/// The ref has no copy, in a format a build that reads only format 1 refuses
+/// for this package alone, so it never reads the missing folder as every file
+/// removed.
 #[test(tokio::test)]
-async fn an_older_build_does_not_see_a_tracked_package() -> Res {
+async fn a_tracked_package_s_ref_has_no_copy_in_its_own_format() -> Res {
     let t = Tracked::new().await?;
 
-    assert!(t.data_json()?.packages.is_empty());
+    let stored = t.stored_ref()?;
+    assert_eq!(stored["format"], 2, "{stored}");
+    assert_eq!(stored["copies"], serde_json::json!([]), "{stored}");
+    Ok(())
+}
+
+/// `data.json` cannot say a package has no working copy, so a rollback is
+/// refused for the whole domain and leaves it writable; once the package is
+/// opened, the rollback goes ahead.
+#[test(tokio::test)]
+async fn a_rollback_is_refused_while_a_package_has_no_working_copy() -> Res {
+    let t = Tracked::new().await?;
+
+    let refused = t.domain.rollback_lineage().await;
+    assert!(
+        matches!(
+            &refused,
+            Err(Error::Lineage(LineageError::RollbackRefused(inner)))
+                if matches!(**inner, LineageError::UnsupportedCopies { .. })
+        ),
+        "{refused:?}"
+    );
+    t.package.open_working_copy(None).await?;
+    assert_eq!(t.stored_ref()?["format"], 1);
+
+    t.domain.rollback_lineage().await?;
     Ok(())
 }
 
@@ -136,8 +168,14 @@ async fn opening_places_every_file_in_a_working_copy() -> Res {
     let status = t.package.status(Some(HostConfig::default())).await?;
     assert_eq!(status.working_copy, WorkingCopy::Available);
     assert!(status.changes.is_empty(), "{:?}", status.changes);
-    // Now an ordinary working copy, which an older build reads as one.
-    assert!(t.data_json()?.packages.contains_key(&t.package.namespace));
+    // Now an ordinary working copy, in the format an older build reads.
+    let stored = t.stored_ref()?;
+    assert_eq!(stored["format"], 1, "{stored}");
+    assert_eq!(
+        stored["copies"].as_array().map(Vec::len),
+        Some(1),
+        "{stored}"
+    );
     Ok(())
 }
 
