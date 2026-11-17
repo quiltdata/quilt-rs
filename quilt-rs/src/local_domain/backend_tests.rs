@@ -196,9 +196,10 @@ async fn a_domain_writes_only_its_own_stores_files() -> Res<()> {
             assert!(!paths.refs_dir().exists());
             assert!(!paths.domain_config().exists());
         }
-        LineageStore::Refs => assert!(crate::lineage::refs::state::is_stub(&std::fs::read(
-            paths.lineage()
-        )?)),
+        LineageStore::Refs => assert!(
+            std::fs::read(paths.lineage())
+                .is_ok_and(|bytes| crate::lineage::refs::state::is_stub(&bytes))
+        ),
     }
     assert_eq!(
         domain.list_installed_packages().await?.len(),

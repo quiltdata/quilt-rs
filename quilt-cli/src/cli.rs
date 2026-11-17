@@ -1841,9 +1841,9 @@ mod tests {
     }
 
     /// Runs `lineage_child` with `QUILT_LINEAGE` as `lineage`, and returns
-    /// whether its domain's `data.json` then holds a lineage, and whether it
-    /// has a `domain.json`.
-    fn create_under_lineage(lineage: Option<&str>) -> (bool, bool) {
+    /// what its domain's `data.json` then is, a lineage or the stub a move to
+    /// refs leaves, and whether it has a `domain.json`.
+    fn create_under_lineage(lineage: Option<&str>) -> (&'static str, bool) {
         let domain = tempfile::TempDir::new().expect("a temp domain");
         let mut child = std::process::Command::new(std::env::current_exe().unwrap());
         child
@@ -1856,18 +1856,25 @@ mod tests {
         let output = child.output().expect("spawn the child");
         assert!(output.status.success(), "{output:?}");
         let dot_quilt = domain.path().join(".quilt");
-        let data_json = std::fs::read(dot_quilt.join("data.json")).expect("a data.json");
-        (
-            quilt_rs::lineage::DomainLineage::from_slice(&data_json).is_ok(),
-            dot_quilt.join("domain.json").exists(),
-        )
+        let data_json = std::fs::read(dot_quilt.join("data.json")).unwrap_or_default();
+        let marker = serde_json::from_slice::<serde_json::Value>(&data_json)
+            .map(|record| record["lineage"].clone())
+            .unwrap_or_default();
+        let found = if quilt_rs::lineage::DomainLineage::from_slice(&data_json).is_ok() {
+            "lineage"
+        } else if marker == "refs" {
+            "stub"
+        } else {
+            "neither"
+        };
+        (found, dot_quilt.join("domain.json").exists())
     }
 
     #[test]
     fn quilt_lineage_refs_keeps_the_lineage_in_refs() {
-        assert_eq!(create_under_lineage(Some("refs")), (false, true));
-        assert_eq!(create_under_lineage(None), (true, false));
-        assert_eq!(create_under_lineage(Some("data.json")), (true, false));
+        assert_eq!(create_under_lineage(Some("refs")), ("stub", true));
+        assert_eq!(create_under_lineage(None), ("lineage", false));
+        assert_eq!(create_under_lineage(Some("data.json")), ("lineage", false));
     }
 
     const ENV_CHILD_ARGV: &str = "QUILT_TEST_ENV_ARGV";
