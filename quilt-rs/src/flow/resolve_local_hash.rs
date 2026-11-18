@@ -228,14 +228,16 @@ mod tests {
         Ok(())
     }
 
-    /// A file where a parent folder should be makes the folder unreadable.
+    /// A file in the folder's place: listing it fails as not a folder on every
+    /// platform, where a file in a parent's place reads as not found on
+    /// Windows.
     #[test(tokio::test)]
     async fn a_manifests_folder_that_cannot_be_read_is_an_error() -> Res {
         let (paths, _dir, _temp_dir) = domain_with(&namespace(), &[ALPHA]).await?;
         let blocked = paths.installed_dir().join("blocked");
         tokio::fs::write(&blocked, b"not a folder").await?;
 
-        let err = resolve_local_hash(&LocalStorage::new(), blocked.join("data"), "abcdef")
+        let err = resolve_local_hash(&LocalStorage::new(), &blocked, "abcdef")
             .await
             .unwrap_err();
         assert!(!matches!(err, Error::HashPrefix(_)), "{err:?}");
