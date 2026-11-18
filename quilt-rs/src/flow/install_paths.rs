@@ -178,8 +178,9 @@ pub(super) async fn refuse_if_present<'a, P: AsRef<Path>>(
 /// must survive.
 ///
 /// Every destination, and every folder between `working_dir` and it, is
-/// checked before the first rename, so a refusal places nothing. The rename replaces what it finds, so a file created during the
-/// renames themselves, a window of milliseconds, is not caught.
+/// checked before the first rename, so a refusal places nothing. The rename
+/// replaces what it finds, so a file created during the renames themselves, a
+/// window of milliseconds, is not caught.
 async fn place_where_absent(
     storage: &(impl Storage + Sync),
     staged: &[(PathBuf, PathBuf, ManifestRow)],
