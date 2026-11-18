@@ -67,16 +67,20 @@ pub async fn resolve_local_hash(
 }
 
 /// The names of the regular files in `manifests_dir` that are a whole top hash
-/// starting with `prefix`; none when the folder is not there.
+/// starting with `prefix`; none when the folder is not there, and an error when
+/// it cannot be read.
 async fn revision_names_with_prefix(
     storage: &(impl Storage + Sync),
     manifests_dir: &Path,
     prefix: &str,
 ) -> Res<Vec<String>> {
-    if !storage.exists(manifests_dir).await {
-        return Ok(Vec::new());
-    }
-    let mut entries = storage.read_dir(manifests_dir).await?;
+    // Only a folder that is not there means no revisions: `exists` would also
+    // say `false` for a folder it may not read, and hide that as no match.
+    let mut entries = match storage.read_dir(manifests_dir).await {
+        Ok(entries) => entries,
+        Err(err) if err.is_not_found() => return Ok(Vec::new()),
+        Err(err) => return Err(err),
+    };
     let mut found = Vec::new();
     while let Some(entry) = entries.next_entry().await? {
         let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
@@ -229,6 +233,21 @@ mod tests {
             .unwrap_err();
         assert!(matches!(prefix_error(err), HashPrefixError::NoMatch(_)));
         assert!(!absent.exists());
+        Ok(())
+    }
+
+    /// Only a missing folder is no match: one that cannot be read, here
+    /// because a file stands where a parent folder should, is an error.
+    #[test(tokio::test)]
+    async fn a_manifests_folder_that_cannot_be_read_is_an_error() -> Res {
+        let (paths, _dir, _temp_dir) = domain_with(&namespace(), &[ALPHA]).await?;
+        let blocked = paths.installed_dir().join("blocked");
+        tokio::fs::write(&blocked, b"not a folder").await?;
+
+        let err = resolve_local_hash(&LocalStorage::new(), blocked.join("data"), "abcdef")
+            .await
+            .unwrap_err();
+        assert!(!matches!(err, Error::HashPrefix(_)), "{err:?}");
         Ok(())
     }
 
