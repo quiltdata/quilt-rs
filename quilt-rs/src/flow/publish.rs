@@ -101,7 +101,11 @@ pub async fn publish_package(
             paths,
             storage,
             remote,
-            host_config.host.as_ref(),
+            // Gated, not warned: the push right after would refuse what the
+            // workflow rejects, and a refused commit leaves no pending commit.
+            flow::WorkflowCheck::Gate {
+                host: host_config.host.as_ref(),
+            },
             working_dir,
             status,
             namespace.clone(),
@@ -110,7 +114,7 @@ pub async fn publish_package(
             commit_opts.workflow,
         )
         .await?;
-        match new_commit {
+        match new_commit.committed {
             Committed::Recorded(new_commit) => {
                 // commit wrote a new manifest to disk; reload it so push uploads
                 // the new rows, not the pre-commit manifest we were handed.

@@ -59,7 +59,7 @@ pub async fn package_commit(
     metadata: &str,
     workflow: WorkflowIntent,
     host_config: Option<HostConfig>,
-) -> Result<quilt::flow::Committed, Error> {
+) -> Result<quilt::flow::Recorded, Error> {
     debug!(
         "Committing the package.\nNamespace:\n{},\nmessage: {},\nuser_meta: {},\nworkflow: {:?}",
         namespace, message, metadata, workflow
@@ -71,8 +71,10 @@ pub async fn package_commit(
         .await?
         .ok_or_else(|| Error::from(quilt::InstallPackageError::NotInstalled(namespace)))?;
 
-    let workflow = installed_package.resolve_workflow(workflow).await?;
-    model
+    let (workflow, unchecked) = installed_package
+        .resolve_workflow_for_commit(workflow)
+        .await?;
+    let recorded = model
         .package_commit(
             &installed_package,
             message.to_string(),
@@ -80,7 +82,8 @@ pub async fn package_commit(
             workflow,
             host_config,
         )
-        .await
+        .await?;
+    Ok(recorded.with_unchecked(unchecked))
 }
 
 pub async fn install_package_only(
