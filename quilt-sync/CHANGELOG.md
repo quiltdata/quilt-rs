@@ -36,7 +36,7 @@
 
 - Listing and changing packages no longer fails now and then with a parse error while `quilt` writes the same packages' lineage (<https://github.com/quiltdata/quilt-rs/pull/1416>)
 - Publishing a new package no longer replaces the latest revision someone else already published under the same name: the package shows the conflict, and you choose which revision stays latest (<https://github.com/quiltdata/quilt-rs/pull/1373>)
-- A package whose folder was deleted, or is on a disk that is not mounted, no longer shows every file as removed, and autosync no longer commits and publishes an empty revision for it; it reports the folder, and the package works again once the folder is back; adding a pattern to `.quiltignore` no longer recreates the folder holding only that file (<https://github.com/quiltdata/quilt-rs/pull/1397>)
+- A package whose folder was deleted, or is on a disk that is not mounted, no longer shows every file as removed, and autosync no longer commits and publishes an empty revision for it. It shows as **Folder missing**, where it showed as **Latest**, and autosync skips it, without pausing it or retrying and logging it every few seconds, and syncs it again once the folder is back; adding a pattern to `.quiltignore` no longer recreates the folder holding only that file (<https://github.com/quiltdata/quilt-rs/pull/1397>, <https://github.com/quiltdata/quilt-rs/pull/1431>)
 
 ### quilt-rs
 
