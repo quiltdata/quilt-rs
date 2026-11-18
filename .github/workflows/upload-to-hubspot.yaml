@@ -237,8 +237,8 @@ jobs:
             url="${HUBFS_URL_PREFIX}/${name}"
             case "$name" in
               *.msi)       WINDOWS_MSI_URL="$url" ;;
-              *aarch64*.dmg) MACOS_ARM_URL="$url" ;;
-              *x64*.dmg|*amd64*.dmg|*x86_64*.dmg) MACOS_INTEL_URL="$url" ;;
+              # One app for both Macs; the page still reads both columns.
+              *universal*.dmg) MACOS_ARM_URL="$url"; MACOS_INTEL_URL="$url" ;;
               *.deb)       LINUX_DEB_URL="$url" ;;
             esac
           done
