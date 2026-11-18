@@ -28,7 +28,7 @@
 
 ### Changed
 
-- **Commit** of a package with a remote no longer refuses a revision the bucket's workflows reject: it commits it, and the Commit page stays to show the workflow warning, and keeps it through another save with no edits. **Publish** still refuses it, and commits nothing (<https://github.com/quiltdata/quilt-rs/pull/1432>)
+- **Commit** of a package with a remote no longer refuses a revision the bucket's workflows reject, or one whose bucket config cannot be read: it commits it, and the Commit page stays to show the workflow warning, and keeps it through another save with no edits. **Publish** still refuses it, and commits nothing (<https://github.com/quiltdata/quilt-rs/pull/1432>)
 - QuiltSync starts faster with many packages: at launch it checks up to eight packages at once instead of one after another (<https://github.com/quiltdata/quilt-rs/pull/1376>)
 - The main page no longer has a **Recent files** view. A package's time on the main page is when it last changed: an edit or commit not yet published, otherwise when QuiltSync last installed, pulled, downloaded or committed its files (<https://github.com/quiltdata/quilt-rs/pull/1403>)
 - QuiltSync keeps each package's lineage in a file of its own under `.quilt/refs/`, so a damaged one costs only that package: its first use of a domain moves the lineage there from `data.json`, keeps that file as `data.json.pre-refs`, and leaves in its place a stub that an older QuiltSync or `quilt` refuses to read; `quilt lineage rollback` moves it back. The diagnostics bundle carries those files and the copies of `data.json` a move keeps (<https://github.com/quiltdata/quilt-rs/pull/1412>, <https://github.com/quiltdata/quilt-rs/pull/1420>, <https://github.com/quiltdata/quilt-rs/pull/1424>)

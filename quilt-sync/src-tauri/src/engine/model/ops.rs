@@ -71,7 +71,9 @@ pub async fn package_commit(
         .await?
         .ok_or_else(|| Error::from(quilt::InstallPackageError::NotInstalled(namespace)))?;
 
-    let workflow = installed_package.resolve_workflow(workflow).await?;
+    let workflow = installed_package
+        .resolve_workflow_for_commit(workflow)
+        .await?;
     model
         .package_commit(
             &installed_package,

@@ -1296,3 +1296,64 @@ async fn test_set_remote_without_host_recommits_with_bucket_workflow() -> Res {
 
     Ok(())
 }
+
+/// A local commit is not refused for a workflows config that cannot be read:
+/// it resolves to no workflow, and the commit records with an `Unchecked`
+/// warning. A workflow the config refuses still fails.
+#[test(tokio::test)]
+async fn a_commit_against_an_unreadable_config_records_unchecked() -> Res {
+    let (package, _t1, _t2) = package_with_config("unreadable", FOO_CONFIG, b"{}").await?;
+    package
+        .set_remote(
+            "my-bucket".to_string(),
+            Some(fixtures::host()),
+            WorkflowIntent::Named("foo".to_string()),
+        )
+        .await?;
+    assert!(
+        package
+            .resolve_workflow_for_commit(WorkflowIntent::Named("nope".to_string()))
+            .await
+            .is_err(),
+        "a workflow the config refuses still fails"
+    );
+
+    package
+        .remote
+        .put_object(
+            None,
+            &"s3://my-bucket/.quilt/workflows/config.yml".parse()?,
+            b"version: [not, a, config".to_vec(),
+        )
+        .await?;
+    assert!(
+        package
+            .resolve_workflow(WorkflowIntent::NoWorkflow)
+            .await
+            .is_err()
+    );
+    let workflow = package
+        .resolve_workflow_for_commit(WorkflowIntent::NoWorkflow)
+        .await?;
+    assert!(workflow.is_none());
+
+    package
+        .storage
+        .write_byte_stream(
+            package.package_home().await?.join("data.txt"),
+            ByteStream::from_static(b"changed"),
+        )
+        .await?;
+    let recorded = package
+        .commit("Second".to_string(), UserMeta::Keep, workflow, None)
+        .await?;
+    assert!(
+        matches!(
+            recorded.warnings.as_slice(),
+            [flow::WorkflowWarning::Unchecked { bucket, .. }] if bucket == "my-bucket"
+        ),
+        "{:?}",
+        recorded.warnings
+    );
+    Ok(())
+}

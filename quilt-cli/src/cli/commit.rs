@@ -75,7 +75,9 @@ async fn commit_package(
                 WorkflowIntent::Named(id) => Some(id.clone()),
                 WorkflowIntent::BucketDefault | WorkflowIntent::NoWorkflow => None,
             };
-            let workflow = installed_package.resolve_workflow(workflow).await?;
+            let workflow = installed_package
+                .resolve_workflow_for_commit(workflow)
+                .await?;
             // A remote-less package has no workflows config to resolve against,
             // so a `Named` intent silently resolves to nothing. Warn instead of
             // dropping it quietly — the workflow can be chosen at push/set-remote.

@@ -1851,6 +1851,28 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         resolve_workflow(&*self.remote, origin.as_ref(), intent, &config_uri).await
     }
 
+    /// [`Self::resolve_workflow`] for a local commit, which a workflows config
+    /// that cannot be read does not refuse: the revision then carries no
+    /// workflow, and the commit's check warns that it went unchecked. A
+    /// missing session and a workflow the config refuses still fail.
+    pub async fn resolve_workflow_for_commit(
+        &self,
+        intent: WorkflowIntent,
+    ) -> Res<Option<Workflow>> {
+        match self.resolve_workflow(intent).await {
+            Err(
+                err @ (Error::Login(_)
+                | Error::WorkflowValidation(_)
+                | Error::RemoteCatalog(crate::error::RemoteCatalogError::Workflow(_))),
+            ) => Err(err),
+            Err(err) => {
+                log::info!("Committing with no workflow, as the config cannot be read: {err}");
+                Ok(None)
+            }
+            resolved => resolved,
+        }
+    }
+
     /// Fetch and parse the bucket's `.quilt/workflows/config.yml` for this
     /// package's remote, returning the typed [`WorkflowsConfig`].
     ///
