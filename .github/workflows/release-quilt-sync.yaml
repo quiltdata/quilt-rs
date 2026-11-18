@@ -71,10 +71,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: "macos-15" # for Arm based macs (M1 and above).
-            args: "--target aarch64-apple-darwin"
-          - platform: "macos-15" # for Intel based macs.
-            args: "--target x86_64-apple-darwin"
+          # One app for Apple Silicon and Intel Macs. latest.json lists it
+          # under darwin-aarch64 and darwin-x86_64 too, so an Intel build
+          # on Apple Silicon updates to it.
+          - platform: "macos-15"
+            args: "--target universal-apple-darwin"
           - platform: "ubuntu-24.04"
             args: ""
           - platform: "windows-latest"
@@ -99,8 +100,6 @@ jobs:
         uses: $/.github/actions/setup-rust-minimal
         with:
           cache-target: release
-          # Both macOS legs run on one runner type; only `args` tells them apart.
-          cache-key: ${{ matrix.args }}
           targets: ${{ matrix.platform == 'macos-15' && 'aarch64-apple-darwin,x86_64-apple-darwin,wasm32-unknown-unknown' || 'wasm32-unknown-unknown' }}
 
       - name: Setup Node.js
@@ -154,8 +153,6 @@ jobs:
           args: ${{ matrix.args }}
           projectPath: "./quilt-sync"
           # Auto updater configuration - generates latest.json for update checks.
-          # (updaterJsonKeepUniversal was removed in tauri-action v1 — universal
-          # macOS builds are now always kept in latest.json.)
           updaterJsonPreferNsis: false
 
   # Single approval gate that flips the draft to public, marks it as
@@ -197,6 +194,7 @@ jobs:
             "repos/$REPO/releases/assets/$asset" > latest.json
           missing=$(jq -r '
             ["linux-x86_64", "linux-x86_64-deb",
+             "darwin-universal", "darwin-universal-app",
              "darwin-aarch64", "darwin-aarch64-app",
              "darwin-x86_64", "darwin-x86_64-app",
              "windows-x86_64", "windows-x86_64-msi"]

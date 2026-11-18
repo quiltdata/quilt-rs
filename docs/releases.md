@@ -144,8 +144,7 @@ job then runs a parallel matrix that uploads to that id:
 
 | Platform | Runner | Tauri args |
 | --- | --- | --- |
-| macOS arm64 | `macos-15` | `--target aarch64-apple-darwin` |
-| macOS x86_64 | `macos-15` | `--target x86_64-apple-darwin` |
+| macOS universal (arm64 + x86_64) | `macos-15` | `--target universal-apple-darwin` |
 | Linux x86_64 | `ubuntu-24.04` | (none) |
 | Windows x86_64 | `windows-latest` | (none) |
 
@@ -163,7 +162,10 @@ Build pipeline:
    one release and one `latest.json`. The tag is
    `QuiltSync/v<version>`, with the version read from
    `quilt-sync/src-tauri/Cargo.toml` — the final tag form, matching
-   the input `upload-to-hubspot.yaml` expects.
+   the input `upload-to-hubspot.yaml` expects. The macOS leg's one
+   `.app.tar.gz` is listed under `darwin-universal`, `darwin-aarch64`
+   and `darwin-x86_64`, so every Mac updates to it, an Intel build on
+   Apple Silicon included.
 4. (Windows only) `azure/login` exchanges the GitHub OIDC token for
    an Azure access token, then `azure/trusted-signing-action` signs
    every `.exe` and `.msi`. See
@@ -220,9 +222,9 @@ Steps:
    - everything else → `<hubspot_folder><release_tag>/`.
 4. Insert a HubDB row with version, release tag, `latest.json`
    content, deduped installer URL list, and per-platform URLs (Windows
-   MSI, macOS arm/intel DMG, Linux DEB) derived by globbing the
-   release assets. Then publish the HubDB draft so the row appears on
-   the quilt.bio download page.
+   MSI, the universal macOS DMG in both macOS columns, Linux DEB)
+   derived by globbing the release assets. Then publish the HubDB
+   draft so the row appears on the quilt.bio download page.
 
 Required: secret `HUBSPOT_ACCESS_TOKEN`, repo vars `HUBDB_TABLE_ID`
 and `HUBDB_COLUMN_MAP`.
