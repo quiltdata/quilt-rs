@@ -1,6 +1,7 @@
 {
   "private": true,
   "dependencies": {
+    "lossless-json": "^4.3.3",
     "vanilla-jsoneditor": "^3.13.0"
   }
 }
