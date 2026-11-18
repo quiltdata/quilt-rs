@@ -224,7 +224,10 @@ impl Tasks {
             return true;
         };
         match fresh_at_head(model, pkg, &locked, &lineage).await {
-            Ok(Some(tree)) => sweepable(tree.status.upstream_state),
+            // Autosync's pass reports a missing folder; no sweep acts on it.
+            Ok(Some(tree)) => {
+                tree.status.unavailable_home().is_none() && sweepable(tree.status.upstream_state)
+            }
             _ => true,
         }
     }

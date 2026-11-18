@@ -8,9 +8,11 @@ use super::*;
 
 const HOME: &str = "/Volumes/gone/demo";
 
-/// `upstream`, read from a folder that is there when `present` says so.
+/// `upstream`, read from the bucket and from a folder that is there when
+/// `present` says so.
 fn status_of(upstream: UpstreamState, present: bool) -> quilt::lineage::InstalledPackageStatus {
     let mut status = quilt::lineage::InstalledPackageStatus::new(upstream, BTreeMap::new());
+    status.latest_refreshed = true;
     if !present {
         status.working_copy = quilt::lineage::WorkingCopy::Unavailable(HOME.into());
     }
@@ -270,5 +272,122 @@ async fn a_missing_folder_ends_a_run_of_failing_publishes() -> Result<(), Error>
         Duration::ZERO,
         "the next failure starts a new run"
     );
+    Ok(())
+}
+
+/// The folder watcher vouches for `ns` and keeps a walk of its folder, read
+/// before it went, that lists `changes`.
+fn kept_walk(
+    inner: &WatcherInner,
+    lineage: quilt::lineage::PackageLineage,
+    upstream: UpstreamState,
+    changes: quilt::lineage::ChangeSet,
+) {
+    let ns: Namespace = ("acme", "demo").into();
+    inner.walks.vouch_for(&BTreeMap::from([(
+        ns.clone(),
+        std::path::PathBuf::from(HOME),
+    )]));
+    let start = inner.walks.begin(&ns);
+    inner.walks.record(
+        &ns,
+        start,
+        lineage,
+        &quilt::lineage::InstalledPackageStatus::new(upstream, changes),
+    );
+}
+
+/// A pull that finds the folder gone after a kept walk said it was there
+/// leaves that walk behind: the next tick reads the folder, finds it still
+/// missing, and says nothing, rather than reading the old walk as the folder
+/// back and announcing it missing again.
+#[tokio::test]
+async fn a_folder_gone_under_a_kept_walk_is_announced_once() -> Result<(), Error> {
+    let mut model = model_with(
+        behind_clean_lineage(),
+        UpstreamState::Behind,
+        Arc::new(AtomicBool::new(false)),
+    );
+    model
+        .expect_locked_package_status_from_walk()
+        .returning(|_, _, walked| Ok(Some(walked)));
+    model.expect_locked_package_pull_verdict().returning(|_| {
+        Err(Error::from(quilt::Error::PackageOp(
+            quilt::PackageOpError::WorkingCopyUnavailable(HOME.into()),
+        )))
+    });
+    let reporter = Arc::new(RecordingReporter::default());
+    let inner = inner(reporter.clone());
+    kept_walk(
+        &inner,
+        behind_clean_lineage(),
+        UpstreamState::Behind,
+        BTreeMap::new(),
+    );
+
+    run_once(&model, &RoleCache::default(), &inner).await?;
+    run_once(&model, &RoleCache::default(), &inner).await?;
+
+    assert_eq!(reported(&reporter), ["unavailable"]);
+    Ok(())
+}
+
+/// The wait ends while a kept walk is checked, and the walk taken before the
+/// publish finds the folder gone: the package is skipped as missing, and the
+/// change the kept walk saw keeps its last-change time.
+#[tokio::test]
+async fn a_folder_gone_before_a_publish_keeps_the_last_change() -> Result<(), Error> {
+    let ns: Namespace = ("acme", "demo").into();
+    let mut model = model_with(
+        behind_clean_lineage(),
+        UpstreamState::UpToDate,
+        Arc::new(AtomicBool::new(false)),
+    );
+    model
+        .expect_locked_package_status_from_walk()
+        .returning(|_, _, walked| Ok(Some(walked)));
+    let reporter = Arc::new(RecordingReporter::default());
+    let inner = inner(reporter.clone());
+    inner.settings.write().await.push.idle_timeout_secs = 0;
+    let mut changes = BTreeMap::new();
+    changes.insert(
+        std::path::PathBuf::from("a.csv"),
+        quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
+    );
+    kept_walk(
+        &inner,
+        behind_clean_lineage(),
+        UpstreamState::UpToDate,
+        changes,
+    );
+
+    run_once(&model, &RoleCache::default(), &inner).await?;
+
+    assert_eq!(reported(&reporter), ["unavailable"]);
+    assert!(inner.last_change.get(&ns).await.is_some());
+    assert_eq!(*reporter.published.lock().unwrap(), []);
+    Ok(())
+}
+
+/// A status read that reached the bucket proves a sign-in it asked for
+/// before is done, even with the folder missing.
+#[tokio::test]
+async fn a_missing_folder_read_from_the_bucket_ends_a_sign_in() -> Result<(), Error> {
+    let ns: Namespace = ("acme", "demo").into();
+    let model = model_with(
+        behind_clean_lineage(),
+        UpstreamState::Behind,
+        Arc::new(AtomicBool::new(false)),
+    );
+    let inner = inner(Arc::new(RecordingReporter::default()));
+    inner
+        .login_blocked
+        .write()
+        .await
+        .insert(ns.clone(), Some(fixtures::host()));
+
+    run_once(&model, &RoleCache::default(), &inner).await?;
+
+    assert!(!inner.login_blocked.read().await.contains_key(&ns));
     Ok(())
 }

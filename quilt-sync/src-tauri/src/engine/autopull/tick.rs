@@ -665,6 +665,10 @@ pub(crate) async fn refresh_then_maybe_sync(
         // tree is a new change, with a wait of its own.
         let status = if reused_walk {
             let fresh = walk_locked(model, &locked, walks, namespace, lineage).await?;
+            if let Some(home) = fresh.unavailable_home() {
+                seen.read_folder = false;
+                return Err(WatchError::Unavailable(home.to_path_buf()));
+            }
             let fresh_fingerprint = status_fingerprint(&fresh);
             if fresh_fingerprint != fingerprint {
                 let changed_at = last_change
@@ -1120,6 +1124,11 @@ pub(crate) async fn sync_package(
     }
     match result {
         Err(WatchError::Unavailable(home)) => {
+            // The bucket answered: a sign-in it asked for before is done.
+            if seen.reached {
+                inner.login_blocked.write().await.remove(&namespace);
+                inner.aggregator.clear_error(&namespace);
+            }
             missing_folder(inner, &namespace, &home).await;
             return Pass::Skipped;
         }
@@ -1230,10 +1239,11 @@ pub(crate) async fn sync_package(
 /// find the same folder missing and say nothing. No backoff: the next tick
 /// reads the package as any other, so it resumes as soon as the folder is
 /// back. A backoff left from before is cleared, or it would hold that first
-/// read back, and so is a run of failing publishes: the outage is not a failed
-/// publish, and a run that started before it would otherwise count the time
-/// the folder was gone and need action on the first failure after it is back.
+/// read back, and so is a run of failing publishes, so the outage does not
+/// count toward it.
 async fn missing_folder(inner: &WatcherInner, namespace: &Namespace, home: &std::path::Path) {
+    // A kept walk read the folder before it went; the next tick walks again.
+    inner.walks.on_signal(namespace);
     inner.backoff.write().await.remove(namespace);
     inner.action_needed.publish_settled(namespace);
     if !inner.aggregator.note_unavailable(namespace, home) {

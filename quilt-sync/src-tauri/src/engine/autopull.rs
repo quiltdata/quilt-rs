@@ -790,12 +790,9 @@ pub(crate) async fn observe_walk(
     status: &crate::engine::quilt::lineage::InstalledPackageStatus,
     pending_commit: last_change::PendingCommit,
 ) {
-    // A folder that could not be read lists no change because nothing was
-    // checked. Taken as a clean tree, it would forget the package's
-    // last-change time, or restart it with a commit pending, and the queued
-    // publish would lose its place in the wait. The time and the countdown
-    // stay as they were until a walk reads the folder again; the tick skips the
-    // package meanwhile. Covers the startup walk, which comes through here too.
+    // An unread folder lists no change because nothing was checked. Observed
+    // as a clean tree, it would drop or restart the publish countdown. The
+    // startup walk comes through here too.
     if let Some(home) = status.unavailable_home() {
         debug!(
             "autosync: {namespace}: working folder {} unavailable, its last change is kept",
