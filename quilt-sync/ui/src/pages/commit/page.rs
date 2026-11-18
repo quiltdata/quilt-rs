@@ -777,7 +777,8 @@ fn CommitScreen(
                     outcome.try_set(Some(warning(ns, SAVED_WITH_WARNING, Some(reasons))));
                     // The re-read has no changes left to name, so an empty
                     // field would leave the next save with no message.
-                    if draft.message.with_untracked(|m| m.trim().is_empty()) {
+                    // `try_`, as the page may be gone by the time the save answers.
+                    if draft.message.try_with_untracked(|m| m.trim().is_empty()) == Some(true) {
                         draft.message.try_set(sent);
                     }
                     reload.notify();
