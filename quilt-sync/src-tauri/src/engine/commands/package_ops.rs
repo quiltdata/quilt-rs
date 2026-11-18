@@ -72,10 +72,9 @@ pub async fn package_commit(
     report_commit(tracing, &namespace, uri.as_ref(), result.map(|(_, c)| c))
 }
 
-/// Response from the `package_commit` command: the line, and what the
-/// bucket's workflows found wrong with a revision the commit recorded anyway.
-/// A typed payload, as [`SetRemoteResponse`] is, so the Commit page can tell
-/// a warned commit from a plain one without reading the line.
+/// What `package_commit` answers: its line, and apart from it, as in
+/// [`SetRemoteResponse`], what the bucket's workflows found wrong with a
+/// revision it recorded anyway.
 #[derive(Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommitResponse {
@@ -85,8 +84,8 @@ pub struct CommitResponse {
     pub workflow_warning: Option<String>,
 }
 
-/// The Commit button's answer to a commit: its event, its line, and the
-/// workflow warning the page shows before leaving.
+/// The Commit button's answer to a commit: its event, its line and its
+/// workflow warning.
 fn report_commit(
     tracing: &crate::engine::telemetry::Telemetry,
     namespace: &str,
