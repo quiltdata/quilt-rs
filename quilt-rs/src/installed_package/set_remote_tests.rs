@@ -1299,7 +1299,8 @@ async fn test_set_remote_without_host_recommits_with_bucket_workflow() -> Res {
 
 /// A local commit is not refused for a workflows config that cannot be read:
 /// it resolves to no workflow, and the commit records with an `Unchecked`
-/// warning. A workflow the config refuses still fails.
+/// warning. A workflow the config refuses, or whose schema cannot be read,
+/// still fails.
 #[test(tokio::test)]
 async fn a_commit_against_an_unreadable_config_records_unchecked() -> Res {
     let (package, _t1, _t2) = package_with_config("unreadable", FOO_CONFIG, b"{}").await?;
@@ -1316,6 +1317,33 @@ async fn a_commit_against_an_unreadable_config_records_unchecked() -> Res {
             .await
             .is_err(),
         "a workflow the config refuses still fails"
+    );
+
+    package
+        .remote
+        .put_object(
+            None,
+            &"s3://my-bucket/.quilt/workflows/config.yml".parse()?,
+            br"
+version: '1'
+is_workflow_required: false
+workflows:
+  foo:
+    name: Foo
+    metadata_schema: gone
+schemas:
+  gone:
+    url: s3://my-bucket/schemas/gone.json
+"
+            .to_vec(),
+        )
+        .await?;
+    assert!(
+        package
+            .resolve_workflow_for_commit(WorkflowIntent::Named("foo".to_string()))
+            .await
+            .is_err(),
+        "nor is a workflow whose schema cannot be read dropped"
     );
 
     package

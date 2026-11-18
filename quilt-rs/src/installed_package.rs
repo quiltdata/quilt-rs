@@ -1854,23 +1854,32 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
     /// [`Self::resolve_workflow`] for a local commit, which a workflows config
     /// that cannot be read does not refuse: the revision then carries no
     /// workflow, and the commit's check warns that it went unchecked. A
-    /// missing session and a workflow the config refuses still fail.
+    /// missing session still fails, and so does anything resolving the
+    /// workflow against a config that was read, such as a missing schema.
     pub async fn resolve_workflow_for_commit(
         &self,
         intent: WorkflowIntent,
     ) -> Res<Option<Workflow>> {
-        match self.resolve_workflow(intent).await {
-            Err(
-                err @ (Error::Login(_)
-                | Error::WorkflowValidation(_)
-                | Error::RemoteCatalog(crate::error::RemoteCatalogError::Workflow(_))),
-            ) => Err(err),
-            Err(err) => {
-                log::info!("Committing with no workflow, as the config cannot be read: {err}");
-                Ok(None)
-            }
-            resolved => resolved,
-        }
+        let Some((origin, config_uri)) = self.workflows_config_location().await? else {
+            return Ok(None);
+        };
+        let (config, parsed) =
+            match fetch_workflows_config(&*self.remote, origin.as_ref(), &config_uri).await {
+                Ok(fetched) => fetched,
+                Err(err @ Error::Login(_)) => return Err(err),
+                Err(err) => {
+                    log::info!("Committing with no workflow, as the config cannot be read: {err}");
+                    return Ok(None);
+                }
+            };
+        resolve_workflow_from_config(
+            &*self.remote,
+            origin.as_ref(),
+            intent,
+            config,
+            parsed.as_ref(),
+        )
+        .await
     }
 
     /// Fetch and parse the bucket's `.quilt/workflows/config.yml` for this
