@@ -80,7 +80,8 @@ pub struct Fetched {
     /// [`InstalledPackage::state`]: quilt_rs::InstalledPackage::state
     pub state: PackageState,
     /// Files changed since the last commit. `None` when the working tree was
-    /// not scanned: no remote, or a failed check.
+    /// not scanned: no remote, a folder that could not be read, or a failed
+    /// check.
     pub changed_files: Option<usize>,
     /// The remote refused the active role.
     pub access_denied: bool,
@@ -205,6 +206,7 @@ fn fetched_state(fetched: &Fetched) -> Cow<'static, str> {
         PackageState::Diverged => "changed in both places".into(),
         PackageState::Unpublished => "not published yet".into(),
         PackageState::NoRemote => "no S3 bucket yet".into(),
+        PackageState::Unavailable => "folder missing".into(),
         PackageState::Unknown => "unknown".into(),
     }
 }
@@ -673,6 +675,7 @@ mod tests {
                 "not published yet",
             ),
             (fetched(PackageState::NoRemote, None), "no S3 bucket yet"),
+            (fetched(PackageState::Unavailable, None), "folder missing"),
             (fetched(PackageState::Unknown, None), "unknown"),
             (denied(), "no access"),
             (credentials_unusable(), CREDENTIALS_UNUSABLE),
@@ -818,6 +821,32 @@ mod tests {
         .await;
         assert_eq!(stale.fetched, Some(unreachable(PackageState::Latest, 0)));
         assert_eq!(state(&stale), "latest (remote unreachable)");
+    }
+
+    /// A package whose folder is missing, as `InstalledPackage::state` reports
+    /// it: `folder missing`, and no `changed_files` under `--json`, because no
+    /// file was scanned.
+    #[test(tokio::test)]
+    async fn test_fetch_entry_of_a_missing_folder_counts_no_files() {
+        let entry = fetch_entry(
+            ("example", "one").into(),
+            Some("acme-research".to_string()),
+            || async {
+                Ok(PackageStateReport {
+                    state: PackageState::Unavailable,
+                    upstream_state: UpstreamState::Behind,
+                    changed_files: None,
+                    latest_refreshed: true,
+                })
+            },
+        )
+        .await;
+
+        assert_eq!(state(&entry), "folder missing");
+        assert_eq!(
+            Output::new(vec![entry], true).to_json().to_string(),
+            r#"{"packages":[{"bucket":"acme-research","namespace":"example/one","status":"behind","fetched":true}]}"#
+        );
     }
 
     /// A denial is a state of its own; any other failure is `unknown` for that

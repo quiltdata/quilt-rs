@@ -120,6 +120,12 @@ pub(crate) fn status_fingerprint(status: &quilt::lineage::InstalledPackageStatus
     out.push_str(&changes_fingerprint(&status.changes));
     out.push('|');
     out.push_str(&ignored_fingerprint(status));
+    // An unread folder lists no change, as a clean one does: the two must not
+    // look like the same observation, or a page showing one skips the other.
+    if let Some(home) = status.unavailable_home() {
+        out.push_str("|unavailable:");
+        push_hex(&mut out, home.as_os_str().as_encoded_bytes());
+    }
     out
 }
 
@@ -747,6 +753,16 @@ mod tests {
                 std::collections::BTreeMap::new(),
             )
         }
+    }
+
+    #[test]
+    fn a_folder_that_could_not_be_read_is_not_a_clean_tree() {
+        let clean = behind_with_latest("aaaa");
+        let unread = quilt::lineage::InstalledPackageStatus {
+            working_copy: quilt::lineage::WorkingCopy::Unavailable("/gone/demo".into()),
+            ..behind_with_latest("aaaa")
+        };
+        assert_ne!(status_fingerprint(&clean), status_fingerprint(&unread));
     }
 
     #[test]

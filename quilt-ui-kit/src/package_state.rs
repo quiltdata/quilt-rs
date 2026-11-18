@@ -50,6 +50,10 @@ pub enum PackageState {
     },
     NoRemote,
     Unpublished,
+    /// The package's working folder is missing or cannot be read — an
+    /// unplugged drive, a moved folder. Syncing skips it until the folder is
+    /// back, and nothing about its files is known meanwhile.
+    Unavailable,
     /// There is no session for this package's deployment — never signed in, or
     /// signed out.
     ///
@@ -274,6 +278,9 @@ fn words(state: &PackageState, site: Site) -> String {
         (PackageState::Unpublished, Site::ListRow) => "Not published yet".to_string(),
         (PackageState::Unpublished, Site::QueueRow) => "has never been published".to_string(),
 
+        (PackageState::Unavailable, Site::ListRow) => "Folder missing".to_string(),
+        (PackageState::Unavailable, Site::QueueRow) => "has a missing folder".to_string(),
+
         // Fixed words, never the backend's message as the label: the vocabulary
         // stays UI-owned, and the message renders as detail beside this.
         //
@@ -341,6 +348,7 @@ fn tone(state: &PackageState) -> StateTone {
         | PackageState::PendingCommit
         | PackageState::NoRemote
         | PackageState::Unpublished
+        | PackageState::Unavailable
         | PackageState::Unreachable { .. } => StateTone::Attention,
 
         // Danger and not Attention: the split is an ordinary step outstanding
@@ -396,7 +404,10 @@ fn action(state: &PackageState) -> Option<PackageAction> {
         // a bare bucket on ambient AWS credentials has no deployment to sign in
         // to, so the button would open nothing, and the remedy — the credentials
         // file — is not something the app edits.
+        // The folder has to come back — reconnect the drive, restore the
+        // folder — and that is not something the app can do.
         PackageState::Latest
+        | PackageState::Unavailable
         | PackageState::RoleDenied { .. }
         | PackageState::NoSession { host: None }
         | PackageState::SignInExpired { host: None }
@@ -628,6 +639,12 @@ mod tests {
                 Some(Publish),
             ),
             (
+                PackageState::Unavailable,
+                "has a missing folder",
+                Attention,
+                None,
+            ),
+            (
                 PackageState::Unreachable {
                     host: Some("quilt.test".to_string()),
                 },
@@ -826,6 +843,7 @@ mod tests {
             },
             PackageState::NoRemote,
             PackageState::Unpublished,
+            PackageState::Unavailable,
             // A host on one and not the other: `NoSession` is the variant that
             // interpolates one, and it is the interpolated form the banned-word
             // sweep below has to see.
@@ -852,6 +870,7 @@ mod tests {
                 | PackageState::RoleDenied { .. }
                 | PackageState::NoRemote
                 | PackageState::Unpublished
+                | PackageState::Unavailable
                 | PackageState::NoSession { .. }
                 | PackageState::SignInExpired { .. }
                 | PackageState::Unreachable { .. }
@@ -1017,6 +1036,13 @@ mod tests {
                 "Not published yet",
                 StateTone::Attention,
                 Some(PackageAction::Publish),
+            ),
+            (
+                PackageState::Unavailable,
+                Site::ListRow,
+                "Folder missing",
+                StateTone::Attention,
+                None,
             ),
             (
                 PackageState::Unknown,

@@ -138,6 +138,12 @@ struct ApplyState {
 struct AggregatorState {
     errors: BTreeMap<Namespace, ErrorEntry>,
     dirty: BTreeMap<Namespace, bool>,
+    /// Packages whose working folder the last pass could not read, each with
+    /// that folder. Not an error, and so not in the tray mode: nothing is
+    /// wrong with the package, and the pass skips it until the folder is back.
+    /// Kept to tell the pass that starts the episode from the ones that
+    /// continue it, so each transition is logged once.
+    unavailable: BTreeMap<Namespace, std::path::PathBuf>,
     last_sync: Option<DateTime<Utc>>,
     next_seq: u64,
 }
@@ -286,6 +292,28 @@ impl SyncTrayAggregator {
         self.upsert_error(ns, ErrorKind::Hard, message);
     }
 
+    /// The pass found `ns`'s working folder `home` missing or unreadable.
+    /// `true` when that starts an episode: the package was available before,
+    /// or its folder moved.
+    pub fn note_unavailable(&self, ns: &Namespace, home: &std::path::Path) -> bool {
+        let mut state = self.state.lock().expect("aggregator lock");
+        state
+            .unavailable
+            .insert(ns.clone(), home.to_path_buf())
+            .as_deref()
+            != Some(home)
+    }
+
+    /// The pass read `ns`'s working folder. The folder it could not read
+    /// before, when this ends an episode.
+    pub fn note_available(&self, ns: &Namespace) -> Option<std::path::PathBuf> {
+        self.state
+            .lock()
+            .expect("aggregator lock")
+            .unavailable
+            .remove(ns)
+    }
+
     /// Drop only the per-namespace error entry. Use this on the
     /// success path; the dirty count is left intact so a clean refresh
     /// of a package with local changes still surfaces them in the
@@ -319,6 +347,7 @@ impl SyncTrayAggregator {
             let mut state = self.state.lock().expect("aggregator lock");
             state.errors.retain(|ns, _| keep.contains(ns));
             state.dirty.retain(|ns, _| keep.contains(ns));
+            state.unavailable.retain(|ns, _| keep.contains(ns));
         }
         // Apply history goes the same way, except never while a write is in
         // flight: an entry is kept past its guard so the epoch survives, but a
@@ -388,6 +417,38 @@ mod tests {
     fn new_aggregator() -> (SyncTrayAggregator, watch::Receiver<SyncTrayStatus>) {
         let (tx, rx) = watch::channel(SyncTrayStatus::default());
         (SyncTrayAggregator::new(tx), rx)
+    }
+
+    #[test]
+    fn a_missing_folder_starts_an_episode_once_and_ends_it_once() {
+        let (agg, rx) = new_aggregator();
+        let ns: Namespace = ("acme", "demo").into();
+        let home = std::path::Path::new("/Volumes/gone/demo");
+
+        assert!(agg.note_unavailable(&ns, home), "the first pass starts it");
+        assert!(
+            !agg.note_unavailable(&ns, home),
+            "a later pass continues it"
+        );
+        assert!(
+            agg.note_unavailable(&ns, std::path::Path::new("/elsewhere/demo")),
+            "a folder that moved starts a new one"
+        );
+        assert_eq!(rx.borrow().mode, TrayMode::Idle, "not an error");
+
+        assert_eq!(
+            agg.note_available(&ns).as_deref(),
+            Some(std::path::Path::new("/elsewhere/demo"))
+        );
+        assert_eq!(agg.note_available(&ns), None, "ended once");
+
+        agg.note_unavailable(&ns, home);
+        agg.retain_namespaces(&std::collections::BTreeSet::new());
+        assert_eq!(
+            agg.note_available(&ns),
+            None,
+            "an uninstalled package leaves"
+        );
     }
 
     #[test]

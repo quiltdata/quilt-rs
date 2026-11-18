@@ -61,6 +61,10 @@ pub enum PackageStateDto {
     },
     NoRemote,
     Unpublished,
+    /// The working folder is missing or cannot be read, though the package
+    /// tracks files in it: an unplugged drive, a moved folder. Never `Latest`,
+    /// which an unread folder's empty change list would otherwise resolve to.
+    Unavailable,
     /// There is no session for this package's deployment — never signed in, or
     /// signed out.
     ///
@@ -278,6 +282,7 @@ impl From<PackageState> for PackageStateDto {
             PackageState::Diverged => Self::Diverged,
             PackageState::Unpublished => Self::Unpublished,
             PackageState::NoRemote => Self::NoRemote,
+            PackageState::Unavailable => Self::Unavailable,
             PackageState::Unknown => Self::Unknown,
         }
     }
@@ -1019,13 +1024,7 @@ pub(super) async fn refresh_main_page_package_from_model(
                 // because the access-denied arm below has higher precedence and must
                 // still be able to win.
                 state: pause_or(paused, || {
-                    PackageState::resolve(
-                        status.upstream_state,
-                        has_local_commit,
-                        has_remote,
-                        Some(status.changes.len()),
-                    )
-                    .into()
+                    PackageState::of_status(&status, has_local_commit, has_remote).into()
                 }),
                 // The refresh did not deny, so any pre-filter mark is cleared.
                 role_switch_host: None,
@@ -2720,6 +2719,24 @@ mod tests {
         assert_eq!(
             refresh(&m, &RoleCache::default()).await.state,
             PackageStateDto::Latest
+        );
+    }
+
+    #[tokio::test]
+    async fn a_folder_that_could_not_be_read_is_unavailable_not_latest() {
+        // An unread folder lists no change because nothing was checked, so the
+        // same status as `a_clean_tree_that_is_up_to_date_is_latest` must not
+        // read as clean.
+        let m = mock_one_package(
+            Ok(quilt::lineage::InstalledPackageStatus {
+                working_copy: quilt::lineage::WorkingCopy::Unavailable("/Volumes/gone".into()),
+                ..status_with(UpstreamState::UpToDate, 0)
+            }),
+            None,
+        );
+        assert_eq!(
+            refresh(&m, &RoleCache::default()).await.state,
+            PackageStateDto::Unavailable
         );
     }
 

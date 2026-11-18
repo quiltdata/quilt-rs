@@ -203,6 +203,19 @@ names the folder. None of them creates the folder empty. The copy works again
 once the folder is restored, or once the package is uninstalled. Files deleted
 inside an existing folder are still `Removed`.
 
+`PackageState::of_status` resolves such a status to `Unavailable`, never to
+`Latest`, which its empty change list would otherwise read as, and
+`InstalledPackage::state` gives it no `changed_files` count. QuiltSync's
+autosync skips the package on every tick the folder is missing — no pull,
+publish, merge or task reset, no pause to clear and no retry backoff — and
+logs it once when the folder goes and once when it is back, which is the next
+tick that reads it. An interrupted task claim on such a package is left to
+autosync, which reports the missing folder, not to the tasks sweep. A walk of
+the missing folder, from the file watcher or at startup, leaves the time of the
+last change alone, so a change made before the folder went is still published
+on its schedule once it is back; a run of failing publishes ends, so the
+outage does not count toward that alert.
+
 ### Set Remote (recommit)
 
 Which checksum algorithm an upload is written with is not a client-side
