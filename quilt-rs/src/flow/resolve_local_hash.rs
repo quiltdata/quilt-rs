@@ -1,37 +1,18 @@
 //! A short top hash, resolved to the whole one among the revisions a package
-//! holds locally.
+//! holds locally: quilt3's `Package.resolve_hash` on the local registry, with
+//! [`resolve_hash`](super::resolve_hash)'s rules and errors.
 //!
-//! This is quilt3's `Package.resolve_hash` on the local registry, as
-//! quilt-specs#297 puts it in `$DOMAIN` (`unit-local-hash`): the rules of
-//! [`resolve_hash`](super::resolve_hash), matched against the names of the
-//! package's own installed manifests rather than a bucket's
-//! `.quilt/packages/`.
+//! A prefix is matched against the names of the package's installed
+//! manifests, with no manifest read. Only a regular file named by a whole top
+//! hash is a revision, so a stranded `.tmp-<uuid>`, a folder or a symlink is
+//! not. A manifests folder that is not there holds no revisions.
 //!
-//! - A prefix is [`MIN_HASH_PREFIX_LEN`](super::MIN_HASH_PREFIX_LEN) to
-//!   [`TOP_HASH_LEN`](super::TOP_HASH_LEN) characters of lowercase hex, checked
-//!   before anything is read, exactly as for a bucket.
-//! - A whole top hash comes back as given, as in quilt3: the read that follows
-//!   says whether the package holds it.
-//! - A shorter prefix is matched against the file names in the package's
-//!   manifests folder, with no manifest read. A file whose name is not a whole
-//!   top hash (a write's stranded `.tmp-<uuid>`, say) is not a revision, and
-//!   nor is a folder.
-//! - No match and several matches are a
-//!   [`HashPrefixError`](crate::error::HashPrefixError), never a guess. A
-//!   package with no manifests folder holds no revisions, so its prefixes
-//!   match zero.
+//! Unlike quilt3's V1 local registry, which matched across every package, only
+//! this package's revisions count, so a prefix another package shares is not
+//! ambiguous.
 //!
-//! The one difference from quilt3, on purpose: quilt3's local registry matched
-//! a prefix against every package's revisions, so a prefix two packages shared
-//! was ambiguous. Here only the package's own revisions count, so a hash
-//! always resolves to a revision the package's own reads can open.
-//!
-//! The resolver takes the folder holding the package's manifests, not the
-//! package's name, so it does not depend on how a domain keys its packages.
-//! Today that folder is
-//! [`DomainPaths::installed_manifests_dir`](crate::paths::DomainPaths::installed_manifests_dir);
-//! [`LocalDomain::resolve_local_hash`](crate::LocalDomain::resolve_local_hash)
-//! finds it from a namespace.
+//! The flow takes the manifests folder, not the package's name, so it does not
+//! depend on how a domain keys its packages.
 
 use std::path::Path;
 
@@ -74,8 +55,7 @@ async fn revision_names_with_prefix(
     manifests_dir: &Path,
     prefix: &str,
 ) -> Res<Vec<String>> {
-    // Only a folder that is not there means no revisions: `exists` would also
-    // say `false` for a folder it may not read, and hide that as no match.
+    // Not `exists`, which is also false for a folder that cannot be read.
     let mut entries = match storage.read_dir(manifests_dir).await {
         Ok(entries) => entries,
         Err(err) if err.is_not_found() => return Ok(Vec::new()),
@@ -221,8 +201,20 @@ mod tests {
         Ok(())
     }
 
-    /// A package that was never installed has no manifests folder; the
-    /// resolver says no match and makes no folder.
+    #[test(tokio::test)]
+    async fn an_empty_manifests_folder_matches_zero() -> Res {
+        let (_paths, dir, _temp_dir) = domain_with(&namespace(), &[]).await?;
+
+        let err = resolve_local_hash(&LocalStorage::new(), &dir, "abcdef")
+            .await
+            .unwrap_err();
+        assert_eq!(
+            prefix_error(err),
+            HashPrefixError::NoMatch("abcdef".to_string())
+        );
+        Ok(())
+    }
+
     #[test(tokio::test)]
     async fn a_package_with_no_manifests_folder_matches_zero() -> Res {
         let (paths, _dir, _temp_dir) = domain_with(&namespace(), &[ALPHA]).await?;
@@ -236,8 +228,7 @@ mod tests {
         Ok(())
     }
 
-    /// Only a missing folder is no match: one that cannot be read, here
-    /// because a file stands where a parent folder should, is an error.
+    /// A file where a parent folder should be makes the folder unreadable.
     #[test(tokio::test)]
     async fn a_manifests_folder_that_cannot_be_read_is_an_error() -> Res {
         let (paths, _dir, _temp_dir) = domain_with(&namespace(), &[ALPHA]).await?;
@@ -287,7 +278,6 @@ mod tests {
         Ok(())
     }
 
-    /// Only regular files named by a whole top hash are revisions.
     #[test(tokio::test)]
     async fn only_whole_hash_files_are_revisions() -> Res {
         let (_paths, dir, _temp_dir) = domain_with(&namespace(), &[ALPHA]).await?;
@@ -296,6 +286,9 @@ mod tests {
         }
         // A folder named like a revision is not one.
         tokio::fs::create_dir(dir.join(BETA)).await?;
+        // Nor is a symlink, even to a manifest.
+        #[cfg(unix)]
+        tokio::fs::symlink(dir.join(ALPHA), dir.join(format!("abcdef02{}", &BETA[8..]))).await?;
 
         assert_eq!(
             resolve_local_hash(&LocalStorage::new(), &dir, "abcdef").await?,
@@ -304,9 +297,7 @@ mod tests {
         Ok(())
     }
 
-    /// quilt3's local registry was shared by every package, so a prefix two
-    /// packages shared was ambiguous. Here another package's revisions do not
-    /// count, for a match or for ambiguity.
+    /// quilt3's V1 local registry matched across packages; this does not.
     #[test(tokio::test)]
     async fn another_packages_revisions_do_not_count() -> Res {
         let (paths, dir, _temp_dir) = domain_with(&namespace(), &[ALPHA]).await?;
@@ -325,8 +316,6 @@ mod tests {
         Ok(())
     }
 
-    /// A package made locally, with no remote, resolves its own revision by
-    /// a short hash.
     #[test(tokio::test)]
     async fn a_local_only_package_resolves_its_revision() -> Res {
         let (home, _home_dir) = Home::from_temp_dir()?;
@@ -358,8 +347,6 @@ mod tests {
         Ok(())
     }
 
-    /// Through the domain: a package with no remote resolves by namespace, and
-    /// a namespace the domain does not hold matches zero.
     #[test(tokio::test)]
     async fn the_domain_resolves_a_local_only_package_by_namespace() -> Res {
         let temp_dir = TempDir::new()?;

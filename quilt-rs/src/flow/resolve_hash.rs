@@ -103,8 +103,7 @@ fn is_lowercase_hex(text: &str) -> bool {
 ///
 /// `found` is whatever the registry listed; it is checked again here, so a
 /// remote that over-lists cannot make a prefix ambiguous, and the same hash
-/// listed twice counts once. Names that are not a whole top hash are not
-/// revisions and never match.
+/// listed twice counts once.
 pub(super) fn pick_one(prefix: &str, found: Vec<String>) -> Result<String, HashPrefixError> {
     let mut matches: Vec<String> = found
         .into_iter()

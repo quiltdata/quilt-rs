@@ -252,10 +252,8 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
         flow::resolve_hash(&*self.remote, host, bucket, prefix).await
     }
 
-    /// [`flow::resolve_local_hash`] over `namespace`'s installed manifests: the
-    /// whole top hash of the one revision this domain holds for the package
-    /// that starts with `prefix`. Reads only, and needs no remote, so it works
-    /// for a package that has none.
+    /// [`flow::resolve_local_hash`] over `namespace`'s installed manifests,
+    /// with no remote involved.
     pub async fn resolve_local_hash(&self, namespace: &Namespace, prefix: &str) -> Res<String> {
         flow::resolve_local_hash(
             &self.storage,

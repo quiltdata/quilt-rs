@@ -58,8 +58,7 @@ A package's own revisions resolve without a remote:
 `LocalDomain::resolve_local_hash` (or `flow::resolve_local_hash`, given the
 package's manifests folder) matches a prefix against the manifests installed
 for that package, with the same rules and errors. Only that package's
-revisions count, so a prefix another package shares is not ambiguous, and a
-package with no remote resolves just the same.
+revisions count, so a prefix another package shares is not ambiguous.
 
 ## Reading an object
 
