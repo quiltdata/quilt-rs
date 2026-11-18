@@ -64,13 +64,15 @@ shows `synced`. `quilt status` reads the working copy and checks the remote now.
 `quilt list --fetch` asks each package's remote now and counts its changed
 files, giving the answer QuiltSync's main page gives, in its words: `latest`,
 `not the latest`, `3 files changed`, `revision not published`, `changed in both
-places`, `not published yet`, `no S3 bucket yet`, `no access`, `unknown`. It
+places`, `not published yet`, `no S3 bucket yet`, `folder missing`, `no access`,
+`unknown`. It
 leaves local packages unchanged, so a plain `list` afterwards still shows the
 last sync. When a remote cannot be reached, that row falls back to what was
 last recorded and says so, as in `latest (remote unreachable)`. Under `--json`
 each row adds `fetched`, `true` only when the remote was read just now, a
-`changed_files` count when the files were scanned, and `"access_denied": true`
-when the remote refused your role; `status` keeps its values.
+`changed_files` count when the files were scanned (never for a missing
+folder), and `"access_denied": true` when the remote refused your role;
+`status` keeps its values.
 
 `status` ends with how many files and folders the ignore rules leave out, as
 in `3 ignored files and 1 ignored folder not included`. `--ignored` lists each

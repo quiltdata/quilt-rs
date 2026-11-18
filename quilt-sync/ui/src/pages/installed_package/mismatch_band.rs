@@ -168,6 +168,10 @@ fn state_line(state: &PackageState) -> &'static str {
             "The requested version isn't installed on this computer. \
              You have the latest version installed, and that's what's shown."
         }
+        PackageState::Unavailable => {
+            "The requested version isn't installed on this computer, \
+             and the package's folder is missing, so its files can't be checked."
+        }
         PackageState::NoSession { .. }
         | PackageState::SignInExpired { .. }
         | PackageState::Unreachable { .. }

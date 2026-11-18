@@ -971,6 +971,13 @@ async fn autosync_leaves_our_own_interrupted_claim_to_the_sweep() -> Result<(), 
         awaits(&unread).await,
         "while latest can't be read, the sweep waits and autosync with it"
     );
+    let mut missing = fresh(written());
+    missing.working_copy = quilt::lineage::WorkingCopy::Unavailable("/Volumes/gone".into());
+    let ours_missing = fixture.model(ours_claimed(), missing, true);
+    assert!(
+        !awaits(&ours_missing).await,
+        "a missing folder is autosync's to report; no sweep acts on it"
+    );
     let _running = fixture.tasks.hold(&namespace());
     assert!(
         !awaits(&ours).await,

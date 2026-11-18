@@ -1193,6 +1193,28 @@ async fn test_pull_dry_runs_refuse_a_missing_folder() -> Res {
     Ok(())
 }
 
+/// `state` of a package whose folder is gone is `Unavailable`, never the
+/// `Behind` (or `Latest`) its empty walk would resolve to, and it counts no
+/// changed files, because none were scanned.
+#[test(tokio::test)]
+async fn test_state_of_a_missing_folder_is_unavailable_with_no_count() -> Res {
+    use crate::lineage::PackageState;
+
+    let (package, _temp_dirs) = behind_package("{\"version\":\"v0\"}").await?;
+    let mut lineage = package.lineage().await?;
+    lineage
+        .paths
+        .insert(PathBuf::from("a.txt"), crate::lineage::PathState::default());
+    package.lineage.write(&package.storage, lineage).await?;
+    std::fs::remove_dir_all(package.package_home().await?)?;
+
+    let report = package.state().await?;
+    assert_eq!(report.state, PackageState::Unavailable);
+    assert_eq!(report.changed_files, None);
+    assert_eq!(report.upstream_state, UpstreamState::Behind);
+    Ok(())
+}
+
 /// A newer revision that changed only the header still has a hash to link to,
 /// though it brings no paths.
 #[test(tokio::test)]

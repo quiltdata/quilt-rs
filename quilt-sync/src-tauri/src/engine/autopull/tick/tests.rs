@@ -1,6 +1,7 @@
 use super::*;
 use quilt_uri::fixtures;
 
+use std::path::Path;
 use std::sync::Arc;
 use std::time::SystemTime;
 
@@ -35,6 +36,7 @@ fn pulled(uri: quilt_uri::ManifestUri) -> quilt::flow::PullReport {
 }
 
 mod merge;
+mod missing_folder;
 mod publish;
 mod watched;
 
@@ -155,15 +157,23 @@ fn classify_generic_is_paused() {
 }
 
 #[test]
-fn classify_a_missing_package_folder_is_transient() {
-    // Nothing for the user to clear: syncing retries on backoff and resumes
-    // once the folder is back, where the default arm would pause until cleared.
-    let err = Error::from(quilt::Error::PackageOp(
-        quilt::PackageOpError::WorkingCopyUnavailable("/gone/demo".into()),
-    ));
-    match classify_sync_err(err) {
-        Err(WatchError::Transient(_)) => {}
-        other => panic!("expected Transient(_), got {other:?}"),
+fn classify_a_missing_package_folder_skips_the_package() {
+    // Nothing for the user to clear, where the default arm would pause until
+    // cleared, and nothing to retry on backoff: the pass skips the package
+    // and the next tick that reads the folder resumes it.
+    let missing = || {
+        Error::from(quilt::Error::PackageOp(
+            quilt::PackageOpError::WorkingCopyUnavailable("/gone/demo".into()),
+        ))
+    };
+    match classify_sync_err(missing()) {
+        Err(WatchError::Unavailable(home)) => assert_eq!(home, Path::new("/gone/demo")),
+        other => panic!("expected Unavailable(_), got {other:?}"),
+    }
+    // The pull dry-run's refusal, on the read side.
+    match classify_transient_or_login(missing()) {
+        WatchError::Unavailable(home) => assert_eq!(home, Path::new("/gone/demo")),
+        other => panic!("expected Unavailable(_), got {other:?}"),
     }
 }
 

@@ -761,7 +761,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
     /// resolved from its lineage, without the network or a working-tree walk.
     /// Otherwise this is [`Self::status`] — the remote's `latest` tip plus the
     /// working tree — resolved by
-    /// [`PackageState::resolve`](lineage::PackageState::resolve). A remote with
+    /// [`PackageState::of_status`](lineage::PackageState::of_status). A remote with
     /// no catalog host is read on the machine's own AWS credentials.
     /// The fetched tip is not written back to lineage.
     ///
@@ -777,16 +777,20 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         // not the read above: a push landing in between would otherwise pair a
         // fresh `UpToDate` with a stale commit and say "revision not published".
         let (lineage, status) = self.status_with_lineage(None).await?;
-        let changed_files = status.changes.len();
+        // A folder that could not be read was not scanned: its empty change
+        // list is no count.
+        let changed_files = status
+            .unavailable_home()
+            .is_none()
+            .then_some(status.changes.len());
         Ok(lineage::PackageStateReport {
-            state: lineage::PackageState::resolve(
-                status.upstream_state,
+            state: lineage::PackageState::of_status(
+                &status,
                 lineage.commit.is_some(),
                 lineage.remote_uri.is_some(),
-                Some(changed_files),
             ),
             upstream_state: status.upstream_state,
-            changed_files: Some(changed_files),
+            changed_files,
             latest_refreshed: status.latest_refreshed,
         })
     }

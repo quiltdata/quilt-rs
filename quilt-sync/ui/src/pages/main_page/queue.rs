@@ -298,9 +298,9 @@ fn role_denied_text(state: &PackageState, host: Option<&str>, bucket: &str) -> S
 
 /// Section 5's lattice, as a sort key. Lower sorts first: pull-conflict above
 /// error above diverged above behind above "has changes" above no-remote
-/// above unpublished. `Unknown` takes the "error" rank — of which a dead
-/// session is the attributable half, so what reaches this function as
-/// `Unknown` is a state that could not be read.
+/// above unpublished above a missing folder. `Unknown` takes the "error" rank
+/// — of which a dead session is the attributable half, so what reaches this
+/// function as `Unknown` is a state that could not be read.
 /// `RoleDenied` sorts last only to keep this match total: R2 groups every
 /// denial by bucket, so a `RoleDenied` package never reaches `rows` unless
 /// its bucket or host is absent, and a denial is not unimportant.
@@ -325,7 +325,10 @@ fn precedence(state: &PackageState) -> u8 {
         PackageState::PendingChanges { .. } | PackageState::PendingCommit => 5,
         PackageState::NoRemote => 6,
         PackageState::Unpublished => 7,
-        PackageState::RoleDenied { .. } => 8,
+        // Nothing to do in the app until the folder is back: below the states
+        // a click can fix.
+        PackageState::Unavailable => 8,
+        PackageState::RoleDenied { .. } => 9,
         PackageState::Latest => unreachable!("Latest never enters either collection"),
     }
 }

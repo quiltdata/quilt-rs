@@ -130,6 +130,10 @@ fn states() -> Vec<(&'static str, PackageState)> {
         ("no bucket chosen yet", PackageState::NoRemote),
         ("has a bucket, never published", PackageState::Unpublished),
         (
+            "the working folder is missing — an unplugged drive",
+            PackageState::Unavailable,
+        ),
+        (
             "no session for the deployment",
             PackageState::NoSession {
                 host: Some("demo.quiltdata.com".to_string()),
