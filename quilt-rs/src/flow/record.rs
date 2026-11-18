@@ -141,6 +141,23 @@ impl Recorded {
     pub fn hash(&self) -> Option<&str> {
         self.committed.hash()
     }
+
+    /// `self` with `unchecked`, the warning of a workflow resolution that
+    /// could not read the config, unless nothing was recorded or the check
+    /// already says the revision went unchecked.
+    #[must_use]
+    pub fn with_unchecked(mut self, unchecked: Option<WorkflowWarning>) -> Self {
+        if let Some(warning) = unchecked
+            && self.hash().is_some()
+            && !self
+                .warnings
+                .iter()
+                .any(|w| matches!(w, WorkflowWarning::Unchecked { .. }))
+        {
+            self.warnings.push(warning);
+        }
+        self
+    }
 }
 
 /// Record `manifest` as a new revision of `namespace` in `store`, on top of

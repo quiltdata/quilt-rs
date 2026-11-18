@@ -71,10 +71,10 @@ pub async fn package_commit(
         .await?
         .ok_or_else(|| Error::from(quilt::InstallPackageError::NotInstalled(namespace)))?;
 
-    let workflow = installed_package
+    let (workflow, unchecked) = installed_package
         .resolve_workflow_for_commit(workflow)
         .await?;
-    model
+    let recorded = model
         .package_commit(
             &installed_package,
             message.to_string(),
@@ -82,7 +82,8 @@ pub async fn package_commit(
             workflow,
             host_config,
         )
-        .await
+        .await?;
+    Ok(recorded.with_unchecked(unchecked))
 }
 
 pub async fn install_package_only(

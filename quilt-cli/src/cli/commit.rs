@@ -75,13 +75,14 @@ async fn commit_package(
                 WorkflowIntent::Named(id) => Some(id.clone()),
                 WorkflowIntent::BucketDefault | WorkflowIntent::NoWorkflow => None,
             };
-            let workflow = installed_package
+            let (workflow, unchecked) = installed_package
                 .resolve_workflow_for_commit(workflow)
                 .await?;
             // A remote-less package has no workflows config to resolve against,
             // so a `Named` intent silently resolves to nothing. Warn instead of
             // dropping it quietly — the workflow can be chosen at push/set-remote.
             if workflow.is_none()
+                && unchecked.is_none()
                 && let Some(id) = named_id
             {
                 log::warn!(
@@ -90,7 +91,8 @@ async fn commit_package(
             }
             Ok(installed_package
                 .commit(message, user_meta, workflow, host_config)
-                .await?)
+                .await?
+                .with_unchecked(unchecked))
         }
         None => Err(Error::NamespaceNotFound(namespace)),
     }

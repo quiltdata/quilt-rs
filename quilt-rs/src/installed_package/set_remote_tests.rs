@@ -1299,8 +1299,8 @@ async fn test_set_remote_without_host_recommits_with_bucket_workflow() -> Res {
 
 /// A local commit is not refused for a workflows config that cannot be read:
 /// it resolves to no workflow, and the commit records with an `Unchecked`
-/// warning. A workflow the config refuses, or whose schema cannot be read,
-/// still fails.
+/// warning, even when the config reads by the time the commit checks. A
+/// workflow the config refuses, or whose schema cannot be read, still fails.
 #[test(tokio::test)]
 async fn a_commit_against_an_unreadable_config_records_unchecked() -> Res {
     let (package, _t1, _t2) = package_with_config("unreadable", FOO_CONFIG, b"{}").await?;
@@ -1360,28 +1360,51 @@ schemas:
             .await
             .is_err()
     );
-    let workflow = package
-        .resolve_workflow_for_commit(WorkflowIntent::NoWorkflow)
+    let (workflow, unchecked) = package
+        .resolve_workflow_for_commit(WorkflowIntent::Named("foo".to_string()))
         .await?;
     assert!(workflow.is_none());
+    let Some(unchecked) = unchecked else {
+        panic!("the resolution says the config could not be read");
+    };
 
+    let home = package.package_home().await?;
     package
         .storage
-        .write_byte_stream(
-            package.package_home().await?.join("data.txt"),
-            ByteStream::from_static(b"changed"),
-        )
+        .write_byte_stream(home.join("data.txt"), ByteStream::from_static(b"changed"))
         .await?;
     let recorded = package
-        .commit("Second".to_string(), UserMeta::Keep, workflow, None)
-        .await?;
+        .commit("Second".to_string(), UserMeta::Keep, None, None)
+        .await?
+        .with_unchecked(Some(unchecked.clone()));
     assert!(
         matches!(
             recorded.warnings.as_slice(),
             [flow::WorkflowWarning::Unchecked { bucket, .. }] if bucket == "my-bucket"
         ),
-        "{:?}",
+        "once, though the commit's own check could not read it either: {:?}",
         recorded.warnings
     );
+
+    // The config reads by the time the commit checks, and requires nothing,
+    // so only the resolution's warning says the revision went unchecked.
+    package
+        .remote
+        .put_object(
+            None,
+            &"s3://my-bucket/.quilt/workflows/config.yml".parse()?,
+            b"version: '1'\nis_workflow_required: false\nworkflows:\n  foo:\n    name: Foo\n"
+                .to_vec(),
+        )
+        .await?;
+    package
+        .storage
+        .write_byte_stream(home.join("data.txt"), ByteStream::from_static(b"again"))
+        .await?;
+    let recorded = package
+        .commit("Third".to_string(), UserMeta::Keep, None, None)
+        .await?
+        .with_unchecked(Some(unchecked.clone()));
+    assert_eq!(recorded.warnings, [unchecked]);
     Ok(())
 }

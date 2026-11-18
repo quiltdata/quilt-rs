@@ -1853,33 +1853,38 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
 
     /// [`Self::resolve_workflow`] for a local commit, which a workflows config
     /// that cannot be read does not refuse: the revision then carries no
-    /// workflow, and the commit's check warns that it went unchecked. A
-    /// missing session still fails, and so does anything resolving the
+    /// workflow, and the warning to add with [`flow::Recorded::with_unchecked`]
+    /// says it went unchecked, even if the commit's own check reads the config.
+    /// A missing session still fails, and so does anything resolving the
     /// workflow against a config that was read, such as a missing schema.
     pub async fn resolve_workflow_for_commit(
         &self,
         intent: WorkflowIntent,
-    ) -> Res<Option<Workflow>> {
+    ) -> Res<(Option<Workflow>, Option<flow::WorkflowWarning>)> {
         let Some((origin, config_uri)) = self.workflows_config_location().await? else {
-            return Ok(None);
+            return Ok((None, None));
         };
         let (config, parsed) =
             match fetch_workflows_config(&*self.remote, origin.as_ref(), &config_uri).await {
                 Ok(fetched) => fetched,
                 Err(err @ Error::Login(_)) => return Err(err),
                 Err(err) => {
-                    log::info!("Committing with no workflow, as the config cannot be read: {err}");
-                    return Ok(None);
+                    let unchecked = flow::WorkflowWarning::Unchecked {
+                        bucket: config_uri.bucket,
+                        reason: err.to_string(),
+                    };
+                    return Ok((None, Some(unchecked)));
                 }
             };
-        resolve_workflow_from_config(
+        let workflow = resolve_workflow_from_config(
             &*self.remote,
             origin.as_ref(),
             intent,
             config,
             parsed.as_ref(),
         )
-        .await
+        .await?;
+        Ok((workflow, None))
     }
 
     /// Fetch and parse the bucket's `.quilt/workflows/config.yml` for this
