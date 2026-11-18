@@ -205,6 +205,7 @@ fn fetched_state(fetched: &Fetched) -> Cow<'static, str> {
         PackageState::Diverged => "changed in both places".into(),
         PackageState::Unpublished => "not published yet".into(),
         PackageState::NoRemote => "no S3 bucket yet".into(),
+        PackageState::Unavailable => "folder missing".into(),
         PackageState::Unknown => "unknown".into(),
     }
 }
@@ -673,6 +674,10 @@ mod tests {
                 "not published yet",
             ),
             (fetched(PackageState::NoRemote, None), "no S3 bucket yet"),
+            (
+                fetched(PackageState::Unavailable, Some(0)),
+                "folder missing",
+            ),
             (fetched(PackageState::Unknown, None), "unknown"),
             (denied(), "no access"),
             (credentials_unusable(), CREDENTIALS_UNUSABLE),

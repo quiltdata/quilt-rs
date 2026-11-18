@@ -130,8 +130,16 @@ pub async fn check<M: QuiltModel>(
     settings: &TaskSettings,
     pkg: &quilt::InstalledPackage,
 ) {
-    if let Err(err) = try_check(model, tasks, settings, pkg).await {
-        warn!("tasks: {}: {err}", pkg.namespace);
+    match try_check(model, tasks, settings, pkg).await {
+        Ok(()) => {}
+        // The folder went between autosync's pass and this check, which the
+        // next pass logs once; this one would every tick.
+        Err(
+            err @ Error::Quilt(quilt::Error::PackageOp(
+                quilt::PackageOpError::WorkingCopyUnavailable(_),
+            )),
+        ) => debug!("tasks: {}: {err}", pkg.namespace),
+        Err(err) => warn!("tasks: {}: {err}", pkg.namespace),
     }
 }
 
@@ -270,6 +278,17 @@ async fn try_check<M: QuiltModel>(
     let Some(tree) = fresh_at_head(model, pkg, &locked, &lineage).await? else {
         return Ok(());
     };
+    // A folder that could not be read lists no change because nothing was
+    // checked: no claim, sweep or reset acts on it. Autosync's pass logs the
+    // missing folder once; the next check after it is back carries on.
+    if let Some(home) = tree.status.unavailable_home() {
+        debug!(
+            "tasks: {}: working folder {} unavailable, skipped",
+            pkg.namespace,
+            home.display()
+        );
+        return Ok(());
+    }
     let workflow = carried_workflow(workflow.as_ref());
     if verdict == Verdict::Interrupted {
         let record = &tasks.record;
@@ -417,10 +436,13 @@ async fn reset_if_clean<M: QuiltModel>(
 ) -> Result<(), Error> {
     let (tree, _) = walk(model, pkg, locked).await?;
     // An unreadable folder lists no change, but nothing was checked in it.
-    if tree.status.changes.is_empty()
-        && tree.status.unavailable_home().is_none()
-        && tree.commit.is_none()
-    {
+    if let Some(home) = tree.status.unavailable_home() {
+        warn!(
+            "tasks: {}: left Diverged, its working folder {} is unavailable",
+            pkg.namespace,
+            home.display()
+        );
+    } else if tree.status.changes.is_empty() && tree.commit.is_none() {
         model.locked_package_reset_local(locked).await?;
     } else {
         warn!(
