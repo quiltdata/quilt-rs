@@ -64,25 +64,35 @@ pub async fn resolve_hash(
     bucket: &str,
     prefix: &str,
 ) -> Res<String> {
-    let length = prefix.chars().count();
-    if !(MIN_HASH_PREFIX_LEN..=TOP_HASH_LEN).contains(&length) {
-        return Err(HashPrefixError::InvalidLength(prefix.to_string()).into());
-    }
-    if length == TOP_HASH_LEN {
-        return if is_top_hash(prefix) {
-            Ok(prefix.to_string())
-        } else {
-            Err(HashPrefixError::NotHex(prefix.to_string()).into())
-        };
-    }
-    if !is_lowercase_hex(prefix) {
-        return Err(HashPrefixError::NotHex(prefix.to_string()).into());
+    if let Some(whole) = check_prefix(prefix)? {
+        return Ok(whole);
     }
 
     let found = remote
         .manifest_hashes_with_prefix(host, bucket, prefix)
         .await?;
     Ok(pick_one(prefix, found)?)
+}
+
+/// The checks every resolver makes before it looks for revisions: the length,
+/// then lowercase hex. `Some` is a whole top hash, which comes back as given
+/// with nothing looked up; `None` is a prefix to match.
+pub(super) fn check_prefix(prefix: &str) -> Result<Option<String>, HashPrefixError> {
+    let length = prefix.chars().count();
+    if !(MIN_HASH_PREFIX_LEN..=TOP_HASH_LEN).contains(&length) {
+        return Err(HashPrefixError::InvalidLength(prefix.to_string()));
+    }
+    if length == TOP_HASH_LEN {
+        return if is_top_hash(prefix) {
+            Ok(Some(prefix.to_string()))
+        } else {
+            Err(HashPrefixError::NotHex(prefix.to_string()))
+        };
+    }
+    if !is_lowercase_hex(prefix) {
+        return Err(HashPrefixError::NotHex(prefix.to_string()));
+    }
+    Ok(None)
 }
 
 fn is_lowercase_hex(text: &str) -> bool {
@@ -93,8 +103,9 @@ fn is_lowercase_hex(text: &str) -> bool {
 ///
 /// `found` is whatever the registry listed; it is checked again here, so a
 /// remote that over-lists cannot make a prefix ambiguous, and the same hash
-/// listed twice counts once.
-fn pick_one(prefix: &str, found: Vec<String>) -> Result<String, HashPrefixError> {
+/// listed twice counts once. Names that are not a whole top hash are not
+/// revisions and never match.
+pub(super) fn pick_one(prefix: &str, found: Vec<String>) -> Result<String, HashPrefixError> {
     let mut matches: Vec<String> = found
         .into_iter()
         .filter(|hash| is_top_hash(hash) && hash.starts_with(prefix))

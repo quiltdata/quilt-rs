@@ -28,6 +28,7 @@ mod remove_revisions;
 mod reset_to_latest;
 mod resolve_comparison;
 mod resolve_hash;
+mod resolve_local_hash;
 mod status;
 mod stop_ignoring;
 mod undo_commit;
@@ -109,6 +110,7 @@ pub use resolve_hash::MAX_LISTED_MATCHES;
 pub use resolve_hash::MIN_HASH_PREFIX_LEN;
 pub use resolve_hash::TOP_HASH_LEN;
 pub use resolve_hash::resolve_hash;
+pub use resolve_local_hash::resolve_local_hash;
 
 pub use status::create_status as status;
 pub use status::create_status_cached as status_cached;
