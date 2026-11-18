@@ -5,10 +5,19 @@ use crate::cli::model::Commands;
 use crate::cli::output::Render;
 use crate::cli::output::Std;
 
-#[derive(Debug)]
 pub struct Input {
     pub code: String,
     pub host: Host,
+}
+
+// The code is a reusable refresh token, and debug logs get shared, so Debug hides it.
+impl std::fmt::Debug for Input {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Input")
+            .field("code", &"<redacted>")
+            .field("host", &self.host)
+            .finish()
+    }
 }
 
 pub struct Output {
@@ -58,6 +67,18 @@ mod tests {
 
         let display_string = format!("{output}");
         assert_eq!(display_string, "Successfully logged in to quilt.test");
+    }
+
+    #[test]
+    fn debug_hides_the_code() {
+        let input = Input {
+            code: "secret-refresh-token".to_string(),
+            host: fixtures::host(),
+        };
+
+        let debug_string = format!("{input:?}");
+        assert!(!debug_string.contains("secret-refresh-token"));
+        assert!(debug_string.contains("quilt.test"));
     }
 
     #[test]

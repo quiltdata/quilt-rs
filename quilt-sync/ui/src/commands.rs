@@ -199,7 +199,9 @@ pub struct WorkflowInfo {
 /// - `NotConfigured` — the bucket is ungoverned; no choice to make.
 /// - `Unavailable` — a transient failure loading the config; commit will retry
 ///   the bucket default.
-/// - `Invalid` — the config is malformed; commits will fail until it is fixed.
+/// - `Invalid` — the config is malformed; the Commit page currently disables
+///   Save, and must not promise a fallback. `quilt commit` records the
+///   revision as unchecked.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(
     tag = "state",
@@ -1383,13 +1385,26 @@ pub async fn download_and_install_update() -> Result<(), String> {
 
 // ── Package actions ─────────────────────────────────────────
 
+/// Response from the `package_commit` command. UI-side mirror of the backend
+/// `quilt_sync::commands::package_ops::CommitResponse`; the serde attributes
+/// MUST match so the typed payload crosses the engine boundary unchanged.
+/// `workflow_warning` is `Some(reasons)` when the revision was committed with
+/// workflow warnings; `nothing_to_commit` when it was the package's already.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitResponse {
+    pub message: String,
+    pub workflow_warning: Option<String>,
+    pub nothing_to_commit: bool,
+}
+
 pub async fn package_commit(
     namespace: String,
     message: String,
     metadata: String,
     workflow: WorkflowIntent,
     uri: Option<S3PackageUri>,
-) -> Result<String, String> {
+) -> Result<CommitResponse, String> {
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
     struct Args {

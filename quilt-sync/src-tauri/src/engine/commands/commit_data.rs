@@ -156,9 +156,10 @@ pub struct CommitWorkflowInfo {
 /// - `NotConfigured` — no config (or no remote); the bucket is ungoverned.
 /// - `Unavailable` — a transient/network failure loading the config; a commit
 ///   will retry resolving the bucket default.
-/// - `Invalid` — the config exists but is malformed (schema violation). Every
-///   commit to this bucket will FAIL until it is fixed, so the UI must not
-///   promise a fallback; `reason` names the violation succinctly.
+/// - `Invalid` — the config exists but is malformed (schema violation).
+///   `reason` names the violation succinctly. A local `quilt commit` records
+///   the revision as unchecked; the Commit page currently still disables
+///   Save, and must not promise a bucket-default fallback.
 #[derive(Serialize)]
 #[serde(
     tag = "state",
@@ -272,9 +273,8 @@ fn workflows_config_to_commit_workflows(
         Ok(None) => CommitWorkflows::NotConfigured,
         // A malformed config is not a load failure — the file is present and
         // readable, it just violates the schema. Distinguish it by variant (not
-        // by message text) so the UI can tell the user commits will fail until
-        // the config is fixed, instead of promising a bucket-default fallback
-        // that would actually error.
+        // by message text) so the UI can tell a broken config from a transient
+        // load failure, instead of promising a bucket-default fallback.
         Err(Error::Quilt(quilt::Error::RemoteCatalog(
             quilt::RemoteCatalogError::InvalidWorkflowsConfig(reason),
         ))) => CommitWorkflows::Invalid {
@@ -652,15 +652,18 @@ pub async fn get_bucket_workflows(
 //
 // The commit dialog validates the user's input against the selected workflow's
 // rules as they type (debounced), showing advisory inline errors before the
-// commit attempt. This is a convenience layer only — the commit-time gate in
-// quilt-rs remains the authority and is unchanged; the buttons stay enabled.
+// commit attempt. This is a convenience layer only — the buttons stay enabled.
+// quilt-rs remains the authority: a local commit records the revision and
+// warns about what the bucket's workflows reject, and Publish and push refuse
+// it.
 //
 // Two commands split the work so the per-keystroke path never touches the
 // network: `load_workflow_rules` fetches + compiles a workflow's rules once and
 // caches them; `validate_commit_candidate` validates {message, user_meta, name}
 // against the CACHED rules with no I/O. The entries schema is deliberately NOT
 // validated live — projecting a candidate's entries needs the built manifest's
-// rows (the heavier flow machinery), so entries stay the commit gate's job.
+// rows (the heavier flow machinery), so entries stay quilt-rs's job: the
+// commit's warning, and the refusal at Publish and push.
 
 /// Which commit-dialog input a [`CommitViolation`] belongs under, so the UI can
 /// render each violation beneath the field the user must fix.
@@ -1937,7 +1940,7 @@ workflows:
 
     /// A malformed workflows config (`InvalidWorkflowsConfig`) must map to the
     /// distinct `Invalid` case carrying the reason — NOT `Unavailable` — so the
-    /// dialog can warn that commits will fail until the config is fixed.
+    /// dialog can distinguish a broken config from a load failure.
     #[tokio::test]
     async fn test_get_commit_data_workflows_invalid() -> Result<(), String> {
         let mut model = base_commit_model();
