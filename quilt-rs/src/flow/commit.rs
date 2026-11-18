@@ -6,17 +6,19 @@ use std::path::PathBuf;
 use tokio_stream::StreamExt;
 use tracing::debug;
 use tracing::info;
-use url::Url;
 
+use super::record::PackageStore;
+use super::record::Recorded;
+use super::record::WorkflowCheck;
+use super::record::record;
 use crate::Error;
+use crate::LogicalKey;
 use crate::Res;
 use crate::error::ManifestError;
 use crate::error::PackageOpError;
+use crate::io::manifest::RowContent;
 use crate::io::manifest::StreamRowsChunk;
-use crate::io::manifest::build_manifest_from_rows_stream;
 use crate::io::remote::Remote;
-use crate::io::remote::entry_view;
-use crate::io::remote::validate_workflow;
 use crate::io::storage::Storage;
 use crate::lineage::Change;
 use crate::lineage::CommitState;
@@ -28,11 +30,7 @@ use crate::manifest::Manifest;
 use crate::manifest::ManifestHeader;
 use crate::manifest::ManifestRow;
 use crate::manifest::RawNumbers;
-use crate::manifest::TopHasher;
 use crate::manifest::Workflow;
-use crate::paths::DomainPaths;
-use crate::workflow::EntryView;
-use quilt_uri::Host;
 use quilt_uri::Namespace;
 
 /// Merge the stored manifest with this revision's changes into the sorted
@@ -91,57 +89,25 @@ async fn collect_local_with_changes(
     all_rows
 }
 
-async fn create_immutable_object_copy(
+/// The row of a file added or modified in the working folder, with its bytes
+/// to be recorded from there, and its state in the folder noted in `lineage`.
+async fn changed_file(
     storage: &impl Storage,
-    paths: &DomainPaths,
     working_dir: &Path,
     lineage: &mut PackageLineage,
+    files: &mut BTreeMap<LogicalKey, RowContent>,
     current: ManifestRow,
 ) -> Res<ManifestRow> {
-    let logical_key = &current.logical_key;
-    debug!(
-        "⏳ Creating immutable object copy for: {}",
-        logical_key.display()
-    );
-    let objects_dir = paths.objects_dir();
-    let object_dest = objects_dir.join(hex::encode(current.hash.digest()));
-    let new_physical_key = Url::from_file_path(&object_dest)
-        .map_err(|()| {
-            Error::PackageOp(PackageOpError::Commit(format!(
-                "Failed to create URL from {}",
-                object_dest.display()
-            )))
-        })?
-        .to_string();
-
-    let current_hash = current.hash.clone();
-    let work_dest = logical_key.join_to(working_dir);
-    let row = ManifestRow {
-        physical_key: new_physical_key,
-        ..current
-    };
-
-    if storage.exists(&object_dest).await {
-        debug!(
-            "✔️ Object already exists in storage: {}",
-            object_dest.display()
-        );
-    } else {
-        debug!(
-            "⏳ Copying file to objects directory: {}",
-            object_dest.display()
-        );
-        storage.copy(&work_dest, object_dest).await?;
-        debug!("✔️ File copied successfully");
-    }
+    let work_dest = current.logical_key.join_to(working_dir);
     lineage.paths.insert(
-        row.logical_key.to_path_buf(),
+        current.logical_key.to_path_buf(),
         PathState {
             timestamp: storage.modified_timestamp(&work_dest).await?,
-            hash: Some(current_hash.into()),
+            hash: Some(current.hash.clone().into()),
         },
     );
-    Ok(row)
+    files.insert(current.logical_key.clone(), RowContent::Path(work_dest));
+    Ok(current)
 }
 
 // TODO
@@ -207,9 +173,14 @@ impl Committed {
 
 /// Commit new commit with new `message`, `user_meta` and all changes got from calling `flow::status`
 ///
+/// The changes are collected into the new revision's rows, which
+/// [`record`] then writes to `store`: the record step is the one local write
+/// path, shared with a build that has no working folder.
+///
 /// `user_meta` selects the new revision's package-level metadata — see
 /// [`UserMeta`]: `Keep` inherits the previous revision's, `Clear` removes it,
-/// `Set` replaces it.
+/// `Set` replaces it. `workflows` says whether the bucket's workflows refuse
+/// the revision or only warn about it ([`WorkflowCheck`]).
 ///
 /// When the new top hash equals the current revision's (the pending commit's
 /// if there is one, else the installed one's), nothing is written or validated and
@@ -217,64 +188,31 @@ impl Committed {
 /// also stored in `lineage.commit`.
 // TODO: move `working_dir` to `paths`, and `paths` to `storage`
 #[allow(clippy::too_many_arguments)]
-#[allow(
-    clippy::too_many_lines,
-    reason = "cohesive commit orchestration; clearer as a linear sequence than extracted helpers"
-)]
 pub async fn commit_package(
     mut lineage: PackageLineage,
     manifest: &mut Manifest,
-    paths: &DomainPaths,
+    store: &impl PackageStore,
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
-    host: Option<&Host>,
+    workflows: WorkflowCheck<'_>,
     working_dir: PathBuf,
     status: InstalledPackageStatus,
     namespace: Namespace,
     message: String,
     user_meta: UserMeta,
     workflow: Option<Workflow>,
-) -> Res<(PackageLineage, Committed)> {
+) -> Res<(PackageLineage, Recorded)> {
     status.require_working_copy()?;
     info!(
         r#"⏳ Starting commit with message "{}" and user_meta `{:?}`"#,
         message, user_meta
     );
 
-    // create a new manifest based on the stored version
-
-    // for each modified file:
-    //   - compute the new hash
-    //   - store in the identity cache at $LOCAL/.quilt/objects/<hash>
-    //   - update the modified entries in the manifest with the new physical keys
-    //     pointing to the new objects in the identity cache
-    //   - ? set entry.meta.pulled_hashes to previous object hash?
-    //   - ? set entry.meta.remote_key to the remote's physical key?
-
-    // compute the new top hash
-    // store the new manifest under the new top hash at $LOCAL/.quilt/packages/<hash>
-    // XXX: prefix with the namespace?
-    // XXX: what to do on collisions?
-    //      e.g. when a file was changed, committed, and then reverted
-
-    // store revision pointers to the newly created manifest
-    //   - in the local registry??
-    //   - in the lineage
-    //     - commit:
-    //       - timestamp
-    //       - user ?
-    //       - multihash: new_top_hash
-    //       - pulled_hashes: [old_top_hash] ?
-    //       - paths:
-    //         - [modified file's path]:
-    //           - multihash
-    //           # XXX: do we actually need this? can be inferred from namespace + logical key
-    //           - remote_key: "s3://..." # no version id
-    //           - local_key: $LOCAL/.quilt/objects/<hash>
-    //           - pulled_hashes: [old_hash] ?
-    // NOTE: each commit MUST include all paths from prior commits
-    //       (since the last pull, until reset by a sync)
-
+    // Each commit includes every path from the prior commits since the last
+    // pull: the new revision is the stored manifest with this walk's changes
+    // applied, and the bytes of each added or modified file are recorded
+    // from the working folder.
+    let mut files = BTreeMap::new();
     let mut modified_keys = BTreeMap::new();
     let mut removed_keys = HashSet::new();
     let mut new_files = Vec::new();
@@ -296,25 +234,13 @@ pub async fn commit_package(
                         current.logical_key.display()
                     ))));
                 }
-                let added = create_immutable_object_copy(
-                    storage,
-                    paths,
-                    &working_dir,
-                    &mut lineage,
-                    current,
-                )
-                .await?;
+                let added =
+                    changed_file(storage, &working_dir, &mut lineage, &mut files, current).await?;
                 new_files.push(Ok(added));
             }
             Change::Modified(current) => {
-                let modified = create_immutable_object_copy(
-                    storage,
-                    paths,
-                    &working_dir,
-                    &mut lineage,
-                    current,
-                )
-                .await?;
+                let modified =
+                    changed_file(storage, &working_dir, &mut lineage, &mut files, current).await?;
                 modified_keys.insert(logical_key.clone(), modified);
             }
         }
@@ -345,84 +271,36 @@ pub async fn commit_package(
         modified_keys.len(),
         new_files.len()
     );
-    let all_rows =
-        collect_local_with_changes(manifest, removed_keys, modified_keys, new_files).await;
-
-    // Before the workflow gate, so an unchanged revision is not validated again.
-    let new_top_hash = top_hash(&header, &all_rows)?;
-    if lineage.current_hash() == Some(new_top_hash.as_str()) {
-        info!("✔️ Nothing to commit: the top hash is still {new_top_hash}");
-        return Ok((lineage, Committed::NothingToCommit));
-    }
-
-    // The workflow quality gate: reject before any manifest is written, so a
-    // rejected revision is never committed. Vacuously passes for an ungoverned
-    // bucket (the header carries no workflow).
-    let entries: Vec<EntryView> = all_rows
-        .iter()
-        .filter_map(|row| row.as_ref().ok())
-        .map(entry_view)
-        .collect();
-    validate_workflow(
-        remote,
-        host,
-        &namespace.to_string(),
-        header.message(),
-        header.user_meta.as_ref(),
-        header.workflow.as_ref(),
-        &entries,
-    )
-    .await?;
-
-    let stream = tokio_stream::iter(vec![Ok(all_rows)]);
-    let dest_dir = paths.installed_manifests_dir(&namespace);
-    let (manifest_path, new_top_hash) = build_manifest_from_rows_stream(
-        storage,
-        dest_dir,
+    let rows = collect_local_with_changes(manifest, removed_keys, modified_keys, new_files)
+        .await
+        .into_iter()
+        .collect::<Res<Vec<_>>>()?;
+    let revision = Manifest {
         header,
-        manifest.dir_meta.clone(),
-        stream,
-    )
-    .await?;
-    info!(
-        "✔️New manifest with {} was built in {}",
-        manifest_path.display(),
-        new_top_hash
-    );
-    let mut prev_hashes = Vec::new();
-    if let Some(commit) = lineage.commit {
-        prev_hashes.push(commit.hash.clone());
-        prev_hashes.extend(commit.prev_hashes.clone());
-    }
-    let commit = CommitState {
-        hash: new_top_hash,
-        timestamp: chrono::Utc::now(),
-        prev_hashes,
+        rows,
+        dir_meta: manifest.dir_meta.clone(),
     };
-    lineage.commit = Some(commit.clone());
 
-    info!(
-        "✔️ Successfully committed changes with hash: {}",
-        commit.hash
-    );
-    Ok((lineage, Committed::Recorded(commit)))
-}
-
-fn top_hash(header: &ManifestHeader, rows: &StreamRowsChunk) -> Res<String> {
-    let mut top_hasher = TopHasher::new();
-    top_hasher.append_header(header)?;
-    for row in rows {
-        match row {
-            Ok(row) => top_hasher.append(row)?,
-            Err(err) => return Err(Error::Manifest(ManifestError::Table(err.to_string()))),
-        }
+    // Boxed: the record step's future is large, and every caller of a
+    // commit would otherwise carry it inline.
+    let (lineage, recorded) = Box::pin(record(
+        store, storage, remote, workflows, &namespace, lineage, revision, &files,
+    ))
+    .await?;
+    if let Committed::Recorded(commit) = &recorded.committed {
+        info!(
+            "✔️ Successfully committed changes with hash: {}",
+            commit.hash
+        );
     }
-    Ok(top_hasher.finalize())
+    Ok((lineage, recorded))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::io::manifest::build_manifest_from_rows_stream;
+    use crate::paths::DomainPaths;
     use test_log::test;
 
     use std::collections::BTreeMap;
@@ -493,7 +371,7 @@ mod tests {
             &paths,
             &ok_storage,
             &ok_remote,
-            None,
+            WorkflowCheck::Gate { host: None },
             PathBuf::default(),
             InstalledPackageStatus::default(),
             namespace.clone(),
@@ -529,7 +407,7 @@ mod tests {
             &paths,
             &storage,
             &remote,
-            None,
+            WorkflowCheck::Gate { host: None },
             PathBuf::default(),
             InstalledPackageStatus::default(),
             namespace.clone(),
@@ -556,6 +434,61 @@ mod tests {
         Ok(())
     }
 
+    /// A local commit (`WorkflowCheck::Warn`, as `InstalledPackage::commit`
+    /// uses) of a package whose remote bucket requires a workflow records the
+    /// revision anyway, and says what the push will refuse.
+    #[test(tokio::test)]
+    async fn a_local_commit_inconsistent_with_its_remote_warns_and_records() -> Res {
+        let paths = DomainPaths::new(std::path::absolute("/foo")?);
+        let namespace: Namespace = ("foo", "bar").into();
+        let remote = MockRemote::default();
+        remote
+            .put_object(
+                None,
+                &"s3://b/.quilt/workflows/config.yml".parse()?,
+                b"version: \"1\"\nis_workflow_required: true\nworkflows:\n  gate:\n    name: Gate\n"
+                    .to_vec(),
+            )
+            .await?;
+        let lineage = PackageLineage {
+            remote_uri: Some(quilt_uri::ManifestUri {
+                origin: None,
+                bucket: "b".to_string(),
+                namespace: namespace.clone(),
+                hash: String::new(),
+            }),
+            ..PackageLineage::default()
+        };
+        let storage = MockStorage::default();
+        let (lineage, recorded) = commit_package(
+            lineage,
+            &mut Manifest::default(),
+            &paths,
+            &storage,
+            &remote,
+            WorkflowCheck::Warn { host: None },
+            PathBuf::default(),
+            InstalledPackageStatus::default(),
+            namespace.clone(),
+            String::from("msg"),
+            UserMeta::Clear,
+            None,
+        )
+        .await?;
+        let hash = recorded.hash().expect("recorded despite the workflow");
+        assert_eq!(lineage.commit.as_ref().map(|c| c.hash.as_str()), Some(hash));
+        assert!(
+            storage
+                .exists(paths.installed_manifest(&namespace, hash))
+                .await
+        );
+        assert!(matches!(
+            recorded.warnings.as_slice(),
+            [super::super::WorkflowWarning::Inconsistent { bucket, .. }] if bucket == "b"
+        ));
+        Ok(())
+    }
+
     #[test(tokio::test)]
     async fn test_commit_empty() -> Res {
         let storage = MockStorage::default();
@@ -568,7 +501,7 @@ mod tests {
             &paths,
             &storage,
             &MockRemote::default(),
-            None,
+            WorkflowCheck::Gate { host: None },
             PathBuf::default(),
             InstalledPackageStatus::default(),
             ("foo", "bar").into(),
@@ -603,7 +536,7 @@ mod tests {
             &paths,
             &storage,
             &MockRemote::default(),
-            None,
+            WorkflowCheck::Gate { host: None },
             PathBuf::from("/gone/pkg"),
             status,
             ("foo", "bar").into(),
@@ -640,7 +573,7 @@ mod tests {
             &paths,
             &storage,
             &MockRemote::default(),
-            None,
+            WorkflowCheck::Gate { host: None },
             PathBuf::default(),
             InstalledPackageStatus::default(),
             ("foo", "bar").into(),
@@ -685,7 +618,7 @@ mod tests {
             &paths,
             &storage,
             &MockRemote::default(),
-            None,
+            WorkflowCheck::Gate { host: None },
             PathBuf::default(),
             InstalledPackageStatus::default(),
             ("foo", "bar").into(),
@@ -751,7 +684,7 @@ mod tests {
             &paths,
             &storage,
             &MockRemote::default(),
-            None,
+            WorkflowCheck::Gate { host: None },
             home,
             status,
             ("foo", "bar").into(),
@@ -936,7 +869,7 @@ mod tests {
                 &paths,
                 &storage,
                 &MockRemote::default(),
-                None,
+                WorkflowCheck::Gate { host: None },
                 PathBuf::default(),
                 InstalledPackageStatus::default(),
                 ("foo", "bar").into(),
@@ -963,7 +896,7 @@ mod tests {
             &paths,
             &storage,
             &MockRemote::default(),
-            None,
+            WorkflowCheck::Gate { host: None },
             PathBuf::default(),
             InstalledPackageStatus::default(),
             namespace.clone(),
@@ -1056,7 +989,7 @@ mod tests {
             &paths,
             &storage,
             &MockRemote::default(),
-            None,
+            WorkflowCheck::Gate { host: None },
             PathBuf::default(),
             InstalledPackageStatus::default(),
             ("foo", "bar").into(),
@@ -1119,7 +1052,7 @@ mod tests {
             &paths,
             &storage,
             &MockRemote::default(),
-            None,
+            WorkflowCheck::Gate { host: None },
             PathBuf::default(),
             status,
             ("foo", "bar").into(),
@@ -1191,7 +1124,7 @@ mod tests {
             &paths,
             &storage,
             &MockRemote::default(),
-            None,
+            WorkflowCheck::Gate { host: None },
             std::path::absolute("/working-dir")?,
             status,
             ("foo", "bar").into(),
@@ -1275,7 +1208,7 @@ mod tests {
             &paths,
             &storage,
             &MockRemote::default(),
-            None,
+            WorkflowCheck::Gate { host: None },
             PathBuf::default(),
             status,
             ("foo", "bar").into(),
@@ -1349,7 +1282,7 @@ mod tests {
             &paths,
             &storage,
             &MockRemote::default(),
-            None,
+            WorkflowCheck::Gate { host: None },
             std::path::absolute("/working-dir")?,
             status,
             ("foo", "bar").into(),
@@ -1403,7 +1336,7 @@ mod tests {
             &paths,
             storage,
             remote,
-            None,
+            WorkflowCheck::Gate { host: None },
             PathBuf::default(),
             InstalledPackageStatus::default(),
             namespace,
@@ -1412,6 +1345,7 @@ mod tests {
             workflow,
         )
         .await
+        .map(|(lineage, recorded)| (lineage, recorded.committed))
     }
 
     /// A first commit of "msg", so the next commit has a revision to compare
@@ -1427,7 +1361,7 @@ mod tests {
             &DomainPaths::new(std::path::absolute("/foo")?),
             storage,
             remote,
-            None,
+            WorkflowCheck::Gate { host: None },
             PathBuf::default(),
             InstalledPackageStatus::default(),
             ("foo", "bar").into(),
@@ -1575,7 +1509,7 @@ mod tests {
                 &paths,
                 &storage,
                 &MockRemote::default(),
-                None,
+                WorkflowCheck::Gate { host: None },
                 PathBuf::default(),
                 InstalledPackageStatus::default(),
                 namespace.clone(),
@@ -1630,7 +1564,7 @@ mod tests {
             &paths,
             &storage,
             &MockRemote::default(),
-            None,
+            WorkflowCheck::Gate { host: None },
             std::path::absolute("/working-dir")?,
             status,
             ("foo", "bar").into(),

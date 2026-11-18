@@ -1,4 +1,5 @@
 use quilt_rs::flow::Committed;
+use quilt_rs::flow::Recorded;
 use quilt_rs::flow::UserMeta;
 use quilt_rs::io::remote::HostConfig;
 use quilt_rs::io::remote::WorkflowIntent;
@@ -20,11 +21,14 @@ pub struct Input {
     pub host_config: Option<HostConfig>,
 }
 
-/// `None` when the new hash was the current revision's and nothing was
-/// committed.
+/// `commit` is `None` when the new hash was the current revision's and
+/// nothing was committed. `warnings` say how the revision is inconsistent
+/// with the remote bucket's workflows, which a local commit does not refuse;
+/// each is also logged as a warning.
 #[derive(Debug)]
 pub struct Output {
     pub commit: Option<CommitState>,
+    pub warnings: Vec<String>,
 }
 
 impl std::fmt::Display for Output {
@@ -38,7 +42,12 @@ impl std::fmt::Display for Output {
 
 impl Render for Output {
     fn to_json(&self) -> serde_json::Value {
-        serde_json::json!({ "hash": self.commit.as_ref().map(|commit| &commit.hash) })
+        let mut json =
+            serde_json::json!({ "hash": self.commit.as_ref().map(|commit| &commit.hash) });
+        if !self.warnings.is_empty() {
+            json["warnings"] = serde_json::json!(self.warnings);
+        }
+        json
     }
 }
 
@@ -53,7 +62,7 @@ async fn commit_package(
     user_meta: UserMeta,
     workflow: WorkflowIntent,
     host_config: Option<HostConfig>,
-) -> Result<Committed, Error> {
+) -> Result<Recorded, Error> {
     match local_domain.get_installed_package(&namespace).await? {
         Some(installed_package) => {
             // Preserve the requested id before the intent is consumed so we can
@@ -100,11 +109,12 @@ pub async fn model(
         host_config,
     )
     .await?;
-    let commit = match commit {
+    let warnings = commit.warnings.iter().map(ToString::to_string).collect();
+    let commit = match commit.committed {
         Committed::NothingToCommit => None,
         Committed::Recorded(commit) => Some(commit),
     };
-    Ok(Output { commit })
+    Ok(Output { commit, warnings })
 }
 
 #[cfg(test)]
@@ -613,6 +623,7 @@ mod tests {
                 hash: "abc123".to_string(),
                 prev_hashes: vec!["older".to_string()],
             }),
+            warnings: Vec::new(),
         };
 
         assert_eq!(output.to_json().to_string(), r#"{"hash":"abc123"}"#);
@@ -620,9 +631,30 @@ mod tests {
 
     #[test]
     fn nothing_to_commit_says_so_with_a_null_hash() {
-        let output = Output { commit: None };
+        let output = Output {
+            commit: None,
+            warnings: Vec::new(),
+        };
 
         assert_eq!(output.to_string(), "Nothing to commit");
         assert_eq!(output.to_json().to_string(), r#"{"hash":null}"#);
+    }
+
+    /// A commit the remote's workflows would refuse is recorded, and its JSON
+    /// lists why.
+    #[test]
+    fn json_lists_the_workflow_warnings() {
+        let output = Output {
+            commit: Some(CommitState {
+                hash: "abc123".to_string(),
+                ..CommitState::default()
+            }),
+            warnings: vec!["needs a workflow".to_string()],
+        };
+
+        assert_eq!(
+            output.to_json().to_string(),
+            r#"{"hash":"abc123","warnings":["needs a workflow"]}"#
+        );
     }
 }

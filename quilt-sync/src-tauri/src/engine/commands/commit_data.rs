@@ -652,15 +652,18 @@ pub async fn get_bucket_workflows(
 //
 // The commit dialog validates the user's input against the selected workflow's
 // rules as they type (debounced), showing advisory inline errors before the
-// commit attempt. This is a convenience layer only — the commit-time gate in
-// quilt-rs remains the authority and is unchanged; the buttons stay enabled.
+// commit attempt. This is a convenience layer only — the buttons stay enabled.
+// quilt-rs remains the authority: a local commit records the revision and
+// warns about what the bucket's workflows reject, and Publish and push refuse
+// it.
 //
 // Two commands split the work so the per-keystroke path never touches the
 // network: `load_workflow_rules` fetches + compiles a workflow's rules once and
 // caches them; `validate_commit_candidate` validates {message, user_meta, name}
 // against the CACHED rules with no I/O. The entries schema is deliberately NOT
 // validated live — projecting a candidate's entries needs the built manifest's
-// rows (the heavier flow machinery), so entries stay the commit gate's job.
+// rows (the heavier flow machinery), so entries stay quilt-rs's job: the
+// commit's warning, and the refusal at Publish and push.
 
 /// Which commit-dialog input a [`CommitViolation`] belongs under, so the UI can
 /// render each violation beneath the field the user must fix.

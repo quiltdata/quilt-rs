@@ -38,7 +38,7 @@ async fn package_commit_command(
     message: &str,
     metadata: &str,
     workflow: WorkflowIntent,
-) -> Result<(quilt_uri::Namespace, quilt::flow::Committed), Error> {
+) -> Result<(quilt_uri::Namespace, quilt::flow::Recorded), Error> {
     let namespace = quilt_uri::Namespace::try_from(namespace)?;
     if message.is_empty() {
         return Err(Error::Commit("Message is required".to_string()));
@@ -61,7 +61,9 @@ pub async fn package_commit(
     let tracing = &*s.telemetry;
     let watcher = &s.watcher;
     let result = package_commit_command(m, &namespace, &message, &metadata, workflow).await;
-    if let Ok((ns, quilt::flow::Committed::Recorded(_))) = &result {
+    if let Ok((ns, recorded)) = &result
+        && let quilt::flow::Committed::Recorded(_) = recorded.committed
+    {
         watcher.clear_paused(ns).await;
         watcher
             .note_committed(ns, pending_commit(m, ns).await)
@@ -75,25 +77,37 @@ fn report_commit(
     tracing: &crate::engine::telemetry::Telemetry,
     namespace: &str,
     uri: Option<&S3PackageUri>,
-    result: Result<quilt::flow::Committed, Error>,
+    result: Result<quilt::flow::Recorded, Error>,
 ) -> Result<String, String> {
     let mut notify = Notify::new(format!("Committing package {namespace}"));
     // Nothing committed, so no commit event. A failure keeps the event, which
     // is what reports a refusal.
-    if !matches!(result, Ok(quilt::flow::Committed::NothingToCommit)) {
+    if !matches!(
+        &result,
+        Ok(quilt::flow::Recorded {
+            committed: quilt::flow::Committed::NothingToCommit,
+            ..
+        })
+    ) {
         notify = notify.on_success(
             tracing,
             MixpanelEvent::PackageCommitted(PackageEvent::for_uri(uri)),
         );
     }
     let msg_ok = match &result {
-        Ok(quilt::flow::Committed::NothingToCommit) => {
+        Ok(recorded) if recorded.committed == quilt::flow::Committed::NothingToCommit => {
             format!("Package {namespace} has nothing to commit")
+        }
+        // A local commit is not refused for the bucket's workflows; it says
+        // what the push will refuse.
+        Ok(recorded) if !recorded.warnings.is_empty() => {
+            let warnings: Vec<String> = recorded.warnings.iter().map(ToString::to_string).collect();
+            format!("Committed {namespace}, but {}", warnings.join("; "))
         }
         _ => format!("Successfully committed {namespace}"),
     };
-    // Committing is not offline (the workflow gate reads the bucket's config),
-    // so a dead session lands here, where the user's typed work is.
+    // Resolving the workflow reads the bucket's config, so a dead session
+    // lands here, where the user's typed work is.
     let msg_err = |err: &Error| {
         auth_failure_message(err).unwrap_or_else(|| format!("Failed to commit: {err}"))
     };
@@ -1754,7 +1768,10 @@ mod tests {
             &telemetry,
             "acme/demo",
             None,
-            Ok(quilt::flow::Committed::NothingToCommit),
+            Ok(quilt::flow::Recorded {
+                committed: quilt::flow::Committed::NothingToCommit,
+                warnings: Vec::new(),
+            }),
         );
 
         assert_eq!(
@@ -1773,12 +1790,42 @@ mod tests {
             &telemetry,
             "acme/demo",
             None,
-            Ok(quilt::flow::Committed::Recorded(
-                quilt::lineage::CommitState::default(),
-            )),
+            Ok(quilt::flow::Recorded {
+                committed: quilt::flow::Committed::Recorded(quilt::lineage::CommitState::default()),
+                warnings: Vec::new(),
+            }),
         );
 
         assert_eq!(said, Ok("Successfully committed acme/demo".to_string()));
+        assert_eq!(
+            telemetry.queued_events(),
+            vec!["package_committed".to_owned()]
+        );
+    }
+
+    /// A commit inconsistent with the bucket's workflows is recorded, and the
+    /// line says what the push will refuse.
+    #[test]
+    fn a_commit_with_workflow_warnings_says_what_push_will_refuse() {
+        let telemetry = crate::engine::telemetry::Telemetry::default();
+
+        let said = super::report_commit(
+            &telemetry,
+            "acme/demo",
+            None,
+            Ok(quilt::flow::Recorded {
+                committed: quilt::flow::Committed::Recorded(quilt::lineage::CommitState::default()),
+                warnings: vec![quilt::flow::WorkflowWarning::Inconsistent {
+                    bucket: "b".to_string(),
+                    reason: "a workflow is required".to_string(),
+                }],
+            }),
+        );
+
+        let said = said.expect("a recorded commit");
+        assert!(said.starts_with("Committed acme/demo, but "), "{said}");
+        assert!(said.contains("s3://b"), "{said}");
+        assert!(said.contains("a workflow is required"), "{said}");
         assert_eq!(
             telemetry.queued_events(),
             vec!["package_committed".to_owned()]
@@ -2156,7 +2203,7 @@ mod tests {
             let commit = package
                 .commit(message, metadata, workflow, host_config)
                 .await?;
-            Ok(committed(&("acme", "demo").into(), &commit))
+            Ok(committed(&("acme", "demo").into(), &commit.committed))
         }
     }
 

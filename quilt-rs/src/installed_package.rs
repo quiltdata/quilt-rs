@@ -871,13 +871,18 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
     /// See [`UserMeta`] for the metadata contract: `Keep` inherits the
     /// previous revision's package-level metadata, `Clear` removes it,
     /// `Set` replaces it.
+    ///
+    /// A local commit is never refused for the remote bucket's workflows: a
+    /// revision inconsistent with them is recorded, and the returned
+    /// [`flow::Recorded::warnings`] say what a push will refuse. A package
+    /// with no remote gets no check.
     pub async fn commit(
         &self,
         message: String,
         user_meta: UserMeta,
         workflow: Option<Workflow>,
         host_config_opt: Option<HostConfig>,
-    ) -> Res<flow::Committed> {
+    ) -> Res<flow::Recorded> {
         Box::pin(
             self.lock()
                 .await?
@@ -893,7 +898,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         user_meta: UserMeta,
         workflow: Option<Workflow>,
         host_config_opt: Option<HostConfig>,
-    ) -> Res<flow::Committed> {
+    ) -> Res<flow::Recorded> {
         self.scaffold_paths().await?;
 
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
@@ -909,9 +914,9 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
             },
         };
 
-        // Captured before `host_config` moves into the walk: the commit
-        // gate fetches the workflow's config + schemas from the same origin the
-        // workflow was resolved against.
+        // Captured before `host_config` moves into the walk: the commit's
+        // workflow check fetches the bucket's config + schemas from the same
+        // origin the workflow was resolved against.
         let host = host_config.host.clone();
 
         let (lineage, status) = self
@@ -921,13 +926,17 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
             .rehash_for_commit(&manifest, &package_home, status, &host_config)
             .await?;
 
-        let (lineage, commit) = flow::commit(
+        // A local commit warns, without refusing, when the revision is
+        // inconsistent with its remote bucket's workflows; the push refuses.
+        let (lineage, recorded) = flow::commit(
             lineage,
             &mut manifest,
             &self.paths,
             &self.storage,
             &*self.remote,
-            host.as_ref(),
+            flow::WorkflowCheck::Warn {
+                host: host.as_ref(),
+            },
             package_home,
             status,
             self.namespace.clone(),
@@ -940,7 +949,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         self.lineage
             .write_locked(&self.storage, held, lineage)
             .await?;
-        Ok(commit)
+        Ok(recorded)
     }
 
     /// Commit any working-directory changes (if any) and push the revision to
@@ -1943,7 +1952,7 @@ impl<S: Storage + Clone + Sync, R: Remote> LockedPackage<S, R> {
         user_meta: UserMeta,
         workflow: Option<Workflow>,
         host_config_opt: Option<HostConfig>,
-    ) -> Res<flow::Committed> {
+    ) -> Res<flow::Recorded> {
         self.package
             .commit_unlocked(&self.held, message, user_meta, workflow, host_config_opt)
             .await

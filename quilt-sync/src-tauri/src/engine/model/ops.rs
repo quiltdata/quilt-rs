@@ -59,7 +59,7 @@ pub async fn package_commit(
     metadata: &str,
     workflow: WorkflowIntent,
     host_config: Option<HostConfig>,
-) -> Result<quilt::flow::Committed, Error> {
+) -> Result<quilt::flow::Recorded, Error> {
     debug!(
         "Committing the package.\nNamespace:\n{},\nmessage: {},\nuser_meta: {},\nworkflow: {:?}",
         namespace, message, metadata, workflow
