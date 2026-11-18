@@ -47,7 +47,7 @@ cargo install quilt-cli
 | `pull`      | Fetch the latest remote revision                 |
 | `list`      | List installed packages and their commit status  |
 | `log`       | List the revisions this copy has, and why each is kept |
-| `uninstall` | Remove a package; `--prune` also deletes its files |
+| `uninstall` | Remove a package; `--prune` also deletes its stored files no other package uses |
 | `gc`        | Delete stored files no installed package uses    |
 | `remove-revisions` | Remove old revisions this copy no longer needs |
 | `catalog`   | Show, set or clear the default Quilt stack       |

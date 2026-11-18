@@ -28,7 +28,19 @@ long-term support branches.
   still carry any secret a caller chose to put there. When handling secrets or
   reviewing an incident that involves a shared manifest, check user metadata,
   not just the file listing.
-- `objects/` and the manifest cache are never pruned by design, so data you
-  committed locally may remain on disk after `uninstall`. This is documented
-  behavior, not a vulnerability — see
+- By default, file contents stay on disk in `objects/` after a commit or an
+  `uninstall`, and remote manifests stay in the `packages/` cache. Objects
+  are shared between packages without reference counting, so only these
+  commands delete them:
+  - `quilt uninstall --prune` deletes the uninstalled package's objects that
+    no other installed package uses.
+  - `quilt remove-revisions` deletes a package's old revisions and the
+    objects only those revisions use.
+  - `quilt gc` deletes every object no installed revision of any installed
+    package uses, the whole `packages/` cache, and files an interrupted
+    command left in `staging/`. If another quilt process is changing a
+    package, it deletes nothing.
+
+  None of them deletes an object that another installed package or revision
+  still uses. This is documented behavior, not a vulnerability — see
   [docs/architecture.md](docs/architecture.md).
