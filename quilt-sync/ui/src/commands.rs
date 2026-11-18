@@ -1387,12 +1387,13 @@ pub async fn download_and_install_update() -> Result<(), String> {
 /// `quilt_sync::commands::package_ops::CommitResponse`; the serde attributes
 /// MUST match so the typed payload crosses the engine boundary unchanged.
 /// `workflow_warning` is `Some(reasons)` when the revision was committed with
-/// workflow warnings.
+/// workflow warnings; `nothing_to_commit` when it was the package's already.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommitResponse {
     pub message: String,
     pub workflow_warning: Option<String>,
+    pub nothing_to_commit: bool,
 }
 
 pub async fn package_commit(

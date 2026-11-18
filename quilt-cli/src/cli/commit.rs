@@ -665,7 +665,7 @@ mod tests {
     }
 
     /// The text output prints each warning after the commit line, so a
-    /// quiet log level does not hide what the push will refuse.
+    /// quiet log level does not hide them.
     #[test]
     fn text_prints_the_workflow_warnings() {
         let output = Output {

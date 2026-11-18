@@ -82,6 +82,8 @@ pub struct CommitResponse {
     /// `Some(reasons)` when the revision was committed with workflow
     /// warnings.
     pub workflow_warning: Option<String>,
+    /// The revision was the package's already, so nothing was recorded.
+    pub nothing_to_commit: bool,
 }
 
 /// The Commit button's answer to a commit: its event, its line and its
@@ -107,8 +109,8 @@ fn report_commit(
             MixpanelEvent::PackageCommitted(PackageEvent::for_uri(uri)),
         );
     }
-    // A local commit is not refused for the bucket's workflows; it says
-    // what the push will refuse.
+    // A local commit is not refused for the bucket's workflows; it passes
+    // their warnings on.
     let workflow_warning = match &result {
         Ok(recorded) if !recorded.warnings.is_empty() => {
             let warnings: Vec<String> = recorded.warnings.iter().map(ToString::to_string).collect();
@@ -116,6 +118,10 @@ fn report_commit(
         }
         _ => None,
     };
+    let nothing_to_commit = matches!(
+        &result,
+        Ok(recorded) if recorded.committed == quilt::flow::Committed::NothingToCommit
+    );
     let msg_ok = match (&result, &workflow_warning) {
         (Ok(recorded), _) if recorded.committed == quilt::flow::Committed::NothingToCommit => {
             format!("Package {namespace} has nothing to commit")
@@ -133,6 +139,7 @@ fn report_commit(
         .map(|message| CommitResponse {
             message,
             workflow_warning,
+            nothing_to_commit,
         })
 }
 
@@ -1801,6 +1808,7 @@ mod tests {
             Ok(super::CommitResponse {
                 message: "Package acme/demo has nothing to commit".to_string(),
                 workflow_warning: None,
+                nothing_to_commit: true,
             })
         );
         assert_eq!(telemetry.queued_events(), Vec::<String>::new());
@@ -1826,6 +1834,7 @@ mod tests {
             Ok(super::CommitResponse {
                 message: "Successfully committed acme/demo".to_string(),
                 workflow_warning: None,
+                nothing_to_commit: false,
             })
         );
         assert_eq!(

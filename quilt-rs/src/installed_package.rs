@@ -873,9 +873,9 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
     /// `Set` replaces it.
     ///
     /// A local commit is never refused for the remote bucket's workflows: a
-    /// revision inconsistent with them is recorded, and the returned
-    /// [`flow::Recorded::warnings`] say what a push will refuse. A package
-    /// with no remote gets no check.
+    /// revision inconsistent with them, or whose bucket config cannot be
+    /// read, is recorded, and the returned [`flow::Recorded::warnings`] say
+    /// which. A package with no remote gets no check.
     pub async fn commit(
         &self,
         message: String,

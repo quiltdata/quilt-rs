@@ -750,17 +750,28 @@ fn CommitScreen(
         let workflow = draft.workflow.get_untracked();
         let (namespace, uri) = (d.namespace.clone(), d.uri.clone());
         running.set(true);
+        let shown = outcome.get_untracked();
         outcome.set(None);
         leptos::task::spawn_local(async move {
             let ns = namespace.to_string();
             match save(publish, ns.clone(), message, metadata, workflow, uri).await {
+                // Saving again what was saved with a warning records nothing,
+                // and the warning still stands: leaving would drop it unread.
+                Ok(Saved::Unchanged)
+                    if shown
+                        .as_ref()
+                        .is_some_and(|shown| shown.lead == SAVED_WITH_WARNING) =>
+                {
+                    running.try_set(false);
+                    outcome.try_set(shown);
+                }
                 // The command's own notification reports it; arriving is the rest.
-                Ok(None) => {
+                Ok(Saved::Done | Saved::Unchanged) => {
                     goto.try_set(Some(routes::package_page_href(&namespace)));
                 }
                 // Saved with a warning from the bucket's workflows: the page
                 // stays to show it.
-                Ok(Some(reasons)) => {
+                Ok(Saved::Warned(reasons)) => {
                     running.try_set(false);
                     outcome.try_set(Some(warning(ns, SAVED_WITH_WARNING, Some(reasons))));
                     reload.notify();
@@ -1068,9 +1079,19 @@ fn focus_field(field: Field) {
 pub(crate) const SAVED_WITH_WARNING: &str =
     "Saved this revision, with a warning from the bucket's workflows.";
 
+/// What a save answered, past the backend's own notification.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Saved {
+    /// Recorded, or published.
+    Done,
+    /// Saved without publishing, with the bucket's workflows' warnings.
+    Warned(String),
+    /// Saved without publishing, but the revision was the package's already.
+    Unchanged,
+}
+
 /// The save: publish or not, namespace, message, metadata, workflow and
-/// remote in; out, the workflow warning of a revision saved without
-/// publishing, or the backend's refusal.
+/// remote in; out, what it answered, or the backend's refusal.
 /// A parameter so a test can answer without an engine.
 pub(crate) type Save = fn(
     bool,
@@ -1079,7 +1100,7 @@ pub(crate) type Save = fn(
     String,
     WorkflowIntent,
     Option<quilt_uri::S3PackageUri>,
-) -> Pin<Box<dyn Future<Output = Result<Option<String>, String>>>>;
+) -> Pin<Box<dyn Future<Output = Result<Saved, String>>>>;
 
 fn save_revision(
     publish: bool,
@@ -1088,18 +1109,22 @@ fn save_revision(
     metadata: String,
     workflow: WorkflowIntent,
     uri: Option<quilt_uri::S3PackageUri>,
-) -> Pin<Box<dyn Future<Output = Result<Option<String>, String>>>> {
+) -> Pin<Box<dyn Future<Output = Result<Saved, String>>>> {
     if publish {
         Box::pin(async move {
             commands::package_commit_and_push(namespace, message, metadata, workflow, uri)
                 .await
-                .map(|_| None)
+                .map(|_| Saved::Done)
         })
     } else {
         Box::pin(async move {
             commands::package_commit(namespace, message, metadata, workflow, uri)
                 .await
-                .map(|response| response.workflow_warning)
+                .map(|response| match response.workflow_warning {
+                    Some(reasons) => Saved::Warned(reasons),
+                    None if response.nothing_to_commit => Saved::Unchanged,
+                    None => Saved::Done,
+                })
         })
     }
 }
@@ -2470,15 +2495,16 @@ mod tests {
         _: String,
         _: WorkflowIntent,
         _: Option<quilt_uri::S3PackageUri>,
-    ) -> Pin<Box<dyn Future<Output = Result<Option<String>, String>>>> {
+    ) -> Pin<Box<dyn Future<Output = Result<Saved, String>>>> {
         SENT.with(|s| s.borrow_mut().push((publish, message)));
-        Box::pin(async { Ok(None) })
+        Box::pin(async { Ok(Saved::Done) })
     }
 
     const REFUSED_BY: &str = "this revision does not satisfy the workflows of s3://team-bucket";
 
-    /// Records as [`recorded_save`] does, and answers a save without
-    /// publishing with a workflow warning.
+    /// Records as [`recorded_save`] does, and answers the first save without
+    /// publishing with a workflow warning, and the next with nothing to
+    /// commit, as the engine does for the same revision.
     #[allow(clippy::needless_pass_by_value, reason = "the seam's signature")]
     fn warned_save(
         publish: bool,
@@ -2487,9 +2513,19 @@ mod tests {
         _: String,
         _: WorkflowIntent,
         _: Option<quilt_uri::S3PackageUri>,
-    ) -> Pin<Box<dyn Future<Output = Result<Option<String>, String>>>> {
-        SENT.with(|s| s.borrow_mut().push((publish, message)));
-        Box::pin(async move { Ok((!publish).then(|| REFUSED_BY.to_string())) })
+    ) -> Pin<Box<dyn Future<Output = Result<Saved, String>>>> {
+        let first = SENT.with(|s| {
+            let mut s = s.borrow_mut();
+            s.push((publish, message));
+            s.len() == 1
+        });
+        Box::pin(async move {
+            Ok(match (publish, first) {
+                (true, _) => Saved::Done,
+                (false, true) => Saved::Warned(REFUSED_BY.to_string()),
+                (false, false) => Saved::Unchanged,
+            })
+        })
     }
 
     const VAGUE: &str = "Say which plate changed.";
@@ -2663,19 +2699,65 @@ mod tests {
     #[wasm_bindgen_test]
     async fn a_warned_save_stays_and_shows_the_warning() {
         let el = saving_page(governed, takes_anything, warned_save).await;
-        let buttons = |el: &web_sys::Element| {
-            el.query_selector_all("[data-primary-action] button")
-                .unwrap()
-        };
-        // The face, the caret, then the options.
-        let save: web_sys::HtmlElement = buttons(&el).item(3).unwrap().unchecked_into();
+        save_without_publishing(&el).await;
+
+        assert_eq!(sent(), [(false, "Updated 1203 files".to_string())]);
+        assert!(
+            says(&el, SAVED_WITH_WARNING),
+            "markup was {}",
+            el.inner_html()
+        );
+        assert!(says(&el, REFUSED_BY), "markup was {}", el.inner_html());
+        assert_eq!(
+            web_sys::window().unwrap().location().pathname().unwrap(),
+            "/commit",
+            "the page stayed"
+        );
+        assert!(!face(&el).disabled(), "and is usable again");
+    }
+
+    /// Choose *Save without publishing* and press it.
+    async fn save_without_publishing(el: &web_sys::Element) {
+        let save: web_sys::HtmlElement = el
+            .query_selector_all("[data-primary-action] button")
+            .unwrap()
+            // The face, the caret, then the options.
+            .item(3)
+            .unwrap()
+            .unchecked_into();
         assert_eq!(save.text_content().unwrap().trim(), SAVE_WITHOUT_PUBLISHING);
         save.click();
         sleep_ms(80).await;
+        face(el).click();
+        sleep_ms(past_the_pause()).await;
+    }
+
+    /// A save without publishing and with no warning leaves for the package
+    /// page.
+    #[wasm_bindgen_test]
+    async fn a_save_without_a_warning_goes_to_the_package_page() {
+        let el = checked_page(governed, takes_anything).await;
+        save_without_publishing(&el).await;
+
+        assert_eq!(sent(), [(false, "Updated 1203 files".to_string())]);
+        assert_eq!(
+            web_sys::window().unwrap().location().pathname().unwrap(),
+            "/installed-package",
+            "markup was {}",
+            el.inner_html()
+        );
+    }
+
+    /// Saving again, with no edits, what was saved with a warning records
+    /// nothing and keeps the warning showing, rather than leaving with it.
+    #[wasm_bindgen_test]
+    async fn saving_a_warned_revision_again_keeps_the_warning() {
+        let el = saving_page(governed, takes_anything, warned_save).await;
+        save_without_publishing(&el).await;
         face(&el).click();
         sleep_ms(past_the_pause()).await;
 
-        assert_eq!(sent(), [(false, "Updated 1203 files".to_string())]);
+        assert_eq!(sent().len(), 2, "both saves were sent");
         assert!(
             says(&el, SAVED_WITH_WARNING),
             "markup was {}",
