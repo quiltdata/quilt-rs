@@ -15,8 +15,8 @@ use serde_json::Value;
 use crate::engine::action_needed::Entry as ActionNeededEntry;
 use crate::engine::autopull::activity::AutopullActivity;
 use crate::engine::commands::{
-    AccountHost, AutosyncPatch, CommitData, CommitViolation, CommitWorkflows, FreedSpace,
-    KeepingScope, LoginData, LoginErrorData, MainPageAccounts, MainPagePackageRefresh,
+    AccountHost, AutosyncPatch, CommitData, CommitResponse, CommitViolation, CommitWorkflows,
+    FreedSpace, KeepingScope, LoginData, LoginErrorData, MainPageAccounts, MainPagePackageRefresh,
     MainPagePackages, MainPageWatcher, NotDownloaded, PackagePageData, PathCheck, RecordRow,
     RemotePackageResult, RevisionHistoryData, RolesData, SetRemoteResponse, SettingsData,
     SetupData, StopIgnoringPreview, StopIgnoringScope, StorageSize,
@@ -166,7 +166,7 @@ commands! {
         refresh_main_page_account(host: String) -> AccountHost;
         refresh_main_page_package(namespace: String) -> MainPagePackageRefresh;
         get_main_page_watcher() -> MainPageWatcher;
-        package_commit(namespace: String, message: String, metadata: String, workflow: WorkflowIntent, uri: Option<S3PackageUri>) -> String;
+        package_commit(namespace: String, message: String, metadata: String, workflow: WorkflowIntent, uri: Option<S3PackageUri>) -> CommitResponse;
         certify_latest(namespace: String, uri: Option<S3PackageUri>) -> String;
         reset_local(namespace: String, uri: Option<S3PackageUri>) -> String;
         package_publish(namespace: String, uri: Option<S3PackageUri>) -> String;

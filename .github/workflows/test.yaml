@@ -321,7 +321,12 @@ jobs:
       - name: Test (live AWS fixture writes)
         run: just test live --no-fail-fast
         env:
-          LIVE: test(/::live_write_/)
+          # `live_write_push_crc64_checksum` is left out: it pushes to the
+          # shared `crc64/s3` package in `fiskus-us-east-1` and then restores
+          # it, so a run cancelled between the two leaves that package on the
+          # wrong revision and fails this job on every branch until someone
+          # resets it by hand. Run it locally with `just test live`.
+          LIVE: test(/::live_write_/) and not test(/::live_write_push_crc64_checksum$/)
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 

@@ -135,8 +135,9 @@ pub fn validate_package(
 ///
 /// The `entries_schema` is intentionally not checked here: projecting a
 /// candidate's entries requires materialising the built manifest's rows (the
-/// heavier flow machinery), so entries validation stays the commit gate's
-/// responsibility — the authoritative check that still runs at commit time.
+/// heavier flow machinery), so entries validation stays with the record
+/// step's check — a warning on a local commit, a refusal on publish — and
+/// with the push gate.
 /// Field checks run in the same order [`validate_package`] uses, and failures
 /// are collected together as [`WorkflowValidationError::Rejected`]; a
 /// misconfigured gate (bad `metadata_schema` or `handle_pattern`)
