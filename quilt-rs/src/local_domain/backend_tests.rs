@@ -293,7 +293,13 @@ async fn a_damaged_package_costs_no_other() -> Res<()> {
                 .commit("new".to_string(), flow::UserMeta::Keep, None, None)
                 .await;
             assert!(
-                matches!(committed, Ok(flow::Committed::Recorded(_))),
+                matches!(
+                    committed,
+                    Ok(flow::Recorded {
+                        committed: flow::Committed::Recorded(_),
+                        ..
+                    })
+                ),
                 "{how:?}: {namespace}: {committed:?}"
             );
         }

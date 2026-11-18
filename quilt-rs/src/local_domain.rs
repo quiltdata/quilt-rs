@@ -1143,7 +1143,13 @@ mod ref_store_tests {
         .await;
 
         assert!(
-            matches!(committed, Ok(Ok(flow::Committed::Recorded(_)))),
+            matches!(
+                committed,
+                Ok(Ok(flow::Recorded {
+                    committed: flow::Committed::Recorded(_),
+                    ..
+                }))
+            ),
             "{committed:?}"
         );
         assert!(is_stub(&domain.paths.lineage()));
