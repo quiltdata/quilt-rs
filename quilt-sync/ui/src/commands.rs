@@ -1386,8 +1386,8 @@ pub async fn download_and_install_update() -> Result<(), String> {
 /// Response from the `package_commit` command. UI-side mirror of the backend
 /// `quilt_sync::commands::package_ops::CommitResponse`; the serde attributes
 /// MUST match so the typed payload crosses the engine boundary unchanged.
-/// `workflow_warning` is `Some(reasons)` when the revision was committed but
-/// the bucket's workflows reject it, so Publish will refuse it as it stands.
+/// `workflow_warning` is `Some(reasons)` when the revision was committed with
+/// workflow warnings.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommitResponse {

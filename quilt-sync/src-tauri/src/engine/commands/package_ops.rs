@@ -73,14 +73,14 @@ pub async fn package_commit(
 }
 
 /// What `package_commit` answers: its line, and apart from it, as in
-/// [`SetRemoteResponse`], what the bucket's workflows found wrong with a
+/// [`SetRemoteResponse`], the warnings the bucket's workflows gave a
 /// revision it recorded anyway.
 #[derive(Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommitResponse {
     pub message: String,
-    /// `Some(reasons)` when the revision was committed but Publish will
-    /// refuse it as it stands.
+    /// `Some(reasons)` when the revision was committed with workflow
+    /// warnings.
     pub workflow_warning: Option<String>,
 }
 

@@ -758,11 +758,11 @@ fn CommitScreen(
                 Ok(None) => {
                     goto.try_set(Some(routes::package_page_href(&namespace)));
                 }
-                // Saved, but the bucket's workflows reject the revision: the
-                // page stays to say so, since Publish will refuse it.
+                // Saved with a warning from the bucket's workflows: the page
+                // stays to show it.
                 Ok(Some(reasons)) => {
                     running.try_set(false);
-                    outcome.try_set(Some(warning(ns, SAVED_BUT_REFUSED, Some(reasons))));
+                    outcome.try_set(Some(warning(ns, SAVED_WITH_WARNING, Some(reasons))));
                     reload.notify();
                 }
                 Err(detail) => {
@@ -1064,14 +1064,13 @@ fn focus_field(field: Field) {
     });
 }
 
-/// The lead of the band a saved revision shows when the bucket's workflows
-/// reject it.
-pub(crate) const SAVED_BUT_REFUSED: &str =
-    "Saved this revision, but Publish will refuse it as it stands.";
+/// The lead of the band a revision saved with a workflow warning shows.
+pub(crate) const SAVED_WITH_WARNING: &str =
+    "Saved this revision, with a warning from the bucket's workflows.";
 
 /// The save: publish or not, namespace, message, metadata, workflow and
 /// remote in; out, the workflow warning of a revision saved without
-/// publishing that the bucket's workflows reject, or the backend's refusal.
+/// publishing, or the backend's refusal.
 /// A parameter so a test can answer without an engine.
 pub(crate) type Save = fn(
     bool,
@@ -2658,9 +2657,9 @@ mod tests {
         assert_eq!(sent(), [(true, "Re-imaged plate 7".to_string())]);
     }
 
-    /// A save without publishing that the bucket's workflows reject is
-    /// saved, and the page stays to say so, with the engine's reasons,
-    /// rather than leaving for the package page.
+    /// A save without publishing that the bucket's workflows warn about
+    /// stays on the page to show the warning, rather than leaving for the
+    /// package page.
     #[wasm_bindgen_test]
     async fn a_warned_save_stays_and_shows_the_warning() {
         let el = saving_page(governed, takes_anything, warned_save).await;
@@ -2678,7 +2677,7 @@ mod tests {
 
         assert_eq!(sent(), [(false, "Updated 1203 files".to_string())]);
         assert!(
-            says(&el, SAVED_BUT_REFUSED),
+            says(&el, SAVED_WITH_WARNING),
             "markup was {}",
             el.inner_html()
         );
