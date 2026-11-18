@@ -253,20 +253,21 @@ mod tests {
         Ok(())
     }
 
-    /// A commit that violates its workflow's `metadata_schema` must surface a
-    /// clear CLI error. The `my-workflow` gate requires `Date`/`Name`/`Owner`/
-    /// `Type` in the package metadata; committing with `Clear` (no metadata)
-    /// against that same workflow is rejected, and the message the user sees
-    /// must name the failing rule (`metadata_schema`) and every missing field.
+    /// A local commit that violates its workflow's `metadata_schema` is
+    /// committed, and its warning says why the push will refuse it. The
+    /// `my-workflow` gate requires `Date`/`Name`/`Owner`/`Type` in the package
+    /// metadata; committing with `Clear` (no metadata) against that same
+    /// workflow is inconsistent with it, and the warning must name the
+    /// failing rule (`metadata_schema`) and every missing field.
     #[test(tokio::test)]
-    async fn live_commit_rejected_by_workflow_surfaces_clear_error() -> Result<(), Error> {
+    async fn live_commit_inconsistent_with_workflow_warns_with_clear_reason() -> Result<(), Error> {
         use crate::cli::fixtures::packages::my_workflow as pkg;
 
         let uri = pkg::URI;
         let (m, _installed_package, _tempdir) = install_package_into_temp_dir(uri).await?;
         let local_domain = m.get_local_domain();
 
-        let err = model(
+        let output = model(
             local_domain,
             Input {
                 message: pkg::MESSAGE.to_string(),
@@ -276,26 +277,27 @@ mod tests {
                 host_config: None,
             },
         )
-        .await
-        .unwrap_err();
+        .await?;
 
-        let message = err.to_string();
-        // The CLI wraps the quilt-rs error transparently, so the validator's own
-        // wording reaches the user verbatim.
+        assert!(output.commit.is_some(), "a local commit is not refused");
+        let [warning] = output.warnings.as_slice() else {
+            panic!("expected one warning, got {:?}", output.warnings);
+        };
+        // The validator's own wording reaches the user verbatim.
         assert!(
-            message.starts_with("quilt_rs error: package does not satisfy the workflow"),
-            "message must announce a workflow rejection, got: {message}"
+            warning.contains("package does not satisfy the workflow"),
+            "the warning must announce a workflow inconsistency, got: {warning}"
         );
         // Names the failing rule …
         assert!(
-            message.contains("metadata_schema"),
-            "message must name the failing rule, got: {message}"
+            warning.contains("metadata_schema"),
+            "the warning must name the failing rule, got: {warning}"
         );
         // … and every field the schema requires (order-independent).
         for field in ["Date", "Name", "Owner", "Type"] {
             assert!(
-                message.contains(field),
-                "message must name the missing field {field}, got: {message}"
+                warning.contains(field),
+                "the warning must name the missing field {field}, got: {warning}"
             );
         }
 
