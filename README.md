@@ -136,9 +136,9 @@ an ordinary local folder. Edit them in your usual tools; QuiltSync syncs the
 changes back as a new immutable revision, and surfaces divergence when someone
 else published in the meantime.
 
-Builds for macOS (one app for Apple Silicon and Intel), Windows, and Linux are on the
-[releases page](https://github.com/quiltdata/quilt-rs/releases) under
-`QuiltSync/v*`. The Windows installers are Authenticode-signed, and the macOS
+Builds for macOS (one app for Apple Silicon and Intel), Windows, and Linux
+are on the [releases page](https://github.com/quiltdata/quilt-rs/releases)
+under `QuiltSync/v*`. The Windows installers are Authenticode-signed, and the macOS
 app is signed and notarized. QuiltSync and the CLI operate on the same
 packages and revisions, so you can move between them freely.
 

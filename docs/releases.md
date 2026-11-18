@@ -223,8 +223,8 @@ Steps:
 4. Insert a HubDB row with version, release tag, `latest.json`
    content, deduped installer URL list, and per-platform URLs (Windows
    MSI, the universal macOS DMG in both macOS columns, Linux DEB)
-   derived by globbing the release assets. Then publish the HubDB draft so the row appears on
-   the quilt.bio download page.
+   derived by globbing the release assets. Then publish the HubDB
+   draft so the row appears on the quilt.bio download page.
 
 Required: secret `HUBSPOT_ACCESS_TOKEN`, repo vars `HUBDB_TABLE_ID`
 and `HUBDB_COLUMN_MAP`.
