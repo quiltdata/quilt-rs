@@ -12,6 +12,7 @@
 //! same inputs and publishes them to a remote.
 
 use std::collections::BTreeMap;
+use std::collections::HashSet;
 use std::fmt;
 use std::path::Path;
 use std::path::PathBuf;
@@ -190,10 +191,8 @@ pub async fn record(
         rows,
         dir_meta,
     } = manifest;
-    if let Some(key) = files
-        .keys()
-        .find(|key| !rows.iter().any(|row| &row.logical_key == *key))
-    {
+    let known: HashSet<&LogicalKey> = rows.iter().map(|row| &row.logical_key).collect();
+    if let Some(key) = files.keys().find(|key| !known.contains(key)) {
         return Err(Error::PackageOp(PackageOpError::Commit(format!(
             "Content was given for \"{}\", but the manifest has no row for it",
             key.display()
