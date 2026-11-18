@@ -204,11 +204,15 @@ once the folder is restored, or once the package is uninstalled. Files deleted
 inside an existing folder are still `Removed`.
 
 `PackageState::of_status` resolves such a status to `Unavailable`, never to
-`Latest`, which its empty change list would otherwise read as. QuiltSync's
+`Latest`, which its empty change list would otherwise read as, and
+`InstalledPackage::state` gives it no `changed_files` count. QuiltSync's
 autosync skips the package on every tick the folder is missing — no pull,
 publish, merge or task reset, no pause to clear and no retry backoff — and
 logs it once when the folder goes and once when it is back, which is the next
-tick that reads it.
+tick that reads it. A walk of the missing folder, from the file watcher or at
+startup, leaves the time of the last change alone, so a change made before the
+folder went is still published on its schedule once it is back; a run of
+failing publishes ends, so the outage does not count toward that alert.
 
 ### Set Remote (recommit)
 

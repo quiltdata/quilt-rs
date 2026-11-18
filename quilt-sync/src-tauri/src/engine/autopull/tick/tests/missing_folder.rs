@@ -199,3 +199,76 @@ async fn a_missing_folder_clears_an_old_backoff() -> Result<(), Error> {
     assert!(!inner.backoff.read().await.contains_key(&ns));
     Ok(())
 }
+
+/// The file watcher's walk of a missing folder lists no change, as a clean
+/// tree's does: it must keep the package's last-change time and its
+/// countdown, with or without a commit waiting, or the queued publish loses
+/// its place in the wait.
+#[tokio::test]
+async fn a_watcher_walk_of_a_missing_folder_keeps_the_last_change_and_countdown() {
+    use crate::engine::autopull::last_change::PendingCommit;
+
+    let ns: Namespace = ("acme", "demo").into();
+    let commit_at = SystemTime::now() - Duration::from_hours(2);
+    for pending in [PendingCommit::None, PendingCommit::At(commit_at)] {
+        let inner = WatcherInner {
+            last_change: LastChange::changed_for_test(&ns, Duration::from_hours(1)).await,
+            ..make_inner(enabled())
+        };
+        // A walk with the change in it starts the countdown.
+        let mut changed = status_of(UpstreamState::UpToDate, true);
+        changed.changes.insert(
+            std::path::PathBuf::from("a.csv"),
+            quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
+        );
+        crate::engine::autopull::observe_walk(&inner, &ns, None, &changed, pending).await;
+        let before = inner.last_change.get(&ns).await.expect("a last change");
+        assert!(inner.clocks.publish_waiting.read().await.contains(&ns));
+
+        crate::engine::autopull::observe_walk(
+            &inner,
+            &ns,
+            None,
+            &status_of(UpstreamState::UpToDate, false),
+            pending,
+        )
+        .await;
+
+        assert_eq!(
+            inner.last_change.get(&ns).await,
+            Some(before),
+            "{pending:?}: neither forgotten nor restarted"
+        );
+        assert!(
+            inner.clocks.publish_waiting.read().await.contains(&ns),
+            "{pending:?}: still counting down"
+        );
+    }
+}
+
+/// A run of failing publishes from before the folder went is over: the
+/// outage is not a failed publish, so the first failure after the folder is
+/// back starts a new run rather than needing action at once.
+#[tokio::test]
+async fn a_missing_folder_ends_a_run_of_failing_publishes() -> Result<(), Error> {
+    let ns: Namespace = ("acme", "demo").into();
+    let model = model_with(
+        behind_clean_lineage(),
+        UpstreamState::Behind,
+        Arc::new(AtomicBool::new(false)),
+    );
+    let inner = inner(Arc::new(RecordingReporter::default()));
+    let long_ago = Instant::now()
+        .checked_sub(PUBLISH_FAILING_AFTER * 2)
+        .expect("the clock is past it");
+    inner.action_needed.publish_failed(&ns, long_ago);
+
+    run_once(&model, &RoleCache::default(), &inner).await?;
+
+    assert_eq!(
+        inner.action_needed.publish_failed(&ns, Instant::now()),
+        Duration::ZERO,
+        "the next failure starts a new run"
+    );
+    Ok(())
+}

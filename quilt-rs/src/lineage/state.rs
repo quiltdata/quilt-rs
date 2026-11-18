@@ -120,7 +120,8 @@ pub struct PackageStateReport {
     /// the lineage's when the package has no remote.
     pub upstream_state: UpstreamState,
     /// Files changed since the last commit. `None` when the working tree was
-    /// not scanned: the package has no remote.
+    /// not scanned: the package has no remote, or its folder could not be read
+    /// ([`PackageState::Unavailable`]).
     pub changed_files: Option<usize>,
     /// The remote's `latest` tip was read in this call
     /// ([`InstalledPackageStatus::latest_refreshed`](crate::lineage::InstalledPackageStatus::latest_refreshed)).

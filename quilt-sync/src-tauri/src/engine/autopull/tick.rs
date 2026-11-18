@@ -1230,9 +1230,12 @@ pub(crate) async fn sync_package(
 /// find the same folder missing and say nothing. No backoff: the next tick
 /// reads the package as any other, so it resumes as soon as the folder is
 /// back. A backoff left from before is cleared, or it would hold that first
-/// read back.
+/// read back, and so is a run of failing publishes: the outage is not a failed
+/// publish, and a run that started before it would otherwise count the time
+/// the folder was gone and need action on the first failure after it is back.
 async fn missing_folder(inner: &WatcherInner, namespace: &Namespace, home: &std::path::Path) {
     inner.backoff.write().await.remove(namespace);
+    inner.action_needed.publish_settled(namespace);
     if !inner.aggregator.note_unavailable(namespace, home) {
         debug!("autosync: {namespace}: working folder still unavailable, skipped");
         return;

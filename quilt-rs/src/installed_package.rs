@@ -777,7 +777,12 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         // not the read above: a push landing in between would otherwise pair a
         // fresh `UpToDate` with a stale commit and say "revision not published".
         let (lineage, status) = self.status_with_lineage(None).await?;
-        let changed_files = status.changes.len();
+        // A folder that could not be read was not scanned: its empty change
+        // list is no count.
+        let changed_files = status
+            .unavailable_home()
+            .is_none()
+            .then_some(status.changes.len());
         Ok(lineage::PackageStateReport {
             state: lineage::PackageState::of_status(
                 &status,
@@ -785,7 +790,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
                 lineage.remote_uri.is_some(),
             ),
             upstream_state: status.upstream_state,
-            changed_files: Some(changed_files),
+            changed_files,
             latest_refreshed: status.latest_refreshed,
         })
     }
