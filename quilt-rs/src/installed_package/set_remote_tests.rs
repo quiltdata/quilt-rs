@@ -7,6 +7,10 @@ use test_log::test;
 
 use aws_sdk_s3::primitives::ByteStream;
 
+use crate::LoginError;
+use crate::io::remote::HostConfig;
+use crate::io::remote::Remote;
+use crate::io::remote::RemoteObjectStream;
 use crate::io::remote::WorkflowIntent;
 use crate::io::remote::mocks::MockRemote;
 use crate::lineage::DomainLineageIo;
@@ -18,6 +22,7 @@ use crate::object_hash::ObjectHash;
 use crate::paths::DomainPaths;
 use crate::workflow::RuleViolation;
 use crate::workflow::WorkflowValidationError;
+use quilt_uri::Host;
 
 #[test(tokio::test)]
 async fn test_set_remote_on_local_package() -> Res {
@@ -1406,5 +1411,105 @@ schemas:
         .await?
         .with_unchecked(Some(unchecked.clone()));
     assert_eq!(recorded.warnings, [unchecked]);
+    Ok(())
+}
+
+/// Reports no session on `exists` and panics on everything else, so a
+/// `resolve_workflow_for_commit` that reached past the missing session would
+/// fail the test itself.
+struct SignedOutRemote {
+    host: Host,
+}
+
+#[allow(
+    clippy::unused_async_trait_impl,
+    reason = "a stub that awaits nothing by design: `exists` refuses immediately and every other method must never be called"
+)]
+impl Remote for SignedOutRemote {
+    async fn exists(&self, _host: Option<&Host>, _s3_uri: &S3Uri) -> Res<bool> {
+        Err(Error::Login(LoginError::NoSession(Some(self.host.clone()))))
+    }
+    async fn get_object_stream(
+        &self,
+        _host: Option<&Host>,
+        _s3_uri: &S3Uri,
+    ) -> Res<RemoteObjectStream> {
+        unreachable!("the resolution must not fetch after an absent session")
+    }
+    async fn resolve_url(&self, _host: Option<&Host>, _s3_uri: &S3Uri) -> Res<S3Uri> {
+        unreachable!("not part of the resolution")
+    }
+    async fn put_object(
+        &self,
+        _host: Option<&Host>,
+        _s3_uri: &S3Uri,
+        _contents: impl Into<aws_sdk_s3::primitives::ByteStream>,
+    ) -> Res {
+        unreachable!("not part of the resolution")
+    }
+    async fn upload_file(
+        &self,
+        _host_config: &HostConfig,
+        _source_path: impl AsRef<std::path::Path>,
+        _dest_uri: &S3Uri,
+        _size: u64,
+    ) -> Res<(S3Uri, crate::object_hash::ObjectHash)> {
+        unreachable!("not part of the resolution")
+    }
+    async fn host_config(&self, _host: Option<&Host>) -> Res<HostConfig> {
+        unreachable!("not part of the resolution")
+    }
+    async fn verify_bucket(&self, _bucket: &str) -> Res {
+        unreachable!("not part of the resolution")
+    }
+    async fn published_revisions(
+        &self,
+        _host: Option<&Host>,
+        _bucket: &str,
+        _namespace: &quilt_uri::Namespace,
+    ) -> Res<Vec<String>> {
+        unreachable!("not part of the resolution")
+    }
+    async fn manifest_hashes_with_prefix(
+        &self,
+        _host: Option<&Host>,
+        _bucket: &str,
+        _prefix: &str,
+    ) -> Res<Vec<String>> {
+        unreachable!("not part of the resolution")
+    }
+}
+
+/// A missing session is not an unreadable config: resolving the commit's
+/// workflow still fails, so the caller can send the user to sign in.
+#[test(tokio::test)]
+async fn a_commit_workflow_resolution_fails_when_there_is_no_session() -> Res {
+    let (package, _t1, _t2) = package_with_config("no-session", FOO_CONFIG, b"{}").await?;
+    package
+        .set_remote(
+            "my-bucket".to_string(),
+            Some(fixtures::host()),
+            WorkflowIntent::Named("foo".to_string()),
+        )
+        .await?;
+
+    let signed_out = InstalledPackage {
+        lineage: package.lineage.clone(),
+        paths: package.paths.clone(),
+        remote: std::sync::Arc::new(SignedOutRemote {
+            host: fixtures::host(),
+        }),
+        storage: package.storage.clone(),
+        namespace: package.namespace.clone(),
+        state_store: None,
+    };
+    let err = signed_out
+        .resolve_workflow_for_commit(WorkflowIntent::Named("foo".to_string()))
+        .await
+        .expect_err("a missing session still fails");
+    assert!(
+        matches!(&err, Error::Login(LoginError::NoSession(Some(h))) if *h == fixtures::host()),
+        "{err:?}"
+    );
     Ok(())
 }

@@ -1844,9 +1844,9 @@ mod tests {
     }
 
     /// A commit inconsistent with the bucket's workflows is recorded, and the
-    /// line says what the push will refuse.
+    /// line says a push of it will be refused.
     #[test]
-    fn a_commit_with_workflow_warnings_says_what_push_will_refuse() {
+    fn a_commit_with_workflow_warnings_says_a_push_will_be_refused() {
         let telemetry = crate::engine::telemetry::Telemetry::default();
 
         let said = super::report_commit(

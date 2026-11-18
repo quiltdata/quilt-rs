@@ -436,7 +436,7 @@ mod tests {
 
     /// A local commit (`WorkflowCheck::Warn`, as `InstalledPackage::commit`
     /// uses) of a package whose remote bucket requires a workflow records the
-    /// revision anyway, and says what the push will refuse.
+    /// revision anyway, and warns that a push of it will be refused.
     #[test(tokio::test)]
     async fn a_local_commit_inconsistent_with_its_remote_warns_and_records() -> Res {
         let paths = DomainPaths::new(std::path::absolute("/foo")?);

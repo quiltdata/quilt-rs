@@ -23,6 +23,7 @@ use tracing::info;
 use crate::Error;
 use crate::LogicalKey;
 use crate::Res;
+use crate::WorkflowValidationError;
 use crate::checksum::hash_file;
 use crate::error::PackageOpError;
 use crate::error::RemoteCatalogError;
@@ -107,8 +108,9 @@ pub enum WorkflowWarning {
     /// The revision is inconsistent with the bucket's workflows config, so a
     /// push there would refuse it as it stands.
     Inconsistent { bucket: String, reason: String },
-    /// The bucket's workflows config or schemas could not be read, so the
-    /// revision was not checked.
+    /// The revision was not checked against the bucket's workflows: the
+    /// config or schemas could not be read, or the validator itself is
+    /// misconfigured (an invalid schema or handle pattern).
     Unchecked { bucket: String, reason: String },
 }
 
@@ -416,10 +418,20 @@ async fn check_workflows(
             let bucket = bucket.to_string();
             Ok(match checked {
                 Ok(()) => Vec::new(),
-                Err(Error::WorkflowValidation(err)) => vec![WorkflowWarning::Inconsistent {
-                    bucket,
-                    reason: err.to_string(),
-                }],
+                Err(Error::WorkflowValidation(err)) => {
+                    let reason = err.to_string();
+                    vec![match err {
+                        WorkflowValidationError::Rejected(_) => {
+                            WorkflowWarning::Inconsistent { bucket, reason }
+                        }
+                        WorkflowValidationError::InvalidSchema { .. }
+                        | WorkflowValidationError::UnsupportedRef { .. }
+                        | WorkflowValidationError::UnsupportedMetaSchema { .. }
+                        | WorkflowValidationError::InvalidHandlePattern { .. } => {
+                            WorkflowWarning::Unchecked { bucket, reason }
+                        }
+                    }]
+                }
                 Err(Error::RemoteCatalog(RemoteCatalogError::Workflow(reason))) => {
                     vec![WorkflowWarning::Inconsistent { bucket, reason }]
                 }
@@ -850,6 +862,107 @@ mod tests {
             recorded.warnings
         );
         Ok(())
+    }
+
+    /// A workflow whose schema is itself invalid is not a fault of the
+    /// revision, so a local commit records it as unchecked rather than
+    /// inconsistent. Push still validates as it always has.
+    #[test(tokio::test)]
+    async fn an_invalid_schema_is_recorded_unchecked() -> Res {
+        let (paths, _domain) = DomainPaths::from_temp_dir()?;
+        let remote = MockRemote::default();
+        let config: S3Uri = "s3://governed/.quilt/workflows/config.yml".parse()?;
+        remote
+            .put_object(
+                None,
+                &config,
+                br#"version: "1"
+workflows:
+  gate:
+    name: Gate
+    entries_schema: bad
+schemas:
+  bad:
+    url: s3://governed/schemas/bad.json
+"#
+                .to_vec(),
+            )
+            .await?;
+        remote
+            .put_object(
+                None,
+                &"s3://governed/schemas/bad.json".parse()?,
+                br#"{"type": 123}"#.to_vec(),
+            )
+            .await?;
+        let lineage = PackageLineage {
+            remote_uri: Some(ManifestUri {
+                origin: None,
+                bucket: "governed".to_string(),
+                namespace: namespace(),
+                hash: String::new(),
+            }),
+            ..PackageLineage::default()
+        };
+        let mut manifest = revision("with a broken schema", Vec::new());
+        manifest.header.workflow = Some(crate::manifest::Workflow {
+            config,
+            id: Some(crate::manifest::WorkflowId {
+                id: "gate".to_string(),
+                schemas: BTreeMap::new(),
+            }),
+        });
+        let (_, recorded) = record(
+            &paths,
+            &LocalStorage::new(),
+            &remote,
+            WorkflowCheck::Warn { host: None },
+            &namespace(),
+            lineage,
+            manifest,
+            &BTreeMap::new(),
+        )
+        .await?;
+        assert!(recorded.hash().is_some());
+        match recorded.warnings.as_slice() {
+            [WorkflowWarning::Unchecked { bucket, reason }] => {
+                assert_eq!(bucket, "governed");
+                assert!(reason.contains("not a valid Draft-7"), "{reason}");
+            }
+            other => panic!("expected one unchecked warning, got {other:?}"),
+        }
+        Ok(())
+    }
+
+    /// `with_unchecked` adds the warning only when a revision was recorded,
+    /// and only once if the check has already said it went unchecked.
+    #[test]
+    fn with_unchecked_adds_the_warning_once_when_something_was_recorded() {
+        let unchecked = WorkflowWarning::Unchecked {
+            bucket: "b".to_string(),
+            reason: "could not read the config".to_string(),
+        };
+        let nothing = Recorded {
+            committed: Committed::NothingToCommit,
+            warnings: Vec::new(),
+        };
+        assert_eq!(nothing.with_unchecked(Some(unchecked.clone())).warnings, []);
+
+        let recorded = Recorded {
+            committed: Committed::Recorded(CommitState {
+                hash: "abc".to_string(),
+                ..CommitState::default()
+            }),
+            warnings: Vec::new(),
+        };
+        let with = recorded.with_unchecked(Some(unchecked.clone()));
+        assert_eq!(with.warnings.as_slice(), std::slice::from_ref(&unchecked));
+        assert_eq!(
+            with.with_unchecked(Some(unchecked.clone()))
+                .warnings
+                .as_slice(),
+            std::slice::from_ref(&unchecked)
+        );
     }
 
     /// The gate a publish uses refuses what its header's workflow rejects,

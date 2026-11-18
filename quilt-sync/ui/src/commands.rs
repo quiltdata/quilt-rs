@@ -199,7 +199,9 @@ pub struct WorkflowInfo {
 /// - `NotConfigured` — the bucket is ungoverned; no choice to make.
 /// - `Unavailable` — a transient failure loading the config; commit will retry
 ///   the bucket default.
-/// - `Invalid` — the config is malformed; commits will fail until it is fixed.
+/// - `Invalid` — the config is malformed; the Commit page currently disables
+///   Save, and must not promise a fallback. `quilt commit` records the
+///   revision as unchecked.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(
     tag = "state",
