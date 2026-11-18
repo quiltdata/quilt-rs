@@ -30,8 +30,11 @@ long-term support branches.
   not just the file listing.
 - By default, file contents stay on disk in `objects/` after a commit or an
   `uninstall`, and remote manifests stay in the `packages/` cache. Objects
-  are shared between packages without reference counting, so only these
-  commands delete them:
+  are shared between packages without reference counting, so only the
+  commands below delete them, and none of them deletes an object that
+  another installed package or revision still uses. This is documented
+  behavior, not a vulnerability — see
+  [docs/architecture.md](docs/architecture.md).
   - `quilt uninstall --prune` deletes the uninstalled package's objects that
     no other installed package uses.
   - `quilt remove-revisions` deletes a package's old revisions and the
@@ -40,7 +43,3 @@ long-term support branches.
     package uses, the whole `packages/` cache, and files an interrupted
     command left in `staging/`. If another quilt process is changing a
     package, it deletes nothing.
-
-  None of them deletes an object that another installed package or revision
-  still uses. This is documented behavior, not a vulnerability — see
-  [docs/architecture.md](docs/architecture.md).
