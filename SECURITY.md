@@ -41,5 +41,8 @@ long-term support branches.
     objects only those revisions use.
   - `quilt gc` deletes every object no installed revision of any installed
     package uses, the whole `packages/` cache, and files an interrupted
-    command left in `staging/`. If another quilt process is changing a
-    package, it deletes nothing.
+    command left in `staging/`.
+  - While another quilt process is changing a package, none of them deletes
+    objects: `uninstall --prune` and `remove-revisions` still remove the
+    package or the revisions, and keep the objects. Run `quilt gc` once that
+    process finishes.
