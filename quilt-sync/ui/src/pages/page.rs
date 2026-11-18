@@ -337,6 +337,17 @@ pub fn critical(namespace: String, lead: &str, detail: Option<String>) -> Outcom
     }
 }
 
+/// A warning the page words, with the engine's text when it has some.
+#[must_use]
+pub fn warning(namespace: String, lead: &str, detail: Option<String>) -> Outcome {
+    Outcome {
+        namespace,
+        variant: BannerVariant::Warning,
+        lead: lead.to_string(),
+        detail,
+    }
+}
+
 /// A success the page words, with nothing from the engine.
 #[must_use]
 pub fn success(namespace: String, lead: String) -> Outcome {

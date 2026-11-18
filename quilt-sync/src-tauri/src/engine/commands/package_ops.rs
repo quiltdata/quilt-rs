@@ -56,7 +56,7 @@ pub async fn package_commit(
     metadata: String,
     workflow: WorkflowIntent,
     uri: Option<S3PackageUri>,
-) -> Result<String, String> {
+) -> Result<CommitResponse, String> {
     let m = &*s.model;
     let tracing = &*s.telemetry;
     let watcher = &s.watcher;
@@ -72,13 +72,27 @@ pub async fn package_commit(
     report_commit(tracing, &namespace, uri.as_ref(), result.map(|(_, c)| c))
 }
 
-/// The Commit button's answer to a commit: its event and its line.
+/// Response from the `package_commit` command: the line, and what the
+/// bucket's workflows found wrong with a revision the commit recorded anyway.
+/// A typed payload, as [`SetRemoteResponse`] is, so the Commit page can tell
+/// a warned commit from a plain one without reading the line.
+#[derive(Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitResponse {
+    pub message: String,
+    /// `Some(reasons)` when the revision was committed but Publish will
+    /// refuse it as it stands.
+    pub workflow_warning: Option<String>,
+}
+
+/// The Commit button's answer to a commit: its event, its line, and the
+/// workflow warning the page shows before leaving.
 fn report_commit(
     tracing: &crate::engine::telemetry::Telemetry,
     namespace: &str,
     uri: Option<&S3PackageUri>,
     result: Result<quilt::flow::Recorded, Error>,
-) -> Result<String, String> {
+) -> Result<CommitResponse, String> {
     let mut notify = Notify::new(format!("Committing package {namespace}"));
     // Nothing committed, so no commit event. A failure keeps the event, which
     // is what reports a refusal.
@@ -94,16 +108,20 @@ fn report_commit(
             MixpanelEvent::PackageCommitted(PackageEvent::for_uri(uri)),
         );
     }
-    let msg_ok = match &result {
-        Ok(recorded) if recorded.committed == quilt::flow::Committed::NothingToCommit => {
-            format!("Package {namespace} has nothing to commit")
-        }
-        // A local commit is not refused for the bucket's workflows; it says
-        // what the push will refuse.
+    // A local commit is not refused for the bucket's workflows; it says
+    // what the push will refuse.
+    let workflow_warning = match &result {
         Ok(recorded) if !recorded.warnings.is_empty() => {
             let warnings: Vec<String> = recorded.warnings.iter().map(ToString::to_string).collect();
-            format!("Committed {namespace}, but {}", warnings.join("; "))
+            Some(warnings.join("; "))
         }
+        _ => None,
+    };
+    let msg_ok = match (&result, &workflow_warning) {
+        (Ok(recorded), _) if recorded.committed == quilt::flow::Committed::NothingToCommit => {
+            format!("Package {namespace} has nothing to commit")
+        }
+        (_, Some(warning)) => format!("Committed {namespace}, but {warning}"),
         _ => format!("Successfully committed {namespace}"),
     };
     // Resolving the workflow reads the bucket's config, so a dead session
@@ -111,7 +129,12 @@ fn report_commit(
     let msg_err = |err: &Error| {
         auth_failure_message(err).unwrap_or_else(|| format!("Failed to commit: {err}"))
     };
-    notify.map(result.map(|_| ()), msg_ok, msg_err)
+    notify
+        .map(result.map(|_| ()), msg_ok, msg_err)
+        .map(|message| CommitResponse {
+            message,
+            workflow_warning,
+        })
 }
 
 async fn certify_latest_command(
@@ -1776,7 +1799,10 @@ mod tests {
 
         assert_eq!(
             said,
-            Ok("Package acme/demo has nothing to commit".to_string())
+            Ok(super::CommitResponse {
+                message: "Package acme/demo has nothing to commit".to_string(),
+                workflow_warning: None,
+            })
         );
         assert_eq!(telemetry.queued_events(), Vec::<String>::new());
     }
@@ -1796,7 +1822,13 @@ mod tests {
             }),
         );
 
-        assert_eq!(said, Ok("Successfully committed acme/demo".to_string()));
+        assert_eq!(
+            said,
+            Ok(super::CommitResponse {
+                message: "Successfully committed acme/demo".to_string(),
+                workflow_warning: None,
+            })
+        );
         assert_eq!(
             telemetry.queued_events(),
             vec!["package_committed".to_owned()]
@@ -1823,9 +1855,14 @@ mod tests {
         );
 
         let said = said.expect("a recorded commit");
-        assert!(said.starts_with("Committed acme/demo, but "), "{said}");
-        assert!(said.contains("s3://b"), "{said}");
-        assert!(said.contains("a workflow is required"), "{said}");
+        assert!(
+            said.message.starts_with("Committed acme/demo, but "),
+            "{said:?}"
+        );
+        let warning = said.workflow_warning.clone().expect("the page is told");
+        assert!(warning.contains("s3://b"), "{warning}");
+        assert!(warning.contains("a workflow is required"), "{warning}");
+        assert!(said.message.ends_with(&warning), "{said:?}");
         assert_eq!(
             telemetry.queued_events(),
             vec!["package_committed".to_owned()]

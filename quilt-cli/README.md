@@ -140,9 +140,9 @@ metadata is a new revision.
 
 `commit` of a package with a remote checks the revision against the bucket's
 current workflows, and a revision they would refuse is still committed: each
-reason is a warning on stderr, and under `--json` a `warnings` list beside
-`hash`. `push` refuses that revision until a new commit satisfies them. A
-package with no remote gets no check.
+reason is printed as a `Warning:` line after the commit line, and under
+`--json` it is a `warnings` list beside `hash`. `push` refuses that revision
+until a new commit satisfies them. A package with no remote gets no check.
 
 `home` prints the home, the folder where installed packages keep their files.
 It defaults to `~/QuiltSync` on first use. `quilt home <dir>` sets it; a

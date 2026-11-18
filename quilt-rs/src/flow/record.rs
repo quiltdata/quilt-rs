@@ -222,8 +222,9 @@ pub async fn record(
 
     let warnings =
         check_workflows(remote, workflows, &lineage, namespace, &header, &placed).await?;
+    // Returned for the caller to show; logged only for the record.
     for warning in &warnings {
-        tracing::warn!("{namespace}: {warning}");
+        info!("{namespace}: {warning}");
     }
 
     let stream = tokio_stream::iter(vec![Ok(placed.into_iter().map(Ok).collect())]);

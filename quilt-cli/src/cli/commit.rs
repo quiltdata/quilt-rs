@@ -24,7 +24,7 @@ pub struct Input {
 /// `commit` is `None` when the new hash was the current revision's and
 /// nothing was committed. `warnings` say how the revision is inconsistent
 /// with the remote bucket's workflows, which a local commit does not refuse;
-/// each is also logged as a warning.
+/// the text output prints each on a line of its own, whatever the log level.
 #[derive(Debug)]
 pub struct Output {
     pub commit: Option<CommitState>,
@@ -34,9 +34,13 @@ pub struct Output {
 impl std::fmt::Display for Output {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.commit {
-            Some(commit) => write!(f, r#"New commit "{}" created"#, commit.hash),
-            None => write!(f, "Nothing to commit"),
+            Some(commit) => write!(f, r#"New commit "{}" created"#, commit.hash)?,
+            None => write!(f, "Nothing to commit")?,
         }
+        for warning in &self.warnings {
+            write!(f, "\nWarning: {warning}")?;
+        }
+        Ok(())
     }
 }
 
@@ -657,6 +661,27 @@ mod tests {
         assert_eq!(
             output.to_json().to_string(),
             r#"{"hash":"abc123","warnings":["needs a workflow"]}"#
+        );
+    }
+
+    /// The text output prints each warning after the commit line, so a
+    /// quiet log level does not hide what the push will refuse.
+    #[test]
+    fn text_prints_the_workflow_warnings() {
+        let output = Output {
+            commit: Some(CommitState {
+                hash: "abc123".to_string(),
+                ..CommitState::default()
+            }),
+            warnings: vec![
+                "needs a workflow".to_string(),
+                "needs a message".to_string(),
+            ],
+        };
+
+        assert_eq!(
+            output.to_string(),
+            "New commit \"abc123\" created\nWarning: needs a workflow\nWarning: needs a message"
         );
     }
 }

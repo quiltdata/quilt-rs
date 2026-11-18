@@ -37,7 +37,7 @@ use super::super::installed_package::{
     location, remote_target, run_reading,
 };
 use super::super::json_editor::focus_json_editor_within;
-use super::super::page::{Outcome, Page, PageHandle, critical, success};
+use super::super::page::{Outcome, Page, PageHandle, critical, success, warning};
 use super::super::row_menu::RowCommand;
 use crate::routes;
 
@@ -755,8 +755,15 @@ fn CommitScreen(
             let ns = namespace.to_string();
             match save(publish, ns.clone(), message, metadata, workflow, uri).await {
                 // The command's own notification reports it; arriving is the rest.
-                Ok(_) => {
+                Ok(None) => {
                     goto.try_set(Some(routes::package_page_href(&namespace)));
+                }
+                // Saved, but the bucket's workflows reject the revision: the
+                // page stays to say so, since Publish will refuse it.
+                Ok(Some(reasons)) => {
+                    running.try_set(false);
+                    outcome.try_set(Some(warning(ns, SAVED_BUT_REFUSED, Some(reasons))));
+                    reload.notify();
                 }
                 Err(detail) => {
                     running.try_set(false);
@@ -1057,9 +1064,15 @@ fn focus_field(field: Field) {
     });
 }
 
+/// The lead of the band a saved revision shows when the bucket's workflows
+/// reject it.
+pub(crate) const SAVED_BUT_REFUSED: &str =
+    "Saved this revision, but Publish will refuse it as it stands.";
+
 /// The save: publish or not, namespace, message, metadata, workflow and
-/// remote in, the backend's report out. A parameter so a test can answer
-/// without an engine.
+/// remote in; out, the workflow warning of a revision saved without
+/// publishing that the bucket's workflows reject, or the backend's refusal.
+/// A parameter so a test can answer without an engine.
 pub(crate) type Save = fn(
     bool,
     String,
@@ -1067,7 +1080,7 @@ pub(crate) type Save = fn(
     String,
     WorkflowIntent,
     Option<quilt_uri::S3PackageUri>,
-) -> Pin<Box<dyn Future<Output = Result<String, String>>>>;
+) -> Pin<Box<dyn Future<Output = Result<Option<String>, String>>>>;
 
 fn save_revision(
     publish: bool,
@@ -1076,15 +1089,19 @@ fn save_revision(
     metadata: String,
     workflow: WorkflowIntent,
     uri: Option<quilt_uri::S3PackageUri>,
-) -> Pin<Box<dyn Future<Output = Result<String, String>>>> {
+) -> Pin<Box<dyn Future<Output = Result<Option<String>, String>>>> {
     if publish {
-        Box::pin(commands::package_commit_and_push(
-            namespace, message, metadata, workflow, uri,
-        ))
+        Box::pin(async move {
+            commands::package_commit_and_push(namespace, message, metadata, workflow, uri)
+                .await
+                .map(|_| None)
+        })
     } else {
-        Box::pin(commands::package_commit(
-            namespace, message, metadata, workflow, uri,
-        ))
+        Box::pin(async move {
+            commands::package_commit(namespace, message, metadata, workflow, uri)
+                .await
+                .map(|response| response.workflow_warning)
+        })
     }
 }
 
@@ -2454,9 +2471,26 @@ mod tests {
         _: String,
         _: WorkflowIntent,
         _: Option<quilt_uri::S3PackageUri>,
-    ) -> Pin<Box<dyn Future<Output = Result<String, String>>>> {
+    ) -> Pin<Box<dyn Future<Output = Result<Option<String>, String>>>> {
         SENT.with(|s| s.borrow_mut().push((publish, message)));
-        Box::pin(async { Ok(String::new()) })
+        Box::pin(async { Ok(None) })
+    }
+
+    const REFUSED_BY: &str = "this revision does not satisfy the workflows of s3://team-bucket";
+
+    /// Records as [`recorded_save`] does, and answers a save without
+    /// publishing with a workflow warning.
+    #[allow(clippy::needless_pass_by_value, reason = "the seam's signature")]
+    fn warned_save(
+        publish: bool,
+        _: String,
+        message: String,
+        _: String,
+        _: WorkflowIntent,
+        _: Option<quilt_uri::S3PackageUri>,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<String>, String>>>> {
+        SENT.with(|s| s.borrow_mut().push((publish, message)));
+        Box::pin(async move { Ok((!publish).then(|| REFUSED_BY.to_string())) })
     }
 
     const VAGUE: &str = "Say which plate changed.";
@@ -2512,6 +2546,11 @@ mod tests {
     /// The routed page over `read`, with `rules` checking and the save seam
     /// recording, once the first check has landed.
     async fn checked_page(read: CommitRead, rules: RulesCheck) -> web_sys::Element {
+        saving_page(read, rules, recorded_save).await
+    }
+
+    /// [`checked_page`] with `save` as the save seam.
+    async fn saving_page(read: CommitRead, rules: RulesCheck, save: Save) -> web_sys::Element {
         SENT.with(|s| s.borrow_mut().clear());
         unmount_earlier();
         web_sys::window()
@@ -2535,7 +2574,7 @@ mod tests {
                                     <CommitScreen
                                         read=read
                                         rules=Some(rules)
-                                        save=Some(recorded_save)
+                                        save=Some(save)
                                     />
                                 }
                             }
@@ -2617,6 +2656,39 @@ mod tests {
         face(&el).click();
         sleep_ms(80).await;
         assert_eq!(sent(), [(true, "Re-imaged plate 7".to_string())]);
+    }
+
+    /// A save without publishing that the bucket's workflows reject is
+    /// saved, and the page stays to say so, with the engine's reasons,
+    /// rather than leaving for the package page.
+    #[wasm_bindgen_test]
+    async fn a_warned_save_stays_and_shows_the_warning() {
+        let el = saving_page(governed, takes_anything, warned_save).await;
+        let buttons = |el: &web_sys::Element| {
+            el.query_selector_all("[data-primary-action] button")
+                .unwrap()
+        };
+        // The face, the caret, then the options.
+        let save: web_sys::HtmlElement = buttons(&el).item(3).unwrap().unchecked_into();
+        assert_eq!(save.text_content().unwrap().trim(), SAVE_WITHOUT_PUBLISHING);
+        save.click();
+        sleep_ms(80).await;
+        face(&el).click();
+        sleep_ms(past_the_pause()).await;
+
+        assert_eq!(sent(), [(false, "Updated 1203 files".to_string())]);
+        assert!(
+            says(&el, SAVED_BUT_REFUSED),
+            "markup was {}",
+            el.inner_html()
+        );
+        assert!(says(&el, REFUSED_BY), "markup was {}", el.inner_html());
+        assert_eq!(
+            web_sys::window().unwrap().location().pathname().unwrap(),
+            "/commit",
+            "the page stayed"
+        );
+        assert!(!face(&el).disabled(), "and is usable again");
     }
 
     /// A press on a valid form publishes at once.

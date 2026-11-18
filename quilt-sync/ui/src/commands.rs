@@ -1383,13 +1383,25 @@ pub async fn download_and_install_update() -> Result<(), String> {
 
 // ── Package actions ─────────────────────────────────────────
 
+/// Response from the `package_commit` command. UI-side mirror of the backend
+/// `quilt_sync::commands::package_ops::CommitResponse`; the serde attributes
+/// MUST match so the typed payload crosses the engine boundary unchanged.
+/// `workflow_warning` is `Some(reasons)` when the revision was committed but
+/// the bucket's workflows reject it, so Publish will refuse it as it stands.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitResponse {
+    pub message: String,
+    pub workflow_warning: Option<String>,
+}
+
 pub async fn package_commit(
     namespace: String,
     message: String,
     metadata: String,
     workflow: WorkflowIntent,
     uri: Option<S3PackageUri>,
-) -> Result<String, String> {
+) -> Result<CommitResponse, String> {
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
     struct Args {
