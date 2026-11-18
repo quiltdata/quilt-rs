@@ -16,8 +16,33 @@ use cli::Error;
 use cli::Std;
 use cli::print;
 
+/// The stack of the thread every command runs on: what Linux and macOS give
+/// a main thread by default, and eight times what Windows gives it.
+///
+/// A command's future is one value on that thread's stack, with every
+/// `await` below it inline, and a debug build's is large. The OS commits
+/// pages as they are touched, so the size costs address space, not memory.
+const COMMAND_STACK_BYTES: usize = 8 * 1024 * 1024;
+
+/// Runs the command on a thread of [`COMMAND_STACK_BYTES`], so the stack it
+/// has does not depend on the OS, or on a `ulimit -s` in the calling shell.
+///
+/// Where that thread cannot start, such as under a limit on address space,
+/// the command runs on the main thread, with the stack the OS gave it.
+fn main() {
+    let command = std::thread::Builder::new()
+        .name("quilt".to_string())
+        .stack_size(COMMAND_STACK_BYTES)
+        .spawn(run);
+    match command.map(std::thread::JoinHandle::join) {
+        Ok(Ok(())) => {}
+        Ok(Err(panic)) => std::panic::resume_unwind(panic),
+        Err(_) => run(),
+    }
+}
+
 #[tokio::main]
-async fn main() {
+async fn run() {
     let args = Args::try_parse_with_env(std::env::args_os()).unwrap_or_else(|err| err.exit());
     let logging = init_logging(
         std::env::var(LOG_ENV).ok().as_deref(),
