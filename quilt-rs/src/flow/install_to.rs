@@ -181,7 +181,7 @@ async fn missing_folders(
 
 /// Refuses a target that is a symbolic link, dangling or not: a rename would
 /// replace it, and `exists` follows links so it cannot see one that dangles.
-async fn refuse_linked_targets<'a>(
+pub(super) async fn refuse_linked_targets<'a>(
     storage: &(impl Storage + Sync),
     targets: impl Iterator<Item = (PathBuf, &'a LogicalKey)>,
 ) -> Res {
@@ -264,7 +264,7 @@ fn folders_above<'a>(
 /// Refuses a key whose folder between `dest` and its target is a symbolic
 /// link, which would put the file outside `dest`. `dest` itself may be a link:
 /// that is the caller's choice.
-async fn refuse_linked_ancestors<'a>(
+pub(super) async fn refuse_linked_ancestors<'a>(
     storage: &(impl Storage + Sync),
     dest: &Path,
     keys: impl Iterator<Item = &'a LogicalKey>,
