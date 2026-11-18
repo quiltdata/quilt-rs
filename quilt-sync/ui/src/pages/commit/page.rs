@@ -754,6 +754,7 @@ fn CommitScreen(
         outcome.set(None);
         leptos::task::spawn_local(async move {
             let ns = namespace.to_string();
+            let sent = message.clone();
             match save(publish, ns.clone(), message, metadata, workflow, uri).await {
                 // Saving again what was saved with a warning records nothing,
                 // and the warning still stands: leaving would drop it unread.
@@ -774,6 +775,11 @@ fn CommitScreen(
                 Ok(Saved::Warned(reasons)) => {
                     running.try_set(false);
                     outcome.try_set(Some(warning(ns, SAVED_WITH_WARNING, Some(reasons))));
+                    // The re-read has no changes left to name, so an empty
+                    // field would leave the next save with no message.
+                    if draft.message.with_untracked(|m| m.trim().is_empty()) {
+                        draft.message.try_set(sent);
+                    }
                     reload.notify();
                 }
                 Err(detail) => {
@@ -1753,6 +1759,21 @@ mod tests {
                 is_workflow_required: false,
                 config_url: None,
             };
+            Ok(d)
+        })
+    }
+
+    /// [`governed`], with no changes left to name once a save was sent, as
+    /// the re-read after a commit has.
+    fn committed_after_a_save(
+        namespace: String,
+    ) -> Pin<Box<dyn Future<Output = Result<CommitData, String>>>> {
+        let saved = SENT.with(|s| !s.borrow().is_empty());
+        Box::pin(async move {
+            let mut d = governed(namespace).await?;
+            if saved {
+                d.message = String::new();
+            }
             Ok(d)
         })
     }
@@ -2749,15 +2770,23 @@ mod tests {
     }
 
     /// Saving again, with no edits, what was saved with a warning records
-    /// nothing and keeps the warning showing, rather than leaving with it.
+    /// nothing and keeps the warning showing, rather than leaving with it,
+    /// though the re-read after the first save names no changes.
     #[wasm_bindgen_test]
     async fn saving_a_warned_revision_again_keeps_the_warning() {
-        let el = saving_page(governed, takes_anything, warned_save).await;
+        let el = saving_page(committed_after_a_save, takes_anything, warned_save).await;
         save_without_publishing(&el).await;
         face(&el).click();
         sleep_ms(past_the_pause()).await;
 
-        assert_eq!(sent().len(), 2, "both saves were sent");
+        assert_eq!(
+            sent(),
+            [
+                (false, "Updated 1203 files".to_string()),
+                (false, "Updated 1203 files".to_string())
+            ],
+            "the second save sends the same message, though the re-read names no changes"
+        );
         assert!(
             says(&el, SAVED_WITH_WARNING),
             "markup was {}",
