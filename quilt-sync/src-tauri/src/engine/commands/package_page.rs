@@ -756,15 +756,10 @@ async fn get_package_page_data_from_model(
             } else if let Some(files) = conflict_files(paused) {
                 PackageStateDto::PullConflict { files }
             } else {
-                quilt::lineage::PackageState::resolve(
-                    status.upstream_state,
-                    has_local_commit,
-                    has_remote,
-                    // The count is measured, not guessed. This page reads one
-                    // package, so it has no light phase to be provisional for.
-                    Some(status.changes.len()),
-                )
-                .into()
+                // The count is measured, not guessed. This page reads one
+                // package, so it has no light phase to be provisional for.
+                quilt::lineage::PackageState::of_status(&status, has_local_commit, has_remote)
+                    .into()
             };
             (state, Ok(status))
         }

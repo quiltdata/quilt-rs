@@ -790,6 +790,16 @@ pub(crate) async fn observe_walk(
     status: &crate::engine::quilt::lineage::InstalledPackageStatus,
     pending_commit: last_change::PendingCommit,
 ) {
+    // An unread folder lists no change because nothing was checked. Observed
+    // as a clean tree, it would drop or restart the publish countdown. The
+    // startup walk comes through here too.
+    if let Some(home) = status.unavailable_home() {
+        debug!(
+            "autosync: {namespace}: working folder {} unavailable, its last change is kept",
+            home.display()
+        );
+        return;
+    }
     let changed_at = inner
         .last_change
         .observe(namespace, home, status, pending_commit)
@@ -930,6 +940,47 @@ mod tests {
                 "{namespace} has a time before the first check"
             );
         }
+    }
+
+    /// A package whose folder is missing at launch keeps the last-change time
+    /// it had: the startup walk reads its empty change list as nothing checked,
+    /// not as a clean tree.
+    #[tokio::test]
+    async fn the_startup_walk_keeps_the_last_change_of_a_missing_folder() {
+        let ns: Namespace = ("acme", "demo").into();
+        let mut model = crate::engine::model::MockQuiltModel::new();
+        model.expect_get_installed_packages_list().returning(|| {
+            Ok(vec![
+                crate::engine::model::mocks::nowhere()
+                    .create_installed_package(("acme", "demo").into()),
+            ])
+        });
+        model.expect_get_installed_package().returning(|ns| {
+            Ok(Some(
+                crate::engine::model::mocks::nowhere().create_installed_package(ns.clone()),
+            ))
+        });
+        model
+            .expect_get_installed_package_lineage()
+            .returning(|_| Ok(crate::engine::quilt::lineage::PackageLineage::default()));
+        model.expect_recompute_local_status().returning(|_, _| {
+            Ok(crate::engine::quilt::lineage::InstalledPackageStatus {
+                working_copy: crate::engine::quilt::lineage::WorkingCopy::Unavailable(
+                    "/Volumes/gone/demo".into(),
+                ),
+                ..crate::engine::quilt::lineage::InstalledPackageStatus::default()
+            })
+        });
+        let inner = WatcherInner {
+            last_change: last_change::LastChange::changed_for_test(&ns, Duration::from_hours(1))
+                .await,
+            ..inner_for_tests(AutosyncSettings::default())
+        };
+        let before = inner.last_change.get(&ns).await.expect("a last change");
+
+        walk_every_package(&model, &inner).await;
+
+        assert_eq!(inner.last_change.get(&ns).await, Some(before));
     }
 
     /// A model whose walks each take a second, counting how many run at once.

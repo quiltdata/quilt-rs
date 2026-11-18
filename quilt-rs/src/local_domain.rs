@@ -252,6 +252,17 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
         flow::resolve_hash(&*self.remote, host, bucket, prefix).await
     }
 
+    /// [`flow::resolve_local_hash`] over `namespace`'s installed manifests,
+    /// with no remote involved.
+    pub async fn resolve_local_hash(&self, namespace: &Namespace, prefix: &str) -> Res<String> {
+        flow::resolve_local_hash(
+            &self.storage,
+            self.paths.installed_manifests_dir(namespace),
+            prefix,
+        )
+        .await
+    }
+
     /// [`flow::push_onto`] on this domain's remote.
     pub async fn push_onto(
         &self,

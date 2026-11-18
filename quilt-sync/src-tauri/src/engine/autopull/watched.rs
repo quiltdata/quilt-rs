@@ -126,6 +126,13 @@ impl WatchedWalks {
         let Some(package) = state.packages.get_mut(namespace) else {
             return;
         };
+        // A walk that could not read the folder is never kept, and the one it
+        // replaces is old news: a folder coming back, such as a drive mounted
+        // again, can do so without an event, and a kept walk would hide it.
+        if status.unavailable_home().is_some() {
+            package.walk = None;
+            return;
+        }
         if package.stale_at > started || package.walk.as_ref().is_some_and(|w| w.started > started)
         {
             return;
@@ -273,6 +280,29 @@ mod tests {
         walks.vouch_for(&live());
         walked(&walks, walks.begin(&ns()));
         walks.vouch_for(&BTreeMap::new());
+        assert!(walks.reusable(&ns()).is_none());
+    }
+
+    /// A folder can come back without an event, as a drive mounted again
+    /// does, so a walk that could not read it is not kept, and it drops the
+    /// walk from before the folder went.
+    #[test]
+    fn a_walk_of_a_missing_folder_is_not_kept_and_drops_the_last() {
+        let walks = WatchedWalks::default();
+        walks.vouch_for(&live());
+        walked(&walks, walks.begin(&ns()));
+        assert!(walks.reusable(&ns()).is_some());
+
+        let unavailable = InstalledPackageStatus {
+            working_copy: crate::engine::quilt::lineage::WorkingCopy::Unavailable("/pkg".into()),
+            ..InstalledPackageStatus::default()
+        };
+        walks.record(
+            &ns(),
+            walks.begin(&ns()),
+            PackageLineage::default(),
+            &unavailable,
+        );
         assert!(walks.reusable(&ns()).is_none());
     }
 }
