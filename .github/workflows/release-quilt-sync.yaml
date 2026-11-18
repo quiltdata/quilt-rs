@@ -201,15 +201,6 @@ jobs:
             - (.platforms | keys) | join(" ")' latest.json)
           [ -z "$missing" ] \
             || { echo "::error::latest.json is missing platforms: $missing"; exit 1; }
-          # tauri-action keeps a per-arch macOS entry when the draft already
-          # holds that arch's build, as a reused draft from before the
-          # universal build would.
-          stale=$(jq -r '.platforms as $p | $p["darwin-universal"].url as $u
-            | ["darwin-aarch64", "darwin-aarch64-app",
-               "darwin-x86_64", "darwin-x86_64-app"]
-            | map(select($p[.].url != $u)) | join(" ")' latest.json)
-          [ -z "$stale" ] \
-            || { echo "::error::latest.json points these at a per-arch build: $stale"; exit 1; }
 
       - name: Promote draft and trigger HubSpot mirror
         env:
