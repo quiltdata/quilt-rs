@@ -364,6 +364,54 @@ async fn a_first_revision_may_hold_only_metadata() -> Res {
 }
 
 #[test(tokio::test)]
+async fn an_empty_write_to_a_package_with_no_latest_publishes_nothing() -> Res {
+    let remote = MockRemote::default();
+    let storage = &remote.storage;
+    storage.create_dir_all(folder()).await?;
+
+    let outcome = publish(storage, &remote, &entry("write = [\"team/raw\"]"), None).await;
+
+    assert!(
+        matches!(outcome, Ok(Published::Unchanged { latest: None })),
+        "{outcome:?}"
+    );
+    assert_eq!(remote.current(LATEST).await?, None);
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_replace_whose_only_change_drops_a_folders_metadata_publishes_it() -> Res {
+    let remote = MockRemote::default();
+    let storage = &remote.storage;
+    seed(
+        &remote,
+        FIRST,
+        &[("a.txt", b"a")],
+        ManifestHeader::default(),
+    )
+    .await?;
+    let manifest = Manifest {
+        rows: vec![row("a.txt", b"a")],
+        dir_meta: vec![crate::manifest::DirMeta {
+            logical_key: LogicalKey::new("old").expect("key"),
+            meta: serde_json::json!({"kind": "old"}),
+            meta_numbers: RawNumbers::default(),
+        }],
+        ..Manifest::default()
+    };
+    seed_manifest(&remote, FIRST, &manifest).await?;
+    write(storage, "a.txt", b"a").await?;
+
+    let outcome = publish(storage, &remote, &entry("replace = [\"team/raw\"]"), None).await;
+
+    let Ok(Published::Advanced { revision: new, .. }) = &outcome else {
+        panic!("expected the snapshot published, got {outcome:?}");
+    };
+    assert_eq!(revision(&remote, new).await?.dir_meta, []);
+    Ok(())
+}
+
+#[test(tokio::test)]
 async fn a_folder_holding_nothing_new_publishes_nothing() -> Res {
     let remote = MockRemote::default();
     let storage = &remote.storage;
@@ -809,6 +857,39 @@ async fn metadata_the_file_leaves_out_is_kept_by_write_and_dropped_by_replace() 
             assert_eq!(package_meta, None, "{access}");
         }
     }
+    Ok(())
+}
+
+/// A `meta` that is not an object has no `user_meta` the metadata file could
+/// clear.
+#[test(tokio::test)]
+async fn metadata_that_is_not_an_object_survives_a_replace_that_leaves_it_out() -> Res {
+    let remote = MockRemote::default();
+    let storage = &remote.storage;
+    seed(
+        &remote,
+        FIRST,
+        &[("a.txt", b"a"), ("b.txt", b"b")],
+        ManifestHeader::default(),
+    )
+    .await?;
+    let mut manifest = Manifest {
+        rows: vec![row("a.txt", b"a"), row("b.txt", b"b")],
+        ..Manifest::default()
+    };
+    manifest.rows[1].meta = Some(serde_json::json!("legacy annotation"));
+    seed_manifest(&remote, FIRST, &manifest).await?;
+    write(storage, "a.txt", b"a").await?;
+    write(storage, "b.txt", b"b").await?;
+    write(storage, METADATA_FILE, br#"{"a.txt": {"k": 2}}"#).await?;
+
+    let outcome = publish(storage, &remote, &entry("replace = [\"team/raw\"]"), None).await?;
+
+    let published = revision(&remote, advanced(&outcome)).await?;
+    assert_eq!(
+        row_of(&published, "b.txt").meta,
+        Some(serde_json::json!("legacy annotation"))
+    );
     Ok(())
 }
 

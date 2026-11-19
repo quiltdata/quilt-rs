@@ -162,8 +162,12 @@ impl MetadataFile {
 }
 
 /// Replaces `row`'s `user_meta`, or removes it with `None`, keeping the rest
-/// of its `meta`.
+/// of its `meta`. A `meta` that is not an object holds no `user_meta` to
+/// remove, so `None` leaves it as it is.
 fn set_user_meta(row: &mut ManifestRow, value: Option<&Value>, numbers: &RawNumbers) {
+    if value.is_none() && !matches!(row.meta, Some(Value::Object(_))) {
+        return;
+    }
     let mut meta = match row.meta.take() {
         Some(Value::Object(meta)) => meta,
         _ => Map::new(),

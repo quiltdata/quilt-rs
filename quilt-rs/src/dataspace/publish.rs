@@ -2,6 +2,7 @@
 //! new revision with no Domain, against the `latest` read just before.
 
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::collections::VecDeque;
 use std::path::Path;
 use std::path::PathBuf;
@@ -143,6 +144,9 @@ pub async fn publish(
         message: message.map_or(HeaderMessage::Missing, |text| {
             HeaderMessage::Text(text.to_string())
         }),
+        // Taken from `latest`, or from the metadata file; a default `{}` would
+        // make an empty first publish look like a change.
+        user_meta: None,
         workflow: resolve_workflow(
             remote,
             target.origin.as_ref(),
@@ -358,9 +362,15 @@ async fn compose(
     if whole {
         // A snapshot keeps a folder's metadata only while the folder holds a
         // file: one it dropped, or turned into a file, has none.
+        let folders: BTreeSet<&str> = rows
+            .iter()
+            .filter_map(|row| row.logical_key.to_str())
+            .flat_map(|key| key.match_indices('/').map(move |(at, _)| &key[..at]))
+            .collect();
         dir_meta.retain(|dir| {
-            rows.iter()
-                .any(|row| dir.logical_key.is_folder_of(&row.logical_key))
+            dir.logical_key
+                .to_str()
+                .is_some_and(|key| folders.contains(key))
         });
     }
     let manifest = Manifest {
@@ -371,8 +381,8 @@ async fn compose(
     Ok((manifest, content))
 }
 
-/// Whether `manifest`, its rows sorted, writes the same files and metadata as
-/// `base`.
+/// Whether `manifest`, its rows sorted, writes the same files, metadata and
+/// folder metadata as `base`.
 fn same_as(manifest: &Manifest, base: Option<&Manifest>) -> bool {
     let Some(base) = base else {
         return manifest.rows.is_empty() && manifest.header.user_meta.is_none();
@@ -380,6 +390,7 @@ fn same_as(manifest: &Manifest, base: Option<&Manifest>) -> bool {
     let mut theirs: Vec<&ManifestRow> = base.rows.iter().collect();
     theirs.sort_by(|a, b| a.logical_key.cmp(&b.logical_key));
     manifest.header.same_user_meta(&base.header)
+        && manifest.dir_meta == base.dir_meta
         && manifest.rows.len() == theirs.len()
         && manifest
             .rows
