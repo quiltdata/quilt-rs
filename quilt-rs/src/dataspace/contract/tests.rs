@@ -68,6 +68,23 @@ fn with_defaults(packages: &str) -> String {
 }
 
 #[test]
+fn an_access_reads_back_from_its_list_name_and_nothing_else() -> Res {
+    for (name, access) in [
+        ("read", Access::Read),
+        ("write", Access::Write),
+        ("replace", Access::Replace),
+        ("sync", Access::Sync),
+    ] {
+        assert_eq!(name.parse::<Access>()?, access);
+        assert_eq!(access.to_string(), name);
+    }
+    for name in ["Read", "publish", ""] {
+        assert!(name.parse::<Access>().is_err(), "{name:?}");
+    }
+    Ok(())
+}
+
+#[test]
 fn three_spellings_of_one_package_expand_to_one_entry() -> Res {
     let expected = Entry {
         registry: bucket("quilt-dev"),
