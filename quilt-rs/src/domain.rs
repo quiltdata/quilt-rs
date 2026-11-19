@@ -1272,12 +1272,21 @@ mod tests {
         let storage = LocalStorage::new();
         let local = DomainRoot::new(dir.path()).local();
         let namespace = Namespace::from(("me", "analysis"));
-        let (hash, _) = commit(&local, &namespace, &[("a.txt", b"one")]).await?;
+        let (hash, _) = commit(&local, &namespace, &[("data/a.txt", b"one")]).await?;
         local.publish(&storage, &namespace, None, &hash).await?;
         let recommitted = local.installed_manifest(&namespace, &hash);
         // A copy that differs where the top hash does not look.
         let mut other = Manifest::from_path(&storage, &recommitted).await?;
-        other.header.user_meta = Some(serde_json::json!({ "copy": "other" }));
+        other.dir_meta = vec![crate::manifest::DirMeta::new(
+            LogicalKey::new("data")?,
+            serde_json::json!({ "copy": "other" }),
+        )];
+        let mut hasher = crate::manifest::TopHasher::new();
+        hasher.append_header(&other.header)?;
+        for row in &other.rows {
+            hasher.append(row)?;
+        }
+        assert_eq!(hasher.finalize(), hash, "folder metadata is not hashed");
         let other = other.try_to_jsonlines()?;
         std::fs::write(&recommitted, &other)?;
 
