@@ -14,6 +14,7 @@ use crate::flow;
 use crate::flow::UserMeta;
 use std::sync::Arc;
 
+use crate::dataspace::contract::Registry;
 use crate::flow::cache_remote_manifest;
 use crate::io::remote::HostChecksums;
 use crate::io::remote::HostConfig;
@@ -41,6 +42,7 @@ use crate::paths;
 use crate::paths::copy_cached_to_installed;
 use crate::quiltignore;
 use crate::quiltignore::Scope;
+use crate::state_store::FolderKey;
 use crate::state_store::PackageStateStore;
 use crate::workflow::WorkflowRules;
 use quilt_uri::Host;
@@ -449,6 +451,24 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         self.lineage.package_home(&self.storage).await
     }
 
+    #[cfg(test)]
+    async fn folder_key(&self) -> Res<FolderKey> {
+        let (package_home, lineage) = self.lineage.read(&self.storage).await?;
+        Ok(self.folder_key_of(&lineage, &package_home))
+    }
+
+    fn folder_key_of(&self, lineage: &lineage::PackageLineage, package_home: &Path) -> FolderKey {
+        FolderKey {
+            registry: lineage
+                .remote_uri
+                .as_ref()
+                .filter(|uri| !uri.bucket.is_empty())
+                .map(|uri| Registry::S3(uri.bucket.clone())),
+            package: self.namespace.clone(),
+            folder: package_home.to_path_buf(),
+        }
+    }
+
     /// [`flow::preview_stop_ignoring`] for the file or folder at `path`.
     pub async fn preview_stop_ignoring(
         &self,
@@ -542,7 +562,8 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
             )
             .await;
         };
-        let mut cache = store.stat_cache(&self.namespace).await;
+        let key = self.folder_key_of(&lineage, package_home);
+        let mut cache = store.stat_cache(&key).await;
         let walked = flow::status_cached(
             lineage,
             &self.storage,
@@ -553,7 +574,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
             Some(&mut cache),
         )
         .await?;
-        store.save_stat_cache(&self.namespace, &cache).await;
+        store.save_stat_cache(&key, &cache).await;
         Ok(walked)
     }
 

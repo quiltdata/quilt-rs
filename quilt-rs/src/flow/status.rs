@@ -1426,8 +1426,12 @@ mod tests {
         }
 
         async fn walk_with(&self, host_config: HostConfig) -> Res<ChangeSet> {
-            let namespace = ("acme", "demo").into();
-            let mut cache = self.store.stat_cache(&namespace).await;
+            let key = crate::state_store::FolderKey {
+                registry: None,
+                package: ("acme", "demo").into(),
+                folder: self.home.path().to_path_buf(),
+            };
+            let mut cache = self.store.stat_cache(&key).await;
             let (_, status) = create_status_cached(
                 self.lineage.clone(),
                 &self.storage,
@@ -1438,7 +1442,7 @@ mod tests {
                 Some(&mut cache),
             )
             .await?;
-            self.store.save_stat_cache(&namespace, &cache).await;
+            self.store.save_stat_cache(&key, &cache).await;
             Ok(status.changes)
         }
 
