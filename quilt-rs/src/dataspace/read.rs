@@ -39,6 +39,15 @@ use quilt_uri::S3PackageUri;
 /// working folder so that each file is renamed into place.
 const STAGING_PREFIX: &str = ".quilt-read-";
 
+/// Whether `name`, at a working folder's root, is a staging folder or a
+/// metadata file's temporary file that a read leaves while it runs.
+pub(crate) fn left_by_read(name: &str) -> bool {
+    name.starts_with(STAGING_PREFIX)
+        || name
+            .strip_prefix(METADATA_FILE)
+            .is_some_and(|rest| rest.starts_with(".tmp-"))
+}
+
 /// How a [`read`] ended.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
@@ -115,7 +124,7 @@ struct Plan<'a> {
 }
 
 /// What is at a path, hashed with one algorithm.
-enum OnDisk {
+pub(crate) enum OnDisk {
     Nothing,
     NotAFile,
     File(Box<(ObjectHash, u64)>),
@@ -123,7 +132,11 @@ enum OnDisk {
 
 impl OnDisk {
     /// A link, dangling or not, is not a file: a rename would replace it.
-    async fn read(storage: &(impl Storage + Sync), path: &Path, algorithm: u64) -> Res<Self> {
+    pub(crate) async fn read(
+        storage: &(impl Storage + Sync),
+        path: &Path,
+        algorithm: u64,
+    ) -> Res<Self> {
         if storage.is_symlink(path).await {
             return Ok(Self::NotAFile);
         }
@@ -138,7 +151,7 @@ impl OnDisk {
         )))
     }
 
-    fn holds(&self, row: &ManifestRow) -> bool {
+    pub(crate) fn holds(&self, row: &ManifestRow) -> bool {
         matches!(self, Self::File(file) if file.0 == row.hash && file.1 == row.size)
     }
 }
@@ -393,7 +406,7 @@ async fn folder_blocked(storage: &(impl Storage + Sync), folder: &Path, path: &P
 }
 
 /// The bytes of the file at `path`, `None` where there is none.
-async fn bytes_at(storage: &(impl Storage + Sync), path: &Path) -> Res<Option<Vec<u8>>> {
+pub(crate) async fn bytes_at(storage: &(impl Storage + Sync), path: &Path) -> Res<Option<Vec<u8>>> {
     match storage.read_bytes(path).await {
         Ok(bytes) => Ok(Some(bytes)),
         Err(err) if err.is_not_found() => Ok(None),
