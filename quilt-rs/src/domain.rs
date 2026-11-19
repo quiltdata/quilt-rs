@@ -639,6 +639,13 @@ pub(crate) fn check_name(name: &str) -> Res {
         ))
         .into());
     }
+    // Its packages' folder, `<name>@local`, would be a device there.
+    if cfg!(windows) && is_windows_device_name(&format!("{name}@local")) {
+        return Err(UriError::Package(format!(
+            "Windows reserves {name:?} for a device, so it names no local registry here"
+        ))
+        .into());
+    }
     Ok(())
 }
 
@@ -1090,6 +1097,15 @@ mod tests {
         let root = DomainRoot::new(r"C:\data");
         assert!(root.registry("con").is_err());
         assert!(root.registry("console").is_ok());
+    }
+
+    /// A name whose `<name>@local` folder Windows takes for a device names no
+    /// local registry there.
+    #[cfg(windows)]
+    #[test]
+    fn a_local_registry_windows_takes_for_a_device_has_no_name_there() {
+        assert!(check_name("nul.lan").is_err());
+        assert!(check_name("con").is_ok(), "`con@local` is no device");
     }
 
     /// The layout the local registry is given beside the buckets' stores,

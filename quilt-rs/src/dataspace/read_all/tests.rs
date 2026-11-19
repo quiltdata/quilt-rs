@@ -284,6 +284,27 @@ async fn a_dataspace_with_a_sync_entry_is_not_marked_filled() -> Res {
     Ok(())
 }
 
+/// A local registry's package is in the Domain, so a read without one leaves
+/// it out, as it does a `sync` entry, and does not mark the dataspace filled.
+#[test(tokio::test)]
+async fn a_local_read_entry_is_left_to_the_domain() -> Res {
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    publish(&remote, "team/raw", FIRST, &[("a.txt", b"alpha")]).await?;
+    let root = dataspace(
+        &storage,
+        "read = [\"team/raw\", \"quilt+local://lab-mac#package=me/analysis\"]\n",
+    )?;
+
+    let read = read_all(&storage, &remote, &root, &writer()).await?;
+
+    assert_eq!(read.entries.len(), 1, "{read:?}");
+    let lock = lock(&storage, &root).await?.expect("a lock");
+    assert_eq!(base(&lock, "team/raw").as_deref(), Some(FIRST));
+    assert_eq!(lock.header.filled, None);
+    Ok(())
+}
+
 #[test(tokio::test)]
 async fn a_contract_edited_by_hand_keeps_the_bases_of_the_packages_it_still_names() -> Res {
     let remote = MockRemote::default();
