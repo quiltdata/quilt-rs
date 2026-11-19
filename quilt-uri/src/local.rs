@@ -151,11 +151,11 @@ mod tests {
     #[test]
     fn a_named_registry_parses_and_round_trips() {
         let input = format!(
-            "quilt+local://ernest-mbp.lan#package=me/analysis@{}&path=data/a%26b.csv",
+            "quilt+local://lab-mac.lan#package=me/analysis@{}&path=data/a%26b.csv",
             fixtures::TOP_HASH
         );
         let expected = LocalPackageUri {
-            registry: Some("ernest-mbp.lan".to_string()),
+            registry: Some("lab-mac.lan".to_string()),
             namespace: ("me", "analysis").into(),
             revision: RevisionPointer::Hash(fixtures::TOP_HASH.to_string()),
             path: Some(PathBuf::from("data/a&b.csv")),
@@ -171,19 +171,16 @@ mod tests {
     /// registry keeps.
     #[test]
     fn a_name_keeps_its_case() {
-        let uri = LocalPackageUri::try_from("quilt+local://Ernest-MBP#package=me/a");
-        assert_eq!(
-            uri.map(|uri| uri.registry),
-            Ok(Some("Ernest-MBP".to_string()))
-        );
+        let uri = LocalPackageUri::try_from("quilt+local://Lab-Mac#package=me/a");
+        assert_eq!(uri.map(|uri| uri.registry), Ok(Some("Lab-Mac".to_string())));
     }
 
     #[test]
     fn a_name_outside_host_name_characters_is_refused() {
         for input in [
-            "quilt+local://ernest_mbp#package=me/a",
-            "quilt+local://ernest%20mbp#package=me/a",
-            "quilt+local://ernest@local#package=me/a",
+            "quilt+local://lab_mac#package=me/a",
+            "quilt+local://lab%20mac#package=me/a",
+            "quilt+local://lab@local#package=me/a",
             "quilt+local://@name#package=me/a",
             "quilt+local://name:#package=me/a",
             "quilt+local://na\tme#package=me/a",
@@ -203,7 +200,7 @@ mod tests {
         for name in ["", ".", "..", "a_b", "a b", "a/b", "@local"] {
             assert!(check_local_registry_name(name).is_err(), "{name:?}");
         }
-        for name in ["a", "ernest-mbp", "Ernest-MBP.local", "10.0.0.1"] {
+        for name in ["a", "lab-mac", "Lab-Mac.local", "10.0.0.1"] {
             assert!(check_local_registry_name(name).is_ok(), "{name:?}");
         }
     }
