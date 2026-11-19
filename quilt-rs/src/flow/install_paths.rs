@@ -28,6 +28,9 @@ use quilt_uri::Host;
 use quilt_uri::Namespace;
 use quilt_uri::S3Uri;
 
+use super::install_to::refuse_linked_ancestors;
+use super::install_to::refuse_linked_targets;
+
 /// What [`InstalledPackage::install_paths`](crate::InstalledPackage::install_paths)
 /// did: the paths the copy now tracks, and the requested ones it left out.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -174,14 +177,31 @@ pub(super) async fn refuse_if_present<'a, P: AsRef<Path>>(
 /// at a destination is a file this copy does not track, the user's own, and it
 /// must survive.
 ///
-/// Every destination is checked before the first rename, so a refusal places
-/// nothing. The rename replaces what it finds, so a file created during the
-/// renames themselves, a window of milliseconds, is not caught.
+/// Every destination, and every folder between `working_dir` and it, is
+/// checked before the first rename, so a refusal places nothing. The rename
+/// replaces what it finds, so a file created during the renames themselves, a
+/// window of milliseconds, is not caught.
 async fn place_where_absent(
     storage: &(impl Storage + Sync),
     staged: &[(PathBuf, PathBuf, ManifestRow)],
+    working_dir: &Path,
     lineage: &mut PackageLineage,
 ) -> Res {
+    // A folder may have become a link during the fetch, as `install_paths`
+    // checked before it.
+    refuse_linked_ancestors(
+        storage,
+        working_dir,
+        staged.iter().map(|(_, _, row)| &row.logical_key),
+    )
+    .await?;
+    refuse_linked_targets(
+        storage,
+        staged
+            .iter()
+            .map(|(_, working_dest, row)| (working_dest.clone(), &row.logical_key)),
+    )
+    .await?;
     refuse_if_present(
         storage,
         staged
@@ -284,7 +304,7 @@ async fn swap_staged_into_place(
     refuse_if_working_copy_unavailable(storage, working_dir, protect, lineage).await?;
     protect.check_removals(storage, working_dir).await?;
     if let Protect::Absent = protect {
-        return place_where_absent(storage, staged, lineage).await;
+        return place_where_absent(storage, staged, working_dir, lineage).await;
     }
     for (staged_path, working_dest, row) in staged {
         if let Protect::BaseContent { rows, .. } = protect {
@@ -487,7 +507,10 @@ async fn refuse_existing_working_files(
 /// Installs paths this copy does not already hold. A path it already tracks is
 /// left as it is and reported in
 /// [`already_installed`](InstallPathsReport::already_installed). The whole call
-/// is refused if an untracked path already has a file in the working folder.
+/// is refused if an untracked path already has a file or a symbolic link in the
+/// working folder, or if a folder between the working folder and it is a
+/// symbolic link, which would put the file outside the working folder, as
+/// [`install_to`](super::install_to) refuses.
 ///
 /// Returns the new lineage and the report. Its `skipped` paths are rows whose
 /// bytes the remote no longer holds, and its `hash_mismatch` paths are rows
@@ -517,9 +540,19 @@ pub async fn install_paths(
     let (already_installed, untracked): (Vec<&PathBuf>, Vec<&PathBuf>) = entries_paths
         .iter()
         .partition(|path| lineage.paths.contains_key(**path));
+    let keys = untracked
+        .iter()
+        .map(|path| LogicalKey::new(path.as_path()))
+        .collect::<Result<Vec<_>, _>>()?;
+    refuse_linked_ancestors(storage, &working_dir, keys.iter()).await?;
+    refuse_linked_targets(
+        storage,
+        keys.iter().map(|key| (key.join_to(&working_dir), key)),
+    )
+    .await?;
     refuse_existing_working_files(storage, &working_dir, &untracked).await?;
     // Checked up front so a refusal fetches nothing, and again at placement
-    // (`Protect::Absent`) because a file can appear during the fetch.
+    // (`Protect::Absent`) because a file or a link can appear during the fetch.
     let (lineage, report) = install_paths_over(
         lineage,
         manifest,
@@ -1566,6 +1599,38 @@ mod tests {
         Ok(())
     }
 
+    /// A folder that became a link after the download, before placing: every
+    /// path is checked before the first rename, so nothing is placed, and
+    /// nothing is written through the link.
+    #[cfg(unix)]
+    #[test(tokio::test)]
+    async fn a_folder_that_became_a_link_after_the_download_refuses_before_any_rename() -> Res {
+        let storage = MockStorage::default();
+        let staged = two_staged(&storage).await?;
+        storage.create_dir_all("work").await?;
+        storage.create_dir_all("outside").await?;
+        let root = storage.temp_dir.path();
+        std::os::unix::fs::symlink(root.join("outside"), root.join("work/sub"))?;
+        let mut lineage = PackageLineage::default();
+
+        let result = swap_staged_into_place(
+            &storage,
+            &staged,
+            Path::new("work"),
+            &Protect::Absent,
+            &mut lineage,
+        )
+        .await;
+
+        let message = result.expect_err("a link is refused").to_string();
+        assert!(message.contains("symbolic link"), "{message}");
+        assert!(!storage.exists("outside/b").await);
+        assert!(!storage.exists("work/a").await, "nothing is renamed");
+        assert!(lineage.paths.is_empty());
+
+        Ok(())
+    }
+
     // TODO: fail if manifest entry has invalid URL
 }
 
@@ -1585,6 +1650,15 @@ mod keys_outside_the_package {
     /// Reads a one-row manifest keyed `key` and installs that row into a real
     /// folder. Returns what the read-and-install returned.
     async fn read_and_install(key: &str) -> Res<Res<(PackageLineage, InstallPathsReport)>> {
+        Ok(read_and_install_into(key, |_| Ok(())).await?.0)
+    }
+
+    /// [`read_and_install`] after `prepare` has had the package folder, which
+    /// exists by then. Returns also how many times the object was fetched.
+    async fn read_and_install_into(
+        key: &str,
+        prepare: impl FnOnce(&Path) -> std::io::Result<()>,
+    ) -> Res<(Res<(PackageLineage, InstallPathsReport)>, usize)> {
         use sha2::Digest;
 
         let (home, _home_dir) = Home::from_temp_dir()?;
@@ -1595,6 +1669,8 @@ mod keys_outside_the_package {
         domain_paths
             .scaffold_for_installing(&storage, &home, &namespace)
             .await?;
+        storage.create_dir_all(&package_home).await?;
+        prepare(&package_home)?;
 
         let body = b"planted";
         let digest = sha2::Sha256::digest(body);
@@ -1614,7 +1690,7 @@ mod keys_outside_the_package {
             })
         );
 
-        Ok(async {
+        let installed = async {
             let mut manifest = Manifest::from_reader(jsonl.as_bytes()).await?;
             let path = manifest.rows[0].logical_key.to_path_buf();
             install_paths(
@@ -1632,7 +1708,8 @@ mod keys_outside_the_package {
             )
             .await
         }
-        .await)
+        .await;
+        Ok((installed, remote.get_object_count(physical_key)))
     }
 
     #[test(tokio::test)]
@@ -1656,6 +1733,47 @@ mod keys_outside_the_package {
         let result = read_and_install(&key).await?;
         assert!(result.is_err(), "installed an absolute key: {key}");
         assert!(!outside.path().join("planted").exists());
+        Ok(())
+    }
+
+    /// A folder in the package folder that links elsewhere would put the file
+    /// outside it, so it is refused before anything is fetched.
+    #[cfg(unix)]
+    #[test(tokio::test)]
+    async fn a_key_under_a_linked_folder_is_refused_before_any_fetch() -> Res {
+        let outside = tempfile::TempDir::new()?;
+        let (result, fetches) = read_and_install_into("sub/planted", |package_home| {
+            std::os::unix::fs::symlink(outside.path(), package_home.join("sub"))
+        })
+        .await?;
+        let message = result.expect_err("a link is refused").to_string();
+        assert!(message.contains("symbolic link"), "{message}");
+        assert!(!outside.path().join("planted").exists());
+        assert_eq!(fetches, 0);
+        Ok(())
+    }
+
+    /// A link at the requested path, even one that leads nowhere, is the
+    /// user's own and is not replaced.
+    #[cfg(unix)]
+    #[test(tokio::test)]
+    async fn a_dangling_link_at_the_requested_path_is_refused_before_any_fetch() -> Res {
+        let outside = tempfile::TempDir::new()?;
+        let nowhere = outside.path().join("nowhere");
+        let (result, fetches) = read_and_install_into("planted", |package_home| {
+            std::os::unix::fs::symlink(&nowhere, package_home.join("planted"))
+        })
+        .await?;
+        assert!(
+            matches!(
+                &result,
+                Err(Error::InstallPath(InstallPathError::LocalFileExists(paths)))
+                    if paths == &vec![PathBuf::from("planted")]
+            ),
+            "{result:?}"
+        );
+        assert!(!nowhere.exists());
+        assert_eq!(fetches, 0);
         Ok(())
     }
 }
