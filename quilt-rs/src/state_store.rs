@@ -65,9 +65,9 @@ CREATE TABLE stat_walk (
 ",
     // Stat records gain the registry and the folder, which earlier ones lack,
     // so they are dropped. `registry` is the bucket, `<name>@local` for a
-    // local registry, or '' for none; `folder`
-    // is the path as the OS spells it, so no two paths share one. Keys start with the
-    // folder, which a full walk clears of other buckets by.
+    // local registry, or '' for none; `folder` is the path as the OS spells
+    // it, so no two paths share one. Keys start with the folder, which a full
+    // walk clears of other buckets by.
     "
 DROP TABLE file_stat;
 DROP TABLE stat_walk;
@@ -124,6 +124,9 @@ impl FolderKey {
         let registry = if registry.is_empty() {
             None
         } else if let Some(name) = registry.strip_suffix(LOCAL_SUFFIX) {
+            if name.is_empty() {
+                return None;
+            }
             Some(Registry::Local(name.to_string()))
         } else {
             Some(Registry::S3(registry))
@@ -817,6 +820,12 @@ mod tests {
                 Some(written)
             );
         }
+        // A local registry has a name, so no key gives a bare `@local`.
+        let (_, namespace, folder) = key().columns();
+        assert_eq!(
+            FolderKey::from_columns("@local".to_string(), &namespace, &folder),
+            None
+        );
     }
 
     #[test(tokio::test)]
