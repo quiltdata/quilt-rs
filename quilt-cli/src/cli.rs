@@ -11,6 +11,7 @@ use clap::Subcommand;
 use clap::builder::TypedValueParser as _;
 use tracing::log;
 
+use quilt_rs::dataspace::read_all::ReadAllError;
 use quilt_rs::flow::UserMeta;
 use quilt_rs::io::remote::WorkflowIntent;
 use quilt_rs::logging::InvalidLogFilter;
@@ -33,6 +34,7 @@ mod model;
 mod output;
 mod pull;
 mod push;
+mod read;
 mod remove_revisions;
 mod role;
 mod status;
@@ -648,6 +650,17 @@ enum Commands {
         #[arg(long, conflicts_with = "workflow")]
         no_workflow: bool,
     },
+    /// Read a dataspace's `read` entries into their working folders, with no
+    /// Domain
+    ///
+    /// Records each revision read in `data.lock.toml`. A file changed here is
+    /// kept, unless the revision changed it too: then that package is left as
+    /// it is. Exits 1 when any package was not read whole.
+    Read {
+        /// The dataspace: the folder holding `data.toml`
+        #[arg(value_name = "DATASPACE")]
+        dataspace: PathBuf,
+    },
     /// Remove old revisions of a package, and the stored files only they use
     ///
     /// Removes the revisions this copy holds that it no longer needs, oldest
@@ -800,6 +813,10 @@ pub async fn init(args: Args) -> Result<Std, Error> {
         .await);
     }
     let root_dir = get_domain_dir(args.domain)?;
+    // It uses no Domain, so it runs before anything touches one.
+    if let Commands::Read { dataspace } = args.command {
+        return Ok(read::command(root_dir, read::Input { dataspace }).await);
+    }
     let m = Model::from(root_dir);
     // Every other command refuses a rollback that was interrupted, so this
     // one runs before anything reads the lineage.
@@ -1027,7 +1044,9 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             Ok(uninstall::command(m, args).await)
         }
         Commands::Upgrade => Ok(upgrade::command()),
-        Commands::Version { .. } => unreachable!("handled before the domain is opened"),
+        Commands::Version { .. } | Commands::Read { .. } => {
+            unreachable!("handled before the domain is opened")
+        }
         Commands::Lineage { .. } => unreachable!("handled before the lineage is read"),
     }
 }
@@ -1068,6 +1087,9 @@ Then run:
 
     #[error("Package {0} not found")]
     NamespaceNotFound(Namespace),
+
+    #[error(transparent)]
+    Dataspace(#[from] ReadAllError),
 
     #[error("--no-download downloads nothing, so it cannot install --path or a &path= in the URI")]
     NoDownloadWithPath,
@@ -1165,6 +1187,12 @@ impl Error {
             Error::NoCatalog => "no_catalog",
             Error::SettingsDir => "settings_dir",
             Error::NamespaceNotFound(_) => "namespace_not_found",
+            Error::Dataspace(err) => match err {
+                ReadAllError::Contract(_) => "contract",
+                ReadAllError::Lock(_) => "lock",
+                ReadAllError::Mismatch(_) => "lock_mismatch",
+                _ => "dataspace",
+            },
             Error::NoDownloadWithPath => "no_download_with_path",
             Error::NamespaceRequired => "namespace_required",
             Error::CommitMetaInvalid(_) => "commit_meta_invalid",
@@ -1287,6 +1315,23 @@ mod tests {
                 "namespace_not_found",
             ),
             (Error::LoginRequired(fixtures::host()), "login_required"),
+            (
+                ReadAllError::from(quilt_rs::dataspace::contract::ContractError::Default {
+                    key: "registry",
+                    reason: "bad".to_string(),
+                })
+                .into(),
+                "contract",
+            ),
+            (
+                ReadAllError::from(quilt_rs::dataspace::lock::LockError::Identity("host name"))
+                    .into(),
+                "lock",
+            ),
+            (
+                ReadAllError::Mismatch(vec![quilt_rs::dataspace::lock::Mismatch::Host]).into(),
+                "lock_mismatch",
+            ),
             (Error::NoCatalog, "no_catalog"),
             (Error::SettingsDir, "settings_dir"),
             (

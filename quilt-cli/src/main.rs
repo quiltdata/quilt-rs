@@ -66,10 +66,10 @@ async fn run() {
         Err(err) => Std::Err(err),
     };
 
-    let failed = matches!(&result, Std::Err(_));
+    let failed = result.failed();
     // Below the result, except above a `--json` error, which must stay the
     // last line on stderr.
-    let notice_first = failed && matches!(format, cli::Format::Json);
+    let notice_first = matches!(&result, Std::Err(_)) && matches!(format, cli::Format::Json);
     if notice_first && let Some(line) = update_notice.take().and_then(update_check::Pending::line) {
         update_check::print(&line);
     }
