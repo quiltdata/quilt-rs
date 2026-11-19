@@ -519,16 +519,15 @@ impl LocalRegistry {
         storage
             .write_byte_stream(self.revision(hash), ByteStream::from(manifest))
             .await?;
-        self.sync_up_from(storage, &self.dir).await;
 
-        if latest.as_deref() == Some(hash) {
-            // A publish that landed before.
-            return Ok(LocalPublish::Advanced);
-        }
-        if latest.as_deref() != base {
+        // `hash` already being `latest` is a publish that landed before.
+        if latest.as_deref() != base && latest.as_deref() != Some(hash) {
+            self.sync_up_from(storage, &self.dir).await;
             return Ok(LocalPublish::Diverged(latest));
         }
-        write_tag(storage, &self.dir, &self.latest(namespace), hash).await?;
+        if latest.as_deref() != Some(hash) {
+            write_tag(storage, &self.dir, &self.latest(namespace), hash).await?;
+        }
         self.sync_up_from(storage, &self.dir.join(LATEST_DIR)).await;
         Ok(LocalPublish::Advanced)
     }
