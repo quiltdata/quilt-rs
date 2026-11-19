@@ -368,6 +368,9 @@ pub enum EntryProblem {
     #[error("its package is not valid: {0}")]
     Package(UriError),
 
+    #[error("its package's name holds `@`, which starts a hash in the package's URI")]
+    AtInPackage,
+
     #[error("a revision is a hash, or a tag after `:`; got {0:?}")]
     Revision(String),
 
@@ -551,6 +554,12 @@ fn expand(
         .map(Namespace::try_from)
         .transpose()
         .map_err(EntryProblem::Package)?;
+    if package
+        .as_ref()
+        .is_some_and(|package| package.prefix().contains('@') || package.name().contains('@'))
+    {
+        return Err(EntryProblem::AtInPackage);
+    }
     let revision = raw.revision.as_deref().map(parse_revision).transpose()?;
     let path = raw.path.as_deref().map(PackagePath::parse).transpose()?;
 
@@ -858,16 +867,20 @@ fn overlap(one: &[String], other: &[String]) -> bool {
     one.starts_with(other) || other.starts_with(one)
 }
 
-/// Whether two paths name one existing file, a link to it not counting.
+/// Whether two paths name one existing file, a link to it not counting. On a
+/// file system that gives no file ids, whether `other` exists at all.
 async fn same_file(one: &Path, other: &Path) -> bool {
     let (one, other) = (one.to_path_buf(), other.to_path_buf());
     tokio::task::spawn_blocking(move || {
-        let id = |path: &Path| {
-            crate::file_stamp::stamp(path)
-                .ok()
-                .and_then(|stamp| stamp.id)
-        };
-        id(&one).is_some_and(|first| id(&other) == Some(first))
+        let stamp = |path: &Path| crate::file_stamp::stamp(path).ok();
+        match (stamp(&one), stamp(&other)) {
+            (Some(one), Some(other)) => match (one.id, other.id) {
+                (Some(one), Some(other)) => one == other,
+                (None, None) => true,
+                _ => false,
+            },
+            _ => false,
+        }
     })
     .await
     .unwrap_or(false)

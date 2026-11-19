@@ -567,6 +567,20 @@ fn a_folder_may_be_outside_the_dataspace() -> Res {
 }
 
 #[test]
+fn a_package_whose_name_holds_an_at_sign_is_refused() {
+    for list in [
+        r#"read = [{ package = "team/raw@abc123" }]"#,
+        r#"read = [{ package = "me@host/raw" }]"#,
+    ] {
+        let problem = entry_problem(&with_defaults(list));
+        assert!(
+            matches!(problem, EntryProblem::AtInPackage),
+            "{list}: {problem}"
+        );
+    }
+}
+
+#[test]
 fn a_package_key_is_its_canonical_uri() -> Res {
     let entry = only(&with_defaults(
         r#"read = [{ uri = "quilt+s3://quilt-dev#package=team/raw:latest&path=a.csv&catalog=open.quilt.bio" }]"#,
