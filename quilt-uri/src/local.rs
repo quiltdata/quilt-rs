@@ -49,6 +49,13 @@ impl TryFrom<&str> for LocalPackageUri {
     type Error = UriError;
 
     fn try_from(input: &str) -> Result<Self, Self::Error> {
+        // The URL parser drops these wherever they are, which can name
+        // another package.
+        if input.contains(['\t', '\n', '\r']) {
+            return Err(UriError::Package(format!(
+                "a local package URI holds no tab or line break: {input:?}"
+            )));
+        }
         let parsed_url = Url::parse(input)?;
         if parsed_url.scheme() != "quilt+local" {
             return Err(UriError::Package(format!(
@@ -56,8 +63,8 @@ impl TryFrom<&str> for LocalPackageUri {
                 parsed_url.scheme()
             )));
         }
-        // The URL parser drops an empty user or port, and tabs and newlines,
-        // so the `//` and the name it reads must be the ones written.
+        // The URL parser drops an empty user or port, so the `//` and the
+        // name it reads must be the ones written.
         let Some(after_slashes) = input
             .split_once(':')
             .and_then(|(_, rest)| rest.strip_prefix("//"))
@@ -190,6 +197,8 @@ mod tests {
             "quilt+local:\t//name#package=me/a&path=x://name",
             "quilt+local:\t//#package=me/a",
             "quilt+local:/\n/#package=me/a",
+            "quilt+local://name#package=me/a\tb",
+            "quilt+lo\rcal://name#package=me/a",
         ] {
             assert!(
                 LocalPackageUri::try_from(input).is_err(),
