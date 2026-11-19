@@ -20,6 +20,7 @@ use crate::dataspace::lock::LockError;
 use crate::dataspace::lock::Mismatch;
 use crate::dataspace::lock::Writer;
 use crate::dataspace::read::ReadOutcome;
+use crate::dataspace::read::ReadReport;
 use crate::dataspace::read::read;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
@@ -33,6 +34,9 @@ pub enum EntryRead {
     /// The read ran. The lock took its base where [`ReadOutcome::lock_base`]
     /// names one.
     Ran(ReadOutcome),
+    /// The working folder was missing or empty, so it was filled whole at
+    /// the revision the lock names, not the contract's.
+    Refilled(ReadReport),
     /// The lock names local commits of the package that are not pushed. They
     /// are in a Domain, so the package was not read.
     Unpushed,
@@ -41,10 +45,19 @@ pub enum EntryRead {
 }
 
 impl EntryRead {
-    /// Whether the package's read completed, so the lock took its base.
+    /// The base the lock took for the package, where its read completed.
+    #[must_use]
+    pub fn lock_base(&self) -> Option<&str> {
+        match self {
+            Self::Ran(outcome) => outcome.lock_base(),
+            Self::Refilled(report) => Some(&report.revision),
+            Self::Unpushed | Self::Failed(_) => None,
+        }
+    }
+
     #[must_use]
     pub fn completed(&self) -> bool {
-        matches!(self, Self::Ran(outcome) if outcome.lock_base().is_some())
+        self.lock_base().is_some()
     }
 }
 
@@ -161,9 +174,7 @@ pub async fn read_all(
             let base = locked.map(|locked| locked.base.as_str());
             read_entry(storage, remote, entry, base).await
         };
-        if let EntryRead::Ran(outcome) = &outcome
-            && let Some(base) = outcome.lock_base()
-        {
+        if let Some(base) = outcome.lock_base() {
             let entry = LockEntry {
                 base: base.to_string(),
                 commits: Vec::new(),
@@ -208,12 +219,16 @@ async fn read_entry(
         // contract's.
         let why = match read(storage, remote, &refill, base).await {
             Ok(ReadOutcome::Read(report))
-                if !report.skipped.is_empty() || !report.hash_mismatch.is_empty() =>
+                if report.skipped.is_empty() && report.hash_mismatch.is_empty() =>
             {
-                "some of its files are gone".to_string()
+                return EntryRead::Refilled(report);
             }
+            Ok(ReadOutcome::Read(_)) => "some of its files are gone".to_string(),
             Ok(outcome) => return EntryRead::Ran(outcome),
-            Err(EntryError::Failed(err)) if err.is_not_found() => err.to_string(),
+            // The bucket no longer holds it; any other failure is reported.
+            Err(EntryError::Failed(err)) if matches!(&*err, crate::Error::S3(s3) if s3.is_not_found()) => {
+                err.to_string()
+            }
             Err(err) => return EntryRead::Failed(err),
         };
         warn!(

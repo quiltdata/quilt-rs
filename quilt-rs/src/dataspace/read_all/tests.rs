@@ -479,11 +479,14 @@ async fn a_working_folder_gone_from_the_dataspace_is_filled_at_the_locks_revisio
     std::fs::remove_dir_all(root.join("team/raw"))?;
 
     let refilled = read_all(&storage, &remote, &root, &writer()).await?;
-    let moved_on =
-        std::fs::read(root.join("team/raw/a.txt")).map(|first| (first, refilled.completed()))?;
+    let refilled_with = std::fs::read(root.join("team/raw/a.txt"))?;
     read_all(&storage, &remote, &root, &writer()).await?;
 
-    assert_eq!(moved_on, (b"alpha".to_vec(), true));
+    assert!(
+        matches!(&refilled.entries[0].1, EntryRead::Refilled(report) if report.revision == FIRST),
+        "reported as a refill: {refilled:?}"
+    );
+    assert_eq!(refilled_with, b"alpha");
     assert_eq!(std::fs::read(root.join("team/raw/a.txt"))?, b"ALPHA");
     Ok(())
 }

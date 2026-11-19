@@ -148,7 +148,8 @@ some of whose files are gone from the bucket, or do not match their hash,
 changes nothing. Packages under `write`, `replace` and `sync` are left alone.
 It exits 1 when any package was not read whole. Under `--json` it prints
 `dataspace`, `completed` and `entries`, each with `package`, `folder`,
-`outcome` (`read`, `incomplete`, `blocked`, `unpushed` or `failed`),
+`outcome` (`read`, `refilled`, `incomplete`, `blocked`, `unpushed` or
+`failed`),
 `completed`, `revision`, the `placed`, `removed`, `kept`, `skipped`,
 `hash_mismatch` and `conflicts` lists, and `error`.
 

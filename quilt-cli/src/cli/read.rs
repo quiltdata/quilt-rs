@@ -42,7 +42,7 @@ const LIST_KEYS: [&str; 6] = [
 /// its heading in the text.
 fn lists(read: &EntryRead) -> Vec<(&'static str, &'static str, &[PathBuf])> {
     match read {
-        EntryRead::Ran(ReadOutcome::Read(report)) => vec![
+        EntryRead::Ran(ReadOutcome::Read(report)) | EntryRead::Refilled(report) => vec![
             ("placed", "placed", &report.placed),
             ("removed", "removed", &report.removed),
             ("kept", "changed here and kept", &report.kept),
@@ -67,7 +67,9 @@ fn lists(read: &EntryRead) -> Vec<(&'static str, &'static str, &[PathBuf])> {
 /// The revision an entry's read was of, where it got that far.
 fn revision(read: &EntryRead) -> Option<&str> {
     match read {
-        EntryRead::Ran(ReadOutcome::Read(report)) => Some(&report.revision),
+        EntryRead::Ran(ReadOutcome::Read(report)) | EntryRead::Refilled(report) => {
+            Some(&report.revision)
+        }
         EntryRead::Ran(ReadOutcome::Blocked { revision, .. }) => Some(revision),
         _ => None,
     }
@@ -112,6 +114,12 @@ impl std::fmt::Display for Output {
                     "{package}: {} cannot be read whole, so nothing changed",
                     report.revision
                 )?,
+                EntryRead::Refilled(report) => write!(
+                    f,
+                    "{package}: refilled at {}, the revision the lock names, into {}; read again to take the contract's",
+                    report.revision,
+                    printable_line(&entry.folder.display().to_string())
+                )?,
                 EntryRead::Ran(ReadOutcome::Blocked { revision, .. }) => write!(
                     f,
                     "{package}: blocked, so nothing changed; local changes collide with {revision}"
@@ -148,6 +156,7 @@ impl Render for Output {
                 let (outcome, error) = match read {
                     EntryRead::Ran(ReadOutcome::Read(_)) if read.completed() => ("read", None),
                     EntryRead::Ran(ReadOutcome::Read(_)) => ("incomplete", None),
+                    EntryRead::Refilled(_) => ("refilled", None),
                     EntryRead::Ran(ReadOutcome::Blocked { .. }) => ("blocked", None),
                     EntryRead::Unpushed => ("unpushed", None),
                     EntryRead::Failed(err) => ("failed", Some(err.to_string())),
@@ -293,6 +302,28 @@ mod tests {
             )
             .await,
         )
+    }
+
+    #[test(tokio::test)]
+    async fn a_folder_refilled_at_the_locks_revision_says_so() -> Result<(), Error> {
+        let remote = MockRemote::default();
+        publish(&remote, FIRST, &[("a.txt", b"alpha")]).await?;
+        let dataspace = dataspace()?;
+        read(&remote, dataspace.path()).await;
+        publish(&remote, SECOND, &[("a.txt", b"ALPHA")]).await?;
+        std::fs::remove_dir_all(dataspace.path().join("team/raw"))?;
+
+        let std = read(&remote, dataspace.path()).await;
+
+        assert!(!std.failed(), "{std:?}");
+        let Std::Out(output) = std else {
+            panic!("expected the report, got {std:?}");
+        };
+        assert_eq!(output.to_json()["entries"][0]["outcome"], "refilled");
+        assert!(output.to_string().starts_with(&format!(
+            "quilt+s3://b#package=team/raw: refilled at {FIRST}, the revision the lock names, into "
+        )));
+        Ok(())
     }
 
     #[test(tokio::test)]
