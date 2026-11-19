@@ -60,6 +60,7 @@ tempfile = "3.27.0"
 thiserror = "2.0.21"
 tokio = { version = "1.54.1", features = ["full"] }
 tokio-stream = "0.1.19"
+toml = "1.1.8"
 tracing = { version = "0.1.44", features = ["log"] }
 tracing-subscriber = "0.3.23"
 url = {version = "2.5.8", features = ["serde"]}
