@@ -1,5 +1,5 @@
-//! `read`: a contract entry's files and metadata, put in its working folder
-//! with no Domain.
+//! `read`: a `read` or `sync` entry's files and metadata, put in its working
+//! folder with no Domain.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -93,8 +93,8 @@ pub struct ReadReport {
     pub placed: Vec<PathBuf>,
     /// Files the revision dropped, deleted because they were unchanged.
     pub removed: Vec<PathBuf>,
-    /// Files changed locally where the revision did not change them, left as
-    /// they are.
+    /// Files changed, or under `sync` deleted, locally where the revision did
+    /// not change them, left as they are.
     pub kept: Vec<PathBuf>,
     /// Rows whose bytes the remote no longer holds, not placed.
     pub skipped: Vec<PathBuf>,
@@ -164,12 +164,15 @@ impl OnDisk {
 /// writes the [metadata file](METADATA_FILE) beside it. `base` is the
 /// revision the lock names for the package, if any.
 ///
-/// A missing file, or one unchanged since `base`, takes the revision's
-/// version, and one the revision dropped is deleted if unchanged. A local
-/// change is kept where the revision did not change that file, and collides
-/// where it did; with no `base`, any file that differs collides. A missing
-/// file is always filled: a `read` never publishes, so it has no deletion to
-/// keep.
+/// A file unchanged since `base` takes the revision's version, and one the
+/// revision dropped is deleted if unchanged. A local change is kept where the
+/// revision did not change that file, and collides where it did; with no
+/// `base`, any file that differs collides. A missing file is filled under
+/// `read`, which never publishes. Under `sync` a file `base` has and the
+/// folder lacks is a local deletion, a change like any other, and only a file
+/// `base` lacks is filled. So a `sync` folder that is missing, or holds none
+/// of `base`'s files, is refused rather than read as every file deleted, and
+/// so is a `base` the bucket no longer holds.
 ///
 /// A failure after the first rename leaves the files already placed; the
 /// lock, which moves only on [`ReadOutcome::lock_base`], still names `base`.
@@ -185,7 +188,7 @@ pub async fn read(
     entry: &Entry,
     base: Option<&str>,
 ) -> Result<ReadOutcome, EntryError> {
-    if entry.access != Access::Read {
+    if !matches!(entry.access, Access::Read | Access::Sync) {
         return Err(EntryError::Access(entry.access));
     }
     let Registry::S3(bucket) = &entry.registry;
@@ -202,25 +205,9 @@ pub async fn read(
         return Err(EntryError::HoldsMetadataFile);
     }
     let metadata = render(&target, &entry.paths).map_err(EntryError::MetadataUnwritable)?;
+    let deletes = entry.access == Access::Sync;
     let other_base = match base {
-        Some(hash) if hash != revision.hash => {
-            let uri = ManifestUri {
-                hash: hash.to_string(),
-                ..revision.clone()
-            };
-            match fetch_jsonl(remote, &uri).await {
-                Ok(manifest) => Some(manifest),
-                // Compared as a first read: any file that differs collides.
-                Err(err) if err.is_not_found() => {
-                    warn!(
-                        "The base {} is gone; reading as if there were none",
-                        uri.display()
-                    );
-                    None
-                }
-                Err(err) => return Err(err.into()),
-            }
-        }
+        Some(hash) if hash != revision.hash => other_base(remote, &revision, hash, deletes).await?,
         _ => None,
     };
     let base = match base {
@@ -229,7 +216,22 @@ pub async fn read(
     };
 
     let folder = &entry.folder;
-    let plan = plan(storage, folder, &entry.paths, &target, base, metadata).await?;
+    if deletes
+        && let Some(base) = base
+        && gone(storage, folder, base, &entry.paths).await?
+    {
+        return Err(EntryError::FolderGone(folder.clone()));
+    }
+    let plan = plan(
+        storage,
+        folder,
+        &entry.paths,
+        &target,
+        base,
+        metadata,
+        deletes,
+    )
+    .await?;
     if !plan.conflicts.is_empty() {
         info!(
             "Reading {} into {} is blocked by {} local changes",
@@ -281,8 +283,37 @@ pub async fn read(
     Ok(ReadOutcome::Read(report))
 }
 
+/// The base `hash`, a revision other than `revision` of its package, or
+/// `None` where the bucket no longer holds it and a read may compare as on a
+/// first read.
+async fn other_base(
+    remote: &impl Remote,
+    revision: &ManifestUri,
+    hash: &str,
+    deletes: bool,
+) -> Result<Option<Manifest>, EntryError> {
+    let uri = ManifestUri {
+        hash: hash.to_string(),
+        ..revision.clone()
+    };
+    match fetch_jsonl(remote, &uri).await {
+        Ok(manifest) => Ok(Some(manifest)),
+        // Compared as a first read: any file that differs collides. Under
+        // `sync` that would fill what the user deleted.
+        Err(err) if err.is_not_found() && !deletes => {
+            warn!(
+                "The base {} is gone; reading as if there were none",
+                uri.display()
+            );
+            Ok(None)
+        }
+        Err(err) => Err(err.into()),
+    }
+}
+
 /// Compares each file `paths` cover in `folder` against `target` and `base`,
 /// and the metadata file against `wanted_text` and `base`'s; see [`read`].
+/// Where `deletes`, a file `base` has and the folder lacks was deleted.
 async fn plan<'a>(
     storage: &(impl Storage + Sync),
     folder: &Path,
@@ -290,6 +321,7 @@ async fn plan<'a>(
     target: &'a Manifest,
     base: Option<&'a Manifest>,
     wanted_text: String,
+    deletes: bool,
 ) -> Res<Plan<'a>> {
     let mut plan = Plan::default();
     let wanted = covered(target, paths);
@@ -322,9 +354,13 @@ async fn plan<'a>(
             }
             None => None,
         };
-        if matches!(disk, OnDisk::Nothing) && folder_blocked(storage, folder, &path).await {
+        // Under `sync`, a missing file `base` had was deleted: a local change,
+        // compared below like any other. A folder above it that cannot be
+        // listed is not a deletion, and collides first.
+        let missing = matches!(disk, OnDisk::Nothing);
+        if missing && folder_blocked(storage, folder, &path).await {
             plan.conflicts.push(key.to_path_buf());
-        } else if matches!(disk, OnDisk::Nothing) {
+        } else if missing && !(deletes && had.is_some()) {
             plan.steps.push(Step {
                 want: Some(want),
                 had: None,
@@ -376,13 +412,26 @@ async fn plan<'a>(
             _ => plan.conflicts.push(key.to_path_buf()),
         }
     }
+    plan_metadata(storage, folder, paths, wanted_text, base, &mut plan).await?;
+    Ok(plan)
+}
 
+/// Compares the metadata file against `wanted_text` and `base`'s; see
+/// [`read`].
+async fn plan_metadata(
+    storage: &(impl Storage + Sync),
+    folder: &Path,
+    paths: &Paths,
+    wanted_text: String,
+    base: Option<&Manifest>,
+    plan: &mut Plan<'_>,
+) -> Res {
     let metadata_path = folder.join(METADATA_FILE);
     // A base TOML cannot hold was never written, so no file holds it.
     let had_text = base.and_then(|base| render(base, paths).ok());
     if !metadata_place_free(storage, &metadata_path).await {
         plan.conflicts.push(PathBuf::from(METADATA_FILE));
-        return Ok(plan);
+        return Ok(());
     }
     let on_disk = bytes_at(storage, &metadata_path).await?;
     match &on_disk {
@@ -396,7 +445,31 @@ async fn plan<'a>(
         }
         Some(_) => plan.conflicts.push(PathBuf::from(METADATA_FILE)),
     }
-    Ok(plan)
+    Ok(())
+}
+
+/// Whether `base` covers a key under `paths` and nothing, not even a dangling
+/// link, is at any of them in `folder`. A folder that is there and cannot be
+/// listed is an error, not a folder gone.
+async fn gone(
+    storage: &(impl Storage + Sync),
+    folder: &Path,
+    base: &Manifest,
+    paths: &Paths,
+) -> Res<bool> {
+    let had = covered(base, paths);
+    match storage.read_dir(folder).await {
+        Ok(_) => {}
+        Err(err) if err.is_not_found() => return Ok(!had.is_empty()),
+        Err(err) => return Err(err),
+    }
+    for key in had.keys() {
+        let path = key.join_to(folder);
+        if storage.is_symlink(&path).await || storage.exists(&path).await {
+            return Ok(false);
+        }
+    }
+    Ok(!had.is_empty())
 }
 
 /// Whether a file, or anything that is not a folder, stands between `folder`
