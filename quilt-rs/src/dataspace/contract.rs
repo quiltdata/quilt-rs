@@ -283,7 +283,7 @@ impl Contract {
         for (key, declared) in &packages {
             let combined =
                 combine(key, declared, &folders).map_err(|problem| ContractError::Package {
-                    package: key.clone(),
+                    package: Box::new(key.clone()),
                     problem,
                 })?;
             entries.extend(combined);
@@ -329,7 +329,7 @@ pub enum ContractError {
 
     #[error("{package}: {problem}")]
     Package {
-        package: PackageKey,
+        package: Box<PackageKey>,
         problem: PackageProblem,
     },
 
