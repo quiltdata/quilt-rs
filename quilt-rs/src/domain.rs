@@ -516,13 +516,10 @@ impl LocalRegistry {
         let manifest = storage
             .read_bytes(self.installed_manifest(namespace, hash))
             .await?;
-        let first_revision = !storage.exists(self.dir.join(PACKAGES_DIR)).await;
         storage
             .write_byte_stream(self.revision(hash), ByteStream::from(manifest))
             .await?;
-        if first_revision {
-            self.sync_up_from(storage, &self.dir).await;
-        }
+        self.sync_up_from(storage, &self.dir).await;
 
         if latest.as_deref() == Some(hash) {
             // A publish that landed before.
@@ -532,15 +529,13 @@ impl LocalRegistry {
             return Ok(LocalPublish::Diverged(latest));
         }
         write_tag(storage, &self.dir, &self.latest(namespace), hash).await?;
-        if latest.is_none() {
-            self.sync_up_from(storage, &self.dir.join(LATEST_DIR)).await;
-        }
+        self.sync_up_from(storage, &self.dir.join(LATEST_DIR)).await;
         Ok(LocalPublish::Advanced)
     }
 
     /// Syncs `folder` and each folder above it up to `registries/`: the
-    /// registry holds the only copy, so folders its first writes made must
-    /// survive a crash too.
+    /// registry holds the only copy, so folders any publish may have made,
+    /// this one or another package's, must survive a crash too.
     async fn sync_up_from(&self, storage: &(impl Storage + Sync), folder: &Path) {
         let registries = self.dir.parent().unwrap_or(&self.dir);
         for folder in folder
