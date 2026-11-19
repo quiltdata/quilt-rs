@@ -11,13 +11,15 @@ use crate::package::parse_after_authority;
 use crate::package::render_fragment;
 
 /// A local registry's name: one or more ASCII letters, digits, `-` or `.`,
-/// the characters of a host name.
+/// the characters of a host name, and not `.` or `..`.
 ///
 /// # Errors
 ///
 /// Returns [`UriError::Package`] for any other name.
 pub fn check_local_registry_name(name: &str) -> Result<(), UriError> {
     let valid = !name.is_empty()
+        && name != "."
+        && name != ".."
         && name
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.'));
@@ -65,12 +67,17 @@ impl TryFrom<&str> for LocalPackageUri {
                 "a local package has no catalog".to_string(),
             ));
         }
-        // As written: the URL parser drops an empty user or port, and tabs
-        // and newlines, which would leave a different name passing the check.
+        // The URL parser drops an empty user or port, and tabs and newlines,
+        // so the name it reads must be the one written.
         let written = input
             .split_once("://")
             .and_then(|(_, rest)| rest.split(['#', '/', '?']).next())
             .unwrap_or_default();
+        if written != parsed_url.host_str().unwrap_or_default() {
+            return Err(UriError::Package(format!(
+                "a local registry's name is all that comes between `//` and `#`: {input:?}"
+            )));
+        }
         let registry = (!written.is_empty()).then_some(written);
         if let Some(name) = registry {
             check_local_registry_name(name)?;
@@ -175,13 +182,15 @@ mod tests {
             "quilt+local://name:#package=me/a",
             "quilt+local://na\tme#package=me/a",
             "quilt+local://na\nme#package=me/a",
+            "quilt+local:/\t/name#package=me/a",
+            "quilt+local:\n//name#package=me/a",
         ] {
             assert!(
                 LocalPackageUri::try_from(input).is_err(),
                 "{input} should not parse"
             );
         }
-        for name in ["", "a_b", "a b", "a/b", "@local"] {
+        for name in ["", ".", "..", "a_b", "a b", "a/b", "@local"] {
             assert!(check_local_registry_name(name).is_err(), "{name:?}");
         }
         for name in ["a", "ernest-mbp", "Ernest-MBP.local", "10.0.0.1"] {
