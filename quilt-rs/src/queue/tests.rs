@@ -429,3 +429,58 @@ async fn a_failure_counted_while_another_process_writes_waits_its_turn() -> Res 
     assert_eq!(failed.ok().map(|f| f.failures), Some(1));
     Ok(())
 }
+
+#[test(tokio::test)]
+async fn dataspaces_stay_on_autosync_across_a_restart_in_the_order_turned_on() -> Res {
+    let dir = tempfile::tempdir()?;
+    let path = queue_path(&dir);
+    let [first, second, third] = ["first", "second", "third"].map(|name| dir.path().join(name));
+    {
+        let queue = Queue::open(&path).await?;
+        for dataspace in [&first, &second, &third] {
+            queue.set_autosync(dataspace, true).await?;
+        }
+        queue.set_autosync(&first, true).await?;
+        queue.set_autosync(&second, false).await?;
+    }
+
+    let queue = Queue::open(&path).await?;
+
+    assert_eq!(queue.autosync().await?, [first, third]);
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_dataspace_this_build_cant_read_is_skipped_and_the_rest_listed() -> Res {
+    let dir = tempfile::tempdir()?;
+    let path = queue_path(&dir);
+    let [damaged, kept_on] = ["damaged", "kept"].map(|name| dir.path().join(name));
+    let queue = Queue::open(&path).await?;
+    queue.set_autosync(&damaged, true).await?;
+    queue.set_autosync(&kept_on, true).await?;
+    rusqlite::Connection::open(&path)?
+        .execute("UPDATE autosync SET dataspace = 'text' WHERE rowid = 1", [])?;
+
+    let listed = queue.autosync().await;
+
+    assert_eq!(listed.ok(), Some(vec![kept_on]));
+    Ok(())
+}
+
+/// One dataspace spelled with `.` or `..` and without is one entry, named as
+/// its contract names it, so turning it off by either spelling turns it off.
+#[test(tokio::test)]
+async fn a_dataspace_is_named_as_its_contract_names_it() -> Res {
+    let dir = tempfile::tempdir()?;
+    let queue = Queue::in_memory().await?;
+    let dataspace = dir.path().join("rnaseq");
+    let roundabout = dir.path().join("other").join("..").join(".").join("rnaseq");
+
+    queue.set_autosync(&roundabout, true).await?;
+    queue.set_autosync(&dataspace, true).await?;
+    assert_eq!(queue.autosync().await?, std::slice::from_ref(&dataspace));
+
+    queue.set_autosync(&roundabout, false).await?;
+    assert_eq!(queue.autosync().await?, Vec::<PathBuf>::new());
+    Ok(())
+}

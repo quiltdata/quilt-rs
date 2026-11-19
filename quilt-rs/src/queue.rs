@@ -1,11 +1,14 @@
 //! The Domain's durable queue, `queue.db` beside `state.db`: autosync's jobs,
 //! the failures it waits out before trying a job again, and the revisions it
-//! stored without making them `latest`.
+//! stored without making them `latest`. It also holds the list of dataspaces
+//! on autosync, until existing state is imported into the new Domain folder,
+//! whose `domain.json` takes it.
 //!
 //! Nothing here can be rebuilt from elsewhere, so unlike `state.db` a file
 //! this build cannot read is an error, and is never replaced.
 
 use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::SystemTime;
@@ -16,16 +19,20 @@ use thiserror::Error;
 use tracing::warn;
 
 use crate::dataspace::contract::Access;
+use crate::dataspace::contract::dataspace_path;
 use crate::sqlite::Connection;
 use crate::sqlite::ConnectionError;
 use crate::state_store::FolderKey;
 use crate::state_store::from_millis;
+use crate::state_store::os_bytes;
+use crate::state_store::os_path;
 use crate::state_store::to_millis;
 
 const SCHEMA_VERSION: i64 = 1;
 
 /// `running_in` names the process that started a job; `NULL` while it waits.
 /// `again` marks a running job queued again, which waits once its run ends.
+/// A `folder` or a `dataspace` is the path as the OS spells it.
 const SCHEMA: &str = "
 CREATE TABLE job (
   registry   TEXT NOT NULL,
@@ -55,6 +62,7 @@ CREATE TABLE kept (
   reason    TEXT NOT NULL,
   PRIMARY KEY (folder, registry, namespace)
 ) WITHOUT ROWID;
+CREATE TABLE autosync (dataspace BLOB NOT NULL UNIQUE);
 ";
 
 const ENQUEUE: &str = "
@@ -455,6 +463,42 @@ impl Queue {
                 "DELETE FROM kept WHERE registry = ?1 AND namespace = ?2 AND folder = ?3",
                 rusqlite::params![registry, namespace, folder],
             )?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// The dataspaces on autosync, in the order autosync was turned on.
+    pub async fn autosync(&self) -> Result<Vec<PathBuf>, QueueError> {
+        self.run(|db, _| {
+            let mut query = db.prepare("SELECT dataspace FROM autosync ORDER BY rowid")?;
+            // As in `jobs`, a value of the wrong type skips its row only.
+            let rows = query.query_map([], |row| Ok(row.get::<_, Vec<u8>>(0).ok()))?;
+            let mut dataspaces = Vec::new();
+            for row in rows {
+                if let Some(path) = row?.as_deref().and_then(os_path) {
+                    dataspaces.push(path);
+                } else {
+                    warn!("queue: skipping a dataspace on autosync this build can't read");
+                }
+            }
+            Ok(dataspaces)
+        })
+        .await
+    }
+
+    /// Turn autosync on or off for the dataspace at `dataspace`, named as
+    /// [`Contract::dataspace`](crate::dataspace::contract::Contract::dataspace)
+    /// names it. Turning it on again keeps its place.
+    pub async fn set_autosync(&self, dataspace: &Path, on: bool) -> Result<(), QueueError> {
+        let dataspace = os_bytes(&dataspace_path(dataspace)?);
+        self.run(move |db, _| {
+            let sql = if on {
+                "INSERT OR IGNORE INTO autosync (dataspace) VALUES (?1)"
+            } else {
+                "DELETE FROM autosync WHERE dataspace = ?1"
+            };
+            db.execute(sql, [dataspace])?;
             Ok(())
         })
         .await
