@@ -530,10 +530,30 @@ impl LocalRegistry {
             return Ok(LocalPublish::Diverged(latest));
         }
         if latest.as_deref() != Some(hash) {
+            self.sync_objects(storage, hash).await?;
             write_tag(storage, &self.dir, &self.latest(namespace), hash).await?;
         }
         self.sync_up_from(storage, &self.dir.join(LATEST_DIR)).await;
         Ok(LocalPublish::Advanced)
+    }
+
+    /// Syncs the objects the revision `hash` names in `objects/`, which a
+    /// commit files without syncing, before `latest` names them.
+    async fn sync_objects(&self, storage: &(impl Storage + Sync), hash: &str) -> Res {
+        let objects = self.objects_dir();
+        for row in Manifest::from_path(storage, &self.revision(hash))
+            .await?
+            .rows
+        {
+            for name in row_objects(&row.hash, &row.physical_key) {
+                let object = objects.join(name);
+                if storage.exists(&object).await {
+                    storage.open_file(&object).await?.sync_all().await?;
+                }
+            }
+        }
+        storage.sync_dir(&objects).await;
+        Ok(())
     }
 
     /// Syncs `folder` and each folder above it up to the Domain's root: the
