@@ -43,4 +43,4 @@ long-term support branches.
   - These commands can keep some files, for example while another quilt
     process runs or after an interrupted command. To be sure a secret is
     gone from this machine, stop every quilt process, then delete the
-    package's folder and the whole `.quilt/` folder.
+    folder of every package that holds it and the whole `.quilt/` folder.
