@@ -292,7 +292,10 @@ async fn plan<'a>(
         // spelling's row is what the file was read as.
         let had = match had.get(key) {
             Some(row) => Some(*row),
-            None if !matches!(disk, OnDisk::Nothing) && !listed(storage, folder, key).await? => {
+            None if !matches!(disk, OnDisk::Nothing)
+                && had_folded.contains_key(&any_case)
+                && !listed(storage, folder, key).await? =>
+            {
                 had_folded.get(&any_case).copied()
             }
             None => None,
@@ -306,7 +309,8 @@ async fn plan<'a>(
             });
         } else if disk.holds(want) {
         } else if let Some(had) = had
-            && had.matches_content(want)
+            && had.hash == want.hash
+            && had.size == want.size
         {
             plan.kept.push(key.to_path_buf());
         } else if let Some(had) = had
@@ -326,7 +330,13 @@ async fn plan<'a>(
             plan.conflicts.push(key.to_path_buf());
         }
     }
+    // Two keys can name one local path, as `a\b` and `a/b` do on Windows.
+    let wanted_paths: std::collections::BTreeSet<PathBuf> =
+        wanted.keys().map(|key| key.join_to(folder)).collect();
     for (key, had) in had.iter().filter(|(key, _)| !wanted.contains_key(*key)) {
+        if wanted_paths.contains(&key.join_to(folder)) {
+            continue;
+        }
         // Where the disk lists either spelling under the other, both name one
         // file.
         if let Some(renamed) = found.get(&key.to_string_lossy().to_lowercase())
@@ -462,7 +472,18 @@ async fn metadata_as_planned(
     if !metadata_place_free(storage, &path).await {
         return Ok(false);
     }
-    Ok(bytes_at(storage, &path).await?.as_deref() == planned_on)
+    // A file replaced while it is read can still read as the old bytes, but
+    // its modified time moves, as `edited` has it.
+    let modified = || async {
+        match storage.modified_timestamp(&path).await {
+            Ok(at) => Ok(Some(at)),
+            Err(err) if err.is_not_found() => Ok(None),
+            Err(err) => Err(err),
+        }
+    };
+    let before = modified().await?;
+    let bytes = bytes_at(storage, &path).await?;
+    Ok(bytes.as_deref() == planned_on && modified().await? == before)
 }
 
 /// Whether the metadata file's place holds a file or nothing: not a link,

@@ -129,6 +129,14 @@ fn keys(names: &[&str]) -> Vec<PathBuf> {
     names.iter().map(PathBuf::from).collect()
 }
 
+/// Whether the disk `storage` keeps its files on finds a name in any case.
+async fn ignores_case(storage: &MockStorage) -> Result<bool, crate::Error> {
+    write(storage, "probe", b"").await?;
+    let ignores = storage.exists(folder().join("PROBE")).await;
+    storage.remove_file(folder().join("probe")).await?;
+    Ok(ignores)
+}
+
 #[test(tokio::test)]
 async fn a_first_read_fills_the_entrys_paths_and_writes_the_metadata() -> Res {
     let remote = MockRemote::default();
@@ -167,6 +175,7 @@ async fn a_package_holding_anything_at_the_metadata_files_place_is_refused() -> 
         METADATA_FILE,
         "Package-Metadata.JSON",
         "package-metadata.json/inside.txt",
+        "package-metadata.json\\inside.txt",
     ] {
         let remote = MockRemote::default();
         let storage = MockStorage::default();
@@ -566,6 +575,26 @@ async fn a_key_renamed_only_in_case_keeps_its_file() -> Res {
 }
 
 #[test(tokio::test)]
+async fn on_a_disk_that_ignores_case_a_local_change_to_a_key_renamed_only_in_case_is_kept() -> Res {
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    if !ignores_case(&storage).await? {
+        return Ok(());
+    }
+    let entry = whole();
+    publish(&remote, FIRST, &[("data.csv", b"v1")]).await?;
+    read(&storage, &remote, &entry, None).await?;
+    write(&storage, "data.csv", b"mine").await?;
+    publish(&remote, SECOND, &[("Data.csv", b"v1")]).await?;
+
+    let outcome = read(&storage, &remote, &entry, Some(FIRST)).await?;
+
+    assert!(matches!(outcome, ReadOutcome::Read(_)), "{outcome:?}");
+    assert_eq!(text(&storage, "data.csv").await.as_deref(), Some("mine"));
+    Ok(())
+}
+
+#[test(tokio::test)]
 async fn a_key_renamed_in_case_and_changed_takes_the_revisions_version() -> Res {
     let remote = MockRemote::default();
     let storage = MockStorage::default();
@@ -723,11 +752,9 @@ async fn metadata_held_in_another_order_is_the_same_metadata() -> Res {
 async fn on_a_disk_that_tells_case_apart_a_key_dropped_in_one_case_is_removed() -> Res {
     let remote = MockRemote::default();
     let storage = MockStorage::default();
-    write(&storage, "probe", b"").await?;
-    if storage.exists(folder().join("PROBE")).await {
-        return Ok(()); // This disk ignores case.
+    if ignores_case(&storage).await? {
+        return Ok(());
     }
-    storage.remove_file(folder().join("probe")).await?;
     let entry = whole();
     publish(
         &remote,
