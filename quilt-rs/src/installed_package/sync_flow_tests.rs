@@ -2170,6 +2170,55 @@ async fn test_a_publish_between_the_read_and_the_write_keeps_latest() -> Res {
     Ok(())
 }
 
+/// `latest` moves between the push's read and its write, and the read after
+/// the refused write fails: the push fails with the stored revision's hash
+/// and keeps its commit pending, rather than saving a lineage that hides the
+/// move.
+#[test(tokio::test)]
+async fn test_a_moved_latest_that_cannot_be_read_again_keeps_the_commit() -> Res {
+    let local_hash = crate::fixtures::top_hash::EMPTY_NULL_TOP_HASH;
+    let (package, _temp_dirs) = first_push_package(None).await?;
+
+    let read = package.remote.park(FIRST_PUSH_LATEST);
+    let compete = async {
+        read.arrived().await;
+        let write = package.remote.park(FIRST_PUSH_LATEST);
+        read.release();
+        write.arrived().await;
+        package
+            .remote
+            .put_object(
+                None,
+                &S3Uri::try_from(FIRST_PUSH_LATEST)?,
+                THEIR_HASH.as_bytes().to_vec(),
+            )
+            .await?;
+        let reread = package.remote.park(FIRST_PUSH_LATEST);
+        write.release();
+        reread.arrived().await;
+        package.remote.deny_reads(FIRST_PUSH_LATEST);
+        reread.release();
+        Ok::<_, Error>(())
+    };
+    let (pushed, competed) = tokio::join!(package.push(None), compete);
+    competed?;
+
+    assert!(
+        matches!(
+            &pushed,
+            Err(Error::PackageOp(PackageOpError::PushTagFailed { top_hash, .. }))
+                if top_hash == local_hash
+        ),
+        "{pushed:?}"
+    );
+    assert!(package.lineage().await?.commit.is_some());
+    assert_eq!(
+        package.remote.current(FIRST_PUSH_LATEST).await?,
+        Some(THEIR_HASH.as_bytes().to_vec())
+    );
+    Ok(())
+}
+
 /// A role that may write `latest` but not read it cannot check it: the push
 /// still moves `latest`, and says the write was unchecked.
 #[test(tokio::test)]

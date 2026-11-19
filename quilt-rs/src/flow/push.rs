@@ -324,9 +324,16 @@ pub(crate) async fn push_package_impl(
     let written = advance_latest(remote, &new_manifest_uri, &latest).await?;
     if let LatestAdvance::Moved { latest } = &written {
         warn!("Pushed but did not certify latest: it moved while this push read it");
-        if let Some(hash) = latest {
-            lineage.latest_hash.clone_from(hash);
-        }
+        // Without the hash `latest` moved to, the lineage cannot say so; the
+        // error keeps the commit pending, and the next push reads it again.
+        let Some(hash) = latest else {
+            return Err(PackageOpError::PushTagFailed {
+                top_hash: new_manifest_uri.hash,
+                reason: "latest changed while this push ran".to_string(),
+            }
+            .into());
+        };
+        lineage.latest_hash.clone_from(hash);
         return Ok(PushResult {
             lineage,
             certified_latest: false,
