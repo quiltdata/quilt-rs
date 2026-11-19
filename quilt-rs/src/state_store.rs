@@ -61,15 +61,16 @@ CREATE TABLE stat_walk (
 );
 ",
     // Stat records gain the registry and the folder, which earlier ones lack,
-    // so they are dropped. `registry` is the bucket, or '' for none. Keys
-    // start with the folder, which a full walk clears of other buckets by.
+    // so they are dropped. `registry` is the bucket, or '' for none; `folder`
+    // is the path's bytes, so no two paths share one. Keys start with the
+    // folder, which a full walk clears of other buckets by.
     "
 DROP TABLE file_stat;
 DROP TABLE stat_walk;
 CREATE TABLE file_stat (
   registry  TEXT NOT NULL,
   namespace TEXT NOT NULL,
-  folder    TEXT NOT NULL,
+  folder    BLOB NOT NULL,
   path      TEXT NOT NULL,
   algorithm INTEGER NOT NULL,
   size      INTEGER NOT NULL,
@@ -84,7 +85,7 @@ CREATE TABLE file_stat (
 CREATE TABLE stat_walk (
   registry     TEXT NOT NULL,
   namespace    TEXT NOT NULL,
-  folder       TEXT NOT NULL,
+  folder       BLOB NOT NULL,
   full_hash_at INTEGER NOT NULL,
   PRIMARY KEY (folder, registry, namespace)
 );
@@ -104,16 +105,16 @@ pub struct FolderKey {
 
 impl FolderKey {
     /// The key's columns, `registry`, `namespace` and `folder`.
-    fn columns(&self) -> [String; 3] {
+    fn columns(&self) -> (String, String, Vec<u8>) {
         let registry = match &self.registry {
             Some(Registry::S3(bucket)) => bucket.clone(),
             None => String::new(),
         };
-        [
+        (
             registry,
             self.package.to_string(),
-            self.folder.to_string_lossy().into_owned(),
-        ]
+            self.folder.as_os_str().as_encoded_bytes().to_vec(),
+        )
     }
 }
 
@@ -325,14 +326,15 @@ impl PackageStateStore {
     /// The folder's [`StatCache`] for one walk. A walk a day hashes every
     /// file anyway; so does one the store can't answer.
     pub async fn stat_cache(&self, key: &FolderKey) -> StatCache {
-        let key = key.columns();
+        let (registry, namespace, folder) = key.columns();
         let loaded = self
             .run(move |db| {
+                let key = rusqlite::params![registry, namespace, folder];
                 let full_hash_at = db
                     .query_row(
                         "SELECT full_hash_at FROM stat_walk
                          WHERE registry = ?1 AND namespace = ?2 AND folder = ?3",
-                        key.each_ref(),
+                        key,
                         |row| row.get::<_, i64>(0),
                     )
                     .optional()?;
@@ -341,7 +343,7 @@ impl PackageStateStore {
                      FROM file_stat WHERE registry = ?1 AND namespace = ?2 AND folder = ?3",
                 )?;
                 let rows = query
-                    .query_map(key.each_ref(), |row| {
+                    .query_map(key, |row| {
                         Ok(StatRow {
                             path: row.get(0)?,
                             algorithm: row.get(1)?,
@@ -377,7 +379,7 @@ impl PackageStateStore {
         if cache.updates().is_empty() && gone.is_empty() && !cache.is_full() {
             return;
         }
-        let [registry, namespace, folder] = key.columns();
+        let (registry, namespace, folder) = key.columns();
         let updates: Arc<Vec<StatRow>> = Arc::new(
             cache
                 .updates()
@@ -847,6 +849,24 @@ mod tests {
             ),
             Some(&entry.hash)
         );
+        Ok(())
+    }
+
+    /// Folders whose names are not UTF-8 and differ in one byte.
+    #[cfg(unix)]
+    #[test(tokio::test)]
+    async fn folders_whose_names_are_not_utf8_keep_their_own_stat_cache() -> Res {
+        use std::os::unix::ffi::OsStrExt;
+        let store = PackageStateStore::in_memory();
+        let in_folder = |name: &[u8]| FolderKey {
+            folder: PathBuf::from(std::ffi::OsStr::from_bytes(name)),
+            ..key()
+        };
+        let (one, two) = (in_folder(b"data\x80"), in_folder(b"data\x81"));
+        let mut cache = store.stat_cache(&one).await;
+        cache.record(std::path::Path::new("a"), cached());
+        store.save_stat_cache(&one, &cache).await;
+        assert_eq!(store.stat_cache(&two).await.gone(), Vec::<PathBuf>::new());
         Ok(())
     }
 
