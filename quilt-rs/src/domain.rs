@@ -630,23 +630,13 @@ fn name_from_host(host: &str) -> Option<String> {
 }
 
 /// A name a local registry may keep: a valid name in a URI, holding at
-/// least one letter or digit.
+/// least one letter or digit, and not starting with `.`.
 pub(crate) fn check_name(name: &str) -> Res {
     quilt_uri::check_local_registry_name(name)?;
-    if !name.bytes().any(|b| b.is_ascii_alphanumeric()) {
+    // A leading `.` would hide its packages' `<name>@local` folder.
+    if !name.bytes().any(|b| b.is_ascii_alphanumeric()) || name.starts_with('.') {
         return Err(UriError::Package(format!(
-            "a local registry's name holds a letter or digit; got {name:?}"
-        ))
-        .into());
-    }
-    // Its packages' folder, `<name>@local`, would be a device there.
-    if cfg!(windows)
-        && is_windows_device_name(
-            &crate::dataspace::contract::Registry::Local(name.to_string()).dir_name(),
-        )
-    {
-        return Err(UriError::Package(format!(
-            "Windows reserves {name:?} for a device, so it names no local registry here"
+            "a local registry's name holds a letter or digit and does not start with `.`; got {name:?}"
         ))
         .into());
     }
@@ -1101,15 +1091,6 @@ mod tests {
         let root = DomainRoot::new(r"C:\data");
         assert!(root.registry("con").is_err());
         assert!(root.registry("console").is_ok());
-    }
-
-    /// A name whose `<name>@local` folder Windows takes for a device names no
-    /// local registry there.
-    #[cfg(windows)]
-    #[test]
-    fn a_local_registry_windows_takes_for_a_device_has_no_name_there() {
-        assert!(check_name("nul.lan").is_err());
-        assert!(check_name("con").is_ok(), "`con@local` is no device");
     }
 
     /// The layout the local registry is given beside the buckets' stores,

@@ -637,6 +637,7 @@ fn a_registry_field_that_is_neither_spelling_is_refused() {
         r#"read = [{ registry = "local://lab-mac", package = "me/analysis" }]"#,
         r#"read = [{ registry = "quilt+local://--", package = "me/analysis" }]"#,
         r#"read = ["quilt+local://--#package=me/analysis"]"#,
+        r#"read = ["quilt+local://.lab-mac#package=me/analysis"]"#,
         r#"read = ["QUILT+LOCAL://lab-mac#package=me/analysis"]"#,
     ] {
         let problem = entry_problem(&with_defaults(list));
