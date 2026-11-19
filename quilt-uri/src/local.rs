@@ -11,13 +11,15 @@ use crate::package::parse_after_authority;
 use crate::package::render_fragment;
 
 /// A local registry's name: one or more ASCII letters, digits, `-` or `.`,
-/// the characters of a host name.
+/// the characters of a host name, and not `.` or `..`.
 ///
 /// # Errors
 ///
 /// Returns [`UriError::Package`] for any other name.
 pub fn check_local_registry_name(name: &str) -> Result<(), UriError> {
     let valid = !name.is_empty()
+        && name != "."
+        && name != ".."
         && name
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.'));
@@ -47,6 +49,14 @@ impl TryFrom<&str> for LocalPackageUri {
     type Error = UriError;
 
     fn try_from(input: &str) -> Result<Self, Self::Error> {
+        // The URL parser drops these, which before the fragment can name
+        // another registry. The fragment is read as `quilt+s3://` reads it.
+        let before_fragment = input.split('#').next().unwrap_or_default();
+        if before_fragment.contains(['\t', '\n', '\r']) {
+            return Err(UriError::Package(format!(
+                "a local package URI holds no tab or line break before `#`: {input:?}"
+            )));
+        }
         let parsed_url = Url::parse(input)?;
         if parsed_url.scheme() != "quilt+local" {
             return Err(UriError::Package(format!(
@@ -54,18 +64,27 @@ impl TryFrom<&str> for LocalPackageUri {
                 parsed_url.scheme()
             )));
         }
-        if !parsed_url.has_authority() {
+        // The URL parser drops an empty user or port, so the name is read
+        // from the text as written, right after the scheme's `//`.
+        let Some(after_slashes) = input
+            .split_once(':')
+            .and_then(|(_, rest)| rest.strip_prefix("//"))
+        else {
             return Err(UriError::Package(format!(
-                "a local package URI starts `quilt+local://`: {input}"
+                "a local package URI starts `quilt+local://`: {input:?}"
             )));
-        }
+        };
         let fragment = parse_after_authority(&parsed_url, input, "local", "the registry's name")?;
         if fragment.catalog.is_some() {
             return Err(UriError::Package(
                 "a local package has no catalog".to_string(),
             ));
         }
-        let registry = parsed_url.host_str();
+        let written = after_slashes
+            .split(['#', '/', '?'])
+            .next()
+            .unwrap_or_default();
+        let registry = (!written.is_empty()).then_some(written);
         if let Some(name) = registry {
             check_local_registry_name(name)?;
         }
@@ -165,13 +184,23 @@ mod tests {
             "quilt+local://ernest_mbp#package=me/a",
             "quilt+local://ernest%20mbp#package=me/a",
             "quilt+local://ernest@local#package=me/a",
+            "quilt+local://@name#package=me/a",
+            "quilt+local://name:#package=me/a",
+            "quilt+local://na\tme#package=me/a",
+            "quilt+local://na\nme#package=me/a",
+            "quilt+local:/\t/name#package=me/a",
+            "quilt+local:\n//name#package=me/a",
+            "quilt+local:\t//name#package=me/a&path=x://name",
+            "quilt+local:\t//#package=me/a",
+            "quilt+local:/\n/#package=me/a",
+            "quilt+lo\rcal://name#package=me/a",
         ] {
             assert!(
                 LocalPackageUri::try_from(input).is_err(),
                 "{input} should not parse"
             );
         }
-        for name in ["", "a_b", "a b", "a/b", "@local"] {
+        for name in ["", ".", "..", "a_b", "a b", "a/b", "@local"] {
             assert!(check_local_registry_name(name).is_err(), "{name:?}");
         }
         for name in ["a", "ernest-mbp", "Ernest-MBP.local", "10.0.0.1"] {
@@ -195,6 +224,14 @@ mod tests {
                 LocalPackageUri::try_from(input).expect_err(&format!("{input} should not parse"));
             assert!(matches!(err, UriError::Package(_)), "{input}: {err}");
         }
+    }
+
+    /// The fragment is read as `quilt+s3://` reads it, padding on a path
+    /// trimmed.
+    #[test]
+    fn a_padded_path_is_trimmed_as_in_an_s3_uri() {
+        let uri = LocalPackageUri::try_from("quilt+local://name#package=me/a&path=a.csv\t");
+        assert_eq!(uri.map(|uri| uri.path), Ok(Some(PathBuf::from("a.csv"))));
     }
 
     #[test]
