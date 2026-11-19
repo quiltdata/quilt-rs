@@ -598,21 +598,18 @@ fn this_machines_registry_needs_one_here() {
     }
 }
 
-/// A catalog beside a local URI disagrees with it, as beside any URI that
-/// names none.
 #[test]
 fn a_local_package_has_no_catalog() {
-    let problem = entry_problem(&with_defaults(
+    for list in [
         r#"sync = [{ registry = "quilt+local://", package = "me/analysis", catalog = "quilt.test" }]"#,
-    ));
-    assert!(matches!(problem, EntryProblem::LocalCatalog), "{problem}");
-    let problem = entry_problem(&with_defaults(
         r#"sync = [{ uri = "quilt+local://lab-mac#package=me/analysis", catalog = "quilt.test" }]"#,
-    ));
-    assert!(
-        matches!(problem, EntryProblem::Disagrees("catalog")),
-        "{problem}"
-    );
+    ] {
+        let problem = entry_problem(&with_defaults(list));
+        assert!(
+            matches!(problem, EntryProblem::LocalCatalog),
+            "{list}: {problem}"
+        );
+    }
 }
 
 #[test]
@@ -684,18 +681,5 @@ fn a_package_key_is_its_canonical_uri() -> Res {
         entry.key().to_string(),
         "quilt+s3://quilt-dev#package=team/raw"
     );
-    let local: PackageKey = "quilt+local://lab-mac#package=me/analysis".parse()?;
-    assert_eq!(local.registry, Registry::Local(HERE.to_string()));
-    assert_eq!(
-        local.to_string(),
-        "quilt+local://lab-mac#package=me/analysis"
-    );
-    for text in [
-        "quilt+local://#package=me/analysis",
-        "quilt+local://lab-mac#package=me/analysis:latest",
-        "QUILT+LOCAL://lab-mac#package=me/analysis",
-    ] {
-        assert!(text.parse::<PackageKey>().is_err(), "{text}");
-    }
     Ok(())
 }

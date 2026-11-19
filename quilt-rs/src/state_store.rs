@@ -106,12 +106,10 @@ pub struct FolderKey {
 impl FolderKey {
     /// The key's columns, `registry`, `namespace` and `folder`.
     fn columns(&self) -> (String, String, Vec<u8>) {
-        let registry = match &self.registry {
-            Some(Registry::S3(bucket)) => bucket.clone(),
-            // `@` is in no bucket's name.
-            Some(Registry::Local(name)) => format!("{name}@local"),
-            None => String::new(),
-        };
+        let registry = self
+            .registry
+            .as_ref()
+            .map_or_else(String::new, Registry::dir_name);
         (registry, self.package.to_string(), os_bytes(&self.folder))
     }
 }

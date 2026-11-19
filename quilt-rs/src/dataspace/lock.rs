@@ -41,6 +41,12 @@ pub struct Writer {
 }
 
 impl Writer {
+    /// The local registry's name, or `None` for a writer with no Domain.
+    #[must_use]
+    pub fn local_registry_name(&self) -> Option<&str> {
+        Some(self.local_registry.as_str()).filter(|name| !name.is_empty())
+    }
+
     /// This machine's host name and the user running this process.
     pub fn here(local_registry: impl Into<String>) -> Result<Self, LockError> {
         let host = hostname::get()

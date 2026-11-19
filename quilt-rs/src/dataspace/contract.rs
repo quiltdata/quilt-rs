@@ -81,6 +81,20 @@ pub enum Registry {
     Local(String),
 }
 
+impl Registry {
+    /// The folder a registry's packages are placed in when an entry states
+    /// it: a bucket's name, or `<name>@local`, which no bucket can be.
+    pub(crate) fn dir_name(&self) -> String {
+        match self {
+            Self::S3(bucket) => bucket.clone(),
+            Self::Local(name) => format!("{name}{LOCAL_SUFFIX}"),
+        }
+    }
+}
+
+/// What ends the folder of a local registry's packages.
+const LOCAL_SUFFIX: &str = "@local";
+
 /// A package by its registry and name, without revision, path or catalog.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct PackageKey {
@@ -120,21 +134,13 @@ impl FromStr for PackageKey {
     type Err = UriError;
 
     fn from_str(text: &str) -> Result<Self, UriError> {
-        let key = if is_local(text) {
-            let uri = LocalPackageUri::try_from(text)?;
-            let name = uri.registry.ok_or_else(|| {
-                UriError::Package(format!("a package's key names its registry: {text:?}"))
-            })?;
-            Self {
-                registry: Registry::Local(name),
-                package: uri.namespace,
-            }
-        } else {
-            let uri = S3PackageUri::try_from(text)?;
-            Self {
-                registry: Registry::S3(uri.bucket),
-                package: uri.namespace,
-            }
+        let uri = parse_uri(text, None).map_err(|problem| match problem {
+            EntryProblem::Uri(err) => err,
+            other => UriError::Package(format!("{other}: {text:?}")),
+        })?;
+        let key = Self {
+            registry: uri.registry,
+            package: uri.namespace,
         };
         if key.to_string() == text {
             Ok(key)
@@ -615,7 +621,7 @@ fn raw_entry(value: toml::Value) -> Result<RawEntry, EntryProblem> {
                 Component::Normal(name) => Some(name),
                 _ => None,
             });
-            if first.is_some_and(|name| name.to_string_lossy().ends_with("@local")) {
+            if first.is_some_and(|name| name.to_string_lossy().ends_with(LOCAL_SUFFIX)) {
                 return Err(EntryProblem::LocalFolder);
             }
             RawEntry {
@@ -684,6 +690,9 @@ fn expand(
                 revision.clone().map(pin_of),
                 Some(uri_revision.clone().and_then(pin_of)),
             )?;
+            if matches!(uri.registry, Registry::Local(_)) && catalog.is_some() {
+                return Err(EntryProblem::LocalCatalog);
+            }
             (
                 agree("registry", registry, Some(uri.registry))?,
                 agree("catalog", catalog, uri.catalog)?,
@@ -983,10 +992,7 @@ impl<'a> Folders<'a> {
     fn placed(&self, stated: bool, key: &PackageKey) -> Result<PathBuf, EntryProblem> {
         let mut folder = self.root.to_path_buf();
         if stated {
-            match &key.registry {
-                Registry::S3(bucket) => folder.push(bucket),
-                Registry::Local(name) => folder.push(format!("{name}@local")),
-            }
+            folder.push(key.registry.dir_name());
         }
         folder.push(key.package.prefix());
         folder.push(key.package.name());
