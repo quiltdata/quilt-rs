@@ -8,6 +8,7 @@ mod metadata;
 pub mod publish;
 pub mod read;
 pub mod read_all;
+pub mod reattach;
 
 use std::path::PathBuf;
 

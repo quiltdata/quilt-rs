@@ -127,6 +127,11 @@ folder:
   metadata, and with no such file the metadata is kept. A revision that does
   not become `latest` is still stored, and `Published::Stored` carries its
   hash.
+- `dataspace::reattach::unattached` lists a package's commits in its bucket's
+  `RegistryStore` that the bucket does not hold and `data.lock.toml` does not
+  name, as after the lock was deleted. `dataspace::reattach::reattach`
+  attaches one to the lock on a base the caller names, which the next publish
+  expects `latest` to be.
 
 ## Hash Algorithms
 
