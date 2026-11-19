@@ -56,23 +56,25 @@ impl TryFrom<&str> for LocalPackageUri {
                 parsed_url.scheme()
             )));
         }
-        if !parsed_url.has_authority() {
+        // The URL parser drops an empty user or port, and tabs and newlines,
+        // so the `//` and the name it reads must be the ones written.
+        let Some(after_slashes) = input
+            .split_once(':')
+            .and_then(|(_, rest)| rest.strip_prefix("//"))
+        else {
             return Err(UriError::Package(format!(
-                "a local package URI starts `quilt+local://`: {input}"
+                "a local package URI starts `quilt+local://`: {input:?}"
             )));
-        }
+        };
         let fragment = parse_after_authority(&parsed_url, input, "local", "the registry's name")?;
         if fragment.catalog.is_some() {
             return Err(UriError::Package(
                 "a local package has no catalog".to_string(),
             ));
         }
-        // The URL parser drops an empty user or port, and tabs and newlines,
-        // so the name it reads must be the one written.
-        let written = input
-            .split_once(':')
-            .and_then(|(_, rest)| rest.strip_prefix("//"))
-            .and_then(|rest| rest.split(['#', '/', '?']).next())
+        let written = after_slashes
+            .split(['#', '/', '?'])
+            .next()
             .unwrap_or_default();
         let registry = (!written.is_empty()).then_some(written);
         if let Some(name) = registry {
@@ -186,6 +188,8 @@ mod tests {
             "quilt+local:/\t/name#package=me/a",
             "quilt+local:\n//name#package=me/a",
             "quilt+local:\t//name#package=me/a&path=x://name",
+            "quilt+local:\t//#package=me/a",
+            "quilt+local:/\n/#package=me/a",
         ] {
             assert!(
                 LocalPackageUri::try_from(input).is_err(),
