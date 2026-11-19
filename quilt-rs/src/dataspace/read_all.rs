@@ -6,6 +6,7 @@ use std::path::Path;
 use chrono::SubsecRound;
 use chrono::Utc;
 use thiserror::Error;
+use tracing::warn;
 
 use crate::dataspace::EntryError;
 use crate::dataspace::contract::Access;
@@ -159,27 +160,7 @@ pub async fn read_all(
             EntryRead::Unpushed
         } else {
             let base = locked.map(|locked| locked.base.as_str());
-            let mut outcome = None;
-            if entry.revision == RevisionPointer::Tag(Tag::Latest)
-                && let Some(base) = base
-                && !holds_files(storage, &entry.folder).await
-            {
-                let mut refill = entry.clone();
-                refill.revision = RevisionPointer::Hash(base.to_string());
-                // A revision that can no longer be read whole gives way to
-                // the contract's.
-                outcome = read(storage, remote, &refill, Some(base))
-                    .await
-                    .ok()
-                    .filter(|outcome| outcome.lock_base().is_some());
-            }
-            match outcome {
-                Some(outcome) => EntryRead::Ran(outcome),
-                None => match read(storage, remote, entry, base).await {
-                    Ok(outcome) => EntryRead::Ran(outcome),
-                    Err(err) => EntryRead::Failed(err),
-                },
-            }
+            read_entry(storage, remote, entry, base).await
         };
         if let EntryRead::Ran(outcome) = &outcome
             && let Some(base) = outcome.lock_base()
@@ -209,6 +190,38 @@ pub async fn read_all(
         lock.write(storage, &contract, &writer).await?;
     }
     Ok(read)
+}
+
+/// Reads `entry` against `base`; a working folder that is missing or empty
+/// first at `base`, unless the entry names a revision.
+async fn read_entry(
+    storage: &(impl Storage + Sync),
+    remote: &impl Remote,
+    entry: &Entry,
+    base: Option<&str>,
+) -> EntryRead {
+    if entry.revision == RevisionPointer::Tag(Tag::Latest)
+        && let Some(base) = base
+        && !holds_files(storage, &entry.folder).await
+    {
+        let mut refill = entry.clone();
+        refill.revision = RevisionPointer::Hash(base.to_string());
+        // A revision that can no longer be read whole gives way to the
+        // contract's.
+        let why = match read(storage, remote, &refill, Some(base)).await {
+            Ok(outcome) if outcome.lock_base().is_some() => return EntryRead::Ran(outcome),
+            Ok(_) => "some of its files are gone".to_string(),
+            Err(err) => err.to_string(),
+        };
+        warn!(
+            "{} was not refilled at {base}, so it takes the contract's revision: {why}",
+            entry.folder.display()
+        );
+    }
+    match read(storage, remote, entry, base).await {
+        Ok(outcome) => EntryRead::Ran(outcome),
+        Err(err) => EntryRead::Failed(err),
+    }
 }
 
 /// Whether `folder` holds anything. One that cannot be listed, for any reason
