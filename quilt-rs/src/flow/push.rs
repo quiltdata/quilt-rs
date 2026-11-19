@@ -464,6 +464,55 @@ mod tests {
         Ok(())
     }
 
+    /// Push refuses a revision whose workflow's schema is invalid, before any
+    /// bytes reach the remote. A local commit records such a revision with an
+    /// `Unchecked` warning; push is where it stops.
+    #[test(tokio::test)]
+    async fn test_push_refuses_an_invalid_schema_and_uploads_nothing() -> Res {
+        let paths = paths::DomainPaths::new(std::path::absolute("/foo")?);
+        let storage = MockStorage::default();
+        let remote = MockRemote::default();
+        remote
+            .put_object(
+                None,
+                &S3Uri::try_from("s3://b/.quilt/workflows/config.yml")?,
+                b"version: \"1\"\nworkflows:\n  gate:\n    name: Gate\n    metadata_schema: meta\nschemas:\n  meta:\n    url: s3://b/schemas/meta.json\n".to_vec(),
+            )
+            .await?;
+        remote
+            .put_object(
+                None,
+                &S3Uri::try_from("s3://b/schemas/meta.json")?,
+                br#"{"type": 123}"#.to_vec(),
+            )
+            .await?;
+
+        let err = push_package(
+            first_push_governed_lineage(),
+            governed_manifest(),
+            &paths,
+            &storage,
+            &remote,
+            None,
+            HostConfig::default(),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            matches!(
+                err,
+                Error::WorkflowValidation(WorkflowValidationError::InvalidSchema { .. })
+            ),
+            "expected an invalid-schema refusal, got: {err:?}"
+        );
+        assert!(
+            !storage.exists(&paths.cached_manifests_dir("b")).await,
+            "a refused push must not build or upload a manifest"
+        );
+        Ok(())
+    }
+
     /// A governed manifest that *satisfies* its workflow passes the gate: the
     /// push proceeds to build and upload the manifest, reaching the post-upload
     /// hash check (which trips only because this fixture's commit hash is a
