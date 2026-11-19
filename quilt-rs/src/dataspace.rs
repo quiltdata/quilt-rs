@@ -44,6 +44,9 @@ pub enum EntryError {
     #[error("{METADATA_FILE} is not valid: {0}")]
     MetadataFile(String),
 
+    #[error("{METADATA_FILE} cannot hold this revision: {0}")]
+    MetadataUnwritable(String),
+
     #[error("`latest` cannot be read, so `write` has nothing to lay its files over")]
     LatestUnreadable,
 

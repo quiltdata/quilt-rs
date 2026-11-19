@@ -109,8 +109,8 @@ folder:
   renames into place are not: a failure partway leaves the files already
   placed.
 - `dataspace::read::read` reads a `data.toml` entry under `read` into its
-  working folder: the revision's files under the entry's paths, and the
-  package's metadata as `package-metadata.json`. A file unchanged since the
+  working folder: the revision's files under the entry's paths, and all that
+  is not a file as `metadata.toml`. A file unchanged since the
   base the lock names takes the revision's version, and a local change to a
   file the revision also changed blocks the read before anything is written.
 - `dataspace::read_all::read_all` reads every `read` entry of a dataspace,
@@ -123,8 +123,9 @@ folder:
   or `replace` from its working folder, against the `latest` read just before.
   `write` lays the files under the entry's paths over `latest` and keeps its
   other keys, composing again on a `latest` that moves meanwhile; `replace`
-  publishes the folder as the whole package. `package-metadata.json` sets the
-  metadata, and with no such file the metadata is kept. A revision that does
+  publishes the folder as the whole package. `metadata.toml` sets the message
+  and the metadata whole, under the entry's paths for its files and folders,
+  and with no such file the metadata is kept. A revision that does
   not become `latest` is still stored, and `Published::Stored` carries its
   hash.
 - `dataspace::reattach::unattached` lists a package's commits in its bucket's
