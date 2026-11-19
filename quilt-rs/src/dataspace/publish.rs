@@ -75,8 +75,10 @@ pub enum Published {
 }
 
 impl Published {
-    /// The base the lock takes for this package: the new revision, once it is
-    /// `latest`. `None` leaves the lock as it is.
+    /// The base the lock takes for a package listed only under `write` or
+    /// `replace`: the new revision, once it is `latest`. `None` leaves the
+    /// lock as it is. A package also listed under `read` shares its base with
+    /// the read paths, which this revision may not have been read into.
     #[must_use]
     pub fn lock_base(&self) -> Option<&str> {
         match self {
