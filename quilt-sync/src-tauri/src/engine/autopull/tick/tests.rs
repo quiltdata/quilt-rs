@@ -2525,6 +2525,7 @@ fn stale_claim_model(
                         origin: None,
                     },
                     certified_latest: true,
+                    latest_unchecked: false,
                 },
             ))
         });

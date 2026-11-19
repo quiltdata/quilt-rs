@@ -497,6 +497,16 @@ mod tests {
         ) -> Res {
             unreachable!("not part of the gate")
         }
+
+        async fn put_object_if(
+            &self,
+            _host: Option<&Host>,
+            _s3_uri: &S3Uri,
+            _contents: impl Into<aws_sdk_s3::primitives::ByteStream>,
+            _condition: &crate::io::remote::WriteCondition,
+        ) -> Res<crate::io::remote::ConditionalPut> {
+            unreachable!("not part of the gate")
+        }
         async fn upload_file(
             &self,
             _host_config: &HostConfig,

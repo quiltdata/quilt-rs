@@ -159,6 +159,16 @@ impl Remote for BadBucketRemote {
     ) -> Res {
         unreachable!("test only exercises verify_bucket")
     }
+
+    async fn put_object_if(
+        &self,
+        _host: Option<&Host>,
+        _s3_uri: &S3Uri,
+        _contents: impl Into<aws_sdk_s3::primitives::ByteStream>,
+        _condition: &crate::io::remote::WriteCondition,
+    ) -> Res<crate::io::remote::ConditionalPut> {
+        unreachable!("test only exercises verify_bucket")
+    }
     async fn upload_file(
         &self,
         _host_config: &crate::io::remote::HostConfig,
@@ -1445,6 +1455,16 @@ impl Remote for SignedOutRemote {
         _s3_uri: &S3Uri,
         _contents: impl Into<aws_sdk_s3::primitives::ByteStream>,
     ) -> Res {
+        unreachable!("not part of the resolution")
+    }
+
+    async fn put_object_if(
+        &self,
+        _host: Option<&Host>,
+        _s3_uri: &S3Uri,
+        _contents: impl Into<aws_sdk_s3::primitives::ByteStream>,
+        _condition: &crate::io::remote::WriteCondition,
+    ) -> Res<crate::io::remote::ConditionalPut> {
         unreachable!("not part of the resolution")
     }
     async fn upload_file(

@@ -48,7 +48,9 @@ use quilt_uri::Namespace;
 use quilt_uri::S3Uri;
 
 use crate::io::manifest::bytestream_to_string;
+use crate::io::remote::ConditionalPut;
 use crate::io::remote::RemoteObjectStream;
+use crate::io::remote::WriteCondition;
 use quilt_uri::Tag;
 use quilt_uri::is_top_hash;
 use quilt_uri::paths::get_manifest_key;
@@ -273,7 +275,24 @@ async fn get_object_stream(
     Ok(RemoteObjectStream {
         body: result.body,
         uri: uri_versioned,
+        etag: result.e_tag,
     })
+}
+
+/// Whether a failed conditional write failed on its condition: S3 answers 412
+/// when the object no longer matches, and 409 when another conditional write
+/// to the same key was in flight. Either way the object is not as the caller
+/// last read it, so nothing was written.
+fn is_condition_failure<E>(err: &SdkError<E>) -> bool
+where
+    E: ProvideErrorMetadata,
+{
+    let code = err.as_service_error().and_then(ProvideErrorMetadata::code);
+    let status = err.raw_response().map(|raw| raw.status().as_u16());
+    matches!(
+        code,
+        Some("PreconditionFailed" | "ConditionalRequestConflict")
+    ) || matches!(status, Some(412 | 409))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -817,6 +836,38 @@ impl Remote for RemoteS3 {
         Ok(())
     }
 
+    async fn put_object_if(
+        &self,
+        host: Option<&Host>,
+        s3_uri: &S3Uri,
+        contents: impl Into<ByteStream>,
+        condition: &WriteCondition,
+    ) -> Res<ConditionalPut> {
+        let request = self
+            .get_client_for_bucket(host, &s3_uri.bucket)
+            .await?
+            .put_object()
+            .bucket(&s3_uri.bucket)
+            .key(&s3_uri.key)
+            .body(contents.into());
+        let request = match condition {
+            WriteCondition::Absent => request.if_none_match("*"),
+            WriteCondition::Matches(etag) => request.if_match(etag),
+        };
+        match request.send().await {
+            Ok(_) => Ok(ConditionalPut::Written),
+            Err(err) if is_condition_failure(&err) => {
+                info!("ℹ️ {s3_uri} changed since it was read; not written");
+                Ok(ConditionalPut::Moved)
+            }
+            Err(err) => Err(self.forget_ambient_clients_on(s3_error_or_session_loss(
+                err,
+                host,
+                S3ErrorKind::PutObject,
+            ))),
+        }
+    }
+
     async fn resolve_url(&self, host: Option<&Host>, s3_uri: &S3Uri) -> Res<S3Uri> {
         let client = self.get_client_for_bucket(host, &s3_uri.bucket).await?;
         let result = client.head_object().bucket(&s3_uri.bucket).key(&s3_uri.key);
@@ -1035,6 +1086,53 @@ mod tests {
             ".quilt/named_packages/team/other/1758500000",
             prefix
         ));
+    }
+
+    /// S3 refuses a conditional write to an object changed since the read
+    /// its `ETag` came from, and creates an object only when there is none.
+    /// The key is new on each run, so concurrent runs do not share it.
+    #[test(tokio::test)]
+    async fn live_conditional_put_refuses_a_moved_object() -> Res<()> {
+        let remote = RemoteS3::new(DomainPaths::default(), LocalStorage::new());
+        let key = format!(
+            "test_quilt_rs/conditional-put/{}",
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        );
+        let s3_uri = S3Uri::try_from(format!("s3://data-yaml-spec-tests/{key}").as_str())?;
+
+        let created = remote
+            .put_object_if(None, &s3_uri, b"first".to_vec(), &WriteCondition::Absent)
+            .await?;
+        assert_eq!(created, ConditionalPut::Written);
+        let again = remote
+            .put_object_if(None, &s3_uri, b"second".to_vec(), &WriteCondition::Absent)
+            .await?;
+        assert_eq!(again, ConditionalPut::Moved);
+
+        let read = remote.get_object_stream(None, &s3_uri).await?;
+        let etag = read.etag.expect("S3 returns an ETag");
+        let matched = remote
+            .put_object_if(
+                None,
+                &s3_uri,
+                b"third".to_vec(),
+                &WriteCondition::Matches(etag.clone()),
+            )
+            .await?;
+        assert_eq!(matched, ConditionalPut::Written);
+        let stale = remote
+            .put_object_if(
+                None,
+                &s3_uri,
+                b"fourth".to_vec(),
+                &WriteCondition::Matches(etag),
+            )
+            .await?;
+        assert_eq!(stale, ConditionalPut::Moved);
+
+        let body = remote.get_object_stream(None, &s3_uri).await?.body;
+        assert_eq!(body.collect().await?.to_vec(), b"third");
+        Ok(())
     }
 
     #[test(tokio::test)]

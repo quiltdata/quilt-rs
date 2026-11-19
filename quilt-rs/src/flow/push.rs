@@ -7,10 +7,13 @@ use crate::Error;
 use crate::Res;
 use crate::error::PackageOpError;
 use crate::flow;
+use crate::io::manifest::LatestAdvance;
+use crate::io::manifest::LatestSeen;
 use crate::io::manifest::RowsStream;
 use crate::io::manifest::StreamItem;
+use crate::io::manifest::advance_latest;
 use crate::io::manifest::build_manifest_from_rows_stream;
-use crate::io::manifest::resolve_tag;
+use crate::io::manifest::read_latest;
 use crate::io::manifest::tag_timestamp;
 use crate::io::manifest::upload_manifest;
 use crate::io::manifest::upload_row;
@@ -27,7 +30,6 @@ use crate::workflow::EntryView;
 use quilt_uri::ManifestUri;
 use quilt_uri::Namespace;
 use quilt_uri::S3PackageHandle;
-use quilt_uri::Tag;
 
 async fn use_existing_row_or_upload(
     remote: &impl Remote,
@@ -91,6 +93,10 @@ pub struct PushResult {
     /// base: someone else pushed since we last checked, or, on a first push,
     /// had already published under this name.
     pub certified_latest: bool,
+    /// Whether "latest" was written without the base check, because the role
+    /// may not read the tag: another writer's revision may have been
+    /// overwritten.
+    pub latest_unchecked: bool,
 }
 
 /// Push the new package revision to the remote and tags it as "latest".
@@ -154,6 +160,7 @@ pub(crate) async fn push_package_impl(
         return Ok(PushResult {
             lineage,
             certified_latest: true,
+            latest_unchecked: false,
         });
     };
 
@@ -273,21 +280,17 @@ pub(crate) async fn push_package_impl(
     debug!("✔️ Timestamp tag added");
 
     debug!("⏳ Checking remote's latest manifest hash");
-    lineage.latest_hash = match resolve_tag(
-        remote,
-        new_manifest_uri.origin.as_ref(),
-        manifest_uri,
-        Tag::Latest,
-    )
-    .await
-    {
-        Ok(uri) => uri.hash,
-        Err(e) if e.is_not_found() => {
+    let latest = read_latest(remote, new_manifest_uri.origin.as_ref(), &manifest_uri).await?;
+    match &latest {
+        LatestSeen::Absent => {
             debug!("✔️ No existing latest tag — first push for this package");
-            String::new()
         }
-        Err(e) => return Err(e),
-    };
+        LatestSeen::Unreadable => {
+            warn!("This role may not read latest, so it is moved without the base check");
+        }
+        LatestSeen::Tagged { .. } => {}
+    }
+    lineage.latest_hash = latest.hash().unwrap_or_default().to_owned();
     debug!("✔️ Latest hash is: {}", lineage.latest_hash);
 
     lineage.remote_uri = Some(new_manifest_uri.clone());
@@ -304,17 +307,44 @@ pub(crate) async fn push_package_impl(
     // Certify latest when the remote has no "latest" yet, when it already is
     // what we pushed, or when it is still our base. A first push has no base,
     // so another writer's "latest" stays, and the empty base leaves the copy
-    // Diverged until the user promotes or resets.
-    if lineage.latest_hash.is_empty()
-        || lineage.latest_hash == new_manifest_uri.hash
-        || (!lineage.base_hash.is_empty() && lineage.base_hash == lineage.latest_hash)
-    {
+    // Diverged until the user promotes or resets. A role that may not read
+    // "latest" cannot tell, so it writes the tag unchecked.
+    let advance = match &latest {
+        LatestSeen::Absent | LatestSeen::Unreadable => true,
+        LatestSeen::Tagged { uri, .. } => {
+            uri.hash == new_manifest_uri.hash
+                || (!lineage.base_hash.is_empty() && lineage.base_hash == uri.hash)
+        }
+    };
+    if advance {
         debug!("⏳ Certifying new latest (no existing latest, already ours, or tracking)");
-        let lineage = flow::certify_latest(lineage, remote, new_manifest_uri).await?;
-        return Ok(PushResult {
-            lineage,
-            certified_latest: true,
-        });
+        // Conditional on "latest" being as just read, so a publish that lands
+        // in between is not overwritten.
+        match advance_latest(remote, &new_manifest_uri, &latest).await? {
+            LatestAdvance::Moved => {
+                warn!("Pushed but did not certify latest: it moved while this push read it");
+                if let Ok(moved) =
+                    read_latest(remote, new_manifest_uri.origin.as_ref(), &manifest_uri).await
+                    && let Some(hash) = moved.hash()
+                {
+                    hash.clone_into(&mut lineage.latest_hash);
+                }
+                return Ok(PushResult {
+                    lineage,
+                    certified_latest: false,
+                    latest_unchecked: false,
+                });
+            }
+            written => {
+                lineage.update_latest(new_manifest_uri);
+                info!("✔️ Certified latest");
+                return Ok(PushResult {
+                    lineage,
+                    certified_latest: true,
+                    latest_unchecked: written == LatestAdvance::Unchecked,
+                });
+            }
+        }
     }
 
     warn!("Pushed but did not certify latest: remote has newer changes");
@@ -322,6 +352,7 @@ pub(crate) async fn push_package_impl(
     Ok(PushResult {
         lineage,
         certified_latest: false,
+        latest_unchecked: false,
     })
 }
 

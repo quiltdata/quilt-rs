@@ -5,9 +5,11 @@ use crate::Error;
 use crate::Res;
 use crate::error::PackageOpError;
 use crate::installed_package::PushOutcome;
+use crate::io::manifest::LatestAdvance;
+use crate::io::manifest::LatestSeen;
+use crate::io::manifest::advance_latest;
 use crate::io::manifest::build_manifest_from_rows_stream;
-use crate::io::manifest::resolve_tag;
-use crate::io::manifest::tag_latest;
+use crate::io::manifest::read_latest;
 use crate::io::manifest::tag_timestamp;
 use crate::io::manifest::upload_manifest;
 use crate::io::remote::Remote;
@@ -18,13 +20,12 @@ use crate::manifest::Manifest;
 use crate::manifest::ManifestRow;
 use crate::paths::DomainPaths;
 use quilt_uri::ManifestUri;
-use quilt_uri::Tag;
 
 /// Publish `manifest`, whose rows are already on the remote, as the revision
-/// after `parent`, and tag it `latest` only if `latest` still names `parent`
-/// when read just before the tag write. That read and the write are two
-/// requests, not one atomic step, so a push that lands between them can still
-/// be overwritten.
+/// after `parent`, and tag it `latest` only if `latest` still names `parent`.
+/// The tag write is conditional on the read that found `parent`, so a push
+/// that lands between the two is not overwritten. A role that may not read
+/// `latest` writes it unchecked.
 pub async fn push_onto(
     paths: &DomainPaths,
     storage: &(impl Storage + Sync),
@@ -73,10 +74,16 @@ pub async fn push_onto(
     upload_manifest(storage, remote, &manifest_uri, &cache_path).await?;
     tag_timestamp(remote, &manifest_uri, chrono::Utc::now()).await?;
 
-    let latest = resolve_tag(remote, parent.origin.as_ref(), parent.clone(), Tag::Latest).await?;
-    let certified_latest = latest.hash == parent.hash;
+    let latest = read_latest(remote, parent.origin.as_ref(), parent.clone()).await?;
+    let advance = match &latest {
+        LatestSeen::Tagged { uri, .. } if uri.hash == parent.hash => {
+            advance_latest(remote, &manifest_uri, &latest).await?
+        }
+        LatestSeen::Unreadable => advance_latest(remote, &manifest_uri, &latest).await?,
+        LatestSeen::Tagged { .. } | LatestSeen::Absent => LatestAdvance::Moved,
+    };
+    let certified_latest = advance != LatestAdvance::Moved;
     if certified_latest {
-        tag_latest(remote, &manifest_uri).await?;
         info!("✔️ Certified {} as latest", manifest_uri.display());
     } else {
         warn!(
@@ -88,6 +95,7 @@ pub async fn push_onto(
     Ok(PushOutcome {
         manifest_uri,
         certified_latest,
+        latest_unchecked: advance == LatestAdvance::Unchecked,
     })
 }
 

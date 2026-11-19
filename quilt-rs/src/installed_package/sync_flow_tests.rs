@@ -534,6 +534,15 @@ impl crate::io::remote::Remote for RejectedCredentialRemote {
     ) -> impl Future<Output = Res> {
         std::future::ready(Err(rejected_credential()))
     }
+    fn put_object_if(
+        &self,
+        _host: Option<&Host>,
+        _s3_uri: &S3Uri,
+        _contents: impl Into<aws_sdk_s3::primitives::ByteStream>,
+        _condition: &crate::io::remote::WriteCondition,
+    ) -> impl Future<Output = Res<crate::io::remote::ConditionalPut>> {
+        std::future::ready(Err(rejected_credential()))
+    }
     fn upload_file(
         &self,
         _host_config: &crate::io::remote::HostConfig,
@@ -605,6 +614,15 @@ impl crate::io::remote::Remote for LoggedOutRemote {
     ) -> impl Future<Output = Res> {
         std::future::ready(Err(Error::Login(LoginError::NoSession(None))))
     }
+    fn put_object_if(
+        &self,
+        _host: Option<&Host>,
+        _s3_uri: &S3Uri,
+        _contents: impl Into<aws_sdk_s3::primitives::ByteStream>,
+        _condition: &crate::io::remote::WriteCondition,
+    ) -> impl Future<Output = Res<crate::io::remote::ConditionalPut>> {
+        std::future::ready(Err(Error::Login(LoginError::NoSession(None))))
+    }
     fn upload_file(
         &self,
         _host_config: &crate::io::remote::HostConfig,
@@ -670,6 +688,15 @@ impl crate::io::remote::Remote for DeniedRemote {
         s3_uri: &S3Uri,
         _contents: impl Into<aws_sdk_s3::primitives::ByteStream>,
     ) -> impl Future<Output = Res> {
+        std::future::ready(Err(denied(s3_uri)))
+    }
+    fn put_object_if(
+        &self,
+        _host: Option<&Host>,
+        s3_uri: &S3Uri,
+        _contents: impl Into<aws_sdk_s3::primitives::ByteStream>,
+        _condition: &crate::io::remote::WriteCondition,
+    ) -> impl Future<Output = Res<crate::io::remote::ConditionalPut>> {
         std::future::ready(Err(denied(s3_uri)))
     }
     fn upload_file(
@@ -2092,6 +2119,74 @@ async fn test_first_push_over_their_latest_then_reset() -> Res {
         crate::lineage::UpstreamState::from(lineage),
         crate::lineage::UpstreamState::UpToDate
     );
+    Ok(())
+}
+
+/// Another first publish of the same name lands between this push's read of
+/// `latest`, which found none, and its write: the conditional write is
+/// refused, so their revision stays `latest` and this one is kept, Diverged.
+#[test(tokio::test)]
+async fn test_a_publish_between_the_read_and_the_write_keeps_latest() -> Res {
+    const LATEST: &str = "s3://b/.quilt/named_packages/test/first_push/latest";
+    const THEIRS: &str = "3333333333333333333333333333333333333333333333333333333333333333";
+    let local_hash = crate::fixtures::top_hash::EMPTY_NULL_TOP_HASH;
+    let (package, _temp_dirs) = first_push_package(None).await?;
+
+    let read = package.remote.park(LATEST);
+    let compete = async {
+        read.arrived().await;
+        // The read goes on; the write after it is held until theirs lands.
+        let write = package.remote.park(LATEST);
+        read.release();
+        write.arrived().await;
+        package
+            .remote
+            .put_object(None, &S3Uri::try_from(LATEST)?, THEIRS.as_bytes().to_vec())
+            .await?;
+        write.release();
+        Ok::<_, Error>(())
+    };
+    let (pushed, competed) = tokio::join!(package.push(None), compete);
+    competed?;
+    let Pushed::Uploaded(outcome) = pushed? else {
+        panic!("a pending commit must upload");
+    };
+
+    assert!(!outcome.certified_latest);
+    assert!(!outcome.latest_unchecked);
+    assert_eq!(outcome.manifest_uri.hash, local_hash);
+    assert_eq!(latest_tag(&package).await?, THEIRS);
+    let lineage = package.lineage().await?;
+    assert_eq!(lineage.latest_hash, THEIRS);
+    assert_eq!(
+        crate::lineage::UpstreamState::from(lineage),
+        crate::lineage::UpstreamState::Diverged
+    );
+    Ok(())
+}
+
+/// A role that may write `latest` but not read it cannot check it: the push
+/// still moves `latest`, and says the write was unchecked.
+#[test(tokio::test)]
+async fn test_a_push_that_cannot_read_latest_moves_it_unchecked() -> Res {
+    const LATEST: &str = "s3://b/.quilt/named_packages/test/first_push/latest";
+    let local_hash = crate::fixtures::top_hash::EMPTY_NULL_TOP_HASH;
+    let theirs = "3333333333333333333333333333333333333333333333333333333333333333";
+    let (package, _temp_dirs) = first_push_package(Some(theirs)).await?;
+    package.remote.deny_reads(LATEST);
+
+    let Pushed::Uploaded(outcome) = package.push(None).await? else {
+        panic!("a pending commit must upload");
+    };
+
+    assert!(outcome.certified_latest);
+    assert!(outcome.latest_unchecked);
+    let written = package
+        .remote
+        .storage
+        .read_byte_stream(LATEST.trim_start_matches("s3://"))
+        .await?;
+    assert_eq!(written.collect().await?.to_vec(), local_hash.as_bytes());
     Ok(())
 }
 

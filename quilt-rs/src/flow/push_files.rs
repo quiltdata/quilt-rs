@@ -10,10 +10,12 @@ use crate::LogicalKey;
 use crate::Res;
 use crate::error::PackageOpError;
 use crate::installed_package::PushOutcome;
+use crate::io::manifest::LatestAdvance;
+use crate::io::manifest::LatestSeen;
 use crate::io::manifest::RowContent;
+use crate::io::manifest::advance_latest;
 use crate::io::manifest::build_manifest_from_rows_stream;
-use crate::io::manifest::resolve_tag;
-use crate::io::manifest::tag_latest;
+use crate::io::manifest::read_latest;
 use crate::io::manifest::tag_timestamp;
 use crate::io::manifest::upload_manifest;
 use crate::io::manifest::upload_row;
@@ -28,7 +30,6 @@ use crate::manifest::ManifestRow;
 use quilt_uri::Host;
 use quilt_uri::ManifestUri;
 use quilt_uri::S3PackageHandle;
-use quilt_uri::Tag;
 
 /// Where [`push_files`] publishes, and the revision the caller built on.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -76,8 +77,9 @@ pub struct PushTarget {
 /// moved to it only if `latest` still names `target.parent` when read just
 /// before the tag write. `latest` also moves when it names nothing, even if the
 /// push has a parent: there is no revision for the push to conflict with. The
-/// read of `latest` and the write of the tag are two requests, not one atomic
-/// step, so a push that lands between them can still be overwritten.
+/// tag write is conditional on that read (see [`advance_latest`]), so a push
+/// that lands between them is not overwritten; a role that may not read
+/// `latest` writes it unchecked.
 ///
 /// When `latest` names another revision, the push still succeeds in the sense
 /// that the revision is stored and reachable by its hash, but `latest` is left
@@ -150,6 +152,16 @@ pub async fn push_files(
     };
     upload_manifest(storage, remote, &manifest_uri, &cache_path).await?;
 
+    tag_stored(remote, target, manifest_uri).await
+}
+
+/// Tags the stored revision `manifest_uri` with its timestamp, and moves
+/// `latest` to it if `latest` still names `target.parent`, or names nothing.
+async fn tag_stored(
+    remote: &impl Remote,
+    target: &PushTarget,
+    manifest_uri: ManifestUri,
+) -> Res<PushOutcome> {
     // From here the revision is stored, so a failure names its hash.
     let tag_failed = |err: Error| {
         Error::from(PackageOpError::PushTagFailed {
@@ -161,42 +173,50 @@ pub async fn push_files(
         .await
         .map_err(tag_failed)?;
 
-    let latest = match resolve_tag(
-        remote,
-        target.origin.as_ref(),
-        target.handle.clone(),
-        Tag::Latest,
-    )
-    .await
-    {
-        Ok(latest) => Some(latest.hash),
-        Err(err) if err.is_not_found() => None,
-        Err(err) => return Err(tag_failed(err)),
-    };
-    match latest {
-        Some(latest) if latest != manifest_uri.hash && Some(&latest) != target.parent.as_ref() => {
-            warn!(
-                "Pushed {} but did not certify latest: latest is {latest}",
-                manifest_uri.display()
-            );
-            Err(PackageOpError::PushedNotLatest {
-                top_hash: manifest_uri.hash,
-                latest,
-                expected: target.parent.as_ref().map_or_else(
-                    || "no earlier revision".to_string(),
-                    |parent| format!("revision {parent}"),
-                ),
-            }
-            .into())
+    let latest = read_latest(remote, target.origin.as_ref(), target.handle.clone())
+        .await
+        .map_err(tag_failed)?;
+    let not_latest = |latest: String| -> Error {
+        warn!(
+            "Pushed {} but did not certify latest: latest is {latest}",
+            manifest_uri.display()
+        );
+        PackageOpError::PushedNotLatest {
+            top_hash: manifest_uri.hash.clone(),
+            latest,
+            expected: target.parent.as_ref().map_or_else(
+                || "no earlier revision".to_string(),
+                |parent| format!("revision {parent}"),
+            ),
         }
-        _ => {
-            tag_latest(remote, &manifest_uri)
-                .await
-                .map_err(tag_failed)?;
+        .into()
+    };
+    if let Some(hash) = latest.hash()
+        && hash != manifest_uri.hash
+        && Some(hash) != target.parent.as_deref()
+    {
+        return Err(not_latest(hash.to_owned()));
+    }
+    // Conditional on `latest` being as just read, so a publish that lands in
+    // between is not overwritten.
+    match advance_latest(remote, &manifest_uri, &latest)
+        .await
+        .map_err(tag_failed)?
+    {
+        LatestAdvance::Moved => {
+            let moved = read_latest(remote, target.origin.as_ref(), target.handle.clone()).await;
+            let latest = match moved.as_ref().ok().and_then(LatestSeen::hash) {
+                Some(hash) => hash.to_owned(),
+                None => "a revision published while this push ran".to_string(),
+            };
+            Err(not_latest(latest))
+        }
+        written => {
             info!("✔️ Certified {} as latest", manifest_uri.display());
             Ok(PushOutcome {
                 manifest_uri,
                 certified_latest: true,
+                latest_unchecked: written == LatestAdvance::Unchecked,
             })
         }
     }
@@ -761,6 +781,23 @@ mod tests {
                 )));
             }
             self.inner.put_object(host, uri, contents).await
+        }
+
+        async fn put_object_if(
+            &self,
+            host: Option<&Host>,
+            uri: &S3Uri,
+            contents: impl Into<ByteStream>,
+            condition: &crate::io::remote::WriteCondition,
+        ) -> Res<crate::io::remote::ConditionalPut> {
+            if self.fail_tags && uri.key.contains(".quilt/named_packages/") {
+                return Err(Error::PackageOp(PackageOpError::Package(
+                    "tag write refused".to_string(),
+                )));
+            }
+            self.inner
+                .put_object_if(host, uri, contents, condition)
+                .await
         }
 
         async fn upload_file(

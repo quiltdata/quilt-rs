@@ -1928,6 +1928,7 @@ mod tests {
                 origin: None,
             },
             certified_latest: true,
+            latest_unchecked: false,
         });
 
         let said = super::report_publish(&telemetry, "acme/demo", None, Ok((namespace, outcome)));
@@ -2214,6 +2215,7 @@ mod tests {
                 origin: None,
             },
             certified_latest: true,
+            latest_unchecked: false,
         })
     }
 

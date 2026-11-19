@@ -49,6 +49,15 @@ impl crate::io::remote::Remote for UnreachableRemote {
     ) -> impl Future<Output = Res> {
         std::future::ready(Err(no_network()))
     }
+    fn put_object_if(
+        &self,
+        _host: Option<&Host>,
+        _s3_uri: &S3Uri,
+        _contents: impl Into<aws_sdk_s3::primitives::ByteStream>,
+        _condition: &crate::io::remote::WriteCondition,
+    ) -> impl Future<Output = Res<crate::io::remote::ConditionalPut>> {
+        std::future::ready(Err(no_network()))
+    }
     fn upload_file(
         &self,
         _host_config: &HostConfig,

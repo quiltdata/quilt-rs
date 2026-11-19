@@ -206,6 +206,7 @@ fn model_of(copy: Copy) -> (MockQuiltModel, Arc<Mutex<Remote>>) {
             Ok(quilt::PublishOutcome::PushedOnly(quilt::PushOutcome {
                 manifest_uri: at("ours"),
                 certified_latest: false,
+                latest_unchecked: false,
             }))
         });
     expect_remote(&mut model, &remote);
@@ -317,6 +318,7 @@ fn expect_remote(model: &mut MockQuiltModel, remote: &Arc<Mutex<Remote>>) {
         Ok(quilt::PushOutcome {
             manifest_uri: at(&hash),
             certified_latest,
+            latest_unchecked: false,
         })
     });
 }

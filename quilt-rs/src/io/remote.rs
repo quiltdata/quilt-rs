@@ -121,6 +121,31 @@ pub mod mocks;
 pub struct RemoteObjectStream {
     pub body: ByteStream,
     pub uri: S3Uri,
+    /// The object's `ETag` as this read returned it, so a later write can be
+    /// made conditional on the object being unchanged since. `None` when the
+    /// store gave none.
+    pub etag: Option<String>,
+}
+
+/// The state an object must be in for [`Remote::put_object_if`] to write it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WriteCondition {
+    /// No object at the key: S3's `If-None-Match: *`.
+    Absent,
+    /// The object still has this `ETag`, taken from an earlier read: S3's
+    /// `If-Match`.
+    Matches(String),
+}
+
+/// What a conditional write did when the request itself succeeded.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConditionalPut {
+    /// The condition held and the object was written.
+    Written,
+    /// The object changed since the read the condition came from (S3's 412,
+    /// or its 409 for a conditional write that raced another), so nothing
+    /// was written.
+    Moved,
 }
 
 pub type StreamObjectChunk = Vec<Res<Object>>;
@@ -158,6 +183,18 @@ pub trait Remote {
         s3_uri: &S3Uri,
         contents: impl Into<ByteStream>,
     ) -> impl Future<Output = Res>;
+
+    /// Write `contents` only if the object is in the state `condition`
+    /// names, in one request. A denial is an error, as for
+    /// [`Remote::put_object`]; callers that can do without the check read it
+    /// with [`Error::is_access_denied`] and fall back to a plain write.
+    fn put_object_if(
+        &self,
+        host: Option<&Host>,
+        s3_uri: &S3Uri,
+        contents: impl Into<ByteStream>,
+        condition: &WriteCondition,
+    ) -> impl Future<Output = Res<ConditionalPut>>;
 
     /// Upload file and request checkum from S3
     fn upload_file(

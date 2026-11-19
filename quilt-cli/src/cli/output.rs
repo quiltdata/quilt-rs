@@ -180,6 +180,7 @@ mod tests {
             outcome: Some(quilt_rs::PushOutcome {
                 manifest_uri: manifest_uri.clone(),
                 certified_latest: true,
+                latest_unchecked: false,
             }),
         };
         assert!(push_out.to_json().is_object());
