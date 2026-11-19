@@ -250,11 +250,9 @@ impl RegistryStore {
         remote: &impl Remote,
         host: Option<&Host>,
     ) -> Res<GcReport> {
-        let mut packages = Vec::new();
-        for owner in list_dirs(storage, &self.dir.join(INSTALLED_DIR)).await? {
-            packages.extend(list_dirs(storage, &owner).await?);
-        }
-        let _held = self.lock_every_package(storage, &packages).await?;
+        let _held = self
+            .lock_every_package(storage, &self.installed_packages(storage).await?)
+            .await?;
         // Before the manifests: an object filed after them is no candidate.
         let mut unused: BTreeMap<String, (PathBuf, u64)> = list_files(storage, &self.objects_dir())
             .await?
@@ -262,9 +260,11 @@ impl RegistryStore {
             .map(|(name, path, len)| (name, (path, len)))
             .collect();
 
+        // Listed again under the locks: a writer that finished before they
+        // were taken may have added a package.
         let mut manifests = Vec::new();
-        for package in &packages {
-            manifests.extend(list_files(storage, package).await?);
+        for package in self.installed_packages(storage).await? {
+            manifests.extend(list_files(storage, &package).await?);
         }
         manifests.extend(list_files(storage, &self.dir.join(PACKAGES_DIR)).await?);
         manifests.retain(|(hash, _, _)| is_top_hash(hash));
@@ -285,13 +285,11 @@ impl RegistryStore {
             .into_iter()
             .partition(|(hash, _, _)| published.contains(hash));
 
-        let mut read = BTreeSet::new();
-        for (hash, path, _) in &kept {
+        // Every copy, even of one hash: the top hash leaves out a row's
+        // physical key, so two copies can name different objects.
+        for (_, path, _) in &kept {
             if unused.is_empty() {
                 break;
-            }
-            if !read.insert(hash) {
-                continue;
             }
             for row in Manifest::from_path(storage, path).await?.rows {
                 for name in row_objects(&row.hash, &row.physical_key) {
@@ -312,6 +310,15 @@ impl RegistryStore {
             report.bytes += len;
         }
         Ok(report)
+    }
+
+    /// The folders under `installed/`, one per package.
+    async fn installed_packages(&self, storage: &(impl Storage + Sync)) -> Res<Vec<PathBuf>> {
+        let mut packages = Vec::new();
+        for owner in list_dirs(storage, &self.dir.join(INSTALLED_DIR)).await? {
+            packages.extend(list_dirs(storage, &owner).await?);
+        }
+        Ok(packages)
     }
 
     /// Try-locks every package in `packages`, the `installed/` folders, and
@@ -568,6 +575,37 @@ mod tests {
             assert!(object.exists(), "{} is the commit's", object.display());
         }
         assert_eq!((report.cached_manifests, report.objects), (2, 1));
+        Ok(())
+    }
+
+    /// Two unpushed copies of one revision whose rows name different objects
+    /// for the same bytes, as a row carried forward under an older object
+    /// name does: clearing keeps both objects.
+    #[test(tokio::test)]
+    async fn clearing_keeps_every_object_each_copy_of_a_commit_names() -> Res {
+        let dir = tempfile::tempdir()?;
+        let store = DomainRoot::new(dir.path()).registry("bucket")?;
+        let storage = LocalStorage::new();
+        let (first, second) = (
+            Namespace::from(("acme", "a")),
+            Namespace::from(("acme", "b")),
+        );
+        let (hash, objects) = commit(&store, &first, &[("a.txt", b"a")]).await?;
+        let older = store.objects_dir().join("older-name");
+        std::fs::copy(&objects[0], &older)?;
+        let mut copy =
+            Manifest::from_path(&storage, &store.installed_manifest(&first, &hash)).await?;
+        copy.rows[0].physical_key = crate::paths::file_url(&older)?;
+        let copy_path = store.installed_manifest(&second, &hash);
+        std::fs::create_dir_all(copy_path.parent().unwrap())?;
+        std::fs::write(&copy_path, copy.try_to_jsonlines()?)?;
+
+        store
+            .clear_published(&storage, &MockRemote::default(), None)
+            .await?;
+
+        assert!(objects[0].exists());
+        assert!(older.exists(), "the second copy's object is kept");
         Ok(())
     }
 
