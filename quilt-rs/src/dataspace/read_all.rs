@@ -93,17 +93,19 @@ impl From<LockError> for ReadAllError {
 /// Reads each `read` entry of the dataspace in the folder `dataspace` into its
 /// working folder. Nothing advances `latest`.
 ///
+/// A working folder that is missing or empty is filled at the revision the
+/// lock names, unless the contract names one; the next read moves it on.
+///
 /// The lock is then written where any read completed: each such package takes
 /// the revision as its base, and `filled` is set once every entry that should
 /// be read has been.
 ///
 /// A lock written for another `data.toml` is used: the contract was edited
 /// here. One written for another folder, host or user is used only while no
-/// entry's working folder holds files and it names no unpushed commits, and
-/// then each package it names is filled at its revision there, unless the
-/// contract names one; otherwise nothing is read or written. A read has no
-/// Domain, so the local registry a lock names is not compared, and is kept
-/// unless the lock is another's.
+/// entry's working folder holds files and it names no unpushed commits;
+/// otherwise nothing is read or written. A read has no Domain, so the local
+/// registry a lock names is not compared, and is kept unless the lock is
+/// another's.
 pub async fn read_all(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
@@ -111,7 +113,6 @@ pub async fn read_all(
     writer: &Writer,
 ) -> Result<DataspaceRead, ReadAllError> {
     let contract = Contract::read(storage, dataspace).await?;
-    let mut fill_at_lock = false;
     let (mut lock, writer) = match Lock::read(storage, &contract).await? {
         Some(mut lock) => {
             let local = Writer {
@@ -130,13 +131,15 @@ pub async fn read_all(
                     .packages
                     .values()
                     .any(|entry| !entry.commits.is_empty());
-                if unpushed || any_folder_holds_files(storage, &contract).await {
+                let mut refused = unpushed;
+                for entry in contract.entries() {
+                    refused = refused || holds_files(storage, &entry.folder).await;
+                }
+                if refused {
                     return Err(ReadAllError::Mismatch(foreign));
                 }
-                // A fresh checkout: filled here at the lock's revisions, and
-                // the lock becomes this one's.
+                // A fresh checkout, filled here: the lock becomes this one's.
                 lock.header.filled = None;
-                fill_at_lock = true;
                 (lock, writer.clone())
             }
         }
@@ -156,10 +159,9 @@ pub async fn read_all(
         } else {
             let base = locked.map(|locked| locked.base.as_str());
             let mut entry = entry.clone();
-            // A revision the contract names wins over the lock's.
-            if fill_at_lock
-                && entry.revision == RevisionPointer::Tag(Tag::Latest)
+            if entry.revision == RevisionPointer::Tag(Tag::Latest)
                 && let Some(base) = base
+                && !holds_files(storage, &entry.folder).await
             {
                 entry.revision = RevisionPointer::Hash(base.to_string());
             }
@@ -198,22 +200,13 @@ pub async fn read_all(
     Ok(read)
 }
 
-/// Whether any entry's working folder holds anything. One that cannot be
-/// listed counts as holding files.
-async fn any_folder_holds_files(storage: &(impl Storage + Sync), contract: &Contract) -> bool {
-    for entry in contract.entries() {
-        if !storage.exists(&entry.folder).await {
-            continue;
-        }
-        let holds = match storage.read_dir(&entry.folder).await {
-            Ok(mut listing) => !matches!(listing.next_entry().await, Ok(None)),
-            Err(_) => true,
-        };
-        if holds {
-            return true;
-        }
+/// Whether `folder` holds anything. One that cannot be listed, for any reason
+/// but that it is not there, counts as holding files.
+async fn holds_files(storage: &(impl Storage + Sync), folder: &Path) -> bool {
+    match storage.read_dir(folder).await {
+        Ok(mut listing) => !matches!(listing.next_entry().await, Ok(None)),
+        Err(err) => !err.is_not_found(),
     }
-    false
 }
 
 #[cfg(test)]

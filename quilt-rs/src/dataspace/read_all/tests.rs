@@ -467,3 +467,46 @@ async fn the_local_registry_a_lock_names_is_kept_and_not_compared() -> Res {
     assert_eq!(lock.header.writer.local_registry, "ernest-mbp");
     Ok(())
 }
+
+#[test(tokio::test)]
+async fn a_working_folder_gone_from_the_dataspace_is_filled_at_the_locks_revision() -> Res {
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    publish(&remote, "team/raw", FIRST, &[("a.txt", b"alpha")]).await?;
+    let root = dataspace(&storage, "read = [\"team/raw\"]\n")?;
+    read_all(&storage, &remote, &root, &writer()).await?;
+    publish(&remote, "team/raw", SECOND, &[("a.txt", b"ALPHA")]).await?;
+    std::fs::remove_dir_all(root.join("team/raw"))?;
+
+    let refilled = read_all(&storage, &remote, &root, &writer()).await?;
+    let moved_on =
+        std::fs::read(root.join("team/raw/a.txt")).map(|first| (first, refilled.completed()))?;
+    read_all(&storage, &remote, &root, &writer()).await?;
+
+    assert_eq!(moved_on, (b"alpha".to_vec(), true));
+    assert_eq!(std::fs::read(root.join("team/raw/a.txt"))?, b"ALPHA");
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test(tokio::test)]
+async fn a_lock_from_another_host_is_refused_while_a_working_folder_cannot_be_listed() -> Res {
+    use std::os::unix::fs::PermissionsExt;
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    publish(&remote, "team/raw", FIRST, &[("a.txt", b"alpha")]).await?;
+    let root = dataspace(&storage, "read = [\"team/raw\"]\n")?;
+    lock_from(&storage, &root, &elsewhere(), at(FIRST)).await?;
+    let team = root.join("team");
+    std::fs::create_dir_all(team.join("raw"))?;
+    std::fs::set_permissions(&team, std::fs::Permissions::from_mode(0o000))?;
+
+    let refused = read_all(&storage, &remote, &root, &writer()).await;
+
+    std::fs::set_permissions(&team, std::fs::Permissions::from_mode(0o755))?;
+    assert!(
+        matches!(&refused, Err(ReadAllError::Mismatch(_))),
+        "{refused:?}"
+    );
+    Ok(())
+}

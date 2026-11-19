@@ -139,15 +139,15 @@ no Domain; the domain folder supplies only a catalog's login. A file changed
 here is kept, unless the revision changed it too: then that package is blocked,
 nothing of it changes, and the colliding files are listed. Each package read
 whole has its revision recorded in `data.lock.toml`, and `latest` is never
-moved. A lock from another host, user or folder is used only while every
-working folder is empty and it names no unpushed commits, and then fills each
-package at the revision it names; otherwise remove it. A revision some of
-whose files are gone from the bucket, or do not match their hash, changes
-nothing. Packages under `write`, `replace` and `sync` are left alone. It exits
-1 when any package was not read whole. Under
-`--json` it prints `dataspace`, `completed` and `entries`, each with
-`package`, `folder`, `outcome` (`read`, `incomplete`, `blocked`, `unpushed` or
-`failed`),
+moved. A working folder that is missing or empty is filled at the revision the
+lock names, unless `data.toml` names one, and the next `read` moves it on. A
+lock from another host, user or folder is used only while every working folder
+is empty and it names no unpushed commits; otherwise remove it. A revision
+some of whose files are gone from the bucket, or do not match their hash,
+changes nothing. Packages under `write`, `replace` and `sync` are left alone.
+It exits 1 when any package was not read whole. Under `--json` it prints
+`dataspace`, `completed` and `entries`, each with `package`, `folder`,
+`outcome` (`read`, `incomplete`, `blocked`, `unpushed` or `failed`),
 `completed`, `revision`, the `placed`, `removed`, `kept`, `skipped`,
 `hash_mismatch` and `conflicts` lists, and `error`.
 
