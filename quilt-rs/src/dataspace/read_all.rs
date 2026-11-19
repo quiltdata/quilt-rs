@@ -23,6 +23,7 @@ use crate::dataspace::read::read;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use quilt_uri::RevisionPointer;
+use quilt_uri::Tag;
 
 /// How one `read` entry's read ended.
 #[derive(Debug)]
@@ -99,9 +100,10 @@ impl From<LockError> for ReadAllError {
 /// A lock written for another `data.toml` is used: the contract was edited
 /// here. One written for another folder, host or user is used only while no
 /// entry's working folder holds files and it names no unpushed commits, and
-/// then each package it names is filled at its revision there; otherwise
-/// nothing is read or written. A read has no Domain, so the local registry a
-/// lock names is kept, not compared.
+/// then each package it names is filled at its revision there, unless the
+/// contract names one; otherwise nothing is read or written. A read has no
+/// Domain, so the local registry a lock names is not compared, and is kept
+/// unless the lock is another's.
 pub async fn read_all(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
@@ -112,16 +114,18 @@ pub async fn read_all(
     let mut fill_at_lock = false;
     let (mut lock, writer) = match Lock::read(storage, &contract).await? {
         Some(mut lock) => {
-            let writer = Writer {
+            let local = Writer {
                 local_registry: lock.header.writer.local_registry.clone(),
                 ..writer.clone()
             };
             let foreign: Vec<Mismatch> = lock
-                .mismatches(&contract, &writer)
+                .mismatches(&contract, &local)
                 .into_iter()
                 .filter(|mismatch| *mismatch != Mismatch::DataToml)
                 .collect();
-            if !foreign.is_empty() {
+            if foreign.is_empty() {
+                (lock, local)
+            } else {
                 let unpushed = lock
                     .packages
                     .values()
@@ -129,11 +133,12 @@ pub async fn read_all(
                 if unpushed || any_folder_holds_files(storage, &contract).await {
                     return Err(ReadAllError::Mismatch(foreign));
                 }
-                // A fresh checkout: filled here at the lock's revisions.
+                // A fresh checkout: filled here at the lock's revisions, and
+                // the lock becomes this one's.
                 lock.header.filled = None;
                 fill_at_lock = true;
+                (lock, writer.clone())
             }
-            (lock, writer)
         }
         None => (Lock::new(&contract, writer), writer.clone()),
     };
@@ -151,7 +156,11 @@ pub async fn read_all(
         } else {
             let base = locked.map(|locked| locked.base.as_str());
             let mut entry = entry.clone();
-            if fill_at_lock && let Some(base) = base {
+            // A revision the contract names wins over the lock's.
+            if fill_at_lock
+                && entry.revision == RevisionPointer::Tag(Tag::Latest)
+                && let Some(base) = base
+            {
                 entry.revision = RevisionPointer::Hash(base.to_string());
             }
             match read(storage, remote, &entry, base).await {

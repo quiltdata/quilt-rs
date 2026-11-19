@@ -344,7 +344,8 @@ fn at(base: &str) -> LockEntry {
 fn elsewhere() -> Writer {
     Writer {
         host: "elsewhere".to_string(),
-        ..writer()
+        user: "me".to_string(),
+        local_registry: "elsewhere".to_string(),
     }
 }
 
@@ -397,6 +398,29 @@ async fn a_lock_from_another_host_fills_a_checkout_that_holds_no_files_at_its_re
             .is_some_and(|filled| filled != long_ago()),
         "filled here, not where the lock was written"
     );
+    assert_eq!(lock.header.writer, writer(), "with nothing of the other's");
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_checkout_filled_from_another_hosts_lock_takes_a_revision_the_contract_names() -> Res {
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    publish(&remote, "team/raw", FIRST, &[("a.txt", b"alpha")]).await?;
+    publish(&remote, "team/raw", SECOND, &[("a.txt", b"ALPHA")]).await?;
+    let root = dataspace(&storage, "read = [\"team/raw\"]\n")?;
+    lock_from(&storage, &root, &elsewhere(), at(FIRST)).await?;
+    dataspace(
+        &storage,
+        &format!("read = [{{ package = \"team/raw\", revision = \"{SECOND}\" }}]\n"),
+    )?;
+
+    let read = read_all(&storage, &remote, &root, &writer()).await;
+
+    assert!(read.is_ok_and(|read| read.completed()));
+    assert_eq!(std::fs::read(root.join("team/raw/a.txt"))?, b"ALPHA");
+    let lock = lock(&storage, &root).await?.expect("a lock");
+    assert_eq!(base(&lock, "team/raw").as_deref(), Some(SECOND));
     Ok(())
 }
 
