@@ -74,14 +74,14 @@ impl TryFrom<&str> for LocalPackageUri {
             .and_then(|(_, rest)| rest.strip_prefix("//"))
             .and_then(|rest| rest.split(['#', '/', '?']).next())
             .unwrap_or_default();
+        let registry = (!written.is_empty()).then_some(written);
+        if let Some(name) = registry {
+            check_local_registry_name(name)?;
+        }
         if written != parsed_url.host_str().unwrap_or_default() {
             return Err(UriError::Package(format!(
                 "a local registry's name is all that comes between `//` and `#`: {input:?}"
             )));
-        }
-        let registry = (!written.is_empty()).then_some(written);
-        if let Some(name) = registry {
-            check_local_registry_name(name)?;
         }
         Ok(Self {
             registry: registry.map(str::to_owned),
