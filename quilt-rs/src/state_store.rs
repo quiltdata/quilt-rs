@@ -130,13 +130,13 @@ impl FolderKey {
 /// The path as the OS spells it: bytes on Unix, UTF-16 on Windows. Not
 /// `as_encoded_bytes`, whose encoding may change and must not be stored.
 #[cfg(unix)]
-fn os_bytes(path: &Path) -> Vec<u8> {
+pub(crate) fn os_bytes(path: &Path) -> Vec<u8> {
     use std::os::unix::ffi::OsStrExt;
     path.as_os_str().as_bytes().to_vec()
 }
 
 #[cfg(windows)]
-fn os_bytes(path: &Path) -> Vec<u8> {
+pub(crate) fn os_bytes(path: &Path) -> Vec<u8> {
     use std::os::windows::ffi::OsStrExt;
     path.as_os_str()
         .encode_wide()
@@ -146,13 +146,13 @@ fn os_bytes(path: &Path) -> Vec<u8> {
 
 #[cfg(unix)]
 #[allow(clippy::unnecessary_wraps, reason = "Windows can refuse the bytes")]
-fn os_path(bytes: &[u8]) -> Option<PathBuf> {
+pub(crate) fn os_path(bytes: &[u8]) -> Option<PathBuf> {
     use std::os::unix::ffi::OsStrExt;
     Some(PathBuf::from(std::ffi::OsStr::from_bytes(bytes)))
 }
 
 #[cfg(windows)]
-fn os_path(bytes: &[u8]) -> Option<PathBuf> {
+pub(crate) fn os_path(bytes: &[u8]) -> Option<PathBuf> {
     use std::os::windows::ffi::OsStringExt;
     let (pairs, rest) = bytes.as_chunks::<2>();
     if !rest.is_empty() {

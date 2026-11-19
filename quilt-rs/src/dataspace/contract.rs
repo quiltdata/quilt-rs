@@ -283,9 +283,7 @@ impl Contract {
             path: path.to_path_buf(),
             source: Box::new(source),
         };
-        let root = std::path::absolute(dataspace)
-            .map(|root| normalize(&root))
-            .map_err(|err| unreadable(dataspace, err.into()))?;
+        let root = dataspace_path(dataspace).map_err(|err| unreadable(dataspace, err.into()))?;
         let path = root.join(CONTRACT_FILE);
         let bytes = storage
             .read_bytes(&path)
@@ -966,6 +964,11 @@ async fn same_file(one: &Path, other: &Path) -> bool {
     })
     .await
     .unwrap_or(false)
+}
+
+/// The dataspace at `dataspace` as [`Contract::dataspace`] names it.
+pub(crate) fn dataspace_path(dataspace: &Path) -> std::io::Result<PathBuf> {
+    std::path::absolute(dataspace).map(|root| normalize(&root))
 }
 
 /// `path` with its `.` and `..` resolved by name, never by the file system.
