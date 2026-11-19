@@ -266,6 +266,37 @@ async fn a_time_toml_cannot_hold_is_an_error_and_the_header_is_kept() -> Res {
 }
 
 #[test(tokio::test)]
+async fn a_lock_the_reader_would_refuse_is_not_written() -> Res {
+    let storage = MockStorage::default();
+    let contract = dataspace(&storage, "rnaseq", CONTRACT).await?;
+    let mut lock = filled_lock(&contract);
+    lock.write(&storage, &contract, &writer()).await?;
+    let written = Lock::read(&storage, &contract).await?;
+
+    let mut short = lock.clone();
+    short.packages.get_mut(&key("team/raw")).unwrap().base = "abc123".to_string();
+    let mut unaddressable = lock.clone();
+    unaddressable.packages.insert(
+        key("team/raw@abc123"),
+        LockEntry {
+            base: BASE.to_string(),
+            commits: Vec::new(),
+        },
+    );
+    for (mut bad, expected) in [(short, "Hash"), (unaddressable, "Key")] {
+        let result = bad.write(&storage, &contract, &writer()).await;
+        let refused = match &result {
+            Err(LockError::Hash { .. }) => "Hash",
+            Err(LockError::Key { .. }) => "Key",
+            _ => "neither",
+        };
+        assert_eq!(refused, expected, "{result:?}");
+        assert_eq!(Lock::read(&storage, &contract).await?, written);
+    }
+    Ok(())
+}
+
+#[test(tokio::test)]
 async fn a_lock_of_another_version_is_refused() {
     assert!(matches!(
         read_text(&lock_text(2, "")).await,

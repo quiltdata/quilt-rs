@@ -197,6 +197,9 @@ fn raw(
         packages: packages
             .iter()
             .map(|(key, entry)| {
+                // What the reader would refuse is never written over a lock.
+                let text = key.to_string();
+                checked(&text, entry)?;
                 let raw = if entry.commits.is_empty() {
                     RawEntry::Base(entry.base.clone())
                 } else {
@@ -205,10 +208,29 @@ fn raw(
                         commits: entry.commits.clone(),
                     })
                 };
-                (key.to_string(), raw)
+                Ok((text, raw))
             })
-            .collect(),
+            .collect::<Result<_, LockError>>()?,
     })
+}
+
+/// The key `text` names, where it is a canonical package URI and the entry
+/// holds whole top hashes.
+fn checked(text: &str, entry: &LockEntry) -> Result<PackageKey, LockError> {
+    let key = text.parse().map_err(|source| LockError::Key {
+        key: text.to_string(),
+        source,
+    })?;
+    if let Some(hash) = std::iter::once(&entry.base)
+        .chain(&entry.commits)
+        .find(|hash| !is_top_hash(hash))
+    {
+        return Err(LockError::Hash {
+            package: text.to_string(),
+            hash: hash.clone(),
+        });
+    }
+    Ok(key)
 }
 
 /// Why a lock could not be read or written.
@@ -286,20 +308,8 @@ fn parse(bytes: &[u8]) -> Result<Lock, LockError> {
             RawEntry::Base(base) => (base, Vec::new()),
             RawEntry::Commits(RawCommits { base, commits }) => (base, commits),
         };
-        let key = match text.parse() {
-            Ok(key) => key,
-            Err(source) => return Err(LockError::Key { key: text, source }),
-        };
-        if let Some(hash) = std::iter::once(&base)
-            .chain(&commits)
-            .find(|hash| !is_top_hash(hash))
-        {
-            return Err(LockError::Hash {
-                package: text,
-                hash: hash.clone(),
-            });
-        }
-        packages.insert(key, LockEntry { base, commits });
+        let entry = LockEntry { base, commits };
+        packages.insert(checked(&text, &entry)?, entry);
     }
     Ok(Lock {
         header: LockHeader {
