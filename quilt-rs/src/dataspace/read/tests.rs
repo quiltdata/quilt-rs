@@ -566,6 +566,22 @@ async fn a_key_renamed_only_in_case_keeps_its_file() -> Res {
 }
 
 #[test(tokio::test)]
+async fn a_key_renamed_in_case_and_changed_takes_the_revisions_version() -> Res {
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    let entry = whole();
+    publish(&remote, FIRST, &[("data.csv", b"v1")]).await?;
+    read(&storage, &remote, &entry, None).await?;
+    publish(&remote, SECOND, &[("Data.csv", b"v2")]).await?;
+
+    let outcome = read(&storage, &remote, &entry, Some(FIRST)).await?;
+
+    assert_eq!(outcome.lock_base(), Some(SECOND));
+    assert_eq!(text(&storage, "Data.csv").await.as_deref(), Some("v2"));
+    Ok(())
+}
+
+#[test(tokio::test)]
 async fn a_file_renamed_locally_to_the_revisions_spelling_is_kept() -> Res {
     let remote = MockRemote::default();
     let storage = MockStorage::default();

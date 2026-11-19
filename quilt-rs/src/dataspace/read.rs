@@ -276,14 +276,27 @@ async fn plan<'a>(
     // that ignores case, a key renamed only in case finds the old key's file,
     // which removing the old key would delete.
     let mut found = BTreeMap::new();
+    let had_folded: BTreeMap<String, &ManifestRow> = had
+        .iter()
+        .map(|(key, row)| (key.to_string_lossy().to_lowercase(), *row))
+        .collect();
     for (key, want) in &wanted {
         let path = key.join_to(folder);
-        let had = had.get(key).copied();
         let algorithm = want.hash.algorithm();
         let disk = OnDisk::read(storage, &path, algorithm).await?;
+        let any_case = key.to_string_lossy().to_lowercase();
         if !matches!(disk, OnDisk::Nothing) {
-            found.insert(key.to_string_lossy().to_lowercase(), *key);
+            found.insert(any_case.clone(), *key);
         }
+        // Where the disk found this key under the base's other spelling, that
+        // spelling's row is what the file was read as.
+        let had = match had.get(key) {
+            Some(row) => Some(*row),
+            None if !matches!(disk, OnDisk::Nothing) && !listed(storage, folder, key).await? => {
+                had_folded.get(&any_case).copied()
+            }
+            None => None,
+        };
         if matches!(disk, OnDisk::Nothing) && folder_blocked(storage, folder, &path).await {
             plan.conflicts.push(key.to_path_buf());
         } else if matches!(disk, OnDisk::Nothing) {
