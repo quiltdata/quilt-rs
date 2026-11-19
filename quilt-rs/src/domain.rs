@@ -39,13 +39,14 @@ impl DomainRoot {
     /// The Package Store of `bucket`. A name that is no bucket name, even
     /// under S3's legacy rule, is refused, so no bucket can name a folder
     /// outside `registries/` or one of the `@` stores beside the buckets. So
-    /// is a legacy name with a capital letter: on a drive that ignores case
-    /// it would share its folder with another bucket.
+    /// is a legacy name with a capital letter or a trailing `.`, whose folder
+    /// a drive that ignores case, or Windows, would share with another
+    /// bucket's.
     pub fn registry(&self, bucket: &str) -> Res<RegistryStore> {
         check_bucket(bucket)?;
-        if bucket.bytes().any(|b| b.is_ascii_uppercase()) {
+        if bucket.bytes().any(|b| b.is_ascii_uppercase()) || bucket.ends_with('.') {
             return Err(UriError::Bucket(format!(
-                "a bucket named with capital letters has no Package Store; got {bucket:?}"
+                "a bucket named with capital letters or a trailing `.` has no Package Store; got {bucket:?}"
             ))
             .into());
         }
@@ -182,12 +183,14 @@ mod tests {
         }
     }
 
-    /// A legacy bucket named in capitals would share `mybucket`'s folder on
-    /// a drive that ignores case, so it has no store; one in lowercase has.
+    /// Legacy buckets whose folder a drive would merge with `mybucket`'s,
+    /// by ignoring case or, on Windows, a trailing dot, have no store; other
+    /// legacy names have one.
     #[test]
-    fn a_bucket_named_in_capitals_has_no_store() {
+    fn a_bucket_a_drive_would_merge_with_another_has_no_store() {
         let root = DomainRoot::new("/data");
         assert!(root.registry("MyBucket").is_err());
+        assert!(root.registry("mybucket.").is_err());
         assert!(root.registry("my_legacy.bucket").is_ok());
     }
 
