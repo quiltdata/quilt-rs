@@ -65,7 +65,13 @@ impl TryFrom<&str> for LocalPackageUri {
                 "a local package has no catalog".to_string(),
             ));
         }
-        let registry = parsed_url.host_str();
+        // As written: the URL parser drops an empty user or port, and tabs
+        // and newlines, which would leave a different name passing the check.
+        let written = input
+            .split_once("://")
+            .and_then(|(_, rest)| rest.split(['#', '/', '?']).next())
+            .unwrap_or_default();
+        let registry = (!written.is_empty()).then_some(written);
         if let Some(name) = registry {
             check_local_registry_name(name)?;
         }
@@ -165,6 +171,10 @@ mod tests {
             "quilt+local://ernest_mbp#package=me/a",
             "quilt+local://ernest%20mbp#package=me/a",
             "quilt+local://ernest@local#package=me/a",
+            "quilt+local://@name#package=me/a",
+            "quilt+local://name:#package=me/a",
+            "quilt+local://na\tme#package=me/a",
+            "quilt+local://na\nme#package=me/a",
         ] {
             assert!(
                 LocalPackageUri::try_from(input).is_err(),
