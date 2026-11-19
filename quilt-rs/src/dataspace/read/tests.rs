@@ -446,6 +446,31 @@ async fn a_file_edited_while_the_revision_downloads_stops_the_read_before_any_ch
 }
 
 #[test(tokio::test)]
+async fn a_dropped_file_deleted_while_the_revision_downloads_is_not_reported_removed() -> Res {
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    let entry = whole();
+    publish(&remote, FIRST, &[("a.txt", b"v1"), ("gone.txt", b"old")]).await?;
+    read(&storage, &remote, &entry, None).await?;
+    publish(&remote, SECOND, &[("a.txt", b"v2")]).await?;
+    let download = remote.park(&row("a.txt", b"v2").physical_key);
+    let delete = async {
+        download.arrived().await;
+        storage.remove_file(folder().join("gone.txt")).await?;
+        download.release();
+        Ok::<_, std::io::Error>(())
+    };
+
+    let (outcome, deleted) = tokio::join!(read(&storage, &remote, &entry, Some(FIRST)), delete);
+    deleted?;
+
+    let report = report(outcome?);
+    assert_eq!(report.removed, Vec::<PathBuf>::new());
+    assert_eq!(report.placed, keys(&["a.txt"]));
+    Ok(())
+}
+
+#[test(tokio::test)]
 async fn a_metadata_file_edited_while_the_revision_downloads_is_left_as_it_is() -> Res {
     let remote = MockRemote::default();
     let storage = MockStorage::default();

@@ -156,6 +156,9 @@ impl OnDisk {
 ///
 /// A failure after the first rename leaves the files already placed; the
 /// lock, which moves only on [`ReadOutcome::lock_base`], still names `base`.
+/// A call dropped before it returns, such as a cancelled task, leaves its
+/// `.quilt-read-*` staging folder, or a `package-metadata.json.tmp-*` file,
+/// in the working folder; either is safe to delete.
 pub async fn read(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
@@ -524,10 +527,10 @@ async fn apply(
             report.placed.push(key.to_path_buf());
         } else {
             match storage.remove_file(&path).await {
+                Ok(()) => report.removed.push(key.to_path_buf()),
                 Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-                removed => removed.map_err(crate::Error::from)?,
+                Err(err) => return Err(crate::Error::from(err).into()),
             }
-            report.removed.push(key.to_path_buf());
         }
     }
     Ok(true)
