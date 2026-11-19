@@ -12,6 +12,9 @@ WASM-safe leaf crate: pure types and string parsing, no I/O.
   prefix of 6 to 63 (`RevisionPointer::HashPrefix`). Parsing never asks the
   network which revision a prefix names; `quilt-rs` resolves it against the
   registry, and the resolved address carries the whole hash.
+- `LocalPackageUri` — `quilt+local://<name>#package=prefix/name`, a package
+  in the local registry named `<name>`, with the same revision and path.
+  `quilt+local://#…`, with no name, is this machine's local registry.
 - `S3PackageHandle` — package without a revision (`bucket` + `prefix/name`).
 - `ManifestUri` — points to an immutable manifest by hash.
 - `TagUri` — points to a tag file (`latest` or a timestamp) that

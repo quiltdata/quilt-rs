@@ -1,0 +1,212 @@
+use std::fmt;
+use std::path::PathBuf;
+
+use url::Url;
+
+use crate::Namespace;
+use crate::RevisionPointer;
+use crate::UriError;
+use crate::package::COPY_VALUE;
+use crate::package::parse_after_authority;
+use crate::package::render_fragment;
+
+/// A local registry's name: one or more ASCII letters, digits, `-` or `.`,
+/// the characters of a host name.
+///
+/// # Errors
+///
+/// Returns [`UriError::Package`] for any other name.
+pub fn check_local_registry_name(name: &str) -> Result<(), UriError> {
+    let valid = !name.is_empty()
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.'));
+    if valid {
+        Ok(())
+    } else {
+        Err(UriError::Package(format!(
+            "a local registry's name is letters, digits, `-` and `.`; got {name:?}"
+        )))
+    }
+}
+
+/// A package in a local registry: `quilt+local://<name>#package=owner/name`,
+/// with a revision and a path as in [`S3PackageUri`](crate::S3PackageUri). A
+/// local package has no catalog.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LocalPackageUri {
+    /// The registry's name. `None` for `quilt+local://#…`, which names this
+    /// machine's local registry.
+    pub registry: Option<String>,
+    pub namespace: Namespace,
+    pub revision: RevisionPointer,
+    pub path: Option<PathBuf>,
+}
+
+impl TryFrom<&str> for LocalPackageUri {
+    type Error = UriError;
+
+    fn try_from(input: &str) -> Result<Self, Self::Error> {
+        let parsed_url = Url::parse(input)?;
+        if parsed_url.scheme() != "quilt+local" {
+            return Err(UriError::Package(format!(
+                "expected quilt+local, got {}",
+                parsed_url.scheme()
+            )));
+        }
+        if !parsed_url.has_authority() {
+            return Err(UriError::Package(format!(
+                "a local package URI starts `quilt+local://`: {input}"
+            )));
+        }
+        let fragment = parse_after_authority(&parsed_url, input, "local", "the registry's name")?;
+        if fragment.catalog.is_some() {
+            return Err(UriError::Package(
+                "a local package has no catalog".to_string(),
+            ));
+        }
+        let registry = parsed_url.host_str();
+        if let Some(name) = registry {
+            check_local_registry_name(name)?;
+        }
+        Ok(Self {
+            registry: registry.map(str::to_owned),
+            namespace: fragment.namespace.try_into()?,
+            revision: fragment.revision,
+            path: fragment.path,
+        })
+    }
+}
+
+impl std::str::FromStr for LocalPackageUri {
+    type Err = UriError;
+
+    fn from_str(input: &str) -> Result<Self, Self::Err> {
+        Self::try_from(input)
+    }
+}
+
+/// The whole hash, and every fragment value escaped, as
+/// [`S3PackageUri`](crate::S3PackageUri) writes it.
+impl fmt::Display for LocalPackageUri {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let fragment = render_fragment(
+            &self.namespace,
+            &self.revision,
+            self.path.as_deref(),
+            None,
+            true,
+            COPY_VALUE,
+        );
+        write!(
+            f,
+            "quilt+local://{}#{fragment}",
+            self.registry.as_deref().unwrap_or_default()
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::Tag;
+    use crate::fixtures;
+
+    /// Two slashes and no name: this machine's local registry.
+    #[test]
+    fn an_empty_authority_names_this_machine() {
+        let expected = LocalPackageUri {
+            registry: None,
+            namespace: ("me", "analysis").into(),
+            revision: RevisionPointer::Tag(Tag::Latest),
+            path: None,
+        };
+        assert_eq!(
+            LocalPackageUri::try_from("quilt+local://#package=me/analysis"),
+            Ok(expected.clone())
+        );
+        assert_eq!(expected.to_string(), "quilt+local://#package=me/analysis");
+    }
+
+    #[test]
+    fn a_named_registry_parses_and_round_trips() {
+        let input = format!(
+            "quilt+local://ernest-mbp.lan#package=me/analysis@{}&path=data/a%26b.csv",
+            fixtures::TOP_HASH
+        );
+        let expected = LocalPackageUri {
+            registry: Some("ernest-mbp.lan".to_string()),
+            namespace: ("me", "analysis").into(),
+            revision: RevisionPointer::Hash(fixtures::TOP_HASH.to_string()),
+            path: Some(PathBuf::from("data/a&b.csv")),
+        };
+        assert_eq!(
+            LocalPackageUri::try_from(input.as_str()),
+            Ok(expected.clone())
+        );
+        assert_eq!(expected.to_string(), input);
+    }
+
+    /// The name is kept as written, so it can be compared with the one the
+    /// registry keeps.
+    #[test]
+    fn a_name_keeps_its_case() {
+        let uri = LocalPackageUri::try_from("quilt+local://Ernest-MBP#package=me/a");
+        assert_eq!(
+            uri.map(|uri| uri.registry),
+            Ok(Some("Ernest-MBP".to_string()))
+        );
+    }
+
+    #[test]
+    fn a_name_outside_host_name_characters_is_refused() {
+        for input in [
+            "quilt+local://ernest_mbp#package=me/a",
+            "quilt+local://ernest%20mbp#package=me/a",
+            "quilt+local://ernest@local#package=me/a",
+        ] {
+            assert!(
+                LocalPackageUri::try_from(input).is_err(),
+                "{input} should not parse"
+            );
+        }
+        for name in ["", "a_b", "a b", "a/b", "@local"] {
+            assert!(check_local_registry_name(name).is_err(), "{name:?}");
+        }
+        for name in ["a", "ernest-mbp", "Ernest-MBP.local", "10.0.0.1"] {
+            assert!(check_local_registry_name(name).is_ok(), "{name:?}");
+        }
+    }
+
+    /// No path follows the name, three slashes included, and the URI needs
+    /// its `//`.
+    #[test]
+    fn only_a_name_comes_before_the_fragment() {
+        for input in [
+            "quilt+local:///#package=me/a",
+            "quilt+local://name/#package=me/a",
+            "quilt+local://name:1#package=me/a",
+            "quilt+local://name?x#package=me/a",
+            "quilt+local:#package=me/a",
+            "quilt+local://name",
+        ] {
+            let err =
+                LocalPackageUri::try_from(input).expect_err(&format!("{input} should not parse"));
+            assert!(matches!(err, UriError::Package(_)), "{input}: {err}");
+        }
+    }
+
+    #[test]
+    fn a_local_package_has_no_catalog() {
+        assert!(
+            LocalPackageUri::try_from("quilt+local://name#package=me/a&catalog=quilt.test")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn another_scheme_is_refused() {
+        assert!(LocalPackageUri::try_from("quilt+s3://bucket#package=me/a").is_err());
+    }
+}
