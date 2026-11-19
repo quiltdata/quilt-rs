@@ -280,7 +280,7 @@ pub(crate) async fn push_package_impl(
     debug!("✔️ Timestamp tag added");
 
     debug!("⏳ Checking remote's latest manifest hash");
-    let latest = read_latest(remote, new_manifest_uri.origin.as_ref(), &manifest_uri).await?;
+    let latest = read_latest(remote, new_manifest_uri.origin.as_ref(), &new_manifest_uri).await?;
     if latest == LatestSeen::Absent {
         debug!("✔️ No existing latest tag — first push for this package");
     }
