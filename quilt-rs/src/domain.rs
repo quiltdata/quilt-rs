@@ -11,6 +11,7 @@ use std::path::PathBuf;
 use crate::Res;
 use crate::flow::PackageStore;
 use quilt_uri::Namespace;
+use quilt_uri::UriError;
 use quilt_uri::check_bucket;
 
 /// The Domain's folder name in the OS's local data folder.
@@ -37,9 +38,17 @@ impl DomainRoot {
 
     /// The Package Store of `bucket`. A name that is no bucket name, even
     /// under S3's legacy rule, is refused, so no bucket can name a folder
-    /// outside `registries/` or one of the `@` stores beside the buckets.
+    /// outside `registries/` or one of the `@` stores beside the buckets. So
+    /// is a legacy name with a capital letter: on a drive that ignores case
+    /// it would share its folder with another bucket.
     pub fn registry(&self, bucket: &str) -> Res<RegistryStore> {
         check_bucket(bucket)?;
+        if bucket.bytes().any(|b| b.is_ascii_uppercase()) {
+            return Err(UriError::Bucket(format!(
+                "a bucket named with capital letters has no Package Store; got {bucket:?}"
+            ))
+            .into());
+        }
         Ok(RegistryStore {
             bucket: bucket.to_string(),
             dir: self.root.join(REGISTRIES_DIR).join(bucket),
@@ -171,6 +180,15 @@ mod tests {
         for name in ["@local", "..", "a/b", r"a\b", ""] {
             assert!(root.registry(name).is_err(), "{name:?} is refused");
         }
+    }
+
+    /// A legacy bucket named in capitals would share `mybucket`'s folder on
+    /// a drive that ignores case, so it has no store; one in lowercase has.
+    #[test]
+    fn a_bucket_named_in_capitals_has_no_store() {
+        let root = DomainRoot::new("/data");
+        assert!(root.registry("MyBucket").is_err());
+        assert!(root.registry("my_legacy.bucket").is_ok());
     }
 
     /// One package recorded into two buckets' stores: each store holds its
