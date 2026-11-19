@@ -242,8 +242,9 @@ impl RegistryStore {
     /// `installed/` whose top hash the bucket holds, and every object that
     /// no other manifest uses. A manifest the bucket lacks, such as an
     /// unpushed commit, is kept with its objects. Clears nothing if the
-    /// bucket cannot be asked about every manifest, as when offline, or
-    /// while another writer holds the lock of a package the store already
+    /// bucket cannot be asked about every manifest, as when offline, if
+    /// there is no manifest to ask about, or while another writer holds the
+    /// lock of a package the store already
     /// has; a package first written meanwhile is not protected, as in
     /// `flow::gc`.
     pub async fn clear_published(
@@ -272,6 +273,10 @@ impl RegistryStore {
         manifests.retain(|(hash, _, _)| is_top_hash(hash));
 
         let hashes: BTreeSet<&String> = manifests.iter().map(|(hash, _, _)| hash).collect();
+        // With no answer from the bucket, nothing shows it can be reached.
+        if hashes.is_empty() {
+            return Ok(GcReport::default());
+        }
         let mut published = BTreeSet::new();
         for hash in hashes {
             let manifest = S3Uri {
@@ -608,6 +613,27 @@ mod tests {
 
         assert!(objects[0].exists());
         assert!(older.exists(), "the second copy's object is kept");
+        Ok(())
+    }
+
+    /// Objects with no manifest, as a record killed before its manifest
+    /// leaves, are kept when there is nothing to ask the bucket about: an
+    /// unreachable bucket would go unnoticed.
+    #[test(tokio::test)]
+    async fn clearing_a_store_with_no_manifest_clears_nothing() -> Res {
+        let dir = tempfile::tempdir()?;
+        let store = DomainRoot::new(dir.path()).registry("bucket")?;
+        let storage = LocalStorage::new();
+        let orphan = store.objects_dir().join("orphan");
+        std::fs::create_dir_all(store.objects_dir())?;
+        std::fs::write(&orphan, b"x")?;
+
+        let report = store
+            .clear_published(&storage, &MockRemote::default(), None)
+            .await?;
+
+        assert!(orphan.exists());
+        assert!(report.is_empty());
         Ok(())
     }
 
