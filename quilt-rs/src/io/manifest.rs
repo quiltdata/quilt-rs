@@ -52,6 +52,15 @@ use quilt_uri::TagUri;
 use quilt_uri::UriError;
 use quilt_uri::is_top_hash;
 
+/// Reads the manifest `manifest_uri` names from the remote, with no cache.
+pub(crate) async fn fetch_jsonl(remote: &impl Remote, manifest_uri: &ManifestUri) -> Res<Manifest> {
+    let s3_uri: S3Uri = manifest_uri.clone().into();
+    let contents = remote
+        .get_object_stream(manifest_uri.origin.as_ref(), &s3_uri)
+        .await?;
+    Manifest::from_reader(contents.body.into_async_read()).await
+}
+
 pub(crate) async fn bytestream_to_string(bytestream: ByteStream) -> Res<String> {
     let mut reader = bytestream.into_async_read();
     let mut contents = Vec::new();

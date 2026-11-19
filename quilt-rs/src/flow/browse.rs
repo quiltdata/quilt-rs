@@ -6,20 +6,12 @@ use tracing::warn;
 use crate::Error;
 use crate::Res;
 use crate::error::ManifestError;
+use crate::io::manifest::fetch_jsonl;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::manifest::Manifest;
 use crate::paths::DomainPaths;
 use quilt_uri::ManifestUri;
-use quilt_uri::S3Uri;
-
-async fn fetch_jsonl(remote: &impl Remote, manifest_uri: &ManifestUri) -> Res<Manifest> {
-    let s3_uri: S3Uri = manifest_uri.clone().into();
-    let contents = remote
-        .get_object_stream(manifest_uri.origin.as_ref(), &s3_uri)
-        .await?;
-    Manifest::from_reader(contents.body.into_async_read()).await
-}
 
 async fn fetch_and_cache(
     storage: &(impl Storage + Sync),
@@ -120,6 +112,7 @@ mod tests {
     use crate::io::storage::LocalStorage;
     use crate::io::storage::StorageExt;
     use crate::io::storage::mocks::MockStorage;
+    use quilt_uri::S3Uri;
 
     /// Verifies that when a manifest is already cached,
     /// the `browse_remote_manifest` function retrieves it from the cache

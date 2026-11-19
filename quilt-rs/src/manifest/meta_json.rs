@@ -163,6 +163,17 @@ impl RawNumbers {
         )
     }
 
+    /// The numbers at or under `from`, moved to sit at or under `to`.
+    pub(crate) fn moved(&self, from: &str, to: &str) -> Self {
+        Self(
+            self.0
+                .iter()
+                .filter(|(pointer, _)| Self::at_or_under(pointer, from))
+                .map(|(pointer, text)| (format!("{to}{}", &pointer[from.len()..]), text.clone()))
+                .collect(),
+        )
+    }
+
     /// The text to write for `number` at `pointer`, when one is kept and
     /// still describes it.
     fn text_for(&self, pointer: &str, number: &Number) -> Option<&str> {
@@ -253,7 +264,7 @@ fn write_string(out: &mut String, s: &str, style: Style) {
     }
 }
 
-fn escape_pointer(key: &str) -> String {
+pub(crate) fn escape_pointer(key: &str) -> String {
     key.replace('~', "~0").replace('/', "~1")
 }
 

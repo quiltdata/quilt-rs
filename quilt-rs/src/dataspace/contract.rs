@@ -196,6 +196,18 @@ impl Paths {
         Some(Self::Only(union))
     }
 
+    /// Whether `key` is a file these paths cover.
+    #[must_use]
+    pub fn covers(&self, key: &LogicalKey) -> bool {
+        match self {
+            Self::Whole => true,
+            Self::Only(paths) => paths.iter().any(|path| match path {
+                PackagePath::Folder(folder) => folder.is_folder_of(key),
+                PackagePath::File(file) => file == key,
+            }),
+        }
+    }
+
     fn overlaps(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Only(ours), Self::Only(theirs)) => ours
