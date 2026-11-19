@@ -618,13 +618,34 @@ fn a_registry_field_that_is_neither_spelling_is_refused() {
         r#"read = [{ registry = "quilt+local://lab_mac", package = "me/analysis" }]"#,
         r#"read = [{ registry = "quilt+local:lab-mac", package = "me/analysis" }]"#,
         r#"read = [{ registry = "local://lab-mac", package = "me/analysis" }]"#,
+        r#"read = [{ registry = "quilt+local://--", package = "me/analysis" }]"#,
+        r#"read = ["quilt+local://--#package=me/analysis"]"#,
+        r#"read = ["QUILT+LOCAL://lab-mac#package=me/analysis"]"#,
     ] {
         let problem = entry_problem(&with_defaults(list));
         assert!(
-            matches!(problem, EntryProblem::Registry(_)),
+            matches!(problem, EntryProblem::Registry(_) | EntryProblem::Uri(_)),
             "{list}: {problem}"
         );
     }
+    // This machine's name is held to the same rule as one written.
+    let text = with_defaults(r#"read = ["quilt+local://#package=me/analysis"]"#);
+    let read = Contract::parse(
+        text.as_bytes(),
+        Path::new(ROOT),
+        FolderCase::Sensitive,
+        Some("../x"),
+    );
+    assert!(
+        matches!(
+            read,
+            Err(ContractError::Entry {
+                problem: EntryProblem::Registry(_),
+                ..
+            })
+        ),
+        "{read:?}"
+    );
 }
 
 #[test]

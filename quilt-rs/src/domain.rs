@@ -600,7 +600,7 @@ fn name_from_host(host: &str) -> Option<String> {
 
 /// A name a local registry may keep: a valid name in a URI, holding at
 /// least one letter or digit.
-fn check_name(name: &str) -> Res {
+pub(crate) fn check_name(name: &str) -> Res {
     quilt_uri::check_local_registry_name(name)?;
     if !name.bytes().any(|b| b.is_ascii_alphanumeric()) {
         return Err(UriError::Package(format!(

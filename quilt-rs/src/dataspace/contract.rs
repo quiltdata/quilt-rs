@@ -34,7 +34,6 @@ use quilt_uri::TOP_HASH_LEN;
 use quilt_uri::Tag;
 use quilt_uri::UriError;
 use quilt_uri::check_bucket;
-use quilt_uri::check_local_registry_name;
 use quilt_uri::is_top_hash;
 
 /// The contract's file name, in the dataspace's folder.
@@ -136,6 +135,9 @@ impl FromStr for PackageKey {
     fn from_str(text: &str) -> Result<Self, UriError> {
         let uri = parse_uri(text, None).map_err(|problem| match problem {
             EntryProblem::Uri(err) => err,
+            EntryProblem::NoLocalRegistry => {
+                UriError::Package(format!("a package's key names its registry: {text:?}"))
+            }
             other => UriError::Package(format!("{other}: {text:?}")),
         })?;
         let key = Self {
@@ -752,15 +754,19 @@ fn agree<T: PartialEq>(
 
 /// Whether `text` is a `quilt+local:` URI, its scheme in any case.
 fn is_local(text: &str) -> bool {
-    text.get(.."quilt+local:".len())
-        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("quilt+local:"))
+    text.starts_with("quilt+local:")
 }
 
-/// The local registry `name` names, this machine's where it is empty.
+/// The local registry `name` names, this machine's where it is empty, held to
+/// the names a local registry can keep.
 fn local(name: Option<String>, local_registry: Option<&str>) -> Result<Registry, EntryProblem> {
-    name.or_else(|| local_registry.map(str::to_string))
-        .map(Registry::Local)
-        .ok_or(EntryProblem::NoLocalRegistry)
+    let name = name
+        .or_else(|| local_registry.map(str::to_string))
+        .ok_or(EntryProblem::NoLocalRegistry)?;
+    match crate::domain::check_name(&name) {
+        Ok(()) => Ok(Registry::Local(name)),
+        Err(_) => Err(EntryProblem::Registry(format!("quilt+local://{name}"))),
+    }
 }
 
 /// What a package URI in a contract names.
@@ -820,10 +826,8 @@ fn parse_registry(text: &str, local_registry: Option<&str>) -> Result<Registry, 
     }
     match text.strip_prefix("quilt+local://") {
         Some("") => local(None, local_registry),
-        Some(name) if check_local_registry_name(name).is_ok() => {
-            Ok(Registry::Local(name.to_string()))
-        }
-        _ => Err(EntryProblem::Registry(text.to_string())),
+        Some(name) => local(Some(name.to_string()), local_registry),
+        None => Err(EntryProblem::Registry(text.to_string())),
     }
 }
 

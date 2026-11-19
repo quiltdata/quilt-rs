@@ -61,7 +61,8 @@ CREATE TABLE stat_walk (
 );
 ",
     // Stat records gain the registry and the folder, which earlier ones lack,
-    // so they are dropped. `registry` is the bucket, or '' for none; `folder`
+    // so they are dropped. `registry` is the bucket, `<name>@local` for a
+    // local registry, or '' for none; `folder`
     // is the path as the OS spells it, so no two paths share one. Keys start with the
     // folder, which a full walk clears of other buckets by.
     "
