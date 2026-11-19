@@ -199,8 +199,8 @@ async fn tag_stored(
     {
         LatestAdvance::Moved {
             latest: Some(latest),
-        } => Err(not_latest(latest)),
-        LatestAdvance::Moved { latest: None } => Err(PackageOpError::PushTagFailed {
+        } if Some(&latest) != target.parent.as_ref() => Err(not_latest(latest)),
+        LatestAdvance::Moved { .. } => Err(PackageOpError::PushTagFailed {
             top_hash: manifest_uri.hash,
             reason: "latest changed while this push ran".to_string(),
         }
@@ -649,6 +649,45 @@ mod tests {
         assert_eq!(latest, SOMEONE_ELSE);
         assert_eq!(read(&remote, LATEST).await?, SOMEONE_ELSE);
         assert_eq!(revisions(&remote).await?, vec![top_hash]);
+        Ok(())
+    }
+
+    /// `latest` is absent when read and set to the push's own parent before
+    /// the write: not a revision it lost to, so the push names its stored
+    /// revision rather than a `PushedNotLatest` naming the parent.
+    #[test(tokio::test)]
+    async fn a_latest_set_to_the_parent_during_the_push_names_the_stored_revision() -> Res {
+        let remote = MockRemote::default();
+        let files = BTreeMap::from([(key("a.txt"), RowContent::Bytes(Bytes::from_static(b"hi")))]);
+        let target = target(Some(PARENT));
+        let read_gate = remote.park(LATEST);
+        let compete = async {
+            read_gate.arrived().await;
+            let write_gate = remote.park(LATEST);
+            read_gate.release();
+            write_gate.arrived().await;
+            seed_latest(&remote, PARENT).await?;
+            write_gate.release();
+            Ok::<_, Error>(())
+        };
+
+        let (pushed, competed) = tokio::join!(
+            push_files(
+                &remote.storage,
+                &remote,
+                &target,
+                manifest(vec![bare_row("a.txt")]),
+                &files,
+            ),
+            compete
+        );
+        competed?;
+
+        let Err(Error::PackageOp(PackageOpError::PushTagFailed { top_hash, .. })) = pushed else {
+            panic!("expected PushTagFailed, got {pushed:?}");
+        };
+        assert_eq!(revisions(&remote).await?, vec![top_hash]);
+        assert_eq!(read(&remote, LATEST).await?, PARENT);
         Ok(())
     }
 
