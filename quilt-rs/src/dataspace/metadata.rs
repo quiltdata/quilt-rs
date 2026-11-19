@@ -18,12 +18,14 @@ pub const METADATA_FILE: &str = "package-metadata.json";
 
 const PACKAGE_KEY: &str = ".";
 
-/// Whether a row is at the metadata file's place or inside a folder there,
-/// compared ignoring case, which a working folder's disk may do.
+/// Whether a row or a folder's metadata is at the metadata file's place or
+/// inside a folder there, compared ignoring case, which a working folder's
+/// disk may do.
 pub(crate) fn holds_metadata_file(manifest: &Manifest) -> bool {
-    manifest.rows.iter().any(|row| {
-        row.logical_key
-            .to_str()
+    let rows = manifest.rows.iter().map(|row| &row.logical_key);
+    let folders = manifest.dir_meta.iter().map(|dir| &dir.logical_key);
+    rows.chain(folders).any(|key| {
+        key.to_str()
             .and_then(|key| key.split('/').next())
             .is_some_and(|first| first.eq_ignore_ascii_case(METADATA_FILE))
     })

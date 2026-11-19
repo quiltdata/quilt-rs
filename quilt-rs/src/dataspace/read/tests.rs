@@ -180,6 +180,22 @@ async fn a_package_holding_anything_at_the_metadata_files_place_is_refused() -> 
         );
         assert_eq!(text(&storage, "a.txt").await, None);
     }
+
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    let mut manifest = publish(&remote, FIRST, &[("a.txt", b"alpha")]).await?;
+    manifest.dir_meta = vec![crate::manifest::DirMeta::new(
+        LogicalKey::new(METADATA_FILE)?,
+        serde_json::json!({"note": "a folder"}),
+    )];
+    put_manifest(&remote, FIRST, &manifest).await?;
+
+    let folder_meta = read(&storage, &remote, &whole(), None).await;
+
+    assert!(
+        matches!(folder_meta, Err(EntryError::HoldsMetadataFile)),
+        "folder metadata: {folder_meta:?}"
+    );
     Ok(())
 }
 
@@ -368,7 +384,7 @@ async fn the_metadata_file_is_compared_like_any_other_file() -> Res {
 }
 
 #[test(tokio::test)]
-async fn a_file_whose_bytes_are_gone_leaves_the_lock_where_it_was() -> Res {
+async fn a_revision_some_of_whose_bytes_are_gone_changes_nothing() -> Res {
     let remote = MockRemote::default();
     let storage = MockStorage::default();
     publish(&remote, FIRST, &[("a.txt", b"alpha")]).await?;
@@ -385,12 +401,19 @@ async fn a_file_whose_bytes_are_gone_leaves_the_lock_where_it_was() -> Res {
     manifest.rows = vec![row("a.txt", b"alpha"), replaced];
     put_manifest(&remote, FIRST, &manifest).await?;
 
-    let outcome = read(&storage, &remote, &whole(), None).await?;
+    let outcome = read(&storage, &remote, &whole(), None).await;
 
-    assert_eq!(outcome.lock_base(), None);
-    let report = report(outcome);
-    assert_eq!(report.skipped, keys(&["b.txt"]));
-    assert_eq!(report.placed, keys(&["a.txt", METADATA_FILE]));
+    assert!(
+        matches!(
+            &outcome,
+            Ok(ReadOutcome::Read(report))
+                if report.skipped == keys(&["b.txt"]) && report.placed.is_empty()
+        ),
+        "{outcome:?}"
+    );
+    assert_eq!(outcome?.lock_base(), None);
+    assert_eq!(text(&storage, "a.txt").await, None);
+    assert_eq!(text(&storage, METADATA_FILE).await, None);
     Ok(())
 }
 
@@ -495,14 +518,62 @@ async fn a_key_renamed_only_in_case_keeps_its_file() -> Res {
     let remote = MockRemote::default();
     let storage = MockStorage::default();
     let entry = whole();
-    publish(&remote, FIRST, &[("data.csv", b"rows")]).await?;
+    publish(
+        &remote,
+        FIRST,
+        &[("data.csv", b"rows"), ("sub/a.csv", b"a")],
+    )
+    .await?;
     read(&storage, &remote, &entry, None).await?;
-    publish(&remote, SECOND, &[("Data.csv", b"rows")]).await?;
+    publish(
+        &remote,
+        SECOND,
+        &[("Data.csv", b"rows"), ("Sub/a.csv", b"a")],
+    )
+    .await?;
 
     let outcome = read(&storage, &remote, &entry, Some(FIRST)).await?;
 
     assert_eq!(outcome.lock_base(), Some(SECOND));
     assert_eq!(text(&storage, "Data.csv").await.as_deref(), Some("rows"));
+    assert_eq!(text(&storage, "Sub/a.csv").await.as_deref(), Some("a"));
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_file_renamed_locally_to_the_revisions_spelling_is_kept() -> Res {
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    let entry = whole();
+    publish(&remote, FIRST, &[("a.txt", b"alpha")]).await?;
+    read(&storage, &remote, &entry, None).await?;
+    storage.remove_file(folder().join("a.txt")).await?;
+    write(&storage, "A.txt", b"alpha").await?;
+    publish(&remote, SECOND, &[("A.txt", b"alpha")]).await?;
+
+    let outcome = read(&storage, &remote, &entry, Some(FIRST)).await?;
+
+    assert_eq!(outcome.lock_base(), Some(SECOND));
+    assert_eq!(text(&storage, "A.txt").await.as_deref(), Some("alpha"));
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_folder_at_the_metadata_files_place_collides() -> Res {
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    publish(&remote, FIRST, &[("a.txt", b"alpha")]).await?;
+    storage.create_dir_all(folder().join(METADATA_FILE)).await?;
+
+    let outcome = read(&storage, &remote, &whole(), None).await;
+
+    assert!(
+        matches!(
+            &outcome,
+            Ok(ReadOutcome::Blocked { conflicts, .. }) if *conflicts == keys(&[METADATA_FILE])
+        ),
+        "{outcome:?}"
+    );
     Ok(())
 }
 

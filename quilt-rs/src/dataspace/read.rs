@@ -2,7 +2,6 @@
 //! with no Domain.
 
 use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -238,8 +237,12 @@ pub async fn read(
     )
     .await;
     let _ = storage.remove_dir_all(&staging).await;
-    applied?;
-    if let Some((text, planned_on)) = plan.metadata {
+    if !applied? {
+        warn!(
+            "{} cannot be read whole: some of its files' bytes are gone",
+            revision.display()
+        );
+    } else if let Some((text, planned_on)) = plan.metadata {
         write_metadata(storage, folder, text, planned_on.as_deref()).await?;
         report.placed.push(PathBuf::from(METADATA_FILE));
     }
@@ -308,8 +311,10 @@ async fn plan<'a>(
         }
     }
     for (key, had) in had.iter().filter(|(key, _)| !wanted.contains_key(*key)) {
+        // Where the disk lists either spelling under the other, both name one
+        // file.
         if let Some(renamed) = found.get(&key.to_string_lossy().to_lowercase())
-            && !listed(storage, &renamed.join_to(folder)).await?
+            && (!listed(storage, folder, renamed).await? || !listed(storage, folder, key).await?)
         {
             continue;
         }
@@ -327,11 +332,12 @@ async fn plan<'a>(
     let metadata_path = folder.join(METADATA_FILE);
     let wanted_text = render(target, paths);
     let had_text = base.map(|base| render(base, paths));
+    if !metadata_place_free(storage, &metadata_path).await {
+        plan.conflicts.push(PathBuf::from(METADATA_FILE));
+        return Ok(plan);
+    }
     let on_disk = bytes_at(storage, &metadata_path).await?;
     match &on_disk {
-        _ if storage.is_symlink(&metadata_path).await => {
-            plan.conflicts.push(PathBuf::from(METADATA_FILE));
-        }
         Some(text) if text == wanted_text.as_bytes() => {}
         Some(_) if had_text.as_ref() == Some(&wanted_text) => {
             plan.kept.push(PathBuf::from(METADATA_FILE));
@@ -369,19 +375,25 @@ async fn bytes_at(storage: &(impl Storage + Sync), path: &Path) -> Res<Option<Ve
     }
 }
 
-/// Whether the folder lists `path` by its exact name, so that a disk that
-/// ignores case did not find it under another.
-async fn listed(storage: &(impl Storage + Sync), path: &Path) -> Res<bool> {
-    let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
-        return Ok(false);
-    };
-    let mut entries = storage.read_dir(parent).await?;
-    while let Some(entry) = entries.next_entry().await? {
-        if entry.file_name() == name {
-            return Ok(true);
+/// Whether every folder between `folder` and `key`'s file lists the next name
+/// exactly, so that a disk that ignores case did not find it under another.
+async fn listed(storage: &(impl Storage + Sync), folder: &Path, key: &LogicalKey) -> Res<bool> {
+    let mut parent = folder.to_path_buf();
+    for name in key.iter() {
+        let mut entries = storage.read_dir(&parent).await?;
+        let mut found = false;
+        while let Some(entry) = entries.next_entry().await? {
+            if entry.file_name() == name {
+                found = true;
+                break;
+            }
         }
+        if !found {
+            return Ok(false);
+        }
+        parent.push(name);
     }
-    Ok(false)
+    Ok(true)
 }
 
 /// Whether the folder still holds what `step` was planned against: its
@@ -397,26 +409,30 @@ async fn as_planned(storage: &(impl Storage + Sync), folder: &Path, step: &Step<
     })
 }
 
-/// Writes the metadata file's `text` where it still holds `planned_on`.
+/// Writes the metadata file's `text` beside it, then renames it into place
+/// where the file still holds `planned_on`.
 async fn write_metadata(
     storage: &(impl Storage + Sync),
     folder: &Path,
     text: String,
     planned_on: Option<&[u8]>,
 ) -> Result<(), EntryError> {
-    if !metadata_as_planned(storage, folder, planned_on).await? {
-        return Err(EntryError::Changed(PathBuf::from(METADATA_FILE)));
-    }
-    let temp = format!("{METADATA_FILE}.tmp-{}", uuid::Uuid::new_v4());
+    let temp = folder.join(format!("{METADATA_FILE}.tmp-{}", uuid::Uuid::new_v4()));
     storage
-        .write_byte_stream_via(
-            folder.join(METADATA_FILE),
-            temp,
-            ByteStream::from(text.into_bytes()),
-            None,
-        )
+        .write_byte_stream(&temp, ByteStream::from(text.into_bytes()))
         .await?;
-    Ok(())
+    let placed = async {
+        if !metadata_as_planned(storage, folder, planned_on).await? {
+            return Err(EntryError::Changed(PathBuf::from(METADATA_FILE)));
+        }
+        storage.rename(&temp, folder.join(METADATA_FILE)).await?;
+        Ok(())
+    }
+    .await;
+    if placed.is_err() {
+        let _ = storage.remove_file(&temp).await;
+    }
+    placed
 }
 
 /// Whether the metadata file still holds the bytes it was planned against,
@@ -427,16 +443,23 @@ async fn metadata_as_planned(
     planned_on: Option<&[u8]>,
 ) -> Res<bool> {
     let path = folder.join(METADATA_FILE);
-    if storage.is_symlink(&path).await {
+    if !metadata_place_free(storage, &path).await {
         return Ok(false);
     }
     Ok(bytes_at(storage, &path).await?.as_deref() == planned_on)
 }
 
+/// Whether the metadata file's place holds a file or nothing: not a link,
+/// whatever it leads to, nor a folder.
+async fn metadata_place_free(storage: &(impl Storage + Sync), path: &Path) -> bool {
+    !storage.is_symlink(path).await && (!storage.exists(path).await || storage.is_file(path).await)
+}
+
 /// Fetches the files `steps` place into `staging`, then, once the folder is
 /// seen to hold what every step and the metadata file, where it is to be
 /// written, were planned against, renames each into the folder and deletes
-/// the files they remove.
+/// the files they remove. Changes nothing, and returns `false`, where a file
+/// could not be fetched.
 #[allow(clippy::too_many_arguments)]
 async fn apply(
     storage: &(impl Storage + Sync),
@@ -447,7 +470,7 @@ async fn apply(
     steps: &[Step<'_>],
     metadata: Option<&(String, Option<Vec<u8>>)>,
     report: &mut ReadReport,
-) -> Result<(), EntryError> {
+) -> Result<bool, EntryError> {
     // A linked folder would put a write or a deletion outside the folder. Asked
     // before the fetch, and again after it.
     refuse_linked_ancestors(storage, folder, steps.iter().map(Step::key)).await?;
@@ -468,20 +491,15 @@ async fn apply(
         report.skipped = fetched.skipped;
         report.hash_mismatch = fetched.hash_mismatch;
     }
+    // A revision some of whose bytes are gone cannot be read whole, and a
+    // folder holding part of it under the old base would read as local work.
+    if !report.skipped.is_empty() || !report.hash_mismatch.is_empty() {
+        return Ok(false);
+    }
     refuse_linked_ancestors(storage, folder, steps.iter().map(Step::key)).await?;
-    let not_placed: BTreeSet<PathBuf> = report
-        .skipped
-        .iter()
-        .chain(&report.hash_mismatch)
-        .cloned()
-        .collect();
-    let steps: Vec<&Step> = steps
-        .iter()
-        .filter(|step| step.want.is_none() || !not_placed.contains(step.key().as_path()))
-        .collect();
     // Every step before the first change, so a concurrent edit stops the read
     // whole, then each again right before its own change.
-    for step in &steps {
+    for step in steps {
         if !as_planned(storage, folder, step).await? {
             return Err(EntryError::Changed(step.key().to_path_buf()));
         }
@@ -497,6 +515,7 @@ async fn apply(
         if !as_planned(storage, folder, step).await? {
             return Err(EntryError::Changed(key.to_path_buf()));
         }
+        refuse_linked_ancestors(storage, folder, std::iter::once(key)).await?;
         if step.want.is_some() {
             if let Some(parent) = path.parent() {
                 storage.create_dir_all(parent).await?;
@@ -511,7 +530,7 @@ async fn apply(
             report.removed.push(key.to_path_buf());
         }
     }
-    Ok(())
+    Ok(true)
 }
 
 fn covered<'a>(manifest: &'a Manifest, paths: &Paths) -> BTreeMap<&'a LogicalKey, &'a ManifestRow> {
