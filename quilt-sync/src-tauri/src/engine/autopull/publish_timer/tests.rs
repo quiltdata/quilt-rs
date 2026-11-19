@@ -83,6 +83,7 @@ fn model_on(
                         origin: None,
                     },
                     certified_latest: true,
+                    latest_unchecked: false,
                 },
             ))
         });

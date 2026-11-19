@@ -16,9 +16,11 @@ use crate::Res;
 use crate::checksum::hash_file;
 use crate::error::ManifestError;
 use crate::error::PackageOpError;
+use crate::io::remote::ConditionalPut;
 use crate::io::remote::HostChecksums;
 use crate::io::remote::HostConfig;
 use crate::io::remote::Remote;
+use crate::io::remote::WriteCondition;
 use crate::io::storage::Storage;
 use crate::manifest::DirMeta;
 use crate::manifest::Manifest;
@@ -127,10 +129,133 @@ pub async fn tag_timestamp(
 }
 
 /// Upload file containing hash of the manifest
-/// "tagged" as "latest".
+/// "tagged" as "latest", whatever `latest` names now; [`advance_latest`] is
+/// the checked write.
 pub async fn tag_latest(remote: &impl Remote, manifest_uri: &ManifestUri) -> Res {
     let tag_latest = TagUri::latest(manifest_uri);
     upload_tag(remote, manifest_uri, tag_latest).await
+}
+
+/// What a package's `latest` tag held when a publish read it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LatestSeen {
+    /// No `latest` tag: nothing has been published under this name.
+    Absent,
+    /// The revision `latest` named, and its `ETag` for a conditional write.
+    Tagged {
+        uri: ManifestUri,
+        etag: Option<String>,
+    },
+    /// The role may not read `latest`, so the base check cannot run.
+    Unreadable,
+}
+
+impl LatestSeen {
+    /// The hash `latest` named, if it was read and present.
+    #[must_use]
+    pub fn hash(&self) -> Option<&str> {
+        match self {
+            Self::Tagged { uri, .. } => Some(&uri.hash),
+            Self::Absent | Self::Unreadable => None,
+        }
+    }
+}
+
+/// Reads a package's `latest` tag for a publish that may move it: absent,
+/// what it names with the `ETag` a conditional write needs, or unreadable
+/// when the role is denied it.
+pub async fn read_latest(
+    remote: &impl Remote,
+    host: Option<&Host>,
+    uri: impl Into<S3PackageHandle>,
+) -> Res<LatestSeen> {
+    match read_tag(remote, host, uri, Tag::Latest).await {
+        Ok((uri, etag)) => Ok(LatestSeen::Tagged { uri, etag }),
+        Err(err) if err.is_not_found() => Ok(LatestSeen::Absent),
+        Err(err) if err.is_access_denied() => Ok(LatestSeen::Unreadable),
+        Err(err) => Err(err),
+    }
+}
+
+/// How a publish's write of `latest` went.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LatestAdvance {
+    /// `latest` names the revision, and was unchanged since it was read.
+    Checked,
+    /// `latest` names the revision, written without the check because it
+    /// could not run. Another writer may have moved it since.
+    Unchecked,
+    /// `latest` moved since it was read, so it was left as it is.
+    Moved {
+        /// The revision `latest` moved to, when a read after the refused
+        /// write found one other than the revision first read.
+        latest: Option<String>,
+    },
+}
+
+/// Moves `latest` to `manifest_uri` only if it still holds what `seen` read:
+/// S3's conditional write, with the `ETag` from that read, or requiring the
+/// tag to be absent when it was. When the check cannot run, because the role
+/// may not read the tag or the store returned no `ETag`, `latest` is written
+/// plainly and the write reported [`LatestAdvance::Unchecked`]: a publish
+/// never fails because the check could not be made.
+pub async fn advance_latest(
+    remote: &impl Remote,
+    manifest_uri: &ManifestUri,
+    seen: &LatestSeen,
+) -> Res<LatestAdvance> {
+    let condition = match seen {
+        LatestSeen::Absent => Some(WriteCondition::Absent),
+        LatestSeen::Tagged {
+            etag: Some(etag), ..
+        } => Some(WriteCondition::Matches(etag.clone())),
+        LatestSeen::Tagged { etag: None, .. } | LatestSeen::Unreadable => None,
+    };
+    let tag_uri = S3Uri::from(TagUri::latest(manifest_uri));
+    if let Some(condition) = condition {
+        match remote
+            .put_object_if(
+                manifest_uri.origin.as_ref(),
+                &tag_uri,
+                manifest_uri.hash.as_bytes().to_vec(),
+                &condition,
+            )
+            .await
+        {
+            Ok(ConditionalPut::Written) => return Ok(LatestAdvance::Checked),
+            Ok(ConditionalPut::Moved) => {
+                return Ok(latest_after_refusal(remote, manifest_uri, seen).await);
+            }
+            Err(err) if err.is_access_denied() => {
+                log::warn!("The base check on {tag_uri} was refused; writing it unchecked");
+            }
+            Err(err) => return Err(err),
+        }
+    } else {
+        log::warn!("{tag_uri} could not be read with an ETag; writing it unchecked");
+    }
+    tag_latest(remote, manifest_uri).await?;
+    Ok(LatestAdvance::Unchecked)
+}
+
+/// Reads `latest` after S3 refused the conditional write. S3 also refuses an
+/// SDK retry of a write that already landed, so a tag naming `manifest_uri`
+/// counts as written. A tag still naming the revision `seen` read was
+/// rewritten but not moved (a 409 whose rival write failed, or a new `ETag`
+/// for the same bytes), so there is no revision it moved to.
+async fn latest_after_refusal(
+    remote: &impl Remote,
+    manifest_uri: &ManifestUri,
+    seen: &LatestSeen,
+) -> LatestAdvance {
+    let now = read_latest(remote, manifest_uri.origin.as_ref(), manifest_uri).await;
+    match now.as_ref().ok().and_then(LatestSeen::hash) {
+        Some(hash) if hash == manifest_uri.hash => LatestAdvance::Checked,
+        Some(hash) if Some(hash) != seen.hash() => LatestAdvance::Moved {
+            latest: Some(hash.to_owned()),
+        },
+        _ => LatestAdvance::Moved { latest: None },
+    }
 }
 
 async fn upload_tag(remote: &impl Remote, manifest_uri: &ManifestUri, tag_uri: TagUri) -> Res {
@@ -152,10 +277,21 @@ pub async fn resolve_tag(
     uri: impl Into<S3PackageHandle>,
     tag: Tag,
 ) -> Res<ManifestUri> {
+    Ok(read_tag(remote, host, uri, tag).await?.0)
+}
+
+/// [`resolve_tag`], with the tag's `ETag` from the same read.
+async fn read_tag(
+    remote: &impl Remote,
+    host: Option<&Host>,
+    uri: impl Into<S3PackageHandle>,
+    tag: Tag,
+) -> Res<(ManifestUri, Option<String>)> {
     let tag_uri = TagUri::new(uri, tag);
     let stream = remote
         .get_object_stream(host, &S3Uri::from(&tag_uri))
         .await?;
+    let etag = stream.etag;
     let hash = bytestream_to_string(stream.body).await?;
     if !is_top_hash(&hash) {
         return Err(UriError::Package(format!(
@@ -165,12 +301,15 @@ pub async fn resolve_tag(
     }
     let S3PackageHandle { bucket, namespace } = tag_uri.into();
     let origin = host.cloned();
-    Ok(ManifestUri {
-        hash,
-        bucket,
-        namespace,
-        origin,
-    })
+    Ok((
+        ManifestUri {
+            hash,
+            bucket,
+            namespace,
+            origin,
+        },
+        etag,
+    ))
 }
 
 /// `ManifestUri` should always have a whole `hash`.
@@ -726,5 +865,193 @@ mod tests {
         assert_eq!(calculated_hash, fixtures::manifest::TOP_HASH);
 
         Ok(())
+    }
+
+    /// The base check on `latest`: one package, its tag, and three revisions.
+    mod base_check {
+        use super::*;
+
+        use test_log::test;
+
+        const OURS: &str = "1111111111111111111111111111111111111111111111111111111111111111";
+        const BASE: &str = "2222222222222222222222222222222222222222222222222222222222222222";
+        const THEIRS: &str = "3333333333333333333333333333333333333333333333333333333333333333";
+        const TAG: &str = "s3://b/.quilt/named_packages/foo/bar/latest";
+
+        fn handle() -> S3PackageHandle {
+            S3PackageHandle {
+                bucket: "b".to_string(),
+                namespace: ("foo", "bar").into(),
+            }
+        }
+
+        fn revision(hash: &str) -> ManifestUri {
+            ManifestUri {
+                bucket: "b".to_string(),
+                namespace: ("foo", "bar").into(),
+                hash: hash.to_string(),
+                origin: None,
+            }
+        }
+
+        async fn set_latest(remote: &MockRemote, hash: &str) -> Res {
+            remote
+                .put_object(None, &S3Uri::try_from(TAG)?, hash.as_bytes().to_vec())
+                .await
+        }
+
+        async fn latest(remote: &MockRemote) -> Res<String> {
+            Ok(resolve_tag(remote, None, handle(), Tag::Latest).await?.hash)
+        }
+
+        #[test(tokio::test)]
+        async fn an_unchanged_latest_is_advanced_checked() -> Res {
+            let remote = MockRemote::default();
+            set_latest(&remote, BASE).await?;
+            let seen = read_latest(&remote, None, handle()).await?;
+            assert_eq!(seen.hash(), Some(BASE));
+
+            let advance = advance_latest(&remote, &revision(OURS), &seen).await?;
+
+            assert_eq!(advance, LatestAdvance::Checked);
+            assert_eq!(latest(&remote).await?, OURS);
+            Ok(())
+        }
+
+        #[test(tokio::test)]
+        async fn a_latest_moved_since_the_read_is_left_as_it_is() -> Res {
+            let remote = MockRemote::default();
+            set_latest(&remote, BASE).await?;
+            let seen = read_latest(&remote, None, handle()).await?;
+            // Another publisher moves `latest` between this read and the write.
+            set_latest(&remote, THEIRS).await?;
+
+            let advance = advance_latest(&remote, &revision(OURS), &seen).await?;
+
+            assert_eq!(
+                advance,
+                LatestAdvance::Moved {
+                    latest: Some(THEIRS.to_string())
+                }
+            );
+            assert_eq!(latest(&remote).await?, THEIRS);
+            Ok(())
+        }
+
+        /// S3 refuses an SDK retry of a write that already landed; the tag
+        /// then names this revision, so the write counts.
+        #[test(tokio::test)]
+        async fn a_refused_write_that_already_landed_is_checked() -> Res {
+            let remote = MockRemote::default();
+            set_latest(&remote, BASE).await?;
+            let seen = read_latest(&remote, None, handle()).await?;
+            set_latest(&remote, OURS).await?;
+
+            let advance = advance_latest(&remote, &revision(OURS), &seen).await?;
+
+            assert_eq!(advance, LatestAdvance::Checked);
+            Ok(())
+        }
+
+        /// A refusal while `latest` still names the revision first read
+        /// reports no revision it moved to.
+        #[test(tokio::test)]
+        async fn a_refused_write_over_the_same_revision_names_none() -> Res {
+            let remote = MockRemote::default();
+            set_latest(&remote, BASE).await?;
+            let seen = LatestSeen::Tagged {
+                uri: revision(BASE),
+                etag: Some("\"rewritten since\"".to_string()),
+            };
+
+            let advance = advance_latest(&remote, &revision(OURS), &seen).await?;
+
+            assert_eq!(advance, LatestAdvance::Moved { latest: None });
+            assert_eq!(latest(&remote).await?, BASE);
+            Ok(())
+        }
+
+        #[test(tokio::test)]
+        async fn an_absent_latest_is_created_checked() -> Res {
+            let remote = MockRemote::default();
+            let seen = read_latest(&remote, None, handle()).await?;
+            assert_eq!(seen, LatestSeen::Absent);
+
+            let advance = advance_latest(&remote, &revision(OURS), &seen).await?;
+
+            assert_eq!(advance, LatestAdvance::Checked);
+            assert_eq!(latest(&remote).await?, OURS);
+            Ok(())
+        }
+
+        /// Two first publishers both read no `latest`; only the first to write
+        /// it creates it.
+        #[test(tokio::test)]
+        async fn a_latest_created_since_the_read_is_left_as_it_is() -> Res {
+            let remote = MockRemote::default();
+            let seen = read_latest(&remote, None, handle()).await?;
+            set_latest(&remote, THEIRS).await?;
+
+            let advance = advance_latest(&remote, &revision(OURS), &seen).await?;
+
+            assert_eq!(
+                advance,
+                LatestAdvance::Moved {
+                    latest: Some(THEIRS.to_string())
+                }
+            );
+            assert_eq!(latest(&remote).await?, THEIRS);
+            Ok(())
+        }
+
+        /// A role that may write the tag and not read it cannot make the
+        /// check, so it writes plainly and says so.
+        #[test(tokio::test)]
+        async fn an_unreadable_latest_is_written_unchecked() -> Res {
+            let remote = MockRemote::default();
+            set_latest(&remote, THEIRS).await?;
+            remote.deny_reads(TAG);
+            let seen = read_latest(&remote, None, handle()).await;
+            assert_eq!(seen.ok(), Some(LatestSeen::Unreadable));
+
+            let advance = advance_latest(&remote, &revision(OURS), &LatestSeen::Unreadable).await?;
+
+            assert_eq!(advance, LatestAdvance::Unchecked);
+            assert_eq!(remote.current(TAG).await?, Some(OURS.as_bytes().to_vec()));
+            Ok(())
+        }
+
+        /// The read succeeded but the conditional form is refused: the write
+        /// still happens, unchecked, rather than failing the publish.
+        #[test(tokio::test)]
+        async fn a_refused_conditional_write_falls_back_unchecked() -> Res {
+            let remote = MockRemote::default();
+            set_latest(&remote, BASE).await?;
+            let seen = read_latest(&remote, None, handle()).await?;
+            remote.deny_reads(TAG);
+
+            let advance = advance_latest(&remote, &revision(OURS), &seen).await;
+
+            assert_eq!(advance.ok(), Some(LatestAdvance::Unchecked));
+            assert_eq!(remote.current(TAG).await?, Some(OURS.as_bytes().to_vec()));
+            Ok(())
+        }
+
+        /// With no `ETag` from the read there is nothing to condition on.
+        #[test(tokio::test)]
+        async fn a_read_without_an_etag_is_written_unchecked() -> Res {
+            let remote = MockRemote::default();
+            set_latest(&remote, THEIRS).await?;
+            let seen = LatestSeen::Tagged {
+                uri: revision(BASE),
+                etag: None,
+            };
+
+            let advance = advance_latest(&remote, &revision(OURS), &seen).await?;
+
+            assert_eq!(advance, LatestAdvance::Unchecked);
+            assert_eq!(latest(&remote).await?, OURS);
+            Ok(())
+        }
     }
 }

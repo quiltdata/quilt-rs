@@ -488,6 +488,7 @@ mod tests {
                 origin: None,
             },
             certified_latest: true,
+            latest_unchecked: false,
         })
     }
 

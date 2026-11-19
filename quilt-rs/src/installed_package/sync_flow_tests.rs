@@ -534,6 +534,15 @@ impl crate::io::remote::Remote for RejectedCredentialRemote {
     ) -> impl Future<Output = Res> {
         std::future::ready(Err(rejected_credential()))
     }
+    fn put_object_if(
+        &self,
+        _host: Option<&Host>,
+        _s3_uri: &S3Uri,
+        _contents: impl Into<aws_sdk_s3::primitives::ByteStream>,
+        _condition: &crate::io::remote::WriteCondition,
+    ) -> impl Future<Output = Res<crate::io::remote::ConditionalPut>> {
+        std::future::ready(Err(rejected_credential()))
+    }
     fn upload_file(
         &self,
         _host_config: &crate::io::remote::HostConfig,
@@ -605,6 +614,15 @@ impl crate::io::remote::Remote for LoggedOutRemote {
     ) -> impl Future<Output = Res> {
         std::future::ready(Err(Error::Login(LoginError::NoSession(None))))
     }
+    fn put_object_if(
+        &self,
+        _host: Option<&Host>,
+        _s3_uri: &S3Uri,
+        _contents: impl Into<aws_sdk_s3::primitives::ByteStream>,
+        _condition: &crate::io::remote::WriteCondition,
+    ) -> impl Future<Output = Res<crate::io::remote::ConditionalPut>> {
+        std::future::ready(Err(Error::Login(LoginError::NoSession(None))))
+    }
     fn upload_file(
         &self,
         _host_config: &crate::io::remote::HostConfig,
@@ -670,6 +688,15 @@ impl crate::io::remote::Remote for DeniedRemote {
         s3_uri: &S3Uri,
         _contents: impl Into<aws_sdk_s3::primitives::ByteStream>,
     ) -> impl Future<Output = Res> {
+        std::future::ready(Err(denied(s3_uri)))
+    }
+    fn put_object_if(
+        &self,
+        _host: Option<&Host>,
+        s3_uri: &S3Uri,
+        _contents: impl Into<aws_sdk_s3::primitives::ByteStream>,
+        _condition: &crate::io::remote::WriteCondition,
+    ) -> impl Future<Output = Res<crate::io::remote::ConditionalPut>> {
         std::future::ready(Err(denied(s3_uri)))
     }
     fn upload_file(
@@ -1944,6 +1971,9 @@ async fn test_commit_and_push_key_a_file_in_a_folder_with_slashes() -> Res {
 /// package first pushes to.
 const THEIR_HASH: &str = "7777777777777777777777777777777777777777777777777777777777777777";
 
+/// The `latest` tag of the package [`first_push_package`] sets up.
+const FIRST_PUSH_LATEST: &str = "s3://b/.quilt/named_packages/test/first_push/latest";
+
 /// A package made locally, committed and never pushed, whose bucket holds
 /// `latest` (when given) under the same name.
 async fn first_push_package(
@@ -2091,6 +2121,174 @@ async fn test_first_push_over_their_latest_then_reset() -> Res {
     assert_eq!(
         crate::lineage::UpstreamState::from(lineage),
         crate::lineage::UpstreamState::UpToDate
+    );
+    Ok(())
+}
+
+/// Another first publish of the same name lands between this push's read of
+/// `latest`, which found none, and its write: the conditional write is
+/// refused, so their revision stays `latest` and this one is kept, Diverged.
+#[test(tokio::test)]
+async fn test_a_publish_between_the_read_and_the_write_keeps_latest() -> Res {
+    let local_hash = crate::fixtures::top_hash::EMPTY_NULL_TOP_HASH;
+    let (package, _temp_dirs) = first_push_package(None).await?;
+
+    let read = package.remote.park(FIRST_PUSH_LATEST);
+    let compete = async {
+        read.arrived().await;
+        // The read goes on; the write after it is held until theirs lands.
+        let write = package.remote.park(FIRST_PUSH_LATEST);
+        read.release();
+        write.arrived().await;
+        package
+            .remote
+            .put_object(
+                None,
+                &S3Uri::try_from(FIRST_PUSH_LATEST)?,
+                THEIR_HASH.as_bytes().to_vec(),
+            )
+            .await?;
+        write.release();
+        Ok::<_, Error>(())
+    };
+    let (pushed, competed) = tokio::join!(package.push(None), compete);
+    competed?;
+    let Pushed::Uploaded(outcome) = pushed? else {
+        panic!("a pending commit must upload");
+    };
+
+    assert!(!outcome.certified_latest);
+    assert!(!outcome.latest_unchecked);
+    assert_eq!(outcome.manifest_uri.hash, local_hash);
+    assert_eq!(latest_tag(&package).await?, THEIR_HASH);
+    let lineage = package.lineage().await?;
+    assert_eq!(lineage.latest_hash, THEIR_HASH);
+    assert_eq!(
+        crate::lineage::UpstreamState::from(lineage),
+        crate::lineage::UpstreamState::Diverged
+    );
+    Ok(())
+}
+
+/// `latest` moves between the push's read and its write, and the read after
+/// the refused write fails: the push fails with the stored revision's hash
+/// and keeps its commit pending, rather than saving a lineage that hides the
+/// move.
+#[test(tokio::test)]
+async fn test_a_moved_latest_that_cannot_be_read_again_keeps_the_commit() -> Res {
+    let local_hash = crate::fixtures::top_hash::EMPTY_NULL_TOP_HASH;
+    let (package, _temp_dirs) = first_push_package(None).await?;
+
+    let read = package.remote.park(FIRST_PUSH_LATEST);
+    let compete = async {
+        read.arrived().await;
+        let write = package.remote.park(FIRST_PUSH_LATEST);
+        read.release();
+        write.arrived().await;
+        package
+            .remote
+            .put_object(
+                None,
+                &S3Uri::try_from(FIRST_PUSH_LATEST)?,
+                THEIR_HASH.as_bytes().to_vec(),
+            )
+            .await?;
+        let reread = package.remote.park(FIRST_PUSH_LATEST);
+        write.release();
+        reread.arrived().await;
+        package.remote.deny_reads(FIRST_PUSH_LATEST);
+        reread.release();
+        Ok::<_, Error>(())
+    };
+    let (pushed, competed) = tokio::join!(package.push(None), compete);
+    competed?;
+
+    assert!(
+        matches!(
+            &pushed,
+            Err(Error::PackageOp(PackageOpError::PushTagFailed { top_hash, .. }))
+                if top_hash == local_hash
+        ),
+        "{pushed:?}"
+    );
+    assert!(package.lineage().await?.commit.is_some());
+    assert_eq!(
+        package.remote.current(FIRST_PUSH_LATEST).await?,
+        Some(THEIR_HASH.as_bytes().to_vec())
+    );
+    Ok(())
+}
+
+/// A tracking push reads no `latest`, and a rival restores it to the push's
+/// base before the write: the refusal names the base, which the lineage
+/// cannot record as a move, so the push fails and keeps its commit.
+#[test(tokio::test)]
+async fn test_a_latest_restored_to_the_base_keeps_the_commit() -> Res {
+    let (package, _temp_dirs) = first_push_package(Some(THEIR_HASH)).await?;
+    package
+        .lineage
+        .edit(&package.storage, |lineage| {
+            lineage.base_hash = THEIR_HASH.to_string();
+            lineage.latest_hash = THEIR_HASH.to_string();
+            if let Some(remote) = lineage.remote_uri.as_mut() {
+                remote.hash = THEIR_HASH.to_string();
+            }
+        })
+        .await?;
+    package
+        .remote
+        .storage
+        .remove_file(FIRST_PUSH_LATEST.trim_start_matches("s3://"))
+        .await?;
+
+    let read = package.remote.park(FIRST_PUSH_LATEST);
+    let compete = async {
+        read.arrived().await;
+        let write = package.remote.park(FIRST_PUSH_LATEST);
+        read.release();
+        write.arrived().await;
+        package
+            .remote
+            .put_object(
+                None,
+                &S3Uri::try_from(FIRST_PUSH_LATEST)?,
+                THEIR_HASH.as_bytes().to_vec(),
+            )
+            .await?;
+        write.release();
+        Ok::<_, Error>(())
+    };
+    let (pushed, competed) = tokio::join!(package.push(None), compete);
+    competed?;
+
+    assert!(
+        matches!(
+            &pushed,
+            Err(Error::PackageOp(PackageOpError::PushTagFailed { .. }))
+        ),
+        "{pushed:?}"
+    );
+    assert!(package.lineage().await?.commit.is_some());
+    Ok(())
+}
+
+/// A role that may write `latest` but not read it cannot check it: the push
+/// still moves `latest`, and says the write was unchecked.
+#[test(tokio::test)]
+async fn test_a_push_that_cannot_read_latest_moves_it_unchecked() -> Res {
+    let local_hash = crate::fixtures::top_hash::EMPTY_NULL_TOP_HASH;
+    let (package, _temp_dirs) = first_push_package(Some(THEIR_HASH)).await?;
+    package.remote.deny_reads(FIRST_PUSH_LATEST);
+
+    let Pushed::Uploaded(outcome) = package.push(None).await? else {
+        panic!("a pending commit must upload");
+    };
+
+    assert!(outcome.certified_latest);
+    assert!(outcome.latest_unchecked);
+    assert_eq!(
+        package.remote.current(FIRST_PUSH_LATEST).await?,
+        Some(local_hash.as_bytes().to_vec())
     );
     Ok(())
 }

@@ -28,6 +28,7 @@
 
 ### Changed
 
+- Publishing no longer overwrites a revision another client made `latest` while the publish ran: the package shows as diverged instead (<https://github.com/quiltdata/quilt-rs/pull/1444>)
 - macOS has one download, which runs natively on Apple Silicon and Intel Macs; an Intel build installed on an Apple Silicon Mac moves to it on its next update (<https://github.com/quiltdata/quilt-rs/pull/1438>)
 - **Commit** of a package with a remote no longer refuses a revision the bucket's workflows reject, one whose bucket config cannot be read, or one whose validator setup is misconfigured: it commits it, and the Commit page stays to show the workflow warning, and keeps it through another save with no edits. The Commit page still disables Save on a live workflow violation or a malformed config, which is stricter than `quilt commit`. **Publish** still refuses an inconsistent revision, and commits nothing (<https://github.com/quiltdata/quilt-rs/pull/1432>)
 - QuiltSync starts faster with many packages: at launch it checks up to eight packages at once instead of one after another (<https://github.com/quiltdata/quilt-rs/pull/1376>)

@@ -80,6 +80,7 @@ fn fake_push_outcome(ns: &Namespace) -> quilt::PushOutcome {
             origin: None,
         },
         certified_latest: true,
+        latest_unchecked: false,
     }
 }
 

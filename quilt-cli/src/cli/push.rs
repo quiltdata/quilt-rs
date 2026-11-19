@@ -41,6 +41,11 @@ impl std::fmt::Display for Output {
                 f,
                 "\nWarning: could not update latest — remote has newer changes"
             )?;
+        } else if outcome.latest_unchecked {
+            write!(
+                f,
+                "\nWarning: latest was updated without checking whether another publisher moved it"
+            )?;
         }
         Ok(())
     }
@@ -55,12 +60,14 @@ impl Render for Output {
                 "hash": null,
                 "manifest_uri": null,
                 "certified_latest": null,
+                "latest_unchecked": null,
             });
         };
         serde_json::json!({
             "hash": &outcome.manifest_uri.hash,
             "manifest_uri": outcome.manifest_uri.to_string(),
             "certified_latest": outcome.certified_latest,
+            "latest_unchecked": outcome.latest_unchecked,
         })
     }
 }
@@ -415,7 +422,7 @@ mod tests {
         assert_eq!(output.to_string(), "Nothing to push");
         assert_eq!(
             output.to_json().to_string(),
-            r#"{"hash":null,"manifest_uri":null,"certified_latest":null}"#
+            r#"{"hash":null,"manifest_uri":null,"certified_latest":null,"latest_unchecked":null}"#
         );
 
         Ok(())
@@ -747,12 +754,36 @@ mod tests {
                     hash: hash.to_string(),
                 },
                 certified_latest: false,
+                latest_unchecked: false,
             }),
         };
 
         assert_eq!(
             output.to_json().to_string(),
-            r#"{"hash":"0123456789abcdef","manifest_uri":"quilt+s3://bucket#package=demo/sales@0123456789abcdef","certified_latest":false}"#
+            r#"{"hash":"0123456789abcdef","manifest_uri":"quilt+s3://bucket#package=demo/sales@0123456789abcdef","certified_latest":false,"latest_unchecked":false}"#
         );
+    }
+
+    #[test]
+    fn an_unchecked_latest_is_warned_about() {
+        let output = Output {
+            outcome: Some(PushOutcome {
+                manifest_uri: quilt_uri::ManifestUri {
+                    origin: None,
+                    bucket: "bucket".to_string(),
+                    namespace: ("demo", "sales").into(),
+                    hash: "0123456789abcdef".to_string(),
+                },
+                certified_latest: true,
+                latest_unchecked: true,
+            }),
+        };
+
+        let text = output.to_string();
+        assert!(
+            text.contains("Warning: latest was updated without checking"),
+            "{text}"
+        );
+        assert_eq!(output.to_json()["latest_unchecked"], true);
     }
 }

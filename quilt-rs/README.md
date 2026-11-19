@@ -94,10 +94,12 @@ managed working folder:
   the preferred direction); a row that already carries a real hash keeps it,
   and the upload is an error unless the bytes hash to it. `latest` moves to
   the new revision only if it still names the revision the push was built on
-  when read just before the tag write, or names nothing. That read and the
-  write are two requests, not one atomic step, so a push that lands between
-  them can still be overwritten. If `latest` has moved past the parent, the
-  revision is still saved, `latest` is left alone, and the error
+  when read just before the tag write, or names nothing. The write is
+  conditional on that read, so a push that lands between the read and the
+  write is not overwritten; a role that may not read `latest` writes it
+  unchecked, and
+  says so in `PushOutcome::latest_unchecked`. If `latest` has moved past the
+  parent, the revision is still saved, `latest` is left alone, and the error
   (`PackageOpError::PushedNotLatest`) carries the pushed top hash. If writing
   a tag fails after the manifest is stored, `PackageOpError::PushTagFailed`
   carries the top hash too.
