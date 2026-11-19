@@ -26,7 +26,8 @@ use quilt_uri::Namespace;
 pub struct GcReport {
     /// Files deleted from `objects/`.
     pub objects: usize,
-    /// Manifests deleted from the `packages/` cache.
+    /// Manifests deleted as cache: from the `packages/` cache, and from a
+    /// registry store's `installed/` when its bucket holds them.
     pub cached_manifests: usize,
     /// Entries removed from `staging/`.
     pub staging: usize,
@@ -422,7 +423,29 @@ pub(crate) async fn lock_every_package(
     except: Option<&Namespace>,
 ) -> Res<Vec<PackageLock>> {
     let mut namespaces = installed.clone();
-    for owner_dir in list_dirs(storage, &paths.locks_dir()).await? {
+    namespaces.extend(locked_namespaces(storage, &paths.locks_dir()).await?);
+
+    if let Some(except) = except {
+        namespaces.remove(except);
+    }
+    let mut held = Vec::with_capacity(namespaces.len());
+    for namespace in namespaces {
+        match PackageLock::try_take(storage, paths, &namespace).await? {
+            Some(lock) => held.push(lock),
+            None => return Err(Error::PackageBusy(namespace)),
+        }
+    }
+    Ok(held)
+}
+
+/// The packages with a lock file under `locks_dir`,
+/// `<owner>/<name>.lock`.
+pub(crate) async fn locked_namespaces(
+    storage: &(impl Storage + Sync),
+    locks_dir: &Path,
+) -> Res<BTreeSet<Namespace>> {
+    let mut namespaces = BTreeSet::new();
+    for owner_dir in list_dirs(storage, locks_dir).await? {
         let Some(owner) = owner_dir.file_name() else {
             continue;
         };
@@ -445,18 +468,7 @@ pub(crate) async fn lock_every_package(
             }
         }
     }
-
-    if let Some(except) = except {
-        namespaces.remove(except);
-    }
-    let mut held = Vec::with_capacity(namespaces.len());
-    for namespace in namespaces {
-        match PackageLock::try_take(storage, paths, &namespace).await? {
-            Some(lock) => held.push(lock),
-            None => return Err(Error::PackageBusy(namespace)),
-        }
-    }
-    Ok(held)
+    Ok(namespaces)
 }
 
 /// One entry of a directory, as it is itself: a symlink is not followed.
