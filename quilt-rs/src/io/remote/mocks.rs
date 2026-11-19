@@ -174,6 +174,12 @@ fn storage_path(uri: &str) -> String {
     uri.strip_prefix("s3://").unwrap_or(uri).replace('?', "#")
 }
 
+/// The S3 version an upload of `body` gets. New bytes get a new version, as
+/// on a versioned bucket, and mocks sharing one root agree on it.
+pub(crate) fn version_of(body: &[u8]) -> String {
+    hex::encode(sha2::Sha256::digest(body))
+}
+
 /// The file's hash, of the checksum type S3 would answer with, and its bytes.
 async fn hash_and_read(
     storage: &(impl Storage + Sync),
@@ -317,9 +323,7 @@ impl Remote for MockRemote {
             hash_and_read(&self.storage, source, algorithm).await?
         };
         let uploaded = S3Uri {
-            // New bytes get a new version, as on a versioned bucket, and
-            // mocks sharing one root agree on it.
-            version: Some(hex::encode(sha2::Sha256::digest(&body))),
+            version: Some(version_of(&body)),
             ..dest_uri.clone()
         };
         // Kept, so another domain on this remote can download what was pushed.

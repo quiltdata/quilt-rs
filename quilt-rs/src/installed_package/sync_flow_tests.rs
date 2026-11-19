@@ -1992,7 +1992,7 @@ async fn test_commit_and_push_key_a_file_in_a_folder_with_slashes() -> Res {
             "data/raw/a.csv".to_string(),
             format!(
                 "s3://b/test/slash/data/raw/a.csv?versionId={}",
-                hex::encode(<sha2::Sha256 as sha2::Digest>::digest(b"a,b\n"))
+                crate::io::remote::mocks::version_of(b"a,b\n")
             )
         )]
     );
