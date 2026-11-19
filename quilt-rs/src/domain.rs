@@ -168,7 +168,8 @@ impl RegistryStore {
         storage: &(impl Storage + Sync),
         namespace: &Namespace,
     ) -> Res<Option<String>> {
-        read_tag(storage, &self.latest(namespace)).await
+        let hash = read_tag(storage, &self.latest(namespace)).await?;
+        Ok(hash.filter(|hash| is_top_hash(hash)))
     }
 
     /// Records in the latest index that `latest` names `hash` for
@@ -421,12 +422,22 @@ impl LocalRegistry {
     }
 
     /// The hash `namespace`'s `latest` names, or `None` where it has none.
+    /// Unlike a bucket's cached index, a tag holding no top hash is an
+    /// error: it is the registry's own, and nothing else can replace it.
     pub async fn read_latest(
         &self,
         storage: &(impl Storage + Sync),
         namespace: &Namespace,
     ) -> Res<Option<String>> {
-        read_tag(storage, &self.latest(namespace)).await
+        let path = self.latest(namespace);
+        match read_tag(storage, &path).await? {
+            Some(hash) if !is_top_hash(&hash) => Err(UriError::Package(format!(
+                "{} holds no top hash: {hash:?}",
+                path.display()
+            ))
+            .into()),
+            tag => Ok(tag),
+        }
     }
 
     /// The registry's names. The first call names it from this machine's
@@ -497,16 +508,15 @@ impl LocalRegistry {
         if let Some(hash) = std::iter::once(hash).chain(base).find(|h| !is_top_hash(h)) {
             return Err(UriError::Package(format!("not a top hash: {hash:?}")).into());
         }
-        let revision = self.revision(hash);
-        if !storage.exists(&revision).await {
-            let manifest = storage
-                .read_bytes(self.installed_manifest(namespace, hash))
-                .await?;
-            storage.create_dir_all(self.dir.join(PACKAGES_DIR)).await?;
-            storage
-                .write_byte_stream(&revision, ByteStream::from(manifest))
-                .await?;
-        }
+        // Written even over a revision of the same hash, which leaves out
+        // folder metadata, so the one published is the one committed.
+        let manifest = storage
+            .read_bytes(self.installed_manifest(namespace, hash))
+            .await?;
+        storage.create_dir_all(self.dir.join(PACKAGES_DIR)).await?;
+        storage
+            .write_byte_stream(self.revision(hash), ByteStream::from(manifest))
+            .await?;
 
         let _held = storage.lock_exclusive(self.package_lock(namespace)).await?;
         let latest = self.read_latest(storage, namespace).await?;
@@ -549,20 +559,21 @@ impl PackageStore for LocalRegistry {
 }
 
 /// `host` held to a local registry name's characters, each other one made
-/// `-`; `None` for an empty host name.
+/// `-`; `None` where that is still no name, as for an empty host name.
 fn name_from_host(host: &str) -> Option<String> {
     let name: String = host
         .chars()
         .map(|c| {
-            let mut one = [0; 4];
-            if quilt_uri::check_local_registry_name(c.encode_utf8(&mut one)).is_ok() {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '.' {
                 c
             } else {
                 '-'
             }
         })
         .collect();
-    (!name.is_empty()).then_some(name)
+    quilt_uri::check_local_registry_name(&name)
+        .is_ok()
+        .then_some(name)
 }
 
 /// The namespace `<owner>/<name>` that the last two parts of `path` name, or
@@ -593,16 +604,13 @@ fn package_path(dir: &Path, namespace: &Namespace, suffix: &str) -> PathBuf {
         .join(format!("{}{suffix}", namespace.name()))
 }
 
-/// The top hash the tag file at `path` names, or `None` when it names none:
-/// a file that is missing or holds no top hash is unknown, not an error.
+/// What the tag file at `path` holds, trimmed, or `None` where it is missing.
 async fn read_tag(storage: &(impl Storage + Sync), path: &Path) -> Res<Option<String>> {
-    let bytes = match storage.read_bytes(path).await {
-        Ok(bytes) => bytes,
-        Err(err) if err.is_not_found() => return Ok(None),
-        Err(err) => return Err(err),
-    };
-    let hash = String::from_utf8_lossy(&bytes).trim().to_string();
-    Ok(is_top_hash(&hash).then_some(hash))
+    match storage.read_bytes(path).await {
+        Ok(bytes) => Ok(Some(String::from_utf8_lossy(&bytes).trim().to_string())),
+        Err(err) if err.is_not_found() => Ok(None),
+        Err(err) => Err(err),
+    }
 }
 
 /// Points the tag file at `path` at `hash`, staged in `store_dir`, outside
@@ -1048,6 +1056,7 @@ mod tests {
             Some("Ernest-s-MacBook-Pro.local".to_string())
         );
         assert_eq!(name_from_host(""), None);
+        assert_eq!(name_from_host(".."), None);
     }
 
     /// The registry's first name comes from the host name, and is stored.
@@ -1160,6 +1169,53 @@ mod tests {
             Some(three.clone())
         );
         assert!(local.revision(&one).exists() && local.revision(&three).exists());
+        Ok(())
+    }
+
+    /// A local tag holding no top hash is damaged, not absent: a publish
+    /// from no `latest` fails and leaves it.
+    #[test(tokio::test)]
+    async fn a_damaged_local_tag_is_not_taken_for_none() -> Res {
+        let dir = tempfile::tempdir()?;
+        let storage = LocalStorage::new();
+        let local = DomainRoot::new(dir.path()).local();
+        let namespace = Namespace::from(("me", "analysis"));
+        let (hash, _) = commit(&local, &namespace, &[("a.txt", b"one")]).await?;
+        let tag = local.latest(&namespace);
+        std::fs::create_dir_all(tag.parent().unwrap())?;
+        std::fs::write(&tag, "not a hash")?;
+
+        assert!(
+            local
+                .publish(&storage, &namespace, None, &hash)
+                .await
+                .is_err()
+        );
+        assert_eq!(std::fs::read_to_string(&tag)?, "not a hash");
+        Ok(())
+    }
+
+    /// A revision published again is written again: its hash leaves out
+    /// folder metadata, so the copy committed last is the one kept.
+    #[test(tokio::test)]
+    async fn a_revision_published_again_is_rewritten() -> Res {
+        let dir = tempfile::tempdir()?;
+        let storage = LocalStorage::new();
+        let local = DomainRoot::new(dir.path()).local();
+        let namespace = Namespace::from(("me", "analysis"));
+        let (hash, _) = commit(&local, &namespace, &[("a.txt", b"one")]).await?;
+        local.publish(&storage, &namespace, None, &hash).await?;
+        let recommitted = local.installed_manifest(&namespace, &hash);
+        std::fs::write(&recommitted, b"the same hash, other folder metadata")?;
+
+        local
+            .publish(&storage, &namespace, Some(&hash), &hash)
+            .await?;
+
+        assert_eq!(
+            std::fs::read(local.revision(&hash))?,
+            b"the same hash, other folder metadata"
+        );
         Ok(())
     }
 
