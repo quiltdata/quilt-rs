@@ -514,12 +514,12 @@ impl LocalRegistry {
         // Written even over a revision of the same hash, which leaves out
         // folder metadata, so the one published is the one committed.
         let manifest = storage
-            .read_bytes(self.installed_manifest(namespace, hash))
+            .read_byte_stream(self.installed_manifest(namespace, hash))
             .await?;
-        storage.create_dir_all(self.dir.join(PACKAGES_DIR)).await?;
         storage
-            .write_byte_stream(self.revision(hash), ByteStream::from(manifest))
+            .write_byte_stream(self.revision(hash), manifest)
             .await?;
+        storage.sync_dir(&self.dir).await;
 
         if latest.as_deref() == Some(hash) {
             // A publish that landed before.
@@ -529,6 +529,10 @@ impl LocalRegistry {
             return Ok(LocalPublish::Diverged(latest));
         }
         write_tag(storage, &self.dir, &self.latest(namespace), hash).await?;
+        // The tag is the only copy, so the folders a first one made are
+        // synced too.
+        storage.sync_dir(self.dir.join(LATEST_DIR)).await;
+        storage.sync_dir(&self.dir).await;
         Ok(LocalPublish::Advanced)
     }
 
