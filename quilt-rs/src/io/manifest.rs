@@ -187,8 +187,8 @@ pub enum LatestAdvance {
     Unchecked,
     /// `latest` moved since it was read, so it was left as it is.
     Moved {
-        /// The revision `latest` names now, when a read after the refused
-        /// write found one.
+        /// The revision `latest` moved to, when a read after the refused
+        /// write found one other than the revision first read.
         latest: Option<String>,
     },
 }
@@ -224,7 +224,7 @@ pub async fn advance_latest(
         {
             Ok(ConditionalPut::Written) => return Ok(LatestAdvance::Checked),
             Ok(ConditionalPut::Moved) => {
-                return Ok(latest_after_refusal(remote, manifest_uri).await);
+                return Ok(latest_after_refusal(remote, manifest_uri, seen).await);
             }
             Err(err) if err.is_access_denied() => {
                 log::warn!("The base check on {tag_uri} was refused; writing it unchecked");
@@ -240,14 +240,21 @@ pub async fn advance_latest(
 
 /// Reads `latest` after S3 refused the conditional write. S3 also refuses an
 /// SDK retry of a write that already landed, so a tag naming `manifest_uri`
-/// counts as written.
-async fn latest_after_refusal(remote: &impl Remote, manifest_uri: &ManifestUri) -> LatestAdvance {
+/// counts as written. A tag still naming the revision `seen` read was
+/// rewritten but not moved (a 409 whose rival write failed, or a new `ETag`
+/// for the same bytes), so there is no revision it moved to.
+async fn latest_after_refusal(
+    remote: &impl Remote,
+    manifest_uri: &ManifestUri,
+    seen: &LatestSeen,
+) -> LatestAdvance {
     let now = read_latest(remote, manifest_uri.origin.as_ref(), manifest_uri).await;
     match now.as_ref().ok().and_then(LatestSeen::hash) {
         Some(hash) if hash == manifest_uri.hash => LatestAdvance::Checked,
-        latest => LatestAdvance::Moved {
-            latest: latest.map(ToOwned::to_owned),
+        Some(hash) if Some(hash) != seen.hash() => LatestAdvance::Moved {
+            latest: Some(hash.to_owned()),
         },
+        _ => LatestAdvance::Moved { latest: None },
     }
 }
 
@@ -943,6 +950,24 @@ mod tests {
             let advance = advance_latest(&remote, &revision(OURS), &seen).await?;
 
             assert_eq!(advance, LatestAdvance::Checked);
+            Ok(())
+        }
+
+        /// A refusal while `latest` still names the revision first read
+        /// reports no revision it moved to.
+        #[test(tokio::test)]
+        async fn a_refused_write_over_the_same_revision_names_none() -> Res {
+            let remote = MockRemote::default();
+            set_latest(&remote, BASE).await?;
+            let seen = LatestSeen::Tagged {
+                uri: revision(BASE),
+                etag: Some("\"rewritten since\"".to_string()),
+            };
+
+            let advance = advance_latest(&remote, &revision(OURS), &seen).await?;
+
+            assert_eq!(advance, LatestAdvance::Moved { latest: None });
+            assert_eq!(latest(&remote).await?, BASE);
             Ok(())
         }
 
