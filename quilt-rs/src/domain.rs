@@ -163,15 +163,16 @@ impl RegistryStore {
         hash: &str,
     ) -> Res {
         let path = self.latest(namespace);
-        if let Some(owner) = path.parent() {
-            storage.create_dir_all(owner).await?;
-        }
+        let owner = path.parent().unwrap_or(&self.dir);
+        storage.create_dir_all(owner).await?;
         // Staged outside `latest/`, where every file is a package's.
         let staged = self.dir.join(temp_name());
         storage
-            .write_byte_stream(&staged, ByteStream::from(hash.as_bytes().to_vec()))
+            .write_staged_byte_stream(&staged, ByteStream::from(hash.as_bytes().to_vec()))
             .await?;
-        storage.rename(&staged, &path).await
+        storage.rename(&staged, &path).await?;
+        storage.sync_dir(owner).await;
+        Ok(())
     }
 
     /// Every package the latest index holds a hash for.
