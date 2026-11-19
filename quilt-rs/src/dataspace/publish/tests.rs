@@ -640,6 +640,40 @@ async fn a_publish_that_cannot_tell_where_latest_went_reads_it_again() -> Res {
     Ok(())
 }
 
+/// Read again, `latest` cannot be read, so where the write went is unknown.
+#[test(tokio::test)]
+async fn a_tag_write_that_failed_with_latest_unreadable_after_is_an_error() -> Res {
+    let remote = MockRemote::default();
+    let storage = &remote.storage;
+    seed(
+        &remote,
+        FIRST,
+        &[("a.txt", b"a")],
+        ManifestHeader::default(),
+    )
+    .await?;
+    write(storage, "mine.txt", b"m").await?;
+    let entry = entry("write = [\"team/raw\"]");
+
+    let rival = unclear_tag_write(&remote, async {
+        remote.deny_reads(LATEST);
+        Ok(())
+    });
+    let outcome = beside(Box::pin(publish(storage, &remote, &entry, None)), rival).await?;
+
+    assert!(
+        matches!(
+            &outcome,
+            Err(EntryError::Failed(err)) if matches!(
+                **err,
+                Error::PackageOp(PackageOpError::PushTagFailed { .. })
+            )
+        ),
+        "{outcome:?}"
+    );
+    Ok(())
+}
+
 /// Read again, `latest` still names the publish's base: nothing raced it, so
 /// the failed tag write is the publish's own error, not a lost race.
 #[test(tokio::test)]
@@ -928,6 +962,13 @@ async fn latest_naming_a_local_file_is_refused() -> Res {
         "{outcome:?}"
     );
     assert_eq!(latest_hash(&remote).await?, FIRST);
+
+    // A snapshot without the row uploads nothing it names.
+    let replaced = publish(storage, &remote, &entry("replace = [\"team/raw\"]"), None).await;
+    let Ok(Published::Advanced { revision: new, .. }) = &replaced else {
+        panic!("expected the snapshot published, got {replaced:?}");
+    };
+    assert_eq!(keys(&revision(&remote, new).await?), ["mine.txt"]);
     Ok(())
 }
 

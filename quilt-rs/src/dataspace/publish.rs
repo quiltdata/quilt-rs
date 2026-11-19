@@ -206,11 +206,13 @@ async fn attempt_on_latest(
     if base.as_ref().is_some_and(holds_metadata_file) {
         return Err(EntryError::HoldsMetadataFile);
     }
+    let (mut manifest, content) = compose(storage, files, base.as_ref(), whole, header).await?;
     // `push_files` uploads the file a `file://` key names, so a row of
     // `latest` kept as it is must already be in S3.
-    if let Some(row) = base
+    if let Some(row) = manifest
+        .rows
         .iter()
-        .flat_map(|base| &base.rows)
+        .filter(|row| !content.contains_key(&row.logical_key))
         .find(|row| !row.physical_key.starts_with("s3://"))
     {
         return Err(Error::from(PackageOpError::Push(format!(
@@ -219,7 +221,6 @@ async fn attempt_on_latest(
         )))
         .into());
     }
-    let (mut manifest, content) = compose(storage, files, base.as_ref(), whole, header).await?;
     metadata.apply(&mut manifest, &entry.paths, whole);
     target.parent = seen.hash().map(str::to_string);
     if same_as(&manifest, base.as_ref()) {
@@ -259,7 +260,9 @@ async fn settle(
     let Error::PackageOp(PackageOpError::PushTagFailed { top_hash, reason }) = &err else {
         return Err(err.into());
     };
-    let Ok(now) = read_latest(remote, target.origin.as_ref(), target.handle.clone()).await else {
+    let Ok(now @ (LatestSeen::Tagged { .. } | LatestSeen::Absent)) =
+        read_latest(remote, target.origin.as_ref(), target.handle.clone()).await
+    else {
         return Err(err.into());
     };
     Ok(match now.hash() {
