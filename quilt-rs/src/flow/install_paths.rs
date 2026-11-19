@@ -239,7 +239,11 @@ async fn holds(storage: &impl Storage, working_dest: &Path, row: ManifestRow) ->
 /// that moved during the hash counts as an edit, and so does a file that was
 /// there when the check began and is gone by its end, as an editor that moves
 /// the old file aside before writing the new one leaves it.
-async fn edited(storage: &impl Storage, working_dest: &Path, row: &ManifestRow) -> Res<bool> {
+pub(crate) async fn edited(
+    storage: &impl Storage,
+    working_dest: &Path,
+    row: &ManifestRow,
+) -> Res<bool> {
     let modified = || async {
         match storage.modified_timestamp(working_dest).await {
             Ok(at) => Ok(Some(at)),

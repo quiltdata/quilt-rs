@@ -235,7 +235,7 @@ fn refuse_unfetchable_rows(rows: &[ManifestRow]) -> Res {
 
 /// Whether `path` holds something other than a folder this install can put files
 /// in: a file, or anything else that cannot be listed.
-async fn blocks_a_folder(storage: &(impl Storage + Sync), path: &Path) -> bool {
+pub(crate) async fn blocks_a_folder(storage: &(impl Storage + Sync), path: &Path) -> bool {
     storage.exists(path).await
         && (storage.is_file(path).await || storage.read_dir(path).await.is_err())
 }
@@ -264,7 +264,7 @@ fn folders_above<'a>(
 /// Refuses a key whose folder between `dest` and its target is a symbolic
 /// link, which would put the file outside `dest`. `dest` itself may be a link:
 /// that is the caller's choice.
-pub(super) async fn refuse_linked_ancestors<'a>(
+pub(crate) async fn refuse_linked_ancestors<'a>(
     storage: &(impl Storage + Sync),
     dest: &Path,
     keys: impl Iterator<Item = &'a LogicalKey>,
