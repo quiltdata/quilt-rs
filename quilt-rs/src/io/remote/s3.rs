@@ -280,9 +280,9 @@ async fn get_object_stream(
 }
 
 /// Whether a failed conditional write failed on its condition: S3 answers 412
-/// when the object no longer matches, and 409 when another conditional write
-/// to the same key was in flight. Either way the object is not as the caller
-/// last read it, so nothing was written.
+/// when the object no longer matches, `NoSuchKey` when it was deleted, and 409
+/// when another conditional write to the same key was in flight. Either way
+/// the object is not as the caller last read it, so nothing was written.
 fn is_condition_failure<E>(err: &SdkError<E>) -> bool
 where
     E: ProvideErrorMetadata,
@@ -291,7 +291,7 @@ where
     let status = err.raw_response().map(|raw| raw.status().as_u16());
     matches!(
         code,
-        Some("PreconditionFailed" | "ConditionalRequestConflict")
+        Some("PreconditionFailed" | "ConditionalRequestConflict" | "NoSuchKey")
     ) || matches!(status, Some(412 | 409))
 }
 
@@ -1088,8 +1088,9 @@ mod tests {
         ));
     }
 
-    /// S3 refuses a conditional write to an object changed since the read
-    /// its `ETag` came from, and creates an object only when there is none.
+    /// S3 refuses a conditional write to an object changed or deleted since
+    /// the read its `ETag` came from, and creates an object only when there
+    /// is none.
     /// The key is new on each run, so concurrent runs do not share it.
     #[test(tokio::test)]
     async fn live_write_conditional_put_refuses_a_moved_object() -> Res<()> {
@@ -1130,8 +1131,28 @@ mod tests {
             .await?;
         assert_eq!(stale, ConditionalPut::Moved);
 
-        let body = remote.get_object_stream(None, &s3_uri).await?.body;
-        assert_eq!(body.collect().await?.to_vec(), b"third");
+        let read = remote.get_object_stream(None, &s3_uri).await?;
+        let etag = read.etag.expect("S3 returns an ETag");
+        assert_eq!(read.body.collect().await?.to_vec(), b"third");
+
+        remote
+            .get_client_for_bucket(None, &s3_uri.bucket)
+            .await?
+            .delete_object()
+            .bucket(&s3_uri.bucket)
+            .key(&s3_uri.key)
+            .send()
+            .await
+            .expect("the test deletes its own key");
+        let deleted = remote
+            .put_object_if(
+                None,
+                &s3_uri,
+                b"fifth".to_vec(),
+                &WriteCondition::Matches(etag),
+            )
+            .await;
+        assert_eq!(deleted.ok(), Some(ConditionalPut::Moved));
         Ok(())
     }
 

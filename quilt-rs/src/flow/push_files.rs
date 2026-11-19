@@ -11,7 +11,6 @@ use crate::Res;
 use crate::error::PackageOpError;
 use crate::installed_package::PushOutcome;
 use crate::io::manifest::LatestAdvance;
-use crate::io::manifest::LatestSeen;
 use crate::io::manifest::RowContent;
 use crate::io::manifest::advance_latest;
 use crate::io::manifest::build_manifest_from_rows_stream;
@@ -198,13 +197,10 @@ async fn tag_stored(
         .await
         .map_err(tag_failed)?
     {
-        LatestAdvance::Moved => {
-            let moved = read_latest(remote, target.origin.as_ref(), target.handle.clone()).await;
-            let latest = match moved.as_ref().ok().and_then(LatestSeen::hash) {
-                Some(hash) => hash.to_owned(),
-                None => "a revision published while this push ran".to_string(),
-            };
-            Err(not_latest(latest))
+        LatestAdvance::Moved { latest } => {
+            Err(not_latest(latest.unwrap_or_else(|| {
+                "a revision published while this push ran".to_string()
+            })))
         }
         written => {
             info!("✔️ Certified {} as latest", manifest_uri.display());
@@ -609,6 +605,47 @@ mod tests {
         assert_eq!(revisions(&remote).await?, vec![top_hash.clone()]);
         let stored = pushed_manifest(&remote, &top_hash).await?;
         assert_eq!(stored.rows.len(), 1);
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn a_latest_moved_between_the_read_and_the_write_keeps_the_revision() -> Res {
+        let remote = MockRemote::default();
+        seed_latest(&remote, PARENT).await?;
+        let files = BTreeMap::from([(key("a.txt"), RowContent::Bytes(Bytes::from_static(b"hi")))]);
+        let target = target(Some(PARENT));
+        let read_gate = remote.park(LATEST);
+        let compete = async {
+            read_gate.arrived().await;
+            let write_gate = remote.park(LATEST);
+            read_gate.release();
+            write_gate.arrived().await;
+            seed_latest(&remote, SOMEONE_ELSE).await?;
+            write_gate.release();
+            Ok::<_, Error>(())
+        };
+
+        let (pushed, competed) = tokio::join!(
+            push_files(
+                &remote.storage,
+                &remote,
+                &target,
+                manifest(vec![bare_row("a.txt")]),
+                &files,
+            ),
+            compete
+        );
+        competed?;
+
+        let Err(Error::PackageOp(PackageOpError::PushedNotLatest {
+            top_hash, latest, ..
+        })) = pushed
+        else {
+            panic!("expected PushedNotLatest, got {pushed:?}");
+        };
+        assert_eq!(latest, SOMEONE_ELSE);
+        assert_eq!(read(&remote, LATEST).await?, SOMEONE_ELSE);
+        assert_eq!(revisions(&remote).await?, vec![top_hash]);
         Ok(())
     }
 

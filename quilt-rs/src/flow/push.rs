@@ -322,12 +322,10 @@ pub(crate) async fn push_package_impl(
 
     debug!("⏳ Certifying new latest");
     let written = advance_latest(remote, &new_manifest_uri, &latest).await?;
-    if written == LatestAdvance::Moved {
+    if let LatestAdvance::Moved { latest } = &written {
         warn!("Pushed but did not certify latest: it moved while this push read it");
-        if let Ok(LatestSeen::Tagged { uri, .. }) =
-            read_latest(remote, new_manifest_uri.origin.as_ref(), &manifest_uri).await
-        {
-            lineage.latest_hash = uri.hash;
+        if let Some(hash) = latest {
+            lineage.latest_hash.clone_from(hash);
         }
         return Ok(PushResult {
             lineage,

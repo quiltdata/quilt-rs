@@ -84,7 +84,10 @@ pub async fn push_onto(
     } else {
         None
     };
-    let certified_latest = advance.is_some_and(|written| written != LatestAdvance::Moved);
+    let certified_latest = matches!(
+        advance,
+        Some(LatestAdvance::Checked | LatestAdvance::Unchecked)
+    );
     if certified_latest {
         info!("✔️ Certified {} as latest", manifest_uri.display());
     } else {
@@ -196,6 +199,51 @@ mod tests {
 
         assert!(!pushed.certified_latest);
         assert_eq!(read(&remote, LATEST).await?, SOMEONE_ELSE);
+        assert!(uploaded(&remote, &pushed).await?, "the revision is kept");
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn a_latest_moved_between_the_read_and_the_write_is_kept() -> Res {
+        let remote = remote_with_latest(PARENT).await?;
+        let read_gate = remote.park(LATEST);
+        let compete = async {
+            read_gate.arrived().await;
+            let write_gate = remote.park(LATEST);
+            read_gate.release();
+            write_gate.arrived().await;
+            remote
+                .put_object(
+                    None,
+                    &S3Uri::try_from(LATEST)?,
+                    SOMEONE_ELSE.as_bytes().to_vec(),
+                )
+                .await?;
+            write_gate.release();
+            Ok::<_, Error>(())
+        };
+
+        let (pushed, competed) = tokio::join!(
+            push(&remote, manifest("s3://b/a/c/out.md?versionId=v1")?),
+            compete
+        );
+        competed?;
+        let pushed = pushed?;
+
+        assert!(!pushed.certified_latest);
+        assert_eq!(read(&remote, LATEST).await?, SOMEONE_ELSE);
+        assert!(uploaded(&remote, &pushed).await?, "the revision is kept");
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn a_parent_with_no_latest_is_kept_uncertified() -> Res {
+        let remote = MockRemote::default();
+
+        let pushed = push(&remote, manifest("s3://b/a/c/out.md?versionId=v1")?).await;
+
+        let pushed = pushed.expect("a missing latest does not fail the push");
+        assert!(!pushed.certified_latest);
         assert!(uploaded(&remote, &pushed).await?, "the revision is kept");
         Ok(())
     }
