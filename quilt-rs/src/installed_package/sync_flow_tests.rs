@@ -2219,6 +2219,59 @@ async fn test_a_moved_latest_that_cannot_be_read_again_keeps_the_commit() -> Res
     Ok(())
 }
 
+/// A tracking push reads no `latest`, and a rival restores it to the push's
+/// base before the write: the refusal names the base, which the lineage
+/// cannot record as a move, so the push fails and keeps its commit.
+#[test(tokio::test)]
+async fn test_a_latest_restored_to_the_base_keeps_the_commit() -> Res {
+    let (package, _temp_dirs) = first_push_package(Some(THEIR_HASH)).await?;
+    package
+        .lineage
+        .edit(&package.storage, |lineage| {
+            lineage.base_hash = THEIR_HASH.to_string();
+            lineage.latest_hash = THEIR_HASH.to_string();
+            if let Some(remote) = lineage.remote_uri.as_mut() {
+                remote.hash = THEIR_HASH.to_string();
+            }
+        })
+        .await?;
+    package
+        .remote
+        .storage
+        .remove_file(FIRST_PUSH_LATEST.trim_start_matches("s3://"))
+        .await?;
+
+    let read = package.remote.park(FIRST_PUSH_LATEST);
+    let compete = async {
+        read.arrived().await;
+        let write = package.remote.park(FIRST_PUSH_LATEST);
+        read.release();
+        write.arrived().await;
+        package
+            .remote
+            .put_object(
+                None,
+                &S3Uri::try_from(FIRST_PUSH_LATEST)?,
+                THEIR_HASH.as_bytes().to_vec(),
+            )
+            .await?;
+        write.release();
+        Ok::<_, Error>(())
+    };
+    let (pushed, competed) = tokio::join!(package.push(None), compete);
+    competed?;
+
+    assert!(
+        matches!(
+            &pushed,
+            Err(Error::PackageOp(PackageOpError::PushTagFailed { .. }))
+        ),
+        "{pushed:?}"
+    );
+    assert!(package.lineage().await?.commit.is_some());
+    Ok(())
+}
+
 /// A role that may write `latest` but not read it cannot check it: the push
 /// still moves `latest`, and says the write was unchecked.
 #[test(tokio::test)]
