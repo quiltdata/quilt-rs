@@ -1037,6 +1037,18 @@ impl Remote for RemoteS3 {
         host: Option<&Host>,
         bucket: &str,
     ) -> Res<Vec<(Namespace, String)>> {
+        if let Some(registry_host) = host {
+            match self
+                .auth
+                .latest_hashes(&self.http, registry_host, bucket)
+                .await
+            {
+                Ok(listed) => return Ok(listed),
+                Err(reason) => {
+                    info!("Listing {bucket} in S3, as its registry's search could not: {reason}");
+                }
+            }
+        }
         self.latest_hashes_listed(host, bucket)
             .await
             .map_err(|e| self.forget_ambient_clients_on(e))
@@ -1699,6 +1711,65 @@ mod tests {
             .unwrap()
             .insert(CredsRef { region, host: None }, denied_client);
         remote
+    }
+
+    /// A registry that cannot list the bucket, here because no one is logged
+    /// in to it, leaves the listing to S3 on the host's credentials: a stub
+    /// endpoint holding no packages, reached only through the host's client.
+    #[test(tokio::test)]
+    async fn latest_hashes_lists_s3_where_the_registry_cannot() -> Res<()> {
+        let body = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
+             <ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">\
+             <Name>listed</Name><Prefix>.quilt/named_packages/</Prefix>\
+             <KeyCount>0</KeyCount><MaxKeys>1000</MaxKeys><Delimiter>/</Delimiter>\
+             <IsTruncated>false</IsTruncated></ListBucketResult>";
+        let addr = spawn_canned_s3_endpoint(
+            format!(
+                "HTTP/1.1 200 OK\r\n\
+                 Content-Type: application/xml\r\n\
+                 Content-Length: {}\r\n\
+                 Connection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .into_bytes(),
+        )
+        .await;
+        let region = Region::new("us-east-1");
+        let client = aws_sdk_s3::Client::from_conf(
+            aws_sdk_s3::Config::builder()
+                .behavior_version(BehaviorVersion::latest())
+                .region(region.clone())
+                .credentials_provider(Credentials::new("AK", "SK", None, None, "test"))
+                .endpoint_url(format!("http://{addr}"))
+                .force_path_style(true)
+                .build(),
+        );
+        let temp = tempfile::TempDir::new()?;
+        let remote = RemoteS3::new(
+            DomainPaths::new(temp.path().to_path_buf()),
+            LocalStorage::new(),
+        );
+        let host = fixtures::host();
+        remote
+            .regions
+            .write()
+            .unwrap()
+            .insert("listed".to_string(), region.clone());
+        remote.s3.write().unwrap().insert(
+            CredsRef {
+                region,
+                host: Some(host.clone()),
+            },
+            client,
+        );
+
+        let listed = remote.latest_hashes(Some(&host), "listed").await;
+
+        assert!(
+            matches!(&listed, Ok(latest) if latest.is_empty()),
+            "expected the bucket's empty listing, got {listed:?}"
+        );
+        Ok(())
     }
 
     /// The typed denial has to survive the `Remote` **method**, not just the
