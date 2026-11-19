@@ -15,10 +15,13 @@ use std::str::FromStr;
 
 use serde::Deserialize;
 use serde::de::IgnoredAny;
+use sha2::Digest;
+use sha2::Sha256;
 use thiserror::Error;
 
 use crate::LogicalKey;
 use crate::LogicalKeyError;
+use crate::dataspace::lock::LOCK_FILE;
 use crate::io::storage::Storage;
 use crate::io::storage::StorageExt;
 use quilt_uri::Host;
@@ -93,6 +96,27 @@ impl fmt::Display for PackageKey {
             path: None,
         };
         write!(f, "{uri}")
+    }
+}
+
+/// Reads only the canonical URI, so one with a revision, path or catalog, or
+/// spelled any other way, is refused.
+impl FromStr for PackageKey {
+    type Err = UriError;
+
+    fn from_str(text: &str) -> Result<Self, UriError> {
+        let uri = S3PackageUri::try_from(text)?;
+        let key = Self {
+            registry: Registry::S3(uri.bucket),
+            package: uri.namespace,
+        };
+        if key.to_string() == text {
+            Ok(key)
+        } else {
+            Err(UriError::Package(format!(
+                "not a package's canonical URI: {text:?}"
+            )))
+        }
     }
 }
 
@@ -213,6 +237,8 @@ impl Entry {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Contract {
     entries: Vec<Entry>,
+    dataspace: PathBuf,
+    data_toml_hash: String,
 }
 
 impl Contract {
@@ -246,6 +272,18 @@ impl Contract {
     #[must_use]
     pub fn entries(&self) -> &[Entry] {
         &self.entries
+    }
+
+    /// The dataspace's folder, as an absolute path.
+    #[must_use]
+    pub fn dataspace(&self) -> &Path {
+        &self.dataspace
+    }
+
+    /// The hex SHA-256 of the `data.toml` bytes this contract was read from.
+    #[must_use]
+    pub fn data_toml_hash(&self) -> &str {
+        &self.data_toml_hash
     }
 
     /// Parses a contract held in `dataspace`, an absolute path.
@@ -299,7 +337,11 @@ impl Contract {
             }
             placed.push((key, folder));
         }
-        Ok(Self { entries })
+        Ok(Self {
+            entries,
+            dataspace: dataspace.to_path_buf(),
+            data_toml_hash: hex::encode(Sha256::digest(bytes)),
+        })
     }
 }
 
@@ -386,7 +428,7 @@ pub enum EntryProblem {
     #[error("a plain string whose first segment ends in `@local` names a local registry's folder")]
     LocalFolder,
 
-    #[error("its folder is, holds or sits in the dataspace's contract")]
+    #[error("its folder is, holds or sits in the dataspace's contract or lock")]
     DataspaceFolder,
 
     #[error(
@@ -809,8 +851,8 @@ pub(crate) enum FolderCase {
 struct Folders<'a> {
     root: &'a Path,
     case: FolderCase,
-    /// The contract file's path, by its names.
-    contract: Vec<String>,
+    /// The contract's and the lock's paths, by their names.
+    own_files: Vec<Vec<String>>,
 }
 
 impl<'a> Folders<'a> {
@@ -818,9 +860,12 @@ impl<'a> Folders<'a> {
         let mut folders = Self {
             root,
             case,
-            contract: Vec::new(),
+            own_files: Vec::new(),
         };
-        folders.contract = folders.names(&root.join(CONTRACT_FILE));
+        folders.own_files = [CONTRACT_FILE, LOCK_FILE]
+            .iter()
+            .map(|file| folders.names(&root.join(file)))
+            .collect();
         folders
     }
 
@@ -842,9 +887,10 @@ impl<'a> Folders<'a> {
         self.checked(folder)
     }
 
-    /// Refuses a folder that is, holds or sits in the contract file.
+    /// Refuses a folder that is, holds or sits in the contract or the lock.
     fn checked(&self, folder: PathBuf) -> Result<PathBuf, EntryProblem> {
-        if overlap(&self.names(&folder), &self.contract) {
+        let names = self.names(&folder);
+        if self.own_files.iter().any(|file| overlap(&names, file)) {
             return Err(EntryProblem::DataspaceFolder);
         }
         Ok(folder)

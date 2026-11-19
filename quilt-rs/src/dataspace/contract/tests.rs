@@ -155,7 +155,7 @@ fn an_entry_naming_no_registry_needs_a_default() -> Res {
 }
 
 #[test]
-fn a_folder_overlapping_the_contract_is_refused() {
+fn a_folder_overlapping_the_contract_or_the_lock_is_refused() {
     for list in [
         r#"read = ["."]"#,
         r#"read = ["./"]"#,
@@ -164,6 +164,8 @@ fn a_folder_overlapping_the_contract_is_refused() {
         r#"read = ["data.toml"]"#,
         r#"read = [{ package = "team/raw", folder = "data.toml/x" }]"#,
         r#"read = [{ package = "data.toml/x" }]"#,
+        r#"read = ["data.lock.toml"]"#,
+        r#"read = [{ package = "data.lock.toml/x" }]"#,
     ] {
         let problem = entry_problem(&with_defaults(list));
         assert!(

@@ -37,6 +37,7 @@ dirs.workspace = true
 getrandom.workspace = true
 gitignores.workspace = true
 hex.workspace = true
+hostname.workspace = true
 http-body.workspace = true
 ignore.workspace = true
 jsonschema.workspace = true

@@ -39,6 +39,7 @@ dirs = "7.0.0"
 getrandom = "0.4"
 gitignores = "4.8"
 hex = "0.4.3"
+hostname = "0.4.2"
 http-body = "1.1.0"
 ignore = "0.4"
 jsonschema = { version = "0.61.0", default-features = false }
