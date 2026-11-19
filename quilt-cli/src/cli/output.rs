@@ -155,10 +155,14 @@ mod tests {
 
         let commit_out = commit::Output {
             commit: Some(CommitState::default()),
+            warnings: Vec::new(),
         };
         assert!(commit_out.to_json().is_object());
 
-        let nothing_to_commit_out = commit::Output { commit: None };
+        let nothing_to_commit_out = commit::Output {
+            commit: None,
+            warnings: Vec::new(),
+        };
         assert!(nothing_to_commit_out.to_json().is_object());
 
         let undo_commit_out = undo_commit::Output {
@@ -176,6 +180,7 @@ mod tests {
             outcome: Some(quilt_rs::PushOutcome {
                 manifest_uri: manifest_uri.clone(),
                 certified_latest: true,
+                latest_unchecked: false,
             }),
         };
         assert!(push_out.to_json().is_object());

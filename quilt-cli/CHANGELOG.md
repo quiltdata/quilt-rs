@@ -23,15 +23,30 @@
 
 ### Added
 
+- `quilt commit` and `quilt create` take `--meta '<json>'` (quilt3's name; `-u` and `--user-meta` are the same flag) to set package metadata as a JSON object, keeping the exact text of integers beyond 64 bits. No flag on `commit` keeps the previous revision's metadata; no flag on `create` writes no `user_meta` key. A non-object (`--meta null`, an array, a string) is an error. `push` has no `--meta` (<https://github.com/quiltdata/quilt-rs/pull/1394>)
+- `quilt install` and `quilt browse` accept a short hash (6 to 63 lowercase hex characters) after `@` in a package URI, as quilt3 does, and look it up in the bucket's registry (<https://github.com/quiltdata/quilt-rs/pull/1392>)
+- `quilt catalog` shows, sets (`set HOST`) and clears the default catalog, which `quilt login` and `quilt role` use when `--host` is left out; a default is taken from quilt3's `config.yml` the first time, and never applies to a package (<https://github.com/quiltdata/quilt-rs/pull/1384>)
 - `quilt version` prints what `quilt --version` prints, and `quilt version --details` adds what a bug report needs: the library versions, the OS, and the folders quilt uses (<https://github.com/quiltdata/quilt-rs/pull/1371>)
 
 ### Changed
 
+- `quilt push` no longer overwrites a `latest` another publisher moved while it ran: it keeps the revision and warns that `latest` was not updated. A role that cannot read `latest` still updates it, with a warning that it was not checked; `--json` has `latest_unchecked` (<https://github.com/quiltdata/quilt-rs/pull/1444>)
+- `quilt commit` of a package with a remote no longer refuses a revision the bucket's current workflows reject, one whose bucket config cannot be read, or one whose validator setup is misconfigured (an invalid schema or handle pattern): it commits it and prints each reason as a `Warning:` line, and `--json` lists the `warnings`; `quilt push` still checks the revision (<https://github.com/quiltdata/quilt-rs/pull/1432>)
+- `quilt` keeps each package's lineage in a file of its own under `.quilt/refs/`, so a damaged one costs only that package: the first command on a domain moves the lineage there from `data.json`, keeps that file as `data.json.pre-refs`, and leaves in its place a stub on which an older `quilt` stops, saying to upgrade. `quilt lineage rollback` moves it back to `data.json`, which a build from before this change reads; the file keeps no per-file hashes, so v0.41.0 and older cannot read it once a package tracks a file (<https://github.com/quiltdata/quilt-rs/pull/1410>, <https://github.com/quiltdata/quilt-rs/pull/1423>, <https://github.com/quiltdata/quilt-rs/pull/1424>)
+- `quilt list` shows a package whose lineage can't be read as a row naming the error (`unreadable: …`, and `error` in `--json`) and lists the others, where that package failed the whole list (<https://github.com/quiltdata/quilt-rs/pull/1402>)
+- `quilt create` without `--meta` writes no `user_meta` key, where it previously wrote `"user_meta": {}` (<https://github.com/quiltdata/quilt-rs/pull/1394>)
 - Building from source now requires Rust 1.99 or newer (<https://github.com/quiltdata/quilt-rs/pull/1370>)
+- `quilt push` of a new package no longer replaces a `latest` someone else already published under the same name: it uploads the revision and warns that `latest` was not updated (<https://github.com/quiltdata/quilt-rs/pull/1373>)
+
+### Fixed
+
+- `quilt` runs every command with 8 MiB of stack on every OS, where on Windows it had the 1 MB of the main thread, which a debug build nearly filled (<https://github.com/quiltdata/quilt-rs/pull/1429>)
+- `quilt list`, `quilt status` and the commands that write lineage no longer fail now and then with a parse error such as `EOF while parsing` while another `quilt` or QuiltSync writes the same domain's lineage (<https://github.com/quiltdata/quilt-rs/pull/1416>)
+- `quilt status` of a package whose folder is missing says the working copy is unavailable and lists no changes, where it listed every file as removed, and `quilt commit` refuses, naming the folder, where it recorded an empty revision; `quilt list --fetch` shows it as `folder missing`, where it showed `latest`, and under `--json` gives it no `changed_files` count, where it gave `0` (<https://github.com/quiltdata/quilt-rs/pull/1397>, <https://github.com/quiltdata/quilt-rs/pull/1431>)
 
 ### quilt-rs
 
-- Updated [from v0.53.0 to v0.53.1-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.53.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+- Updated [from v0.53.0 to v0.54.0-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.53.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
 
 ### quilt-uri
 

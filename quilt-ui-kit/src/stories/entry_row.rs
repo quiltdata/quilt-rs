@@ -103,9 +103,7 @@ fn states(ticked: RwSignal<bool>, fresh: RwSignal<bool>, opened: RwSignal<String
 
 const CLICK: &str = "A click does the thing the row can do, and where the file is decides \
                      which, so the box and the gesture cannot disagree. A file that is here \
-                     has no box and opens locally — the recent-files list's own gesture, so \
-                     a click means the same in both of this app's file lists. One that is \
-                     not here ticks instead. One that can do neither draws no pointer at \
+                     has no box and opens locally. One that is not here ticks instead. One that can do neither draws no pointer at \
                      all, because a row advertising a click it cannot honour is worse than \
                      an inert one. Click the first two rows, then read the last cell.";
 

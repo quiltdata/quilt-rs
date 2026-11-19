@@ -20,11 +20,19 @@
 
 ### Added
 
+- `paths::TAGS_PREFIX` is the prefix every package's tags share, `.quilt/named_packages/` (<https://github.com/quiltdata/quilt-rs/pull/1452>)
+- A package URI's `@` may be a short hash of 6 to 63 lowercase hex characters, as in quilt3. It parses to the new `RevisionPointer::HashPrefix` and displays as written, `ManifestUri::try_from` refuses it, and a hash of any other length, or not lowercase hex, is an error that says which; `MIN_HASH_PREFIX_LEN` and `TOP_HASH_LEN` are exported (<https://github.com/quiltdata/quilt-rs/pull/1392>)
 - `VERSION` holds the crate's version (<https://github.com/quiltdata/quilt-rs/pull/1371>)
 
 ### Changed
 
+- **Breaking:** `RevisionPointer` has a new variant, `HashPrefix`, so an exhaustive match on it needs an arm, and its JSON form has a new `_tag` (<https://github.com/quiltdata/quilt-rs/pull/1392>)
 - Building from source now requires Rust 1.99 or newer (<https://github.com/quiltdata/quilt-rs/pull/1370>)
+
+### Fixed
+
+- In a `quilt+s3://` fragment, `+` is a literal `+`, so `path=C++.csv` names `C++.csv`, and a %-escape that is not UTF-8, such as `%FF`, is an error instead of U+FFFD (<https://github.com/quiltdata/quilt-rs/pull/1372>)
+- A `path=` with leading or trailing whitespace, or an empty `path=`, is accepted the way quilt3 accepts it, then trimmed (with a warning) so the URI does not silently name a different entry; an empty path is no path (<https://github.com/quiltdata/quilt-rs/pull/1385>)
 
 ## [v0.5.0] - 2026-11-12
 

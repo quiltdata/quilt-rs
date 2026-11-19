@@ -1,0 +1,4 @@
+{"message":"","user_meta":{},"version":"v0"}
+{"logical_key":"data","physical_keys":["s3://bucket/data"],"hash":{"type":"sha2-256-chunked","value":"Xb1PbjJeWof4zD7zuHc9PI7sLiz/Ykj4gphlaZEt3xA="},"size":16,"meta":{}}
+{"logical_key":"data-2/x.csv","physical_keys":["s3://bucket/data-2/x.csv"],"hash":{"type":"sha2-256-chunked","value":"Xb1PbjJeWof4zD7zuHc9PI7sLiz/Ykj4gphlaZEt3xA="},"size":16,"meta":{}}
+{"logical_key":"data.csv","physical_keys":["s3://bucket/data.csv"],"hash":{"type":"sha2-256-chunked","value":"Xb1PbjJeWof4zD7zuHc9PI7sLiz/Ykj4gphlaZEt3xA="},"size":16,"meta":{}}

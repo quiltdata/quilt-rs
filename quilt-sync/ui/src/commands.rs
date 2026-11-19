@@ -199,7 +199,9 @@ pub struct WorkflowInfo {
 /// - `NotConfigured` — the bucket is ungoverned; no choice to make.
 /// - `Unavailable` — a transient failure loading the config; commit will retry
 ///   the bucket default.
-/// - `Invalid` — the config is malformed; commits will fail until it is fixed.
+/// - `Invalid` — the config is malformed; the Commit page currently disables
+///   Save, and must not promise a fallback. `quilt commit` records the
+///   revision as unchecked.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(
     tag = "state",
@@ -1004,9 +1006,6 @@ pub struct MainPagePackageRefreshData {
     pub role_switch_host: Option<String>,
     /// `None` when the status check did not run or failed.
     pub downloads: Option<MainPageDownloadsData>,
-    /// Files changed here since the last commit; `None` when the status check
-    /// did not run or failed. Apart from `state`, which can hide it.
-    pub changed_files: Option<usize>,
 }
 
 /// What a copy holds of its current revision. Mirrors `MainPageDownloads` on
@@ -1070,9 +1069,8 @@ pub struct MainPagePackagesData {
 pub struct MainPagePackageData {
     pub namespace: Namespace,
     pub state: quilt_ui_kit::PackageState,
-    /// Epoch milliseconds, from the last commit or the last installed path — see
-    /// `last_changed` on the engine's side. `None` only when nothing has ever been
-    /// written to the package.
+    /// Epoch milliseconds — see `last_changed` on the engine's side. `None` when
+    /// none of the times it reads is known.
     pub changed_at: Option<f64>,
     /// The queue's group key for `RoleDenied` (§4.3, R2): one host can hold
     /// both readable and unreadable buckets, so `derive_queue` groups a
@@ -1297,38 +1295,6 @@ pub async fn refresh_main_page_account(host: String) -> Result<AccountHostData, 
     engine::invoke("refresh_main_page_account", &Args { host }).await
 }
 
-/// One installed or published file, flat across every package. Mirrors the
-/// backend's `MainPageFile`; the owning package travels with the row rather
-/// than grouping it.
-#[derive(Clone, Debug, PartialEq, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MainPageFileData {
-    pub path: String,
-    pub namespace: Namespace,
-    /// Epoch milliseconds. Never re-sorted or re-capped on this side — see
-    /// `pages::main_page::recent_files::RecentFilesRegion`.
-    pub changed_at: f64,
-    /// The revision the package holds, when its remote has it and the package
-    /// has no unpublished revision; the catalog link and the copied URI name
-    /// it. `None` otherwise. Read from the lineage alone.
-    pub published_hash: Option<String>,
-}
-
-/// Payload of `get_main_page_recent_files`: §3.2's flat feed, already newest
-/// first and already bounded by the backend (§4.5).
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MainPageRecentFilesData {
-    pub files: Vec<MainPageFileData>,
-}
-
-/// The recent files feed, single-phase: drawn by
-/// `pages::main_page::recent_files::RecentFilesRegion`, and read by the main
-/// page's own resource only once the reader asks for that view.
-pub async fn get_main_page_recent_files() -> Result<MainPageRecentFilesData, String> {
-    engine::invoke_unit("get_main_page_recent_files").await
-}
-
 /// Payload of the `package-status-changed` engine event, with the namespace
 /// it applies to, so a page can match a package by namespace.
 #[derive(Clone, Debug, Deserialize)]
@@ -1419,13 +1385,26 @@ pub async fn download_and_install_update() -> Result<(), String> {
 
 // ── Package actions ─────────────────────────────────────────
 
+/// Response from the `package_commit` command. UI-side mirror of the backend
+/// `quilt_sync::commands::package_ops::CommitResponse`; the serde attributes
+/// MUST match so the typed payload crosses the engine boundary unchanged.
+/// `workflow_warning` is `Some(reasons)` when the revision was committed with
+/// workflow warnings; `nothing_to_commit` when it was the package's already.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitResponse {
+    pub message: String,
+    pub workflow_warning: Option<String>,
+    pub nothing_to_commit: bool,
+}
+
 pub async fn package_commit(
     namespace: String,
     message: String,
     metadata: String,
     workflow: WorkflowIntent,
     uri: Option<S3PackageUri>,
-) -> Result<String, String> {
+) -> Result<CommitResponse, String> {
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
     struct Args {
@@ -2719,25 +2698,6 @@ mod tests {
         assert_eq!(pkg.host.as_deref(), Some("quilt.test"));
         assert!(pkg.provisional);
         assert_eq!(pkg.role_switch_host, None);
-    }
-
-    /// The mirror struct must deserialize the exact camelCase JSON the
-    /// backend's `MainPageFile`/`MainPageRecentFiles`
-    /// (`#[serde(rename_all = "camelCase")]`, both plain `Serialize`) produce.
-    /// If the two drift, the feed silently fails to deserialize at the engine
-    /// boundary.
-    #[test]
-    fn main_page_recent_files_data_wire_form_is_verbatim() {
-        let data = serde_json::from_str::<super::MainPageRecentFilesData>(
-            r#"{"files":[{"path":"a/one.csv","namespace":"user/alpha","changedAt":1000.0,"publishedHash":"abc123"}]}"#,
-        )
-        .unwrap();
-        assert_eq!(data.files.len(), 1);
-        let file = &data.files[0];
-        assert_eq!(file.path, "a/one.csv");
-        assert_eq!(file.namespace.to_string(), "user/alpha");
-        assert!((file.changed_at - 1000.0).abs() < f64::EPSILON);
-        assert_eq!(file.published_hash.as_deref(), Some("abc123"));
     }
 
     /// The mirror struct must deserialize the heavy phase's two never-before-seen

@@ -54,15 +54,25 @@ pub(crate) fn holds_user_meta(meta: &serde_json::Value) -> bool {
     }
 }
 
+/// The `user_meta` of `header` as written, when it says anything.
+pub(crate) fn written_user_meta(header: &ManifestHeader) -> Option<String> {
+    header
+        .user_meta
+        .as_ref()
+        .filter(|meta| holds_user_meta(meta))
+        .and(header.user_meta_text())
+}
+
 impl Revision {
     /// The facts `header` records about the revision at `hash`.
     #[must_use]
     pub fn from_header(hash: String, obtained: DateTime<Utc>, header: ManifestHeader) -> Self {
+        let message = header.message().map(str::to_owned);
         let meta = header.user_meta.filter(holds_user_meta);
         Self {
             hash,
             obtained,
-            message: header.message,
+            message,
             meta,
             workflow: header.workflow.and_then(|w| w.id).map(|id| id.id),
         }
@@ -147,9 +157,10 @@ mod tests {
 
     use test_log::test;
 
+    use crate::flow::UserMeta;
     use crate::flow::create;
     use crate::io::storage::mocks::MockStorage;
-    use crate::lineage::DomainLineage;
+    use crate::lineage::Home;
 
     /// A created package's manifest is enumerated, with its header message.
     ///
@@ -158,18 +169,20 @@ mod tests {
     /// `commit` — more setup than belongs here.
     #[test(tokio::test)]
     async fn test_list_revisions_reads_the_installed_manifest() -> Res {
-        let (lineage, _temp_dir) = DomainLineage::from_temp_dir()?;
+        let (home, _temp_dir) = Home::from_temp_dir()?;
         let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
         let storage = MockStorage::default();
         let namespace: Namespace = ("demo", "sales").into();
 
         create(
-            lineage,
+            &home,
+            false,
             &paths,
             &storage,
             namespace.clone(),
             None,
             Some("initial import".to_string()),
+            UserMeta::Clear,
         )
         .await?;
 

@@ -4,13 +4,15 @@
 //! lock, `.quilt/locks/<owner>/<name>.lock`, from its first read of the entry
 //! to its write. Two writers of one package then run one after the other, so
 //! the entry a writer writes is always the one it read. Different packages
-//! have different lock files and never wait on each other; their writes meet
-//! only at the short lock around each splice of `data.json` (see
-//! [`DomainLineageIo::update`](crate::lineage::DomainLineageIo::update)).
+//! have different lock files, and updates of different packages never wait
+//! on each other, since each has a ref of its own; an install or uninstall
+//! also takes the domain lock, `.quilt/domain.lock`, as a home change does.
 //!
-//! Lock order is fixed: the package's lock, then the short one, never the
-//! reverse. The lock is not reentrant, so only public entry points take it,
-//! and the calls inside them assume it is held.
+//! Lock order is fixed: `.quilt/migrate.lock`, held by a move between
+//! `data.json` and refs, then the package's lock, then the domain lock, then
+//! `data.json.lock`, which only such a move takes. The lock is not
+//! reentrant, so only public entry points take it, and the calls inside
+//! them assume it is held.
 //!
 //! Lock files are never deleted, not even on uninstall: a writer waiting on
 //! a deleted file would lock an unlinked inode while a new writer locked a
@@ -44,7 +46,7 @@ pub fn on_package_lock_wait(notice: impl Fn() + Send + Sync + 'static) {
 }
 
 /// Takes `namespace`'s lock, waiting for it if another writer holds it.
-pub(crate) async fn lock(
+async fn lock(
     storage: &impl Storage,
     paths: &DomainPaths,
     namespace: &Namespace,
@@ -62,7 +64,7 @@ pub(crate) async fn lock(
 
 /// Takes `namespace`'s lock if it is free now; `None` when another writer
 /// holds it.
-pub(crate) async fn try_lock(
+async fn try_lock(
     storage: &impl Storage,
     paths: &DomainPaths,
     namespace: &Namespace,
@@ -70,6 +72,47 @@ pub(crate) async fn try_lock(
     storage
         .try_lock_exclusive(paths.package_lock(namespace))
         .await
+}
+
+/// A package's lock, held until this drops. Only [`Self::take`] and
+/// [`Self::try_take`] make one, so a function given one knows the lock is
+/// held, and need not take it again, which would wait on itself.
+#[derive(Debug)]
+pub(crate) struct PackageLock {
+    namespace: Namespace,
+    _guard: LockGuard,
+}
+
+impl PackageLock {
+    /// [`lock`], kept as proof.
+    pub(crate) async fn take(
+        storage: &impl Storage,
+        paths: &DomainPaths,
+        namespace: &Namespace,
+    ) -> Res<Self> {
+        Ok(Self {
+            namespace: namespace.clone(),
+            _guard: lock(storage, paths, namespace).await?,
+        })
+    }
+
+    /// [`try_lock`], kept as proof.
+    pub(crate) async fn try_take(
+        storage: &impl Storage,
+        paths: &DomainPaths,
+        namespace: &Namespace,
+    ) -> Res<Option<Self>> {
+        Ok(try_lock(storage, paths, namespace)
+            .await?
+            .map(|guard| Self {
+                namespace: namespace.clone(),
+                _guard: guard,
+            }))
+    }
+
+    pub(crate) fn namespace(&self) -> &Namespace {
+        &self.namespace
+    }
 }
 
 #[cfg(test)]

@@ -86,6 +86,7 @@ pub async fn publish_package(
     host_config: HostConfig,
     commit_opts: CommitOptions,
 ) -> Res<PublishOutcome<PushResult>> {
+    status.require_working_copy()?;
     let has_changes = !status.changes.is_empty();
     let has_pending_commit = lineage.commit.is_some();
 
@@ -100,7 +101,11 @@ pub async fn publish_package(
             paths,
             storage,
             remote,
-            host_config.host.as_ref(),
+            // Gated, not warned: the push right after would refuse what the
+            // workflow rejects, and a refused commit leaves no pending commit.
+            flow::WorkflowCheck::Gate {
+                host: host_config.host.as_ref(),
+            },
             working_dir,
             status,
             namespace.clone(),
@@ -109,7 +114,7 @@ pub async fn publish_package(
             commit_opts.workflow,
         )
         .await?;
-        match new_commit {
+        match new_commit.committed {
             Committed::Recorded(new_commit) => {
                 // commit wrote a new manifest to disk; reload it so push uploads
                 // the new rows, not the pre-commit manifest we were handed.
@@ -358,6 +363,43 @@ mod tests {
         assert!(push.certified_latest);
         assert_eq!(push.lineage.remote()?.hash, hash);
         Ok(())
+    }
+
+    /// With no change listed, a pending commit would be pushed as though the
+    /// working folder held nothing newer; it was never read.
+    #[test(tokio::test)]
+    async fn an_unavailable_working_copy_is_not_published() {
+        let lineage = PackageLineage {
+            commit: Some(crate::lineage::CommitState::default()),
+            ..PackageLineage::default()
+        };
+        let status = InstalledPackageStatus {
+            working_copy: crate::lineage::WorkingCopy::Unavailable(PathBuf::from("/gone/pkg")),
+            ..InstalledPackageStatus::default()
+        };
+        let error = publish_package(
+            lineage,
+            &mut Manifest::default(),
+            &DomainPaths::default(),
+            &MockStorage::default(),
+            &MockRemote::default(),
+            PathBuf::from("/gone/pkg"),
+            status,
+            ("foo", "bar").into(),
+            HostConfig::default(),
+            CommitOptions {
+                message: String::new(),
+                user_meta: UserMeta::Keep,
+                workflow: None,
+            },
+        )
+        .await;
+        assert!(matches!(
+            error,
+            Err(crate::Error::PackageOp(
+                crate::PackageOpError::WorkingCopyUnavailable(home)
+            )) if home.as_path() == std::path::Path::new("/gone/pkg")
+        ));
     }
 
     #[test(tokio::test)]
@@ -784,7 +826,7 @@ mod tests {
             HostConfig::default(),
             CommitOptions {
                 message: "Lorem ipsum".to_string(),
-                user_meta: UserMeta::Set(serde_json::json!({"lorem": "ipsum"})),
+                user_meta: UserMeta::set(serde_json::json!({"lorem": "ipsum"})),
                 workflow: None,
             },
         )

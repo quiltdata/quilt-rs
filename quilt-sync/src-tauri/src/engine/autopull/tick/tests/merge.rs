@@ -18,16 +18,18 @@ fn file(key: &str, content: &str) -> Result<quilt::manifest::ManifestRow, Error>
             .into(),
         size: content.len() as u64,
         meta: None,
+        meta_numbers: quilt::manifest::RawNumbers::default(),
     })
 }
 
 fn revision(message: &str, rows: Vec<quilt::manifest::ManifestRow>) -> quilt::manifest::Manifest {
     quilt::manifest::Manifest {
         header: quilt::manifest::ManifestHeader {
-            message: Some(message.to_string()),
+            message: quilt::manifest::HeaderMessage::Text(message.to_string()),
             ..quilt::manifest::ManifestHeader::default()
         },
         rows,
+        dir_meta: Vec::new(),
     }
 }
 
@@ -157,12 +159,12 @@ fn model_of(copy: Copy) -> (MockQuiltModel, Arc<Mutex<Remote>>) {
     let mut model = MockQuiltModel::new();
     model.expect_get_installed_packages_list().returning(|| {
         Ok(vec![
-            quilt::LocalDomain::new(PathBuf::new()).create_installed_package(ns()),
+            crate::engine::model::mocks::nowhere().create_installed_package(ns()),
         ])
     });
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
-            quilt::LocalDomain::new(PathBuf::new()).create_installed_package(ns()),
+            crate::engine::model::mocks::nowhere().create_installed_package(ns()),
         ))
     });
     model
@@ -191,7 +193,7 @@ fn model_of(copy: Copy) -> (MockQuiltModel, Arc<Mutex<Remote>>) {
             // The commit takes the walked changes into the copy's revision.
             let ours = remote.revisions.get_mut("ours").expect("ours");
             for (path, change) in status.map_or_default(|status| status.changes) {
-                ours.rows.retain(|row| row.logical_key != path);
+                ours.rows.retain(|row| row.logical_key.as_path() != path);
                 if let quilt::lineage::Change::Added(row) | quilt::lineage::Change::Modified(row) =
                     change
                 {
@@ -204,6 +206,7 @@ fn model_of(copy: Copy) -> (MockQuiltModel, Arc<Mutex<Remote>>) {
             Ok(quilt::PublishOutcome::PushedOnly(quilt::PushOutcome {
                 manifest_uri: at("ours"),
                 certified_latest: false,
+                latest_unchecked: false,
             }))
         });
     expect_remote(&mut model, &remote);
@@ -266,7 +269,7 @@ fn moved(
         updated: Vec::new(),
         removed: Vec::new(),
         kept_not_removed: Vec::new(),
-        message: target.header.message.clone(),
+        message: target.header.message().map(str::to_owned),
     };
     for row in &target.rows {
         match ours
@@ -315,6 +318,7 @@ fn expect_remote(model: &mut MockQuiltModel, remote: &Arc<Mutex<Remote>>) {
         Ok(quilt::PushOutcome {
             manifest_uri: at(&hash),
             certified_latest,
+            latest_unchecked: false,
         })
     });
 }
@@ -411,7 +415,7 @@ async fn the_merged_revision_carries_this_copys_message_under_latests_header() -
     tick(&model).await;
 
     let remote = seen(&remote);
-    assert_eq!(remote.latest().header.message.as_deref(), Some("mine"));
+    assert_eq!(remote.latest().header.message(), Some("mine"));
     assert_eq!(remote.latest().header.workflow, workflow);
     Ok(())
 }
@@ -869,6 +873,36 @@ async fn a_copy_whose_change_latest_already_holds_moves_to_it_without_publishing
     assert_eq!(seen(&remote).events, ["move to h1"]);
     assert!(reporter.published.lock().unwrap().is_empty());
     assert!(inner.paused.read().await.is_empty());
+    Ok(())
+}
+
+/// The change `latest` lacks is folder metadata alone: the files are the same
+/// on both sides, so only the metadata can show there is something to publish.
+#[tokio::test]
+async fn a_copy_whose_only_change_is_folder_metadata_is_published_onto_latest() -> Result<(), Error>
+{
+    let dir_meta = vec![quilt::manifest::DirMeta::new(
+        quilt::LogicalKey::new("data")?,
+        json!({"owner": "team"}),
+    )];
+    let (model, remote) = model_of(Copy {
+        ours: quilt::manifest::Manifest {
+            dir_meta: dir_meta.clone(),
+            ..revision("mine", vec![file("a.csv", "1")?])
+        },
+        ..Copy::new(
+            vec![file("a.csv", "1")?],
+            vec![file("a.csv", "1")?],
+            vec![file("a.csv", "1")?],
+        )
+    });
+
+    let (inner, _) = tick(&model).await;
+
+    let remote = seen(&remote);
+    assert_eq!(remote.events, ["push onto h1", "move to r1"]);
+    assert_eq!(remote.latest().dir_meta, dir_meta);
+    assert!(inner.paused.read().await.is_empty(), "not paused");
     Ok(())
 }
 

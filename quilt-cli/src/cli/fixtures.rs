@@ -196,13 +196,13 @@ pub mod old_revisions {
     use quilt_rs::io::remote::Remote;
     use quilt_rs::io::remote::mocks::MockRemote;
     use quilt_rs::io::storage::LocalStorage;
-    use quilt_rs::io::storage::Storage;
     use quilt_rs::lineage::DomainLineageIo;
     use quilt_rs::lineage::Home;
-    use quilt_rs::lineage::PackageLineageIo;
+    use quilt_rs::lineage::PackageLineage;
     use quilt_rs::manifest::Manifest;
     use quilt_rs::manifest::ManifestRow;
     use quilt_rs::paths::DomainPaths;
+    use quilt_uri::ManifestUri;
     use quilt_uri::Namespace;
     use quilt_uri::paths::tag_key;
 
@@ -283,30 +283,26 @@ pub mod old_revisions {
         paths
             .scaffold_for_installing(&storage, &home, &namespace)
             .await?;
-        // Built as JSON, not formatted in: a Windows path's backslashes
-        // would be escapes inside a JSON string.
         let current = top_hash("current-rev");
-        let lineage_json = serde_json::json!({
-            "packages": {
-                "test/history": {
-                    "commit": null,
-                    "remote": {
-                        "bucket": "bucket",
-                        "namespace": "test/history",
-                        "hash": current,
-                        "origin": "quilt.test"
+        let lineage = DomainLineageIo::write_fixture(
+            quilt_rs::lineage::LineageStore::DataJson,
+            &storage,
+            &paths,
+            home_dir.path(),
+            [(
+                namespace.clone(),
+                PackageLineage::from_remote(
+                    ManifestUri {
+                        bucket: "bucket".to_string(),
+                        namespace: namespace.clone(),
+                        hash: current.clone(),
+                        origin: Some("quilt.test".parse()?),
                     },
-                    "base_hash": current,
-                    "latest_hash": current,
-                    "paths": {}
-                }
-            },
-            "home": &home,
-        })
-        .to_string();
-        storage
-            .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-            .await?;
+                    current,
+                ),
+            )],
+        )
+        .await?;
 
         std::fs::create_dir_all(paths.objects_dir())?;
         let start = SystemTime::now() - Duration::from_secs(3600);
@@ -337,10 +333,7 @@ pub mod old_revisions {
         }
 
         let package = InstalledPackage {
-            lineage: PackageLineageIo::new(
-                DomainLineageIo::new(paths.lineage()),
-                namespace.clone(),
-            ),
+            lineage: lineage.create_package_lineage(namespace.clone()),
             paths,
             remote: Arc::new(remote),
             storage,
@@ -372,13 +365,14 @@ pub mod old_revisions {
     /// The same, its remote with no catalog: the bucket lists the revisions.
     pub async fn package_without_a_catalog() -> Result<(Package, [TempDir; 2]), Error> {
         let (package, dirs) = package().await?;
-        let path = package.paths.lineage();
-        let mut lineage: serde_json::Value = serde_json::from_slice(&std::fs::read(&path)?)?;
-        lineage["packages"]["test/history"]["remote"]
-            .as_object_mut()
-            .expect("a remote")
-            .remove("origin");
-        std::fs::write(&path, lineage.to_string())?;
+        package
+            .lineage
+            .edit(&package.storage, |lineage| {
+                if let Some(remote) = lineage.remote_uri.as_mut() {
+                    remote.origin = None;
+                }
+            })
+            .await?;
         Ok((package, dirs))
     }
 

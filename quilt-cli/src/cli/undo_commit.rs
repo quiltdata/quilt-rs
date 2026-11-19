@@ -75,6 +75,7 @@ mod tests {
                 namespace: namespace.clone(),
                 source: None,
                 message: Some("initial".to_string()),
+                user_meta: UserMeta::Clear,
             })
             .await?;
         let package_home = created.installed_package.package_home().await?;
@@ -123,11 +124,14 @@ mod tests {
     /// The map is what `pull`'s touch set, `install_paths`, `uninstall_paths`
     /// and undo's own guard read, so it has to be asserted on its own terms.
     async fn tracked(cli_model: &Model, namespace: &Namespace) -> Result<Vec<String>, Error> {
-        let lineage = cli_model.get_local_domain().get_lineage().await?;
-        let mut keys: Vec<String> = lineage
-            .packages
-            .get(namespace)
+        let lineage = cli_model
+            .get_local_domain()
+            .get_installed_package(namespace)
+            .await?
             .expect("installed")
+            .lineage()
+            .await?;
+        let mut keys: Vec<String> = lineage
             .paths
             .keys()
             .map(|path| path.display().to_string())
@@ -155,6 +159,7 @@ mod tests {
                 namespace: namespace.clone(),
                 source: None,
                 message: Some("initial".to_string()),
+                user_meta: UserMeta::Clear,
             })
             .await?;
         let package_home = created.installed_package.package_home().await?;

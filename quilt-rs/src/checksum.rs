@@ -7,6 +7,8 @@
 
 use std::path::Path;
 
+use tokio::io::AsyncRead;
+
 use crate::LogicalKey;
 use crate::Res;
 use crate::io::remote::HostConfig;
@@ -20,6 +22,30 @@ use crate::object_hash::ObjectHash;
 use crate::object_hash::Sha256ChunkedHash;
 use crate::object_hash::Sha256Hash;
 
+/// Hash the bytes `reader` yields, `size` of them, with the multihash
+/// `algorithm`. An algorithm this crate doesn't know hashes as SHA-256
+/// chunked, the default.
+///
+/// `size` is the reader's length, not a limit. SHA-256 chunked uses it for its
+/// part boundaries and reads that many bytes; SHA-256 and CRC64 ignore it and
+/// read until the reader ends, so give them a reader that ends where the
+/// object does.
+///
+/// The one place an algorithm code picks a hasher, shared by a file on disk
+/// ([`hash_file`]) and by bytes still streaming in (`flow::read_object`), so
+/// both always agree on a row's hash.
+pub async fn hash_reader<R: AsyncRead + Unpin + Send>(
+    reader: R,
+    size: u64,
+    algorithm: u64,
+) -> Res<ObjectHash> {
+    Ok(match algorithm {
+        MULTIHASH_CRC64_NVME => Crc64Hash::from_reader(reader, size).await?.into(),
+        MULTIHASH_SHA256 => Sha256Hash::from_reader(reader, size).await?.into(),
+        _ => Sha256ChunkedHash::from_reader(reader, size).await?.into(),
+    })
+}
+
 /// Hash the file at `path` with the multihash `algorithm`, and return the hash
 /// with the size read. An algorithm this crate doesn't know hashes as
 /// SHA-256 chunked, the default.
@@ -30,11 +56,7 @@ pub async fn hash_file(
 ) -> Res<(ObjectHash, u64)> {
     let file = storage.open_file(path).await?;
     let size = file.metadata().await?.len();
-    let hash = match algorithm {
-        MULTIHASH_CRC64_NVME => Crc64Hash::from_reader(file, size).await?.into(),
-        MULTIHASH_SHA256 => Sha256Hash::from_reader(file, size).await?.into(),
-        _ => Sha256ChunkedHash::from_reader(file, size).await?.into(),
-    };
+    let hash = hash_reader(file, size, algorithm).await?;
     Ok((hash, size))
 }
 
@@ -69,6 +91,7 @@ pub async fn calculate_hash(
         size,
         hash,
         meta: None,
+        meta_numbers: crate::manifest::RawNumbers::default(),
     })
 }
 
@@ -87,9 +110,13 @@ pub async fn verify_hash(
             Ok(Some(modified))
         } else {
             // Need to recalculate with host's preferred algorithm
-            let calculated_row =
-                calculate_hash(storage, path, &modified.logical_key, host_config).await?;
-            Ok(Some(calculated_row))
+            // The row's metadata is the package's, not the file's, so it stays,
+            // raw numbers included.
+            Ok(Some(ManifestRow {
+                meta: modified.meta,
+                meta_numbers: modified.meta_numbers,
+                ..calculate_hash(storage, path, &modified.logical_key, host_config).await?
+            }))
         }
     } else {
         Ok(None)
@@ -212,7 +239,7 @@ mod tests {
         let row = calculate_hash(&storage, file_path, &logical_key, &host_config).await?;
 
         assert_eq!(row.hash.algorithm(), MULTIHASH_CRC64_NVME);
-        assert_eq!(row.logical_key, logical_key);
+        assert_eq!(row.logical_key.as_path(), logical_key);
 
         assert_eq!(row.size, storage.read_bytes(file_path).await?.len() as u64);
         assert_eq!(row.hash.to_string(), "LZmmpqbBItw=");
@@ -237,7 +264,7 @@ mod tests {
         let row = calculate_hash(&storage, file_path, &logical_key, &host_config).await?;
 
         assert_eq!(row.hash.algorithm(), MULTIHASH_SHA256_CHUNKED);
-        assert_eq!(row.logical_key, logical_key);
+        assert_eq!(row.logical_key.as_path(), logical_key);
         assert_eq!(row.size, file_content.len() as u64);
         assert_eq!(
             row.hash.to_string(),
@@ -292,6 +319,44 @@ mod tests {
 
         assert_eq!(modified_row.hash.to_string(), "LZmmpqbBItw=");
 
+        Ok(())
+    }
+
+    /// A modified file whose row has another checksum type than the host's is
+    /// hashed again with the host's, and the row keeps its `meta`, big
+    /// integers included.
+    #[test(tokio::test)]
+    async fn test_verify_hash_keeps_meta_when_the_algorithm_changes() -> Res {
+        let storage = MockStorage::default();
+        let path = Path::new("foo");
+        storage
+            .write_byte_stream(path, ByteStream::from_static(b"lorem ipsum"))
+            .await?;
+        let (meta, meta_numbers) =
+            crate::manifest::RawNumbers::parse(r#"{"n": 18446744073709551617, "k": "v"}"#)?;
+        let row = ManifestRow {
+            meta: Some(meta.clone()),
+            meta_numbers: meta_numbers.clone(),
+            ..calculate_hash(
+                &storage,
+                path,
+                Path::new("bar"),
+                &HostConfig::default_sha256_chunked(),
+            )
+            .await?
+        };
+        storage
+            .write_byte_stream(path, ByteStream::from_static(b"dolor sit amet"))
+            .await?;
+
+        let modified = verify_hash(&storage, path, row, &HostConfig::default_crc64())
+            .await?
+            .expect("the file changed");
+
+        assert_eq!(modified.hash.algorithm(), MULTIHASH_CRC64_NVME);
+        assert_eq!(modified.meta, Some(meta));
+        assert_eq!(modified.meta_numbers, meta_numbers);
+        assert!(!modified.meta_numbers.is_empty());
         Ok(())
     }
 

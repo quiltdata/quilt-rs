@@ -313,6 +313,7 @@ mod tests {
                 namespace: namespace.clone(),
                 source: None,
                 message: Some("initial import".to_string()),
+                user_meta: UserMeta::Clear,
             })
             .await?;
 
@@ -371,6 +372,7 @@ mod tests {
                 namespace: namespace.clone(),
                 source: None,
                 message: Some("r1 initial import".to_string()),
+                user_meta: UserMeta::Clear,
             })
             .await?;
 
@@ -436,6 +438,7 @@ mod tests {
                 namespace: namespace.clone(),
                 source: None,
                 message: Some("r1 initial import".to_string()),
+                user_meta: UserMeta::Clear,
             })
             .await?;
 

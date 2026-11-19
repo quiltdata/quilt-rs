@@ -164,6 +164,7 @@ impl HttpConnector for ResponseTimeoutConnector {
 /// so it drains in a few round trips. What is left is hyper's 128 KiB, which
 /// only a link slower than about 2 KB/s takes longer than 60 s to send.
 const PIECE: usize = 8 * 1024;
+const _: () = assert!(PIECE * 16 <= 128 * 1024, "hyper may still hold 16 pieces");
 
 /// A request body that hands its data over in [`PIECE`]s and drops `sent`
 /// once it has nothing more to send.
@@ -459,8 +460,9 @@ mod tests {
     }
 
     /// Read the request headers, then its body at `per_tick` bytes a
-    /// [`TICK`]: a slow link. Answer `200 OK` once the body is in.
-    async fn read_slowly(mut stream: TcpStream, per_tick: usize) {
+    /// [`TICK`]: a slow link. Read the last `fast_tail` bytes at full speed.
+    /// Answer `200 OK` once the body is in.
+    async fn read_slowly(mut stream: TcpStream, per_tick: usize, fast_tail: usize) {
         use tokio::io::AsyncReadExt;
 
         let mut request = Vec::new();
@@ -482,14 +484,19 @@ mod tests {
                     .then(|| value.trim().parse().ok())?
             })
             .unwrap_or(0);
+        let slow_until = body_len.saturating_sub(fast_tail);
         let mut read = request.len() - header_end;
         let mut this_tick = 0;
         while read < body_len {
-            if this_tick >= per_tick {
-                tokio::time::sleep(TICK).await;
-                this_tick = 0;
-            }
-            let want = (per_tick - this_tick).min(buf.len());
+            let want = if read < slow_until {
+                if this_tick >= per_tick {
+                    tokio::time::sleep(TICK).await;
+                    this_tick = 0;
+                }
+                per_tick - this_tick
+            } else {
+                buf.len()
+            };
             match stream.read(&mut buf[..want]).await {
                 Ok(0) | Err(_) => return,
                 Ok(n) => {
@@ -511,14 +518,17 @@ mod tests {
     /// The clock starts once the last piece is handed over, while the socket
     /// buffers still hold some of the body. On a real link the OS sizes them to
     /// about what the path holds, so they drain in a few round trips. On
-    /// loopback with a slow reader they grow to megabytes, so the server reads
-    /// fast enough (10 MB/s) that they drain well inside [`TIMEOUT`], and the
-    /// body is large enough that the whole upload still takes about 6 s.
+    /// loopback with a slow reader they grow to megabytes, and how many
+    /// depends on the OS. So the server reads the first part of the body
+    /// slowly, for longer than [`TIMEOUT`], and the rest, larger than any
+    /// socket buffers, at full speed. The last piece is handed over during the
+    /// fast part, and what is left drains at once.
     #[test(tokio::test)]
     async fn slow_steady_in_memory_upload_succeeds() {
-        const PER_TICK: usize = 2 * 1024 * 1024;
-        let addr = spawn_endpoint(|stream| read_slowly(stream, PER_TICK)).await;
-        let body = vec![b'x'; PER_TICK * 2 * STEPS];
+        const PER_TICK: usize = 64 * 1024;
+        const FAST_TAIL: usize = 64 * 1024 * 1024;
+        let addr = spawn_endpoint(|stream| read_slowly(stream, PER_TICK, FAST_TAIL)).await;
+        let body = vec![b'x'; PER_TICK * (STEPS + 1) + FAST_TAIL];
 
         let (result, elapsed) = timed(Box::pin(
             client(addr)
@@ -532,6 +542,35 @@ mod tests {
 
         result.expect("a slow upload that keeps moving must succeed");
         assert!(elapsed >= SLOW, "the body was not slow: {elapsed:?}");
+    }
+
+    /// An in-memory body is handed over in pieces of at most [`PIECE`], and
+    /// the clock may start only once the last one is.
+    #[test(tokio::test)]
+    async fn in_memory_body_is_handed_over_in_pieces() {
+        let len = PIECE * 3 + 1;
+        let (sent_tx, mut sent) = oneshot::channel::<()>();
+        let mut body = NotifyWhenSent {
+            inner: SdkBody::from(vec![b'x'; len]),
+            pending: bytes::Bytes::new(),
+            sent: Some(sent_tx),
+        };
+
+        let mut handed = 0;
+        while handed < len {
+            assert_eq!(sent.try_recv(), Err(oneshot::error::TryRecvError::Empty));
+            let frame =
+                std::future::poll_fn(|cx| http_body::Body::poll_frame(Pin::new(&mut body), cx))
+                    .await
+                    .expect("the body is not done yet")
+                    .expect("an in-memory body does not fail");
+            let piece = frame.into_data().expect("a data frame");
+            assert!(piece.len() <= PIECE, "a piece of {} bytes", piece.len());
+            handed += piece.len();
+        }
+
+        assert_eq!(handed, len);
+        assert_eq!(sent.try_recv(), Err(oneshot::error::TryRecvError::Closed));
     }
 
     /// Answer with `head`, then send `body` one byte every [`TICK`].

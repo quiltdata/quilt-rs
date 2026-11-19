@@ -20,15 +20,35 @@ Where package files (working copies) live. Each installed package occupies
 `<owner>/<package>/` inside it.
 
 *QuiltSync*: set by the user on the Setup page on first launch, then stored in
-`$DATA_DIR/.quilt/data.json` and read from there on subsequent starts.
+`$DATA_DIR/.quilt/domain.json` and read from there on subsequent starts.
 Defaults to `~/QuiltSync` if the user has not configured it yet.
 *CLI/library*: the caller provides the path.
 
-## Domain (`$DATA_DIR/.quilt/data.json`)
+## Domain (`$DATA_DIR/.quilt/domain.json`, `$DATA_DIR/.quilt/refs/`)
 
-*All components (quilt-rs, quilt-cli, QuiltSync).* Tracks all installed
-packages, their remote origins, local commit state, and the home directory
-path. Path is hardcoded relative to `$DATA_DIR`.
+*All components (quilt-rs, quilt-cli, QuiltSync).* `domain.json` holds the
+home directory path; `refs/<owner>/<package>.json` holds one installed
+package's remote origin and local commit state. Path is hardcoded relative to
+`$DATA_DIR`.
+
+| Artifact | Path |
+|----------|------|
+| Package ref | `.quilt/refs/<owner>/<package>.json` |
+| Remote tip cache, which may be missing or stale | `.quilt/refs/<owner>/<package>.json.latest` |
+| Domain config | `.quilt/domain.json` |
+| Package lock | `.quilt/locks/<owner>/<package>.lock` |
+| Domain lock | `.quilt/domain.lock` |
+| Move lock, held by a move to refs or back | `.quilt/migrate.lock` |
+
+A domain kept in `data.json` by an earlier version moves here on its first
+use, which keeps that file as `data.json.pre-refs` and leaves in `data.json` a
+stub that earlier versions fail to read. Under `data.json.lock`, which
+earlier versions write `data.json` under, the move copies `data.json` to
+`data.json.migrating` and puts the stub in its place; it then reads only that
+copy. `quilt lineage rollback` moves
+the domain back: it writes `data.json.rollback` from the refs, moves `refs/`
+to `refs.rolled-back-<uuid>/`, and puts that file in place of the stub. A
+move or rollback a kill interrupted resumes from what these files show.
 
 ## Package state (`$DATA_DIR/.quilt/`)
 
@@ -110,6 +130,31 @@ because logging out removes `<host>/` whole, under the same lock, so a
 refresh waiting on it finds no `tokens.json` afterwards and writes nothing.
 quilt-rs takes no lock for a host with no `<host>/`, which has no session to
 guard. Logging in writes `tokens.json` without the lock.
+
+## Shared settings (`$QUILT_AUTH_DIR/settings.json`)
+
+*The `quilt` CLI only, so far.* Non-secret settings every Quilt client may
+share, designed in
+[quilt-specs#46](https://github.com/quiltdata/quilt-specs/pull/46). The folder
+is `QUILT_AUTH_DIR` when set, else `com.quiltdata.auth` under the platform's
+local data directory; it is not `$DATA_DIR`. On Unix a change sets the folder
+to 0700 where the file system allows, an existing `QUILT_AUTH_DIR` folder
+included.
+
+| Artifact | Path | Contents |
+|----------|------|----------|
+| Settings | `<folder>/settings.json` | One JSON object; `default_catalog` is a bare catalog host, as in `.auth/<host>` |
+| Settings lock | `<folder>/settings.json.lock` | Held by every writer; created by its first holder |
+
+A missing file or key means there is no default catalog, unless quilt3 has
+one: the first read takes the host of `navigator_url` from quilt3's
+`config.yml`, which is only read, and stores it. Clearing the default stores
+`null`, which stops that. A writer takes the lock, rereads the file and writes
+it whole through a temp file and a rename, changing only its own key, so keys
+it does not know survive. A file that is not a JSON object is reported and
+never replaced. The default is only a fallback for a command with no package
+and no host: a package's own catalog wins, and a package with no catalog stays
+on this computer's AWS credentials.
 
 ## Logs (`$DATA_DIR/logs/`)
 

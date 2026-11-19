@@ -1,0 +1,7 @@
+{"version": "v0", "message": "", "user_meta": {}}
+{"logical_key": "a/", "meta": {"kind": "parent"}}
+{"logical_key": "a/sub/", "meta": {"kind": "child"}}
+{"logical_key": "a-b/", "meta": {"kind": "sibling"}}
+{"logical_key": "a/sub/y.txt", "physical_keys": ["s3://bucket/a/sub/y.txt"], "size": 1, "hash": {"type": "SHA256", "value": "0000000000000000000000000000000000000000000000000000000000000000"}, "meta": {}}
+{"logical_key": "a/x.txt", "physical_keys": ["s3://bucket/a/x.txt"], "size": 1, "hash": {"type": "SHA256", "value": "0000000000000000000000000000000000000000000000000000000000000000"}, "meta": {}}
+{"logical_key": "a-b/z.txt", "physical_keys": ["s3://bucket/a-b/z.txt"], "size": 1, "hash": {"type": "SHA256", "value": "0000000000000000000000000000000000000000000000000000000000000000"}, "meta": {}}

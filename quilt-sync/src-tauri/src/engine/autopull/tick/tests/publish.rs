@@ -32,7 +32,7 @@ fn fixture_with_lineage_and_status(
     let mut model = MockQuiltModel::new();
     model.expect_get_installed_packages_list().returning(|| {
         Ok(vec![
-            quilt::LocalDomain::new(std::path::PathBuf::new())
+            crate::engine::model::mocks::nowhere()
                 .create_installed_package(("acme", "demo").into()),
         ])
     });
@@ -45,7 +45,7 @@ fn fixture_with_lineage_and_status(
         .returning(|p| Ok(Some(p.namespace.clone())));
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
-            quilt::LocalDomain::new(std::path::PathBuf::new())
+            crate::engine::model::mocks::nowhere()
                 .create_installed_package(("acme", "demo").into()),
         ))
     });
@@ -80,6 +80,7 @@ fn fake_push_outcome(ns: &Namespace) -> quilt::PushOutcome {
             origin: None,
         },
         certified_latest: true,
+        latest_unchecked: false,
     }
 }
 
@@ -294,6 +295,7 @@ async fn autosync_default_metadata_keeps_the_heads_agent_exec() -> Result<(), Er
                         ..quilt::manifest::ManifestHeader::default()
                     },
                     rows: Vec::new(),
+                    dir_meta: Vec::new(),
                 })
             });
         let published = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -318,7 +320,7 @@ async fn autosync_default_metadata_keeps_the_heads_agent_exec() -> Result<(), Er
 
         let published = published.lock().unwrap();
         assert!(
-            matches!(published.as_slice(), [quilt::flow::UserMeta::Set(meta)] if *meta == expected),
+            matches!(published.as_slice(), [quilt::flow::UserMeta::Set(meta, _)] if *meta == expected),
             "expected {expected}, got {published:?}"
         );
     }
@@ -675,7 +677,7 @@ async fn run_once_pauses_on_foreign_remote_diverged() -> Result<(), Error> {
     let host = fixtures::host();
     // Foreign-remote `Diverged`: `remote.hash` empty, `latest_hash`
     // non-empty (a teammate published under the same namespace). Its edits
-    // are not published: a first push would certify over the teammate's.
+    // are not published: there is no shared base to merge from.
     let lineage = quilt::lineage::PackageLineage {
         remote_uri: Some(quilt_uri::ManifestUri {
             bucket: "bucket".to_string(),

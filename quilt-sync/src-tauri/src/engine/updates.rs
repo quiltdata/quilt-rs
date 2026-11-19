@@ -186,10 +186,17 @@ mod tests {
         );
     }
 
-    /// The names from the 0.26.1 release: the feed's updater download, and
-    /// the installer beside it.
+    /// The names from the 0.26.1 release, and the one universal macOS build
+    /// that replaced its two: the feed's updater download, and the installer
+    /// beside it.
     #[test]
     fn a_macos_updater_download_becomes_the_dmg() {
+        assert_eq!(
+            installer(
+                "https://www.quilt.bio/hubfs/quiltsync/QuiltSync/v0.29.0/QuiltSync_0.29.0_universal.app.tar.gz"
+            ),
+            "https://www.quilt.bio/hubfs/quiltsync/QuiltSync/v0.29.0/QuiltSync_0.29.0_universal.dmg"
+        );
         assert_eq!(
             installer(
                 "https://www.quilt.bio/hubfs/quiltsync/QuiltSync/v0.26.1/QuiltSync_0.26.1_aarch64.app.tar.gz"

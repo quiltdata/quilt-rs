@@ -106,13 +106,16 @@ one:
 
 1. **Add a variant** to `MixpanelEvent`. The wire name is the snake-case form of
    the variant, produced by serde — do not write it out anywhere.
+
 2. **Pick a payload type** by what the event can *prove* about its host:
    `RemotePackageEvent` (an operation impossible without a remote),
    `PackageEvent` (a package that may be local-only), `PackageFileEvent`,
    `AuthEvent` / `AutosyncEvent` (host guaranteed), or no payload at all for
    app-lifecycle and debug actions.
+
 3. **Add the arm to `MixpanelEvent::host()`.** It is exhaustive on purpose, so
    the compiler makes you decide whether your event names a deployment.
+
 4. **Emit through the command helper**, not directly:
 
    ```rust

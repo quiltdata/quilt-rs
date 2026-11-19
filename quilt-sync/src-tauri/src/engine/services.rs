@@ -125,14 +125,16 @@ impl Services {
         let last_change = autopull::last_change::LastChange::shared(Arc::clone(&state_store));
         let events = EventSink::new();
         let record = Arc::new(Record::open(&data_dir, events.clone()).await);
+        debug!("Root directory is {data_dir:?}");
+        let domain = quilt::LocalDomain::new(&data_dir).with_state_store(state_store);
+        if let Err(err) = domain.sweep_leftovers().await {
+            error!("Failed to sweep what killed lineage writes left: {err}");
+        }
         // Every lineage write of this process goes through its hook, so a
         // revision that moved without it was moved by another tool.
-        let outside = Outside::open(&data_dir, paths.lineage(), Arc::clone(&record)).await;
-        let model = Arc::new(Model::create_with_state_store(
-            data_dir.clone(),
-            state_store,
-            outside.hook(),
-        ));
+        let outside =
+            Outside::open(&data_dir, domain.lineage_io().clone(), Arc::clone(&record)).await;
+        let model = Arc::new(Model::from_domain(domain.with_lineage_hook(outside.hook())));
         let roles = Arc::new(RoleCache::default());
 
         let action_needed = Arc::new(ActionNeeded::default());

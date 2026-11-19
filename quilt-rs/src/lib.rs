@@ -17,7 +17,10 @@ pub mod flow;
 
 pub mod auth;
 pub mod checksum;
+pub mod dataspace;
+pub mod domain;
 pub mod error;
+mod failpoint;
 pub mod file_stamp;
 mod installed_package;
 pub mod io;
@@ -30,7 +33,10 @@ pub mod manifest;
 pub mod object_hash;
 mod package_lock;
 pub mod paths;
+#[cfg(test)]
+mod process_tests;
 pub mod quiltignore;
+pub mod settings;
 pub mod stat_cache;
 pub mod state_store;
 
@@ -44,6 +50,7 @@ pub use error::AuthError;
 pub use error::ChecksumError;
 pub use error::Error;
 pub use error::FsError;
+pub use error::HashPrefixError;
 pub use error::InstallPackageError;
 pub use error::InstallPathError;
 pub use error::LineageError;

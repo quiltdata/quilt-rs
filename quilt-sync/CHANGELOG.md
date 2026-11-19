@@ -19,6 +19,33 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.28.1-dev]
+
+### Added
+
+- Publish and commit metadata parsed from JSON keeps the exact text of integers beyond 64 bits, and a publish that keeps or updates the head's `agent_exec` task — autosync, a claim, a completion, or unrunnable — also keeps those numbers (<https://github.com/quiltdata/quilt-rs/pull/1394>)
+- A `quilt+s3://` link can name a revision by a short hash (6 to 63 characters) after `@`, as in quilt3; QuiltSync looks it up in the package's bucket, and a hash that matches nothing, or several revisions, is reported as a revision that is not there (<https://github.com/quiltdata/quilt-rs/pull/1392>)
+
+### Changed
+
+- Publishing no longer overwrites a revision another client made `latest` while the publish ran: the package shows as diverged instead (<https://github.com/quiltdata/quilt-rs/pull/1444>)
+- macOS has one download, which runs natively on Apple Silicon and Intel Macs; an Intel build installed on an Apple Silicon Mac moves to it on its next update (<https://github.com/quiltdata/quilt-rs/pull/1438>)
+- **Commit** of a package with a remote no longer refuses a revision the bucket's workflows reject, one whose bucket config cannot be read, or one whose validator setup is misconfigured: it commits it, and the Commit page stays to show the workflow warning, and keeps it through another save with no edits. The Commit page still disables Save on a live workflow violation or a malformed config, which is stricter than `quilt commit`. **Publish** still refuses an inconsistent revision, and commits nothing (<https://github.com/quiltdata/quilt-rs/pull/1432>)
+- QuiltSync starts faster with many packages: at launch it checks up to eight packages at once instead of one after another (<https://github.com/quiltdata/quilt-rs/pull/1376>)
+- The main page no longer has a **Recent files** view. A package's time on the main page is when it last changed: an edit or commit not yet published, otherwise when QuiltSync last installed, pulled, downloaded or committed its files (<https://github.com/quiltdata/quilt-rs/pull/1403>)
+- QuiltSync keeps each package's lineage in a file of its own under `.quilt/refs/`, so a damaged one costs only that package: its first use of a domain moves the lineage there from `data.json`, keeps that file as `data.json.pre-refs`, and leaves in its place a stub that an older QuiltSync or `quilt` refuses to read; `quilt lineage rollback` moves it back. The diagnostics bundle carries those files and the copies of `data.json` a move keeps (<https://github.com/quiltdata/quilt-rs/pull/1412>, <https://github.com/quiltdata/quilt-rs/pull/1420>, <https://github.com/quiltdata/quilt-rs/pull/1424>)
+
+### Fixed
+
+- Listing and changing packages no longer fails now and then with a parse error while `quilt` writes the same packages' lineage (<https://github.com/quiltdata/quilt-rs/pull/1416>)
+- Publishing a new package no longer replaces the latest revision someone else already published under the same name: the package shows the conflict, and you choose which revision stays latest (<https://github.com/quiltdata/quilt-rs/pull/1373>)
+- A package whose folder was deleted, or is on a disk that is not mounted, no longer shows every file as removed, and autosync no longer commits and publishes an empty revision for it. It shows as **Folder missing**, where it showed as **Latest**, and autosync skips it, without pausing it or retrying and logging it every few seconds, and syncs it again once the folder is back, keeping the countdown to publish a change made before the folder went, which it restarted or dropped, and not counting the time the folder was gone toward the alert for failing publishes; adding a pattern to `.quiltignore` no longer recreates the folder holding only that file (<https://github.com/quiltdata/quilt-rs/pull/1397>, <https://github.com/quiltdata/quilt-rs/pull/1431>)
+- In the browser, the hint under a typed folder path keeps its line while empty, so the form no longer jumps when a hint appears (<https://github.com/quiltdata/quilt-rs/pull/1439>)
+
+### quilt-rs
+
+- Updated [from v0.53.0 to v0.54.0-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.53.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
 ## [v0.28.0] - 2026-11-12
 
 ### Added

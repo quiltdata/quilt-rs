@@ -4,8 +4,9 @@
 //! A push by any client leaves three objects: the manifest, a timestamp
 //! pointer and `latest`. Nothing in them says who wrote them. Here the other
 //! client is either a second domain on the same mock bucket, or the objects
-//! quilt3 wrote in `fixtures/quilt3-bucket/`, loaded into the bucket as they
-//! are.
+//! quilt3 wrote, loaded into the bucket as they are: its pointers and data
+//! objects from `fixtures/quilt3-bucket/`, its manifests from
+//! `fixtures/quilt3-packages/`.
 
 use std::path::Path;
 use std::str::FromStr;
@@ -17,6 +18,7 @@ use super::older_revision_tests::publish_manifest;
 use super::older_revision_tests::publish_row;
 
 use crate::io::remote::mocks::MockRemote;
+use crate::lineage::DomainLineageIo;
 use crate::lineage::UpstreamState;
 use crate::paths::DomainPaths;
 use quilt_uri::S3Uri;
@@ -34,7 +36,9 @@ impl Client {
     async fn new(bucket: &Arc<MockRemote>) -> Res<Self> {
         let (paths, paths_dir) = DomainPaths::from_temp_dir()?;
         let home_dir = tempfile::TempDir::new()?;
-        let domain = crate::LocalDomain::with_parts(paths, LocalStorage::new(), Arc::clone(bucket));
+        let lineage = DomainLineageIo::new(paths.clone());
+        let domain =
+            crate::LocalDomain::with_parts(paths, lineage, LocalStorage::new(), Arc::clone(bucket));
         domain.set_home(home_dir.path()).await?;
         Ok(Self {
             domain,
@@ -260,7 +264,7 @@ mod quilt3_bucket {
     const BUCKET_NAME: &str = "quilt3-bucket";
 
     fn fixtures() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures/quilt3-bucket")
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures")
     }
 
     /// Every file under `dir`, as its path relative to `dir` in `/` form.
@@ -283,36 +287,63 @@ mod quilt3_bucket {
         Ok(keys)
     }
 
-    /// Puts what quilt3's push number `step` wrote into `bucket`, byte for
-    /// byte. Data objects go in at the version its manifest names.
-    async fn load(bucket: &MockRemote, step: &str) -> Res<String> {
-        let dir = fixtures().join(step);
-        let keys = keys(&dir)?;
-        let mut versioned = std::collections::HashMap::new();
-        let mut manifest_hash = None;
-        for key in &keys {
-            if let Some(hash) = key.strip_prefix(".quilt/packages/") {
-                manifest_hash = Some(hash.to_string());
-                let manifest = Manifest::from_path(&LocalStorage::new(), &dir.join(key)).await?;
-                for row in manifest.rows {
-                    let uri = S3Uri::from_str(&row.physical_key)?;
-                    versioned.insert(uri.key.clone(), uri);
-                }
+    /// quilt3's manifest `hash`, kept with the other quilt3 manifests.
+    fn manifest_path(hash: &str) -> Res<PathBuf> {
+        let dir = fixtures().join("quilt3-packages");
+        for entry in std::fs::read_dir(&dir)? {
+            let path = entry?.path();
+            let name = path.file_name().expect("a file").to_string_lossy();
+            if name
+                .split_once('-')
+                .is_some_and(|(prefix, _)| prefix == hash)
+            {
+                return Ok(path);
             }
         }
+        panic!("no quilt3-packages fixture for {hash}");
+    }
+
+    /// Puts what quilt3's push `step` wrote into `bucket`, byte for byte, and
+    /// returns its hash. `quilt3-bucket/<step>/` holds the pointers and data
+    /// objects; the manifest its `latest` names is in `quilt3-packages/`.
+    /// Data objects go in at the version the manifest names.
+    async fn load(bucket: &MockRemote, step: &str) -> Res<String> {
+        let dir = fixtures().join("quilt3-bucket").join(step);
+        let keys = keys(&dir)?;
+        let latest_key = keys
+            .iter()
+            .find(|key| key.starts_with(".quilt/named_packages/") && key.ends_with("/latest"))
+            .expect("each step moves latest");
+        let hash = std::fs::read_to_string(dir.join(latest_key))?;
+
+        let manifest_path = manifest_path(&hash)?;
+        let manifest = Manifest::from_path(&LocalStorage::new(), &manifest_path).await?;
+        let mut versioned = std::collections::HashMap::new();
+        for row in manifest.rows {
+            let uri = S3Uri::from_str(&row.physical_key)?;
+            versioned.insert(uri.key.clone(), uri);
+        }
+        bucket
+            .put_object(
+                None,
+                &S3Uri::from_str(&format!("s3://{BUCKET_NAME}/.quilt/packages/{hash}"))?,
+                tokio::fs::read(manifest_path).await?,
+            )
+            .await?;
+
         for key in &keys {
             let uri = if key.starts_with(".quilt/") {
                 S3Uri::from_str(&format!("s3://{BUCKET_NAME}/{key}"))?
             } else {
                 versioned
                     .get(key)
-                    .unwrap_or_else(|| panic!("{key} is in no manifest of {step}"))
+                    .unwrap_or_else(|| panic!("{key} is not in the manifest of {step}"))
                     .clone()
             };
             let body = tokio::fs::read(dir.join(key)).await?;
             bucket.put_object(None, &uri, body).await?;
         }
-        Ok(manifest_hash.expect("each step holds one manifest"))
+        Ok(hash)
     }
 
     /// quilt3 pushed v1, we installed it, then quilt3 pushed v2.

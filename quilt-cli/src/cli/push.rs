@@ -41,6 +41,11 @@ impl std::fmt::Display for Output {
                 f,
                 "\nWarning: could not update latest — remote has newer changes"
             )?;
+        } else if outcome.latest_unchecked {
+            write!(
+                f,
+                "\nWarning: latest was updated without checking whether another publisher moved it"
+            )?;
         }
         Ok(())
     }
@@ -55,12 +60,14 @@ impl Render for Output {
                 "hash": null,
                 "manifest_uri": null,
                 "certified_latest": null,
+                "latest_unchecked": null,
             });
         };
         serde_json::json!({
             "hash": &outcome.manifest_uri.hash,
             "manifest_uri": outcome.manifest_uri.to_string(),
             "certified_latest": outcome.certified_latest,
+            "latest_unchecked": outcome.latest_unchecked,
         })
     }
 }
@@ -207,7 +214,7 @@ mod tests {
         use quilt_rs::io::remote::mocks::MockRemote;
         use quilt_rs::lineage::DomainLineageIo;
         use quilt_rs::lineage::Home;
-        use quilt_rs::lineage::PackageLineageIo;
+        use quilt_rs::lineage::PackageLineage;
         use quilt_rs::manifest::Workflow;
         use quilt_rs::manifest::WorkflowId;
         use quilt_rs::paths::DomainPaths;
@@ -229,24 +236,14 @@ mod tests {
 
         // A brand-new local package: a commit will be stamped below, and only
         // then is the remote attached, mirroring `create → commit → set-remote`.
-        // Built as JSON, not formatted in: a Windows path's backslashes
-        // would be escapes inside a JSON string.
-        let lineage_json = serde_json::json!({
-            "packages": {
-                "reference/push-gate": {
-                    "commit": null,
-                    "remote": null,
-                    "base_hash": "",
-                    "latest_hash": "",
-                    "paths": {}
-                }
-            },
-            "home": &home,
-        })
-        .to_string();
-        storage
-            .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-            .await?;
+        let lineage = DomainLineageIo::write_fixture(
+            quilt_rs::lineage::LineageStore::DataJson,
+            &storage,
+            &paths,
+            home_dir.path(),
+            [(namespace.clone(), PackageLineage::default())],
+        )
+        .await?;
 
         let config_uri = S3Uri::try_from("s3://b/.quilt/workflows/config.yml")?;
         // Config v1: a permissive `gate` workflow with no metadata_schema.
@@ -259,10 +256,7 @@ mod tests {
             .await?;
 
         let package = InstalledPackage {
-            lineage: PackageLineageIo::new(
-                DomainLineageIo::new(paths.lineage()),
-                namespace.clone(),
-            ),
+            lineage: lineage.create_package_lineage(namespace.clone()),
             paths,
             remote: std::sync::Arc::new(remote),
             storage,
@@ -354,7 +348,7 @@ mod tests {
         use quilt_rs::io::remote::mocks::MockRemote;
         use quilt_rs::lineage::DomainLineageIo;
         use quilt_rs::lineage::Home;
-        use quilt_rs::lineage::PackageLineageIo;
+        use quilt_rs::lineage::PackageLineage;
         use quilt_rs::paths::DomainPaths;
         use tempfile::TempDir;
 
@@ -367,27 +361,16 @@ mod tests {
         paths
             .scaffold_for_installing(&storage, &home, &namespace)
             .await?;
-        let lineage_json = serde_json::json!({
-            "packages": {
-                "local/only": {
-                    "commit": null,
-                    "remote": null,
-                    "base_hash": "",
-                    "latest_hash": "",
-                    "paths": {}
-                }
-            },
-            "home": &home,
-        })
-        .to_string();
-        storage
-            .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-            .await?;
+        let lineage = DomainLineageIo::write_fixture(
+            quilt_rs::lineage::LineageStore::DataJson,
+            &storage,
+            &paths,
+            home_dir.path(),
+            [(namespace.clone(), PackageLineage::default())],
+        )
+        .await?;
         let package = InstalledPackage {
-            lineage: PackageLineageIo::new(
-                DomainLineageIo::new(paths.lineage()),
-                namespace.clone(),
-            ),
+            lineage: lineage.create_package_lineage(namespace.clone()),
             paths,
             remote: std::sync::Arc::new(MockRemote::default()),
             storage,
@@ -439,7 +422,7 @@ mod tests {
         assert_eq!(output.to_string(), "Nothing to push");
         assert_eq!(
             output.to_json().to_string(),
-            r#"{"hash":null,"manifest_uri":null,"certified_latest":null}"#
+            r#"{"hash":null,"manifest_uri":null,"certified_latest":null,"latest_unchecked":null}"#
         );
 
         Ok(())
@@ -484,7 +467,7 @@ mod tests {
         m.commit(commit::Input {
             message: "Unbounded Defy 2 Landmine".to_string(),
             namespace: namespace.clone(),
-            user_meta: UserMeta::Set(serde_json::json!({"Naturist": "Conjure"})),
+            user_meta: UserMeta::set(serde_json::json!({"Naturist": "Conjure"})),
             workflow: WorkflowIntent::NoWorkflow,
             host_config: None,
         })
@@ -518,7 +501,7 @@ mod tests {
         m.commit(commit::Input {
             message: "Equate 1 Fragment Grimace".to_string(),
             namespace: namespace.clone(),
-            user_meta: UserMeta::Set(serde_json::json!({"Antitoxic": "Mankind"})),
+            user_meta: UserMeta::set(serde_json::json!({"Antitoxic": "Mankind"})),
             workflow: WorkflowIntent::NoWorkflow,
             host_config: None,
         })
@@ -546,13 +529,22 @@ mod tests {
 
     /// Integration test: create local package → set bucket → push to S3 → verify lineage.
     /// Uses fiskus-us-east-1 with a dedicated namespace (no catalog — local AWS creds).
+    /// The package name is unique so this first push finds no latest tag; a
+    /// reused name would not certify after a top-hash change.
     #[test(tokio::test)]
     async fn live_write_push_local_package_bucket_only() -> Result<(), Error> {
         use crate::cli::create;
         use crate::cli::status;
         use quilt_rs::lineage::UpstreamState;
 
-        let namespace: Namespace = ("cli_test", "local_push").into();
+        let name = format!(
+            "local_push_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        );
+        let namespace: Namespace = ("cli_test", name.as_str()).into();
         let host_config = Some(HostConfig::default_sha256_chunked());
 
         // Step 1: Create model and local package
@@ -563,6 +555,7 @@ mod tests {
                 namespace: namespace.clone(),
                 source: None,
                 message: None,
+                user_meta: UserMeta::Clear,
             })
             .await?;
 
@@ -686,7 +679,7 @@ mod tests {
         m.commit(commit::Input {
             message: "Unbounded Defy 2 Landmine".to_string(),
             namespace: namespace.clone(),
-            user_meta: UserMeta::Set(serde_json::json!({"Naturist": "Conjure"})),
+            user_meta: UserMeta::set(serde_json::json!({"Naturist": "Conjure"})),
             workflow: WorkflowIntent::NoWorkflow,
             host_config: host_config.clone(),
         })
@@ -761,12 +754,36 @@ mod tests {
                     hash: hash.to_string(),
                 },
                 certified_latest: false,
+                latest_unchecked: false,
             }),
         };
 
         assert_eq!(
             output.to_json().to_string(),
-            r#"{"hash":"0123456789abcdef","manifest_uri":"quilt+s3://bucket#package=demo/sales@0123456789abcdef","certified_latest":false}"#
+            r#"{"hash":"0123456789abcdef","manifest_uri":"quilt+s3://bucket#package=demo/sales@0123456789abcdef","certified_latest":false,"latest_unchecked":false}"#
         );
+    }
+
+    #[test]
+    fn an_unchecked_latest_is_warned_about() {
+        let output = Output {
+            outcome: Some(PushOutcome {
+                manifest_uri: quilt_uri::ManifestUri {
+                    origin: None,
+                    bucket: "bucket".to_string(),
+                    namespace: ("demo", "sales").into(),
+                    hash: "0123456789abcdef".to_string(),
+                },
+                certified_latest: true,
+                latest_unchecked: true,
+            }),
+        };
+
+        let text = output.to_string();
+        assert!(
+            text.contains("Warning: latest was updated without checking"),
+            "{text}"
+        );
+        assert_eq!(output.to_json()["latest_unchecked"], true);
     }
 }

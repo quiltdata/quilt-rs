@@ -48,11 +48,45 @@ use quilt_uri::Namespace;
 use quilt_uri::S3Uri;
 
 use crate::io::manifest::bytestream_to_string;
+use crate::io::remote::ConditionalPut;
 use crate::io::remote::RemoteObjectStream;
+use crate::io::remote::WriteCondition;
 use quilt_uri::Tag;
+use quilt_uri::is_top_hash;
+use quilt_uri::paths::TAGS_PREFIX;
+use quilt_uri::paths::get_manifest_key;
 use quilt_uri::paths::tag_key;
 
 mod response_timeout;
+
+/// The folders directly under `prefix`, each as a prefix ending in `/`,
+/// listed page by page.
+async fn folders_under(
+    client: &aws_sdk_s3::Client,
+    host: Option<&Host>,
+    bucket: &str,
+    prefix: &str,
+) -> Res<Vec<String>> {
+    let mut pages = client
+        .list_objects_v2()
+        .bucket(bucket)
+        .prefix(prefix)
+        .delimiter("/")
+        .into_paginator()
+        .send();
+    let mut folders = Vec::new();
+    while let Some(page) = pages.next().await {
+        let page =
+            page.map_err(|err| s3_error_or_session_loss(err, host, S3ErrorKind::ListObjects))?;
+        folders.extend(
+            page.common_prefixes()
+                .iter()
+                .filter_map(|folder| folder.prefix())
+                .map(str::to_string),
+        );
+    }
+    Ok(folders)
+}
 
 /// A key under `prefix` names a revision when it is a timestamp: not
 /// `latest`, which only names one of them, as the registry lists them.
@@ -271,7 +305,24 @@ async fn get_object_stream(
     Ok(RemoteObjectStream {
         body: result.body,
         uri: uri_versioned,
+        etag: result.e_tag,
     })
+}
+
+/// Whether a failed conditional write failed on its condition: S3 answers 412
+/// when the object no longer matches, `NoSuchKey` when it was deleted, and 409
+/// when another conditional write to the same key was in flight. Either way
+/// the object is not as the caller last read it, so nothing was written.
+fn is_condition_failure<E>(err: &SdkError<E>) -> bool
+where
+    E: ProvideErrorMetadata,
+{
+    let code = err.as_service_error().and_then(ProvideErrorMetadata::code);
+    let status = err.raw_response().map(|raw| raw.status().as_u16());
+    matches!(
+        code,
+        Some("PreconditionFailed" | "ConditionalRequestConflict" | "NoSuchKey")
+    ) || matches!(status, Some(412 | 409))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -654,6 +705,83 @@ impl RemoteS3 {
         Ok(hashes)
     }
 
+    /// [`Remote::manifest_hashes_with_prefix`]: the keys under
+    /// `.quilt/packages/` that start with `prefix`, listed page by page.
+    async fn manifest_hashes_listed(
+        &self,
+        host: Option<&Host>,
+        bucket: &str,
+        prefix: &str,
+    ) -> Res<Vec<String>> {
+        let client = self.get_client_for_bucket(host, bucket).await?;
+        let directory = get_manifest_key("");
+        let mut pages = client
+            .list_objects_v2()
+            .bucket(bucket)
+            .prefix(format!("{directory}{prefix}"))
+            .into_paginator()
+            .send();
+        let mut hashes = Vec::new();
+        while let Some(page) = pages.next().await {
+            let page =
+                page.map_err(|err| s3_error_or_session_loss(err, host, S3ErrorKind::ListObjects))?;
+            hashes.extend(
+                page.contents()
+                    .iter()
+                    .filter_map(|object| object.key())
+                    .filter_map(|key| key.strip_prefix(&directory))
+                    .filter(|name| is_top_hash(name))
+                    .map(str::to_string),
+            );
+        }
+        Ok(hashes)
+    }
+
+    /// [`Remote::latest_hashes`]: the owners under `.quilt/named_packages/`,
+    /// then each owner's packages, then each package's `latest`, one read
+    /// per package. A folder that is no namespace, a package with no
+    /// `latest`, and a `latest` that holds no top hash have none.
+    async fn latest_hashes_listed(
+        &self,
+        host: Option<&Host>,
+        bucket: &str,
+    ) -> Res<Vec<(Namespace, String)>> {
+        let client = self.get_client_for_bucket(host, bucket).await?;
+        let mut latest = Vec::new();
+        for owner in folders_under(&client, host, bucket, TAGS_PREFIX).await? {
+            for package in folders_under(&client, host, bucket, &owner).await? {
+                let name = package
+                    .strip_prefix(TAGS_PREFIX)
+                    .and_then(|name| name.strip_suffix('/'))
+                    .unwrap_or_default();
+                let Ok(namespace) = Namespace::try_from(name) else {
+                    debug!("Skipping {package}, which names no package");
+                    continue;
+                };
+                let pointer = S3Uri {
+                    bucket: bucket.to_string(),
+                    key: tag_key(&namespace, "latest"),
+                    version: None,
+                };
+                let hash = match get_object_stream(&client, &pointer, host).await {
+                    Ok(stream) => match bytestream_to_string(stream.body).await {
+                        Ok(hash) => hash,
+                        Err(Error::Utf8(_)) => String::new(),
+                        Err(e) => return Err(e),
+                    },
+                    Err(e) if e.is_not_found() => continue,
+                    Err(e) => return Err(e),
+                };
+                if is_top_hash(&hash) {
+                    latest.push((namespace, hash));
+                } else {
+                    warn!("Skipping {pointer}, which holds no top hash");
+                }
+            }
+        }
+        Ok(latest)
+    }
+
     async fn get_client_for_bucket(
         &self,
         host: Option<&Host>,
@@ -783,6 +911,38 @@ impl Remote for RemoteS3 {
         Ok(())
     }
 
+    async fn put_object_if(
+        &self,
+        host: Option<&Host>,
+        s3_uri: &S3Uri,
+        contents: impl Into<ByteStream>,
+        condition: &WriteCondition,
+    ) -> Res<ConditionalPut> {
+        let request = self
+            .get_client_for_bucket(host, &s3_uri.bucket)
+            .await?
+            .put_object()
+            .bucket(&s3_uri.bucket)
+            .key(&s3_uri.key)
+            .body(contents.into());
+        let request = match condition {
+            WriteCondition::Absent => request.if_none_match("*"),
+            WriteCondition::Matches(etag) => request.if_match(etag),
+        };
+        match request.send().await {
+            Ok(_) => Ok(ConditionalPut::Written),
+            Err(err) if is_condition_failure(&err) => {
+                info!("ℹ️ {s3_uri} changed since it was read; not written");
+                Ok(ConditionalPut::Moved)
+            }
+            Err(err) => Err(self.forget_ambient_clients_on(s3_error_or_session_loss(
+                err,
+                host,
+                S3ErrorKind::PutObject,
+            ))),
+        }
+    }
+
     async fn resolve_url(&self, host: Option<&Host>, s3_uri: &S3Uri) -> Res<S3Uri> {
         let client = self.get_client_for_bucket(host, &s3_uri.bucket).await?;
         let result = client.head_object().bucket(&s3_uri.bucket).key(&s3_uri.key);
@@ -859,6 +1019,27 @@ impl Remote for RemoteS3 {
                 .await
                 .map_err(|e| self.forget_ambient_clients_on(e)),
         }
+    }
+
+    async fn manifest_hashes_with_prefix(
+        &self,
+        host: Option<&Host>,
+        bucket: &str,
+        prefix: &str,
+    ) -> Res<Vec<String>> {
+        self.manifest_hashes_listed(host, bucket, prefix)
+            .await
+            .map_err(|e| self.forget_ambient_clients_on(e))
+    }
+
+    async fn latest_hashes(
+        &self,
+        host: Option<&Host>,
+        bucket: &str,
+    ) -> Res<Vec<(Namespace, String)>> {
+        self.latest_hashes_listed(host, bucket)
+            .await
+            .map_err(|e| self.forget_ambient_clients_on(e))
     }
 
     fn clear_client_cache(&self, host: Option<&Host>) {
@@ -947,6 +1128,56 @@ mod tests {
         Ok(())
     }
 
+    /// The fixture bucket's packages are listed with what `latest` names for
+    /// each, the fixture package's included.
+    #[test(tokio::test)]
+    async fn live_latest_hashes() -> Res<()> {
+        let remote = RemoteS3::new(DomainPaths::default(), LocalStorage::new());
+        let namespace: Namespace = ("scale", "10u").into();
+
+        let listed = remote.latest_hashes(None, "data-yaml-spec-tests").await?;
+
+        let pointer = S3Uri {
+            bucket: "data-yaml-spec-tests".to_string(),
+            key: tag_key(&namespace, "latest"),
+            version: None,
+        };
+        let latest = bytestream_to_string(remote.get_object_stream(None, &pointer).await?.body)
+            .await?
+            .trim()
+            .to_string();
+        assert!(
+            listed.contains(&(namespace, latest)),
+            "the fixture's latest in {listed:?}"
+        );
+        assert!(listed.len() > 1, "more than one package: {listed:?}");
+        Ok(())
+    }
+
+    /// A short prefix finds the fixture package's old revision in the
+    /// bucket's `.quilt/packages/`, and `resolve_hash` turns it into the
+    /// whole hash.
+    #[test(tokio::test)]
+    async fn live_manifest_hashes_with_prefix() -> Res<()> {
+        let remote = RemoteS3::new(DomainPaths::default(), LocalStorage::new());
+        let hash = "f8216f57739c9824f22f1f7a1f8ded59fd50791c92bf9c317d06376811ecbfef";
+
+        let listed = remote
+            .manifest_hashes_with_prefix(None, "data-yaml-spec-tests", &hash[..12])
+            .await?;
+        assert_eq!(listed, vec![hash.to_string()]);
+
+        let resolved =
+            crate::flow::resolve_hash(&remote, None, "data-yaml-spec-tests", &hash[..8]).await?;
+        assert_eq!(resolved, hash);
+
+        let none = remote
+            .manifest_hashes_with_prefix(None, "data-yaml-spec-tests", "ffffffffffff")
+            .await?;
+        assert!(none.is_empty(), "{none:?}");
+        Ok(())
+    }
+
     #[test]
     fn only_timestamp_pointers_are_revisions() {
         let prefix = ".quilt/named_packages/team/data/";
@@ -966,6 +1197,74 @@ mod tests {
             ".quilt/named_packages/team/other/1758500000",
             prefix
         ));
+    }
+
+    /// S3 refuses a conditional write to an object changed or deleted since
+    /// the read its `ETag` came from, and creates an object only when there
+    /// is none.
+    /// The key is new on each run, so concurrent runs do not share it.
+    #[test(tokio::test)]
+    async fn live_write_conditional_put_refuses_a_moved_object() -> Res<()> {
+        let remote = RemoteS3::new(DomainPaths::default(), LocalStorage::new());
+        let key = format!(
+            "test_quilt_rs/conditional-put/{}",
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        );
+        let s3_uri = S3Uri::try_from(format!("s3://data-yaml-spec-tests/{key}").as_str())?;
+
+        let created = remote
+            .put_object_if(None, &s3_uri, b"first".to_vec(), &WriteCondition::Absent)
+            .await?;
+        assert_eq!(created, ConditionalPut::Written);
+        let again = remote
+            .put_object_if(None, &s3_uri, b"second".to_vec(), &WriteCondition::Absent)
+            .await?;
+        assert_eq!(again, ConditionalPut::Moved);
+
+        let read = remote.get_object_stream(None, &s3_uri).await?;
+        let etag = read.etag.expect("S3 returns an ETag");
+        let matched = remote
+            .put_object_if(
+                None,
+                &s3_uri,
+                b"third".to_vec(),
+                &WriteCondition::Matches(etag.clone()),
+            )
+            .await?;
+        assert_eq!(matched, ConditionalPut::Written);
+        let stale = remote
+            .put_object_if(
+                None,
+                &s3_uri,
+                b"fourth".to_vec(),
+                &WriteCondition::Matches(etag),
+            )
+            .await?;
+        assert_eq!(stale, ConditionalPut::Moved);
+
+        let read = remote.get_object_stream(None, &s3_uri).await?;
+        let etag = read.etag.expect("S3 returns an ETag");
+        assert_eq!(read.body.collect().await?.to_vec(), b"third");
+
+        remote
+            .get_client_for_bucket(None, &s3_uri.bucket)
+            .await?
+            .delete_object()
+            .bucket(&s3_uri.bucket)
+            .key(&s3_uri.key)
+            .send()
+            .await
+            .expect("the test deletes its own key");
+        let deleted = remote
+            .put_object_if(
+                None,
+                &s3_uri,
+                b"fifth".to_vec(),
+                &WriteCondition::Matches(etag),
+            )
+            .await;
+        assert_eq!(deleted.ok(), Some(ConditionalPut::Moved));
+        Ok(())
     }
 
     #[test(tokio::test)]

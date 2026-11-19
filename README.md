@@ -79,6 +79,10 @@ is the version:
 
 ```bash
 quilt commit -n lab/assays -m "add well A2"
+# Optional package metadata, as a JSON object: --meta '{"owner": "lab"}'
+# (`-u` and `--user-meta` are the same flag). No flag keeps the previous
+# revision's metadata. `quilt create` also takes `--meta`; without it the
+# first revision has no `user_meta` key.
 ```
 
 ```text
@@ -132,9 +136,9 @@ an ordinary local folder. Edit them in your usual tools; QuiltSync syncs the
 changes back as a new immutable revision, and surfaces divergence when someone
 else published in the meantime.
 
-Builds for macOS (Apple Silicon and Intel), Windows, and Linux are on the
-[releases page](https://github.com/quiltdata/quilt-rs/releases) under
-`QuiltSync/v*`. The Windows installers are Authenticode-signed, and the macOS
+Builds for macOS (one app for Apple Silicon and Intel), Windows, and Linux
+are on the [releases page](https://github.com/quiltdata/quilt-rs/releases)
+under `QuiltSync/v*`. The Windows installers are Authenticode-signed, and the macOS
 app is signed and notarized. QuiltSync and the CLI operate on the same
 packages and revisions, so you can move between them freely.
 

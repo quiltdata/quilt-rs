@@ -1,11 +1,12 @@
 use std::path::Path;
-use std::path::PathBuf;
 
 use aws_sdk_s3::primitives::ByteStream;
 use chrono::DateTime;
 use chrono::Utc;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
+#[cfg(unix)]
+use tracing::debug;
 #[cfg(unix)]
 use tracing::warn;
 use uuid::Uuid;
@@ -16,11 +17,9 @@ use crate::error::FsError;
 
 use super::Storage;
 
-/// Generate a unique file path in `dir` for use as a temp file.
-///
-/// Same directory as the target ensures `rename` is atomic (same filesystem).
-fn temp_path_in(dir: &Path) -> PathBuf {
-    dir.join(format!(".tmp-{}", Uuid::new_v4()))
+/// A unique name for a temp file that names no target.
+pub(crate) fn temp_name() -> String {
+    format!(".tmp-{}", Uuid::new_v4())
 }
 
 #[cfg(unix)]
@@ -46,29 +45,120 @@ async fn write_stream(path: &Path, mut body: ByteStream, private: bool) -> std::
     file.sync_all().await
 }
 
-/// Write `body` to a temp file, then atomically rename to `path`.
+/// The folder a write to `path` lands in. A bare file name's parent is the
+/// empty path, which cannot be opened to sync it.
+fn folder_of(path: &Path) -> &Path {
+    match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    }
+}
+
+fn failpoint(tag: Option<&str>, step: &str) {
+    if let Some(tag) = tag {
+        crate::failpoint::hit(format_args!("{tag}.{step}"));
+    }
+}
+
+/// Write `body` to the temp file `temp_name` in `path`'s folder, so the rename
+/// is atomic, then rename it to `path`.
 ///
 /// On failure the temp file is cleaned up.
-async fn atomic_write(path: &Path, body: ByteStream, private: bool) -> std::io::Result<()> {
-    let parent = path.parent().unwrap_or(Path::new("."));
+async fn atomic_write(
+    path: &Path,
+    temp_name: &Path,
+    body: ByteStream,
+    private: bool,
+    sync_folder: bool,
+    tag: Option<&str>,
+) -> std::io::Result<()> {
+    // A path would move the temp out of the folder, and the target's own name
+    // would write over it in place: either way the rename is not atomic.
+    if temp_name.file_name() != Some(temp_name.as_os_str())
+        || path.file_name() == Some(temp_name.as_os_str())
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "temp name {} is not a file name of its own",
+                temp_name.display()
+            ),
+        ));
+    }
+    let parent = folder_of(path);
     fs::create_dir_all(parent).await?;
-    let tmp = temp_path_in(parent);
+    let tmp = parent.join(temp_name);
     let cleanup = |_: &std::io::Error| {
         let _ = std::fs::remove_file(&tmp);
     };
+    failpoint(tag, "before-temp");
     write_stream(&tmp, body, private)
         .await
         .inspect_err(cleanup)?;
-    fs::rename(&tmp, path).await.inspect_err(cleanup)
+    failpoint(tag, "after-temp");
+    fs::rename(&tmp, path).await.inspect_err(cleanup)?;
+    failpoint(tag, "after-rename");
+    #[cfg(unix)]
+    if sync_folder {
+        sync_dir(parent).await;
+    }
+    #[cfg(not(unix))]
+    let _ = sync_folder;
+    Ok(())
 }
 
-pub(super) async fn write(path: &Path, body: ByteStream, private: bool) -> Res {
-    atomic_write(path, body, private).await.map_err(|source| {
-        Error::Fs(FsError::Write {
-            path: path.to_path_buf(),
-            source,
-        })
+/// Makes a rename into `dir` survive a power loss. Windows has no directory
+/// fsync. A failure is logged, not returned: the new file is already in place.
+#[cfg(unix)]
+async fn sync_dir(dir: &Path) {
+    let synced = async { fs::File::open(dir).await?.sync_all().await };
+    match synced.await {
+        Ok(()) => {}
+        // Network and FUSE mounts refuse every folder sync: a warning would
+        // repeat on each write.
+        Err(err) if sync_unsupported(&err) => {
+            debug!("Could not sync {}: {}", dir.display(), err);
+        }
+        Err(err) => warn!("❌ Could not sync {}: {}", dir.display(), err),
+    }
+}
+
+/// Whether `err` is a file system's refusal to sync a folder at all. Matched by
+/// code: the `ErrorKind` of `ENOTSUP` differs between Rust releases.
+#[cfg(unix)]
+fn sync_unsupported(err: &std::io::Error) -> bool {
+    err.raw_os_error().is_some_and(|code| {
+        [
+            libc::EINVAL,
+            libc::ENOTSUP,
+            libc::EOPNOTSUPP,
+            libc::ENOSYS,
+            libc::ENOTTY,
+        ]
+        .contains(&code)
     })
+}
+
+pub(super) async fn write(path: &Path, body: ByteStream, private: bool, sync_folder: bool) -> Res {
+    write_via(path, temp_name().as_ref(), body, private, sync_folder, None).await
+}
+
+async fn write_via(
+    path: &Path,
+    temp_name: &Path,
+    body: ByteStream,
+    private: bool,
+    sync_folder: bool,
+    tag: Option<&str>,
+) -> Res {
+    atomic_write(path, temp_name, body, private, sync_folder, tag)
+        .await
+        .map_err(|source| {
+            Error::Fs(FsError::Write {
+                path: path.to_path_buf(),
+                source,
+            })
+        })
 }
 
 /// Limits a directory made before it was private to its owner. Best effort: a
@@ -160,6 +250,16 @@ impl Storage for LocalStorage {
         fs::metadata(path).await.is_ok_and(|m| m.is_file())
     }
 
+    async fn remove_dir(&self, path: impl AsRef<Path> + Send) -> Res {
+        Ok(fs::remove_dir(path.as_ref()).await?)
+    }
+
+    async fn is_symlink(&self, path: impl AsRef<Path> + Send) -> bool {
+        fs::symlink_metadata(path.as_ref())
+            .await
+            .is_ok_and(|m| m.file_type().is_symlink())
+    }
+
     async fn modified_timestamp(&self, path: impl AsRef<Path>) -> Res<DateTime<Utc>> {
         let modified = fs::metadata(path).await.map(|m| m.modified())??;
         Ok(DateTime::<Utc>::from(modified))
@@ -212,7 +312,33 @@ impl Storage for LocalStorage {
         path: impl AsRef<Path> + Send + Sync,
         body: ByteStream,
     ) -> Res {
-        write(path.as_ref(), body, false).await
+        self.write_byte_stream_via(path, temp_name(), body, None)
+            .await
+    }
+
+    async fn write_staged_byte_stream(
+        &self,
+        path: impl AsRef<Path> + Send + Sync,
+        body: ByteStream,
+    ) -> Res {
+        write(path.as_ref(), body, false, false).await
+    }
+
+    async fn write_byte_stream_via(
+        &self,
+        path: impl AsRef<Path> + Send + Sync,
+        temp_name: impl AsRef<Path> + Send + Sync,
+        body: ByteStream,
+        tag: Option<&'static str>,
+    ) -> Res {
+        write_via(path.as_ref(), temp_name.as_ref(), body, false, true, tag).await
+    }
+
+    async fn sync_dir(&self, path: impl AsRef<Path> + Send) {
+        #[cfg(unix)]
+        sync_dir(path.as_ref()).await;
+        #[cfg(not(unix))]
+        let _ = path;
     }
 
     async fn create_private_dir(&self, path: impl AsRef<Path> + Send) -> Res {
@@ -224,7 +350,7 @@ impl Storage for LocalStorage {
         path: impl AsRef<Path> + Send + Sync,
         body: ByteStream,
     ) -> Res {
-        write(path.as_ref(), body, true).await
+        write(path.as_ref(), body, true, true).await
     }
 
     async fn lock_exclusive(&self, path: impl AsRef<Path> + Send) -> Res<super::LockGuard> {
@@ -253,15 +379,20 @@ impl LocalStorage {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     use test_log::test;
 
     use std::path::Path;
+    #[cfg(unix)]
+    use std::path::PathBuf;
 
     use tempfile::tempdir;
     use tokio::io::AsyncWriteExt;
+
+    use crate::io::storage::LockGuard;
+    use crate::io::storage::StorageExt;
 
     #[test(tokio::test)]
     #[ignore = "doesn't work in CI: in CI the file has a `now` modification date"]
@@ -338,6 +469,123 @@ mod tests {
         assert_ne!(bytes, [] as [u8; 0]);
         assert_eq!(bytes, fs::read("fixtures/user-settings.mkfg").await?);
 
+        Ok(())
+    }
+
+    /// [`LocalStorage`] that, once, writes `replacement` over a file the moment
+    /// a read of it starts, the way another process's lineage write lands:
+    /// through a temp file renamed onto it.
+    struct ReplaceOnRead {
+        inner: LocalStorage,
+        replacement: std::sync::Mutex<Option<Vec<u8>>>,
+    }
+
+    impl ReplaceOnRead {
+        async fn replace(&self, path: &Path) -> Res {
+            let replacement = self.replacement.lock().unwrap().take();
+            if let Some(bytes) = replacement {
+                self.inner
+                    .write_byte_stream(path, ByteStream::from(bytes))
+                    .await?;
+            }
+            Ok(())
+        }
+    }
+
+    impl Storage for ReplaceOnRead {
+        async fn copy(
+            &self,
+            from: impl AsRef<Path> + Send,
+            to: impl AsRef<Path> + Send,
+        ) -> Res<u64> {
+            self.inner.copy(from, to).await
+        }
+        async fn create_dir_all(&self, path: impl AsRef<Path> + Send) -> Res {
+            self.inner.create_dir_all(path).await
+        }
+        async fn create_file(&self, path: impl AsRef<Path>) -> Res<fs::File> {
+            self.inner.create_file(path).await
+        }
+        async fn exists(&self, path: impl AsRef<Path>) -> bool {
+            self.inner.exists(path).await
+        }
+        async fn is_file(&self, path: impl AsRef<Path>) -> bool {
+            self.inner.is_file(path).await
+        }
+        async fn modified_timestamp(&self, path: impl AsRef<Path>) -> Res<DateTime<Utc>> {
+            self.inner.modified_timestamp(path).await
+        }
+        async fn open_file(&self, path: impl AsRef<Path> + Send) -> Res<fs::File> {
+            let file = self.inner.open_file(path.as_ref()).await?;
+            self.replace(path.as_ref()).await?;
+            Ok(file)
+        }
+        async fn read_byte_stream(&self, path: impl AsRef<Path> + Send + Sync) -> Res<ByteStream> {
+            let stream = self.inner.read_byte_stream(path.as_ref()).await?;
+            self.replace(path.as_ref()).await?;
+            Ok(stream)
+        }
+        async fn read_dir(&self, path: impl AsRef<Path> + Send + Sync) -> Res<fs::ReadDir> {
+            self.inner.read_dir(path).await
+        }
+        async fn remove_dir_all(&self, path: impl AsRef<Path> + Send) -> Res {
+            self.inner.remove_dir_all(path).await
+        }
+        async fn remove_file(&self, path: impl AsRef<Path> + Send) -> Result<(), std::io::Error> {
+            self.inner.remove_file(path).await
+        }
+        async fn rename(&self, from: impl AsRef<Path> + Send, to: impl AsRef<Path> + Send) -> Res {
+            self.inner.rename(from, to).await
+        }
+        async fn write_byte_stream(
+            &self,
+            path: impl AsRef<Path> + Send + Sync,
+            body: ByteStream,
+        ) -> Res {
+            self.inner.write_byte_stream(path, body).await
+        }
+        async fn create_private_dir(&self, path: impl AsRef<Path> + Send) -> Res {
+            self.inner.create_private_dir(path).await
+        }
+        async fn write_private_byte_stream(
+            &self,
+            path: impl AsRef<Path> + Send + Sync,
+            body: ByteStream,
+        ) -> Res {
+            self.inner.write_private_byte_stream(path, body).await
+        }
+        async fn lock_exclusive(&self, path: impl AsRef<Path> + Send) -> Res<LockGuard> {
+            self.inner.lock_exclusive(path).await
+        }
+        async fn try_lock_exclusive(
+            &self,
+            path: impl AsRef<Path> + Send,
+        ) -> Res<Option<LockGuard>> {
+            self.inner.try_lock_exclusive(path).await
+        }
+    }
+
+    #[test(tokio::test)]
+    async fn a_file_replaced_during_a_read_is_read_whole() -> Res {
+        let temp_dir = tempdir()?;
+        let path = temp_dir.path().join("data.json");
+        let before = br#"["before"]"#.to_vec();
+        for after in [br#"["a longer replacement"]"#.to_vec(), b"[]".to_vec()] {
+            fs::write(&path, &before).await?;
+            let storage = ReplaceOnRead {
+                inner: LocalStorage::new(),
+                replacement: std::sync::Mutex::new(Some(after.clone())),
+            };
+
+            let read = storage.read_bytes(&path).await?;
+
+            assert_eq!(fs::read(&path).await?, after, "the file was replaced");
+            assert!(
+                read == before || read == after,
+                "read {}",
+                String::from_utf8_lossy(&read)
+            );
+        }
         Ok(())
     }
 
@@ -519,6 +767,341 @@ mod tests {
 
         assert_eq!(fs::read(&dest).await?, b"updated");
         Ok(())
+    }
+
+    /// Records the level of each event logged while it is the default subscriber.
+    #[cfg(unix)]
+    #[derive(Clone, Default)]
+    pub(crate) struct Logged(std::sync::Arc<std::sync::Mutex<Vec<tracing::Level>>>);
+
+    #[cfg(unix)]
+    impl Logged {
+        /// Awaits `body`, returning its output and the levels it logged.
+        pub(crate) async fn during<T>(body: impl Future<Output = T>) -> (T, Vec<tracing::Level>) {
+            let logged = Logged::default();
+            let guard = tracing::subscriber::set_default(logged.clone());
+            let output = body.await;
+            drop(guard);
+            let levels = logged.0.lock().unwrap().clone();
+            (output, levels)
+        }
+    }
+
+    #[cfg(unix)]
+    impl tracing::Subscriber for Logged {
+        fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+            true
+        }
+        fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+            tracing::span::Id::from_u64(1)
+        }
+        fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+        fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+        fn event(&self, event: &tracing::Event<'_>) {
+            self.0.lock().unwrap().push(*event.metadata().level());
+        }
+        fn enter(&self, _: &tracing::span::Id) {}
+        fn exit(&self, _: &tracing::span::Id) {}
+    }
+
+    /// A folder its owner can write and search but not read, so it cannot be
+    /// opened to sync it.
+    #[cfg(unix)]
+    struct UnreadableFolder {
+        path: PathBuf,
+        _temp_dir: tempfile::TempDir,
+    }
+
+    #[cfg(unix)]
+    impl UnreadableFolder {
+        /// `None` as root, which ignores the mode: there the sync would not fail.
+        fn new() -> Res<Option<Self>> {
+            use std::os::unix::fs::PermissionsExt;
+
+            let temp_dir = tempdir()?;
+            let path = temp_dir.path().join("unreadable");
+            std::fs::create_dir(&path)?;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o300))?;
+            let folder = UnreadableFolder {
+                path,
+                _temp_dir: temp_dir,
+            };
+            Ok(std::fs::File::open(&folder.path).is_err().then_some(folder))
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for UnreadableFolder {
+        fn drop(&mut self) {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&self.path, std::fs::Permissions::from_mode(0o700));
+        }
+    }
+
+    /// A directory that cannot be opened to sync it still takes the write,
+    /// since the new file is in place by then, and the failed sync is logged.
+    #[test(tokio::test)]
+    #[cfg(unix)]
+    async fn a_write_whose_directory_cannot_be_synced_succeeds_and_warns() -> Res {
+        let Some(folder) = UnreadableFolder::new()? else {
+            return Ok(());
+        };
+        let dest = folder.path.join("data.json");
+
+        let (result, logged) = Logged::during(
+            LocalStorage::default().write_byte_stream(&dest, ByteStream::from_static(b"new")),
+        )
+        .await;
+
+        result?;
+        assert_eq!(fs::read(&dest).await?, b"new");
+        assert_eq!(logged, [tracing::Level::WARN]);
+        Ok(())
+    }
+
+    /// A staged file is renamed elsewhere right after, so its folder is not
+    /// synced: the same unreadable folder logs nothing.
+    #[test(tokio::test)]
+    #[cfg(unix)]
+    async fn a_staged_write_does_not_sync_its_folder() -> Res {
+        let Some(folder) = UnreadableFolder::new()? else {
+            return Ok(());
+        };
+        let dest = folder.path.join("staged");
+
+        let (result, logged) = Logged::during(
+            LocalStorage::default()
+                .write_staged_byte_stream(&dest, ByteStream::from_static(b"new")),
+        )
+        .await;
+
+        result?;
+        assert_eq!(fs::read(&dest).await?, b"new");
+        assert!(logged.is_empty(), "{logged:?}");
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    #[cfg(unix)]
+    async fn a_folder_that_cannot_be_synced_warns() -> Res {
+        let Some(folder) = UnreadableFolder::new()? else {
+            return Ok(());
+        };
+        let ((), logged) = Logged::during(LocalStorage::default().sync_dir(&folder.path)).await;
+        assert_eq!(logged, [tracing::Level::WARN]);
+        Ok(())
+    }
+
+    /// The names and contents of the files in `dir`.
+    fn files_in(dir: &Path) -> std::collections::BTreeMap<String, Vec<u8>> {
+        std::fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| {
+                let path = entry.unwrap().path();
+                let name = path.file_name().unwrap().to_string_lossy().into_owned();
+                (name, std::fs::read(&path).unwrap_or_default())
+            })
+            .collect()
+    }
+
+    /// A body that fails before yielding anything.
+    struct FailingBody;
+
+    impl http_body::Body for FailingBody {
+        type Data = bytes::Bytes;
+        type Error = std::io::Error;
+
+        fn poll_frame(
+            self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
+            std::task::Poll::Ready(Some(Err(std::io::Error::other("cut off"))))
+        }
+    }
+
+    /// A temp name that is a path is refused before anything is written.
+    #[test(tokio::test)]
+    async fn a_temp_name_that_leaves_the_folder_is_refused() -> Res {
+        let temp_dir = tempdir()?;
+        let folder = temp_dir.path().join("folder");
+        let outside = temp_dir.path().join("outside.tmp");
+
+        for temp_name in [outside, std::path::PathBuf::from("../outside.tmp")] {
+            let result = LocalStorage::default()
+                .write_byte_stream_via(
+                    folder.join("data.json"),
+                    &temp_name,
+                    ByteStream::from_static(b"new"),
+                    None,
+                )
+                .await;
+            assert!(result.is_err(), "{} was taken", temp_name.display());
+        }
+        assert!(files_in(temp_dir.path()).is_empty());
+        Ok(())
+    }
+
+    /// A temp named after its target is refused, and the target left whole.
+    #[test(tokio::test)]
+    async fn a_temp_named_after_its_target_is_refused() -> Res {
+        let temp_dir = tempdir()?;
+        let dest = temp_dir.path().join("data.json");
+        std::fs::write(&dest, b"old")?;
+
+        let result = LocalStorage::default()
+            .write_byte_stream_via(
+                &dest,
+                "data.json",
+                ByteStream::new(aws_smithy_types::body::SdkBody::from_body_1_x(FailingBody)),
+                None,
+            )
+            .await;
+
+        assert!(result.is_err());
+        assert_eq!(std::fs::read(&dest).ok(), Some(b"old".to_vec()));
+        Ok(())
+    }
+
+    /// A write whose body fails removes its named temp: only a killed write
+    /// leaves one.
+    #[test(tokio::test)]
+    async fn a_write_whose_body_fails_removes_its_named_temp() -> Res {
+        let temp_dir = tempdir()?;
+
+        let result = LocalStorage::default()
+            .write_byte_stream_via(
+                temp_dir.path().join("data.json"),
+                "data.json.tmp-1",
+                ByteStream::new(aws_smithy_types::body::SdkBody::from_body_1_x(FailingBody)),
+                None,
+            )
+            .await;
+
+        assert!(result.is_err());
+        assert!(files_in(temp_dir.path()).is_empty());
+        Ok(())
+    }
+
+    /// A write killed at each of its failpoints, with nothing unwinding.
+    #[cfg(unix)]
+    mod killed {
+        use super::*;
+
+        use std::collections::BTreeMap;
+
+        use test_log::test;
+
+        const CHILD_DEST: &str = "QUILT_RS_TEST_CHILD_DEST";
+        const KILLED_TEMP: &str = "data.json.tmp-killed";
+
+        /// Not a test on its own: the child half of [`killed_at`]. It writes `new`
+        /// through the failpoints tagged `test`.
+        #[test]
+        #[ignore = "run only as the child of killed_at"]
+        fn child_writes_through_the_failpoints() -> Res {
+            let Ok(dest) = std::env::var(CHILD_DEST) else {
+                return Ok(());
+            };
+            tokio::runtime::Runtime::new()?.block_on(LocalStorage::default().write_byte_stream_via(
+                dest,
+                KILLED_TEMP,
+                ByteStream::from_static(b"new"),
+                Some("test"),
+            ))
+        }
+
+        /// Has a child process write `new` over `data.json`, which holds `old`,
+        /// `SIGKILL`s it once it reaches the failpoint `test.<step>`, and returns
+        /// the files left in the folder.
+        fn killed_at(step: &str) -> Res<BTreeMap<String, Vec<u8>>> {
+            use std::time::Duration;
+            use std::time::Instant;
+
+            let dir = tempdir()?;
+            let signals = tempdir()?;
+            let dest = dir.path().join("data.json");
+            std::fs::write(&dest, b"old")?;
+            let name = format!("test.{step}");
+            let mut child = std::process::Command::new(std::env::current_exe()?)
+                .args([
+                    "--exact",
+                    "io::storage::local::tests::killed::child_writes_through_the_failpoints",
+                    "--ignored",
+                    "--nocapture",
+                ])
+                .env(CHILD_DEST, &dest)
+                .env(crate::failpoint::NAME_VAR, &name)
+                .env(crate::failpoint::DIR_VAR, signals.path())
+                .spawn()?;
+
+            let reached = signals.path().join(format!("{name}.reached"));
+            let deadline = Instant::now() + Duration::from_secs(30);
+            let mut exited = None;
+            while !reached.exists() && exited.is_none() && Instant::now() < deadline {
+                exited = child.try_wait()?;
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            let _ = child.kill();
+            child.wait()?;
+            assert!(
+                reached.exists(),
+                "the child never reached {name}; it exited with {exited:?}"
+            );
+            Ok(files_in(dir.path()))
+        }
+
+        fn files(entries: &[(&str, &[u8])]) -> BTreeMap<String, Vec<u8>> {
+            entries
+                .iter()
+                .map(|(name, bytes)| ((*name).to_string(), bytes.to_vec()))
+                .collect()
+        }
+
+        #[test]
+        fn a_write_killed_before_its_temp_leaves_the_old_file_alone() -> Res {
+            assert_eq!(killed_at("before-temp")?, files(&[("data.json", b"old")]));
+            Ok(())
+        }
+
+        /// The temp is whole before the rename, and a kill leaves it under the
+        /// name the caller gave it.
+        #[test]
+        fn a_write_killed_before_its_rename_leaves_the_old_file_and_the_whole_temp() -> Res {
+            assert_eq!(
+                killed_at("after-temp")?,
+                files(&[("data.json", b"old"), (KILLED_TEMP, b"new")])
+            );
+            Ok(())
+        }
+
+        #[test]
+        fn a_write_killed_after_its_rename_leaves_the_whole_new_file() -> Res {
+            assert_eq!(killed_at("after-rename")?, files(&[("data.json", b"new")]));
+            Ok(())
+        }
+    }
+
+    /// devfs on macOS and procfs on Linux refuse every folder sync, as network
+    /// and FUSE mounts do; that refusal is logged at debug, not as a warning.
+    #[test(tokio::test)]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    async fn a_folder_sync_the_file_system_refuses_is_logged_at_debug() {
+        let folder = if cfg!(target_os = "macos") {
+            "/dev"
+        } else {
+            "/proc"
+        };
+        let ((), logged) = Logged::during(sync_dir(Path::new(folder))).await;
+        assert_eq!(logged, [tracing::Level::DEBUG]);
+    }
+
+    #[test]
+    fn a_bare_file_name_is_written_into_the_current_folder() {
+        assert_eq!(folder_of(Path::new("data.json")), Path::new("."));
+        assert_eq!(
+            folder_of(Path::new(".quilt/data.json")),
+            Path::new(".quilt")
+        );
     }
 
     #[test(tokio::test)]

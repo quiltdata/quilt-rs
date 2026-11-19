@@ -1,3 +1,4 @@
+use chrono::DateTime;
 use chrono::Utc;
 use tempfile::TempDir;
 use test_log::test;
@@ -14,9 +15,19 @@ async fn current_revision_reads_only_the_selected_installed_manifest() -> Res {
     domain.set_home(temp_dir.path()).await?;
 
     let namespace: Namespace = ("demo", "sales").into();
-    let before = Utc::now();
+    // The revision time is the manifest file's modified time. Some Linux
+    // filesystems stamp files from a clock that lags `Utc::now()` by a few
+    // milliseconds, so the lower bound is a file written just before.
+    let marker = temp_dir.path().join("before");
+    tokio::fs::write(&marker, b"").await?;
+    let before: DateTime<Utc> = tokio::fs::metadata(&marker).await?.modified()?.into();
     let (package, _) = domain
-        .create_package(namespace.clone(), None, Some("initial import".to_string()))
+        .create_package(
+            namespace.clone(),
+            None,
+            Some("initial import".to_string()),
+            UserMeta::Clear,
+        )
         .await?;
     let snapshot = package.lineage().await?;
     let expected_hash = snapshot
@@ -67,7 +78,12 @@ async fn current_revision_prefers_a_pending_commit_over_the_remote_hash() -> Res
 
     let namespace: Namespace = ("demo", "pending").into();
     let (package, _) = domain
-        .create_package(namespace.clone(), None, Some("local work".to_string()))
+        .create_package(
+            namespace.clone(),
+            None,
+            Some("local work".to_string()),
+            UserMeta::Clear,
+        )
         .await?;
     let pending_hash = package
         .lineage()

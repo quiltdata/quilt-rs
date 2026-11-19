@@ -19,6 +19,7 @@ homepage.workspace = true
 test-support = []
 
 [dependencies]
+log = "0.4"
 percent-encoding.workspace = true
 serde.workspace = true
 thiserror.workspace = true
@@ -27,6 +28,7 @@ url.workspace = true
 [dev-dependencies]
 serde_json.workspace = true
 test-log.workspace = true
+testing_logger = "0.1"
 
 [lints]
 workspace = true

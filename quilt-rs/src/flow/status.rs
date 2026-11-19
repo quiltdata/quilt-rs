@@ -10,6 +10,7 @@ use tracing::warn;
 
 use crate::Error;
 use crate::LogicalKey;
+use crate::PackageOpError;
 use crate::Res;
 use crate::checksum::calculate_hash;
 use crate::checksum::hash_file;
@@ -26,6 +27,7 @@ use crate::lineage::Change;
 use crate::lineage::ChangeSet;
 use crate::lineage::InstalledPackageStatus;
 use crate::lineage::PackageLineage;
+use crate::lineage::WorkingCopy;
 use crate::manifest::Manifest;
 use crate::manifest::ManifestRow;
 use crate::object_hash::ObjectHash;
@@ -98,10 +100,15 @@ impl Tracked {
 }
 
 /// The whole walk, one folder call at a time. Blocking.
+///
+/// With `root_required`, a package home that cannot be read is
+/// [`PackageOpError::WorkingCopyUnavailable`], not an empty walk: the files
+/// the package tracks there would read as removed.
 pub(crate) fn walk_package_home(
     package_home: &Path,
     rules: &quiltignore::Rules,
     tracked: &Tracked,
+    root_required: bool,
 ) -> Res<Walked> {
     let mut walked = Walked::default();
     let mut queue = VecDeque::new();
@@ -110,6 +117,11 @@ pub(crate) fn walk_package_home(
     while let Some(dir) = queue.pop_front() {
         let entries = match read_dir_stamps(&dir) {
             Ok(entries) => entries,
+            Err(_) if root_required && dir == package_home && std::fs::read_dir(&dir).is_err() => {
+                return Err(Error::PackageOp(PackageOpError::WorkingCopyUnavailable(
+                    dir,
+                )));
+            }
             // A folder that lists but can't be stamped holds files the walk
             // can't see; skipping it would report them removed.
             Err(err) if std::fs::read_dir(&dir).is_ok() => return Err(err.into()),
@@ -246,9 +258,15 @@ impl<S: Storage + Sync> Hasher<'_, S> {
         if hash.algorithm() == host_config.checksums.algorithm_code() {
             return Ok(Some(ManifestRow { hash, size, ..row }));
         }
-        self.calculate(&row.logical_key, path, stamp, host_config)
-            .await
-            .map(Some)
+        // The row's metadata is the package's, not the file's, so it stays,
+        // raw numbers included.
+        Ok(Some(ManifestRow {
+            meta: row.meta,
+            meta_numbers: row.meta_numbers,
+            ..self
+                .calculate(&row.logical_key, path, stamp, host_config)
+                .await?
+        }))
     }
 
     /// The same row `checksum::calculate_hash` gives.
@@ -273,6 +291,7 @@ impl<S: Storage + Sync> Hasher<'_, S> {
             size,
             hash,
             meta: None,
+            meta_numbers: crate::manifest::RawNumbers::default(),
         })
     }
 
@@ -356,6 +375,7 @@ pub async fn rehash_changes(
                     .map(Change::Modified),
                 None => Some(Change::Modified(ManifestRow {
                     meta: current.meta,
+                    meta_numbers: current.meta_numbers,
                     ..calculate_hash(storage, &path, &logical_key, host_config).await?
                 })),
             },
@@ -465,9 +485,27 @@ pub async fn create_status_cached(
     );
     let home = package_home.as_ref().to_path_buf();
     let walked_at = SystemTime::now();
-    let walk = tokio::task::spawn_blocking(move || walk_package_home(&home, &rules, &tracked))
-        .await
-        .map_err(std::io::Error::other)??;
+    // A package that tracks no file loses nothing to a missing folder, as with
+    // one installed and not yet downloaded.
+    let root_required = !orig_paths.is_empty();
+    let walk = tokio::task::spawn_blocking(move || {
+        walk_package_home(&home, &rules, &tracked, root_required)
+    })
+    .await
+    .map_err(std::io::Error::other)?;
+    let walk = match walk {
+        Err(Error::PackageOp(PackageOpError::WorkingCopyUnavailable(unreadable))) => {
+            trace!("❌ Working folder {} is unavailable", unreadable.display());
+            if let Some(cache) = cache {
+                cache.keep_all();
+            }
+            let mut status = InstalledPackageStatus::new(lineage.clone().into(), ChangeSet::new());
+            status.latest_hash.clone_from(&lineage.latest_hash);
+            status.working_copy = WorkingCopy::Unavailable(unreadable);
+            return Ok((lineage, status));
+        }
+        walked => walked?,
+    };
     let files = locate_files(walk.entries, manifest, orig_paths);
     // Captured before the vector is consumed; reported once, on the outcome line.
     let walked = files.len();
@@ -663,7 +701,7 @@ mod tests {
             paths: BTreeMap::from([(
                 logical_key.clone(),
                 PathState {
-                    hash: manifest_record.hash.clone().into(),
+                    hash: Some(manifest_record.hash.clone().into()),
                     ..PathState::default()
                 },
             )]),
@@ -709,6 +747,103 @@ mod tests {
         Ok(())
     }
 
+    /// A folder that is gone says nothing about its files: they are neither
+    /// `Removed` nor changed, and the status lists no change at all.
+    #[test(tokio::test)]
+    async fn test_missing_working_dir_is_unavailable_not_removed() -> Res {
+        let manifest = fixtures::manifest_with_objects_all_sizes::manifest().await?;
+        let logical_key = PathBuf::from("less-then-8mb.txt");
+        let manifest_record = manifest.get_record(&logical_key).unwrap();
+        let storage = MockStorage::default();
+        let lineage = PackageLineage {
+            paths: BTreeMap::from([(
+                logical_key.clone(),
+                PathState {
+                    hash: Some(manifest_record.hash.clone().into()),
+                    ..PathState::default()
+                },
+            )]),
+            ..PackageLineage::default()
+        };
+        let working_dir = storage.temp_dir.as_ref().join("foo/bar");
+        assert!(!working_dir.exists());
+
+        let (_, status) = create_status(
+            lineage.clone(),
+            &storage,
+            &domain_paths(&storage),
+            &manifest,
+            &working_dir,
+            HostConfig::default(),
+        )
+        .await?;
+        assert_eq!(
+            status.working_copy,
+            WorkingCopy::Unavailable(working_dir.clone())
+        );
+        assert!(status.changes.is_empty(), "{:?}", status.changes);
+
+        // Restored, the file is read again and found unchanged.
+        storage
+            .write_byte_stream(
+                working_dir.join(&logical_key),
+                ByteStream::from_static(fixtures::objects::less_than_8mb()),
+            )
+            .await?;
+        let (_, status) = create_status(
+            lineage,
+            &storage,
+            &domain_paths(&storage),
+            &manifest,
+            &working_dir,
+            HostConfig::default(),
+        )
+        .await?;
+        assert_eq!(status.working_copy, WorkingCopy::Available);
+        assert!(status.changes.is_empty(), "{:?}", status.changes);
+        Ok(())
+    }
+
+    /// A folder that goes missing after the status was started is read by the
+    /// walk, so the walk itself says it is unavailable rather than empty.
+    #[test]
+    fn test_walk_of_an_unreadable_root_is_unavailable_only_when_required() -> Res {
+        let home = tempfile::TempDir::new()?;
+        let root = home.path().join("gone");
+        let rules = quiltignore::Rules::load(&root, &home.path().join("domain"))?;
+
+        let error = walk_package_home(&root, &rules, &Tracked::default(), true)
+            .err()
+            .expect("an unreadable root is refused");
+        assert!(matches!(
+            error,
+            Error::PackageOp(PackageOpError::WorkingCopyUnavailable(named)) if named == root
+        ));
+        let walked = walk_package_home(&root, &rules, &Tracked::default(), false)?;
+        assert_eq!(walked.entries.len(), 0);
+        Ok(())
+    }
+
+    /// Nothing is tracked in the folder, as for a package installed and not
+    /// yet downloaded, so its absence loses nothing.
+    #[test(tokio::test)]
+    async fn test_missing_working_dir_of_a_package_tracking_nothing_is_available() -> Res {
+        let manifest = fixtures::manifest_with_objects_all_sizes::manifest().await?;
+        let storage = MockStorage::default();
+        let (_, status) = create_status(
+            lineage_with_remote(PackageLineage::default()),
+            &storage,
+            &domain_paths(&storage),
+            &manifest,
+            storage.temp_dir.as_ref().join("never/created"),
+            HostConfig::default(),
+        )
+        .await?;
+        assert_eq!(status.working_copy, WorkingCopy::Available);
+        assert!(status.changes.is_empty());
+        Ok(())
+    }
+
     #[test(tokio::test)]
     async fn test_added_files() -> Res {
         let lineage = PackageLineage::default();
@@ -744,6 +879,7 @@ mod tests {
                     .into(),
                 meta: None,
                 physical_key: crate::paths::file_url(&physical_key)?,
+                meta_numbers: crate::manifest::RawNumbers::default(),
             };
             assert!(added_row.matches_content(&reference_row));
             Ok(())
@@ -1097,7 +1233,7 @@ mod tests {
             paths: BTreeMap::from([(
                 logical_key.clone(),
                 PathState {
-                    hash: manifest_record.hash.clone().into(),
+                    hash: Some(manifest_record.hash.clone().into()),
                     ..PathState::default()
                 },
             )]),
@@ -1264,7 +1400,7 @@ mod tests {
                 paths: BTreeMap::from([(
                     PathBuf::from("tracked.txt"),
                     PathState {
-                        hash: row.hash.clone().into(),
+                        hash: Some(row.hash.clone().into()),
                         ..PathState::default()
                     },
                 )]),
@@ -1290,8 +1426,12 @@ mod tests {
         }
 
         async fn walk_with(&self, host_config: HostConfig) -> Res<ChangeSet> {
-            let namespace = ("acme", "demo").into();
-            let mut cache = self.store.stat_cache(&namespace).await;
+            let key = crate::state_store::FolderKey {
+                registry: None,
+                package: ("acme", "demo").into(),
+                folder: self.home.path().to_path_buf(),
+            };
+            let mut cache = self.store.stat_cache(&key).await;
             let (_, status) = create_status_cached(
                 self.lineage.clone(),
                 &self.storage,
@@ -1302,7 +1442,7 @@ mod tests {
                 Some(&mut cache),
             )
             .await?;
-            self.store.save_stat_cache(&namespace, &cache).await;
+            self.store.save_stat_cache(&key, &cache).await;
             Ok(status.changes)
         }
 
@@ -1485,6 +1625,117 @@ mod tests {
         Ok(())
     }
 
+    /// A modified row the manifest does not have is rehashed whole, but its
+    /// `meta` stays as it was, big integers included.
+    #[test(tokio::test)]
+    async fn rehash_changes_keeps_the_meta_numbers_of_a_row_the_manifest_lacks()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let package = CachedPackage::new().await?;
+        std::fs::write(package.path("new.txt"), b"x")?;
+        let (meta, meta_numbers) =
+            crate::manifest::RawNumbers::parse(r#"{"n": 18446744073709551617}"#)?;
+        let current = ManifestRow {
+            meta: Some(meta.clone()),
+            meta_numbers: meta_numbers.clone(),
+            ..ManifestRow::default()
+        };
+        let status = InstalledPackageStatus {
+            changes: ChangeSet::from([(PathBuf::from("new.txt"), Change::Modified(current))]),
+            ..InstalledPackageStatus::default()
+        };
+
+        let status = rehash_changes(
+            &package.storage,
+            &Manifest::default(),
+            package.home.path(),
+            status,
+            &HostConfig::default(),
+        )
+        .await?;
+
+        let Some(Change::Modified(row)) = status.changes.get(Path::new("new.txt")) else {
+            panic!("{:?}", status.changes);
+        };
+        assert_eq!(row.meta, Some(meta));
+        assert_eq!(row.meta_numbers, meta_numbers);
+        Ok(())
+    }
+
+    /// A package whose tracked row has a checksum type other than the host's
+    /// and metadata with a big integer, and whose file has changed since.
+    async fn tracked_row_with_big_int_meta_modified()
+    -> Result<(CachedPackage, ManifestRow), Box<dyn std::error::Error>> {
+        let mut package = CachedPackage::new().await?;
+        let (meta, meta_numbers) =
+            crate::manifest::RawNumbers::parse(r#"{"n": 18446744073709551617, "k": "v"}"#)?;
+        let row = ManifestRow {
+            meta: Some(meta),
+            meta_numbers,
+            ..calculate_hash(
+                &package.storage,
+                &package.path("tracked.txt"),
+                Path::new("tracked.txt"),
+                &HostConfig::default_sha256_chunked(),
+            )
+            .await?
+        };
+        assert!(!row.meta_numbers.is_empty());
+        package.manifest = Manifest::default();
+        package.manifest.insert_record(row.clone()).await?;
+        package.lineage.paths.insert(
+            PathBuf::from("tracked.txt"),
+            PathState {
+                hash: Some(row.hash.clone().into()),
+                ..PathState::default()
+            },
+        );
+        std::fs::write(package.path("tracked.txt"), b"changed")?;
+        Ok((package, row))
+    }
+
+    /// The status of a modified row, rehashed under a host whose checksum type
+    /// differs from the row's, keeps the row's `meta` and `meta_numbers`.
+    #[test(tokio::test)]
+    async fn a_modified_row_keeps_its_meta_when_the_host_algorithm_differs()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (package, row) = tracked_row_with_big_int_meta_modified().await?;
+        let crc64 = HostConfig::default_crc64();
+
+        let walked = package.walk_with(crc64.clone()).await?;
+        let (_, status) = create_status(
+            package.lineage.clone(),
+            &package.storage,
+            &package.domain_paths(),
+            &package.manifest,
+            package.home.path(),
+            crc64.clone(),
+        )
+        .await?;
+        let rehashed = rehash_changes(
+            &package.storage,
+            &package.manifest,
+            package.home.path(),
+            status.clone(),
+            &crc64,
+        )
+        .await?;
+
+        assert_eq!(walked, status.changes);
+        for changes in [&walked, &rehashed.changes] {
+            let Some(Change::Modified(modified)) = changes.get(Path::new("tracked.txt")) else {
+                panic!("{changes:?}");
+            };
+            assert_eq!(
+                modified.hash.algorithm(),
+                crate::object_hash::MULTIHASH_CRC64_NVME
+            );
+            assert_ne!(modified.hash, row.hash);
+            assert_eq!(modified.meta, row.meta);
+            assert_eq!(modified.meta_numbers, row.meta_numbers);
+        }
+        Ok(())
+    }
+
     #[test(tokio::test)]
     async fn test_local_status() -> Res {
         let storage = MockStorage::default();
@@ -1531,7 +1782,7 @@ mod tests {
             lineage.paths.insert(
                 PathBuf::from(name),
                 PathState {
-                    hash: row.hash.clone().into(),
+                    hash: Some(row.hash.clone().into()),
                     ..PathState::default()
                 },
             );
@@ -1738,7 +1989,7 @@ mod keys_the_walk_leaves_out {
         std::fs::write(home.path().join("..\\escape.txt"), b"x")?;
         let rules =
             quiltignore::Rules::load(home.path(), &home.path().join("no-user-quiltignore"))?;
-        let walked = walk_package_home(home.path(), &rules, &Tracked::default())?;
+        let walked = walk_package_home(home.path(), &rules, &Tracked::default(), false)?;
         let keys: Vec<_> = walked.entries.iter().map(|entry| entry.0.clone()).collect();
         assert_eq!(keys, vec![PathBuf::from("kept.txt")]);
         Ok(())

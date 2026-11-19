@@ -523,7 +523,10 @@ mod tests {
     async fn a_package_file_s_path_is_where_opening_it_would_look() -> Result<(), Error> {
         let mut m = model::MockQuiltModel::new();
         m.expect_file_path()
-            .withf(|ns, path| ns.to_string() == "team/plate" && path == &PathBuf::from("raw/a.csv"))
+            .withf(|ns, path| {
+                ns.to_string() == "team/plate"
+                    && path.as_path() == std::path::Path::new("raw/a.csv")
+            })
             .returning(|_, path| {
                 Ok(path.join_to(std::path::Path::new("/Users/me/QuiltSync/team/plate")))
             });

@@ -6,8 +6,10 @@
 package twice: `v1/` holds every object after the first push, `v2/` every
 object the second push added or replaced.
 
-Each file sits at its S3 key. Data objects are versioned; their version IDs
-are in the manifests' physical keys. Not run in CI. Regenerate with:
+Each file sits at its S3 key, except the manifests: they go with the other
+quilt3 manifests, as `../quilt3-packages/<top_hash>-pushed-<step>.jsonl`.
+Data objects are versioned; their version IDs are in the manifests' physical
+keys. Not run in CI. Regenerate with:
 
     uv run quilt-rs/fixtures/quilt3-bucket/generate.py
 """
@@ -46,7 +48,14 @@ def snapshot(s3):
 def write(step, objects):
     root = HERE / step
     shutil.rmtree(root, ignore_errors=True)
+    manifests = HERE.parent / "quilt3-packages"
+    for old in manifests.glob(f"*-pushed-{step}.jsonl"):
+        old.unlink()
     for (key, _), body in objects.items():
+        if key.startswith(".quilt/packages/"):
+            top_hash = key.removeprefix(".quilt/packages/")
+            (manifests / f"{top_hash}-pushed-{step}.jsonl").write_bytes(body)
+            continue
         path = root / key
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(body)

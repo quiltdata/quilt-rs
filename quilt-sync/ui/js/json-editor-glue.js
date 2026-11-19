@@ -1,4 +1,5 @@
 // Bundled by esbuild during `trunk build` (see Trunk.toml hook).
+import { parse, stringify } from "lossless-json";
 import { createJSONEditor } from "vanilla-jsoneditor/standalone.js";
 
 // Keyed by DOM element, never by id: the commit page's `Transition` keeps an
@@ -15,10 +16,13 @@ function mountEditor(target, textarea, initialValue) {
     target,
     props: {
       content: { text: initialValue },
+      // Lossless, so numbers beyond what a JS float holds exactly (large
+      // integers, long decimals) keep every digit through a tree-mode edit.
+      parser: { parse, stringify },
       onChange: (updatedContent) => {
         if (!textarea) return;
         if (updatedContent.json !== undefined)
-          textarea.value = JSON.stringify(updatedContent.json);
+          textarea.value = stringify(updatedContent.json);
         else textarea.value = updatedContent.text ?? "";
         // Assigning `.value` does not fire `input`; dispatch one so the
         // commit page's live-validation signal sees edits made in the editor.

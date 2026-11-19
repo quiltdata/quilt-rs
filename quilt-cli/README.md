@@ -47,9 +47,10 @@ cargo install quilt-cli
 | `pull`      | Fetch the latest remote revision                 |
 | `list`      | List installed packages and their commit status  |
 | `log`       | List the revisions this copy has, and why each is kept |
-| `uninstall` | Remove a package; `--prune` also deletes its files |
+| `uninstall` | Remove a package; `--prune` also deletes its stored files no other package uses |
 | `gc`        | Delete stored files no installed package uses    |
 | `remove-revisions` | Remove old revisions this copy no longer needs |
+| `catalog`   | Show, set or clear the default Quilt stack       |
 | `login`     | Authenticate against a Quilt stack               |
 | `role`      | Show or switch your active role on a stack       |
 | `version`   | Print the version, as `quilt --version` does     |
@@ -63,13 +64,15 @@ shows `synced`. `quilt status` reads the working copy and checks the remote now.
 `quilt list --fetch` asks each package's remote now and counts its changed
 files, giving the answer QuiltSync's main page gives, in its words: `latest`,
 `not the latest`, `3 files changed`, `revision not published`, `changed in both
-places`, `not published yet`, `no S3 bucket yet`, `no access`, `unknown`. It
+places`, `not published yet`, `no S3 bucket yet`, `folder missing`, `no access`,
+`unknown`. It
 leaves local packages unchanged, so a plain `list` afterwards still shows the
 last sync. When a remote cannot be reached, that row falls back to what was
 last recorded and says so, as in `latest (remote unreachable)`. Under `--json`
 each row adds `fetched`, `true` only when the remote was read just now, a
-`changed_files` count when the files were scanned, and `"access_denied": true`
-when the remote refused your role; `status` keeps its values.
+`changed_files` count when the files were scanned (never for a missing
+folder), and `"access_denied": true` when the remote refused your role;
+`status` keeps its values.
 
 `status` ends with how many files and folders the ignore rules leave out, as
 in `3 ignored files and 1 ignored folder not included`. `--ignored` lists each
@@ -94,6 +97,10 @@ Under `--json`, `ignored` holds the `files` and `folders` counts, and with
 `--ignored` a `paths` list whose entries carry `path`, `kind` (`file` or
 `folder`), `rule`, `source` (`built-in`, `user` or `package`), and `line`,
 `rules_file` and `size` where they apply.
+
+A package URI's `@hash` may be a prefix of 6 to 63 lowercase hex characters,
+as in quilt3: `install` and `browse` look it up in the bucket's registry, and
+fail when no revision starts with it or several do, naming the candidates.
 
 `install` fetches the package manifest and starts tracking it; files are
 downloaded only for the paths you name with `--path` (repeatable) or a
@@ -132,6 +139,12 @@ exits 0; under `--json` the same shape has `"hash": null` and empty groups.
 same revision again, so it records nothing: it prints `Nothing to commit` and
 exits 0; under `--json` it prints `{"hash": null}`. A new message or new
 metadata is a new revision.
+
+`commit` of a package with a remote checks the revision against the bucket's
+current workflows, and a revision they would refuse is still committed: each
+reason is printed as a `Warning:` line after the commit line, and under
+`--json` it is a `warnings` list beside `hash`. `push` refuses that revision
+until a new commit satisfies them. A package with no remote gets no check.
 
 `home` prints the home, the folder where installed packages keep their files.
 It defaults to `~/QuiltSync` on first use. `quilt home <dir>` sets it; a
@@ -287,6 +300,13 @@ Package files are stored under `~/QuiltSync` by default. Run
 namespace defaults to the one in the URI, so `install` needs no `--namespace`
 here.
 
+`quilt catalog set open.quiltdata.com` makes a stack the default, so `login`
+and `role` can leave out `--host`; `quilt catalog` shows it and
+`quilt catalog clear` forgets it. With none set, `quilt catalog` takes the
+host of `navigator_url` from quilt3's `config.yml`, once, and keeps it in
+`settings.json` in the shared folder (`QUILT_AUTH_DIR`). The default is never
+used for a package, which keeps the catalog it came from, or none.
+
 URIs follow the [Quilt+ URI format](https://docs.quilt.bio/quilt-platform-catalog-user/uri).
 With `&catalog=<host>`, S3 requests use the stack credentials from
 `quilt login`; without it, the CLI uses your local AWS credentials from
@@ -306,9 +326,20 @@ echo "a,b,c" > data.csv
 
 quilt status
 quilt commit --message "Add data.csv"
+# Or with package metadata (a JSON object):
+# quilt commit -m "Add data.csv" --meta '{"owner":"me"}'
 
 quilt list
 ```
+
+`commit` and `create` take `--meta '<json>'` (quilt3's name; `-u` and
+`--user-meta` are the same flag). The value must be a JSON object; bad
+JSON or a non-object (`--meta null`, an array, a string) is an error.
+No flag on `commit` keeps the previous revision's metadata, including
+the exact text of integers beyond 64 bits. No flag on `create` writes
+no `user_meta` key. There is no flag for removing the key (`Clear` in
+the library), which quilt3 does not have, and `push` has no `--meta`:
+it publishes an existing commit.
 
 Add `--source <dir>` to `create` to populate the package from an existing
 directory instead of starting empty. The package stays local-only — usable

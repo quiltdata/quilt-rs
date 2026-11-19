@@ -11,23 +11,32 @@ use serde::ser;
 use crate::Error;
 use crate::Res;
 use crate::error::LineageError;
+use crate::error::PackageOpError;
 use crate::lineage::status::UpstreamState;
 use quilt_uri::ManifestUri;
 
+#[allow(
+    clippy::ref_option,
+    reason = "serde's `serialize_with` passes the field by reference"
+)]
 fn multihash_to_str<S: ser::Serializer>(
-    hash: &Multihash<256>,
+    hash: &Option<Multihash<256>>,
     serializer: S,
 ) -> Result<S::Ok, S::Error> {
-    let s = hex::encode(hash.to_bytes());
-    serializer.serialize_str(&s)
+    hash.as_ref()
+        .map(|hash| hex::encode(hash.to_bytes()))
+        .serialize(serializer)
 }
 
 fn str_to_multihash<'de, D: de::Deserializer<'de>>(
     deserializer: D,
-) -> Result<Multihash<256>, D::Error> {
-    let s = String::deserialize(deserializer)?;
-    let bytes = hex::decode(s).map_err(de::Error::custom)?;
-    Multihash::from_bytes(&bytes).map_err(de::Error::custom)
+) -> Result<Option<Multihash<256>>, D::Error> {
+    Option::<String>::deserialize(deserializer)?
+        .map(|s| {
+            let bytes = hex::decode(s).map_err(de::Error::custom)?;
+            Multihash::from_bytes(&bytes).map_err(de::Error::custom)
+        })
+        .transpose()
 }
 
 /// State of the file tracked in lineage
@@ -39,11 +48,16 @@ pub struct PathState {
     /// Last tracked hash.
     /// We don't track files modifications in real time.
     /// We calculate hash when we commit or install file.
+    ///
+    /// `None` when the entry has no hash, absent or `null`; written back without
+    /// one, since `Multihash::default()` would store a hash of no file.
     #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
         serialize_with = "multihash_to_str",
         deserialize_with = "str_to_multihash"
     )]
-    pub hash: Multihash<256>,
+    pub hash: Option<Multihash<256>>,
 }
 
 /// A map of paths to their state
@@ -285,6 +299,19 @@ impl PackageLineage {
         self.remote_uri
             .as_ref()
             .ok_or(Error::Lineage(LineageError::NoRemote))
+    }
+
+    /// Refuses with [`PackageOpError::WorkingCopyUnavailable`] when this package
+    /// tracks files and `package_home` cannot be listed, for an operation that
+    /// would otherwise create the folder holding only what it writes. A package
+    /// that tracks no files loses nothing to a recreated folder, so it passes.
+    pub fn require_package_folder(&self, package_home: &Path) -> Res {
+        if self.paths.is_empty() || std::fs::read_dir(package_home).is_ok() {
+            return Ok(());
+        }
+        Err(Error::PackageOp(PackageOpError::WorkingCopyUnavailable(
+            package_home.to_path_buf(),
+        )))
     }
 
     /// Returns a mutable reference to the remote `ManifestUri`,

@@ -7,16 +7,22 @@ use test_log::test;
 
 use aws_sdk_s3::primitives::ByteStream;
 
+use crate::LoginError;
+use crate::io::remote::HostConfig;
+use crate::io::remote::Remote;
+use crate::io::remote::RemoteObjectStream;
 use crate::io::remote::WorkflowIntent;
 use crate::io::remote::mocks::MockRemote;
 use crate::lineage::DomainLineageIo;
 use crate::lineage::Home;
+use crate::lineage::PackageLineage;
 use crate::lineage::PackageLineageIo;
 use crate::manifest::ManifestHeader;
 use crate::object_hash::ObjectHash;
 use crate::paths::DomainPaths;
 use crate::workflow::RuleViolation;
 use crate::workflow::WorkflowValidationError;
+use quilt_uri::Host;
 
 #[test(tokio::test)]
 async fn test_set_remote_on_local_package() -> Res {
@@ -31,23 +37,15 @@ async fn test_set_remote_on_local_package() -> Res {
         .scaffold_for_installing(&storage, &home, &namespace)
         .await?;
 
-    let lineage_json = r#"{
-        "packages": {
-            "test/local": {
-                "commit": null,
-                "remote": null,
-                "base_hash": "",
-                "latest_hash": "",
-                "paths": {}
-            }
-        },
-        "home": "/tmp/working_dir"
-    }"#;
-    storage
-        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-        .await?;
+    let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
+        &storage,
+        &paths,
+        "/tmp/working_dir",
+        [(namespace.clone(), PackageLineage::default())],
+    )
+    .await?;
 
-    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
@@ -93,23 +91,15 @@ async fn test_set_remote_empty_bucket_error() -> Res {
         .scaffold_for_installing(&storage, &home, &namespace)
         .await?;
 
-    let lineage_json = r#"{
-        "packages": {
-            "test/local": {
-                "commit": null,
-                "remote": null,
-                "base_hash": "",
-                "latest_hash": "",
-                "paths": {}
-            }
-        },
-        "home": "/tmp/working_dir"
-    }"#;
-    storage
-        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-        .await?;
+    let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
+        &storage,
+        &paths,
+        "/tmp/working_dir",
+        [(namespace.clone(), PackageLineage::default())],
+    )
+    .await?;
 
-    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
@@ -169,6 +159,16 @@ impl Remote for BadBucketRemote {
     ) -> Res {
         unreachable!("test only exercises verify_bucket")
     }
+
+    async fn put_object_if(
+        &self,
+        _host: Option<&Host>,
+        _s3_uri: &S3Uri,
+        _contents: impl Into<aws_sdk_s3::primitives::ByteStream>,
+        _condition: &crate::io::remote::WriteCondition,
+    ) -> Res<crate::io::remote::ConditionalPut> {
+        unreachable!("test only exercises verify_bucket")
+    }
     async fn upload_file(
         &self,
         _host_config: &crate::io::remote::HostConfig,
@@ -192,6 +192,22 @@ impl Remote for BadBucketRemote {
     ) -> Res<Vec<String>> {
         unreachable!("test only exercises verify_bucket")
     }
+    async fn manifest_hashes_with_prefix(
+        &self,
+        _host: Option<&Host>,
+        _bucket: &str,
+        _prefix: &str,
+    ) -> Res<Vec<String>> {
+        unreachable!("test only exercises verify_bucket")
+    }
+
+    async fn latest_hashes(
+        &self,
+        _host: Option<&Host>,
+        _bucket: &str,
+    ) -> Res<Vec<(Namespace, String)>> {
+        unreachable!("test only exercises verify_bucket")
+    }
 }
 
 #[test(tokio::test)]
@@ -206,23 +222,15 @@ async fn test_set_remote_rejects_unreachable_bucket() -> Res {
         .scaffold_for_installing(&storage, &home, &namespace)
         .await?;
 
-    let lineage_json = r#"{
-        "packages": {
-            "test/badbucket": {
-                "commit": null,
-                "remote": null,
-                "base_hash": "",
-                "latest_hash": "",
-                "paths": {}
-            }
-        },
-        "home": "/tmp/working_dir"
-    }"#;
-    storage
-        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-        .await?;
+    let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
+        &storage,
+        &paths,
+        "/tmp/working_dir",
+        [(namespace.clone(), PackageLineage::default())],
+    )
+    .await?;
 
-    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
@@ -269,23 +277,16 @@ async fn set_remote_refuses_a_bucket_name_s3_does_not_allow() -> Res {
     paths
         .scaffold_for_installing(&storage, &home, &namespace)
         .await?;
-    let lineage_json = r#"{
-        "packages": {
-            "test/badname": {
-                "commit": null,
-                "remote": null,
-                "base_hash": "",
-                "latest_hash": "",
-                "paths": {}
-            }
-        },
-        "home": "/tmp/working_dir"
-    }"#;
-    storage
-        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-        .await?;
+    let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
+        &storage,
+        &paths,
+        "/tmp/working_dir",
+        [(namespace.clone(), PackageLineage::default())],
+    )
+    .await?;
     let package = InstalledPackage {
-        lineage: PackageLineageIo::new(DomainLineageIo::new(paths.lineage()), namespace.clone()),
+        lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
         // Any call to it would fail as unreachable, so a bucket error here
         // shows the name was refused first.
@@ -326,28 +327,24 @@ async fn test_set_remote_rejects_change_on_pushed_package() -> Res {
         .scaffold_for_installing(&storage, &home, &namespace)
         .await?;
 
-    let lineage_json = r#"{
-        "packages": {
-            "test/overwrite": {
-                "commit": null,
-                "remote": {
-                    "bucket": "old-bucket",
-                    "namespace": "test/overwrite",
-                    "hash": "abcdef0000000000000000000000000000000000000000000000000000000000",
-                    "origin": "one.quilt.test"
-                },
-                "base_hash": "abcdef0000000000000000000000000000000000000000000000000000000000",
-                "latest_hash": "abcdef0000000000000000000000000000000000000000000000000000000000",
-                "paths": {}
-            }
-        },
-        "home": "/tmp/working_dir"
-    }"#;
-    storage
-        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-        .await?;
+    let hash = "abcdef0000000000000000000000000000000000000000000000000000000000";
+    let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
+        &storage,
+        &paths,
+        "/tmp/working_dir",
+        [(
+            namespace.clone(),
+            PackageLineage::from(ManifestUri {
+                bucket: "old-bucket".to_string(),
+                namespace: namespace.clone(),
+                hash: hash.to_string(),
+                origin: Some(fixtures::one_host()),
+            }),
+        )],
+    )
+    .await?;
 
-    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
@@ -390,28 +387,24 @@ async fn test_set_remote_is_idempotent_on_pushed_package() -> Res {
         .scaffold_for_installing(&storage, &home, &namespace)
         .await?;
 
-    let lineage_json = r#"{
-        "packages": {
-            "test/idempotent": {
-                "commit": null,
-                "remote": {
-                    "bucket": "my-bucket",
-                    "namespace": "test/idempotent",
-                    "hash": "abcdef0000000000000000000000000000000000000000000000000000000000",
-                    "origin": "quilt.test"
-                },
-                "base_hash": "abcdef0000000000000000000000000000000000000000000000000000000000",
-                "latest_hash": "abcdef0000000000000000000000000000000000000000000000000000000000",
-                "paths": {}
-            }
-        },
-        "home": "/tmp/working_dir"
-    }"#;
-    storage
-        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-        .await?;
+    let hash = "abcdef0000000000000000000000000000000000000000000000000000000000";
+    let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
+        &storage,
+        &paths,
+        "/tmp/working_dir",
+        [(
+            namespace.clone(),
+            PackageLineage::from(ManifestUri {
+                bucket: "my-bucket".to_string(),
+                namespace: namespace.clone(),
+                hash: hash.to_string(),
+                origin: Some(fixtures::host()),
+            }),
+        )],
+    )
+    .await?;
 
-    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
@@ -456,28 +449,23 @@ async fn test_set_remote_overwrites_unpushed_remote() -> Res {
         .scaffold_for_installing(&storage, &home, &namespace)
         .await?;
 
-    let lineage_json = r#"{
-        "packages": {
-            "test/unpushed": {
-                "commit": null,
-                "remote": {
-                    "bucket": "old-bucket",
-                    "namespace": "test/unpushed",
-                    "hash": "",
-                    "origin": "one.quilt.test"
-                },
-                "base_hash": "",
-                "latest_hash": "",
-                "paths": {}
-            }
-        },
-        "home": "/tmp/working_dir"
-    }"#;
-    storage
-        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-        .await?;
+    let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
+        &storage,
+        &paths,
+        "/tmp/working_dir",
+        [(
+            namespace.clone(),
+            PackageLineage::from(ManifestUri {
+                bucket: "old-bucket".to_string(),
+                namespace: namespace.clone(),
+                hash: String::new(),
+                origin: Some(fixtures::one_host()),
+            }),
+        )],
+    )
+    .await?;
 
-    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
@@ -524,21 +512,14 @@ async fn test_set_remote_recommits_existing_commit() -> Res {
         .await?;
 
     // Start with no remote and no commit
-    let lineage_json = r#"{
-        "packages": {
-            "test/recommit": {
-                "commit": null,
-                "remote": null,
-                "base_hash": "",
-                "latest_hash": "",
-                "paths": {}
-            }
-        },
-        "home": "/tmp/working_dir"
-    }"#;
-    storage
-        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-        .await?;
+    let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
+        &storage,
+        &paths,
+        "/tmp/working_dir",
+        [(namespace.clone(), PackageLineage::default())],
+    )
+    .await?;
 
     // Write a file to package home so commit has something to pick up
     let package_home = home.join(namespace.to_string());
@@ -550,7 +531,6 @@ async fn test_set_remote_recommits_existing_commit() -> Res {
         )
         .await?;
 
-    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
@@ -564,7 +544,7 @@ async fn test_set_remote_recommits_existing_commit() -> Res {
     let commit = package
         .commit(
             "Initial commit".to_string(),
-            UserMeta::Set(serde_json::json!({"key": "value"})),
+            UserMeta::set(serde_json::json!({"key": "value"})),
             None,
             None,
         )
@@ -615,8 +595,8 @@ async fn test_set_remote_recommits_existing_commit() -> Res {
         .installed_manifest(&namespace, &new_commit.hash);
     let manifest = Manifest::from_path(&package.storage, &manifest_path).await?;
     assert_eq!(
-        manifest.header.message,
-        Some("Initial commit".to_string()),
+        manifest.header.message(),
+        Some("Initial commit"),
         "Message should be preserved after recommit"
     );
     assert_eq!(
@@ -641,23 +621,15 @@ async fn test_resolve_workflow_without_remote_is_none_for_every_intent() -> Res 
         .scaffold_for_installing(&storage, &home, &namespace)
         .await?;
 
-    let lineage_json = r#"{
-        "packages": {
-            "test/noremote": {
-                "commit": null,
-                "remote": null,
-                "base_hash": "",
-                "latest_hash": "",
-                "paths": {}
-            }
-        },
-        "home": "/tmp/working_dir"
-    }"#;
-    storage
-        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-        .await?;
+    let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
+        &storage,
+        &paths,
+        "/tmp/working_dir",
+        [(namespace.clone(), PackageLineage::default())],
+    )
+    .await?;
 
-    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
@@ -714,21 +686,14 @@ schemas:
     remote.put_object(None, &schema_uri, b"{}".to_vec()).await?;
 
     // Start with no remote and no commit
-    let lineage_json = r#"{
-        "packages": {
-            "test/bucketdefault": {
-                "commit": null,
-                "remote": null,
-                "base_hash": "",
-                "latest_hash": "",
-                "paths": {}
-            }
-        },
-        "home": "/tmp/working_dir"
-    }"#;
-    storage
-        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-        .await?;
+    let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
+        &storage,
+        &paths,
+        "/tmp/working_dir",
+        [(namespace.clone(), PackageLineage::default())],
+    )
+    .await?;
 
     // Write a file to package home so commit has something to pick up
     let package_home = home.join(namespace.to_string());
@@ -740,7 +705,6 @@ schemas:
         )
         .await?;
 
-    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
@@ -754,7 +718,7 @@ schemas:
     package
         .commit(
             "Initial commit".to_string(),
-            UserMeta::Set(serde_json::json!({"key": "value"})),
+            UserMeta::set(serde_json::json!({"key": "value"})),
             None,
             None,
         )
@@ -831,21 +795,14 @@ schemas:
         .await?;
     remote.put_object(None, &schema_uri, b"{}".to_vec()).await?;
 
-    let lineage_json = r#"{
-        "packages": {
-            "test/fetchonce": {
-                "commit": null,
-                "remote": null,
-                "base_hash": "",
-                "latest_hash": "",
-                "paths": {}
-            }
-        },
-        "home": "/tmp/working_dir"
-    }"#;
-    storage
-        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-        .await?;
+    let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
+        &storage,
+        &paths,
+        "/tmp/working_dir",
+        [(namespace.clone(), PackageLineage::default())],
+    )
+    .await?;
 
     let package_home = home.join(namespace.to_string());
     storage.create_dir_all(&package_home).await?;
@@ -856,7 +813,6 @@ schemas:
         )
         .await?;
 
-    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
@@ -869,7 +825,7 @@ schemas:
     package
         .commit(
             "Initial commit".to_string(),
-            UserMeta::Set(serde_json::json!({"key": "value"})),
+            UserMeta::set(serde_json::json!({"key": "value"})),
             None,
             None,
         )
@@ -937,23 +893,14 @@ schemas:
         .await?;
     remote.put_object(None, &schema_uri, b"{}".to_vec()).await?;
 
-    let lineage_json = format!(
-        r#"{{
-        "packages": {{
-            "test/{slug}": {{
-                "commit": null,
-                "remote": null,
-                "base_hash": "",
-                "latest_hash": "",
-                "paths": {{}}
-            }}
-        }},
-        "home": "/tmp/working_dir"
-    }}"#
-    );
-    storage
-        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-        .await?;
+    let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
+        &storage,
+        &paths,
+        "/tmp/working_dir",
+        [(namespace.clone(), PackageLineage::default())],
+    )
+    .await?;
 
     let package_home = home.join(namespace.to_string());
     storage.create_dir_all(&package_home).await?;
@@ -964,7 +911,6 @@ schemas:
         )
         .await?;
 
-    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
@@ -977,7 +923,7 @@ schemas:
     package
         .commit(
             "Initial commit".to_string(),
-            UserMeta::Set(serde_json::json!({"key": "value"})),
+            UserMeta::set(serde_json::json!({"key": "value"})),
             None,
             None,
         )
@@ -1044,23 +990,14 @@ async fn package_with_config(
         .put_object(None, &schema_uri, schema.to_vec())
         .await?;
 
-    let lineage_json = format!(
-        r#"{{
-        "packages": {{
-            "test/{slug}": {{
-                "commit": null,
-                "remote": null,
-                "base_hash": "",
-                "latest_hash": "",
-                "paths": {{}}
-            }}
-        }},
-        "home": "/tmp/working_dir"
-    }}"#
-    );
-    storage
-        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-        .await?;
+    let domain_lineage_io = DomainLineageIo::write_fixture(
+        BACKEND,
+        &storage,
+        &paths,
+        "/tmp/working_dir",
+        [(namespace.clone(), PackageLineage::default())],
+    )
+    .await?;
 
     let package_home = home.join(namespace.to_string());
     storage.create_dir_all(&package_home).await?;
@@ -1071,7 +1008,6 @@ async fn package_with_config(
         )
         .await?;
 
-    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
@@ -1084,7 +1020,7 @@ async fn package_with_config(
     package
         .commit(
             "Initial commit".to_string(),
-            UserMeta::Set(serde_json::json!({"key": "value"})),
+            UserMeta::set(serde_json::json!({"key": "value"})),
             None,
             None,
         )
@@ -1381,5 +1317,235 @@ async fn test_set_remote_without_host_recommits_with_bucket_workflow() -> Res {
         .expect("recommit should stamp the named workflow");
     assert_eq!(workflow.id.expect("workflow id should be set").id, "foo");
 
+    Ok(())
+}
+
+/// A local commit is not refused for a workflows config that cannot be read:
+/// it resolves to no workflow, and the commit records with an `Unchecked`
+/// warning, even when the config reads by the time the commit checks. A
+/// workflow the config refuses, or whose schema cannot be read, still fails.
+#[test(tokio::test)]
+async fn a_commit_against_an_unreadable_config_records_unchecked() -> Res {
+    let (package, _t1, _t2) = package_with_config("unreadable", FOO_CONFIG, b"{}").await?;
+    package
+        .set_remote(
+            "my-bucket".to_string(),
+            Some(fixtures::host()),
+            WorkflowIntent::Named("foo".to_string()),
+        )
+        .await?;
+    assert!(
+        package
+            .resolve_workflow_for_commit(WorkflowIntent::Named("nope".to_string()))
+            .await
+            .is_err(),
+        "a workflow the config refuses still fails"
+    );
+
+    package
+        .remote
+        .put_object(
+            None,
+            &"s3://my-bucket/.quilt/workflows/config.yml".parse()?,
+            br"
+version: '1'
+is_workflow_required: false
+workflows:
+  foo:
+    name: Foo
+    metadata_schema: gone
+schemas:
+  gone:
+    url: s3://my-bucket/schemas/gone.json
+"
+            .to_vec(),
+        )
+        .await?;
+    assert!(
+        package
+            .resolve_workflow_for_commit(WorkflowIntent::Named("foo".to_string()))
+            .await
+            .is_err(),
+        "nor is a workflow whose schema cannot be read dropped"
+    );
+
+    package
+        .remote
+        .put_object(
+            None,
+            &"s3://my-bucket/.quilt/workflows/config.yml".parse()?,
+            b"version: [not, a, config".to_vec(),
+        )
+        .await?;
+    assert!(
+        package
+            .resolve_workflow(WorkflowIntent::NoWorkflow)
+            .await
+            .is_err()
+    );
+    let (workflow, unchecked) = package
+        .resolve_workflow_for_commit(WorkflowIntent::Named("foo".to_string()))
+        .await?;
+    assert!(workflow.is_none());
+    let Some(unchecked) = unchecked else {
+        panic!("the resolution says the config could not be read");
+    };
+
+    let home = package.package_home().await?;
+    package
+        .storage
+        .write_byte_stream(home.join("data.txt"), ByteStream::from_static(b"changed"))
+        .await?;
+    let recorded = package
+        .commit("Second".to_string(), UserMeta::Keep, None, None)
+        .await?
+        .with_unchecked(Some(unchecked.clone()));
+    assert!(
+        matches!(
+            recorded.warnings.as_slice(),
+            [flow::WorkflowWarning::Unchecked { bucket, .. }] if bucket == "my-bucket"
+        ),
+        "once, though the commit's own check could not read it either: {:?}",
+        recorded.warnings
+    );
+
+    // The config reads by the time the commit checks, and requires nothing,
+    // so only the resolution's warning says the revision went unchecked.
+    package
+        .remote
+        .put_object(
+            None,
+            &"s3://my-bucket/.quilt/workflows/config.yml".parse()?,
+            b"version: '1'\nis_workflow_required: false\nworkflows:\n  foo:\n    name: Foo\n"
+                .to_vec(),
+        )
+        .await?;
+    package
+        .storage
+        .write_byte_stream(home.join("data.txt"), ByteStream::from_static(b"again"))
+        .await?;
+    let recorded = package
+        .commit("Third".to_string(), UserMeta::Keep, None, None)
+        .await?
+        .with_unchecked(Some(unchecked.clone()));
+    assert_eq!(recorded.warnings, [unchecked]);
+    Ok(())
+}
+
+/// Reports no session on `exists` and panics on everything else, so a
+/// `resolve_workflow_for_commit` that reached past the missing session would
+/// fail the test itself.
+struct SignedOutRemote {
+    host: Host,
+}
+
+#[allow(
+    clippy::unused_async_trait_impl,
+    reason = "a stub that awaits nothing by design: `exists` refuses immediately and every other method must never be called"
+)]
+impl Remote for SignedOutRemote {
+    async fn exists(&self, _host: Option<&Host>, _s3_uri: &S3Uri) -> Res<bool> {
+        Err(Error::Login(LoginError::NoSession(Some(self.host.clone()))))
+    }
+    async fn get_object_stream(
+        &self,
+        _host: Option<&Host>,
+        _s3_uri: &S3Uri,
+    ) -> Res<RemoteObjectStream> {
+        unreachable!("the resolution must not fetch after an absent session")
+    }
+    async fn resolve_url(&self, _host: Option<&Host>, _s3_uri: &S3Uri) -> Res<S3Uri> {
+        unreachable!("not part of the resolution")
+    }
+    async fn put_object(
+        &self,
+        _host: Option<&Host>,
+        _s3_uri: &S3Uri,
+        _contents: impl Into<aws_sdk_s3::primitives::ByteStream>,
+    ) -> Res {
+        unreachable!("not part of the resolution")
+    }
+
+    async fn put_object_if(
+        &self,
+        _host: Option<&Host>,
+        _s3_uri: &S3Uri,
+        _contents: impl Into<aws_sdk_s3::primitives::ByteStream>,
+        _condition: &crate::io::remote::WriteCondition,
+    ) -> Res<crate::io::remote::ConditionalPut> {
+        unreachable!("not part of the resolution")
+    }
+    async fn upload_file(
+        &self,
+        _host_config: &HostConfig,
+        _source_path: impl AsRef<std::path::Path>,
+        _dest_uri: &S3Uri,
+        _size: u64,
+    ) -> Res<(S3Uri, crate::object_hash::ObjectHash)> {
+        unreachable!("not part of the resolution")
+    }
+    async fn host_config(&self, _host: Option<&Host>) -> Res<HostConfig> {
+        unreachable!("not part of the resolution")
+    }
+    async fn verify_bucket(&self, _bucket: &str) -> Res {
+        unreachable!("not part of the resolution")
+    }
+    async fn published_revisions(
+        &self,
+        _host: Option<&Host>,
+        _bucket: &str,
+        _namespace: &quilt_uri::Namespace,
+    ) -> Res<Vec<String>> {
+        unreachable!("not part of the resolution")
+    }
+    async fn manifest_hashes_with_prefix(
+        &self,
+        _host: Option<&Host>,
+        _bucket: &str,
+        _prefix: &str,
+    ) -> Res<Vec<String>> {
+        unreachable!("not part of the resolution")
+    }
+
+    async fn latest_hashes(
+        &self,
+        _host: Option<&Host>,
+        _bucket: &str,
+    ) -> Res<Vec<(Namespace, String)>> {
+        unreachable!("not part of the resolution")
+    }
+}
+
+/// A missing session is not an unreadable config: resolving the commit's
+/// workflow still fails, so the caller can send the user to sign in.
+#[test(tokio::test)]
+async fn a_commit_workflow_resolution_fails_when_there_is_no_session() -> Res {
+    let (package, _t1, _t2) = package_with_config("no-session", FOO_CONFIG, b"{}").await?;
+    package
+        .set_remote(
+            "my-bucket".to_string(),
+            Some(fixtures::host()),
+            WorkflowIntent::Named("foo".to_string()),
+        )
+        .await?;
+
+    let signed_out = InstalledPackage {
+        lineage: package.lineage.clone(),
+        paths: package.paths.clone(),
+        remote: std::sync::Arc::new(SignedOutRemote {
+            host: fixtures::host(),
+        }),
+        storage: package.storage.clone(),
+        namespace: package.namespace.clone(),
+        state_store: None,
+    };
+    let err = signed_out
+        .resolve_workflow_for_commit(WorkflowIntent::Named("foo".to_string()))
+        .await
+        .expect_err("a missing session still fails");
+    assert!(
+        matches!(&err, Error::Login(LoginError::NoSession(Some(h))) if *h == fixtures::host()),
+        "{err:?}"
+    );
     Ok(())
 }

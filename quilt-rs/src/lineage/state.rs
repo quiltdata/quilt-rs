@@ -1,6 +1,7 @@
 //! A package's state as a front end shows it: [`UpstreamState`] plus the facts
 //! that split it, resolved in one place so every surface agrees.
 
+use crate::lineage::InstalledPackageStatus;
 use crate::lineage::PackageLineage;
 use crate::lineage::UpstreamState;
 
@@ -27,6 +28,12 @@ pub enum PackageState {
     Unpublished,
     /// No remote is set.
     NoRemote,
+    /// The working folder is missing or cannot be read, though the package
+    /// tracks files in it ([`WorkingCopy::Unavailable`](crate::lineage::WorkingCopy::Unavailable)).
+    /// Nothing can be said about those files, so this outranks every state the
+    /// tree would decide: a status in this state lists no changes because
+    /// nothing was checked, not because the tree is clean.
+    Unavailable,
     /// The state could not be read: [`UpstreamState::Error`].
     Unknown,
 }
@@ -79,6 +86,29 @@ impl PackageState {
             }),
         }
     }
+
+    /// Resolves a status call's answer: [`Self::Unavailable`] when it could not
+    /// read the working folder, else [`Self::resolve`] over its upstream state
+    /// and the files it measured.
+    ///
+    /// The one place a status becomes a state, so no surface can read an
+    /// unavailable folder's empty change list as a clean tree.
+    #[must_use]
+    pub fn of_status(
+        status: &InstalledPackageStatus,
+        has_local_commit: bool,
+        has_remote: bool,
+    ) -> Self {
+        if status.unavailable_home().is_some() {
+            return Self::Unavailable;
+        }
+        Self::resolve(
+            status.upstream_state,
+            has_local_commit,
+            has_remote,
+            Some(status.changes.len()),
+        )
+    }
 }
 
 /// What [`InstalledPackage::state`](crate::InstalledPackage::state) learned
@@ -90,7 +120,8 @@ pub struct PackageStateReport {
     /// the lineage's when the package has no remote.
     pub upstream_state: UpstreamState,
     /// Files changed since the last commit. `None` when the working tree was
-    /// not scanned: the package has no remote.
+    /// not scanned: the package has no remote, or its folder could not be read
+    /// ([`PackageState::Unavailable`]).
     pub changed_files: Option<usize>,
     /// The remote's `latest` tip was read in this call
     /// ([`InstalledPackageStatus::latest_refreshed`](crate::lineage::InstalledPackageStatus::latest_refreshed)).
@@ -136,6 +167,30 @@ mod tests {
         changed_files: Option<usize>,
     ) -> PackageState {
         PackageState::resolve(upstream, has_local_commit, has_remote, changed_files)
+    }
+
+    #[test]
+    fn a_status_that_could_not_read_the_folder_is_unavailable_not_latest() {
+        let mut status =
+            InstalledPackageStatus::new(UpstreamState::UpToDate, crate::lineage::ChangeSet::new());
+        assert_eq!(
+            PackageState::of_status(&status, false, true),
+            PackageState::Latest
+        );
+        status.working_copy = crate::lineage::WorkingCopy::Unavailable("/gone/pkg".into());
+        for upstream in [
+            UpstreamState::UpToDate,
+            UpstreamState::Ahead,
+            UpstreamState::Behind,
+            UpstreamState::Diverged,
+        ] {
+            status.upstream_state = upstream;
+            assert_eq!(
+                PackageState::of_status(&status, true, true),
+                PackageState::Unavailable,
+                "{upstream}"
+            );
+        }
     }
 
     #[test]

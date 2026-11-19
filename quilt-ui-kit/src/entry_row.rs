@@ -1,13 +1,5 @@
 //! One file in an installed package.
 //!
-//! # Not a `FileRow`
-//!
-//! That one is *a recently-changed file* for the cross-package feed: it carries
-//! the package it belongs to, which a page about one package does not need, and
-//! its row opens the file. This one chooses instead — **the checkbox is the
-//! control and the name is not a button** — because this page's verb is picking
-//! files in bulk, not acting on one.
-//!
 //! # The resting state is silent
 //!
 //! `Downloaded` is what most of a seven-hundred-row list is, and printing it
@@ -31,8 +23,7 @@
 //!   anywhere on the row ticks it. There is no local file to open, and choosing
 //!   is what the page is for.
 //! - **downloaded** → [`EntryAction::Open`]: no box, and a click opens the local
-//!   file — the recent-files list's own gesture, so the two file lists in this
-//!   app mean the same thing by a click.
+//!   file.
 //! - **neither** → no action at all: a file that is here but that the caller will
 //!   not open, such as a deleted or ignored one. No box, no pointer, nothing to
 //!   click. A row that advertises a click it cannot honour is worse than an
@@ -126,10 +117,9 @@
 //! is not its control is invalid. So the label covers box, name, state and size,
 //! and the menu is its sibling.
 //!
-//! An openable row is not a label at all. Its **name is a real `<button>`**, as
-//! [`FileRow`](super::FileRow)'s is, so the platform turns Enter and Space into a
-//! click. The row carries the click too, as a pointer convenience — but only up
-//! to the name, state and size: the handler is on the row's inner area and the
+//! An openable row is not a label at all. Its **name is a real `<button>`**, so
+//! the platform turns Enter and Space into a click. The row carries the click
+//! too, as a pointer convenience — but only up to the name, state and size: the handler is on the row's inner area and the
 //! `[⋯]` is that area's sibling, so reaching for the menu cannot open the file.
 
 use leptos::prelude::*;
@@ -272,9 +262,9 @@ pub fn EntryRow(
     /// all, so the name starts the row. Ignored on a selectable row.
     #[prop(optional)]
     plain: bool,
-    /// This row's copy just landed. The caller's answer, as on
-    /// [`FileRow`](super::FileRow): the size column says *Copied*, hidden
-    /// from assistive tech, which hears the caller's live region instead.
+    /// This row's copy just landed. The caller's answer: the size column says
+    /// *Copied*, hidden from assistive tech, which hears the caller's live
+    /// region instead.
     #[prop(optional, into)]
     copied: MaybeProp<bool>,
 ) -> impl IntoView {

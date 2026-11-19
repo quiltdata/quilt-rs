@@ -5,7 +5,7 @@ keywords = ["data", "versioning", "s3", "manifest", "reproducibility"]
 categories = ["filesystem", "science", "api-bindings"]
 
 # Inherit from workspace
-version = "0.53.1-dev"
+version = "0.54.0-dev"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -14,8 +14,11 @@ homepage.workspace = true
 
 [features]
 # Exposes the in-memory mock `Remote`/`Storage` implementations so downstream
-# crates can drive quilt-rs flows against a fake bucket in their own tests.
+# crates can drive quilt-rs flows against a fake bucket in their own tests,
+# and lineage writers that take no lock proof. Never for a release build.
 testing = []
+# Compiles in the failpoints crash tests kill a process at; see `src/failpoint.rs`.
+failpoints = []
 
 [dependencies]
 async-trait.workspace = true
@@ -30,9 +33,11 @@ aws-smithy-runtime-api.workspace = true
 aws-smithy-types.workspace = true
 aws-types.workspace = true
 chrono.workspace = true
+dirs.workspace = true
 getrandom.workspace = true
 gitignores.workspace = true
 hex.workspace = true
+hostname.workspace = true
 http-body.workspace = true
 ignore.workspace = true
 jsonschema.workspace = true
@@ -44,21 +49,22 @@ reqwest.workspace = true
 reqwest-middleware.workspace = true
 reqwest-retry.workspace = true
 rusqlite.workspace = true
+ryu.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-serde-json-fmt.workspace = true
 sha2.workspace = true
 serde-saphyr.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
+toml.workspace = true
 tracing.workspace = true
 quilt-uri = { path = "../quilt-uri", version = "0.5.1-dev" }
 url.workspace = true
 uuid.workspace = true
 
-[target.'cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))'.dependencies]
+[target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]

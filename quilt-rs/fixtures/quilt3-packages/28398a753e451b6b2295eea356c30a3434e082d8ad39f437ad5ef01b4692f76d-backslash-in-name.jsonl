@@ -1,0 +1,4 @@
+{"message": "", "user_meta": {}, "version": "v0"}
+{"logical_key": "a\\b", "physical_keys": ["s3://bucket/0"], "hash": {"type": "SHA256", "value": "c62016d0f8ee333350283fd879b50b692932e932794e5d686f7d37d67484e199"}, "size": 1, "meta": {}}
+{"logical_key": "a-b", "physical_keys": ["s3://bucket/1"], "hash": {"type": "SHA256", "value": "d44362d67d921091c7b9674d752e9e23c1f9ec8a4f0b82741bf01364eb97c830"}, "size": 1, "meta": {}}
+{"logical_key": "a/c", "physical_keys": ["s3://bucket/2"], "hash": {"type": "SHA256", "value": "24586ae9e14fc882f9131365a45cafbe2145689981a17bdd995a81d8e68912b0"}, "size": 1, "meta": {}}

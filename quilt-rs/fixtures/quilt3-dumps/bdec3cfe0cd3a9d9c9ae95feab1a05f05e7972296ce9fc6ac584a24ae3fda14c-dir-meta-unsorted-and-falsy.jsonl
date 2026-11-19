@@ -1,0 +1,7 @@
+{"version": "v0", "message": "", "user_meta": {}}
+{"logical_key": "a/sub/", "meta": {"x": true}}
+{"logical_key": "b/", "meta": "text"}
+{"logical_key": "e/", "meta": [1]}
+{"logical_key": "z/", "meta": {"z": 1}}
+{"logical_key": "a/x.txt", "physical_keys": ["s3://bucket/a/x.txt"], "size": 1, "hash": {"type": "SHA256", "value": "0000000000000000000000000000000000000000000000000000000000000000"}, "meta": {}}
+{"logical_key": "b/y.txt", "physical_keys": ["s3://bucket/b/y.txt"], "size": 1, "hash": {"type": "SHA256", "value": "0000000000000000000000000000000000000000000000000000000000000000"}, "meta": {}}

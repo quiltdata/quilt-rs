@@ -9,7 +9,6 @@ use crate::story::Story;
 
 #[component]
 pub fn SegmentedControlStories() -> impl IntoView {
-    let two = RwSignal::new("Packages".to_string());
     let three = RwSignal::new("Prefix".to_string());
     let long = RwSignal::new("Recently changed files".to_string());
     let inert = RwSignal::new("All 53".to_string());
@@ -22,15 +21,7 @@ pub fn SegmentedControlStories() -> impl IntoView {
                   Focus one and press an arrow. Each instance needs a unique `name`: two \
                   sharing one become a single group."
         >
-            <Cell label="two options — the list region's real use">
-                <SegmentedControl
-                    aria_label="List view"
-                    name="story-view"
-                    options=vec!["Packages".into(), "Recent files".into()]
-                    selected=two
-                />
-            </Cell>
-            <Cell label="three options — still comfortable">
+            <Cell label="three options">
                 <SegmentedControl
                     aria_label="Grouping"
                     name="story-group"

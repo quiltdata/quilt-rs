@@ -142,6 +142,7 @@ mod tests {
     use crate::cli::model::Model;
     use crate::cli::model::create_model_in_temp_dir;
     use crate::cli::print;
+    use quilt_rs::flow::UserMeta;
 
     fn home_args(domain: &std::path::Path, dir: Option<PathBuf>, overwrite: bool) -> Args {
         Args {
@@ -181,6 +182,7 @@ mod tests {
             namespace: ("example", "local").into(),
             source: None,
             message: None,
+            user_meta: UserMeta::Clear,
         })
         .await?;
         Ok((m, temp_dir))

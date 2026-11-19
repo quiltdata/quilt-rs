@@ -1,0 +1,7 @@
+{"message":"","user_meta":{},"version":"v0"}
+{"logical_key":"a.txt","physical_keys":["s3://bucket/a.txt"],"hash":{"type":"sha2-256-chunked","value":"Xb1PbjJeWof4zD7zuHc9PI7sLiz/Ykj4gphlaZEt3xA="},"size":16,"meta":{}}
+{"logical_key":"b.txt","physical_keys":["s3://bucket/b.txt"],"hash":{"type":"sha2-256-chunked","value":"Xb1PbjJeWof4zD7zuHc9PI7sLiz/Ykj4gphlaZEt3xA="},"size":16,"meta":{}}
+{"logical_key":"c.txt","physical_keys":["s3://bucket/c.txt"],"hash":{"type":"sha2-256-chunked","value":"Xb1PbjJeWof4zD7zuHc9PI7sLiz/Ykj4gphlaZEt3xA="},"size":16,"meta":{}}
+{"logical_key":"d.txt","physical_keys":["s3://bucket/d.txt"],"hash":{"type":"sha2-256-chunked","value":"Xb1PbjJeWof4zD7zuHc9PI7sLiz/Ykj4gphlaZEt3xA="},"size":16,"meta":{}}
+{"logical_key":"e.txt","physical_keys":["s3://bucket/e.txt"],"hash":{"type":"sha2-256-chunked","value":"Xb1PbjJeWof4zD7zuHc9PI7sLiz/Ykj4gphlaZEt3xA="},"size":16,"meta":{}}
+{"logical_key":"f.txt","physical_keys":["s3://bucket/f.txt"],"hash":{"type":"sha2-256-chunked","value":"Xb1PbjJeWof4zD7zuHc9PI7sLiz/Ykj4gphlaZEt3xA="},"size":16,"meta":{}}

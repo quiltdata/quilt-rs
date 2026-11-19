@@ -40,14 +40,26 @@ in code by `LocalDomain`. Its on-disk layout:
 ├── packages/           # Immutable cache of remote manifests, by bucket
 ├── installed/          # Local package installations, by namespace
 ├── objects/            # Content-addressed object store (deduplicated)
-└── data.json           # Installation, modification, and commit tracking
+├── refs/               # Each installed package's origin and commit tracking
+├── locks/              # Each package's lock, among others
+├── domain.json         # The home directory, and where a move of the lineage stands
+└── domain.lock         # The domain's lock
 ```
+
+Each package's lineage is a ref of its own, `refs/<owner>/<name>.json`,
+written whole under that package's lock, so a damaged ref costs that
+package alone and updates of different packages never wait on each other.
+A remote's tip is a cache beside it, `<name>.json.latest`, that may be
+missing or stale. Earlier versions kept every package in one
+`data.json`; a domain moves from there on first use, and
+`quilt lineage rollback` moves it back
+([artifacts](artifacts.md)).
 
 The load-bearing choice is that a checked-out working file is a **mutable
 copy out of `objects/`**, never the canonical object itself. Editing a
-working file cannot corrupt the store, and modification detection is a
-cheap timestamp-plus-hash comparison against the recorded `PathState`
-rather than a re-hash of the store.
+working file cannot corrupt the store, and modification detection compares
+a working file's hash with its row in the installed manifest rather than
+re-hashing the store.
 
 The consequence accepted with it: content may be shared across packages and
 there is no reference counting, so no reset or pull deletes an object. Only
@@ -70,6 +82,20 @@ The workspace splits along an I/O boundary:
   `aws-sdk-s3`, `tempfile`, `ignore`, `tokio`.
 - **Native consumers**: `quilt-cli`, `quilt-sync/src-tauri`.
 - **WASM consumer**: `quilt-sync/ui` depends on the leaf crates only.
+
+### Consumers hold no package logic
+
+`quilt-cli` and QuiltSync are presentation layers. They call quilt-rs's
+`flow` operations and show the result; QuiltSync adds the watcher, the tray
+and the commands that bridge its UI to those operations. Package logic —
+reading, merging, comparing or rebuilding manifests, hashing, deciding what
+to publish — belongs in quilt-rs, as one operation that every consumer can
+call, so the CLI gets it too.
+
+A consumer that needs a new package behavior asks quilt-rs for that whole
+operation instead of composing it from quilt-rs's parts. Keep such parts
+(row merges, a manifest's internal fields) `pub(crate)` when only quilt-rs
+needs them, so the public API offers operations, not pieces.
 
 ### Why separate crates, not feature flags
 
@@ -123,6 +149,16 @@ hash (`top_hash`). Two properties worth knowing beyond the format itself:
   content-addressed naming.
 - Package-level and per-row user metadata are part of the hashed content —
   a metadata change is a new revision.
+- A folder can carry metadata too, as quilt3 does: a row whose `logical_key`
+  ends in `/` and which has no physical key. Unlike the other metadata it is
+  **not** hashed, so changing it does not make a new revision; every flow that
+  rewrites a manifest keeps it, including the exact text of whole numbers
+  beyond 64 bits and `-0` as `0`. Revisions that differ only in folder
+  metadata therefore share a top hash, and a push of such a change overwrites
+  the stored manifest without moving `latest`. That follows quilt3 until
+  quilt3 settles whether folder metadata should affect the top hash (it has a
+  TODO saying it should). This crate does not hash folder metadata until
+  quilt3 does.
 
 A **workflow** is a package-level configuration stored as a YAML file in
 the remote registry and referenced from the package's manifest header. It
@@ -154,6 +190,32 @@ intentional — `.quiltignore` controls which files belong in the package —
 but it means adding a pattern can delete a file from the next published
 revision, where `.gitignore` would have left it tracked.
 
+### A missing working folder
+
+When a package tracks files and its working folder is missing or cannot be read
+(deleted by hand, or on a disk that is not mounted), nothing can be said about
+those files: `status` reports the working copy as unavailable
+(`InstalledPackageStatus::working_copy`) and lists no changes, where it once
+listed every file `Removed`. `commit`, `publish`, `install_paths`, `undo_commit`,
+writing a rule to the package's own `.quiltignore`, and a `pull` that would
+apply a revision refuse with `PackageOpError::WorkingCopyUnavailable`, which
+names the folder. None of them creates the folder empty. The copy works again
+once the folder is restored, or once the package is uninstalled. Files deleted
+inside an existing folder are still `Removed`.
+
+`PackageState::of_status` resolves such a status to `Unavailable`, never to
+`Latest`, which its empty change list would otherwise read as, and
+`InstalledPackage::state` gives it no `changed_files` count. QuiltSync's
+autosync skips the package on every tick the folder is missing — no pull,
+publish, merge or task reset, no pause to clear and no retry backoff — and
+logs it once when the folder goes and once when it is back, which is the next
+tick that reads it. An interrupted task claim on such a package is left to
+autosync, which reports the missing folder, not to the tasks sweep. A walk of
+the missing folder, from the file watcher or at startup, leaves the time of the
+last change alone, so a change made before the folder went is still published
+on its schedule once it is back; a run of failing publishes ends, so the
+outage does not count toward that alert.
+
 ### Set Remote (recommit)
 
 Which checksum algorithm an upload is written with is not a client-side
@@ -171,9 +233,14 @@ never been pushed).
 
 Package-level metadata is durable across commits: the caller passes an
 explicit intent (`UserMeta`) — `Keep` inherits the previous revision's
-metadata, `Clear` drops it, `Set` replaces it — and callers with no
-opinion pass `Keep`, so a background commit can never strip metadata by
-omission.
+metadata (the value and the exact number text it kept), `Clear` drops
+it, `Set` replaces both — and callers with no opinion pass `Keep`, so a
+background commit can never strip metadata by omission. `UserMeta::parse`
+reads JSON text as quilt3's `set_meta` does. `ManifestHeader::set_meta`
+sets the value and its numbers together. The CLI's `--meta` (and its
+`-u` / `--user-meta` aliases) on `commit` and `create` is that `Set`;
+no flag on `commit` is `Keep`, and no flag on `create` writes no
+`user_meta` key.
 
 ### Undo Commit
 
@@ -222,17 +289,25 @@ resolves `Diverged` against the remote.
 - The remote `latest` tag is re-read mid-push; the certify decision uses
   that fresh value, not the possibly-stale one from the last status
   check.
-- The push certifies its revision as `latest` when any of: it is the
-  first push, the caller was tracking the tip
-  (`base_hash == latest_hash`), or no latest tag exists yet.
-- **First push always certifies.** `is_first_push` is captured before
-  `base_hash` is filled in, and it short-circuits the tracking check: the
-  very first push of a package certifies its revision as `latest`
-  unconditionally — even when the remote already carries a different
-  `latest` (the state the classifier reports as `Diverged` when a
-  teammate published the same namespace first). The rationale recorded in
-  the code: the user explicitly pushed this version. Only *subsequent*
-  pushes respect a moved `latest`.
+- The push certifies its revision as `latest` when any of: no latest tag
+  exists yet, the tag already names the pushed revision, or the caller was
+  tracking the tip (`base_hash == latest_hash`, `base_hash` non-empty).
+- **The tag write is conditional on that read.** It carries the `ETag` the
+  read returned (`If-Match`), or requires the tag to be absent
+  (`If-None-Match: *`) when there was none, so a publish that lands between
+  the read and the write is not overwritten: S3 answers 412, and the push
+  keeps its revision, leaves the tag and reports `certified_latest = false`
+  (`Diverged`). When it cannot read which revision `latest` moved to, or
+  finds its own base there, it fails with `PushTagFailed` naming the stored
+  revision and keeps the commit. A role that may write the tag but not read
+  it cannot make the check: the push writes the tag plainly and reports
+  `latest_unchecked = true`. Writers outside quilt-rs, such as an older
+  quilt3 or the catalog, still move `latest` without the check.
+- **A first push respects another writer's `latest`.** A first push has an
+  empty `base_hash`, so when the bucket already has a `latest` for the
+  name that is another revision, the push uploads but leaves the tag, as
+  a later push whose base fell behind does. `base_hash` stays empty, so
+  the copy reads `Diverged` until the user promotes or resets.
 - `certified_latest = false` means the upload itself succeeded but
   someone else pushed in the meantime, so the `latest` tag was not
   moved.

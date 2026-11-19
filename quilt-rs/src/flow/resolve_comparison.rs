@@ -13,11 +13,11 @@ use std::collections::HashSet;
 use std::hash::BuildHasher;
 use std::path::PathBuf;
 
-use crate::flow::list_revisions::holds_user_meta;
+use crate::flow::list_revisions::written_user_meta;
 use crate::flow::remote_delta;
 use crate::lineage::CommitState;
 use crate::manifest::Manifest;
-use crate::manifest::normalized_entry_meta;
+use crate::manifest::same_entry_meta;
 
 /// What each resolve choice costs: this copy's revision against the
 /// published `latest`. Paths are logical keys, sorted.
@@ -66,29 +66,18 @@ pub fn compare_for_resolve<S: BuildHasher>(
         .rows
         .iter()
         .filter(|theirs| {
-            mine.get(&theirs.logical_key).is_none_or(|row| {
-                row.hash != theirs.hash
-                    || (row.meta != theirs.meta
-                        && normalized_entry_meta(row.meta.as_ref())
-                            != normalized_entry_meta(theirs.meta.as_ref()))
-            })
+            mine.get(&theirs.logical_key)
+                .is_none_or(|row| row.hash != theirs.hash || !same_entry_meta(row, theirs))
         })
         .count();
     ResolveComparison {
-        published_message: published.header.message.clone(),
+        published_message: published.header.message().map(str::to_owned),
         differing,
         lost,
-        user_meta_differs: user_meta(current) != user_meta(published),
+        user_meta_differs: written_user_meta(&current.header)
+            != written_user_meta(&published.header),
         unpublished,
     }
-}
-
-fn user_meta(manifest: &Manifest) -> Option<&serde_json::Value> {
-    manifest
-        .header
-        .user_meta
-        .as_ref()
-        .filter(|v| holds_user_meta(v))
 }
 
 #[cfg(test)]
@@ -99,6 +88,7 @@ mod tests {
 
     use crate::Res;
 
+    use crate::manifest::HeaderMessage;
     use crate::manifest::ManifestRow;
 
     fn row(key: &str, hash_seed: &[u8]) -> Res<ManifestRow> {
@@ -111,6 +101,7 @@ mod tests {
                 .unwrap(),
             size: hash_seed.len() as u64,
             meta: None,
+            meta_numbers: crate::manifest::RawNumbers::default(),
         })
     }
 
@@ -122,7 +113,8 @@ mod tests {
     }
 
     fn with_message(mut manifest: Manifest, message: Option<&str>) -> Manifest {
-        manifest.header.message = message.map(str::to_owned);
+        manifest.header.message =
+            message.map_or(HeaderMessage::Null, |m| HeaderMessage::Text(m.to_owned()));
         manifest
     }
 
@@ -234,6 +226,21 @@ mod tests {
 
         assert!(comparison.user_meta_differs);
         assert_eq!(comparison.lost, 0);
+    }
+
+    /// A kept number the value has left behind writes nothing, so it is no
+    /// difference from a copy that never had it.
+    #[test]
+    fn a_number_left_behind_in_user_meta_is_no_difference() -> Res {
+        let (_, numbers) = crate::manifest::RawNumbers::parse(r#"{"n": 18446744073709551616}"#)?;
+        let mut current = with_user_meta(manifest_of(vec![]), Some(serde_json::json!({"n": 3})));
+        current.header.user_meta_numbers = numbers;
+        let published = with_user_meta(manifest_of(vec![]), Some(serde_json::json!({"n": 3})));
+
+        let comparison = compare_for_resolve(&current, &published, None, &HashSet::new());
+
+        assert!(!comparison.user_meta_differs);
+        Ok(())
     }
 
     #[test]

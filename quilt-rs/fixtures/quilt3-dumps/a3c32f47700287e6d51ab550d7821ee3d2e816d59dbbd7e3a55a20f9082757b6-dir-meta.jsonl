@@ -1,0 +1,7 @@
+{"version": "v0", "message": "", "user_meta": {}}
+{"logical_key": "data/", "meta": {"owner": "team"}}
+{"logical_key": "data/raw/", "meta": {"source": "lab", "n": [1, 2]}}
+{"logical_key": "empty/", "meta": {"note": "no files"}}
+{"logical_key": "data/a.csv", "physical_keys": ["s3://bucket/data/a.csv"], "size": 1, "hash": {"type": "SHA256", "value": "0000000000000000000000000000000000000000000000000000000000000000"}, "meta": {}}
+{"logical_key": "data/raw/b.csv", "physical_keys": ["s3://bucket/data/raw/b.csv"], "size": 1, "hash": {"type": "SHA256", "value": "0000000000000000000000000000000000000000000000000000000000000000"}, "meta": {"k": 1}}
+{"logical_key": "top.txt", "physical_keys": ["s3://bucket/top.txt"], "size": 1, "hash": {"type": "SHA256", "value": "0000000000000000000000000000000000000000000000000000000000000000"}, "meta": {}}

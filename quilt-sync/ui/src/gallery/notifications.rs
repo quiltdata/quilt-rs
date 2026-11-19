@@ -129,7 +129,7 @@ fn WholeSystem() -> impl IntoView {
                         <pages::QueueBand>
                             <ZeroLine text="1 package needs your attention" tone=StateTone::Attention />
                         </pages::QueueBand>
-                        <PackagesRegion view_name="notifications-view" />
+                        <PackagesRegion />
                     </PageLayout>
                 </Provider>
             </div>
