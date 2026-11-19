@@ -18,6 +18,7 @@ use crate::dataspace::contract::Access;
 use crate::dataspace::contract::Entry;
 use crate::dataspace::contract::Registry;
 use crate::dataspace::metadata::MetadataFile;
+use crate::dataspace::metadata::at_metadata_file;
 use crate::dataspace::metadata::holds_metadata_file;
 use crate::dataspace::read::OnDisk;
 use crate::dataspace::read::bytes_at;
@@ -152,33 +153,83 @@ pub async fn publish(
         ..ManifestHeader::default()
     };
     let mut attempt = 1;
+    let mut lost = None;
     loop {
-        let seen = read_latest(remote, target.origin.as_ref(), target.handle.clone()).await?;
-        let base = match &seen {
-            LatestSeen::Tagged { uri, .. } => Some(fetch_jsonl(remote, uri).await?),
-            LatestSeen::Absent => None,
-            LatestSeen::Unreadable if whole => None,
-            LatestSeen::Unreadable => return Err(EntryError::LatestUnreadable),
-        };
-        if base.as_ref().is_some_and(holds_metadata_file) {
-            return Err(EntryError::HoldsMetadataFile);
+        let outcome = Box::pin(attempt_on_latest(
+            storage,
+            remote,
+            entry,
+            &files,
+            &metadata,
+            header.clone(),
+            &mut target,
+        ))
+        .await;
+        // A revision an earlier attempt stored stands where this one found
+        // nothing more to publish or failed, so its hash is not lost.
+        if let Some(stored) = lost.take()
+            && matches!(outcome, Ok(Published::Unchanged { .. }) | Err(_))
+        {
+            if let Err(err) = &outcome {
+                warn!("Publishing again failed: {err}");
+            }
+            return Ok(stored);
         }
-        let (mut manifest, content) =
-            compose(storage, &files, base.as_ref(), whole, header.clone()).await?;
-        metadata.apply(&mut manifest, &entry.paths, whole);
-        target.parent = seen.hash().map(str::to_string);
-        if same_as(&manifest, base.as_ref()) {
-            info!("Nothing to publish from {}", folder.display());
-            return Ok(Published::Unchanged {
-                latest: target.parent,
-            });
-        }
-        let pushed = Box::pin(push_files(storage, remote, &target, manifest, &content)).await;
-        match settle(remote, &target, pushed).await? {
-            Published::Stored { .. } if !whole && attempt < ATTEMPTS => attempt += 1,
-            published => return Ok(published),
+        match outcome {
+            Ok(stored @ Published::Stored { .. }) if !whole && attempt < ATTEMPTS => {
+                lost = Some(stored);
+                attempt += 1;
+            }
+            outcome => return outcome,
         }
     }
+}
+
+/// One publish of `files` on the `latest` read now.
+async fn attempt_on_latest(
+    storage: &(impl Storage + Sync),
+    remote: &impl Remote,
+    entry: &Entry,
+    files: &[(LogicalKey, PathBuf)],
+    metadata: &MetadataFile,
+    header: ManifestHeader,
+    target: &mut PushTarget,
+) -> Result<Published, EntryError> {
+    let whole = entry.access == Access::Replace;
+    let seen = read_latest(remote, target.origin.as_ref(), target.handle.clone()).await?;
+    let base = match &seen {
+        LatestSeen::Tagged { uri, .. } => Some(fetch_jsonl(remote, uri).await?),
+        LatestSeen::Absent => None,
+        LatestSeen::Unreadable if whole => None,
+        LatestSeen::Unreadable => return Err(EntryError::LatestUnreadable),
+    };
+    if base.as_ref().is_some_and(holds_metadata_file) {
+        return Err(EntryError::HoldsMetadataFile);
+    }
+    // `push_files` uploads the file a `file://` key names, so a row of
+    // `latest` kept as it is must already be in S3.
+    if let Some(row) = base
+        .iter()
+        .flat_map(|base| &base.rows)
+        .find(|row| !row.physical_key.starts_with("s3://"))
+    {
+        return Err(Error::from(PackageOpError::Push(format!(
+            "`latest` names {} at {}, which is not in S3",
+            row.logical_key, row.physical_key
+        )))
+        .into());
+    }
+    let (mut manifest, content) = compose(storage, files, base.as_ref(), whole, header).await?;
+    metadata.apply(&mut manifest, &entry.paths, whole);
+    target.parent = seen.hash().map(str::to_string);
+    if same_as(&manifest, base.as_ref()) {
+        info!("Nothing to publish from {}", entry.folder.display());
+        return Ok(Published::Unchanged {
+            latest: target.parent.clone(),
+        });
+    }
+    let pushed = Box::pin(push_files(storage, remote, target, manifest, &content)).await;
+    settle(remote, target, pushed).await
 }
 
 /// What a push came to. Where it cannot say whether `latest` moved, `latest`
@@ -299,10 +350,20 @@ async fn compose(
             .user_meta_numbers
             .clone_from(&base.header.user_meta_numbers);
     }
+    let rows: Vec<ManifestRow> = rows.into_values().collect();
+    let mut dir_meta = base.map_or_else(Vec::new, |base| base.dir_meta.clone());
+    if whole {
+        // A snapshot keeps a folder's metadata only while the folder holds a
+        // file: one it dropped, or turned into a file, has none.
+        dir_meta.retain(|dir| {
+            rows.iter()
+                .any(|row| dir.logical_key.is_folder_of(&row.logical_key))
+        });
+    }
     let manifest = Manifest {
         header,
-        rows: rows.into_values().collect(),
-        dir_meta: base.map_or_else(Vec::new, |base| base.dir_meta.clone()),
+        rows,
+        dir_meta,
     };
     Ok((manifest, content))
 }
@@ -325,9 +386,10 @@ fn same_as(manifest: &Manifest, base: Option<&Manifest>) -> bool {
 }
 
 /// Whether `name`, at a working folder's root, is Quilt's rather than a file
-/// of the package: the metadata file, in any case, or what a read leaves.
+/// of the package: [at the metadata file's place](at_metadata_file), or what
+/// a read leaves.
 fn quilts_own(name: &str) -> bool {
-    if name.eq_ignore_ascii_case(METADATA_FILE) {
+    if at_metadata_file(name) {
         if name != METADATA_FILE {
             warn!("Left out of the package: {name} takes the name of {METADATA_FILE}");
         }

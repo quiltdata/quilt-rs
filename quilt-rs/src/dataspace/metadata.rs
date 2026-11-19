@@ -20,17 +20,22 @@ pub const METADATA_FILE: &str = "package-metadata.json";
 
 const PACKAGE_KEY: &str = ".";
 
-/// Whether a row or a folder's metadata is at the metadata file's place or
-/// inside a folder there, compared ignoring case and reading `\` as a
-/// separator, as a working folder's disk may.
+/// Whether a row or a folder's metadata is [at the metadata file's
+/// place](at_metadata_file).
 pub(crate) fn holds_metadata_file(manifest: &Manifest) -> bool {
     let rows = manifest.rows.iter().map(|row| &row.logical_key);
     let folders = manifest.dir_meta.iter().map(|dir| &dir.logical_key);
-    rows.chain(folders).any(|key| {
-        key.to_str()
-            .and_then(|key| key.split(['/', '\\']).next())
-            .is_some_and(|first| first.eq_ignore_ascii_case(METADATA_FILE))
-    })
+    rows.chain(folders)
+        .any(|key| key.to_str().is_some_and(at_metadata_file))
+}
+
+/// Whether `path` is at the metadata file's place or inside a folder there,
+/// compared ignoring case and reading `\` as a separator, as a working
+/// folder's disk may.
+pub(crate) fn at_metadata_file(path: &str) -> bool {
+    path.split(['/', '\\'])
+        .next()
+        .is_some_and(|first| first.eq_ignore_ascii_case(METADATA_FILE))
 }
 
 /// The metadata file's text for `manifest`, holding the entries `paths`

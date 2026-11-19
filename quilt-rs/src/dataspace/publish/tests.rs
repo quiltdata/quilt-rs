@@ -170,11 +170,13 @@ async fn beside(
     })
 }
 
-/// Runs `publishing` while another writer tags `rivals`, one each time the
-/// publish reads `latest` to tag its own revision.
+/// Runs `publishing` while another writer tags `rivals` holding
+/// `rival_files`, one each time the publish reads `latest` to tag its own
+/// revision.
 async fn race(
     remote: &MockRemote,
     rivals: &[&str],
+    rival_files: &[(&str, &[u8])],
     publishing: impl Future<Output = Result<Published, EntryError>>,
 ) -> Result<Published, Box<dyn std::error::Error>> {
     let mut gate = remote.park(LATEST);
@@ -184,13 +186,7 @@ async fn race(
             // Past the publish's own read, to the read before its tag write.
             let tagging = next(remote, gate).await;
             tagging.arrived().await;
-            seed(
-                remote,
-                rival,
-                &[("theirs.txt", rival.as_bytes())],
-                ManifestHeader::default(),
-            )
-            .await?;
+            seed(remote, rival, rival_files, ManifestHeader::default()).await?;
             if rivals.peek().is_none() {
                 tagging.release();
                 break;
@@ -296,6 +292,42 @@ async fn a_replace_removes_every_key_the_folder_lacks() -> Res {
 }
 
 #[test(tokio::test)]
+async fn a_replace_that_turns_a_folder_into_a_file_drops_the_folders_metadata() -> Res {
+    let remote = MockRemote::default();
+    let storage = &remote.storage;
+    seed(
+        &remote,
+        FIRST,
+        &[("results/a.csv", b"a"), ("keep/b.csv", b"b")],
+        ManifestHeader::default(),
+    )
+    .await?;
+    let folder_meta = |key: &str| crate::manifest::DirMeta {
+        logical_key: LogicalKey::new(key).expect("key"),
+        meta: serde_json::json!({"kind": key}),
+        meta_numbers: RawNumbers::default(),
+    };
+    let manifest = Manifest {
+        rows: vec![row("results/a.csv", b"a"), row("keep/b.csv", b"b")],
+        dir_meta: vec![folder_meta("results"), folder_meta("keep")],
+        ..Manifest::default()
+    };
+    seed_manifest(&remote, FIRST, &manifest).await?;
+    write(storage, "results", b"now a file").await?;
+    write(storage, "keep/b.csv", b"b").await?;
+
+    let outcome = publish(storage, &remote, &entry("replace = [\"team/raw\"]"), None).await;
+
+    let Ok(Published::Advanced { revision: new, .. }) = &outcome else {
+        panic!("expected the snapshot published, got {outcome:?}");
+    };
+    let published = revision(&remote, new).await?;
+    assert_eq!(keys(&published), ["keep/b.csv", "results"]);
+    assert_eq!(published.dir_meta, [folder_meta("keep")]);
+    Ok(())
+}
+
+#[test(tokio::test)]
 async fn a_package_with_no_latest_is_published_as_its_first_revision() -> Res {
     let remote = MockRemote::default();
     let storage = &remote.storage;
@@ -374,6 +406,7 @@ async fn a_write_racing_another_writer_keeps_the_other_writers_additions() -> Re
     let outcome = race(
         &remote,
         &[SECOND],
+        &[("theirs.txt", b"t")],
         Box::pin(publish(storage, &remote, &entry, None)),
     )
     .await?;
@@ -404,6 +437,7 @@ async fn a_write_that_keeps_losing_the_race_is_stored_and_reported_with_its_hash
     let outcome = race(
         &remote,
         &[SECOND, THIRD, FOURTH],
+        &[("theirs.txt", b"t")],
         Box::pin(publish(storage, &remote, &entry, None)),
     )
     .await?;
@@ -442,6 +476,7 @@ async fn a_replace_racing_another_writer_is_stored_and_reported_with_its_hash() 
     let outcome = race(
         &remote,
         &[SECOND],
+        &[("theirs.txt", b"t")],
         Box::pin(publish(storage, &remote, &entry, None)),
     )
     .await?;
@@ -457,6 +492,89 @@ async fn a_replace_racing_another_writer_is_stored_and_reported_with_its_hash() 
     assert_eq!(outcome.lock_base(), None);
     assert_eq!(latest_hash(&remote).await?, SECOND);
     assert_eq!(keys(&revision(&remote, stored).await?), ["mine.txt"]);
+    Ok(())
+}
+
+/// The rival's `latest` already holds the write's file, so the second
+/// attempt finds nothing to publish; the first attempt's revision is still
+/// reported.
+#[test(tokio::test)]
+async fn a_write_whose_retry_finds_nothing_new_reports_the_revision_it_stored() -> Res {
+    let remote = MockRemote::default();
+    let storage = &remote.storage;
+    seed(
+        &remote,
+        FIRST,
+        &[("a.txt", b"a")],
+        ManifestHeader::default(),
+    )
+    .await?;
+    write(storage, "mine.txt", b"m").await?;
+    let entry = entry("write = [\"team/raw\"]");
+
+    let outcome = race(
+        &remote,
+        &[SECOND],
+        &[("mine.txt", b"m"), ("theirs.txt", b"t")],
+        Box::pin(publish(storage, &remote, &entry, None)),
+    )
+    .await?;
+
+    let Published::Stored {
+        revision: stored,
+        latest,
+    } = &outcome
+    else {
+        panic!("expected a stored revision, got {outcome:?}");
+    };
+    assert_eq!(latest.as_deref(), Some(SECOND));
+    assert_eq!(
+        keys(&revision(&remote, stored).await?),
+        ["a.txt", "mine.txt"]
+    );
+    Ok(())
+}
+
+/// The rival tags a revision whose manifest cannot be fetched, so the second
+/// attempt fails; the first attempt's revision is still reported.
+#[test(tokio::test)]
+async fn a_write_whose_retry_fails_reports_the_revision_it_stored() -> Res {
+    let remote = MockRemote::default();
+    let storage = &remote.storage;
+    seed(
+        &remote,
+        FIRST,
+        &[("a.txt", b"a")],
+        ManifestHeader::default(),
+    )
+    .await?;
+    write(storage, "mine.txt", b"m").await?;
+    let entry = entry("write = [\"team/raw\"]");
+
+    let gate = remote.park(LATEST);
+    let rival = async {
+        let tagging = next(&remote, gate).await;
+        tagging.arrived().await;
+        remote
+            .put_object(None, &S3Uri::try_from(LATEST)?, SECOND.as_bytes().to_vec())
+            .await?;
+        tagging.release();
+        Ok(())
+    };
+    let outcome = beside(Box::pin(publish(storage, &remote, &entry, None)), rival).await?;
+
+    let Ok(Published::Stored {
+        revision: stored,
+        latest,
+    }) = &outcome
+    else {
+        panic!("expected a stored revision, got {outcome:?}");
+    };
+    assert_eq!(latest.as_deref(), Some(SECOND));
+    assert_eq!(
+        keys(&revision(&remote, stored).await?),
+        ["a.txt", "mine.txt"]
+    );
     Ok(())
 }
 
@@ -676,6 +794,24 @@ async fn a_file_named_like_the_metadata_file_in_another_case_is_not_published() 
     Ok(())
 }
 
+/// A read refuses a package with such a key, reading `\` as a separator,
+/// so publishing one would leave a revision no dataspace could use.
+#[test(tokio::test)]
+async fn a_file_inside_the_metadata_files_name_after_a_backslash_is_not_published() -> Res {
+    let remote = MockRemote::default();
+    let storage = &remote.storage;
+    write(storage, "a.txt", b"a").await?;
+    write(storage, "package-metadata.json\\inside.txt", b"x").await?;
+
+    let outcome = publish(storage, &remote, &entry("write = [\"team/raw\"]"), None).await?;
+
+    assert_eq!(
+        keys(&revision(&remote, advanced(&outcome)).await?),
+        ["a.txt"]
+    );
+    Ok(())
+}
+
 #[test(tokio::test)]
 async fn what_an_interrupted_read_leaves_is_not_published() -> Res {
     let remote = MockRemote::default();
@@ -753,6 +889,42 @@ async fn latest_holding_a_file_named_for_the_metadata_is_refused() -> Res {
 
     assert!(
         matches!(outcome, Err(EntryError::HoldsMetadataFile)),
+        "{outcome:?}"
+    );
+    assert_eq!(latest_hash(&remote).await?, FIRST);
+    Ok(())
+}
+
+/// A row of `latest` that names a local file would have that file uploaded
+/// from this machine, wherever it is.
+#[test(tokio::test)]
+async fn latest_naming_a_local_file_is_refused() -> Res {
+    let remote = MockRemote::default();
+    let storage = &remote.storage;
+    storage
+        .write_byte_stream("/outside/secret.txt", ByteStream::from_static(b"s"))
+        .await?;
+    let local = ManifestRow {
+        physical_key: "file:///outside/secret.txt".to_string(),
+        ..row("secret.txt", b"s")
+    };
+    let manifest = Manifest {
+        rows: vec![row("a.txt", b"a"), local],
+        ..Manifest::default()
+    };
+    seed_manifest(&remote, FIRST, &manifest).await?;
+    write(storage, "mine.txt", b"m").await?;
+
+    let outcome = publish(storage, &remote, &entry("write = [\"team/raw\"]"), None).await;
+
+    assert!(
+        matches!(
+            &outcome,
+            Err(EntryError::Failed(err)) if matches!(
+                &**err,
+                Error::PackageOp(PackageOpError::Push(message)) if message.contains("not in S3")
+            )
+        ),
         "{outcome:?}"
     );
     assert_eq!(latest_hash(&remote).await?, FIRST);
