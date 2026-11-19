@@ -848,10 +848,14 @@ mod tests {
         store.save_stat_cache(&changed, &cache).await;
         let entry = cached();
         for clean in [copy("bucket-b", "one"), copy("bucket-a", "two")] {
-            let cache = store.stat_cache(&clean).await;
+            let mut cache = store.stat_cache(&clean).await;
             assert_eq!(cache.gone(), Vec::<PathBuf>::new(), "it read no entry");
-            // A walk that found no `a` deletes its entry.
+            cache.record(std::path::Path::new("a"), cached());
             store.save_stat_cache(&clean, &cache).await;
+            // A walk that found no `a` deletes its own entry.
+            let cache = store.stat_cache(&clean).await;
+            store.save_stat_cache(&clean, &cache).await;
+            assert_eq!(store.stat_cache(&clean).await.gone(), Vec::<PathBuf>::new());
         }
         let cache = store.stat_cache(&changed).await;
         assert_eq!(
@@ -897,6 +901,7 @@ mod tests {
         };
         let mut cache = store.stat_cache(&moved).await;
         assert!(cache.is_full(), "never walked");
+        assert_eq!(cache.gone(), Vec::<PathBuf>::new(), "it read no entry");
         cache.record(std::path::Path::new("a"), cached());
         store.save_stat_cache(&moved, &cache).await;
 
