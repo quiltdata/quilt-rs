@@ -1008,8 +1008,8 @@ impl<'a> Folders<'a> {
         self.checked(normalize(&self.root.join(folder)))
     }
 
-    /// Where a package goes when its entry names no folder: under its bucket
-    /// only when the entry states one.
+    /// Where a package goes when its entry names no folder: under its
+    /// registry's [`Registry::dir_name`] only when the entry states one.
     fn placed(&self, stated: bool, key: &PackageKey) -> Result<PathBuf, EntryProblem> {
         let mut folder = self.root.to_path_buf();
         if stated {
