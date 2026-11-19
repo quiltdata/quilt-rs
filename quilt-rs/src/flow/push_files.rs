@@ -197,11 +197,14 @@ async fn tag_stored(
         .await
         .map_err(tag_failed)?
     {
-        LatestAdvance::Moved { latest } => {
-            Err(not_latest(latest.unwrap_or_else(|| {
-                "a revision published while this push ran".to_string()
-            })))
+        LatestAdvance::Moved {
+            latest: Some(latest),
+        } => Err(not_latest(latest)),
+        LatestAdvance::Moved { latest: None } => Err(PackageOpError::PushTagFailed {
+            top_hash: manifest_uri.hash,
+            reason: "latest moved while this push ran, and could not be read again".to_string(),
         }
+        .into()),
         written => {
             info!("✔️ Certified {} as latest", manifest_uri.display());
             Ok(PushOutcome {
@@ -646,6 +649,50 @@ mod tests {
         assert_eq!(latest, SOMEONE_ELSE);
         assert_eq!(read(&remote, LATEST).await?, SOMEONE_ELSE);
         assert_eq!(revisions(&remote).await?, vec![top_hash]);
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn a_latest_moved_and_then_unreadable_names_the_stored_revision() -> Res {
+        let remote = MockRemote::default();
+        seed_latest(&remote, PARENT).await?;
+        let files = BTreeMap::from([(key("a.txt"), RowContent::Bytes(Bytes::from_static(b"hi")))]);
+        let target = target(Some(PARENT));
+        let read_gate = remote.park(LATEST);
+        let compete = async {
+            read_gate.arrived().await;
+            let write_gate = remote.park(LATEST);
+            read_gate.release();
+            write_gate.arrived().await;
+            seed_latest(&remote, SOMEONE_ELSE).await?;
+            let reread_gate = remote.park(LATEST);
+            write_gate.release();
+            reread_gate.arrived().await;
+            remote.deny_reads(LATEST);
+            reread_gate.release();
+            Ok::<_, Error>(())
+        };
+
+        let (pushed, competed) = tokio::join!(
+            push_files(
+                &remote.storage,
+                &remote,
+                &target,
+                manifest(vec![bare_row("a.txt")]),
+                &files,
+            ),
+            compete
+        );
+        competed?;
+
+        let Err(Error::PackageOp(PackageOpError::PushTagFailed { top_hash, .. })) = pushed else {
+            panic!("expected PushTagFailed, got {pushed:?}");
+        };
+        assert_eq!(revisions(&remote).await?, vec![top_hash]);
+        assert_eq!(
+            remote.current(LATEST).await?,
+            Some(SOMEONE_ELSE.as_bytes().to_vec())
+        );
         Ok(())
     }
 
