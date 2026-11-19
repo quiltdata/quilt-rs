@@ -243,7 +243,9 @@ impl RegistryStore {
     /// no other manifest uses. A manifest the bucket lacks, such as an
     /// unpushed commit, is kept with its objects. Clears nothing if the
     /// bucket cannot be asked about every manifest, as when offline, or
-    /// while another writer holds a package's lock.
+    /// while another writer holds the lock of a package the store already
+    /// has; a package first written meanwhile is not protected, as in
+    /// `flow::gc`.
     pub async fn clear_published(
         &self,
         storage: &(impl Storage + Sync),
