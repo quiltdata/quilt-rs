@@ -50,9 +50,15 @@ impl Connection {
     {
         let inner = self.0.clone();
         tokio::task::spawn_blocking(move || {
-            // An op that panicked left SQLite to roll its transaction back,
-            // so the connection is sound for the next one.
-            let mut guard = inner.lock().unwrap_or_else(PoisonError::into_inner);
+            // An op that panicked may have left a transaction open; rolled
+            // back, the connection is sound for the next one.
+            let mut guard = inner.lock().unwrap_or_else(|poisoned| {
+                let mut guard = poisoned.into_inner();
+                if let Some(db) = guard.as_mut().filter(|db| !db.is_autocommit()) {
+                    let _ = db.execute_batch("ROLLBACK");
+                }
+                guard
+            });
             f(guard.as_mut().ok_or(ConnectionError::Closed)?)
         })
         .await
@@ -89,18 +95,17 @@ mod tests {
         db.call(|db| Ok::<_, ConnectionError>(db.execute_batch("CREATE TABLE t (x)")?))
             .await?;
 
+        // A transaction no guard would roll back.
         let panicked = db
             .call(|db| -> Result<(), ConnectionError> {
-                let tx = db.transaction()?;
-                tx.execute("INSERT INTO t VALUES (1)", [])?;
+                db.execute_batch("BEGIN; INSERT INTO t VALUES (1)")?;
                 panic!("an op that panics mid-transaction");
             })
             .await;
-        let rows = db
+        let next = db
             .call(|db| {
-                Ok::<i64, ConnectionError>(
-                    db.query_row("SELECT count(*) FROM t", [], |r| r.get(0))?,
-                )
+                let rows: i64 = db.query_row("SELECT count(*) FROM t", [], |r| r.get(0))?;
+                Ok::<_, ConnectionError>((rows, db.is_autocommit()))
             })
             .await;
 
@@ -108,7 +113,7 @@ mod tests {
             matches!(panicked, Err(ConnectionError::Closed)),
             "{panicked:?}"
         );
-        assert_eq!(rows.ok(), Some(0));
+        assert_eq!(next.ok(), Some((0, true)));
         Ok(())
     }
 }
