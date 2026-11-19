@@ -644,12 +644,17 @@ fn refuse_local(text: &str) -> Result<(), EntryProblem> {
 /// Whether a package URI's text names a revision, which the parsed URI cannot
 /// tell for `:latest`.
 fn names_revision(uri: &str) -> bool {
-    uri.split_once('#').is_some_and(|(_, fragment)| {
-        let decode = |part| percent_encoding::percent_decode_str(part).decode_utf8_lossy();
-        fragment.split('&').any(|piece| {
-            piece.split_once('=').is_some_and(|(key, spec)| {
-                decode(key) == "package" && decode(spec).contains([':', '@'])
-            })
+    // The fragment exactly as `S3PackageUri::try_from` reads it.
+    let Ok(uri) = url::Url::parse(uri) else {
+        return false;
+    };
+    let Some(fragment) = uri.fragment() else {
+        return false;
+    };
+    let decode = |part| percent_encoding::percent_decode_str(part).decode_utf8_lossy();
+    fragment.split('&').any(|piece| {
+        piece.split_once('=').is_some_and(|(key, spec)| {
+            decode(key) == "package" && decode(spec).contains([':', '@'])
         })
     })
 }

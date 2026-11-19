@@ -415,6 +415,7 @@ fn the_declarations_of_a_package_share_one_pin() -> Res {
         r#"{ package = "team/p", path = "b/", revision = ":latest" }"#,
         r#"{ uri = "quilt+s3://quilt-dev#package=team/p:latest&path=b/", folder = "team/p" }"#,
         r#"{ uri = "quilt+s3://quilt-dev#%70ackage=team/p:latest&path=b/", folder = "team/p" }"#,
+        r#"{ uri = "quilt+s3://quilt-dev#pack\tage=team/p:latest&path=b/", folder = "team/p" }"#,
     ] {
         let problem = package_problem(&with_defaults(&format!(
             r#"read = [{{ package = "team/p", path = "a/", revision = "abc123" }}, {other}]"#,
