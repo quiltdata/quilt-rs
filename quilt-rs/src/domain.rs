@@ -17,6 +17,7 @@ use crate::flow::list_dirs;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::io::storage::StorageExt;
+use crate::io::storage::temp_name;
 use quilt_uri::Host;
 use quilt_uri::Namespace;
 use quilt_uri::UriError;
@@ -165,9 +166,12 @@ impl RegistryStore {
         if let Some(owner) = path.parent() {
             storage.create_dir_all(owner).await?;
         }
+        // Staged outside `latest/`, where every file is a package's.
+        let staged = self.dir.join(temp_name());
         storage
-            .write_byte_stream(&path, ByteStream::from(hash.as_bytes().to_vec()))
-            .await
+            .write_byte_stream(&staged, ByteStream::from(hash.as_bytes().to_vec()))
+            .await?;
+        storage.rename(&staged, &path).await
     }
 
     /// Every package the latest index holds a hash for.
@@ -181,8 +185,7 @@ impl RegistryStore {
             let mut entries = storage.read_dir(&owner_dir).await?;
             while let Some(entry) = entries.next_entry().await? {
                 let name = entry.file_name().to_string_lossy().into_owned();
-                // A package may be named `.foo`; a write's temp file may not.
-                if name.starts_with(".tmp-") || !entry.file_type().await?.is_file() {
+                if !entry.file_type().await?.is_file() {
                     continue;
                 }
                 let Ok(namespace) = Namespace::try_from(format!("{owner}/{name}")) else {
@@ -280,8 +283,8 @@ mod tests {
     }
 
     /// The index holds what the registry lists after a refresh: a moved
-    /// `latest` is updated, new packages added, a dotted name among them, and
-    /// a package the registry no longer has dropped.
+    /// `latest` is updated, new packages added, and a package the registry no
+    /// longer has dropped, names that look like a temp file's among them.
     #[test(tokio::test)]
     async fn a_refreshed_index_holds_what_the_registry_lists() -> Res {
         let dir = tempfile::tempdir()?;
@@ -291,8 +294,8 @@ mod tests {
         let (moved, added, dotted, gone) = (
             Namespace::from(("acme", "moved")),
             Namespace::from(("acme", "added")),
-            Namespace::from(("acme", ".dotted")),
-            Namespace::from(("other", "gone")),
+            Namespace::from(("acme", ".tmp-dotted")),
+            Namespace::from(("other", ".tmp-gone")),
         );
         store.write_latest(&storage, &moved, &hash(1)).await?;
         store.write_latest(&storage, &gone, &hash(2)).await?;
