@@ -752,7 +752,7 @@ fn agree<T: PartialEq>(
     }
 }
 
-/// Whether `text` is a `quilt+local:` URI, its scheme in any case.
+/// Whether `text` is a `quilt+local:` URI, its scheme lowercase as written.
 fn is_local(text: &str) -> bool {
     text.starts_with("quilt+local:")
 }
