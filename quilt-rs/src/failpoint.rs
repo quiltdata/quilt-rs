@@ -39,3 +39,41 @@ pub(crate) fn hit(name: impl Display) {
 
 #[cfg(not(any(test, feature = "failpoints")))]
 pub(crate) fn hit(_: impl Display) {}
+
+#[cfg(test)]
+tokio::task_local! {
+    /// The point a test stops at, and how many passes of it to let by first.
+    static STOP: (&'static str, std::cell::Cell<usize>);
+}
+
+/// Fails where a test running under [`stopping_at`] names `name`, so the
+/// operation is left as a crash there would leave it, in-process and on
+/// every OS. Elsewhere it does nothing.
+#[cfg_attr(
+    not(test),
+    allow(clippy::unnecessary_wraps, reason = "it fails only under test")
+)]
+pub(crate) fn stop(name: &str) -> crate::Res {
+    #[cfg(test)]
+    if STOP
+        .try_with(|(at, passes)| *at == name && passes.replace(passes.get().wrapping_sub(1)) == 0)
+        .unwrap_or(false)
+    {
+        return Err(std::io::Error::other(format!("stopped at {name}")).into());
+    }
+    #[cfg(not(test))]
+    let _ = name;
+    Ok(())
+}
+
+/// Runs `operation`, stopping it at `name` once `passes` passes of it have
+/// gone by; see [`stop`].
+#[cfg(test)]
+pub(crate) async fn stopping_at<F: std::future::Future>(
+    name: &'static str,
+    passes: usize,
+    operation: F,
+) -> F::Output {
+    STOP.scope((name, std::cell::Cell::new(passes)), operation)
+        .await
+}

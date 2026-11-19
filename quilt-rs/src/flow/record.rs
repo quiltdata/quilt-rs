@@ -220,6 +220,7 @@ pub async fn record(
     for row in rows {
         let content = files.get(&row.logical_key);
         placed.push(place_row(store, storage, row, content).await?);
+        crate::failpoint::stop("record.object")?;
     }
     placed.sort_by(|a, b| a.logical_key.cmp(&b.logical_key));
 

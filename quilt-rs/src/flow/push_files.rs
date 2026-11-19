@@ -148,6 +148,7 @@ pub async fn push_files(
         origin: target.origin.clone(),
     };
     upload_manifest(storage, remote, &manifest_uri, &cache_path).await?;
+    crate::failpoint::stop("push.stored")?;
 
     tag_stored(remote, target, manifest_uri).await
 }
@@ -252,6 +253,7 @@ async fn upload_rows(
             upload_row(remote, host_config, target.handle.clone(), row).await?
         };
         uploaded_rows.push(uploaded);
+        crate::failpoint::stop("push.object")?;
     }
     Ok(uploaded_rows)
 }

@@ -128,38 +128,9 @@ pub async fn read_all(
     writer: &Writer,
 ) -> Result<DataspaceRead, ReadAllError> {
     let contract = Contract::read(storage, dataspace).await?;
-    let (mut lock, writer) = match Lock::read(storage, &contract).await? {
-        Some(mut lock) => {
-            let local = Writer {
-                local_registry: lock.header.writer.local_registry.clone(),
-                ..writer.clone()
-            };
-            let foreign: Vec<Mismatch> = lock
-                .mismatches(&contract, &local)
-                .into_iter()
-                .filter(|mismatch| *mismatch != Mismatch::DataToml)
-                .collect();
-            if foreign.is_empty() {
-                (lock, local)
-            } else {
-                let unpushed = lock
-                    .packages
-                    .values()
-                    .any(|entry| !entry.commits.is_empty());
-                let mut refused = unpushed;
-                for entry in contract.entries() {
-                    refused = refused || holds_files(storage, &entry.folder).await;
-                }
-                if refused {
-                    return Err(ReadAllError::Mismatch(foreign));
-                }
-                // A fresh checkout, filled here: the lock becomes this one's.
-                lock.header.filled = None;
-                (lock, writer.clone())
-            }
-        }
-        None => (Lock::new(&contract, writer), writer.clone()),
-    };
+    let (mut lock, writer) = usable_lock(storage, &contract, writer)
+        .await?
+        .map_err(ReadAllError::Mismatch)?;
 
     let mut entries = Vec::new();
     for entry in contract.entries() {
@@ -199,6 +170,44 @@ pub async fn read_all(
         lock.write(storage, &contract, &writer).await?;
     }
     Ok(read)
+}
+
+/// The lock beside `contract`, or a new one, and the writer to write it as;
+/// or what in a lock written for another folder, host or user keeps it from
+/// use. See [`read_all`].
+pub(crate) async fn usable_lock(
+    storage: &(impl Storage + Sync),
+    contract: &Contract,
+    writer: &Writer,
+) -> Result<Result<(Lock, Writer), Vec<Mismatch>>, LockError> {
+    let Some(mut lock) = Lock::read(storage, contract).await? else {
+        return Ok(Ok((Lock::new(contract, writer), writer.clone())));
+    };
+    let local = Writer {
+        local_registry: lock.header.writer.local_registry.clone(),
+        ..writer.clone()
+    };
+    let foreign: Vec<Mismatch> = lock
+        .mismatches(contract, &local)
+        .into_iter()
+        .filter(|mismatch| *mismatch != Mismatch::DataToml)
+        .collect();
+    if foreign.is_empty() {
+        return Ok(Ok((lock, local)));
+    }
+    let mut refused = lock
+        .packages
+        .values()
+        .any(|entry| !entry.commits.is_empty());
+    for entry in contract.entries() {
+        refused = refused || holds_files(storage, &entry.folder).await;
+    }
+    if refused {
+        return Ok(Err(foreign));
+    }
+    // A fresh checkout, filled here: the lock becomes this one's.
+    lock.header.filled = None;
+    Ok(Ok((lock, writer.clone())))
 }
 
 /// Reads `entry` against `base`; a working folder that is missing or empty

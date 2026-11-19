@@ -466,7 +466,7 @@ async fn not_found(storage: &(impl Storage + Sync), path: &Path) -> Res<bool> {
 /// empty: no file or link under `paths`, empty folders and what Quilt writes
 /// there aside. A folder that is there and cannot be listed is an error, not
 /// a folder gone.
-async fn gone(
+pub(crate) async fn gone(
     storage: &(impl Storage + Sync),
     folder: &Path,
     base: &Manifest,
@@ -718,6 +718,7 @@ async fn apply(
                 Err(err) => return Err(crate::Error::from(err).into()),
             }
         }
+        crate::failpoint::stop("read.file")?;
     }
     Ok(true)
 }
