@@ -533,14 +533,14 @@ impl LocalRegistry {
         Ok(LocalPublish::Advanced)
     }
 
-    /// Syncs `folder` and each folder above it up to `registries/`: the
-    /// registry holds the only copy, so folders any publish may have made,
-    /// this one or another package's, must survive a crash too.
+    /// Syncs `folder` and each folder above it up to the Domain's root: the
+    /// registry holds the only copy, so folders any write may have made,
+    /// this one or another's, must survive a crash too.
     async fn sync_up_from(&self, storage: &(impl Storage + Sync), folder: &Path) {
-        let registries = self.dir.parent().unwrap_or(&self.dir);
+        let root = self.dir.ancestors().nth(2).unwrap_or(&self.dir);
         for folder in folder
             .ancestors()
-            .take_while(|folder| folder.starts_with(registries))
+            .take_while(|folder| folder.starts_with(root))
         {
             storage.sync_dir(folder).await;
         }
@@ -562,7 +562,9 @@ impl LocalRegistry {
         let body = ByteStream::from(serde_json::to_vec(names)?);
         storage
             .write_byte_stream(self.dir.join(NAME_FILE), body)
-            .await
+            .await?;
+        self.sync_up_from(storage, &self.dir).await;
+        Ok(())
     }
 }
 
