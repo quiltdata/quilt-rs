@@ -1008,7 +1008,7 @@ async fn the_files_message_is_the_revisions() -> Res {
         b"message = \"the file's\"\n[metadata.package]\n",
     )
     .await?;
-    let alone = publish(storage, &remote, &entry(entry_text), Some("given")).await?;
+    let alone = publish(storage, &remote, &entry(entry_text), Some("the file's")).await?;
     assert_eq!(
         alone,
         Published::Unchanged {

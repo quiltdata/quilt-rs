@@ -173,6 +173,7 @@ pub async fn publish(
             &files,
             &metadata,
             header.clone(),
+            message.is_none() && metadata.message().is_some(),
             &mut target,
         ))
         .await;
@@ -196,7 +197,9 @@ pub async fn publish(
     }
 }
 
-/// One publish of `files` on the `latest` read now.
+/// One publish of `files` on the `latest` read now. The message counts as a
+/// change only where the metadata file gave it, `with_message`.
+#[allow(clippy::too_many_arguments)]
 async fn attempt_on_latest(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
@@ -204,6 +207,7 @@ async fn attempt_on_latest(
     files: &[(LogicalKey, PathBuf)],
     metadata: &MetadataFile,
     header: ManifestHeader,
+    with_message: bool,
     target: &mut PushTarget,
 ) -> Result<Published, EntryError> {
     let whole = entry.access == Access::Replace;
@@ -234,8 +238,7 @@ async fn attempt_on_latest(
     }
     metadata.apply(&mut manifest, &entry.paths);
     target.parent = seen.hash().map(str::to_string);
-    let file_message = metadata.message() == Some(&manifest.header.message);
-    if same_as(&manifest, base.as_ref(), file_message) {
+    if same_as(&manifest, base.as_ref(), with_message) {
         info!("Nothing to publish from {}", entry.folder.display());
         return Ok(Published::Unchanged {
             latest: target.parent.clone(),
