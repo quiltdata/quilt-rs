@@ -119,6 +119,14 @@ folder:
   lock names, where that can still be read whole. A lock written for another
   `data.toml` is used; one written for another folder, host or user only while
   no working folder holds files and it names no unpushed commits.
+- `dataspace::publish::publish` publishes a `data.toml` entry under `write`
+  or `replace` from its working folder, against the `latest` read just before.
+  `write` lays the files under the entry's paths over `latest` and keeps its
+  other keys, composing again on a `latest` that moves meanwhile; `replace`
+  publishes the folder as the whole package. `package-metadata.json` sets the
+  metadata, and with no such file the metadata is kept. A revision that does
+  not become `latest` is still stored, and `Published::Stored` carries its
+  hash.
 
 ## Hash Algorithms
 
