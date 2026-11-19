@@ -488,6 +488,23 @@ async fn a_working_folder_gone_from_the_dataspace_is_filled_at_the_locks_revisio
     Ok(())
 }
 
+#[test(tokio::test)]
+async fn a_folder_whose_locked_revision_is_gone_is_filled_at_the_contracts() -> Res {
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    publish(&remote, "team/raw", FIRST, &[("a.txt", b"alpha")]).await?;
+    let root = dataspace(&storage, "read = [\"team/raw\"]\n")?;
+    lock_from(&storage, &root, &writer(), at(SECOND)).await?;
+
+    let read = read_all(&storage, &remote, &root, &writer()).await?;
+
+    assert!(read.completed());
+    assert_eq!(std::fs::read(root.join("team/raw/a.txt"))?, b"alpha");
+    let lock = lock(&storage, &root).await?.expect("a lock");
+    assert_eq!(base(&lock, "team/raw").as_deref(), Some(FIRST));
+    Ok(())
+}
+
 #[cfg(unix)]
 #[test(tokio::test)]
 async fn a_lock_from_another_host_is_refused_while_a_working_folder_cannot_be_listed() -> Res {

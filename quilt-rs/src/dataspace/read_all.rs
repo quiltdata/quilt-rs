@@ -94,7 +94,8 @@ impl From<LockError> for ReadAllError {
 /// working folder. Nothing advances `latest`.
 ///
 /// A working folder that is missing or empty is filled at the revision the
-/// lock names, unless the contract names one; the next read moves it on.
+/// lock names, unless the contract names one or that revision can no longer
+/// be read whole; the next read moves it on.
 ///
 /// The lock is then written where any read completed: each such package takes
 /// the revision as its base, and `filled` is set once every entry that should
@@ -158,16 +159,26 @@ pub async fn read_all(
             EntryRead::Unpushed
         } else {
             let base = locked.map(|locked| locked.base.as_str());
-            let mut entry = entry.clone();
+            let mut outcome = None;
             if entry.revision == RevisionPointer::Tag(Tag::Latest)
                 && let Some(base) = base
                 && !holds_files(storage, &entry.folder).await
             {
-                entry.revision = RevisionPointer::Hash(base.to_string());
+                let mut refill = entry.clone();
+                refill.revision = RevisionPointer::Hash(base.to_string());
+                // A revision that can no longer be read whole gives way to
+                // the contract's.
+                outcome = read(storage, remote, &refill, Some(base))
+                    .await
+                    .ok()
+                    .filter(|outcome| outcome.lock_base().is_some());
             }
-            match read(storage, remote, &entry, base).await {
-                Ok(outcome) => EntryRead::Ran(outcome),
-                Err(err) => EntryRead::Failed(err),
+            match outcome {
+                Some(outcome) => EntryRead::Ran(outcome),
+                None => match read(storage, remote, entry, base).await {
+                    Ok(outcome) => EntryRead::Ran(outcome),
+                    Err(err) => EntryRead::Failed(err),
+                },
             }
         };
         if let EntryRead::Ran(outcome) = &outcome
