@@ -401,14 +401,24 @@ mod quilt3_bucket {
             let name = entry.file_name().to_string_lossy().into_owned();
             pointers.insert(name, tokio::fs::read(entry.path()).await?);
         }
-        let hashes: std::collections::BTreeSet<_> = pointers
+        let mut hashes = std::collections::BTreeSet::new();
+        for (name, body) in pointers
             .iter()
             .filter(|(name, _)| name.as_str() != "latest")
-            .map(|(name, body)| {
-                assert!(name.bytes().all(|b| b.is_ascii_digit()), "pointer {name}");
-                String::from_utf8(body.clone()).expect("a pointer is text")
-            })
-            .collect();
+        {
+            let hash = String::from_utf8(body.clone()).expect("a pointer is text");
+            let seconds: i64 = name.parse().unwrap_or_else(|_| panic!("pointer {name}"));
+            if hash == local {
+                // Ours was named just now; a name in milliseconds would be
+                // about a thousand times too large.
+                let now = chrono::Utc::now().timestamp();
+                assert!(
+                    (now - seconds).abs() < 3600,
+                    "pointer {name} is not now in seconds"
+                );
+            }
+            hashes.insert(hash);
+        }
         let expected: std::collections::BTreeSet<_> = [moved.v1.clone(), moved.v2.clone(), local]
             .into_iter()
             .collect();
