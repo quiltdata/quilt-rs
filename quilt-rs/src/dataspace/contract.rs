@@ -69,6 +69,25 @@ impl fmt::Display for Access {
     }
 }
 
+/// The list's name as [`Display`](fmt::Display) writes it.
+impl FromStr for Access {
+    type Err = UnknownAccess;
+
+    fn from_str(text: &str) -> Result<Self, UnknownAccess> {
+        match text {
+            "read" => Ok(Self::Read),
+            "write" => Ok(Self::Write),
+            "replace" => Ok(Self::Replace),
+            "sync" => Ok(Self::Sync),
+            _ => Err(UnknownAccess(text.to_owned())),
+        }
+    }
+}
+
+#[derive(Debug, Error)]
+#[error("{0:?} is not an access: read, write, replace or sync")]
+pub struct UnknownAccess(pub String);
+
 /// Where a package's names, revisions and tags live.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[non_exhaustive]
