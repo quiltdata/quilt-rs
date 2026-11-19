@@ -70,8 +70,9 @@ impl TryFrom<&str> for LocalPackageUri {
         // The URL parser drops an empty user or port, and tabs and newlines,
         // so the name it reads must be the one written.
         let written = input
-            .split_once("://")
-            .and_then(|(_, rest)| rest.split(['#', '/', '?']).next())
+            .split_once(':')
+            .and_then(|(_, rest)| rest.strip_prefix("//"))
+            .and_then(|rest| rest.split(['#', '/', '?']).next())
             .unwrap_or_default();
         if written != parsed_url.host_str().unwrap_or_default() {
             return Err(UriError::Package(format!(
@@ -184,6 +185,7 @@ mod tests {
             "quilt+local://na\nme#package=me/a",
             "quilt+local:/\t/name#package=me/a",
             "quilt+local:\n//name#package=me/a",
+            "quilt+local:\t//name#package=me/a&path=x://name",
         ] {
             assert!(
                 LocalPackageUri::try_from(input).is_err(),
