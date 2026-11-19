@@ -540,16 +540,22 @@ impl LocalRegistry {
     /// Syncs the objects the revision `hash` names in `objects/`, which a
     /// commit files without syncing, before `latest` names them.
     async fn sync_objects(&self, storage: &(impl Storage + Sync), hash: &str) -> Res {
+        // Windows syncs only a file opened for writing, and its folders not
+        // at all, as `Storage::sync_dir` does not.
+        if !cfg!(unix) {
+            return Ok(());
+        }
         let objects = self.objects_dir();
-        for row in Manifest::from_path(storage, &self.revision(hash))
+        let names: BTreeSet<String> = Manifest::from_path(storage, &self.revision(hash))
             .await?
             .rows
-        {
-            for name in row_objects(&row.hash, &row.physical_key) {
-                let object = objects.join(name);
-                if storage.exists(&object).await {
-                    storage.open_file(&object).await?.sync_all().await?;
-                }
+            .iter()
+            .flat_map(|row| row_objects(&row.hash, &row.physical_key))
+            .collect();
+        for name in names {
+            let object = objects.join(name);
+            if storage.exists(&object).await {
+                storage.open_file(&object).await?.sync_all().await?;
             }
         }
         storage.sync_dir(&objects).await;
