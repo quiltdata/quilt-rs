@@ -40,12 +40,16 @@ use quilt_uri::S3PackageUri;
 const STAGING_PREFIX: &str = ".quilt-read-";
 
 /// Whether `name`, at a working folder's root, is a staging folder or a
-/// metadata file's temporary file that a read leaves while it runs.
+/// temporary file that a read leaves while it runs: the metadata file's, or
+/// the `.tmp-<uuid>` the storage writes it through.
 pub(crate) fn left_by_read(name: &str) -> bool {
     name.starts_with(STAGING_PREFIX)
         || name
             .strip_prefix(METADATA_FILE)
             .is_some_and(|rest| rest.starts_with(".tmp-"))
+        || name
+            .strip_prefix(".tmp-")
+            .is_some_and(|rest| uuid::Uuid::parse_str(rest).is_ok())
 }
 
 /// How a [`read`] ended.

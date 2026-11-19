@@ -934,6 +934,12 @@ async fn what_an_interrupted_read_leaves_is_not_published() -> Res {
     write(storage, "a.txt", b"a").await?;
     write(storage, ".quilt-read-0123/a.txt", b"staged").await?;
     write(storage, "package-metadata.json.tmp-0123", b"{}").await?;
+    write(
+        storage,
+        ".tmp-67e55044-10b1-426f-9247-bb680e5fe0c8",
+        b"{\"partial",
+    )
+    .await?;
 
     let outcome = publish(storage, &remote, &entry("replace = [\"team/raw\"]"), None).await?;
 
