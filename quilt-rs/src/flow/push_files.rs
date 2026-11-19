@@ -965,6 +965,14 @@ mod tests {
                 .manifest_hashes_with_prefix(host, bucket, prefix)
                 .await
         }
+
+        async fn latest_hashes(
+            &self,
+            host: Option<&Host>,
+            bucket: &str,
+        ) -> Res<Vec<(quilt_uri::Namespace, String)>> {
+            self.inner.latest_hashes(host, bucket).await
+        }
     }
 
     const ENTRIES_CONFIG: &[u8] = b"version: \"1\"\nworkflows:\n  gate:\n    name: Gate\n    entries_schema: entries\nschemas:\n  entries:\n    url: s3://bkt/schemas/entries.json\n";

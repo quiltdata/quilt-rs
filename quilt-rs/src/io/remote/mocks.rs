@@ -11,6 +11,7 @@ use crate::Error;
 use crate::error::FsError;
 use crate::error::S3Error;
 use crate::error::S3ErrorKind;
+use crate::flow::list_dirs;
 use crate::io::remote::ConditionalPut;
 use crate::io::remote::HostConfig;
 use crate::io::remote::RemoteObjectStream;
@@ -22,6 +23,7 @@ use quilt_uri::Host;
 use quilt_uri::Namespace;
 use quilt_uri::S3Uri;
 use quilt_uri::is_top_hash;
+use quilt_uri::paths::TAGS_PREFIX;
 use quilt_uri::paths::get_manifest_key;
 use quilt_uri::paths::tag_key;
 
@@ -365,6 +367,46 @@ impl Remote for MockRemote {
             }
         }
         Ok(hashes)
+    }
+
+    /// Each `<bucket>/.quilt/named_packages/<owner>/<name>/latest` that
+    /// `put_object` stored, with the top hash it holds. One that
+    /// [`MockRemote::deny_reads`] refuses fails the listing.
+    async fn latest_hashes(
+        &self,
+        _host: Option<&Host>,
+        bucket: &str,
+    ) -> Res<Vec<(Namespace, String)>> {
+        let root = format!("s3://{bucket}/{TAGS_PREFIX}");
+        log::debug!("Mocking {root} latest listing");
+        let mut latest = Vec::new();
+        for owner in list_dirs(&self.storage, Path::new(&storage_path(&root))).await? {
+            for package in list_dirs(&self.storage, &owner).await? {
+                let name = |dir: &Path| {
+                    dir.file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .into_owned()
+                };
+                let Ok(namespace) =
+                    Namespace::try_from(format!("{}/{}", name(&owner), name(&package)))
+                else {
+                    continue;
+                };
+                let pointer = format!("s3://{bucket}/{}", tag_key(&namespace, "latest"));
+                if let Some(err) = self.denied(&pointer) {
+                    return Err(err);
+                }
+                let Some(bytes) = self.current(&pointer).await? else {
+                    continue;
+                };
+                let hash = String::from_utf8_lossy(&bytes).into_owned();
+                if is_top_hash(&hash) {
+                    latest.push((namespace, hash));
+                }
+            }
+        }
+        Ok(latest)
     }
 }
 

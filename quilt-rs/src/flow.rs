@@ -54,6 +54,7 @@ pub use gc::format_bytes;
 pub use gc::gc;
 pub use gc::gc_estimate;
 pub(crate) use gc::gc_under;
+pub(crate) use gc::list_dirs;
 pub use gc::measure_storage;
 pub(crate) use gc::package_objects;
 pub(crate) use gc::prune;

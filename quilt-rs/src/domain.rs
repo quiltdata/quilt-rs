@@ -5,14 +5,23 @@
 //! `.quilt/` ([`DomainPaths`](crate::paths::DomainPaths)); nothing moves here
 //! until existing state is imported.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::path::PathBuf;
 
+use aws_sdk_s3::primitives::ByteStream;
+
 use crate::Res;
 use crate::flow::PackageStore;
+use crate::flow::list_dirs;
+use crate::io::remote::Remote;
+use crate::io::storage::Storage;
+use crate::io::storage::StorageExt;
+use quilt_uri::Host;
 use quilt_uri::Namespace;
 use quilt_uri::UriError;
 use quilt_uri::check_bucket;
+use quilt_uri::is_top_hash;
 
 /// The Domain's folder name in the OS's local data folder.
 pub const DOMAIN_DIR_NAME: &str = "bio.quilt.dataspace";
@@ -126,6 +135,96 @@ impl RegistryStore {
     pub fn package_lock(&self, namespace: &Namespace) -> PathBuf {
         package_path(&self.dir.join(LOCKS_DIR), namespace, ".lock")
     }
+
+    /// The hash the latest index holds for `namespace`, or `None` when it
+    /// holds none: a cache that is missing or holds no top hash is unknown,
+    /// not an error.
+    pub async fn read_latest(
+        &self,
+        storage: &(impl Storage + Sync),
+        namespace: &Namespace,
+    ) -> Res<Option<String>> {
+        let bytes = match storage.read_bytes(self.latest(namespace)).await {
+            Ok(bytes) => bytes,
+            Err(err) if err.is_not_found() => return Ok(None),
+            Err(err) => return Err(err),
+        };
+        let hash = String::from_utf8_lossy(&bytes).trim().to_string();
+        Ok(is_top_hash(&hash).then_some(hash))
+    }
+
+    /// Records in the latest index that `latest` names `hash` for
+    /// `namespace`.
+    pub async fn write_latest(
+        &self,
+        storage: &(impl Storage + Sync),
+        namespace: &Namespace,
+        hash: &str,
+    ) -> Res {
+        let path = self.latest(namespace);
+        if let Some(owner) = path.parent() {
+            storage.create_dir_all(owner).await?;
+        }
+        storage
+            .write_byte_stream(&path, ByteStream::from(hash.as_bytes().to_vec()))
+            .await
+    }
+
+    /// Every package the latest index holds a hash for.
+    pub async fn latest_index(
+        &self,
+        storage: &(impl Storage + Sync),
+    ) -> Res<BTreeMap<Namespace, String>> {
+        let mut index = BTreeMap::new();
+        for owner_dir in list_dirs(storage, &self.dir.join(LATEST_DIR)).await? {
+            let owner = owner_dir.file_name().unwrap_or_default().to_string_lossy();
+            let mut entries = storage.read_dir(&owner_dir).await?;
+            while let Some(entry) = entries.next_entry().await? {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                // A package may be named `.foo`; a write's temp file may not.
+                if name.starts_with(".tmp-") || !entry.file_type().await?.is_file() {
+                    continue;
+                }
+                let Ok(namespace) = Namespace::try_from(format!("{owner}/{name}")) else {
+                    continue;
+                };
+                if let Some(hash) = self.read_latest(storage, &namespace).await? {
+                    index.insert(namespace, hash);
+                }
+            }
+        }
+        Ok(index)
+    }
+
+    /// Replaces the latest index with what the bucket's registry lists now,
+    /// and returns it: a package the registry no longer lists leaves the
+    /// index. Nothing changes if the listing fails.
+    pub async fn refresh_latest_index(
+        &self,
+        storage: &(impl Storage + Sync),
+        remote: &impl Remote,
+        host: Option<&Host>,
+    ) -> Res<BTreeMap<Namespace, String>> {
+        let listed: BTreeMap<Namespace, String> = remote
+            .latest_hashes(host, &self.bucket)
+            .await?
+            .into_iter()
+            .collect();
+        let known = self.latest_index(storage).await?;
+        for (namespace, hash) in &listed {
+            if known.get(namespace) != Some(hash) {
+                self.write_latest(storage, namespace, hash).await?;
+            }
+        }
+        for namespace in known.keys().filter(|known| !listed.contains_key(*known)) {
+            if let Err(err) = storage.remove_file(self.latest(namespace)).await
+                && err.kind() != std::io::ErrorKind::NotFound
+            {
+                return Err(err.into());
+            }
+        }
+        Ok(listed)
+    }
 }
 
 impl PackageStore for RegistryStore {
@@ -148,8 +247,6 @@ fn package_path(dir: &Path, namespace: &Namespace, suffix: &str) -> PathBuf {
 mod tests {
     use super::*;
 
-    use std::collections::BTreeMap;
-
     use bytes::Bytes;
     use test_log::test;
 
@@ -163,6 +260,107 @@ mod tests {
     use crate::manifest::Manifest;
     use crate::manifest::ManifestRow;
     use crate::object_hash::ObjectHash;
+    use quilt_uri::S3Uri;
+    use quilt_uri::paths::tag_key;
+
+    fn hash(n: u8) -> String {
+        format!("{n:02x}").repeat(32)
+    }
+
+    /// Sets the bucket's `latest` for `namespace` to `contents`.
+    async fn tag(remote: &MockRemote, bucket: &str, namespace: &Namespace, contents: &str) -> Res {
+        let uri = S3Uri {
+            bucket: bucket.to_string(),
+            key: tag_key(namespace, "latest"),
+            version: None,
+        };
+        remote
+            .put_object(None, &uri, contents.as_bytes().to_vec())
+            .await
+    }
+
+    /// The index holds what the registry lists after a refresh: a moved
+    /// `latest` is updated, new packages added, a dotted name among them, and
+    /// a package the registry no longer has dropped.
+    #[test(tokio::test)]
+    async fn a_refreshed_index_holds_what_the_registry_lists() -> Res {
+        let dir = tempfile::tempdir()?;
+        let store = DomainRoot::new(dir.path()).registry("bucket")?;
+        let storage = LocalStorage::new();
+        let remote = MockRemote::default();
+        let (moved, added, dotted, gone) = (
+            Namespace::from(("acme", "moved")),
+            Namespace::from(("acme", "added")),
+            Namespace::from(("acme", ".dotted")),
+            Namespace::from(("other", "gone")),
+        );
+        store.write_latest(&storage, &moved, &hash(1)).await?;
+        store.write_latest(&storage, &gone, &hash(2)).await?;
+        tag(&remote, "bucket", &moved, &hash(3)).await?;
+        tag(&remote, "bucket", &added, &hash(4)).await?;
+        tag(&remote, "bucket", &dotted, &hash(5)).await?;
+        tag(&remote, "other-bucket", &gone, &hash(2)).await?;
+
+        let refreshed = store.refresh_latest_index(&storage, &remote, None).await?;
+
+        let expected = BTreeMap::from([
+            (moved.clone(), hash(3)),
+            (added, hash(4)),
+            (dotted, hash(5)),
+        ]);
+        assert_eq!(refreshed, expected);
+        assert_eq!(store.latest_index(&storage).await?, expected);
+        assert_eq!(store.read_latest(&storage, &moved).await?, Some(hash(3)));
+        assert_eq!(store.read_latest(&storage, &gone).await?, None);
+        Ok(())
+    }
+
+    /// A listing that fails partway changes nothing: the index is not left
+    /// holding part of the registry.
+    #[test(tokio::test)]
+    async fn a_failed_listing_leaves_the_index_alone() -> Res {
+        let dir = tempfile::tempdir()?;
+        let store = DomainRoot::new(dir.path()).registry("bucket")?;
+        let storage = LocalStorage::new();
+        let remote = MockRemote::default();
+        let (kept, listed) = (
+            Namespace::from(("acme", "kept")),
+            Namespace::from(("acme", "listed")),
+        );
+        store.write_latest(&storage, &kept, &hash(1)).await?;
+        tag(&remote, "bucket", &listed, &hash(2)).await?;
+        let unreadable = Namespace::from(("zzz", "unreadable"));
+        tag(&remote, "bucket", &unreadable, &hash(3)).await?;
+        remote.deny_reads(&format!("s3://bucket/{}", tag_key(&unreadable, "latest")));
+
+        assert!(
+            store
+                .refresh_latest_index(&storage, &remote, None)
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            store.latest_index(&storage).await?,
+            BTreeMap::from([(kept, hash(1))])
+        );
+        Ok(())
+    }
+
+    /// An index file holding anything but a top hash says nothing.
+    #[test(tokio::test)]
+    async fn an_index_file_holding_no_top_hash_is_unknown() -> Res {
+        let dir = tempfile::tempdir()?;
+        let store = DomainRoot::new(dir.path()).registry("bucket")?;
+        let storage = LocalStorage::new();
+        let namespace = Namespace::from(("acme", "demo"));
+        store
+            .write_latest(&storage, &namespace, "not a hash")
+            .await?;
+
+        assert_eq!(store.read_latest(&storage, &namespace).await?, None);
+        assert_eq!(store.latest_index(&storage).await?, BTreeMap::new());
+        Ok(())
+    }
 
     /// The layout quilt-specs#299 rules for a Package Store, structural
     /// because the layout is the contract the import and other clients read.
