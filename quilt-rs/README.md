@@ -113,6 +113,12 @@ folder:
   package's metadata as `package-metadata.json`. A file unchanged since the
   base the lock names takes the revision's version, and a local change to a
   file the revision also changed blocks the read before anything is written.
+- `dataspace::read_all::read_all` reads every `read` entry of a dataspace,
+  then writes `data.lock.toml`, moving a package's base only where its read
+  completed. A missing or empty working folder is filled at the revision the
+  lock names, where that can still be read whole. A lock written for another
+  `data.toml` is used; one written for another folder, host or user only while
+  no working folder holds files and it names no unpushed commits.
 
 ## Hash Algorithms
 
