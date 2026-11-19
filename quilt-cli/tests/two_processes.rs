@@ -205,15 +205,18 @@ fn two_processes_committing_one_package_keep_both_commits() {
         &quilt(&domain, &["--json", "log", "--namespace", "test/pkg"]).stdout,
     )
     .expect("log's JSON");
-    let history: Vec<&str> = log["revisions"]
+    let mut history: Vec<&str> = log["revisions"]
         .as_array()
         .expect("revisions")
         .iter()
         .map(|revision| revision["message"].as_str().expect("a message"))
         .collect();
+    // The log orders by file time, which two commits a few milliseconds apart
+    // can share; the lineage above already checks which came first.
+    history[..2].sort_unstable();
     assert_eq!(
         history,
-        [messages[last], messages[first], "Created package"],
+        ["one", "two", "Created package"],
         "the history keeps both commits"
     );
 }
