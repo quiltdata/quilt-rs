@@ -111,7 +111,7 @@ impl Registry {
 }
 
 /// What ends the folder of a local registry's packages.
-const LOCAL_SUFFIX: &str = "@local";
+pub(crate) const LOCAL_SUFFIX: &str = "@local";
 
 /// A package by its registry and name, without revision, path or catalog.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]

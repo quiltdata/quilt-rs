@@ -20,6 +20,7 @@ use tokio::sync::Mutex;
 use tracing::info;
 use tracing::warn;
 
+use crate::dataspace::contract::LOCAL_SUFFIX;
 use crate::dataspace::contract::Registry;
 use crate::file_stamp::FileId;
 use crate::file_stamp::FileStamp;
@@ -120,8 +121,15 @@ impl FolderKey {
 
     /// The key [`Self::columns`] gave, or `None` for columns no key gives.
     pub(crate) fn from_columns(registry: String, namespace: &str, folder: &[u8]) -> Option<Self> {
+        let registry = if registry.is_empty() {
+            None
+        } else if let Some(name) = registry.strip_suffix(LOCAL_SUFFIX) {
+            Some(Registry::Local(name.to_string()))
+        } else {
+            Some(Registry::S3(registry))
+        };
         Some(Self {
-            registry: (!registry.is_empty()).then_some(Registry::S3(registry)),
+            registry,
             package: Namespace::try_from(namespace).ok()?,
             folder: os_path(folder)?,
         })
@@ -791,6 +799,24 @@ mod tests {
         };
         assert_eq!(local.columns().0, "lab-mac@local");
         assert!(quilt_uri::check_bucket(&local.columns().0).is_err());
+    }
+
+    /// `queue.db` is never rebuilt, so every key reads back from its
+    /// columns as it was written: a bucket's, a local registry's, and none.
+    #[test]
+    fn a_key_reads_back_from_its_columns() {
+        for registry in [
+            Some(Registry::S3("bucket-a".to_string())),
+            Some(Registry::Local("lab-mac".to_string())),
+            None,
+        ] {
+            let written = FolderKey { registry, ..key() };
+            let (registry, namespace, folder) = written.columns();
+            assert_eq!(
+                FolderKey::from_columns(registry, &namespace, &folder),
+                Some(written)
+            );
+        }
     }
 
     #[test(tokio::test)]
