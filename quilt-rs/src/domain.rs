@@ -511,17 +511,21 @@ impl LocalRegistry {
         }
         let _held = storage.lock_exclusive(self.package_lock(namespace)).await?;
         let latest = self.read_latest(storage, namespace).await?;
-        // Written even over a revision of the same hash, which leaves out
-        // folder metadata, so the one published is the one committed.
-        let manifest = storage
-            .read_bytes(self.installed_manifest(namespace, hash))
-            .await?;
-        storage
-            .write_byte_stream(self.revision(hash), ByteStream::from(manifest))
-            .await?;
+        let from_base = latest.as_deref() == base;
+        // A publish from the base writes even over a revision of the same
+        // hash, which leaves out folder metadata, so the one published is
+        // the one committed; any other only keeps a revision not yet stored.
+        if from_base || !storage.exists(self.revision(hash)).await {
+            let manifest = storage
+                .read_bytes(self.installed_manifest(namespace, hash))
+                .await?;
+            storage
+                .write_byte_stream(self.revision(hash), ByteStream::from(manifest))
+                .await?;
+        }
 
         // `hash` already being `latest` is a publish that landed before.
-        if latest.as_deref() != base && latest.as_deref() != Some(hash) {
+        if !from_base && latest.as_deref() != Some(hash) {
             self.sync_up_from(storage, &self.dir).await;
             return Ok(LocalPublish::Diverged(latest));
         }
@@ -1228,8 +1232,9 @@ mod tests {
         Ok(())
     }
 
-    /// A revision published again is written again: its hash leaves out
-    /// folder metadata, so the copy committed last is the one kept.
+    /// A revision published again from the base is written again: its hash
+    /// leaves out folder metadata, so the copy committed last is the one
+    /// kept.
     #[test(tokio::test)]
     async fn a_revision_published_again_is_rewritten() -> Res {
         let dir = tempfile::tempdir()?;
@@ -1245,6 +1250,14 @@ mod tests {
             .publish(&storage, &namespace, Some(&hash), &hash)
             .await?;
 
+        assert_eq!(
+            std::fs::read(local.revision(&hash))?,
+            b"the same hash, other folder metadata"
+        );
+
+        // One not from the base leaves a stored revision as it is.
+        std::fs::write(&recommitted, b"from a stale base")?;
+        local.publish(&storage, &namespace, None, &hash).await?;
         assert_eq!(
             std::fs::read(local.revision(&hash))?,
             b"the same hash, other folder metadata"
