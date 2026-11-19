@@ -94,8 +94,8 @@ pub struct PushResult {
     /// had already published under this name.
     pub certified_latest: bool,
     /// Whether "latest" was written without the base check, because the role
-    /// may not read the tag: another writer's revision may have been
-    /// overwritten.
+    /// may not read the tag or the store gave no `ETag`: another writer's
+    /// revision may have been overwritten.
     pub latest_unchecked: bool,
 }
 

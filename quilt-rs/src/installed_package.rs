@@ -59,8 +59,9 @@ pub struct PushOutcome {
     /// already published under this name.
     pub certified_latest: bool,
     /// Whether `latest` was written without the base check, because the role
-    /// may not read the tag. Another writer's revision may have been
-    /// overwritten; it is still stored under its own hash.
+    /// may not read the tag or the store gave no `ETag`. Another writer's
+    /// revision may have been overwritten; it is still stored under its own
+    /// hash.
     pub latest_unchecked: bool,
 }
 

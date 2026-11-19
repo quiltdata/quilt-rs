@@ -182,8 +182,8 @@ pub async fn read_latest(
 pub enum LatestAdvance {
     /// `latest` names the revision, and was unchanged since it was read.
     Checked,
-    /// `latest` names the revision, written without the check because the
-    /// role may not read the tag. Another writer may have moved it since.
+    /// `latest` names the revision, written without the check because it
+    /// could not run. Another writer may have moved it since.
     Unchecked,
     /// `latest` moved since it was read, so it was left as it is.
     Moved {

@@ -44,7 +44,7 @@ impl std::fmt::Display for Output {
         } else if outcome.latest_unchecked {
             write!(
                 f,
-                "\nWarning: latest was updated without checking it, because this role cannot read it"
+                "\nWarning: latest was updated without checking whether another publisher moved it"
             )?;
         }
         Ok(())
@@ -762,5 +762,28 @@ mod tests {
             output.to_json().to_string(),
             r#"{"hash":"0123456789abcdef","manifest_uri":"quilt+s3://bucket#package=demo/sales@0123456789abcdef","certified_latest":false,"latest_unchecked":false}"#
         );
+    }
+
+    #[test]
+    fn an_unchecked_latest_is_warned_about() {
+        let output = Output {
+            outcome: Some(PushOutcome {
+                manifest_uri: quilt_uri::ManifestUri {
+                    origin: None,
+                    bucket: "bucket".to_string(),
+                    namespace: ("demo", "sales").into(),
+                    hash: "0123456789abcdef".to_string(),
+                },
+                certified_latest: true,
+                latest_unchecked: true,
+            }),
+        };
+
+        let text = output.to_string();
+        assert!(
+            text.contains("Warning: latest was updated without checking"),
+            "{text}"
+        );
+        assert_eq!(output.to_json()["latest_unchecked"], true);
     }
 }
