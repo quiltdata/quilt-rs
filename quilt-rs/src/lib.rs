@@ -17,6 +17,7 @@ pub mod flow;
 
 pub mod auth;
 pub mod checksum;
+pub mod dataspace;
 pub mod error;
 mod failpoint;
 pub mod file_stamp;

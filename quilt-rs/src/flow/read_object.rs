@@ -673,6 +673,7 @@ mod tests {
             Ok(crate::io::remote::RemoteObjectStream {
                 body: ByteStream::new(SdkBody::from_body_1_x(body)),
                 uri: uri.clone(),
+                etag: None,
             })
         }
 
@@ -687,6 +688,18 @@ mod tests {
             contents: impl Into<ByteStream>,
         ) -> Res {
             self.inner.put_object(host, uri, contents).await
+        }
+
+        async fn put_object_if(
+            &self,
+            host: Option<&Host>,
+            uri: &S3Uri,
+            contents: impl Into<ByteStream>,
+            condition: &crate::io::remote::WriteCondition,
+        ) -> Res<crate::io::remote::ConditionalPut> {
+            self.inner
+                .put_object_if(host, uri, contents, condition)
+                .await
         }
 
         async fn upload_file(

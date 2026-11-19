@@ -58,6 +58,11 @@ pub struct PushOutcome {
     /// base: someone else pushed in the meantime, or, on a first push, had
     /// already published under this name.
     pub certified_latest: bool,
+    /// Whether `latest` was written without the base check, because the role
+    /// may not read the tag or the store gave no `ETag`. Another writer's
+    /// revision may have been overwritten; it is still stored under its own
+    /// hash.
+    pub latest_unchecked: bool,
 }
 
 /// What a push did: nothing, because there was no pending commit, or the
@@ -1045,6 +1050,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
             flow::PublishOutcome::NothingToPublish => return Ok(PublishOutcome::NothingToPublish),
         };
         let certified_latest = push_result.certified_latest;
+        let latest_unchecked = push_result.latest_unchecked;
         crate::failpoint::hit("flow.push.before-lineage");
         let lineage = self
             .lineage
@@ -1053,6 +1059,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         let push = PushOutcome {
             manifest_uri: lineage.remote()?.clone(),
             certified_latest,
+            latest_unchecked,
         };
         Ok(if committed {
             PublishOutcome::CommittedAndPushed(push)
@@ -1121,6 +1128,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         )
         .await?;
         let certified_latest = result.certified_latest;
+        let latest_unchecked = result.latest_unchecked;
         crate::failpoint::hit("flow.push.before-lineage");
         let lineage = self
             .lineage
@@ -1129,6 +1137,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         let outcome = PushOutcome {
             manifest_uri: lineage.remote()?.clone(),
             certified_latest,
+            latest_unchecked,
         };
         Ok((Pushed::Uploaded(outcome), lineage))
     }

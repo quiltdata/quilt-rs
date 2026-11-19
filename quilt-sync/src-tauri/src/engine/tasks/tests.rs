@@ -100,6 +100,7 @@ fn expect_push_and_reset(
                 origin: Some(fixtures::host()),
             },
             certified_latest,
+            latest_unchecked: false,
         }))
     });
     let reset = Arc::clone(events);
@@ -394,6 +395,7 @@ impl Fixture {
                             origin: Some(fixtures::host()),
                         },
                         certified_latest,
+                        latest_unchecked: false,
                     },
                 ))
             });
@@ -754,6 +756,7 @@ async fn the_sweeps_outcome_that_is_not_latest_is_rebased_onto_it() -> Result<()
         Ok(quilt::PushOutcome {
             manifest_uri: at("r1"),
             certified_latest: true,
+            latest_unchecked: false,
         })
     });
     let pkg = crate::engine::model::mocks::nowhere().create_installed_package(namespace());
@@ -1411,6 +1414,7 @@ fn finishing_model(
                 quilt::PushOutcome {
                     manifest_uri: at("h3"),
                     certified_latest,
+                    latest_unchecked: false,
                 },
             ))
         });
@@ -1794,6 +1798,7 @@ async fn finish_among(fixture: &Fixture, revisions: Revisions) -> Arc<Mutex<Remo
         Ok(quilt::PushOutcome {
             manifest_uri: at(&hash),
             certified_latest,
+            latest_unchecked: false,
         })
     });
 

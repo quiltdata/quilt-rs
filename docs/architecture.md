@@ -292,6 +292,17 @@ resolves `Diverged` against the remote.
 - The push certifies its revision as `latest` when any of: no latest tag
   exists yet, the tag already names the pushed revision, or the caller was
   tracking the tip (`base_hash == latest_hash`, `base_hash` non-empty).
+- **The tag write is conditional on that read.** It carries the `ETag` the
+  read returned (`If-Match`), or requires the tag to be absent
+  (`If-None-Match: *`) when there was none, so a publish that lands between
+  the read and the write is not overwritten: S3 answers 412, and the push
+  keeps its revision, leaves the tag and reports `certified_latest = false`
+  (`Diverged`). When it cannot read which revision `latest` moved to, or
+  finds its own base there, it fails with `PushTagFailed` naming the stored
+  revision and keeps the commit. A role that may write the tag but not read
+  it cannot make the check: the push writes the tag plainly and reports
+  `latest_unchecked = true`. Writers outside quilt-rs, such as an older
+  quilt3 or the catalog, still move `latest` without the check.
 - **A first push respects another writer's `latest`.** A first push has an
   empty `base_hash`, so when the bucket already has a `latest` for the
   name that is another revision, the push uploads but leaves the tag, as

@@ -39,6 +39,7 @@ dirs = "7.0.0"
 getrandom = "0.4"
 gitignores = "4.8"
 hex = "0.4.3"
+hostname = "0.4.2"
 http-body = "1.1.0"
 ignore = "0.4"
 jsonschema = { version = "0.61.0", default-features = false }
@@ -60,6 +61,7 @@ tempfile = "3.27.0"
 thiserror = "2.0.21"
 tokio = { version = "1.54.1", features = ["full"] }
 tokio-stream = "0.1.19"
+toml = "1.1.8"
 tracing = { version = "0.1.44", features = ["log"] }
 tracing-subscriber = "0.3.23"
 url = {version = "2.5.8", features = ["serde"]}

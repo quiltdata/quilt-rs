@@ -356,6 +356,16 @@ impl Remote for ListingRemote {
     ) -> Res {
         unreachable!("only the listing is asked")
     }
+
+    async fn put_object_if(
+        &self,
+        _host: Option<&Host>,
+        _s3_uri: &S3Uri,
+        _contents: impl Into<aws_sdk_s3::primitives::ByteStream>,
+        _condition: &crate::io::remote::WriteCondition,
+    ) -> Res<crate::io::remote::ConditionalPut> {
+        unreachable!("only the listing is asked")
+    }
     async fn upload_file(
         &self,
         _host_config: &crate::io::remote::HostConfig,
