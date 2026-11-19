@@ -505,6 +505,27 @@ async fn a_folder_whose_locked_revision_is_gone_is_filled_at_the_contracts() -> 
     Ok(())
 }
 
+#[test(tokio::test)]
+async fn a_refill_the_bucket_refuses_fails_rather_than_taking_latest() -> Res {
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    publish(&remote, "team/raw", FIRST, &[("a.txt", b"alpha")]).await?;
+    publish(&remote, "team/raw", SECOND, &[("a.txt", b"ALPHA")]).await?;
+    // FIRST's own bytes, which a read at SECOND never fetches.
+    remote.deny_reads(&row("team/raw", "a.txt", b"alpha").physical_key);
+    let root = dataspace(&storage, "read = [\"team/raw\"]\n")?;
+    lock_from(&storage, &root, &writer(), at(FIRST)).await?;
+
+    let read = read_all(&storage, &remote, &root, &writer()).await?;
+
+    assert!(
+        matches!(read.entries[0].1, EntryRead::Failed(_)),
+        "{read:?}"
+    );
+    assert!(!root.join("team/raw/a.txt").exists());
+    Ok(())
+}
+
 #[cfg(unix)]
 #[test(tokio::test)]
 async fn a_lock_from_another_host_is_refused_while_a_working_folder_cannot_be_listed() -> Res {

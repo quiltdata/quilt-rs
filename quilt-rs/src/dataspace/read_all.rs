@@ -149,7 +149,6 @@ pub async fn read_all(
     };
 
     let mut entries = Vec::new();
-    let mut moved = false;
     for entry in contract.entries() {
         if entry.access != Access::Read {
             continue;
@@ -170,13 +169,12 @@ pub async fn read_all(
                 commits: Vec::new(),
             };
             lock.packages.insert(entry_key, entry);
-            moved = true;
         }
         entries.push((entry.clone(), outcome));
     }
 
     let read = DataspaceRead { entries };
-    if moved {
+    if read.entries.iter().any(|(_, read)| read.completed()) {
         // `sync` entries need a Domain, so a domainless read never fills them.
         if lock.header.filled.is_none()
             && read.completed()
@@ -201,20 +199,25 @@ async fn read_entry(
     base: Option<&str>,
 ) -> EntryRead {
     if entry.revision == RevisionPointer::Tag(Tag::Latest)
-        && let Some(base) = base
+        && let Some(locked) = base
         && !holds_files(storage, &entry.folder).await
     {
         let mut refill = entry.clone();
-        refill.revision = RevisionPointer::Hash(base.to_string());
+        refill.revision = RevisionPointer::Hash(locked.to_string());
         // A revision that can no longer be read whole gives way to the
         // contract's.
-        let why = match read(storage, remote, &refill, Some(base)).await {
-            Ok(outcome) if outcome.lock_base().is_some() => return EntryRead::Ran(outcome),
-            Ok(_) => "some of its files are gone".to_string(),
-            Err(err) => err.to_string(),
+        let why = match read(storage, remote, &refill, base).await {
+            Ok(ReadOutcome::Read(report))
+                if !report.skipped.is_empty() || !report.hash_mismatch.is_empty() =>
+            {
+                "some of its files are gone".to_string()
+            }
+            Ok(outcome) => return EntryRead::Ran(outcome),
+            Err(EntryError::Failed(err)) if err.is_not_found() => err.to_string(),
+            Err(err) => return EntryRead::Failed(err),
         };
         warn!(
-            "{} was not refilled at {base}, so it takes the contract's revision: {why}",
+            "{} was not refilled at {locked}, so it takes the contract's revision: {why}",
             entry.folder.display()
         );
     }

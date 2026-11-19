@@ -401,6 +401,7 @@ mod tests {
         let first = Std::from_result(model(domain.path().to_path_buf(), input()).await);
         let again = Std::from_result(model(domain.path().to_path_buf(), input()).await);
 
+        assert!(!first.failed() && !again.failed(), "{first:?} {again:?}");
         let Std::Out(first) = first else {
             panic!("expected a success, got {first:?}");
         };
