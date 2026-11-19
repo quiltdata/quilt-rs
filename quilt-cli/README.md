@@ -45,6 +45,7 @@ cargo install quilt-cli
 | `undo-commit` | Undo the newest commit, before the first push  |
 | `push`      | Upload a local revision to the remote            |
 | `pull`      | Fetch the latest remote revision                 |
+| `read`      | Read a dataspace's `read` entries, with no Domain |
 | `list`      | List installed packages and their commit status  |
 | `log`       | List the revisions this copy has, and why each is kept |
 | `uninstall` | Remove a package; `--prune` also deletes its stored files no other package uses |
@@ -130,6 +131,27 @@ writes nothing for it. The message that follows is the newest revision's only:
 a pull advances to `latest` in one step and may span several revisions.
 When the package is already at `latest`, `pull` prints `Already up to date` and
 exits 0; under `--json` the same shape has `"hash": null` and empty groups.
+
+`read <DATASPACE>` reads the folder's `data.toml` and puts each package it
+lists under `read` in its working folder: the revision's files under the
+entry's paths, and the package's metadata as `package-metadata.json`. It uses
+no Domain; the domain folder supplies only a catalog's login. A file changed
+here is kept, unless the revision changed it too: then that package is blocked,
+nothing of it changes, and the colliding files are listed. Each package read
+whole has its revision recorded in `data.lock.toml`, and `latest` is never
+moved. A working folder that is missing or empty is filled at the revision the
+lock names, unless `data.toml` names one or that revision can no longer be read
+whole, and the next `read` moves it on. A
+lock from another host, user or folder is used only while every working folder
+is empty and it names no unpushed commits; otherwise remove it. A revision
+some of whose files are gone from the bucket, or do not match their hash,
+changes nothing. Packages under `write`, `replace` and `sync` are left alone.
+It exits 1 when any package was not read whole. Under `--json` it prints
+`dataspace`, `completed` and `entries`, each with `package`, `folder`,
+`outcome` (`read`, `refilled`, `incomplete`, `blocked`, `unpushed` or
+`failed`),
+`completed`, `revision`, the `placed`, `removed`, `kept`, `skipped`,
+`hash_mismatch` and `conflicts` lists, and `error`.
 
 `push` with no commit to push prints `Nothing to push` and exits 0; under
 `--json` the same shape has `"hash": null`, `"manifest_uri": null` and

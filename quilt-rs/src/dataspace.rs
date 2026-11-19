@@ -6,6 +6,7 @@ pub mod contract;
 pub mod lock;
 mod metadata;
 pub mod read;
+pub mod read_all;
 
 use std::path::PathBuf;
 

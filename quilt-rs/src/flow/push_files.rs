@@ -388,7 +388,10 @@ mod tests {
         assert_eq!(a.size, 5);
         assert_eq!(
             a.physical_key,
-            "s3://bkt/test/survey/a.txt?versionId=version"
+            format!(
+                "s3://bkt/test/survey/a.txt?versionId={}",
+                crate::io::remote::mocks::version_of(b"hello")
+            )
         );
         let b = stored
             .get_record(std::path::Path::new("data/b.csv"))
@@ -396,7 +399,10 @@ mod tests {
         assert_eq!(b.size, 8);
         assert_eq!(
             b.physical_key,
-            "s3://bkt/test/survey/data/b.csv?versionId=version"
+            format!(
+                "s3://bkt/test/survey/data/b.csv?versionId={}",
+                crate::io::remote::mocks::version_of(b"x,y\n1,2\n")
+            )
         );
         Ok(())
     }

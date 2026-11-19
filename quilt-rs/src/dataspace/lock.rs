@@ -18,6 +18,7 @@ use serde::Serialize;
 use thiserror::Error;
 use toml::value::Datetime;
 
+use crate::dataspace::contract::CONTRACT_FILE;
 use crate::dataspace::contract::Contract;
 use crate::dataspace::contract::PackageKey;
 use crate::io::storage::Storage;
@@ -57,6 +58,11 @@ impl Writer {
             local_registry: local_registry.into(),
         })
     }
+
+    /// [`Writer::here`] with no Domain, so no local registry to name.
+    pub fn without_domain() -> Result<Self, LockError> {
+        Self::here(String::new())
+    }
 }
 
 /// The lock's `[lock]` table, but for its version.
@@ -95,6 +101,19 @@ pub enum Mismatch {
     LocalRegistry,
     Host,
     User,
+}
+
+/// What the lock was written for that is not this one's.
+impl std::fmt::Display for Mismatch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::DataToml => CONTRACT_FILE,
+            Self::Dataspace => "dataspace folder",
+            Self::LocalRegistry => "local registry",
+            Self::Host => "host",
+            Self::User => "user",
+        })
+    }
 }
 
 impl Lock {
