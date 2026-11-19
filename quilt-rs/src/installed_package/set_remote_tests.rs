@@ -200,6 +200,14 @@ impl Remote for BadBucketRemote {
     ) -> Res<Vec<String>> {
         unreachable!("test only exercises verify_bucket")
     }
+
+    async fn latest_hashes(
+        &self,
+        _host: Option<&Host>,
+        _bucket: &str,
+    ) -> Res<Vec<(Namespace, String)>> {
+        unreachable!("test only exercises verify_bucket")
+    }
 }
 
 #[test(tokio::test)]
@@ -1496,6 +1504,14 @@ impl Remote for SignedOutRemote {
         _bucket: &str,
         _prefix: &str,
     ) -> Res<Vec<String>> {
+        unreachable!("not part of the resolution")
+    }
+
+    async fn latest_hashes(
+        &self,
+        _host: Option<&Host>,
+        _bucket: &str,
+    ) -> Res<Vec<(Namespace, String)>> {
         unreachable!("not part of the resolution")
     }
 }

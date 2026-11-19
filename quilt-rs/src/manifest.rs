@@ -28,8 +28,9 @@ use crate::error::ManifestError;
 use crate::io::manifest::RowsStream;
 use crate::io::manifest::StreamRowsChunk;
 use crate::io::storage::ByteStream;
-use crate::manifest::meta_json::Style;
-use crate::manifest::meta_json::write_json;
+pub(crate) use crate::manifest::meta_json::Style;
+pub(crate) use crate::manifest::meta_json::escape_pointer;
+pub(crate) use crate::manifest::meta_json::write_json;
 use crate::object_hash;
 
 /// Header (or first row) in JSONL manifest

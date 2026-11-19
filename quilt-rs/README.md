@@ -85,8 +85,8 @@ length but wrong bytes is not caught.
 
 ## Without a package home
 
-Two calls work from a manifest alone, with no `InstalledPackage`, lineage or
-managed working folder:
+These calls work with no `InstalledPackage`, lineage or managed working
+folder:
 
 - `flow::push_files` uploads rows from files or bytes the caller supplies, and
   publishes the manifest. A row with no hash gets S3's checksum of the host's
@@ -108,6 +108,11 @@ managed working folder:
   between the destination and a target. Fetching is all-or-nothing, but the
   renames into place are not: a failure partway leaves the files already
   placed.
+- `dataspace::read::read` reads a `data.toml` entry under `read` into its
+  working folder: the revision's files under the entry's paths, and the
+  package's metadata as `package-metadata.json`. A file unchanged since the
+  base the lock names takes the revision's version, and a local change to a
+  file the revision also changed blocks the read before anything is written.
 
 ## Hash Algorithms
 

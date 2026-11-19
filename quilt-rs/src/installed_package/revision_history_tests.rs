@@ -398,6 +398,14 @@ impl Remote for ListingRemote {
     ) -> Res<Vec<String>> {
         unreachable!("only the listing is asked")
     }
+
+    async fn latest_hashes(
+        &self,
+        _host: Option<&Host>,
+        _bucket: &str,
+    ) -> Res<Vec<(Namespace, String)>> {
+        unreachable!("only the listing is asked")
+    }
 }
 
 /// Unusable AWS credentials on this computer fail a catalog-less listing
