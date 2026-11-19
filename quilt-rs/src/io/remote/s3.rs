@@ -53,10 +53,40 @@ use crate::io::remote::RemoteObjectStream;
 use crate::io::remote::WriteCondition;
 use quilt_uri::Tag;
 use quilt_uri::is_top_hash;
+use quilt_uri::paths::TAGS_PREFIX;
 use quilt_uri::paths::get_manifest_key;
 use quilt_uri::paths::tag_key;
 
 mod response_timeout;
+
+/// The folders directly under `prefix`, each as a prefix ending in `/`,
+/// listed page by page.
+async fn folders_under(
+    client: &aws_sdk_s3::Client,
+    host: Option<&Host>,
+    bucket: &str,
+    prefix: &str,
+) -> Res<Vec<String>> {
+    let mut pages = client
+        .list_objects_v2()
+        .bucket(bucket)
+        .prefix(prefix)
+        .delimiter("/")
+        .into_paginator()
+        .send();
+    let mut folders = Vec::new();
+    while let Some(page) = pages.next().await {
+        let page =
+            page.map_err(|err| s3_error_or_session_loss(err, host, S3ErrorKind::ListObjects))?;
+        folders.extend(
+            page.common_prefixes()
+                .iter()
+                .filter_map(|folder| folder.prefix())
+                .map(str::to_string),
+        );
+    }
+    Ok(folders)
+}
 
 /// A key under `prefix` names a revision when it is a timestamp: not
 /// `latest`, which only names one of them, as the registry lists them.
@@ -707,6 +737,51 @@ impl RemoteS3 {
         Ok(hashes)
     }
 
+    /// [`Remote::latest_hashes`]: the owners under `.quilt/named_packages/`,
+    /// then each owner's packages, then each package's `latest`, one read
+    /// per package. A folder that is no namespace, a package with no
+    /// `latest`, and a `latest` that holds no top hash have none.
+    async fn latest_hashes_listed(
+        &self,
+        host: Option<&Host>,
+        bucket: &str,
+    ) -> Res<Vec<(Namespace, String)>> {
+        let client = self.get_client_for_bucket(host, bucket).await?;
+        let mut latest = Vec::new();
+        for owner in folders_under(&client, host, bucket, TAGS_PREFIX).await? {
+            for package in folders_under(&client, host, bucket, &owner).await? {
+                let name = package
+                    .strip_prefix(TAGS_PREFIX)
+                    .and_then(|name| name.strip_suffix('/'))
+                    .unwrap_or_default();
+                let Ok(namespace) = Namespace::try_from(name) else {
+                    debug!("Skipping {package}, which names no package");
+                    continue;
+                };
+                let pointer = S3Uri {
+                    bucket: bucket.to_string(),
+                    key: tag_key(&namespace, "latest"),
+                    version: None,
+                };
+                let hash = match get_object_stream(&client, &pointer, host).await {
+                    Ok(stream) => match bytestream_to_string(stream.body).await {
+                        Ok(hash) => hash,
+                        Err(Error::Utf8(_)) => String::new(),
+                        Err(e) => return Err(e),
+                    },
+                    Err(e) if e.is_not_found() => continue,
+                    Err(e) => return Err(e),
+                };
+                if is_top_hash(&hash) {
+                    latest.push((namespace, hash));
+                } else {
+                    warn!("Skipping {pointer}, which holds no top hash");
+                }
+            }
+        }
+        Ok(latest)
+    }
+
     async fn get_client_for_bucket(
         &self,
         host: Option<&Host>,
@@ -957,6 +1032,16 @@ impl Remote for RemoteS3 {
             .map_err(|e| self.forget_ambient_clients_on(e))
     }
 
+    async fn latest_hashes(
+        &self,
+        host: Option<&Host>,
+        bucket: &str,
+    ) -> Res<Vec<(Namespace, String)>> {
+        self.latest_hashes_listed(host, bucket)
+            .await
+            .map_err(|e| self.forget_ambient_clients_on(e))
+    }
+
     fn clear_client_cache(&self, host: Option<&Host>) {
         RemoteS3::clear_client_cache(self, host);
     }
@@ -1040,6 +1125,32 @@ mod tests {
         ] {
             assert!(hashes.iter().any(|h| h == hash), "{hash} in {hashes:?}");
         }
+        Ok(())
+    }
+
+    /// The fixture bucket's packages are listed with what `latest` names for
+    /// each, the fixture package's included.
+    #[test(tokio::test)]
+    async fn live_latest_hashes() -> Res<()> {
+        let remote = RemoteS3::new(DomainPaths::default(), LocalStorage::new());
+        let namespace: Namespace = ("scale", "10u").into();
+
+        let listed = remote.latest_hashes(None, "data-yaml-spec-tests").await?;
+
+        let pointer = S3Uri {
+            bucket: "data-yaml-spec-tests".to_string(),
+            key: tag_key(&namespace, "latest"),
+            version: None,
+        };
+        let latest = bytestream_to_string(remote.get_object_stream(None, &pointer).await?.body)
+            .await?
+            .trim()
+            .to_string();
+        assert!(
+            listed.contains(&(namespace, latest)),
+            "the fixture's latest in {listed:?}"
+        );
+        assert!(listed.len() > 1, "more than one package: {listed:?}");
         Ok(())
     }
 

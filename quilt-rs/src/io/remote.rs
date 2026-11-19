@@ -239,6 +239,17 @@ pub trait Remote {
         prefix: &str,
     ) -> impl Future<Output = Res<Vec<String>>> + Send;
 
+    /// Every package in `bucket`'s registry whose `latest` names a top hash,
+    /// with that hash: the folders under `.quilt/named_packages/`, listed on
+    /// `host`'s credentials or, with no host, this computer's AWS ones, and
+    /// each one's `latest` read. Unsorted; an error if a listing or a read
+    /// fails, never a short list.
+    fn latest_hashes(
+        &self,
+        host: Option<&Host>,
+        bucket: &str,
+    ) -> impl Future<Output = Res<Vec<(Namespace, String)>>> + Send;
+
     /// Drop any cached clients (and their in-memory credentials) for the
     /// given `host`, or for all hosts when `None`. Lets callers invalidate
     /// credentials immediately on logout instead of waiting for them to

@@ -538,6 +538,14 @@ mod tests {
         ) -> Res<Vec<String>> {
             unreachable!("not part of the gate")
         }
+
+        async fn latest_hashes(
+            &self,
+            _host: Option<&Host>,
+            _bucket: &str,
+        ) -> Res<Vec<(quilt_uri::Namespace, String)>> {
+            unreachable!("not part of the gate")
+        }
     }
 
     /// The seam above the recovery: the gate makes the commit path's first S3

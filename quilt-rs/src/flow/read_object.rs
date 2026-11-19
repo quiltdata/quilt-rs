@@ -743,6 +743,14 @@ mod tests {
                 .manifest_hashes_with_prefix(host, bucket, prefix)
                 .await
         }
+
+        async fn latest_hashes(
+            &self,
+            host: Option<&Host>,
+            bucket: &str,
+        ) -> Res<Vec<(quilt_uri::Namespace, String)>> {
+            self.inner.latest_hashes(host, bucket).await
+        }
     }
 
     fn in_pieces(contents: &[u8], size: usize) -> Vec<bytes::Bytes> {

@@ -91,6 +91,14 @@ impl crate::io::remote::Remote for UnreachableRemote {
     ) -> impl Future<Output = Res<Vec<String>>> {
         std::future::ready(Err(no_network()))
     }
+
+    fn latest_hashes(
+        &self,
+        _host: Option<&Host>,
+        _bucket: &str,
+    ) -> impl Future<Output = Res<Vec<(Namespace, String)>>> {
+        std::future::ready(Err(no_network()))
+    }
 }
 
 /// A package committed with CRC64 hashes, installed from a catalog host that

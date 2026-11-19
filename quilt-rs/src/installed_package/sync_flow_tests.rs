@@ -577,6 +577,14 @@ impl crate::io::remote::Remote for RejectedCredentialRemote {
     ) -> impl Future<Output = Res<Vec<String>>> {
         std::future::ready(Err(rejected_credential()))
     }
+
+    fn latest_hashes(
+        &self,
+        _host: Option<&Host>,
+        _bucket: &str,
+    ) -> impl Future<Output = Res<Vec<(Namespace, String)>>> {
+        std::future::ready(Err(rejected_credential()))
+    }
 }
 
 fn rejected_credential() -> Error {
@@ -655,6 +663,14 @@ impl crate::io::remote::Remote for LoggedOutRemote {
         _bucket: &str,
         _prefix: &str,
     ) -> impl Future<Output = Res<Vec<String>>> {
+        std::future::ready(Err(Error::Login(LoginError::NoSession(None))))
+    }
+
+    fn latest_hashes(
+        &self,
+        _host: Option<&Host>,
+        _bucket: &str,
+    ) -> impl Future<Output = Res<Vec<(Namespace, String)>>> {
         std::future::ready(Err(Error::Login(LoginError::NoSession(None))))
     }
 }
@@ -742,6 +758,19 @@ impl crate::io::remote::Remote for DeniedRemote {
             version: None,
         };
         std::future::ready(Err(denied(&manifests)))
+    }
+
+    fn latest_hashes(
+        &self,
+        _host: Option<&Host>,
+        bucket: &str,
+    ) -> impl Future<Output = Res<Vec<(Namespace, String)>>> {
+        let tags = S3Uri {
+            bucket: bucket.to_string(),
+            key: quilt_uri::paths::TAGS_PREFIX.to_string(),
+            version: None,
+        };
+        std::future::ready(Err(denied(&tags)))
     }
 }
 

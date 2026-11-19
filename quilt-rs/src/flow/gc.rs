@@ -490,7 +490,7 @@ async fn list_entries(storage: &(impl Storage + Sync), dir: &Path) -> Res<Vec<En
 
 /// The subdirectories of `dir`: a stray file beside them, such as the OS's
 /// own, is not one.
-async fn list_dirs(storage: &(impl Storage + Sync), dir: &Path) -> Res<Vec<PathBuf>> {
+pub(crate) async fn list_dirs(storage: &(impl Storage + Sync), dir: &Path) -> Res<Vec<PathBuf>> {
     Ok(list_entries(storage, dir)
         .await?
         .into_iter()
