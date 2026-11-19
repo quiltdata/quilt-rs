@@ -454,7 +454,7 @@ impl LocalRegistry {
     /// Renames the registry to `name`, keeping its old name as an alias. A
     /// registry not yet named takes `name` as its first.
     pub async fn rename(&self, storage: &(impl Storage + Sync), name: &str) -> Res<LocalNames> {
-        quilt_uri::check_local_registry_name(name)?;
+        check_name(name)?;
         let _held = self.lock_names(storage).await?;
         let Some(mut names) = self.read_names(storage).await? else {
             let names = LocalNames {
@@ -591,9 +591,20 @@ fn name_from_host(host: &str) -> Option<String> {
             }
         })
         .collect();
-    (quilt_uri::check_local_registry_name(&name).is_ok()
-        && name.bytes().any(|b| b.is_ascii_alphanumeric()))
-    .then_some(name)
+    check_name(&name).is_ok().then_some(name)
+}
+
+/// A name a local registry may keep: a valid name in a URI, holding at
+/// least one letter or digit.
+fn check_name(name: &str) -> Res {
+    quilt_uri::check_local_registry_name(name)?;
+    if !name.bytes().any(|b| b.is_ascii_alphanumeric()) {
+        return Err(UriError::Package(format!(
+            "a local registry's name holds a letter or digit; got {name:?}"
+        ))
+        .into());
+    }
+    Ok(())
 }
 
 /// The namespace `<owner>/<name>` that the last two parts of `path` name, or
@@ -1134,6 +1145,7 @@ mod tests {
         let storage = LocalStorage::new();
         let local = DomainRoot::new(dir.path()).local();
         assert!(local.rename(&storage, "my registry").await.is_err());
+        assert!(local.rename(&storage, "--").await.is_err());
         Ok(())
     }
 
