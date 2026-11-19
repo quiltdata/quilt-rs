@@ -281,14 +281,8 @@ pub(crate) async fn push_package_impl(
 
     debug!("⏳ Checking remote's latest manifest hash");
     let latest = read_latest(remote, new_manifest_uri.origin.as_ref(), &manifest_uri).await?;
-    match &latest {
-        LatestSeen::Absent => {
-            debug!("✔️ No existing latest tag — first push for this package");
-        }
-        LatestSeen::Unreadable => {
-            warn!("This role may not read latest, so it is moved without the base check");
-        }
-        LatestSeen::Tagged { .. } => {}
+    if latest == LatestSeen::Absent {
+        debug!("✔️ No existing latest tag — first push for this package");
     }
     lineage.latest_hash = latest.hash().unwrap_or_default().to_owned();
     debug!("✔️ Latest hash is: {}", lineage.latest_hash);
@@ -316,43 +310,37 @@ pub(crate) async fn push_package_impl(
                 || (!lineage.base_hash.is_empty() && lineage.base_hash == uri.hash)
         }
     };
-    if advance {
-        debug!("⏳ Certifying new latest (no existing latest, already ours, or tracking)");
-        // Conditional on "latest" being as just read, so a publish that lands
-        // in between is not overwritten.
-        match advance_latest(remote, &new_manifest_uri, &latest).await? {
-            LatestAdvance::Moved => {
-                warn!("Pushed but did not certify latest: it moved while this push read it");
-                if let Ok(moved) =
-                    read_latest(remote, new_manifest_uri.origin.as_ref(), &manifest_uri).await
-                    && let Some(hash) = moved.hash()
-                {
-                    hash.clone_into(&mut lineage.latest_hash);
-                }
-                return Ok(PushResult {
-                    lineage,
-                    certified_latest: false,
-                    latest_unchecked: false,
-                });
-            }
-            written => {
-                lineage.update_latest(new_manifest_uri);
-                info!("✔️ Certified latest");
-                return Ok(PushResult {
-                    lineage,
-                    certified_latest: true,
-                    latest_unchecked: written == LatestAdvance::Unchecked,
-                });
-            }
-        }
+    if !advance {
+        warn!("Pushed but did not certify latest: remote has newer changes");
+        info!("✔️ Successfully pushed package (without certifying latest)");
+        return Ok(PushResult {
+            lineage,
+            certified_latest: false,
+            latest_unchecked: false,
+        });
     }
 
-    warn!("Pushed but did not certify latest: remote has newer changes");
-    info!("✔️ Successfully pushed package (without certifying latest)");
+    debug!("⏳ Certifying new latest");
+    let written = advance_latest(remote, &new_manifest_uri, &latest).await?;
+    if written == LatestAdvance::Moved {
+        warn!("Pushed but did not certify latest: it moved while this push read it");
+        if let Ok(LatestSeen::Tagged { uri, .. }) =
+            read_latest(remote, new_manifest_uri.origin.as_ref(), &manifest_uri).await
+        {
+            lineage.latest_hash = uri.hash;
+        }
+        return Ok(PushResult {
+            lineage,
+            certified_latest: false,
+            latest_unchecked: false,
+        });
+    }
+    lineage.update_latest(new_manifest_uri);
+    info!("✔️ Certified latest");
     Ok(PushResult {
         lineage,
-        certified_latest: false,
-        latest_unchecked: false,
+        certified_latest: true,
+        latest_unchecked: written == LatestAdvance::Unchecked,
     })
 }
 

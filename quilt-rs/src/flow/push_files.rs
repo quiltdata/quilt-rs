@@ -77,9 +77,7 @@ pub struct PushTarget {
 /// moved to it only if `latest` still names `target.parent` when read just
 /// before the tag write. `latest` also moves when it names nothing, even if the
 /// push has a parent: there is no revision for the push to conflict with. The
-/// tag write is conditional on that read (see [`advance_latest`]), so a push
-/// that lands between them is not overwritten; a role that may not read
-/// `latest` writes it unchecked.
+/// tag write is conditional on that read; see [`advance_latest`].
 ///
 /// When `latest` names another revision, the push still succeeds in the sense
 /// that the revision is stored and reachable by its hash, but `latest` is left
@@ -155,8 +153,7 @@ pub async fn push_files(
     tag_stored(remote, target, manifest_uri).await
 }
 
-/// Tags the stored revision `manifest_uri` with its timestamp, and moves
-/// `latest` to it if `latest` still names `target.parent`, or names nothing.
+/// Tags the stored revision; see [`push_files`].
 async fn tag_stored(
     remote: &impl Remote,
     target: &PushTarget,
@@ -197,8 +194,6 @@ async fn tag_stored(
     {
         return Err(not_latest(hash.to_owned()));
     }
-    // Conditional on `latest` being as just read, so a publish that lands in
-    // between is not overwritten.
     match advance_latest(remote, &manifest_uri, &latest)
         .await
         .map_err(tag_failed)?

@@ -129,11 +129,8 @@ pub async fn tag_timestamp(
 }
 
 /// Upload file containing hash of the manifest
-/// "tagged" as "latest", whatever `latest` names now.
-///
-/// This is the forced write: [`certify_latest`](crate::flow::certify_latest)
-/// uses it when the user moves `latest` on purpose. A publish moves `latest`
-/// with [`advance_latest`], which checks it first.
+/// "tagged" as "latest", whatever `latest` names now; [`advance_latest`] is
+/// the checked write.
 pub async fn tag_latest(remote: &impl Remote, manifest_uri: &ManifestUri) -> Res {
     let tag_latest = TagUri::latest(manifest_uri);
     upload_tag(remote, manifest_uri, tag_latest).await
@@ -144,8 +141,7 @@ pub async fn tag_latest(remote: &impl Remote, manifest_uri: &ManifestUri) -> Res
 pub enum LatestSeen {
     /// No `latest` tag: nothing has been published under this name.
     Absent,
-    /// The revision `latest` named, and the tag's `ETag` from the same read,
-    /// which the write that moves it is made conditional on.
+    /// The revision `latest` named, and its `ETag` for a conditional write.
     Tagged {
         uri: ManifestUri,
         etag: Option<String>,
@@ -229,6 +225,8 @@ pub async fn advance_latest(
             }
             Err(err) => return Err(err),
         }
+    } else {
+        log::warn!("{tag_uri} could not be read with an ETag; writing it unchecked");
     }
     tag_latest(remote, manifest_uri).await?;
     Ok(LatestAdvance::Unchecked)
@@ -950,11 +948,7 @@ mod tests {
             let advance = advance_latest(&remote, &revision(OURS), &seen).await?;
 
             assert_eq!(advance, LatestAdvance::Unchecked);
-            let written = remote
-                .storage
-                .read_byte_stream(TAG.trim_start_matches("s3://"))
-                .await?;
-            assert_eq!(written.collect().await?.to_vec(), OURS.as_bytes());
+            assert_eq!(remote.current(TAG).await?, Some(OURS.as_bytes().to_vec()));
             Ok(())
         }
 
@@ -970,11 +964,7 @@ mod tests {
             let advance = advance_latest(&remote, &revision(OURS), &seen).await?;
 
             assert_eq!(advance, LatestAdvance::Unchecked);
-            let written = remote
-                .storage
-                .read_byte_stream(TAG.trim_start_matches("s3://"))
-                .await?;
-            assert_eq!(written.collect().await?.to_vec(), OURS.as_bytes());
+            assert_eq!(remote.current(TAG).await?, Some(OURS.as_bytes().to_vec()));
             Ok(())
         }
 

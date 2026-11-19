@@ -1971,6 +1971,9 @@ async fn test_commit_and_push_key_a_file_in_a_folder_with_slashes() -> Res {
 /// package first pushes to.
 const THEIR_HASH: &str = "7777777777777777777777777777777777777777777777777777777777777777";
 
+/// The `latest` tag of the package [`first_push_package`] sets up.
+const FIRST_PUSH_LATEST: &str = "s3://b/.quilt/named_packages/test/first_push/latest";
+
 /// A package made locally, committed and never pushed, whose bucket holds
 /// `latest` (when given) under the same name.
 async fn first_push_package(
@@ -2127,21 +2130,23 @@ async fn test_first_push_over_their_latest_then_reset() -> Res {
 /// refused, so their revision stays `latest` and this one is kept, Diverged.
 #[test(tokio::test)]
 async fn test_a_publish_between_the_read_and_the_write_keeps_latest() -> Res {
-    const LATEST: &str = "s3://b/.quilt/named_packages/test/first_push/latest";
-    const THEIRS: &str = "3333333333333333333333333333333333333333333333333333333333333333";
     let local_hash = crate::fixtures::top_hash::EMPTY_NULL_TOP_HASH;
     let (package, _temp_dirs) = first_push_package(None).await?;
 
-    let read = package.remote.park(LATEST);
+    let read = package.remote.park(FIRST_PUSH_LATEST);
     let compete = async {
         read.arrived().await;
         // The read goes on; the write after it is held until theirs lands.
-        let write = package.remote.park(LATEST);
+        let write = package.remote.park(FIRST_PUSH_LATEST);
         read.release();
         write.arrived().await;
         package
             .remote
-            .put_object(None, &S3Uri::try_from(LATEST)?, THEIRS.as_bytes().to_vec())
+            .put_object(
+                None,
+                &S3Uri::try_from(FIRST_PUSH_LATEST)?,
+                THEIR_HASH.as_bytes().to_vec(),
+            )
             .await?;
         write.release();
         Ok::<_, Error>(())
@@ -2155,9 +2160,9 @@ async fn test_a_publish_between_the_read_and_the_write_keeps_latest() -> Res {
     assert!(!outcome.certified_latest);
     assert!(!outcome.latest_unchecked);
     assert_eq!(outcome.manifest_uri.hash, local_hash);
-    assert_eq!(latest_tag(&package).await?, THEIRS);
+    assert_eq!(latest_tag(&package).await?, THEIR_HASH);
     let lineage = package.lineage().await?;
-    assert_eq!(lineage.latest_hash, THEIRS);
+    assert_eq!(lineage.latest_hash, THEIR_HASH);
     assert_eq!(
         crate::lineage::UpstreamState::from(lineage),
         crate::lineage::UpstreamState::Diverged
@@ -2169,11 +2174,9 @@ async fn test_a_publish_between_the_read_and_the_write_keeps_latest() -> Res {
 /// still moves `latest`, and says the write was unchecked.
 #[test(tokio::test)]
 async fn test_a_push_that_cannot_read_latest_moves_it_unchecked() -> Res {
-    const LATEST: &str = "s3://b/.quilt/named_packages/test/first_push/latest";
     let local_hash = crate::fixtures::top_hash::EMPTY_NULL_TOP_HASH;
-    let theirs = "3333333333333333333333333333333333333333333333333333333333333333";
-    let (package, _temp_dirs) = first_push_package(Some(theirs)).await?;
-    package.remote.deny_reads(LATEST);
+    let (package, _temp_dirs) = first_push_package(Some(THEIR_HASH)).await?;
+    package.remote.deny_reads(FIRST_PUSH_LATEST);
 
     let Pushed::Uploaded(outcome) = package.push(None).await? else {
         panic!("a pending commit must upload");
@@ -2181,12 +2184,10 @@ async fn test_a_push_that_cannot_read_latest_moves_it_unchecked() -> Res {
 
     assert!(outcome.certified_latest);
     assert!(outcome.latest_unchecked);
-    let written = package
-        .remote
-        .storage
-        .read_byte_stream(LATEST.trim_start_matches("s3://"))
-        .await?;
-    assert_eq!(written.collect().await?.to_vec(), local_hash.as_bytes());
+    assert_eq!(
+        package.remote.current(FIRST_PUSH_LATEST).await?,
+        Some(local_hash.as_bytes().to_vec())
+    );
     Ok(())
 }
 

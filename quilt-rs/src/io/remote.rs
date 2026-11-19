@@ -142,9 +142,7 @@ pub enum WriteCondition {
 pub enum ConditionalPut {
     /// The condition held and the object was written.
     Written,
-    /// The object changed since the read the condition came from (S3's 412,
-    /// or its 409 for a conditional write that raced another), so nothing
-    /// was written.
+    /// The condition failed, so nothing was written.
     Moved,
 }
 

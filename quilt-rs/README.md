@@ -95,8 +95,9 @@ managed working folder:
   and the upload is an error unless the bytes hash to it. `latest` moves to
   the new revision only if it still names the revision the push was built on
   when read just before the tag write, or names nothing. The write is
-  conditional on that read, so a push that lands between them is not
-  overwritten; a role that may not read `latest` writes it unchecked, and
+  conditional on that read, so a push that lands between the read and the
+  write is not overwritten; a role that may not read `latest` writes it
+  unchecked, and
   says so in `PushOutcome::latest_unchecked`. If `latest` has moved past the
   parent, the revision is still saved, `latest` is left alone, and the error
   (`PackageOpError::PushedNotLatest`) carries the pushed top hash. If writing

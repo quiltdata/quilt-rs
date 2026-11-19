@@ -323,11 +323,11 @@ commit in place, so re-running publish resumes as a push-only call.
 The user-invoked composition of push + certify, run from the package
 page's resolve mode: it forces certification even when push declined to
 (the remote `latest` has moved since the user's base). It is
-intentionally last-writer-wins on the tag, unlike a push's conditional
-write — if another client moves `latest` between the inner push and the
-outer tag write, that move is silently overwritten. This is the semantic
-*Promote my revision* asks for, but it makes a non-certifying push and
-promote asymmetric: push respects a concurrent `latest`; promote does not.
+intentionally last-writer-wins on the tag — if another client moves
+`latest` between the inner push and the outer tag write, that move is
+silently overwritten. This is the semantic *Promote my revision* asks
+for, but it makes a non-certifying push and promote asymmetric: push
+respects a concurrent `latest`; promote does not.
 
 ### Pull
 

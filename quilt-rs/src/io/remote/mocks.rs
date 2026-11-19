@@ -102,9 +102,8 @@ impl MockRemote {
     }
 
     /// Holds the next `get_object_stream`, `put_object` or `put_object_if` of
-    /// `uri` until the
-    /// returned gate is released, so a test can land another operation inside
-    /// this one. Only the next call parks; later ones pass.
+    /// `uri` until the returned gate is released, so a test can land another
+    /// operation inside this one. Only the next call parks; later ones pass.
     ///
     /// # Panics
     ///
@@ -139,8 +138,13 @@ impl MockRemote {
             .then(|| S3Error::new(S3ErrorKind::AccessDenied(key.to_string())).into())
     }
 
-    /// The object's contents, or `None` when there is none.
-    async fn current(&self, key: &str) -> Res<Option<Vec<u8>>> {
+    /// The object's contents, or `None` when there is none, whatever
+    /// [`MockRemote::deny_reads`] refuses.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the backing storage cannot be read.
+    pub async fn current(&self, key: &str) -> Res<Option<Vec<u8>>> {
         let path = storage_path(key);
         if !self.storage.exists(&path).await {
             return Ok(None);

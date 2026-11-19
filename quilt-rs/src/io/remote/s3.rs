@@ -1092,7 +1092,7 @@ mod tests {
     /// its `ETag` came from, and creates an object only when there is none.
     /// The key is new on each run, so concurrent runs do not share it.
     #[test(tokio::test)]
-    async fn live_conditional_put_refuses_a_moved_object() -> Res<()> {
+    async fn live_write_conditional_put_refuses_a_moved_object() -> Res<()> {
         let remote = RemoteS3::new(DomainPaths::default(), LocalStorage::new());
         let key = format!(
             "test_quilt_rs/conditional-put/{}",

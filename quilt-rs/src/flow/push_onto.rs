@@ -23,9 +23,8 @@ use quilt_uri::ManifestUri;
 
 /// Publish `manifest`, whose rows are already on the remote, as the revision
 /// after `parent`, and tag it `latest` only if `latest` still names `parent`.
-/// The tag write is conditional on the read that found `parent`, so a push
-/// that lands between the two is not overwritten. A role that may not read
-/// `latest` writes it unchecked.
+/// The tag write is conditional on the read that found `parent`; see
+/// [`advance_latest`].
 pub async fn push_onto(
     paths: &DomainPaths,
     storage: &(impl Storage + Sync),
@@ -75,14 +74,17 @@ pub async fn push_onto(
     tag_timestamp(remote, &manifest_uri, chrono::Utc::now()).await?;
 
     let latest = read_latest(remote, parent.origin.as_ref(), parent.clone()).await?;
-    let advance = match &latest {
-        LatestSeen::Tagged { uri, .. } if uri.hash == parent.hash => {
-            advance_latest(remote, &manifest_uri, &latest).await?
-        }
-        LatestSeen::Unreadable => advance_latest(remote, &manifest_uri, &latest).await?,
-        LatestSeen::Tagged { .. } | LatestSeen::Absent => LatestAdvance::Moved,
+    let on_parent = match &latest {
+        LatestSeen::Tagged { uri, .. } => uri.hash == parent.hash,
+        LatestSeen::Unreadable => true,
+        LatestSeen::Absent => false,
     };
-    let certified_latest = advance != LatestAdvance::Moved;
+    let advance = if on_parent {
+        Some(advance_latest(remote, &manifest_uri, &latest).await?)
+    } else {
+        None
+    };
+    let certified_latest = advance.is_some_and(|written| written != LatestAdvance::Moved);
     if certified_latest {
         info!("✔️ Certified {} as latest", manifest_uri.display());
     } else {
@@ -95,7 +97,7 @@ pub async fn push_onto(
     Ok(PushOutcome {
         manifest_uri,
         certified_latest,
-        latest_unchecked: advance == LatestAdvance::Unchecked,
+        latest_unchecked: advance == Some(LatestAdvance::Unchecked),
     })
 }
 
