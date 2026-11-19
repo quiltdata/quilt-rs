@@ -514,12 +514,15 @@ impl LocalRegistry {
         // Written even over a revision of the same hash, which leaves out
         // folder metadata, so the one published is the one committed.
         let manifest = storage
-            .read_byte_stream(self.installed_manifest(namespace, hash))
+            .read_bytes(self.installed_manifest(namespace, hash))
             .await?;
+        let first_revision = !storage.exists(self.dir.join(PACKAGES_DIR)).await;
         storage
-            .write_byte_stream(self.revision(hash), manifest)
+            .write_byte_stream(self.revision(hash), ByteStream::from(manifest))
             .await?;
-        storage.sync_dir(&self.dir).await;
+        if first_revision {
+            self.sync_up_from(storage, &self.dir).await;
+        }
 
         if latest.as_deref() == Some(hash) {
             // A publish that landed before.
@@ -529,11 +532,23 @@ impl LocalRegistry {
             return Ok(LocalPublish::Diverged(latest));
         }
         write_tag(storage, &self.dir, &self.latest(namespace), hash).await?;
-        // The tag is the only copy, so the folders a first one made are
-        // synced too.
-        storage.sync_dir(self.dir.join(LATEST_DIR)).await;
-        storage.sync_dir(&self.dir).await;
+        if latest.is_none() {
+            self.sync_up_from(storage, &self.dir.join(LATEST_DIR)).await;
+        }
         Ok(LocalPublish::Advanced)
+    }
+
+    /// Syncs `folder` and each folder above it up to `registries/`: the
+    /// registry holds the only copy, so folders its first writes made must
+    /// survive a crash too.
+    async fn sync_up_from(&self, storage: &(impl Storage + Sync), folder: &Path) {
+        let registries = self.dir.parent().unwrap_or(&self.dir);
+        for folder in folder
+            .ancestors()
+            .take_while(|folder| folder.starts_with(registries))
+        {
+            storage.sync_dir(folder).await;
+        }
     }
 
     async fn lock_names(&self, storage: &(impl Storage + Sync)) -> Res<LockGuard> {
@@ -567,7 +582,8 @@ impl PackageStore for LocalRegistry {
 }
 
 /// `host` held to a local registry name's characters, each other one made
-/// `-`; `None` where that is still no name, as for an empty host name.
+/// `-`; `None` where that is no name or holds no letter or digit, as for an
+/// empty host name or one written in another script.
 fn name_from_host(host: &str) -> Option<String> {
     let name: String = host
         .chars()
@@ -579,9 +595,9 @@ fn name_from_host(host: &str) -> Option<String> {
             }
         })
         .collect();
-    quilt_uri::check_local_registry_name(&name)
-        .is_ok()
-        .then_some(name)
+    (quilt_uri::check_local_registry_name(&name).is_ok()
+        && name.bytes().any(|b| b.is_ascii_alphanumeric()))
+    .then_some(name)
 }
 
 /// The namespace `<owner>/<name>` that the last two parts of `path` name, or
@@ -1060,11 +1076,12 @@ mod tests {
     #[test]
     fn a_host_name_is_held_to_registry_name_characters() {
         assert_eq!(
-            name_from_host("Ernest's MacBook_Pro.local"),
-            Some("Ernest-s-MacBook-Pro.local".to_string())
+            name_from_host("Lab's MacBook_Pro.local"),
+            Some("Lab-s-MacBook-Pro.local".to_string())
         );
         assert_eq!(name_from_host(""), None);
         assert_eq!(name_from_host(".."), None);
+        assert_eq!(name_from_host("日本"), None);
     }
 
     /// The registry's first name comes from the host name, and is stored.
