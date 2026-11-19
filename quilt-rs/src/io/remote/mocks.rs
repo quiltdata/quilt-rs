@@ -121,9 +121,9 @@ impl MockRemote {
     }
 
     /// Refuses reads of `uri` as S3 refuses a role without read access to
-    /// it: `get_object_stream` and the conditional `put_object_if`, which S3
-    /// evaluates against the object, are denied, and a plain `put_object`
-    /// still writes.
+    /// it: `exists`, `get_object_stream` and the conditional `put_object_if`,
+    /// which S3 evaluates against the object, are denied, and a plain
+    /// `put_object` still writes.
     ///
     /// # Panics
     ///
@@ -179,6 +179,9 @@ impl Remote for MockRemote {
     async fn exists(&self, _host: Option<&Host>, s3_uri: &S3Uri) -> Res<bool> {
         let key = s3_uri.to_string();
         log::debug!("Mocking {key} exists request");
+        if let Some(err) = self.denied(&key) {
+            return Err(err);
+        }
         Ok(self.storage.exists(storage_path(&key)).await)
     }
 
