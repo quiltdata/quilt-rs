@@ -168,7 +168,9 @@ pub async fn read(
     if entry.access != Access::Read {
         return Err(EntryError::Access(entry.access));
     }
-    let Registry::S3(bucket) = &entry.registry;
+    let Registry::S3(bucket) = &entry.registry else {
+        return Err(EntryError::LocalRegistry);
+    };
     let uri = S3PackageUri {
         catalog: entry.catalog.clone(),
         bucket: bucket.clone(),

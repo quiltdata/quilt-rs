@@ -1,10 +1,10 @@
 //! `data.toml`, a dataspace's contract.
 //!
 //! An entry is spelled one of three ways: a plain string is a folder, whose
-//! package is implied; a `quilt+s3://` URI string is a package; a table gives
-//! any subset of the fields. [`Contract::read`] expands each to one [`Entry`]
-//! and validates the expanded entries together, so a contract is read whole or
-//! refused.
+//! package is implied; a `quilt+s3://` or `quilt+local://` URI string is a
+//! package; a table gives any subset of the fields. [`Contract::read`] expands
+//! each to one [`Entry`] and validates the expanded entries together, so a
+//! contract is read whole or refused.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -25,6 +25,7 @@ use crate::dataspace::lock::LOCK_FILE;
 use crate::io::storage::Storage;
 use crate::io::storage::StorageExt;
 use quilt_uri::Host;
+use quilt_uri::LocalPackageUri;
 use quilt_uri::MIN_HASH_PREFIX_LEN;
 use quilt_uri::Namespace;
 use quilt_uri::RevisionPointer;
@@ -33,6 +34,7 @@ use quilt_uri::TOP_HASH_LEN;
 use quilt_uri::Tag;
 use quilt_uri::UriError;
 use quilt_uri::check_bucket;
+use quilt_uri::check_local_registry_name;
 use quilt_uri::is_top_hash;
 
 /// The contract's file name, in the dataspace's folder.
@@ -75,6 +77,8 @@ impl fmt::Display for Access {
 pub enum Registry {
     /// An S3 bucket, by name.
     S3(String),
+    /// A local registry, by the name it keeps.
+    Local(String),
 }
 
 /// A package by its registry and name, without revision, path or catalog.
@@ -84,31 +88,53 @@ pub struct PackageKey {
     pub package: Namespace,
 }
 
-/// The canonical URI: `quilt+s3://bucket#package=owner/name`.
+/// The canonical URI: `quilt+s3://bucket#package=owner/name`, or
+/// `quilt+local://name#package=owner/name`.
 impl fmt::Display for PackageKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Registry::S3(bucket) = &self.registry;
-        let uri = S3PackageUri {
-            catalog: None,
-            bucket: bucket.clone(),
-            namespace: self.package.clone(),
-            revision: RevisionPointer::Tag(Tag::Latest),
-            path: None,
-        };
-        write!(f, "{uri}")
+        let namespace = self.package.clone();
+        let revision = RevisionPointer::Tag(Tag::Latest);
+        match &self.registry {
+            Registry::S3(bucket) => S3PackageUri {
+                catalog: None,
+                bucket: bucket.clone(),
+                namespace,
+                revision,
+                path: None,
+            }
+            .fmt(f),
+            Registry::Local(name) => LocalPackageUri {
+                registry: Some(name.clone()),
+                namespace,
+                revision,
+                path: None,
+            }
+            .fmt(f),
+        }
     }
 }
 
 /// Reads only the canonical URI, so one with a revision, path or catalog, or
-/// spelled any other way, is refused.
+/// spelled any other way, the local shorthand included, is refused.
 impl FromStr for PackageKey {
     type Err = UriError;
 
     fn from_str(text: &str) -> Result<Self, UriError> {
-        let uri = S3PackageUri::try_from(text)?;
-        let key = Self {
-            registry: Registry::S3(uri.bucket),
-            package: uri.namespace,
+        let key = if is_local(text) {
+            let uri = LocalPackageUri::try_from(text)?;
+            let name = uri.registry.ok_or_else(|| {
+                UriError::Package(format!("a package's key names its registry: {text:?}"))
+            })?;
+            Self {
+                registry: Registry::Local(name),
+                package: uri.namespace,
+            }
+        } else {
+            let uri = S3PackageUri::try_from(text)?;
+            Self {
+                registry: Registry::S3(uri.bucket),
+                package: uri.namespace,
+            }
         };
         if key.to_string() == text {
             Ok(key)
@@ -255,10 +281,13 @@ pub struct Contract {
 
 impl Contract {
     /// Reads `data.toml` in the folder `dataspace`. Folders are compared as
-    /// the file system holding it compares names.
+    /// the file system holding it compares names. `quilt+local://` with no
+    /// name stands for `local_registry`, this machine's local registry, and
+    /// is refused where there is none.
     pub async fn read(
         storage: &(impl Storage + Sync),
         dataspace: &Path,
+        local_registry: Option<&str>,
     ) -> Result<Self, ContractError> {
         let unreadable = |path: &Path, source: crate::Error| ContractError::Read {
             path: path.to_path_buf(),
@@ -277,7 +306,7 @@ impl Contract {
         } else {
             FolderCase::Sensitive
         };
-        Self::parse(&bytes, &root, case)
+        Self::parse(&bytes, &root, case, local_registry)
     }
 
     /// One entry per package and access, in the order of their keys.
@@ -303,10 +332,11 @@ impl Contract {
         bytes: &[u8],
         dataspace: &Path,
         case: FolderCase,
+        local_registry: Option<&str>,
     ) -> Result<Self, ContractError> {
         let raw: RawContract = toml::from_slice(bytes)?;
         let folders = Folders::new(dataspace, case);
-        let defaults = Defaults::new(&raw)?;
+        let defaults = Defaults::new(&raw, local_registry)?;
         let lists = [
             (Access::Read, raw.packages.read),
             (Access::Write, raw.packages.write),
@@ -407,10 +437,13 @@ pub enum EntryProblem {
     #[error("it names no registry, and the contract has no default `registry`")]
     NoDefaultRegistry,
 
-    #[error("the local registry is not supported yet")]
-    LocalRegistry,
+    #[error("it names this machine's local registry, and there is none here")]
+    NoLocalRegistry,
 
-    #[error("a registry is `s3://<bucket>`; got {0:?}")]
+    #[error("a local package has no catalog")]
+    LocalCatalog,
+
+    #[error("a registry is `s3://<bucket>` or `quilt+local://<name>`; got {0:?}")]
     Registry(String),
 
     #[error(transparent)]
@@ -519,19 +552,21 @@ struct RawEntry {
     uri: Option<String>,
 }
 
-struct Defaults {
+struct Defaults<'a> {
     registry: Option<Registry>,
     catalog: Option<Host>,
     prefix: Option<String>,
     suffix: Option<String>,
+    /// This machine's local registry, which `quilt+local://` names.
+    local_registry: Option<&'a str>,
 }
 
-impl Defaults {
-    fn new(raw: &RawContract) -> Result<Self, ContractError> {
+impl<'a> Defaults<'a> {
+    fn new(raw: &RawContract, local_registry: Option<&'a str>) -> Result<Self, ContractError> {
         let registry = raw
             .registry
             .as_deref()
-            .map(parse_registry)
+            .map(|text| parse_registry(text, local_registry))
             .transpose()
             .map_err(|problem| ContractError::Default {
                 key: "registry",
@@ -551,6 +586,7 @@ impl Defaults {
             catalog,
             prefix: raw.default_prefix.as_deref().map(clean_name),
             suffix: raw.default_suffix.as_deref().map(clean_name),
+            local_registry,
         })
     }
 }
@@ -567,13 +603,9 @@ struct Declared {
     folder: PathBuf,
 }
 
-fn expand(
-    value: toml::Value,
-    access: Access,
-    defaults: &Defaults,
-    folders: &Folders,
-) -> Result<Declared, EntryProblem> {
-    let raw = match value {
+/// The fields one of an entry's three spellings gives.
+fn raw_entry(value: toml::Value) -> Result<RawEntry, EntryProblem> {
+    Ok(match value {
         toml::Value::String(uri) if uri.starts_with("quilt+") || uri.contains("://") => RawEntry {
             uri: Some(uri),
             ..RawEntry::default()
@@ -593,10 +625,27 @@ fn expand(
         }
         table @ toml::Value::Table(_) => table.try_into().map_err(EntryProblem::Table)?,
         other => return Err(EntryProblem::Spelling(other.type_str())),
-    };
+    })
+}
 
-    let uri = raw.uri.as_deref().map(parse_uri).transpose()?;
-    let registry = raw.registry.as_deref().map(parse_registry).transpose()?;
+fn expand(
+    value: toml::Value,
+    access: Access,
+    defaults: &Defaults,
+    folders: &Folders,
+) -> Result<Declared, EntryProblem> {
+    let raw = raw_entry(value)?;
+    let local_registry = defaults.local_registry;
+    let uri = raw
+        .uri
+        .as_deref()
+        .map(|text| parse_uri(text, local_registry))
+        .transpose()?;
+    let registry = raw
+        .registry
+        .as_deref()
+        .map(|text| parse_registry(text, local_registry))
+        .transpose()?;
     let catalog = raw
         .catalog
         .as_deref()
@@ -636,7 +685,7 @@ fn expand(
                 Some(uri_revision.clone().and_then(pin_of)),
             )?;
             (
-                agree("registry", registry, Some(Registry::S3(uri.bucket)))?,
+                agree("registry", registry, Some(uri.registry))?,
                 agree("catalog", catalog, uri.catalog)?,
                 agree("package", package, Some(uri.namespace))?,
                 revision.or(uri_revision),
@@ -651,7 +700,11 @@ fn expand(
     let registry = registry
         .or_else(|| defaults.registry.clone())
         .ok_or(EntryProblem::NoDefaultRegistry)?;
-    let catalog = catalog.or_else(|| defaults.catalog.clone());
+    let catalog = match registry {
+        Registry::S3(_) => catalog.or_else(|| defaults.catalog.clone()),
+        Registry::Local(_) if catalog.is_some() => return Err(EntryProblem::LocalCatalog),
+        Registry::Local(_) => None,
+    };
     let folder = raw
         .folder
         .map(|folder| folders.resolve(&folder))
@@ -688,11 +741,26 @@ fn agree<T: PartialEq>(
     }
 }
 
-fn refuse_local(text: &str) -> Result<(), EntryProblem> {
-    if text.starts_with("quilt+local:") {
-        return Err(EntryProblem::LocalRegistry);
-    }
-    Ok(())
+/// Whether `text` is a `quilt+local:` URI, its scheme in any case.
+fn is_local(text: &str) -> bool {
+    text.get(.."quilt+local:".len())
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("quilt+local:"))
+}
+
+/// The local registry `name` names, this machine's where it is empty.
+fn local(name: Option<String>, local_registry: Option<&str>) -> Result<Registry, EntryProblem> {
+    name.or_else(|| local_registry.map(str::to_string))
+        .map(Registry::Local)
+        .ok_or(EntryProblem::NoLocalRegistry)
+}
+
+/// What a package URI in a contract names.
+struct ParsedUri {
+    registry: Registry,
+    catalog: Option<Host>,
+    namespace: Namespace,
+    revision: RevisionPointer,
+    path: Option<PathBuf>,
 }
 
 /// Whether a package URI's text names a revision, which the parsed URI cannot
@@ -713,15 +781,39 @@ fn names_revision(uri: &str) -> bool {
     })
 }
 
-fn parse_uri(text: &str) -> Result<S3PackageUri, EntryProblem> {
-    refuse_local(text)?;
-    S3PackageUri::try_from(text).map_err(EntryProblem::Uri)
+fn parse_uri(text: &str, local_registry: Option<&str>) -> Result<ParsedUri, EntryProblem> {
+    if is_local(text) {
+        let uri = LocalPackageUri::try_from(text).map_err(EntryProblem::Uri)?;
+        return Ok(ParsedUri {
+            registry: local(uri.registry, local_registry)?,
+            catalog: None,
+            namespace: uri.namespace,
+            revision: uri.revision,
+            path: uri.path,
+        });
+    }
+    let uri = S3PackageUri::try_from(text).map_err(EntryProblem::Uri)?;
+    Ok(ParsedUri {
+        registry: Registry::S3(uri.bucket),
+        catalog: uri.catalog,
+        namespace: uri.namespace,
+        revision: uri.revision,
+        path: uri.path,
+    })
 }
 
-fn parse_registry(text: &str) -> Result<Registry, EntryProblem> {
-    refuse_local(text)?;
-    match text.strip_prefix("s3://") {
-        Some(bucket) if check_bucket(bucket).is_ok() => Ok(Registry::S3(bucket.to_string())),
+/// `s3://<bucket>`, or `quilt+local://<name>`, this machine's with no name.
+fn parse_registry(text: &str, local_registry: Option<&str>) -> Result<Registry, EntryProblem> {
+    if let Some(bucket) = text.strip_prefix("s3://")
+        && check_bucket(bucket).is_ok()
+    {
+        return Ok(Registry::S3(bucket.to_string()));
+    }
+    match text.strip_prefix("quilt+local://") {
+        Some("") => local(None, local_registry),
+        Some(name) if check_local_registry_name(name).is_ok() => {
+            Ok(Registry::Local(name.to_string()))
+        }
         _ => Err(EntryProblem::Registry(text.to_string())),
     }
 }
@@ -891,8 +983,10 @@ impl<'a> Folders<'a> {
     fn placed(&self, stated: bool, key: &PackageKey) -> Result<PathBuf, EntryProblem> {
         let mut folder = self.root.to_path_buf();
         if stated {
-            let Registry::S3(bucket) = &key.registry;
-            folder.push(bucket);
+            match &key.registry {
+                Registry::S3(bucket) => folder.push(bucket),
+                Registry::Local(name) => folder.push(format!("{name}@local")),
+            }
         }
         folder.push(key.package.prefix());
         folder.push(key.package.name());

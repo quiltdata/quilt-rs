@@ -20,8 +20,13 @@ const SECOND: &str = "2222222222222222222222222222222222222222222222222222222222
 
 fn entry(packages: &str) -> Entry {
     let text = format!("registry = \"s3://b\"\n[packages]\n{packages}");
-    let contract = Contract::parse(text.as_bytes(), Path::new(DATASPACE), FolderCase::Sensitive)
-        .expect("contract");
+    let contract = Contract::parse(
+        text.as_bytes(),
+        Path::new(DATASPACE),
+        FolderCase::Sensitive,
+        None,
+    )
+    .expect("contract");
     contract.entries()[0].clone()
 }
 
@@ -221,6 +226,25 @@ async fn an_entry_under_another_access_is_not_read() -> Res {
         "{outcome:?}"
     );
     Ok(())
+}
+
+/// A local registry is in the Domain, which a read without one cannot reach.
+#[test(tokio::test)]
+async fn a_local_registrys_package_is_not_read() {
+    let entry = entry("read = [\"quilt+local://lab-mac#package=team/raw\"]");
+
+    let outcome = read(
+        &MockStorage::default(),
+        &MockRemote::default(),
+        &entry,
+        None,
+    )
+    .await;
+
+    assert!(
+        matches!(outcome, Err(EntryError::LocalRegistry)),
+        "{outcome:?}"
+    );
 }
 
 #[test(tokio::test)]

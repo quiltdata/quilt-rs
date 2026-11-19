@@ -108,6 +108,8 @@ impl FolderKey {
     fn columns(&self) -> (String, String, Vec<u8>) {
         let registry = match &self.registry {
             Some(Registry::S3(bucket)) => bucket.clone(),
+            // `@` is in no bucket's name.
+            Some(Registry::Local(name)) => format!("{name}@local"),
             None => String::new(),
         };
         (registry, self.package.to_string(), os_bytes(&self.folder))
@@ -791,6 +793,17 @@ mod tests {
 
     fn at(secs: u64) -> SystemTime {
         UNIX_EPOCH + Duration::from_secs(secs)
+    }
+
+    /// A local registry's column holds `@`, so no bucket's can match it.
+    #[test]
+    fn a_local_registrys_column_is_no_buckets() {
+        let local = FolderKey {
+            registry: Some(Registry::Local("lab-mac".to_string())),
+            ..key()
+        };
+        assert_eq!(local.columns().0, "lab-mac@local");
+        assert!(quilt_uri::check_bucket(&local.columns().0).is_err());
     }
 
     #[test(tokio::test)]

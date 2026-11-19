@@ -127,7 +127,8 @@ pub async fn read_all(
     dataspace: &Path,
     writer: &Writer,
 ) -> Result<DataspaceRead, ReadAllError> {
-    let contract = Contract::read(storage, dataspace).await?;
+    let local_registry = Some(writer.local_registry.as_str()).filter(|name| !name.is_empty());
+    let contract = Contract::read(storage, dataspace, local_registry).await?;
     let (mut lock, writer) = match Lock::read(storage, &contract).await? {
         Some(mut lock) => {
             let local = Writer {

@@ -106,7 +106,7 @@ async fn lock(
     storage: &MockStorage,
     root: &Path,
 ) -> Result<Option<Lock>, Box<dyn std::error::Error>> {
-    let contract = Contract::read(storage, root).await?;
+    let contract = Contract::read(storage, root, None).await?;
     Ok(Lock::read(storage, &contract).await?)
 }
 
@@ -154,7 +154,7 @@ async fn a_first_read_fills_each_read_entry_and_records_its_base() -> Res {
     assert_eq!(base(&lock, "team/ref").as_deref(), Some(REF_FIRST));
     assert_eq!(lock.packages.len(), 2);
     assert!(lock.header.filled.is_some(), "every read entry was read");
-    let contract = Contract::read(&storage, &root).await?;
+    let contract = Contract::read(&storage, &root, None).await?;
     assert_eq!(lock.mismatches(&contract, &writer()), []);
     Ok(())
 }
@@ -251,7 +251,7 @@ async fn a_package_with_unpushed_commits_is_not_read() -> Res {
     let storage = MockStorage::default();
     publish(&remote, "team/raw", FIRST, &[("a.txt", b"alpha")]).await?;
     let root = dataspace(&storage, "read = [\"team/raw\"]\n")?;
-    let contract = Contract::read(&storage, &root).await?;
+    let contract = Contract::read(&storage, &root, None).await?;
     let mut lock = Lock::new(&contract, &writer());
     let committed = LockEntry {
         base: SECOND.to_string(),
@@ -313,7 +313,7 @@ async fn a_contract_edited_by_hand_keeps_the_bases_of_the_packages_it_still_name
     assert!(read.completed());
     assert_eq!(report(&read.entries[0].1).kept, [PathBuf::from("a.txt")]);
     assert_eq!(std::fs::read(root.join("team/ref/c.txt"))?, b"gamma");
-    let contract = Contract::read(&storage, &root).await?;
+    let contract = Contract::read(&storage, &root, None).await?;
     let lock = lock(&storage, &root).await?.expect("a lock");
     assert_eq!(lock.mismatches(&contract, &writer()), []);
     Ok(())
@@ -326,7 +326,7 @@ fn long_ago() -> chrono::DateTime<Utc> {
 /// A lock `writer` wrote for the dataspace, filled [`long_ago`], naming
 /// `team/raw` as `entry`.
 async fn lock_from(storage: &MockStorage, root: &Path, writer: &Writer, entry: LockEntry) -> Res {
-    let contract = Contract::read(storage, root).await?;
+    let contract = Contract::read(storage, root, None).await?;
     let mut lock = Lock::new(&contract, writer);
     lock.header.filled = Some(long_ago());
     lock.packages.insert(key("team/raw"), entry);
@@ -384,7 +384,7 @@ async fn a_lock_from_another_host_fills_a_checkout_that_holds_no_files_at_its_re
 
     assert!(read.is_ok_and(|read| read.completed()));
     assert_eq!(std::fs::read(root.join("team/raw/a.txt"))?, b"alpha");
-    let contract = Contract::read(&storage, &root).await?;
+    let contract = Contract::read(&storage, &root, None).await?;
     let lock = lock(&storage, &root).await?.expect("a lock");
     assert_eq!(
         lock.mismatches(&contract, &writer()),

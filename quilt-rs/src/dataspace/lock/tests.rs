@@ -47,7 +47,7 @@ async fn dataspace(
     let folder = storage.temp_dir.path().join(name);
     std::fs::create_dir_all(&folder)?;
     std::fs::write(folder.join("data.toml"), contract)?;
-    Ok(Contract::read(storage, &folder).await?)
+    Ok(Contract::read(storage, &folder, None).await?)
 }
 
 fn filled_lock(contract: &Contract) -> Lock {
@@ -315,12 +315,25 @@ async fn a_key_is_a_canonical_package_uri() -> Res {
     assert_eq!(read.packages.keys().collect::<Vec<_>>(), [&key("team/raw")]);
     assert_eq!(read.header.filled, None);
 
+    let local = read_text(&lock_text(
+        1,
+        &format!(r#""quilt+local://lab-mac#package=me/analysis" = "{BASE}""#),
+    ))
+    .await?
+    .unwrap();
+    let local_key = PackageKey {
+        registry: Registry::Local("lab-mac".to_string()),
+        package: Namespace::try_from("me/analysis")?,
+    };
+    assert_eq!(local.packages.keys().collect::<Vec<_>>(), [&local_key]);
+
     for key in [
         "quilt+s3://quilt-dev#package=team/raw:latest",
         &format!("quilt+s3://quilt-dev#package=team/raw@{BASE}"),
         "quilt+s3://quilt-dev#package=team/raw&path=a.csv",
         "quilt+s3://quilt-dev#package=team/raw&catalog=open.quilt.bio",
-        "quilt+local://host#package=me/analysis",
+        "quilt+local://#package=me/analysis",
+        "quilt+local://lab-mac#package=me/analysis:latest",
         "team/raw",
     ] {
         let result = read_text(&lock_text(1, &format!(r#""{key}" = "{BASE}""#))).await;
