@@ -451,6 +451,7 @@ async fn a_metadata_file_edited_while_the_revision_downloads_is_left_as_it_is() 
         "{outcome:?}"
     );
     assert_eq!(text(&storage, METADATA_FILE).await.as_deref(), Some("mine"));
+    assert_eq!(text(&storage, "a.txt").await.as_deref(), Some("v1"));
     Ok(())
 }
 
@@ -601,5 +602,98 @@ async fn metadata_held_in_another_order_is_the_same_metadata() -> Res {
     let outcome = read(&storage, &remote, &entry, Some(FIRST)).await?;
 
     assert_eq!(report(outcome).kept, keys(&[METADATA_FILE]));
+    Ok(())
+}
+
+/// Two keys differing only in case are two files where the disk tells them
+/// apart; there, dropping one deletes it.
+#[test(tokio::test)]
+async fn on_a_disk_that_tells_case_apart_a_key_dropped_in_one_case_is_removed() -> Res {
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    write(&storage, "probe", b"").await?;
+    if storage.exists(folder().join("PROBE")).await {
+        return Ok(()); // This disk ignores case.
+    }
+    storage.remove_file(folder().join("probe")).await?;
+    let entry = whole();
+    publish(
+        &remote,
+        FIRST,
+        &[("data.csv", b"rows"), ("Data.csv", b"rows")],
+    )
+    .await?;
+    read(&storage, &remote, &entry, None).await?;
+    publish(&remote, SECOND, &[("Data.csv", b"rows")]).await?;
+
+    let outcome = read(&storage, &remote, &entry, Some(FIRST)).await?;
+
+    assert_eq!(report(outcome).removed, keys(&["data.csv"]));
+    assert_eq!(text(&storage, "data.csv").await, None);
+    assert_eq!(text(&storage, "Data.csv").await.as_deref(), Some("rows"));
+    Ok(())
+}
+
+/// A rename would replace the link with a file.
+#[cfg(unix)]
+#[test(tokio::test)]
+async fn a_link_at_the_metadata_files_place_collides() -> Res {
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    publish(&remote, FIRST, &[("a.txt", b"alpha")]).await?;
+    storage.create_dir_all(folder()).await?;
+    let root = storage.temp_dir.path();
+    std::os::unix::fs::symlink(
+        root.join("nowhere"),
+        root.join("work/rnaseq/team/raw").join(METADATA_FILE),
+    )?;
+
+    let outcome = read(&storage, &remote, &whole(), None).await;
+
+    assert!(
+        matches!(
+            &outcome,
+            Ok(ReadOutcome::Blocked { conflicts, .. }) if *conflicts == keys(&[METADATA_FILE])
+        ),
+        "{outcome:?}"
+    );
+    assert!(storage.is_symlink(folder().join(METADATA_FILE)).await);
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test(tokio::test)]
+async fn a_link_put_in_a_files_place_while_the_revision_downloads_stops_the_read() -> Res {
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    let entry = whole();
+    publish(&remote, FIRST, &[("edit.txt", b"v1")]).await?;
+    read(&storage, &remote, &entry, None).await?;
+    publish(&remote, SECOND, &[("edit.txt", b"v2")]).await?;
+    let root = storage.temp_dir.path().to_path_buf();
+    storage
+        .write_byte_stream(
+            Path::new("/elsewhere/v1.txt"),
+            ByteStream::from(b"v1".to_vec()),
+        )
+        .await?;
+    let download = remote.park(&row("edit.txt", b"v2").physical_key);
+    let swap = async {
+        download.arrived().await;
+        let target = root.join("work/rnaseq/team/raw/edit.txt");
+        std::fs::remove_file(&target)?;
+        std::os::unix::fs::symlink(root.join("elsewhere/v1.txt"), &target)?;
+        download.release();
+        Ok::<_, std::io::Error>(())
+    };
+
+    let (outcome, swapped) = tokio::join!(read(&storage, &remote, &entry, Some(FIRST)), swap);
+    swapped?;
+
+    assert!(
+        matches!(&outcome, Err(EntryError::Changed(key)) if key == Path::new("edit.txt")),
+        "{outcome:?}"
+    );
+    assert!(storage.is_symlink(folder().join("edit.txt")).await);
     Ok(())
 }

@@ -233,20 +233,14 @@ pub async fn read(
         folder,
         &staging,
         &plan.steps,
+        plan.metadata.as_ref(),
         &mut report,
     )
     .await;
     let _ = storage.remove_dir_all(&staging).await;
     applied?;
     if let Some((text, planned_on)) = plan.metadata {
-        let path = folder.join(METADATA_FILE);
-        if bytes_at(storage, &path).await? != planned_on {
-            return Err(EntryError::Changed(PathBuf::from(METADATA_FILE)));
-        }
-        let temp = format!("{METADATA_FILE}.tmp-{}", uuid::Uuid::new_v4());
-        storage
-            .write_byte_stream_via(path, temp, ByteStream::from(text.into_bytes()), None)
-            .await?;
+        write_metadata(storage, folder, text, planned_on.as_deref()).await?;
         report.placed.push(PathBuf::from(METADATA_FILE));
     }
     info!(
@@ -272,17 +266,17 @@ async fn plan<'a>(
     let mut plan = Plan::default();
     let wanted = covered(target, paths);
     let had = base.map_or_else(BTreeMap::new, |base| covered(base, paths));
-    // The revision's keys found on disk, case folded: on a disk that ignores
-    // case, a key renamed only in case finds the old key's file, which removing
-    // the old key would delete.
-    let mut found = BTreeSet::new();
+    // The revision's keys found on disk, by their case-folded names: on a disk
+    // that ignores case, a key renamed only in case finds the old key's file,
+    // which removing the old key would delete.
+    let mut found = BTreeMap::new();
     for (key, want) in &wanted {
         let path = key.join_to(folder);
         let had = had.get(key).copied();
         let algorithm = want.hash.algorithm();
         let disk = OnDisk::read(storage, &path, algorithm).await?;
         if !matches!(disk, OnDisk::Nothing) {
-            found.insert(key.to_string_lossy().to_lowercase());
+            found.insert(key.to_string_lossy().to_lowercase(), *key);
         }
         if matches!(disk, OnDisk::Nothing) && folder_blocked(storage, folder, &path).await {
             plan.conflicts.push(key.to_path_buf());
@@ -314,7 +308,9 @@ async fn plan<'a>(
         }
     }
     for (key, had) in had.iter().filter(|(key, _)| !wanted.contains_key(*key)) {
-        if found.contains(&key.to_string_lossy().to_lowercase()) {
+        if let Some(renamed) = found.get(&key.to_string_lossy().to_lowercase())
+            && !listed(storage, &renamed.join_to(folder)).await?
+        {
             continue;
         }
         let path = key.join_to(folder);
@@ -333,6 +329,9 @@ async fn plan<'a>(
     let had_text = base.map(|base| render(base, paths));
     let on_disk = bytes_at(storage, &metadata_path).await?;
     match &on_disk {
+        _ if storage.is_symlink(&metadata_path).await => {
+            plan.conflicts.push(PathBuf::from(METADATA_FILE));
+        }
         Some(text) if text == wanted_text.as_bytes() => {}
         Some(_) if had_text.as_ref() == Some(&wanted_text) => {
             plan.kept.push(PathBuf::from(METADATA_FILE));
@@ -370,19 +369,75 @@ async fn bytes_at(storage: &(impl Storage + Sync), path: &Path) -> Res<Option<Ve
     }
 }
 
+/// Whether the folder lists `path` by its exact name, so that a disk that
+/// ignores case did not find it under another.
+async fn listed(storage: &(impl Storage + Sync), path: &Path) -> Res<bool> {
+    let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
+        return Ok(false);
+    };
+    let mut entries = storage.read_dir(parent).await?;
+    while let Some(entry) = entries.next_entry().await? {
+        if entry.file_name() == name {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// Whether the folder still holds what `step` was planned against: its
-/// `had`, or nothing at all.
+/// `had`, or nothing at all. A link holds neither.
 async fn as_planned(storage: &(impl Storage + Sync), folder: &Path, step: &Step<'_>) -> Res<bool> {
     let path = step.key().join_to(folder);
+    if storage.is_symlink(&path).await {
+        return Ok(false);
+    }
     Ok(match step.had {
         Some(had) => !edited(storage, &path, had).await?,
-        None => !storage.exists(&path).await && !storage.is_symlink(&path).await,
+        None => !storage.exists(&path).await,
     })
 }
 
+/// Writes the metadata file's `text` where it still holds `planned_on`.
+async fn write_metadata(
+    storage: &(impl Storage + Sync),
+    folder: &Path,
+    text: String,
+    planned_on: Option<&[u8]>,
+) -> Result<(), EntryError> {
+    if !metadata_as_planned(storage, folder, planned_on).await? {
+        return Err(EntryError::Changed(PathBuf::from(METADATA_FILE)));
+    }
+    let temp = format!("{METADATA_FILE}.tmp-{}", uuid::Uuid::new_v4());
+    storage
+        .write_byte_stream_via(
+            folder.join(METADATA_FILE),
+            temp,
+            ByteStream::from(text.into_bytes()),
+            None,
+        )
+        .await?;
+    Ok(())
+}
+
+/// Whether the metadata file still holds the bytes it was planned against,
+/// `None` being no file. A link holds none.
+async fn metadata_as_planned(
+    storage: &(impl Storage + Sync),
+    folder: &Path,
+    planned_on: Option<&[u8]>,
+) -> Res<bool> {
+    let path = folder.join(METADATA_FILE);
+    if storage.is_symlink(&path).await {
+        return Ok(false);
+    }
+    Ok(bytes_at(storage, &path).await?.as_deref() == planned_on)
+}
+
 /// Fetches the files `steps` place into `staging`, then, once the folder is
-/// seen to hold what every step was planned against, renames each into the
-/// folder and deletes the files they remove.
+/// seen to hold what every step and the metadata file, where it is to be
+/// written, were planned against, renames each into the folder and deletes
+/// the files they remove.
+#[allow(clippy::too_many_arguments)]
 async fn apply(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
@@ -390,6 +445,7 @@ async fn apply(
     folder: &Path,
     staging: &Path,
     steps: &[Step<'_>],
+    metadata: Option<&(String, Option<Vec<u8>>)>,
     report: &mut ReadReport,
 ) -> Result<(), EntryError> {
     // A linked folder would put a write or a deletion outside the folder. Asked
@@ -429,6 +485,11 @@ async fn apply(
         if !as_planned(storage, folder, step).await? {
             return Err(EntryError::Changed(step.key().to_path_buf()));
         }
+    }
+    if let Some((_, planned_on)) = metadata
+        && !metadata_as_planned(storage, folder, planned_on.as_deref()).await?
+    {
+        return Err(EntryError::Changed(PathBuf::from(METADATA_FILE)));
     }
     for step in steps {
         let key = step.key();
