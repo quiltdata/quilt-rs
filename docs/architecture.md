@@ -297,8 +297,10 @@ resolves `Diverged` against the remote.
   (`If-None-Match: *`) when there was none, so a publish that lands between
   the read and the write is not overwritten: S3 answers 412, and the push
   keeps its revision, leaves the tag and reports `certified_latest = false`
-  (`Diverged`). A role that may write the tag but not read it cannot make
-  the check: the push writes the tag plainly and reports
+  (`Diverged`). When it cannot read which revision `latest` moved to, or
+  finds its own base there, it fails with `PushTagFailed` naming the stored
+  revision and keeps the commit. A role that may write the tag but not read
+  it cannot make the check: the push writes the tag plainly and reports
   `latest_unchecked = true`. Writers outside quilt-rs, such as an older
   quilt3 or the catalog, still move `latest` without the check.
 - **A first push respects another writer's `latest`.** A first push has an
