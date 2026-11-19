@@ -62,7 +62,7 @@ CREATE TABLE stat_walk (
 ",
     // Stat records gain the registry and the folder, which earlier ones lack,
     // so they are dropped. `registry` is the bucket, or '' for none; `folder`
-    // is the path's bytes, so no two paths share one. Keys start with the
+    // is the path as the OS spells it, so no two paths share one. Keys start with the
     // folder, which a full walk clears of other buckets by.
     "
 DROP TABLE file_stat;
@@ -110,12 +110,30 @@ impl FolderKey {
             Some(Registry::S3(bucket)) => bucket.clone(),
             None => String::new(),
         };
-        (
-            registry,
-            self.package.to_string(),
-            self.folder.as_os_str().as_encoded_bytes().to_vec(),
-        )
+        (registry, self.package.to_string(), os_bytes(&self.folder))
     }
+}
+
+/// The path as the OS spells it: bytes on Unix, UTF-16 on Windows. Not
+/// `as_encoded_bytes`, whose encoding may change and must not be stored.
+#[cfg(unix)]
+fn os_bytes(path: &Path) -> Vec<u8> {
+    use std::os::unix::ffi::OsStrExt;
+    path.as_os_str().as_bytes().to_vec()
+}
+
+#[cfg(windows)]
+fn os_bytes(path: &Path) -> Vec<u8> {
+    use std::os::windows::ffi::OsStrExt;
+    path.as_os_str()
+        .encode_wide()
+        .flat_map(u16::to_le_bytes)
+        .collect()
+}
+
+#[cfg(not(any(unix, windows)))]
+fn os_bytes(path: &Path) -> Vec<u8> {
+    path.to_string_lossy().into_owned().into_bytes()
 }
 
 /// What moved a package's last-change time.
