@@ -378,7 +378,8 @@ impl LocalNames {
 /// What a publish to the local registry did with `latest`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LocalPublish {
-    /// `latest` was still the base, and now names the revision.
+    /// `latest` names the revision: it was the base, or already the
+    /// revision.
     Advanced,
     /// `latest` had moved from the base, to the hash held here, or `None`
     /// where the package has no `latest`. The revision is kept and the tag
@@ -483,7 +484,7 @@ impl LocalRegistry {
             .unwrap_or_default();
         let name = name_from_host(&host).ok_or_else(|| {
             std::io::Error::other(format!(
-                "can't name the local registry after this machine's host name {host:?}"
+                "can't name the local registry after this machine's host name {host:?}; give it a name with a rename"
             ))
         })?;
         let names = LocalNames {
@@ -496,8 +497,8 @@ impl LocalRegistry {
 
     /// Stores the revision `hash`, committed here for `namespace`, and moves
     /// `latest` to it only if `latest` still names `base`, `None` being no
-    /// `latest` at all, or names `hash` already. The check and the move are
-    /// made under the package's lock.
+    /// `latest` at all, or names `hash` already. All of it is done holding
+    /// the package's lock, so the caller must not hold it.
     pub async fn publish(
         &self,
         storage: &(impl Storage + Sync),
@@ -508,6 +509,8 @@ impl LocalRegistry {
         if let Some(hash) = std::iter::once(hash).chain(base).find(|h| !is_top_hash(h)) {
             return Err(UriError::Package(format!("not a top hash: {hash:?}")).into());
         }
+        let _held = storage.lock_exclusive(self.package_lock(namespace)).await?;
+        let latest = self.read_latest(storage, namespace).await?;
         // Written even over a revision of the same hash, which leaves out
         // folder metadata, so the one published is the one committed.
         let manifest = storage
@@ -518,10 +521,11 @@ impl LocalRegistry {
             .write_byte_stream(self.revision(hash), ByteStream::from(manifest))
             .await?;
 
-        let _held = storage.lock_exclusive(self.package_lock(namespace)).await?;
-        let latest = self.read_latest(storage, namespace).await?;
-        // `hash` already being `latest` is a publish that landed before.
-        if latest.as_deref() != base && latest.as_deref() != Some(hash) {
+        if latest.as_deref() == Some(hash) {
+            // A publish that landed before.
+            return Ok(LocalPublish::Advanced);
+        }
+        if latest.as_deref() != base {
             return Ok(LocalPublish::Diverged(latest));
         }
         write_tag(storage, &self.dir, &self.latest(namespace), hash).await?;
@@ -1219,8 +1223,9 @@ mod tests {
         Ok(())
     }
 
-    /// A publish checks and moves `latest` only once it holds the package's
-    /// lock, so two publishers from one base cannot both advance it.
+    /// A publish stores its revision, and checks and moves `latest`, only
+    /// once it holds the package's lock, so two publishers from one base
+    /// cannot both advance it.
     #[test(tokio::test)]
     async fn a_local_publish_waits_for_the_package_lock() -> Res {
         let dir = tempfile::tempdir()?;
@@ -1241,6 +1246,7 @@ mod tests {
             "the publish finished while another holder had the lock"
         );
         assert_eq!(local.read_latest(&storage, &namespace).await?, None);
+        assert!(!local.revision(&hash).exists(), "the revision waits too");
 
         drop(held);
         assert_eq!(publish.await?, LocalPublish::Advanced);
