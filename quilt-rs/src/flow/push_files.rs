@@ -202,7 +202,7 @@ async fn tag_stored(
         } => Err(not_latest(latest)),
         LatestAdvance::Moved { latest: None } => Err(PackageOpError::PushTagFailed {
             top_hash: manifest_uri.hash,
-            reason: "latest moved while this push ran, and could not be read again".to_string(),
+            reason: "latest changed while this push ran".to_string(),
         }
         .into()),
         written => {
