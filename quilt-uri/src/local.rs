@@ -49,11 +49,12 @@ impl TryFrom<&str> for LocalPackageUri {
     type Error = UriError;
 
     fn try_from(input: &str) -> Result<Self, Self::Error> {
-        // The URL parser drops these wherever they are, which can name
-        // another package.
-        if input.contains(['\t', '\n', '\r']) {
+        // The URL parser drops these, which before the fragment can name
+        // another registry. The fragment is read as `quilt+s3://` reads it.
+        let before_fragment = input.split('#').next().unwrap_or_default();
+        if before_fragment.contains(['\t', '\n', '\r']) {
             return Err(UriError::Package(format!(
-                "a local package URI holds no tab or line break: {input:?}"
+                "a local package URI holds no tab or line break before `#`: {input:?}"
             )));
         }
         let parsed_url = Url::parse(input)?;
@@ -192,7 +193,6 @@ mod tests {
             "quilt+local:\t//name#package=me/a&path=x://name",
             "quilt+local:\t//#package=me/a",
             "quilt+local:/\n/#package=me/a",
-            "quilt+local://name#package=me/a\tb",
             "quilt+lo\rcal://name#package=me/a",
         ] {
             assert!(
@@ -224,6 +224,14 @@ mod tests {
                 LocalPackageUri::try_from(input).expect_err(&format!("{input} should not parse"));
             assert!(matches!(err, UriError::Package(_)), "{input}: {err}");
         }
+    }
+
+    /// The fragment is read as `quilt+s3://` reads it, padding on a path
+    /// trimmed.
+    #[test]
+    fn a_padded_path_is_trimmed_as_in_an_s3_uri() {
+        let uri = LocalPackageUri::try_from("quilt+local://name#package=me/a&path=a.csv\t");
+        assert_eq!(uri.map(|uri| uri.path), Ok(Some(PathBuf::from("a.csv"))));
     }
 
     #[test]
