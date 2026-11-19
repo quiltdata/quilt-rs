@@ -23,7 +23,7 @@
 
 ### Added
 
-- `quilt read <DATASPACE>` fills the working folder of each `read` entry in `data.toml`, with no Domain, and records the revisions in `data.lock.toml`. A local change that collides with the revision blocks that package, and the command exits 1
+- `quilt read <DATASPACE>` fills the working folder of each `read` entry in `data.toml`, with no Domain, and records the revisions in `data.lock.toml`. A local change that collides with the revision blocks that package, and the command exits 1 (<https://github.com/quiltdata/quilt-rs/pull/1459>)
 - `quilt commit` and `quilt create` take `--meta '<json>'` (quilt3's name; `-u` and `--user-meta` are the same flag) to set package metadata as a JSON object, keeping the exact text of integers beyond 64 bits. No flag on `commit` keeps the previous revision's metadata; no flag on `create` writes no `user_meta` key. A non-object (`--meta null`, an array, a string) is an error. `push` has no `--meta` (<https://github.com/quiltdata/quilt-rs/pull/1394>)
 - `quilt install` and `quilt browse` accept a short hash (6 to 63 lowercase hex characters) after `@` in a package URI, as quilt3 does, and look it up in the bucket's registry (<https://github.com/quiltdata/quilt-rs/pull/1392>)
 - `quilt catalog` shows, sets (`set HOST`) and clears the default catalog, which `quilt login` and `quilt role` use when `--host` is left out; a default is taken from quilt3's `config.yml` the first time, and never applies to a package (<https://github.com/quiltdata/quilt-rs/pull/1384>)
