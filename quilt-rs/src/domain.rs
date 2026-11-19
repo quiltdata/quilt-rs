@@ -640,7 +640,11 @@ pub(crate) fn check_name(name: &str) -> Res {
         .into());
     }
     // Its packages' folder, `<name>@local`, would be a device there.
-    if cfg!(windows) && is_windows_device_name(&format!("{name}@local")) {
+    if cfg!(windows)
+        && is_windows_device_name(
+            &crate::dataspace::contract::Registry::Local(name.to_string()).dir_name(),
+        )
+    {
         return Err(UriError::Package(format!(
             "Windows reserves {name:?} for a device, so it names no local registry here"
         ))

@@ -244,13 +244,13 @@ async fn read_entry(
     }
 }
 
-/// Whether `folder` holds anything. One that cannot be listed, for any reason
-/// but that it is not there, counts as holding files.
 /// A local registry's package, which only the Domain holds.
 fn needs_domain(entry: &Entry) -> bool {
     matches!(entry.registry, Registry::Local(_))
 }
 
+/// Whether `folder` holds anything. One that cannot be listed, for any reason
+/// but that it is not there, counts as holding files.
 async fn holds_files(storage: &(impl Storage + Sync), folder: &Path) -> bool {
     match storage.read_dir(folder).await {
         Ok(mut listing) => !matches!(listing.next_entry().await, Ok(None)),
