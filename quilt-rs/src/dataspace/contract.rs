@@ -69,6 +69,25 @@ impl fmt::Display for Access {
     }
 }
 
+/// The list's name as [`Display`](fmt::Display) writes it.
+impl FromStr for Access {
+    type Err = UnknownAccess;
+
+    fn from_str(text: &str) -> Result<Self, UnknownAccess> {
+        match text {
+            "read" => Ok(Self::Read),
+            "write" => Ok(Self::Write),
+            "replace" => Ok(Self::Replace),
+            "sync" => Ok(Self::Sync),
+            _ => Err(UnknownAccess(text.to_owned())),
+        }
+    }
+}
+
+#[derive(Debug, Error)]
+#[error("{0:?} is not an access: read, write, replace or sync")]
+pub struct UnknownAccess(pub String);
+
 /// Where a package's names, revisions and tags live.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[non_exhaustive]
@@ -264,9 +283,7 @@ impl Contract {
             path: path.to_path_buf(),
             source: Box::new(source),
         };
-        let root = std::path::absolute(dataspace)
-            .map(|root| normalize(&root))
-            .map_err(|err| unreadable(dataspace, err.into()))?;
+        let root = dataspace_path(dataspace).map_err(|err| unreadable(dataspace, err.into()))?;
         let path = root.join(CONTRACT_FILE);
         let bytes = storage
             .read_bytes(&path)
@@ -947,6 +964,11 @@ async fn same_file(one: &Path, other: &Path) -> bool {
     })
     .await
     .unwrap_or(false)
+}
+
+/// The dataspace at `dataspace` as [`Contract::dataspace`] names it.
+pub(crate) fn dataspace_path(dataspace: &Path) -> std::io::Result<PathBuf> {
+    std::path::absolute(dataspace).map(|root| normalize(&root))
 }
 
 /// `path` with its `.` and `..` resolved by name, never by the file system.

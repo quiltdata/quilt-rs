@@ -5,6 +5,7 @@
 pub mod contract;
 pub mod lock;
 mod metadata;
+pub mod publish;
 pub mod read;
 pub mod read_all;
 
@@ -29,6 +30,21 @@ pub enum EntryError {
 
     #[error("{} changed while the operation ran, so it was left as it is", .0.display())]
     Changed(PathBuf),
+
+    #[error("the working folder {} is missing or cannot be read, so nothing was published", .0.display())]
+    FolderUnavailable(PathBuf),
+
+    #[error(
+        "the working folder {} holds no files, and `replace` would remove every file of the package",
+        .0.display()
+    )]
+    NothingToReplace(PathBuf),
+
+    #[error("{METADATA_FILE} is not valid: {0}")]
+    MetadataFile(String),
+
+    #[error("`latest` cannot be read, so `write` has nothing to lay its files over")]
+    LatestUnreadable,
 
     #[error(transparent)]
     Failed(#[from] Box<crate::Error>),

@@ -35,8 +35,10 @@ mod package_lock;
 pub mod paths;
 #[cfg(test)]
 mod process_tests;
+pub mod queue;
 pub mod quiltignore;
 pub mod settings;
+mod sqlite;
 pub mod stat_cache;
 pub mod state_store;
 
