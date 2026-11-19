@@ -41,7 +41,7 @@ impl DomainRoot {
     /// outside `registries/` or one of the `@` stores beside the buckets. So
     /// is a legacy name with a capital letter or a trailing `.`, whose folder
     /// a drive that ignores case, or Windows, would share with another
-    /// bucket's.
+    /// bucket's, and on Windows a name its folder would take for a device.
     pub fn registry(&self, bucket: &str) -> Res<RegistryStore> {
         check_bucket(bucket)?;
         if bucket.bytes().any(|b| b.is_ascii_uppercase()) || bucket.ends_with('.') {
@@ -50,11 +50,32 @@ impl DomainRoot {
             ))
             .into());
         }
+        if cfg!(windows) && is_windows_device_name(bucket) {
+            return Err(UriError::Bucket(format!(
+                "Windows reserves {bucket:?} for a device, so the bucket has no Package Store here"
+            ))
+            .into());
+        }
         Ok(RegistryStore {
             bucket: bucket.to_string(),
             dir: self.root.join(REGISTRIES_DIR).join(bucket),
         })
     }
+}
+
+/// Whether Windows takes a file named `name` for a device: `con`, `prn`,
+/// `aux`, `nul`, `com0` to `com9` or `lpt0` to `lpt9`, alone or before a
+/// `.`, in any case.
+fn is_windows_device_name(name: &str) -> bool {
+    let stem = name
+        .split('.')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    matches!(stem.as_str(), "con" | "prn" | "aux" | "nul")
+        || (stem.len() == 4
+            && (stem.starts_with("com") || stem.starts_with("lpt"))
+            && stem.as_bytes()[3].is_ascii_digit())
 }
 
 /// One bucket's Package Store: a cache of the bucket, and the local commits
@@ -192,6 +213,26 @@ mod tests {
         assert!(root.registry("MyBucket").is_err());
         assert!(root.registry("mybucket.").is_err());
         assert!(root.registry("my_legacy.bucket").is_ok());
+    }
+
+    /// The names Windows keeps for devices, with or without an extension,
+    /// and none that only begin like one.
+    #[test]
+    fn windows_device_names_are_known() {
+        for name in ["con", "nul", "aux.data", "com1", "lpt9.x", "prn"] {
+            assert!(is_windows_device_name(name), "{name}");
+        }
+        for name in ["console", "com10", "comx", "nul-bucket", "my.con"] {
+            assert!(!is_windows_device_name(name), "{name}");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_bucket_windows_takes_for_a_device_has_no_store_there() {
+        let root = DomainRoot::new(r"C:\data");
+        assert!(root.registry("con").is_err());
+        assert!(root.registry("console").is_ok());
     }
 
     /// One package recorded into two buckets' stores: each store holds its
