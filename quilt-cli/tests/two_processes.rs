@@ -211,12 +211,12 @@ fn two_processes_committing_one_package_keep_both_commits() {
         .iter()
         .map(|revision| revision["message"].as_str().expect("a message"))
         .collect();
-    // The log orders by file time, which two commits a few milliseconds apart
-    // can share; the lineage above already checks which came first.
-    history[..2].sort_unstable();
+    // The log orders by file time, which revisions a few milliseconds apart can
+    // share; the lineage above already checks which commit came first.
+    history.sort_unstable();
     assert_eq!(
         history,
-        ["one", "two", "Created package"],
+        ["Created package", "one", "two"],
         "the history keeps both commits"
     );
 }
