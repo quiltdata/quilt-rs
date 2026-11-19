@@ -227,6 +227,17 @@ impl Paths {
         }
     }
 
+    /// Whether the folder `key` is one of these paths or inside one.
+    pub(crate) fn covers_folder(&self, key: &LogicalKey) -> bool {
+        match self {
+            Self::Whole => true,
+            Self::Only(paths) => {
+                let folder = PackagePath::Folder(key.clone());
+                paths.iter().any(|path| path.covers(&folder))
+            }
+        }
+    }
+
     fn overlaps(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Only(ours), Self::Only(theirs)) => ours

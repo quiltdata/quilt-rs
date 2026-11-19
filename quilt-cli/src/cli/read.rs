@@ -346,7 +346,7 @@ mod tests {
         assert_eq!(entry["revision"], FIRST);
         assert_eq!(
             entry["placed"],
-            serde_json::json!(["a.txt", "package-metadata.json"])
+            serde_json::json!(["a.txt", "metadata.toml"])
         );
         assert!(output.to_string().starts_with(&format!(
             "quilt+s3://b#package=team/raw: read {FIRST} into "

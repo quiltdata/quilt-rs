@@ -29,7 +29,6 @@ use crate::io::manifest::RowsStream;
 use crate::io::manifest::StreamRowsChunk;
 use crate::io::storage::ByteStream;
 pub(crate) use crate::manifest::meta_json::Style;
-pub(crate) use crate::manifest::meta_json::escape_pointer;
 pub(crate) use crate::manifest::meta_json::write_json;
 use crate::object_hash;
 

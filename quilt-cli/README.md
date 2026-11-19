@@ -134,8 +134,10 @@ exits 0; under `--json` the same shape has `"hash": null` and empty groups.
 
 `read <DATASPACE>` reads the folder's `data.toml` and puts each package it
 lists under `read` in its working folder: the revision's files under the
-entry's paths, and the package's metadata as `package-metadata.json`. It uses
-no Domain; the domain folder supplies only a catalog's login. A file changed
+entry's paths, and all of the revision that is not a file as `metadata.toml`:
+its message, workflow and metadata, with `"$NULL"` for JSON `null`. A revision
+holding an integer beyond TOML's 64 bits is refused. It uses no Domain; the
+domain folder supplies only a catalog's login. A file changed
 here is kept, unless the revision changed it too: then that package is blocked,
 nothing of it changes, and the colliding files are listed. Each package read
 whole has its revision recorded in `data.lock.toml`, and `latest` is never
