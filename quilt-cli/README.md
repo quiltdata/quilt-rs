@@ -46,6 +46,7 @@ cargo install quilt-cli
 | `push`      | Upload a local revision to the remote            |
 | `pull`      | Fetch the latest remote revision                 |
 | `read`      | Read a dataspace's `read` entries, with no Domain |
+| `reattach`  | List or reattach local commits a dataspace's lock lost |
 | `list`      | List installed packages and their commit status  |
 | `log`       | List the revisions this copy has, and why each is kept |
 | `uninstall` | Remove a package; `--prune` also deletes its stored files no other package uses |
@@ -152,6 +153,18 @@ It exits 1 when any package was not read whole. Under `--json` it prints
 `failed`),
 `completed`, `revision`, the `placed`, `removed`, `kept`, `skipped`,
 `hash_mismatch` and `conflicts` lists, and `error`.
+
+`reattach <DATASPACE> <PACKAGE>` lists the package's local commits that
+`data.lock.toml` does not name, as after the lock was deleted: those its bucket
+lacks, kept in `bio.quilt.dataspace` in the OS's local data folder. Commits
+made with `quilt commit` are not among them.
+`reattach ... <COMMIT> --base <HASH>` attaches one as the package's unpushed
+commit on that base, which its next publish expects `latest` to be. PACKAGE is
+`quilt+s3://bucket#package=owner/name`, listed under `write`, `replace` or
+`sync`. A lock that already names unpushed commits of the package, or that
+another host, user or folder wrote, is refused. Under `--json` it prints
+`package`, `unattached` (`hash` and `message`; `null` after an attach),
+`attached` and `base`.
 
 `push` with no commit to push prints `Nothing to push` and exits 0; under
 `--json` the same shape has `"hash": null`, `"manifest_uri": null` and

@@ -11,7 +11,11 @@ use clap::Subcommand;
 use clap::builder::TypedValueParser as _;
 use tracing::log;
 
+use quilt_rs::dataspace::contract::PackageKey;
 use quilt_rs::dataspace::read_all::ReadAllError;
+use quilt_rs::dataspace::reattach::ReattachError;
+use quilt_rs::domain::DOMAIN_DIR_NAME;
+use quilt_rs::domain::DomainRoot;
 use quilt_rs::flow::UserMeta;
 use quilt_rs::io::remote::WorkflowIntent;
 use quilt_rs::logging::InvalidLogFilter;
@@ -35,6 +39,7 @@ mod output;
 mod pull;
 mod push;
 mod read;
+mod reattach;
 mod remove_revisions;
 mod role;
 mod status;
@@ -132,6 +137,14 @@ fn get_domain_dir(dir_arg: Option<PathBuf>) -> Result<PathBuf, Error> {
 /// The domain used when neither `--domain` nor `QUILT_DOMAIN` names one.
 fn default_domain_dir() -> Option<PathBuf> {
     dirs::data_local_dir().map(|dir| dir.join(DOMAIN_DIR_NAMESPACE))
+}
+
+/// The Domain folder that keeps a dataspace's local commits. `--domain` and
+/// `QUILT_DOMAIN` name the `.quilt` one, which still keeps the credentials.
+fn dataspace_domain_dir() -> Result<PathBuf, Error> {
+    dirs::data_local_dir()
+        .map(|dir| dir.join(DOMAIN_DIR_NAME))
+        .ok_or(Error::Domain)
 }
 
 fn get_default_home_dir() -> Result<PathBuf, Error> {
@@ -661,6 +674,26 @@ enum Commands {
         #[arg(value_name = "DATASPACE")]
         dataspace: PathBuf,
     },
+    /// List a package's local commits that the dataspace's lock does not
+    /// name, or attach one to the lock again
+    ///
+    /// The recovery for a deleted `data.lock.toml`. A commit is attached on
+    /// the base you name, which its next publish expects `latest` to be.
+    Reattach {
+        /// The dataspace: the folder holding `data.toml`
+        #[arg(value_name = "DATASPACE")]
+        dataspace: PathBuf,
+        /// The package as the lock names it.
+        /// Ex. `quilt+s3://bucket#package=owner/name`
+        #[arg(value_name = "PACKAGE")]
+        package: PackageKey,
+        /// The commit to attach, one the listing shows; omit to list
+        #[arg(value_name = "COMMIT", requires = "base")]
+        commit: Option<String>,
+        /// The revision the commit was made on, as a whole top hash
+        #[arg(long, value_name = "HASH", requires = "commit")]
+        base: Option<String>,
+    },
     /// Remove old revisions of a package, and the stored files only they use
     ///
     /// Removes the revisions this copy holds that it no longer needs, oldest
@@ -816,6 +849,21 @@ pub async fn init(args: Args) -> Result<Std, Error> {
     // It uses no Domain, so it runs before anything touches one.
     if let Commands::Read { dataspace } = args.command {
         return Ok(read::command(root_dir, read::Input { dataspace }).await);
+    }
+    if let Commands::Reattach {
+        dataspace,
+        package,
+        commit,
+        base,
+    } = args.command
+    {
+        let input = reattach::Input {
+            dataspace,
+            package,
+            attach: commit.zip(base),
+        };
+        let domain = DomainRoot::new(dataspace_domain_dir()?);
+        return Ok(reattach::command(root_dir, domain, input).await);
     }
     let m = Model::from(root_dir);
     // Every other command refuses a rollback that was interrupted, so this
@@ -1044,7 +1092,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             Ok(uninstall::command(m, args).await)
         }
         Commands::Upgrade => Ok(upgrade::command()),
-        Commands::Version { .. } | Commands::Read { .. } => {
+        Commands::Version { .. } | Commands::Read { .. } | Commands::Reattach { .. } => {
             unreachable!("handled before the domain is opened")
         }
         Commands::Lineage { .. } => unreachable!("handled before the lineage is read"),
@@ -1090,6 +1138,9 @@ Then run:
 
     #[error(transparent)]
     Dataspace(#[from] ReadAllError),
+
+    #[error(transparent)]
+    Reattach(#[from] ReattachError),
 
     #[error("--no-download downloads nothing, so it cannot install --path or a &path= in the URI")]
     NoDownloadWithPath,
@@ -1191,6 +1242,16 @@ impl Error {
                 ReadAllError::Contract(_) => "contract",
                 ReadAllError::Lock(_) => "lock",
                 ReadAllError::Mismatch(_) => "lock_mismatch",
+                _ => "dataspace",
+            },
+            Error::Reattach(err) => match err {
+                ReattachError::Contract(_) => "contract",
+                ReattachError::Lock(_) => "lock",
+                ReattachError::Mismatch(_) => "lock_mismatch",
+                ReattachError::Undeclared => "not_declared",
+                ReattachError::Attached => "commits_attached",
+                ReattachError::NotUnattached(_) => "not_unattached",
+                ReattachError::Base(_) => "invalid_base",
                 _ => "dataspace",
             },
             Error::NoDownloadWithPath => "no_download_with_path",
@@ -1380,6 +1441,22 @@ mod tests {
         }
     }
 
+    /// [`error_kinds_are_stable`] for `reattach`'s own refusals.
+    #[test]
+    fn reattach_error_kinds_are_stable() {
+        for (err, expected) in [
+            (ReattachError::Undeclared, "not_declared"),
+            (ReattachError::Attached, "commits_attached"),
+            (
+                ReattachError::NotUnattached("1".to_string()),
+                "not_unattached",
+            ),
+            (ReattachError::Base("1".to_string()), "invalid_base"),
+        ] {
+            assert_eq!(Error::from(err).kind(), expected);
+        }
+    }
+
     #[test]
     fn commit_workflow_intent_omit_maps_to_bucket_default() {
         assert_eq!(
@@ -1431,6 +1508,20 @@ mod tests {
         };
         assert_eq!(host.unwrap().to_string(), "quilt.test");
         assert_eq!(set.as_deref(), Some("ReadOnly"));
+    }
+
+    /// A commit is never attached without a base to check its publish
+    /// against, and a base names nothing without a commit.
+    #[test]
+    fn reattach_takes_a_commit_and_its_base_together() {
+        let package = "quilt+s3://b#package=team/raw";
+        let parse = |rest: &[&str]| {
+            Args::try_parse_from(["quilt", "reattach", "ds", package].iter().chain(rest))
+        };
+        assert!(parse(&[]).is_ok());
+        assert!(parse(&["abc", "--base", "def"]).is_ok());
+        assert!(parse(&["abc"]).is_err());
+        assert!(parse(&["--base", "def"]).is_err());
     }
 
     /// `--host` is optional on `login` and `role`: left out, they use the

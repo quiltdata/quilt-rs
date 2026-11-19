@@ -23,6 +23,7 @@
 
 ### Added
 
+- `dataspace::reattach::{unattached, reattach}` list a package's local commits that `data.lock.toml` does not name, as after the lock was deleted, and attach one on a base the caller names
 - `dataspace::read_all::read_all` reads every `read` entry of a dataspace into its working folder, then writes `data.lock.toml`, moving a package's base only where its read completed (<https://github.com/quiltdata/quilt-rs/pull/1459>)
 - `dataspace::publish::publish` publishes a `write` or `replace` entry's working folder against the `latest` read just before, with no Domain: `write` lays the folder's files over `latest`, composed again on a `latest` that moved meanwhile, and `replace` publishes the folder as the whole package, with `package-metadata.json` setting the metadata. A revision that did not become `latest` comes back as `Published::Stored` with its hash
 - `dataspace::publish::publish` publishes a `write` or `replace` entry's working folder against the `latest` read just before, with no Domain: `write` lays the folder's files over `latest`, composed again on a `latest` that moved meanwhile, and `replace` publishes the folder as the whole package, with `package-metadata.json` setting the metadata. A revision that did not become `latest` comes back as `Published::Stored` with its hash (<https://github.com/quiltdata/quilt-rs/pull/1457>)
