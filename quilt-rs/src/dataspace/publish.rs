@@ -24,6 +24,7 @@ use crate::dataspace::metadata::holds_metadata_file;
 use crate::dataspace::read::OnDisk;
 use crate::dataspace::read::bytes_at;
 use crate::dataspace::read::left_by_read;
+use crate::dataspace::read::metadata_place_free;
 use crate::error::PackageOpError;
 use crate::flow::PushTarget;
 use crate::flow::push_files;
@@ -293,7 +294,12 @@ async fn metadata_file(
     storage: &(impl Storage + Sync),
     folder: &Path,
 ) -> Result<MetadataFile, EntryError> {
-    let text = bytes_at(storage, &folder.join(METADATA_FILE))
+    let path = folder.join(METADATA_FILE);
+    // As a read has it: a folder or a link there is not the metadata file.
+    if !metadata_place_free(storage, &path).await {
+        return Err(EntryError::MetadataFile("it is not a file".to_string()));
+    }
+    let text = bytes_at(storage, &path)
         .await?
         .map(String::from_utf8)
         .transpose()

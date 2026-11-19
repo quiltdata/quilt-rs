@@ -910,7 +910,9 @@ async fn a_file_named_like_the_metadata_file_in_another_case_is_not_published() 
 }
 
 /// A read refuses a package with such a key, reading `\` as a separator,
-/// so publishing one would leave a revision no dataspace could use.
+/// so publishing one would leave a revision no dataspace could use. Only on
+/// Unix is `\` part of a name; on Windows the path is a folder, as below.
+#[cfg(unix)]
 #[test(tokio::test)]
 async fn a_file_inside_the_metadata_files_name_after_a_backslash_is_not_published() -> Res {
     let remote = MockRemote::default();
@@ -924,6 +926,25 @@ async fn a_file_inside_the_metadata_files_name_after_a_backslash_is_not_publishe
         keys(&revision(&remote, advanced(&outcome)).await?),
         ["a.txt"]
     );
+    Ok(())
+}
+
+/// A read collides on a folder at the metadata file's place, so a publish
+/// refuses it rather than read it as the file or publish what it holds.
+#[test(tokio::test)]
+async fn a_folder_at_the_metadata_files_place_is_refused() -> Res {
+    let remote = MockRemote::default();
+    let storage = &remote.storage;
+    write(storage, "a.txt", b"a").await?;
+    write(storage, "package-metadata.json/inside.txt", b"x").await?;
+
+    let outcome = publish(storage, &remote, &entry("write = [\"team/raw\"]"), None).await;
+
+    assert!(
+        matches!(outcome, Err(EntryError::MetadataFile(_))),
+        "{outcome:?}"
+    );
+    assert_eq!(remote.current(LATEST).await?, None);
     Ok(())
 }
 

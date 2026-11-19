@@ -505,7 +505,7 @@ async fn metadata_as_planned(
 
 /// Whether the metadata file's place holds a file or nothing: not a link,
 /// whatever it leads to, nor a folder.
-async fn metadata_place_free(storage: &(impl Storage + Sync), path: &Path) -> bool {
+pub(crate) async fn metadata_place_free(storage: &(impl Storage + Sync), path: &Path) -> bool {
     !storage.is_symlink(path).await && (!storage.exists(path).await || storage.is_file(path).await)
 }
 
