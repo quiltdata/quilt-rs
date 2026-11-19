@@ -147,22 +147,26 @@ impl Paths {
     /// whole package. `None` where one names as a file what another puts
     /// inside a folder of that name.
     fn union(declared: &[Option<&PackagePath>]) -> Option<Self> {
-        if declared.iter().any(Option::is_none) {
+        let paths: Vec<&PackagePath> = declared.iter().flatten().copied().collect();
+        let collides = |one: &PackagePath, other: &PackagePath| {
+            one.overlaps(other) && !one.covers(other) && !other.covers(one)
+        };
+        if paths
+            .iter()
+            .enumerate()
+            .any(|(i, one)| paths[i + 1..].iter().any(|other| collides(one, other)))
+        {
+            return None;
+        }
+        if paths.len() < declared.len() {
             return Some(Self::Whole);
         }
         let mut union: Vec<PackagePath> = Vec::new();
-        for path in declared.iter().flatten() {
-            if union.iter().any(|kept| kept.covers(path)) {
-                continue;
+        for path in paths {
+            if !union.iter().any(|kept| kept.covers(path)) {
+                union.retain(|kept| !path.covers(kept));
+                union.push(path.clone());
             }
-            if union
-                .iter()
-                .any(|kept| kept.overlaps(path) && !path.covers(kept))
-            {
-                return None;
-            }
-            union.retain(|kept| !path.covers(kept));
-            union.push((*path).clone());
         }
         union.sort();
         Some(Self::Only(union))
@@ -230,10 +234,7 @@ impl Contract {
             .read_bytes(&path)
             .await
             .map_err(|err| unreadable(&path, err))?;
-        let case = if storage
-            .exists(root.join(CONTRACT_FILE.to_uppercase()))
-            .await
-        {
+        let case = if same_file(&path, &root.join(CONTRACT_FILE.to_uppercase())).await {
             FolderCase::Insensitive
         } else {
             FolderCase::Sensitive
@@ -561,18 +562,21 @@ fn expand(
                 .as_deref()
                 .map(|path| PackagePath::parse(&path.to_string_lossy()))
                 .transpose()?;
-            // A URI that names no revision reads as `:latest`, not as one given.
-            let uri_pin = pin_of(uri.revision);
+            let uri_revision = raw
+                .uri
+                .as_deref()
+                .is_some_and(names_revision)
+                .then_some(uri.revision);
             agree(
                 "revision",
                 revision.clone().map(pin_of),
-                Some(uri_pin.clone()),
+                Some(uri_revision.clone().and_then(pin_of)),
             )?;
             (
                 agree("registry", registry, Some(Registry::S3(uri.bucket)))?,
                 agree("catalog", catalog, uri.catalog)?,
                 agree("package", package, Some(uri.namespace))?,
-                revision.or(uri_pin),
+                revision.or(uri_revision),
                 agree("path", path, uri_path)?,
             )
         }
@@ -626,6 +630,19 @@ fn refuse_local(text: &str) -> Result<(), EntryProblem> {
         return Err(EntryProblem::LocalRegistry);
     }
     Ok(())
+}
+
+/// Whether a package URI's text names a revision, which the parsed URI cannot
+/// tell for `:latest`.
+fn names_revision(uri: &str) -> bool {
+    uri.split_once('#').is_some_and(|(_, fragment)| {
+        let decode = |part| percent_encoding::percent_decode_str(part).decode_utf8_lossy();
+        fragment.split('&').any(|piece| {
+            piece.split_once('=').is_some_and(|(key, spec)| {
+                decode(key) == "package" && decode(spec).contains([':', '@'])
+            })
+        })
+    })
 }
 
 fn parse_uri(text: &str) -> Result<S3PackageUri, EntryProblem> {
@@ -839,6 +856,21 @@ impl<'a> Folders<'a> {
 /// Whether one path, by its names, is the other or inside it.
 fn overlap(one: &[String], other: &[String]) -> bool {
     one.starts_with(other) || other.starts_with(one)
+}
+
+/// Whether two paths name one existing file, a link to it not counting.
+async fn same_file(one: &Path, other: &Path) -> bool {
+    let (one, other) = (one.to_path_buf(), other.to_path_buf());
+    tokio::task::spawn_blocking(move || {
+        let id = |path: &Path| {
+            crate::file_stamp::stamp(path)
+                .ok()
+                .and_then(|stamp| stamp.id)
+        };
+        id(&one).is_some_and(|first| id(&other) == Some(first))
+    })
+    .await
+    .unwrap_or(false)
 }
 
 /// `path` with its `.` and `..` resolved by name, never by the file system.

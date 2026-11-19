@@ -222,6 +222,8 @@ async fn read_compares_folders_as_the_dataspace_file_system_does() -> Res {
     let storage = MockStorage::default();
     let dataspace = storage.temp_dir.path().join("rnaseq");
     std::fs::create_dir(&dataspace)?;
+    // A file of its own where names keep case, and the contract where they don't.
+    std::fs::write(dataspace.join("DATA.TOML"), "")?;
     std::fs::write(
         dataspace.join(CONTRACT_FILE),
         with_defaults(r#"read = ["Team/Raw", "team/raw"]"#),
@@ -370,10 +372,21 @@ fn repeated_paths_under_one_access_are_their_union() -> Res {
         Paths::Only(vec![PackagePath::Folder(key("src"))])
     );
     assert_eq!(union(&["src/", ""])?, Paths::Whole);
-    for paths in [["a/b", "a/b/c/"], ["a/b/c/", "a/b"], ["src", "src/"]] {
+    let collisions: [&[&str]; 6] = [
+        &["a/b", "a/b/c/"],
+        &["a/b/c/", "a/b"],
+        &["src", "src/"],
+        &["src/", "src/item", "src/item/"],
+        &["src/item", "src/item/", "src/"],
+        &["", "a/b", "a/b/c/"],
+    ];
+    for paths in collisions {
         let list: Vec<String> = paths
             .iter()
-            .map(|path| format!(r#"{{ package = "team/p", path = "{path}" }}"#))
+            .map(|path| match *path {
+                "" => r#"{ package = "team/p" }"#.to_string(),
+                path => format!(r#"{{ package = "team/p", path = "{path}" }}"#),
+            })
             .collect();
         let problem = package_problem(&with_defaults(&format!("sync = [{}]", list.join(", "))));
         assert!(
@@ -397,9 +410,14 @@ fn the_declarations_of_a_package_share_one_pin() -> Res {
         shared.revision,
         RevisionPointer::HashPrefix("abc123".to_string())
     );
-    for other in ["def456", ":latest"] {
+    for other in [
+        r#"{ package = "team/p", path = "b/", revision = "def456" }"#,
+        r#"{ package = "team/p", path = "b/", revision = ":latest" }"#,
+        r#"{ uri = "quilt+s3://quilt-dev#package=team/p:latest&path=b/", folder = "team/p" }"#,
+        r#"{ uri = "quilt+s3://quilt-dev#%70ackage=team/p:latest&path=b/", folder = "team/p" }"#,
+    ] {
         let problem = package_problem(&with_defaults(&format!(
-            r#"read = [{{ package = "team/p", path = "a/", revision = "abc123" }}, {{ package = "team/p", path = "b/", revision = "{other}" }}]"#,
+            r#"read = [{{ package = "team/p", path = "a/", revision = "abc123" }}, {other}]"#,
         )));
         assert!(
             matches!(problem, PackageProblem::Revisions),
