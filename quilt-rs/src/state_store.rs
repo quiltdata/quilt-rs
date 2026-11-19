@@ -154,13 +154,11 @@ fn os_path(bytes: &[u8]) -> Option<PathBuf> {
 #[cfg(windows)]
 fn os_path(bytes: &[u8]) -> Option<PathBuf> {
     use std::os::windows::ffi::OsStringExt;
-    if bytes.len() % 2 != 0 {
+    let (pairs, rest) = bytes.as_chunks::<2>();
+    if !rest.is_empty() {
         return None;
     }
-    let wide: Vec<u16> = bytes
-        .chunks_exact(2)
-        .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
-        .collect();
+    let wide: Vec<u16> = pairs.iter().map(|pair| u16::from_le_bytes(*pair)).collect();
     Some(PathBuf::from(std::ffi::OsString::from_wide(&wide)))
 }
 
