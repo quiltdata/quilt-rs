@@ -864,37 +864,38 @@ mod tests {
         Ok(())
     }
 
-    /// A workflow whose schema is itself invalid is not a fault of the
-    /// revision, so a local commit records it as unchecked rather than
-    /// inconsistent. Push still validates as it always has.
-    #[test(tokio::test)]
-    async fn an_invalid_schema_is_recorded_unchecked() -> Res {
-        let (paths, _domain) = DomainPaths::from_temp_dir()?;
+    /// A `governed` bucket whose `gate` workflow has `rules` (YAML lines under
+    /// the workflow) and, when given, a schema `s` at `schemas/s.json`; a
+    /// lineage with that bucket as its remote; and a revision that names the
+    /// `gate` workflow.
+    async fn misconfigured(
+        rules: &str,
+        schema: Option<&str>,
+    ) -> Res<(MockRemote, PackageLineage, Manifest)> {
         let remote = MockRemote::default();
         let config: S3Uri = "s3://governed/.quilt/workflows/config.yml".parse()?;
+        let schemas = if schema.is_some() {
+            "schemas:\n  s:\n    url: s3://governed/schemas/s.json\n"
+        } else {
+            ""
+        };
         remote
             .put_object(
                 None,
                 &config,
-                br#"version: "1"
-workflows:
-  gate:
-    name: Gate
-    entries_schema: bad
-schemas:
-  bad:
-    url: s3://governed/schemas/bad.json
-"#
-                .to_vec(),
+                format!("version: \"1\"\nworkflows:\n  gate:\n    name: Gate\n{rules}{schemas}")
+                    .into_bytes(),
             )
             .await?;
-        remote
-            .put_object(
-                None,
-                &"s3://governed/schemas/bad.json".parse()?,
-                br#"{"type": 123}"#.to_vec(),
-            )
-            .await?;
+        if let Some(schema) = schema {
+            remote
+                .put_object(
+                    None,
+                    &"s3://governed/schemas/s.json".parse()?,
+                    schema.as_bytes().to_vec(),
+                )
+                .await?;
+        }
         let lineage = PackageLineage {
             remote_uri: Some(ManifestUri {
                 origin: None,
@@ -904,7 +905,7 @@ schemas:
             }),
             ..PackageLineage::default()
         };
-        let mut manifest = revision("with a broken schema", Vec::new());
+        let mut manifest = revision("against a misconfigured workflow", Vec::new());
         manifest.header.workflow = Some(crate::manifest::Workflow {
             config,
             id: Some(crate::manifest::WorkflowId {
@@ -912,6 +913,15 @@ schemas:
                 schemas: BTreeMap::new(),
             }),
         });
+        Ok((remote, lineage, manifest))
+    }
+
+    /// Records a revision against a misconfigured workflow with a local
+    /// commit's check, and asserts it was recorded with one `Unchecked`
+    /// warning whose reason contains `expected`.
+    async fn assert_recorded_unchecked(rules: &str, schema: Option<&str>, expected: &str) -> Res {
+        let (paths, _domain) = DomainPaths::from_temp_dir()?;
+        let (remote, lineage, manifest) = misconfigured(rules, schema).await?;
         let (_, recorded) = record(
             &paths,
             &LocalStorage::new(),
@@ -927,10 +937,96 @@ schemas:
         match recorded.warnings.as_slice() {
             [WorkflowWarning::Unchecked { bucket, reason }] => {
                 assert_eq!(bucket, "governed");
-                assert!(reason.contains("not a valid Draft-7"), "{reason}");
+                assert!(reason.contains(expected), "{reason}");
             }
             other => panic!("expected one unchecked warning, got {other:?}"),
         }
+        Ok(())
+    }
+
+    /// A workflow whose schema is itself invalid is not a fault of the
+    /// revision, so a local commit records it as unchecked rather than
+    /// inconsistent. Push still validates as it always has.
+    #[test(tokio::test)]
+    async fn an_invalid_schema_is_recorded_unchecked() -> Res {
+        assert_recorded_unchecked(
+            "    entries_schema: s\n",
+            Some(r#"{"type": 123}"#),
+            "not a valid Draft-7",
+        )
+        .await
+    }
+
+    /// A `handle_pattern` that is not a valid regular expression is a
+    /// misconfigured validator too: unchecked, not inconsistent.
+    #[test(tokio::test)]
+    async fn an_invalid_handle_pattern_is_recorded_unchecked() -> Res {
+        assert_recorded_unchecked(
+            "    handle_pattern: \"(unclosed\"\n",
+            None,
+            "not a valid regular expression",
+        )
+        .await
+    }
+
+    /// A schema that uses `$ref`, which the validator does not support, is
+    /// recorded unchecked.
+    #[test(tokio::test)]
+    async fn an_unsupported_ref_is_recorded_unchecked() -> Res {
+        assert_recorded_unchecked(
+            "    metadata_schema: s\n",
+            Some(r##"{"type": "object", "properties": {"owner": {"$ref": "#/definitions/x"}}}"##),
+            "`$ref`",
+        )
+        .await
+    }
+
+    /// A schema that declares a meta-schema other than Draft-7 is recorded
+    /// unchecked.
+    #[test(tokio::test)]
+    async fn an_unsupported_meta_schema_is_recorded_unchecked() -> Res {
+        assert_recorded_unchecked(
+            "    metadata_schema: s\n",
+            Some(
+                r#"{"$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object"}"#,
+            ),
+            "2020-12",
+        )
+        .await
+    }
+
+    /// The gate a publish uses refuses a revision whose workflow's schema is
+    /// invalid, and records nothing: only a local commit's check turns a
+    /// misconfigured validator into a warning.
+    #[test(tokio::test)]
+    async fn the_gate_refuses_an_invalid_schema_and_records_nothing() -> Res {
+        let (paths, _domain) = DomainPaths::from_temp_dir()?;
+        let (remote, lineage, manifest) =
+            misconfigured("    entries_schema: s\n", Some(r#"{"type": 123}"#)).await?;
+        let result = record(
+            &paths,
+            &LocalStorage::new(),
+            &remote,
+            WorkflowCheck::Gate { host: None },
+            &namespace(),
+            lineage,
+            manifest,
+            &BTreeMap::new(),
+        )
+        .await;
+        assert!(
+            matches!(
+                result,
+                Err(Error::WorkflowValidation(
+                    WorkflowValidationError::InvalidSchema { .. }
+                ))
+            ),
+            "{result:?}"
+        );
+        assert_eq!(
+            manifest_names(&paths.installed_manifests_dir(&namespace())),
+            Vec::<String>::new()
+        );
         Ok(())
     }
 
