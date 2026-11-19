@@ -131,11 +131,6 @@ fn os_bytes(path: &Path) -> Vec<u8> {
         .collect()
 }
 
-#[cfg(not(any(unix, windows)))]
-fn os_bytes(path: &Path) -> Vec<u8> {
-    path.to_string_lossy().into_owned().into_bytes()
-}
-
 /// What moved a package's last-change time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChangeSource {
