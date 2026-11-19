@@ -485,10 +485,15 @@ async fn under_sync_a_file_in_a_folder_that_cannot_be_read_is_not_a_deletion() -
     publish(&remote, SECOND, &[("sub/a.txt", b"v1"), ("b.txt", b"v2")]).await?;
     let sub = storage.temp_dir.path().join("work/rnaseq/team/raw/sub");
     std::fs::set_permissions(&sub, std::fs::Permissions::from_mode(0o000))?;
+    let readable = std::fs::read_dir(&sub).is_ok();
 
     let outcome = read(&storage, &remote, &entry, Some(FIRST)).await;
 
     std::fs::set_permissions(&sub, std::fs::Permissions::from_mode(0o755))?;
+    // Root reads it anyway.
+    if readable {
+        return Ok(());
+    }
     assert!(
         !matches!(&outcome, Ok(outcome) if outcome.lock_base().is_some()),
         "{outcome:?}"
@@ -508,11 +513,15 @@ async fn under_sync_a_working_folder_that_cannot_be_listed_is_not_gone() -> Res 
     read(&storage, &remote, &sync(), None).await?;
     let raw = storage.temp_dir.path().join("work/rnaseq/team/raw");
     std::fs::set_permissions(&raw, std::fs::Permissions::from_mode(0o000))?;
+    let readable = std::fs::read_dir(&raw).is_ok();
 
     let outcome = read(&storage, &remote, &sync(), Some(FIRST)).await;
 
     std::fs::set_permissions(&raw, std::fs::Permissions::from_mode(0o755))?;
-    assert!(matches!(outcome, Err(EntryError::Failed(_))), "{outcome:?}");
+    // Root reads it anyway.
+    if !readable {
+        assert!(matches!(outcome, Err(EntryError::Failed(_))), "{outcome:?}");
+    }
     Ok(())
 }
 
