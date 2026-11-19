@@ -479,7 +479,7 @@ impl Queue {
                 if let Some(path) = row?.as_deref().and_then(os_path) {
                     dataspaces.push(path);
                 } else {
-                    warn!("queue: skipping a dataspace this OS can't name");
+                    warn!("queue: skipping a dataspace on autosync this build can't read");
                 }
             }
             Ok(dataspaces)
