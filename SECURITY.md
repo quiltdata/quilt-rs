@@ -34,13 +34,14 @@ long-term support branches.
   commands below delete them. This is documented behavior, not a
   vulnerability — see [docs/architecture.md](docs/architecture.md).
   - `quilt uninstall --prune` deletes the uninstalled package's objects that
-    no other installed package uses.
+    no other installed package uses. QuiltSync's Remove does the same, with
+    this option on by default.
   - `quilt remove-revisions` deletes a package's old revisions and the
     objects only those revisions use.
   - `quilt gc` deletes every object no installed revision of any installed
     package uses, the whole `packages/` cache, and files an interrupted
-    command left in `staging/`.
-  - These commands can keep some files, for example while another quilt
-    process runs or after an interrupted command. To be sure a secret is
-    gone from this machine, stop every quilt process, then delete the
-    folder of every package that holds it and the whole `.quilt/` folder.
+    command left in `staging/`. QuiltSync's Free up space runs it.
+  - These commands free space; they do not promise to remove a secret. They
+    can keep some files, for example while another quilt process runs or
+    after an interrupted command, and they never touch copies outside quilt's
+    folders, such as the folder a package was created from.
