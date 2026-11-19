@@ -942,10 +942,10 @@ mod tests {
             let remote = MockRemote::default();
             set_latest(&remote, THEIRS).await?;
             remote.deny_reads(TAG);
-            let seen = read_latest(&remote, None, handle()).await?;
-            assert_eq!(seen, LatestSeen::Unreadable);
+            let seen = read_latest(&remote, None, handle()).await;
+            assert_eq!(seen.ok(), Some(LatestSeen::Unreadable));
 
-            let advance = advance_latest(&remote, &revision(OURS), &seen).await?;
+            let advance = advance_latest(&remote, &revision(OURS), &LatestSeen::Unreadable).await?;
 
             assert_eq!(advance, LatestAdvance::Unchecked);
             assert_eq!(remote.current(TAG).await?, Some(OURS.as_bytes().to_vec()));
@@ -961,9 +961,9 @@ mod tests {
             let seen = read_latest(&remote, None, handle()).await?;
             remote.deny_reads(TAG);
 
-            let advance = advance_latest(&remote, &revision(OURS), &seen).await?;
+            let advance = advance_latest(&remote, &revision(OURS), &seen).await;
 
-            assert_eq!(advance, LatestAdvance::Unchecked);
+            assert_eq!(advance.ok(), Some(LatestAdvance::Unchecked));
             assert_eq!(remote.current(TAG).await?, Some(OURS.as_bytes().to_vec()));
             Ok(())
         }
