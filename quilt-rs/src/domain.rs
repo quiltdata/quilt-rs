@@ -529,8 +529,13 @@ impl LocalRegistry {
             self.sync_up_from(storage, &self.dir).await;
             return Ok(LocalPublish::Diverged(latest));
         }
-        if latest.as_deref() != Some(hash) {
+        if from_base {
+            // The revision this publish wrote, and the folders holding it,
+            // are durable before `latest` names it.
             self.sync_objects(storage, hash).await?;
+            self.sync_up_from(storage, &self.dir).await;
+        }
+        if latest.as_deref() != Some(hash) {
             write_tag(storage, &self.dir, &self.latest(namespace), hash).await?;
         }
         self.sync_up_from(storage, &self.dir.join(LATEST_DIR)).await;
@@ -1270,24 +1275,22 @@ mod tests {
         let (hash, _) = commit(&local, &namespace, &[("a.txt", b"one")]).await?;
         local.publish(&storage, &namespace, None, &hash).await?;
         let recommitted = local.installed_manifest(&namespace, &hash);
-        std::fs::write(&recommitted, b"the same hash, other folder metadata")?;
+        // A copy that differs where the top hash does not look.
+        let mut other = Manifest::from_path(&storage, &recommitted).await?;
+        other.header.user_meta = Some(serde_json::json!({ "copy": "other" }));
+        let other = other.try_to_jsonlines()?;
+        std::fs::write(&recommitted, &other)?;
 
         local
             .publish(&storage, &namespace, Some(&hash), &hash)
             .await?;
 
-        assert_eq!(
-            std::fs::read(local.revision(&hash))?,
-            b"the same hash, other folder metadata"
-        );
+        assert_eq!(std::fs::read_to_string(local.revision(&hash))?, other);
 
         // One not from the base leaves a stored revision as it is.
         std::fs::write(&recommitted, b"from a stale base")?;
         local.publish(&storage, &namespace, None, &hash).await?;
-        assert_eq!(
-            std::fs::read(local.revision(&hash))?,
-            b"the same hash, other folder metadata"
-        );
+        assert_eq!(std::fs::read_to_string(local.revision(&hash))?, other);
         Ok(())
     }
 
