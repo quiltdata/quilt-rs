@@ -172,10 +172,7 @@ mod tests {
     #[test]
     fn a_name_keeps_its_case() {
         let uri = LocalPackageUri::try_from("quilt+local://Lab-Mac#package=me/a");
-        assert_eq!(
-            uri.map(|uri| uri.registry),
-            Ok(Some("Lab-Mac".to_string()))
-        );
+        assert_eq!(uri.map(|uri| uri.registry), Ok(Some("Lab-Mac".to_string())));
     }
 
     #[test]
