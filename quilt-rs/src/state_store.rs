@@ -24,6 +24,8 @@ use crate::dataspace::contract::Registry;
 use crate::file_stamp::FileId;
 use crate::file_stamp::FileStamp;
 use crate::object_hash::ObjectHash;
+use crate::sqlite::Connection;
+use crate::sqlite::ConnectionError;
 use crate::stat_cache::CachedHash;
 use crate::stat_cache::FULL_HASH_EVERY;
 use crate::stat_cache::StatCache;
@@ -104,13 +106,24 @@ pub struct FolderKey {
 }
 
 impl FolderKey {
-    /// The key's columns, `registry`, `namespace` and `folder`.
-    fn columns(&self) -> (String, String, Vec<u8>) {
+    /// The key's columns, `registry`, `namespace` and `folder`. `queue.db`
+    /// stores them too, and is never rebuilt: changing them needs its
+    /// migration as well.
+    pub(crate) fn columns(&self) -> (String, String, Vec<u8>) {
         let registry = match &self.registry {
             Some(Registry::S3(bucket)) => bucket.clone(),
             None => String::new(),
         };
         (registry, self.package.to_string(), os_bytes(&self.folder))
+    }
+
+    /// The key [`Self::columns`] gave, or `None` for columns no key gives.
+    pub(crate) fn from_columns(registry: String, namespace: &str, folder: &[u8]) -> Option<Self> {
+        Some(Self {
+            registry: (!registry.is_empty()).then_some(Registry::S3(registry)),
+            package: Namespace::try_from(namespace).ok()?,
+            folder: os_path(folder)?,
+        })
     }
 }
 
@@ -129,6 +142,24 @@ fn os_bytes(path: &Path) -> Vec<u8> {
         .encode_wide()
         .flat_map(u16::to_le_bytes)
         .collect()
+}
+
+#[cfg(unix)]
+#[allow(clippy::unnecessary_wraps, reason = "Windows can refuse the bytes")]
+fn os_path(bytes: &[u8]) -> Option<PathBuf> {
+    use std::os::unix::ffi::OsStrExt;
+    Some(PathBuf::from(std::ffi::OsStr::from_bytes(bytes)))
+}
+
+#[cfg(windows)]
+fn os_path(bytes: &[u8]) -> Option<PathBuf> {
+    use std::os::windows::ffi::OsStringExt;
+    let (pairs, rest) = bytes.as_chunks::<2>();
+    if !rest.is_empty() {
+        return None;
+    }
+    let wide: Vec<u16> = pairs.iter().map(|pair| u16::from_le_bytes(*pair)).collect();
+    Some(PathBuf::from(std::ffi::OsString::from_wide(&wide)))
 }
 
 /// What moved a package's last-change time.
@@ -186,6 +217,15 @@ enum StoreError {
 impl From<rusqlite::Error> for StoreError {
     fn from(err: rusqlite::Error) -> Self {
         Self::Sqlite(err)
+    }
+}
+
+impl From<ConnectionError> for StoreError {
+    fn from(err: ConnectionError) -> Self {
+        match err {
+            ConnectionError::Sqlite(err) => Self::Sqlite(err),
+            ConnectionError::Closed => Self::Closed,
+        }
     }
 }
 
@@ -636,58 +676,6 @@ async fn migrate(connection: &Connection) -> Result<(), StoreError> {
         .await
 }
 
-/// A SQLite connection whose work runs on tokio's blocking threads.
-#[derive(Clone)]
-struct Connection(Arc<std::sync::Mutex<Option<rusqlite::Connection>>>);
-
-impl Connection {
-    async fn open(path: &Path) -> Result<Self, StoreError> {
-        let path = path.to_owned();
-        Self::open_with(move || rusqlite::Connection::open(path)).await
-    }
-
-    async fn open_in_memory() -> Result<Self, StoreError> {
-        Self::open_with(rusqlite::Connection::open_in_memory).await
-    }
-
-    async fn open_with<F>(open: F) -> Result<Self, StoreError>
-    where
-        F: FnOnce() -> rusqlite::Result<rusqlite::Connection> + Send + 'static,
-    {
-        let db = tokio::task::spawn_blocking(open)
-            .await
-            .map_err(|_| StoreError::Closed)??;
-        Ok(Self(Arc::new(std::sync::Mutex::new(Some(db)))))
-    }
-
-    async fn call<T, F>(&self, f: F) -> Result<T, StoreError>
-    where
-        T: Send + 'static,
-        F: FnOnce(&mut rusqlite::Connection) -> Result<T, StoreError> + Send + 'static,
-    {
-        let inner = self.0.clone();
-        tokio::task::spawn_blocking(move || {
-            let mut guard = inner.lock().map_err(|_| StoreError::Closed)?;
-            f(guard.as_mut().ok_or(StoreError::Closed)?)
-        })
-        .await
-        .map_err(|_| StoreError::Closed)?
-    }
-
-    async fn close(&self) -> Result<(), StoreError> {
-        let inner = self.0.clone();
-        tokio::task::spawn_blocking(move || {
-            let db = inner.lock().map_err(|_| StoreError::Closed)?.take();
-            match db {
-                Some(db) => db.close().map_err(|(_, err)| err.into()),
-                None => Ok(()),
-            }
-        })
-        .await
-        .map_err(|_| StoreError::Closed)?
-    }
-}
-
 /// A `file_stat` row as SQLite holds it.
 struct StatRow {
     path: String,
@@ -755,12 +743,12 @@ fn from_nanos(ns: i64) -> SystemTime {
     }
 }
 
-fn to_millis(at: SystemTime) -> i64 {
+pub(crate) fn to_millis(at: SystemTime) -> i64 {
     at.duration_since(UNIX_EPOCH)
         .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
 }
 
-fn from_millis(ms: i64) -> SystemTime {
+pub(crate) fn from_millis(ms: i64) -> SystemTime {
     UNIX_EPOCH + Duration::from_millis(u64::try_from(ms).unwrap_or(0))
 }
 
