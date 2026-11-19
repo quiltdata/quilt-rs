@@ -51,13 +51,11 @@ use quilt_uri::Namespace;
 
 /// Where a recorded revision's objects and manifest are written.
 ///
-/// Today the domain's one shared store, `$DOMAIN/.quilt/`
-/// ([`DomainPaths`]), is the only implementation: every package's objects
-/// share `objects/`, and its manifests are `installed/<owner>/<name>/<hash>`.
-/// The record step takes the store as a parameter rather than reaching for
-/// `$DOMAIN` itself, so that a store per registry
-/// ([quilt-specs#299](https://github.com/quiltdata/quilt-specs/pull/299)) is
-/// another implementation of this trait and the same write path.
+/// The domain's shared store, `$DOMAIN/.quilt/` ([`DomainPaths`]), keeps
+/// every package's objects in one `objects/`; a bucket's own store
+/// ([`RegistryStore`](crate::domain::RegistryStore)) keeps that bucket's
+/// alone. The record step takes the store as a parameter, so both are the
+/// same write path.
 pub trait PackageStore: Sync {
     /// The folder holding the store's objects, each named by the hex digest
     /// of its hash.
