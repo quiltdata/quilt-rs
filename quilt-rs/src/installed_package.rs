@@ -2147,6 +2147,8 @@ const BACKEND: lineage::LineageStore = lineage::LineageStore::Refs;
 #[cfg(test)]
 mod change_catalog_tests;
 #[cfg(test)]
+mod cross_client_tests;
+#[cfg(test)]
 mod current_revision_tests;
 #[cfg(test)]
 mod missing_folder_tests;

@@ -16,7 +16,9 @@ use crate::io::remote::ConditionalPut;
 use crate::io::remote::HostConfig;
 use crate::io::remote::RemoteObjectStream;
 use crate::io::remote::WriteCondition;
+use crate::io::storage::LocalStorage;
 use crate::io::storage::Storage;
+use crate::io::storage::StorageExt;
 use crate::io::storage::mocks::MockStorage;
 use crate::object_hash::ObjectHash;
 use quilt_uri::Host;
@@ -26,6 +28,7 @@ use quilt_uri::is_top_hash;
 use quilt_uri::paths::TAGS_PREFIX;
 use quilt_uri::paths::get_manifest_key;
 use quilt_uri::paths::tag_key;
+use sha2::Digest;
 
 use crate::Res;
 
@@ -171,6 +174,22 @@ fn storage_path(uri: &str) -> String {
     uri.strip_prefix("s3://").unwrap_or(uri).replace('?', "#")
 }
 
+/// The S3 version an upload of `body` gets. New bytes get a new version, as
+/// on a versioned bucket, and mocks sharing one root agree on it.
+pub(crate) fn version_of(body: &[u8]) -> String {
+    hex::encode(sha2::Sha256::digest(body))
+}
+
+/// The file's hash, of the checksum type S3 would answer with, and its bytes.
+async fn hash_and_read(
+    storage: &(impl Storage + Sync),
+    path: &Path,
+    algorithm: u64,
+) -> Res<(ObjectHash, Vec<u8>)> {
+    let (hash, _) = crate::checksum::hash_file(storage, path, algorithm).await?;
+    Ok((hash, storage.read_bytes(path).await?))
+}
+
 #[allow(
     clippy::unused_async_trait_impl,
     reason = "seven of this impl's methods do await; only `host_config` and `verify_bucket` do not. Rewriting just those two would leave one impl split between `async fn` and `fn -> impl Future`, which reads worse than either consistent choice."
@@ -294,20 +313,24 @@ impl Remote for MockRemote {
         dest_uri: &S3Uri,
         _size: u64,
     ) -> Res<(S3Uri, ObjectHash)> {
-        // S3 answers with the checksum type the upload asked for.
-        let (hash, _) = crate::checksum::hash_file(
-            &self.storage,
-            source_path.as_ref(),
-            host_config.checksums.algorithm_code(),
-        )
-        .await?;
-        Ok((
-            S3Uri {
-                version: Some("version".to_string()),
-                ..dest_uri.clone()
-            },
-            hash,
-        ))
+        // A domain on the real file system hands over a path this mock's
+        // storage would re-root, so read such a file where it is.
+        let source = source_path.as_ref();
+        let algorithm = host_config.checksums.algorithm_code();
+        let (hash, body) = if tokio::fs::try_exists(source).await? {
+            hash_and_read(&LocalStorage::new(), source, algorithm).await?
+        } else {
+            hash_and_read(&self.storage, source, algorithm).await?
+        };
+        let uploaded = S3Uri {
+            version: Some(version_of(&body)),
+            ..dest_uri.clone()
+        };
+        // Kept, so another domain on this remote can download what was pushed.
+        self.storage
+            .write_byte_stream(storage_path(&uploaded.to_string()), body.into())
+            .await?;
+        Ok((uploaded, hash))
     }
 
     async fn host_config(&self, _host: Option<&Host>) -> Res<HostConfig> {
