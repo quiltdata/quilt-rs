@@ -6,6 +6,7 @@ pub mod error;
 #[cfg(any(test, feature = "test-support"))]
 pub mod fixtures;
 mod host;
+mod local;
 mod manifest;
 mod object;
 mod package;
@@ -15,6 +16,8 @@ mod tag;
 
 pub use error::UriError;
 pub use host::Host;
+pub use local::LocalPackageUri;
+pub use local::check_local_registry_name;
 pub use manifest::ManifestUri;
 pub use object::ObjectUri;
 pub use package::MIN_HASH_PREFIX_LEN;

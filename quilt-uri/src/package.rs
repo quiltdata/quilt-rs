@@ -3,6 +3,7 @@ use std::cmp::Ordering;
 use std::cmp::PartialOrd;
 use std::collections::HashMap;
 use std::fmt;
+use std::path::Path;
 use std::path::PathBuf;
 
 use serde::Deserialize;
@@ -315,88 +316,7 @@ impl TryFrom<&str> for S3PackageUri {
                 parsed_url.scheme()
             )));
         }
-        let bucket = parsed_url.host_str().unwrap_or_default();
-        if !parsed_url.username().is_empty() || parsed_url.password().is_some() {
-            return Err(UriError::Package(format!(
-                "a user or password is not allowed before the bucket {bucket:?}"
-            )));
-        }
-        if let Some(port) = parsed_url.port() {
-            return Err(UriError::Package(format!(
-                "a port is not allowed after the bucket {bucket:?}; got {port}"
-            )));
-        }
-        if !parsed_url.path().is_empty() || parsed_url.query().is_some() {
-            return Err(UriError::Package(format!(
-                "a path or query is not allowed after the bucket: {input}"
-            )));
-        }
-
-        let fragment = parsed_url.fragment().ok_or(UriError::Package(format!(
-            "S3 package URI must contain a fragment: {input}"
-        )))?;
-        let mut params = HashMap::new();
-        for (key, value) in parse_fragment(fragment)? {
-            if params.contains_key(&key) {
-                return Err(UriError::Package(format!(
-                    "`{key}` is given more than once in the fragment"
-                )));
-            }
-            params.insert(key, value);
-        }
-
-        let pkg_spec = params
-            .remove("package")
-            .ok_or(UriError::Package("missing package in fragment".to_string()))?;
-
-        let (namespace, revision) = if pkg_spec.contains(':') && pkg_spec.contains('@') {
-            return Err(UriError::Package(
-                "package spec may either contain \":\" or \"@\"".to_string(),
-            ));
-        } else if let Some((namespace, tag)) = pkg_spec.split_once(':') {
-            if tag.is_empty() {
-                return Err(UriError::Package("tag must not be empty".to_string()));
-            }
-            if tag.contains(':') {
-                return Err(UriError::Package(
-                    "package spec may contain only one \":\"".to_string(),
-                ));
-            }
-            (namespace.into(), RevisionPointer::Tag(tag.parse()?))
-        } else if let Some((namespace, top_hash)) = pkg_spec.split_once('@') {
-            if top_hash.is_empty() {
-                return Err(UriError::Package("hash must not be empty".to_string()));
-            }
-            if top_hash.contains('@') {
-                return Err(UriError::Package(
-                    "package spec may contain only one \"@\"".to_string(),
-                ));
-            }
-            check_hash_prefix(top_hash)?;
-            let revision = if top_hash.len() == TOP_HASH_LEN {
-                RevisionPointer::Hash(top_hash.into())
-            } else {
-                RevisionPointer::HashPrefix(top_hash.into())
-            };
-            (namespace.into(), revision)
-        } else {
-            (pkg_spec, RevisionPointer::Tag(Tag::Latest))
-        };
-
-        let path = params
-            .remove("path")
-            .and_then(|value| tidy_package_path(&value, raw_path_had_padding(input)));
-
-        let catalog = match params.remove("catalog") {
-            Some(c) => Some(c.parse()?),
-            None => None,
-        };
-
-        if !params.is_empty() {
-            return Err(UriError::Package(format!(
-                "unexpected parameters in fragment: {params:?}"
-            )));
-        }
+        let fragment = parse_after_authority(&parsed_url, input, "S3", "the bucket")?;
 
         let bucket = parsed_url.host_str().ok_or(UriError::Package(format!(
             "expected host in S3 package URI, got {}",
@@ -406,12 +326,159 @@ impl TryFrom<&str> for S3PackageUri {
 
         Ok(Self {
             bucket: bucket.to_string(),
-            catalog,
-            namespace: namespace.try_into()?,
-            path,
-            revision,
+            catalog: fragment.catalog,
+            namespace: fragment.namespace.try_into()?,
+            path: fragment.path,
+            revision: fragment.revision,
         })
     }
+}
+
+/// What a package URI's fragment names, the namespace not yet checked.
+pub(crate) struct PackageFragment {
+    pub(crate) namespace: String,
+    pub(crate) revision: RevisionPointer,
+    pub(crate) path: Option<PathBuf>,
+    pub(crate) catalog: Option<Host>,
+}
+
+/// The fragment after `#`, each value escaped with `set`, safe to put beside
+/// the delimiters.
+///
+/// Anything written raw can come back changed or truncated: a logical key
+/// holding `&` ends the value early and the rest is read as another parameter.
+pub(crate) fn render_fragment(
+    namespace: &Namespace,
+    revision: &RevisionPointer,
+    path: Option<&Path>,
+    catalog: Option<&Host>,
+    full_hash: bool,
+    set: &'static percent_encoding::AsciiSet,
+) -> String {
+    let encode = |value: &str| percent_encoding::utf8_percent_encode(value, set).to_string();
+    let hash = match revision {
+        RevisionPointer::Tag(Tag::Latest) => String::new(),
+        RevisionPointer::Tag(tag) => format!(":{}", encode(&tag.to_string())),
+        RevisionPointer::Hash(h) if full_hash => format!("@{}", encode(h)),
+        RevisionPointer::Hash(h) => format!("@{}", encode(&S3PackageUri::format_hash(h))),
+        // As written: shortening it would name a different prefix.
+        RevisionPointer::HashPrefix(prefix) => format!("@{}", encode(prefix)),
+    };
+    let path_part = match path {
+        Some(p) => format!("&path={}", encode(&p.display().to_string())),
+        None => String::new(),
+    };
+    let catalog_part = match catalog {
+        Some(p) => format!("&catalog={}", encode(&p.to_string())),
+        None => String::new(),
+    };
+    format!(
+        "package={}{}{}{}",
+        encode(&namespace.to_string()),
+        hash,
+        path_part,
+        catalog_part
+    )
+}
+
+/// Refuses whatever `parsed_url` holds between its authority and its
+/// fragment, and reads the fragment. `kind` and `authority` name the URI and
+/// its authority in errors.
+pub(crate) fn parse_after_authority(
+    parsed_url: &Url,
+    input: &str,
+    kind: &str,
+    authority: &str,
+) -> Result<PackageFragment, UriError> {
+    let host = parsed_url.host_str().unwrap_or_default();
+    if !parsed_url.username().is_empty() || parsed_url.password().is_some() {
+        return Err(UriError::Package(format!(
+            "a user or password is not allowed before {authority} {host:?}"
+        )));
+    }
+    if let Some(port) = parsed_url.port() {
+        return Err(UriError::Package(format!(
+            "a port is not allowed after {authority} {host:?}; got {port}"
+        )));
+    }
+    if !parsed_url.path().is_empty() || parsed_url.query().is_some() {
+        return Err(UriError::Package(format!(
+            "a path or query is not allowed after {authority}: {input}"
+        )));
+    }
+
+    let fragment = parsed_url.fragment().ok_or(UriError::Package(format!(
+        "{kind} package URI must contain a fragment: {input}"
+    )))?;
+    let mut params = HashMap::new();
+    for (key, value) in parse_fragment(fragment)? {
+        if params.contains_key(&key) {
+            return Err(UriError::Package(format!(
+                "`{key}` is given more than once in the fragment"
+            )));
+        }
+        params.insert(key, value);
+    }
+
+    let pkg_spec = params
+        .remove("package")
+        .ok_or(UriError::Package("missing package in fragment".to_string()))?;
+
+    let (namespace, revision) = if pkg_spec.contains(':') && pkg_spec.contains('@') {
+        return Err(UriError::Package(
+            "package spec may either contain \":\" or \"@\"".to_string(),
+        ));
+    } else if let Some((namespace, tag)) = pkg_spec.split_once(':') {
+        if tag.is_empty() {
+            return Err(UriError::Package("tag must not be empty".to_string()));
+        }
+        if tag.contains(':') {
+            return Err(UriError::Package(
+                "package spec may contain only one \":\"".to_string(),
+            ));
+        }
+        (namespace.into(), RevisionPointer::Tag(tag.parse()?))
+    } else if let Some((namespace, top_hash)) = pkg_spec.split_once('@') {
+        if top_hash.is_empty() {
+            return Err(UriError::Package("hash must not be empty".to_string()));
+        }
+        if top_hash.contains('@') {
+            return Err(UriError::Package(
+                "package spec may contain only one \"@\"".to_string(),
+            ));
+        }
+        check_hash_prefix(top_hash)?;
+        let revision = if top_hash.len() == TOP_HASH_LEN {
+            RevisionPointer::Hash(top_hash.into())
+        } else {
+            RevisionPointer::HashPrefix(top_hash.into())
+        };
+        (namespace.into(), revision)
+    } else {
+        (pkg_spec, RevisionPointer::Tag(Tag::Latest))
+    };
+
+    let path = params
+        .remove("path")
+        .and_then(|value| tidy_package_path(&value, raw_path_had_padding(input)));
+
+    let catalog = match params.remove("catalog") {
+        Some(c) => Some(c.parse()?),
+        None => None,
+    };
+
+    if !params.is_empty() {
+        return Err(UriError::Package(format!(
+            "unexpected parameters in fragment: {params:?}"
+        )));
+    }
+
+    Ok(PackageFragment {
+        namespace,
+        revision,
+        path,
+        catalog,
+    })
 }
 
 /// The shortest prefix of a top hash a package URI may name, as in quilt3.
@@ -561,7 +628,7 @@ const FRAGMENT_VALUE: &percent_encoding::AsciiSet = &percent_encoding::CONTROLS
     .add(b'%');
 
 /// [`FRAGMENT_VALUE`] and space, which would end a link pasted into a chat.
-const COPY_VALUE: &percent_encoding::AsciiSet = &FRAGMENT_VALUE.add(b' ');
+pub(crate) const COPY_VALUE: &percent_encoding::AsciiSet = &FRAGMENT_VALUE.add(b' ');
 
 impl S3PackageUri {
     fn format_hash(hash: &str) -> String {
@@ -580,37 +647,16 @@ impl S3PackageUri {
         self.render(false, FRAGMENT_VALUE)
     }
 
-    /// Each fragment value is escaped with `set`, safe to put beside the
-    /// delimiters.
-    ///
-    /// Anything written raw can come back changed or truncated: a logical key
-    /// holding `&` ends the value early and the rest is read as another parameter.
     fn render(&self, full_hash: bool, set: &'static percent_encoding::AsciiSet) -> String {
-        let encode = |value: &str| percent_encoding::utf8_percent_encode(value, set).to_string();
-        let hash = match &self.revision {
-            RevisionPointer::Tag(Tag::Latest) => String::new(),
-            RevisionPointer::Tag(tag) => format!(":{}", encode(&tag.to_string())),
-            RevisionPointer::Hash(h) if full_hash => format!("@{}", encode(h)),
-            RevisionPointer::Hash(h) => format!("@{}", encode(&Self::format_hash(h))),
-            // As written: shortening it would name a different prefix.
-            RevisionPointer::HashPrefix(prefix) => format!("@{}", encode(prefix)),
-        };
-        let path_part = match &self.path {
-            Some(p) => format!("&path={}", encode(&p.display().to_string())),
-            None => String::new(),
-        };
-        let catalog_part = match &self.catalog {
-            Some(p) => format!("&catalog={}", encode(&p.to_string())),
-            None => String::new(),
-        };
-        format!(
-            "quilt+s3://{}#package={}{}{}{}",
-            self.bucket,
-            encode(&self.namespace.to_string()),
-            hash,
-            path_part,
-            catalog_part
-        )
+        let fragment = render_fragment(
+            &self.namespace,
+            &self.revision,
+            self.path.as_deref(),
+            self.catalog.as_ref(),
+            full_hash,
+            set,
+        );
+        format!("quilt+s3://{}#{fragment}", self.bucket)
     }
 
     /// Renders this package URI as a catalog web URL on `host`.
