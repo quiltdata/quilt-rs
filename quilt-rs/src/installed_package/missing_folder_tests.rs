@@ -146,13 +146,14 @@ async fn an_unavailable_walk_leaves_the_stat_cache_alone() -> Res {
         .commit("add".to_string(), UserMeta::Keep, None, None)
         .await?;
     package.status(None).await?;
-    let saved = store.stat_cache(&namespace).await.gone();
+    let key = package.folder_key().await?;
+    let saved = store.stat_cache(&key).await.gone();
     assert_eq!(saved, [PathBuf::from("a.txt")]);
 
     let moved = temp_dir.path().join("moved");
     std::fs::rename(&home, &moved)?;
     assert!(package.status(None).await?.unavailable_home().is_some());
-    assert_eq!(store.stat_cache(&namespace).await.gone(), saved);
+    assert_eq!(store.stat_cache(&key).await.gone(), saved);
     Ok(())
 }
 
