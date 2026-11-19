@@ -472,10 +472,11 @@ impl Queue {
     pub async fn autosync(&self) -> Result<Vec<PathBuf>, QueueError> {
         self.run(|db, _| {
             let mut query = db.prepare("SELECT dataspace FROM autosync ORDER BY rowid")?;
-            let rows = query.query_map([], |row| row.get::<_, Vec<u8>>(0))?;
+            // As in `jobs`, a value of the wrong type skips its row only.
+            let rows = query.query_map([], |row| Ok(row.get::<_, Vec<u8>>(0).ok()))?;
             let mut dataspaces = Vec::new();
             for row in rows {
-                if let Some(path) = os_path(&row?) {
+                if let Some(path) = row?.as_deref().and_then(os_path) {
                     dataspaces.push(path);
                 } else {
                     warn!("queue: skipping a dataspace this OS can't name");
