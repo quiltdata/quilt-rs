@@ -103,9 +103,10 @@ impl Published {
 /// `latest` has no metadata to keep.
 ///
 /// When `latest` moves while it publishes, a `write` is composed again on
-/// the new `latest`, so another writer's additions are never dropped, and a
-/// `replace` is left stored and not `latest`. Either way a revision that did
-/// not become `latest` is reported with its hash.
+/// the new `latest`, so another writer's added files are never dropped,
+/// though a metadata file clears the metadata it leaves out under the entry's
+/// paths, theirs too. A `replace` is left stored and not `latest`. Either way
+/// a revision that did not become `latest` is reported with its hash.
 pub async fn publish(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
