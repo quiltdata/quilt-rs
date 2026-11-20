@@ -761,6 +761,53 @@ async fn under_sync_a_folder_left_with_empty_folders_and_files_outside_the_paths
 }
 
 #[test(tokio::test)]
+async fn under_sync_a_folder_left_with_what_the_os_writes_is_refused() -> Res {
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    let entry = sync();
+    publish(&remote, FIRST, &[("a.txt", b"v1")]).await?;
+    read(&storage, &remote, &entry, None).await?;
+    storage.remove_file(folder().join("a.txt")).await?;
+    write(&storage, ".DS_Store", b"finder").await?;
+
+    let outcome = read(&storage, &remote, &entry, Some(FIRST)).await;
+
+    assert!(
+        matches!(&outcome, Err(EntryError::FolderGone(gone)) if *gone == folder()),
+        "{outcome:?}"
+    );
+    Ok(())
+}
+
+/// A folder outside the entry's paths is none of its business.
+#[cfg(unix)]
+#[test(tokio::test)]
+async fn under_sync_a_folder_that_cannot_be_listed_outside_the_paths_is_passed_over() -> Res {
+    use std::os::unix::fs::PermissionsExt;
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    let entry = entry("sync = [{ package = \"team/raw\", path = \"data/\" }]");
+    publish(&remote, FIRST, &[("data/a.txt", b"v1")]).await?;
+    read(&storage, &remote, &entry, None).await?;
+    storage.remove_file(folder().join("data/a.txt")).await?;
+    // Deeper than the folder that cannot be listed, so that one is asked first.
+    write(&storage, "data/deep/b.txt", b"mine").await?;
+    write(&storage, "private/x.txt", b"x").await?;
+    let private = storage.temp_dir.path().join("work/rnaseq/team/raw/private");
+    std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o000))?;
+    publish(&remote, SECOND, &[("data/a.txt", b"v1"), ("c.txt", b"c")]).await?;
+
+    let outcome = read(&storage, &remote, &entry, Some(FIRST)).await;
+
+    std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o755))?;
+    assert!(
+        matches!(&outcome, Ok(outcome) if outcome.lock_base() == Some(SECOND)),
+        "{outcome:?}"
+    );
+    Ok(())
+}
+
+#[test(tokio::test)]
 async fn under_sync_files_moved_to_new_keys_are_not_a_folder_gone() -> Res {
     let remote = MockRemote::default();
     let storage = MockStorage::default();

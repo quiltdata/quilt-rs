@@ -477,22 +477,30 @@ async fn gone(
     }
     let mut queue = VecDeque::from([(folder.to_path_buf(), PathBuf::new())]);
     while let Some((dir, prefix)) = queue.pop_front() {
+        let root = prefix.as_os_str().is_empty();
         let mut listing = match storage.read_dir(&dir).await {
             Ok(listing) => listing,
-            Err(err) if err.is_not_found() && prefix.as_os_str().is_empty() => return Ok(true),
-            Err(err) => return Err(err),
+            Err(err) if err.is_not_found() && root => return Ok(true),
+            Err(err) if root => return Err(err),
+            // Below the root a folder that cannot be listed proves nothing.
+            Err(_) => continue,
         };
         while let Some(entry) = listing.next_entry().await? {
             let name = entry.file_name();
             let text = name.to_string_lossy();
-            if prefix.as_os_str().is_empty() && (at_metadata_file(&text) || left_by_read(&text)) {
+            if root && (at_metadata_file(&text) || left_by_read(&text)) {
                 continue;
             }
             let relative = prefix.join(&name);
             if entry.file_type().await?.is_dir() {
                 queue.push_back((dir.join(&name), relative));
-            } else if LogicalKey::new(crate::paths::logical_key(&relative))
-                .is_ok_and(|key| paths.covers(&key))
+                continue;
+            }
+            // What an OS leaves in a folder it shows, as `.DS_Store`, is no
+            // file of the user's.
+            if crate::junk::check(&relative).is_none()
+                && LogicalKey::new(crate::paths::logical_key(&relative))
+                    .is_ok_and(|key| paths.covers(&key))
             {
                 return Ok(false);
             }
