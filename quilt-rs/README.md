@@ -153,6 +153,13 @@ folder:
   name, as after the lock was deleted. `dataspace::reattach::reattach`
   attaches one to the lock on a base the caller names, which the next publish
   expects `latest` to be.
+- `dataspace::hooks` runs the one script `data.toml` declares for each of
+  `pre-read`, `post-read`, `pre-write` and `post-write`, as `command`, `args`
+  and `env`, from `read_all`, `publish_all` and `sync`. `post-read` follows a
+  read that moved the lock to a newer revision, even one whose files are
+  unchanged, and `post-write` a publish that stored a revision. A `pre-` hook
+  that fails stops its entry, and a `pre-write` hook may rewrite
+  `metadata.toml` before the publish takes it.
 
 ## Hash Algorithms
 

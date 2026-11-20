@@ -4,6 +4,7 @@
 
 pub mod conflict;
 pub mod contract;
+pub mod hooks;
 pub mod lock;
 mod metadata;
 pub mod publish;
@@ -65,6 +66,9 @@ pub enum EntryError {
 
     #[error("{CONFLICT_FILE}: {0}")]
     ConflictMap(String),
+
+    #[error(transparent)]
+    Hook(#[from] hooks::HookError),
 
     #[error(transparent)]
     Queue(#[from] Box<crate::queue::QueueError>),

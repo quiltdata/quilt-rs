@@ -15,6 +15,8 @@ use crate::dataspace::contract::Contract;
 use crate::dataspace::contract::ContractError;
 use crate::dataspace::contract::Entry;
 use crate::dataspace::contract::Registry;
+use crate::dataspace::hooks;
+use crate::dataspace::hooks::HookPoint;
 use crate::dataspace::lock::LOCK_FILE;
 use crate::dataspace::lock::Lock;
 use crate::dataspace::lock::LockEntry;
@@ -123,6 +125,10 @@ impl From<LockError> for ReadAllError {
 /// otherwise nothing is read or written. A read has no Domain, so the local
 /// registry a lock names is not compared, and is kept unless the lock is
 /// another's.
+///
+/// The contract's `pre-read` hook runs before each entry is read, and one
+/// that fails leaves the entry unread. Once the lock is written, `post-read`
+/// runs for each package the lock moved to a newer revision.
 pub async fn read_all(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
@@ -135,6 +141,7 @@ pub async fn read_all(
         .map_err(ReadAllError::Mismatch)?;
 
     let mut entries = Vec::new();
+    let mut newer = Vec::new();
     for entry in contract.entries() {
         if entry.access != Access::Read || needs_domain(entry) {
             continue;
@@ -143,9 +150,15 @@ pub async fn read_all(
         let locked = lock.packages.get(&entry_key);
         let outcome = if locked.is_some_and(|locked| !locked.commits.is_empty()) {
             EntryRead::Unpushed
+        } else if let Err(err) = hooks::run(&contract, HookPoint::PreRead, entry, None).await {
+            EntryRead::Failed(err.into())
         } else {
             let base = locked.map(|locked| locked.base.as_str());
-            read_entry(storage, remote, contract.dataspace(), entry, base).await
+            let read = read_entry(storage, remote, contract.dataspace(), entry, base).await;
+            if let Some(revision) = hooks::newer(base, read.lock_base()) {
+                newer.push((entry, revision.to_string()));
+            }
+            read
         };
         if let Some(base) = outcome.lock_base() {
             let entry = LockEntry {
@@ -168,6 +181,9 @@ pub async fn read_all(
             lock.header.filled = Some(Utc::now().trunc_subsecs(0));
         }
         lock.write(storage, &contract, &writer).await?;
+    }
+    for (entry, revision) in newer {
+        hooks::after(&contract, HookPoint::PostRead, entry, &revision).await;
     }
     Ok(read)
 }

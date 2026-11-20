@@ -23,6 +23,8 @@ use crate::dataspace::contract::Contract;
 use crate::dataspace::contract::ContractError;
 use crate::dataspace::contract::Entry;
 use crate::dataspace::contract::Registry;
+use crate::dataspace::hooks;
+use crate::dataspace::hooks::HookPoint;
 use crate::dataspace::lock::Lock;
 use crate::dataspace::lock::LockEntry;
 use crate::dataspace::lock::LockError;
@@ -217,6 +219,13 @@ impl<S: Storage + Sync> LockFile<'_, S> {
 /// The lock is used as [`read_all`](crate::dataspace::read_all::read_all)
 /// uses it, and `conflict.json` as [`read_resolving`] does. Each commit's
 /// message is `message`, and its workflow the bucket's default.
+///
+/// The contract's hooks run around each half: `pre-read` before the tick
+/// reads `latest`, and `post-read` once the lock moved to a newer revision;
+/// `pre-write` before it commits a folder that changed, which is then taken
+/// again, and `post-write` once a push stored a revision or moved `latest`.
+/// A `pre-` hook that fails stops the entry. Reading a missing folder back
+/// runs none.
 #[allow(clippy::too_many_arguments)]
 pub async fn sync(
     storage: &(impl Storage + Sync),
@@ -365,7 +374,7 @@ async fn fill(
         } else if latest.as_ref() != Some(&locked.base) {
             return Ok(EntrySync::Diverged { latest });
         } else {
-            let pushed = push_head(
+            let (pushed, wrote) = push_head(
                 storage,
                 remote,
                 &store,
@@ -375,9 +384,14 @@ async fn fill(
                 Some(&locked.base),
             )
             .await?;
+            if let Published::Advanced { revision, .. } = &pushed {
+                set_base(lock, lock_file, &key, revision.clone()).await?;
+            }
+            if wrote {
+                after_write(lock_file.contract, entry, &pushed).await;
+            }
             match &pushed {
                 Published::Advanced { revision, .. } => {
-                    set_base(lock, lock_file, &key, revision.clone()).await?;
                     latest = Some(revision.clone());
                     published = Some(pushed);
                 }
@@ -412,12 +426,27 @@ async fn fill(
     };
     let mut whole = at(entry, &latest);
     whole.access = Access::Read;
-    let dataspace = lock_file.contract.dataspace();
+    let contract = lock_file.contract;
+    hooks::run(contract, HookPoint::PreRead, entry, None)
+        .await
+        .map_err(EntryError::from)?;
+    let dataspace = contract.dataspace();
     let outcome = read_resolving(storage, remote, dataspace, &whole, base.as_deref()).await?;
     if let Some(revision) = outcome.lock_base() {
         set_base(lock, lock_file, &key, revision.to_string()).await?;
     }
+    if let Some(revision) = hooks::newer(base.as_deref(), outcome.lock_base()) {
+        hooks::after(contract, HookPoint::PostRead, entry, revision).await;
+    }
     Ok(ran(outcome, published))
+}
+
+/// Runs the contract's `post-write` hook for the revision `published`
+/// stored, if any.
+async fn after_write(contract: &Contract, entry: &Entry, published: &Published) {
+    if let Some(revision) = published.stored() {
+        hooks::after(contract, HookPoint::PostWrite, entry, revision).await;
+    }
 }
 
 fn ran(outcome: ReadOutcome, published: Option<Published>) -> EntrySync {
@@ -517,7 +546,11 @@ async fn tick(
     } else if base.is_some() && (latest.is_none() || !commits.is_empty()) {
         return Ok(EntrySync::Diverged { latest });
     } else if let Some(hash) = &latest {
-        let dataspace = lock_file.contract.dataspace();
+        let contract = lock_file.contract;
+        hooks::run(contract, HookPoint::PreRead, entry, None)
+            .await
+            .map_err(EntryError::from)?;
+        let dataspace = contract.dataspace();
         let pinned = at(entry, hash);
         let outcome = read_resolving(storage, remote, dataspace, &pinned, base.as_deref()).await?;
         let completed = outcome.lock_base().map(str::to_string);
@@ -539,7 +572,9 @@ async fn tick(
                 published: None,
             });
         };
-        set_base(lock, lock_file, &key, revision).await?;
+        set_base(lock, lock_file, &key, revision.clone()).await?;
+        // `latest` moved past the base, so the revision read is newer.
+        hooks::after(contract, HookPoint::PostRead, entry, &revision).await;
         read_report = Some(report);
     }
 
@@ -611,17 +646,17 @@ async fn publish(
         return Ok(None);
     }
     let rules = Rules::load(folder, user_rules)?;
-    let files = walk(storage, folder, &entry.paths, &rules, Some(&current)).await?;
-    let (mut manifest, content) = compose(storage, &current, entry, &files).await?;
-    let metadata_text = bytes_at(storage, &folder.join(METADATA_FILE)).await?;
-    metadata_file(storage, folder)
-        .await?
-        .apply(&mut manifest, &entry.paths);
+    let contract = lock_file.contract;
+    let on = current_hash.map(|_| &current);
+    let (taken, changed) = take_changed(storage, contract, entry, &rules, &current, on).await?;
+    let Taken {
+        mut manifest,
+        content,
+        metadata_text,
+    } = taken;
 
     let mut head = current_hash.cloned();
-    // The tick's message wins over the metadata file's, so the file's alone
-    // is no change.
-    if !same_as(&manifest, current_hash.map(|_| &current), false) {
+    if changed {
         let workflows = S3Uri {
             bucket: bucket(entry)?.to_string(),
             key: WORKFLOWS_CONFIG_KEY.to_string(),
@@ -683,12 +718,73 @@ async fn publish(
         }
         return Ok(None);
     };
-    let published = push_head(storage, remote, store, queue, entry, &head, base.as_deref()).await?;
+    let (published, wrote) =
+        push_head(storage, remote, store, queue, entry, &head, base.as_deref()).await?;
     if let Published::Advanced { revision, .. } = &published {
         crate::failpoint::stop("sync.pushed")?;
         set_base(lock, lock_file, &key, revision.clone()).await?;
     }
+    if wrote {
+        after_write(contract, entry, &published).await;
+    }
     Ok(Some(published))
+}
+
+/// What a commit would take from a working folder.
+struct Taken {
+    /// `current` as the folder has it.
+    manifest: Manifest,
+    /// The content of each row a file changed or added.
+    content: BTreeMap<LogicalKey, RowContent>,
+    /// `metadata.toml` as it was read, if there is one.
+    metadata_text: Option<Vec<u8>>,
+}
+
+/// [`take`]s `entry`'s working folder, and says whether it changed from `on`,
+/// the lock's current revision `current` where there is one. Where it did,
+/// the contract's `pre-write` hook runs first, and may change the folder,
+/// `metadata.toml` included, so it is taken again.
+async fn take_changed(
+    storage: &(impl Storage + Sync),
+    contract: &Contract,
+    entry: &Entry,
+    rules: &Rules,
+    current: &Manifest,
+    on: Option<&Manifest>,
+) -> Result<(Taken, bool), EntryError> {
+    let taken = take(storage, entry, rules, current).await?;
+    // The tick's message wins over the metadata file's, so the file's alone
+    // is no change.
+    let changed = !same_as(&taken.manifest, on, false);
+    if !changed || contract.hooks().get(HookPoint::PreWrite).is_none() {
+        return Ok((taken, changed));
+    }
+    hooks::run(contract, HookPoint::PreWrite, entry, None).await?;
+    let taken = take(storage, entry, rules, current).await?;
+    let changed = !same_as(&taken.manifest, on, false);
+    Ok((taken, changed))
+}
+
+/// Takes `entry`'s working folder over `current`, the lock's current
+/// revision, with its metadata file applied.
+async fn take(
+    storage: &(impl Storage + Sync),
+    entry: &Entry,
+    rules: &Rules,
+    current: &Manifest,
+) -> Result<Taken, EntryError> {
+    let folder = &entry.folder;
+    let files = walk(storage, folder, &entry.paths, rules, Some(current)).await?;
+    let (mut manifest, content) = compose(storage, current, entry, &files).await?;
+    let metadata_text = bytes_at(storage, &folder.join(METADATA_FILE)).await?;
+    metadata_file(storage, folder)
+        .await?
+        .apply(&mut manifest, &entry.paths);
+    Ok(Taken {
+        manifest,
+        content,
+        metadata_text,
+    })
 }
 
 /// Writes the metadata file of the commit `hash` into `entry`'s folder,
@@ -711,7 +807,8 @@ async fn rewrite_metadata(
 /// Pushes the local commit `head` against `base`, squashing the commits
 /// before it. A revision the bucket's workflow refuses is still stored, and
 /// one stored without becoming `latest` is kept in `queue`; a later push of
-/// it that the bucket still holds is not uploaded again.
+/// it that the bucket still holds is not uploaded again. Also says whether
+/// the push wrote to the bucket: stored the revision, or moved `latest`.
 async fn push_head(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
@@ -720,7 +817,7 @@ async fn push_head(
     entry: &Entry,
     head: &str,
     base: Option<&str>,
-) -> Result<Published, EntryError> {
+) -> Result<(Published, bool), EntryError> {
     let head_only = [head.to_string()];
     let manifest = manifest_at(storage, remote, store, entry, head, &head_only).await?;
     let target = PushTarget {
@@ -768,17 +865,19 @@ async fn push_head(
     };
     if let Some(reason) = refused {
         keep(&stored.hash, KeptReason::WorkflowBlocked).await?;
-        return Ok(Published::WorkflowBlocked {
+        let blocked = Published::WorkflowBlocked {
             revision: stored.hash,
             reason,
-        });
+        };
+        return Ok((blocked, !in_bucket));
     }
     let pushed = tag_stored(remote, &target, stored).await;
     let published = settle(remote, &target, pushed).await?;
     if let Published::Stored { revision, .. } = &published {
         keep(revision, KeptReason::LatestMoved).await?;
     }
-    Ok(published)
+    let wrote = !in_bucket || matches!(published, Published::Advanced { .. });
+    Ok((published, wrote))
 }
 
 /// The key `queue.db` keeps `entry`'s working folder under.

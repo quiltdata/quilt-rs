@@ -11,6 +11,8 @@ use crate::dataspace::contract::Access;
 use crate::dataspace::contract::Contract;
 use crate::dataspace::contract::ContractError;
 use crate::dataspace::contract::Entry;
+use crate::dataspace::hooks;
+use crate::dataspace::hooks::HookPoint;
 use crate::dataspace::lock::LOCK_FILE;
 use crate::dataspace::lock::Lock;
 use crate::dataspace::lock::LockEntry;
@@ -119,6 +121,12 @@ impl From<LockError> for PublishAllError {
 /// The lock is then written where any base moved. A lock written for another
 /// `data.toml` is used: the contract was edited here. One written for another
 /// folder, host or user is refused, and nothing is published.
+///
+/// The contract's `pre-write` hook runs before each entry is published, so
+/// it may rewrite `metadata.toml`, and `pre-read` before a package is read
+/// first; either failing leaves that entry unpublished. Once the lock is
+/// written, `post-read` runs for each package a read moved to a newer
+/// revision, and `post-write` for each revision a publish stored.
 pub async fn publish_all(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
@@ -148,27 +156,30 @@ pub async fn publish_all(
 
     let mut moved = false;
     let mut entries = Vec::new();
+    let mut after = Vec::new();
     for entry in contract.entries() {
         if !matches!(entry.access, Access::Write | Access::Replace) {
             continue;
         }
         let key = entry.key();
         let locked = lock.packages.get(&key);
+        let before = locked.map(|locked| locked.base.clone());
         let reads = contract
             .entries()
             .iter()
             .find(|read| read.access == Access::Read && read.key() == key);
         let (read, published) = if locked.is_some_and(|locked| !locked.commits.is_empty()) {
             (None, EntryPublish::Unpushed)
+        } else if let Err(err) = hooks::run(&contract, HookPoint::PreWrite, entry, None).await {
+            (None, EntryPublish::Failed(err.into()))
         } else if let Some(reads) = reads {
-            let base = locked.map(|locked| locked.base.as_str());
             Box::pin(publish_on_base(
                 storage,
                 remote,
-                contract.dataspace(),
+                &contract,
                 entry,
                 reads,
-                base,
+                before.as_deref(),
                 user_rules,
             ))
             .await
@@ -192,6 +203,17 @@ pub async fn publish_all(
             lock.packages.insert(key, based_on(base));
             moved = true;
         }
+        let read_newer = read.as_ref().map(EntryRead::lock_base);
+        if let (Some(reads), Some(revision)) =
+            (reads, hooks::newer(before.as_deref(), read_newer.flatten()))
+        {
+            after.push((HookPoint::PostRead, reads, revision.to_string()));
+        }
+        if let EntryPublish::Ran(published) = &published
+            && let Some(revision) = published.stored()
+        {
+            after.push((HookPoint::PostWrite, entry, revision.to_string()));
+        }
         entries.push(PackagePublish {
             entry: entry.clone(),
             read,
@@ -202,16 +224,19 @@ pub async fn publish_all(
     if moved {
         lock.write(storage, &contract, &writer).await?;
     }
+    for (point, entry, revision) in after {
+        hooks::after(&contract, point, entry, &revision).await;
+    }
     Ok(DataspacePublish { entries })
 }
 
 /// Publishes `entry` on `base`, first reading `reads`, the package's `read`
-/// entry, as [`read_resolving`] does in `dataspace`, where `latest` is not
-/// `base`.
+/// entry, as [`read_resolving`] does in the dataspace, after the contract's
+/// `pre-read` hook, where `latest` is not `base`.
 async fn publish_on_base(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
-    dataspace: &Path,
+    contract: &Contract,
     entry: &Entry,
     reads: &Entry,
     base: Option<&str>,
@@ -223,9 +248,13 @@ async fn publish_on_base(
         Err(EntryError::FolderUnavailable(_)) if base.is_none() => {}
         published => return (None, ran(published)),
     }
-    let read = match read_resolving(storage, remote, dataspace, reads, base).await {
-        Ok(outcome) => EntryRead::Ran(outcome),
-        Err(err) => EntryRead::Failed(err),
+    let dataspace = contract.dataspace();
+    let read = match hooks::run(contract, HookPoint::PreRead, reads, None).await {
+        Err(err) => EntryRead::Failed(err.into()),
+        Ok(()) => match read_resolving(storage, remote, dataspace, reads, base).await {
+            Ok(outcome) => EntryRead::Ran(outcome),
+            Err(err) => EntryRead::Failed(err),
+        },
     };
     let Some(base) = read.lock_base() else {
         return (Some(read), EntryPublish::NotRead);

@@ -7,6 +7,13 @@ use test_log::test;
 use crate::LogicalKey;
 use crate::dataspace::contract::PackageKey;
 use crate::dataspace::contract::Registry;
+use crate::dataspace::hooks::HookPoint::PostRead;
+use crate::dataspace::hooks::HookPoint::PreRead;
+use crate::dataspace::hooks::tests::FAIL_VAR;
+use crate::dataspace::hooks::tests::call;
+use crate::dataspace::hooks::tests::calls;
+use crate::dataspace::hooks::tests::table;
+use crate::dataspace::hooks::tests::tables;
 use crate::dataspace::lock::LOCK_FILE;
 use crate::dataspace::read::ReadReport;
 use crate::io::remote::mocks::MockRemote;
@@ -583,5 +590,56 @@ async fn a_lock_from_another_host_is_refused_while_a_working_folder_cannot_be_li
         matches!(&refused, Err(ReadAllError::Mismatch(_))),
         "{refused:?}"
     );
+    Ok(())
+}
+
+/// `post-read` follows each read of a newer revision, one whose files are
+/// all unchanged included, and not a read of a `latest` that did not move;
+/// `pre-read` comes before every read.
+#[test(tokio::test)]
+async fn post_read_follows_a_newer_revision_and_pre_read_every_read() -> Res {
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    let record = storage.temp_dir.path().join("calls");
+    publish(&remote, "team/raw", FIRST, &[("a.txt", b"alpha")]).await?;
+    let hooks = tables(&[PreRead, PostRead], &record);
+    let root = dataspace(&storage, &format!("read = [\"team/raw\"]\n{hooks}"))?;
+
+    read_all(&storage, &remote, &root, &writer()).await?;
+    read_all(&storage, &remote, &root, &writer()).await?;
+    publish(&remote, "team/raw", SECOND, &[("a.txt", b"alpha")]).await?;
+    let read = read_all(&storage, &remote, &root, &writer()).await?;
+
+    assert!(report(&read.entries[0].1).placed.is_empty(), "{read:?}");
+    assert_eq!(
+        calls(&record),
+        [
+            call(PreRead, None),
+            call(PostRead, Some(FIRST)),
+            call(PreRead, None),
+            call(PreRead, None),
+            call(PostRead, Some(SECOND)),
+        ]
+    );
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_pre_read_hook_that_fails_leaves_the_entry_unread() -> Res {
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    let record = storage.temp_dir.path().join("calls");
+    publish(&remote, "team/raw", FIRST, &[("a.txt", b"alpha")]).await?;
+    let hook = table(PreRead, &record, &[(FAIL_VAR, "1")]);
+    let root = dataspace(&storage, &format!("read = [\"team/raw\"]\n{hook}"))?;
+
+    let read = read_all(&storage, &remote, &root, &writer()).await?;
+
+    assert!(
+        matches!(read.entries[0].1, EntryRead::Failed(EntryError::Hook(_))),
+        "{read:?}"
+    );
+    assert!(!root.join("team/raw/a.txt").exists());
+    assert!(!root.join(LOCK_FILE).exists());
     Ok(())
 }

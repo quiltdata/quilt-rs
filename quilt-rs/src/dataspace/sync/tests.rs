@@ -5,6 +5,16 @@ use test_log::test;
 
 use crate::dataspace::METADATA_FILE;
 use crate::dataspace::contract::PackageKey;
+use crate::dataspace::hooks::HookPoint::PostRead;
+use crate::dataspace::hooks::HookPoint::PostWrite;
+use crate::dataspace::hooks::HookPoint::PreRead;
+use crate::dataspace::hooks::HookPoint::PreWrite;
+use crate::dataspace::hooks::tests::FAIL_VAR;
+use crate::dataspace::hooks::tests::METADATA_VAR;
+use crate::dataspace::hooks::tests::call;
+use crate::dataspace::hooks::tests::calls;
+use crate::dataspace::hooks::tests::table;
+use crate::dataspace::hooks::tests::tables;
 use crate::failpoint::stopping_at;
 use crate::io::manifest::fetch_jsonl;
 use crate::io::remote::mocks::MockRemote;
@@ -1458,5 +1468,116 @@ async fn a_tick_stopped_at_any_file_manifest_or_lock_step_ends_as_one_that_was_n
             assert!(world.folder().join(METADATA_FILE).exists(), "{context}");
         }
     }
+    Ok(())
+}
+
+/// Where a test's hooks record their calls.
+fn record(world: &World) -> PathBuf {
+    world.dir.path().join("calls")
+}
+
+/// A dataspace with `team/raw` under `sync` and the hooks `hooks` declares
+/// to record in [`record`], filled at [`FIRST`] holding `a.txt`.
+async fn hooked(hooks: impl Fn(&Path) -> String) -> Result<World, Box<dyn std::error::Error>> {
+    let world = World::synced()?;
+    let hooks = hooks(&record(&world));
+    world.contract(&format!("sync = [\"team/raw\"]\n{hooks}"))?;
+    world.publish(FIRST, &[("a.txt", b"v1")]).await?;
+    world.sync().await?;
+    Ok(world)
+}
+
+#[test(tokio::test)]
+async fn hooks_run_around_a_read_of_a_newer_latest_and_a_publish_and_not_on_an_idle_tick() -> Res {
+    let world = hooked(|record| tables(&[PreRead, PostRead, PreWrite, PostWrite], record)).await?;
+    world.tick().await?;
+    world.write("a.txt", "v2")?;
+    let pushed = advanced(&world.tick().await?);
+    world.tick().await?;
+    world
+        .publish(SECOND, &[("a.txt", b"v2"), ("b.txt", b"b")])
+        .await?;
+    world.tick().await?;
+    world.tick().await?;
+
+    assert_eq!(world.text("b.txt").as_deref(), Some("b"));
+    assert_eq!(
+        calls(&record(&world)),
+        [
+            call(PreRead, None),
+            call(PostRead, Some(FIRST)),
+            call(PreWrite, None),
+            call(PostWrite, Some(&pushed)),
+            call(PreRead, None),
+            call(PostRead, Some(SECOND)),
+        ]
+    );
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_pre_write_hook_rewrites_metadata_toml_before_the_commit() -> Res {
+    let stamp = "[metadata.package]\nstamped = true\n";
+    let world = hooked(|record| table(PreWrite, record, &[(METADATA_VAR, stamp)])).await?;
+    world.write("a.txt", "v2")?;
+
+    let pushed = advanced(&world.tick().await?);
+
+    let uri = ManifestUri {
+        origin: None,
+        bucket: "b".to_string(),
+        namespace: package(),
+        hash: pushed,
+    };
+    let header = fetch_jsonl(&world.remote, &uri).await?.header;
+    assert_eq!(header.user_meta, Some(serde_json::json!({"stamped": true})));
+    assert_eq!(header.message(), Some(MESSAGE));
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_pre_write_hook_that_fails_commits_nothing() -> Res {
+    let world = hooked(|record| table(PreWrite, record, &[(FAIL_VAR, "1")])).await?;
+    world.write("a.txt", "v2")?;
+
+    let outcome = world.tick().await?;
+
+    assert!(
+        matches!(&outcome, EntrySync::Failed(EntryError::Hook(_))),
+        "{outcome:?}"
+    );
+    assert_eq!(world.latest().await?, FIRST);
+    let locked = world.locked().await?.ok_or("no lock entry")?;
+    assert_eq!(locked.commits, Vec::<String>::new());
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn post_write_follows_a_blocked_revision_once_and_not_its_push_again() -> Res {
+    let world = hooked(|record| table(PostWrite, record, &[])).await?;
+    gate(&world, r#"{"type": "object", "required": ["owner"]}"#).await?;
+    world.write("a.txt", "v2")?;
+
+    let blocked = world.tick().await?;
+    let again = world.tick().await?;
+
+    let EntrySync::Ran {
+        published: Some(Published::WorkflowBlocked { revision, .. }),
+        ..
+    } = &blocked
+    else {
+        panic!("expected the revision stored and blocked, got {blocked:?}");
+    };
+    assert!(
+        matches!(
+            &again,
+            EntrySync::Ran {
+                published: Some(Published::WorkflowBlocked { .. }),
+                ..
+            }
+        ),
+        "{again:?}"
+    );
+    assert_eq!(calls(&record(&world)), [call(PostWrite, Some(revision))]);
     Ok(())
 }

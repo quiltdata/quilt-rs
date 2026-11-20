@@ -106,6 +106,16 @@ impl Published {
             | Self::Behind { .. } => None,
         }
     }
+
+    /// The revision the publish stored, whether or not it became `latest`.
+    pub(crate) fn stored(&self) -> Option<&str> {
+        match self {
+            Self::Advanced { revision, .. }
+            | Self::Stored { revision, .. }
+            | Self::WorkflowBlocked { revision, .. } => Some(revision),
+            Self::Unchanged { .. } | Self::Behind { .. } => None,
+        }
+    }
 }
 
 /// The revision a [`publish`] builds on.

@@ -669,7 +669,7 @@ fn a_registry_field_that_is_neither_spelling_is_refused() {
 }
 
 #[test]
-fn hooks_are_left_to_their_reader_and_unknown_keys_are_refused() -> Res {
+fn hooks_are_read_beside_the_entries_and_unknown_keys_are_refused() -> Res {
     let hooked = format!(
         "{}\n[hooks.post-read]\ncommand = \"after-read\"\n",
         with_defaults(r#"read = ["team/raw"]"#)

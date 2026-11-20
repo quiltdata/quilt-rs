@@ -7,6 +7,16 @@ use test_log::test;
 use crate::LogicalKey;
 use crate::dataspace::contract::PackageKey;
 use crate::dataspace::contract::Registry;
+use crate::dataspace::hooks::HookPoint::PostRead;
+use crate::dataspace::hooks::HookPoint::PostWrite;
+use crate::dataspace::hooks::HookPoint::PreRead;
+use crate::dataspace::hooks::HookPoint::PreWrite;
+use crate::dataspace::hooks::tests::FAIL_VAR;
+use crate::dataspace::hooks::tests::METADATA_VAR;
+use crate::dataspace::hooks::tests::call;
+use crate::dataspace::hooks::tests::calls;
+use crate::dataspace::hooks::tests::table;
+use crate::dataspace::hooks::tests::tables;
 use crate::dataspace::read::ReadOutcome;
 use crate::dataspace::read_all::read_all;
 use crate::io::manifest::fetch_jsonl;
@@ -452,5 +462,100 @@ async fn an_edit_to_data_toml_under_sync_entries_is_left_for_the_sync_tick() -> 
     assert_ne!(contract.data_toml_hash(), written_for);
     let lock = Lock::read(&storage, &contract).await?.ok_or("no lock")?;
     assert_eq!(lock.header.data_toml_hash, written_for);
+    Ok(())
+}
+
+/// The manifest of `hash`, a revision of `team/raw`.
+async fn manifest(remote: &MockRemote, hash: &str) -> Result<Manifest, crate::Error> {
+    let uri = ManifestUri {
+        hash: hash.to_string(),
+        bucket: "b".to_string(),
+        namespace: Namespace::try_from("team/raw").expect("package"),
+        origin: None,
+    };
+    fetch_jsonl(remote, &uri).await
+}
+
+#[test(tokio::test)]
+async fn a_pre_write_hook_rewrites_metadata_toml_before_the_publish_and_post_write_follows() -> Res
+{
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    let record = storage.temp_dir.path().join("calls");
+    seed(&remote, FIRST, &[("a.txt", b"a")]).await?;
+    let stamp = "message = \"stamped\"\n[metadata.package]\nstamped = true\n";
+    let hooks = format!(
+        "{}{}",
+        table(PreWrite, &record, &[(METADATA_VAR, stamp)]),
+        table(PostWrite, &record, &[]),
+    );
+    let root = dataspace(&storage, &format!("write = [\"team/raw\"]\n{hooks}"))?;
+    write(&root, "team/raw", "new.txt", b"n")?;
+
+    let published = publish_all_here(&storage, &remote, &root, &writer()).await?;
+
+    let new = advanced(&published.entries[0]);
+    let header = manifest(&remote, new).await?.header;
+    assert_eq!(header.message(), Some("stamped"));
+    assert_eq!(header.user_meta, Some(serde_json::json!({"stamped": true})));
+    assert_eq!(
+        calls(&record),
+        [call(PreWrite, None), call(PostWrite, Some(new))]
+    );
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_pre_write_hook_that_fails_leaves_the_entry_unpublished() -> Res {
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    let record = storage.temp_dir.path().join("calls");
+    let hooks = format!(
+        "{}{}",
+        table(PreWrite, &record, &[(FAIL_VAR, "1")]),
+        table(PostWrite, &record, &[]),
+    );
+    let root = dataspace(&storage, &format!("write = [\"team/raw\"]\n{hooks}"))?;
+    write(&root, "team/raw", "new.txt", b"n")?;
+
+    let published = publish_all_here(&storage, &remote, &root, &writer()).await?;
+
+    let entry = &published.entries[0];
+    assert!(
+        matches!(&entry.published, EntryPublish::Failed(EntryError::Hook(_))),
+        "{entry:?}"
+    );
+    let tag = "s3://b/.quilt/named_packages/team/raw/latest";
+    assert_eq!(remote.current(tag).await?, None);
+    assert_eq!(calls(&record), [call(PreWrite, None)]);
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_package_read_first_runs_the_read_hooks_between_the_write_hooks() -> Res {
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    let record = storage.temp_dir.path().join("calls");
+    seed(&remote, FIRST, &[("in/a.txt", b"a")]).await?;
+    let hooks = tables(&[PreRead, PostRead, PreWrite, PostWrite], &record);
+    let root = dataspace(&storage, &format!("{READ_AND_WRITE}{hooks}"))?;
+    read_all(&storage, &remote, &root, &writer()).await?;
+    seed(&remote, SECOND, &[("in/a.txt", b"A")]).await?;
+    write(&root, "team/raw", "out/b.txt", b"b")?;
+
+    let published = publish_all_here(&storage, &remote, &root, &writer()).await?;
+
+    let new = advanced(&published.entries[0]);
+    assert_eq!(
+        calls(&record),
+        [
+            call(PreRead, None),
+            call(PostRead, Some(FIRST)),
+            call(PreWrite, None),
+            call(PreRead, None),
+            call(PostRead, Some(SECOND)),
+            call(PostWrite, Some(new)),
+        ]
+    );
     Ok(())
 }
