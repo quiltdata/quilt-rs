@@ -467,7 +467,10 @@ async fn under_sync_a_base_the_registry_no_longer_holds_is_refused() -> Res {
 
     let outcome = read(&storage, &remote, &sync(), Some(FIRST)).await;
 
-    assert!(matches!(outcome, Err(EntryError::Failed(_))), "{outcome:?}");
+    assert!(
+        matches!(&outcome, Err(EntryError::Failed(err)) if err.is_not_found()),
+        "{outcome:?}"
+    );
     assert_eq!(text(&storage, "a.txt").await, None);
     Ok(())
 }
@@ -683,6 +686,62 @@ async fn a_file_edited_while_the_revision_downloads_stops_the_read_before_any_ch
     );
     assert_eq!(text(&storage, "edit.txt").await.as_deref(), Some("mine"));
     assert_eq!(text(&storage, "a.txt").await.as_deref(), Some("v1"));
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn under_sync_a_file_deleted_while_the_revision_downloads_stays_deleted() -> Res {
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    let entry = sync();
+    publish(&remote, FIRST, &[("a.txt", b"v1"), ("edit.txt", b"v1")]).await?;
+    read(&storage, &remote, &entry, None).await?;
+    publish(&remote, SECOND, &[("a.txt", b"v2"), ("edit.txt", b"v2")]).await?;
+    let download = remote.park(&row("edit.txt", b"v2").physical_key);
+    let delete = async {
+        download.arrived().await;
+        storage.remove_file(folder().join("edit.txt")).await?;
+        download.release();
+        Ok::<_, crate::Error>(())
+    };
+
+    let (outcome, deleted) = tokio::join!(read(&storage, &remote, &entry, Some(FIRST)), delete);
+    deleted?;
+
+    assert!(
+        matches!(&outcome, Err(EntryError::Changed(key)) if key == Path::new("edit.txt")),
+        "{outcome:?}"
+    );
+    assert_eq!(text(&storage, "edit.txt").await, None);
+    assert_eq!(text(&storage, "a.txt").await.as_deref(), Some("v1"));
+    Ok(())
+}
+
+/// Whether the files are there cannot be told, so the folder is not gone.
+#[cfg(unix)]
+#[test(tokio::test)]
+async fn under_sync_a_folder_whose_files_cannot_be_searched_is_not_gone() -> Res {
+    use std::os::unix::fs::PermissionsExt;
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    publish(
+        &remote,
+        FIRST,
+        &[("sub/a.txt", b"v1"), ("sub/b.txt", b"v1")],
+    )
+    .await?;
+    read(&storage, &remote, &sync(), None).await?;
+    let sub = storage.temp_dir.path().join("work/rnaseq/team/raw/sub");
+    std::fs::set_permissions(&sub, std::fs::Permissions::from_mode(0o444))?;
+    let searchable = std::fs::metadata(sub.join("a.txt")).is_ok();
+
+    let outcome = read(&storage, &remote, &sync(), Some(FIRST)).await;
+
+    std::fs::set_permissions(&sub, std::fs::Permissions::from_mode(0o755))?;
+    // Root searches it anyway.
+    if !searchable {
+        assert!(matches!(outcome, Err(EntryError::Failed(_))), "{outcome:?}");
+    }
     Ok(())
 }
 

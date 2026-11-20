@@ -260,6 +260,7 @@ pub async fn read(
         &plan.steps,
         plan.metadata.as_ref(),
         &mut report,
+        deletes,
     )
     .await;
     let _ = storage.remove_dir_all(&staging).await;
@@ -476,7 +477,10 @@ async fn gone(
     }
     for key in had.keys() {
         let path = key.join_to(folder);
-        if storage.is_symlink(&path).await || storage.exists(&path).await {
+        if storage.is_symlink(&path).await
+            || storage.exists(&path).await
+            || !not_found(storage, &path).await?
+        {
             return Ok(false);
         }
     }
@@ -529,10 +533,23 @@ async fn listed(storage: &(impl Storage + Sync), folder: &Path, key: &LogicalKey
 }
 
 /// Whether the folder still holds what `step` was planned against: its
-/// `had`, or nothing at all. A link holds neither.
-async fn as_planned(storage: &(impl Storage + Sync), folder: &Path, step: &Step<'_>) -> Res<bool> {
+/// `had`, or nothing at all. A link holds neither. Where `deletes`, a file
+/// to be replaced that has gone since, or the folder itself, was deleted,
+/// which the read must not undo.
+async fn as_planned(
+    storage: &(impl Storage + Sync),
+    folder: &Path,
+    step: &Step<'_>,
+    deletes: bool,
+) -> Res<bool> {
     let path = step.key().join_to(folder);
     if storage.is_symlink(&path).await {
+        return Ok(false);
+    }
+    if deletes
+        && (!storage.exists(folder).await
+            || (step.want.is_some() && step.had.is_some() && !storage.exists(&path).await))
+    {
         return Ok(false);
     }
     Ok(match step.had {
@@ -613,6 +630,7 @@ async fn apply(
     steps: &[Step<'_>],
     metadata: Option<&(String, Option<Vec<u8>>)>,
     report: &mut ReadReport,
+    deletes: bool,
 ) -> Result<bool, EntryError> {
     // A linked folder would put a write or a deletion outside the folder. Asked
     // before the fetch, and again after it.
@@ -643,7 +661,7 @@ async fn apply(
     // Every step before the first change, so a concurrent edit stops the read
     // whole, then each again right before its own change.
     for step in steps {
-        if !as_planned(storage, folder, step).await? {
+        if !as_planned(storage, folder, step, deletes).await? {
             return Err(EntryError::Changed(step.key().to_path_buf()));
         }
     }
@@ -655,7 +673,7 @@ async fn apply(
     for step in steps {
         let key = step.key();
         let path = key.join_to(folder);
-        if !as_planned(storage, folder, step).await? {
+        if !as_planned(storage, folder, step, deletes).await? {
             return Err(EntryError::Changed(key.to_path_buf()));
         }
         refuse_linked_ancestors(storage, folder, std::iter::once(key)).await?;
