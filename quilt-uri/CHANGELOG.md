@@ -32,6 +32,7 @@
 
 ### Fixed
 
+- URI and namespace errors no longer repeat the address, so a user and password given in it stay out of the message; each error names the part that was wrong instead (<https://github.com/quiltdata/quilt-rs/pull/1474>)
 - In a `quilt+s3://` fragment, `+` is a literal `+`, so `path=C++.csv` names `C++.csv`, and a %-escape that is not UTF-8, such as `%FF`, is an error instead of U+FFFD (<https://github.com/quiltdata/quilt-rs/pull/1372>)
 - A `path=` with leading or trailing whitespace, or an empty `path=`, is accepted the way quilt3 accepts it, then trimmed (with a warning) so the URI does not silently name a different entry; an empty path is no path (<https://github.com/quiltdata/quilt-rs/pull/1385>)
 
