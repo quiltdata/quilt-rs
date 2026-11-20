@@ -69,6 +69,11 @@ pub enum EntryError {
     #[error("`latest` cannot be read, so there is no revision to build on")]
     LatestUnreadable,
 
+    /// The local commits cannot be merged onto `latest` for a reason no
+    /// decision in `conflict.json` can settle.
+    #[error("the local commits cannot be merged onto `latest`: {0}")]
+    Unmergeable(String),
+
     #[error("{CONFLICT_FILE}: {0}")]
     ConflictMap(String),
 

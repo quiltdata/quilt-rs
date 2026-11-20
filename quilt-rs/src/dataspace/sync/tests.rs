@@ -583,24 +583,6 @@ async fn a_push_that_latest_moved_past_is_left_stored_and_the_lock_unmoved() -> 
 }
 
 #[test(tokio::test)]
-async fn unpushed_commits_and_a_latest_that_moved_are_diverged() -> Res {
-    let world = World::filled(&[("a.txt", b"v1")]).await?;
-    world.write("a.txt", "v2")?;
-    let stopped = stopping_at("push.object", 0, world.tick()).await?;
-    assert!(matches!(stopped, EntrySync::Failed(_)), "{stopped:?}");
-    world.publish(SECOND, &[("a.txt", b"theirs")]).await?;
-
-    let outcome = world.tick().await?;
-
-    assert!(
-        matches!(&outcome, EntrySync::Diverged { latest } if latest.as_deref() == Some(SECOND)),
-        "{outcome:?}"
-    );
-    assert_eq!(world.text("a.txt").as_deref(), Some("v2"));
-    Ok(())
-}
-
-#[test(tokio::test)]
 async fn a_package_whose_latest_is_gone_is_diverged_and_its_lock_kept() -> Res {
     let world = World::filled(&[("a.txt", b"v1")]).await?;
     world
@@ -1876,11 +1858,11 @@ async fn a_first_push_that_a_latest_appeared_before_is_left_stored_and_locked() 
     Ok(())
 }
 
-/// A `latest` that appears before the first push of a package's commits
-/// diverges from them: nothing is read or published, and the lock and the
-/// folder keep them.
+/// A `latest` that appears before the first push of a package's commits, and
+/// holds a key they hold other bytes of, collides with them: nothing is read
+/// or published, and the lock and the folder keep them.
 #[test(tokio::test)]
-async fn a_latest_that_appears_before_a_first_push_is_diverged() -> Res {
+async fn a_latest_that_appears_before_a_first_push_with_the_same_key_collides() -> Res {
     let world = unpublished().await?;
     stopping_at("push.object", 0, world.tick()).await?;
     let locked = world.locked().await?;
@@ -1889,7 +1871,8 @@ async fn a_latest_that_appears_before_a_first_push_is_diverged() -> Res {
     let outcome = world.tick().await?;
 
     assert!(
-        matches!(&outcome, EntrySync::Diverged { latest } if latest.as_deref() == Some(SECOND)),
+        matches!(&outcome, EntrySync::Blocked { revision, conflicts }
+            if revision == SECOND && *conflicts == [PathBuf::from("a.txt")]),
         "{outcome:?}"
     );
     assert!(locked.as_ref().is_some_and(|locked| locked.base.is_none()));
@@ -2395,3 +2378,5 @@ async fn post_write_follows_a_blocked_revision_once_and_not_its_push_again() -> 
     assert_eq!(calls(&record(&world)), [call(PostWrite, Some(revision))]);
     Ok(())
 }
+
+mod merge;

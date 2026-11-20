@@ -97,16 +97,18 @@ pub enum EntrySync {
         read: Option<ReadReport>,
         published: Option<Published>,
     },
-    /// Local changes collide with the revision's, so nothing was applied or
-    /// published.
+    /// Local changes collide with the revision's, that being read or the
+    /// `latest` local commits were to be merged onto, so nothing was applied
+    /// or published; `conflict.json` holds the colliding keys.
     Blocked {
         revision: String,
         conflicts: Vec<PathBuf>,
     },
-    /// `latest` is neither the lock's base nor its last commit, and the lock
-    /// names commits not pushed, or `latest` is gone, or the package is
-    /// moving from the local registry to a bucket that has a `latest` for it
-    /// already: nothing was read or published.
+    /// `latest` is gone while the lock names a base, or the package is moving
+    /// from the local registry to a bucket that has a `latest` for it
+    /// already, or, before the dataspace is filled, `latest` is neither the
+    /// lock's base nor its last commit and the lock names commits not
+    /// pushed: nothing was read or published.
     Diverged { latest: Option<String> },
     /// The working folder was missing or empty, so the lock's current
     /// revision was read back into it and nothing was published.
@@ -205,8 +207,14 @@ impl<S: Storage + Sync> LockFile<'_, S> {
 /// written after each step: the base after a read, a commit once it is
 /// recorded, and the base again, with the commits the push squashed dropped,
 /// once `latest` names the push. A package never published is recorded with
-/// its commits and no base, and its first push expects no `latest`; a
-/// `latest` that appears first leaves it diverged. Commits are not checked
+/// its commits and no base, and its first push expects no `latest`. Where
+/// `latest` moved past the base of commits the lock names, or appeared
+/// before a package's first push, the commits and the folder's changes are
+/// merged onto it, the empty revision standing for a missing base: where
+/// nothing collides the folder takes `latest`'s change, and the merge is one
+/// commit on `latest`, pushed as any is; where something does, nothing is
+/// applied and `conflict.json` holds a publish's row for each colliding key,
+/// whose decisions a later tick applies. Commits are not checked
 /// against the bucket's workflow; their push is. A push that `latest` moved
 /// past, or that the workflow refuses, is left stored, recorded with
 /// [`Queue::keep`], and not uploaded again while the bucket holds it; the
@@ -245,7 +253,8 @@ impl<S: Storage + Sync> LockFile<'_, S> {
 /// the local registry.
 ///
 /// The contract's hooks run around each half: `pre-read` before the tick
-/// reads `latest`, and `post-read` once the lock moved to a newer revision;
+/// reads `latest` or merges onto it, and `post-read` once the lock moved to a
+/// newer revision;
 /// `pre-write` before it commits a folder that changed, which is then taken
 /// again, and `post-write` once a push stored a revision or moved `latest`.
 /// A `pre-` hook that fails stops the entry. Reading a missing folder back
@@ -708,9 +717,25 @@ async fn tick(
     {
         // The push landed and the lock was not written after it.
         set_base(lock, lock_file, &key, pushed.clone()).await?;
-    } else if !commits.is_empty() || (base.is_some() && latest.is_none()) {
+    } else if let (false, Some(theirs), Some((_, manifest))) =
+        (commits.is_empty(), &latest, &current)
+    {
         // Commits on a base `latest` moved from, or on none where `latest`
-        // now names a revision; or a base whose `latest` is gone.
+        // now names a revision: merged onto it.
+        let ours = merge::Local {
+            base: base.as_deref(),
+            current: manifest,
+        };
+        match merge::onto_latest(
+            storage, remote, &store, entry, lock, lock_file, ours, theirs, message, user_rules,
+        )
+        .await?
+        {
+            ControlFlow::Continue(report) => read_report = Some(report),
+            ControlFlow::Break(outcome) => return Ok(outcome),
+        }
+    } else if base.is_some() && latest.is_none() {
+        // A base whose `latest` is gone.
         return Ok(EntrySync::Diverged { latest });
     } else if let Some(hash) = &latest {
         let contract = lock_file.contract;
@@ -1382,6 +1407,8 @@ fn changed(logical_key: LogicalKey, was: Option<&ManifestRow>) -> ManifestRow {
         meta_numbers: was.map_or_else(RawNumbers::default, |row| row.meta_numbers.clone()),
     }
 }
+
+mod merge;
 
 #[cfg(test)]
 mod tests;
