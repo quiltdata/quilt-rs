@@ -30,8 +30,8 @@ fn dataspace() -> PathBuf {
 
 fn entry() -> Entry {
     let text = "registry = \"s3://b\"\n[packages]\nread = [\"team/raw\"]";
-    let contract =
-        Contract::parse(text.as_bytes(), &dataspace(), FolderCase::Sensitive).expect("contract");
+    let contract = Contract::parse(text.as_bytes(), &dataspace(), FolderCase::Sensitive, None)
+        .expect("contract");
     contract.entries()[0].clone()
 }
 

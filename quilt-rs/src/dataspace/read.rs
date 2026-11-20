@@ -350,7 +350,6 @@ pub(crate) async fn read_deciding(
             "{} cannot be read whole: some of its files' bytes are gone",
             revision.display()
         );
-        report.resolved.clear();
     } else if let Some((text, planned_on)) = plan.metadata {
         write_metadata(storage, folder, text, planned_on.as_deref()).await?;
         report.placed.push(PathBuf::from(METADATA_FILE));
@@ -946,6 +945,7 @@ async fn apply(
     // A revision some of whose bytes are gone cannot be read whole, and a
     // folder holding part of it under the old base would read as local work.
     if !report.skipped.is_empty() || !report.hash_mismatch.is_empty() {
+        report.resolved.clear();
         return Ok(false);
     }
     for step in steps {

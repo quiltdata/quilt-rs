@@ -386,7 +386,9 @@ async fn fill(
                 Published::WorkflowBlocked { revision, .. } => {
                     let mut whole = at(entry, revision);
                     whole.access = Access::Read;
-                    let outcome = read(storage, remote, &whole, Some(revision)).await?;
+                    let dataspace = lock_file.contract.dataspace();
+                    let outcome =
+                        read_resolving(storage, remote, dataspace, &whole, Some(revision)).await?;
                     return Ok(ran(outcome, Some(pushed)));
                 }
                 _ => {
