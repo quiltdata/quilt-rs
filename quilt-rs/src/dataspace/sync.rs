@@ -10,10 +10,12 @@ use std::path::PathBuf;
 use chrono::SubsecRound;
 use chrono::Utc;
 use thiserror::Error;
+use tracing::warn;
 
 use crate::LogicalKey;
 use crate::Res;
 use crate::dataspace::EntryError;
+use crate::dataspace::METADATA_FILE;
 use crate::dataspace::contract::Access;
 use crate::dataspace::contract::Contract;
 use crate::dataspace::contract::ContractError;
@@ -24,6 +26,7 @@ use crate::dataspace::lock::LockEntry;
 use crate::dataspace::lock::LockError;
 use crate::dataspace::lock::Mismatch;
 use crate::dataspace::lock::Writer;
+use crate::dataspace::metadata::render;
 use crate::dataspace::publish::Published;
 use crate::dataspace::publish::metadata_file;
 use crate::dataspace::publish::same_as;
@@ -32,8 +35,10 @@ use crate::dataspace::publish::walk;
 use crate::dataspace::read::OnDisk;
 use crate::dataspace::read::ReadOutcome;
 use crate::dataspace::read::ReadReport;
+use crate::dataspace::read::bytes_at;
 use crate::dataspace::read::gone;
 use crate::dataspace::read::read;
+use crate::dataspace::read::write_metadata;
 use crate::dataspace::read_all::usable_lock;
 use crate::domain::DomainRoot;
 use crate::domain::RegistryStore;
@@ -501,6 +506,7 @@ async fn publish(
         .filter(|(key, _)| entry.paths.covers(key))
         .collect();
     let (mut manifest, content) = compose(storage, &current, entry, &files).await?;
+    let metadata_text = bytes_at(storage, &folder.join(METADATA_FILE)).await?;
     metadata_file(storage, folder)
         .await?
         .apply(&mut manifest, &entry.paths);
@@ -548,11 +554,32 @@ async fn publish(
                 locked.commits.push(hash.to_string());
                 lock_file.save(lock).await?;
             }
+            // The folder holds the commit now, its message included, so a
+            // later read does not take the metadata file for a local change.
+            let committed =
+                Manifest::from_path(storage, &store.installed_manifest(&entry.package, hash))
+                    .await?;
+            let rewritten = match render(&committed, &entry.paths) {
+                Ok(text) => write_metadata(storage, folder, text, metadata_text.as_deref()).await,
+                Err(reason) => Err(EntryError::MetadataUnwritable(reason)),
+            };
+            if let Err(err) = rewritten {
+                warn!("{METADATA_FILE} was left as it is: {err}");
+            }
             head = Some(hash.to_string());
         }
     }
 
     let Some(head) = head.filter(|head| Some(head) != base.as_ref()) else {
+        // Committed back to the base: the commits before it are released.
+        if let Some(base) = base
+            && lock
+                .packages
+                .get(&key)
+                .is_some_and(|locked| !locked.commits.is_empty())
+        {
+            set_base(lock, lock_file, &key, base).await?;
+        }
         return Ok(None);
     };
     let published = push_head(storage, remote, store, entry, &head, base.as_deref()).await?;

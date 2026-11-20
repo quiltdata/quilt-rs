@@ -580,7 +580,7 @@ async fn as_planned(
 
 /// Writes the metadata file's `text` beside it, then renames it into place
 /// where the file still holds `planned_on`.
-async fn write_metadata(
+pub(crate) async fn write_metadata(
     storage: &(impl Storage + Sync),
     folder: &Path,
     text: String,

@@ -109,16 +109,18 @@ impl World {
 
     /// [`World::publish`] for `package`.
     async fn publish_to(&self, package: &str, hash: &str, files: &[(&str, &[u8])]) -> Res {
-        self.publish_with_folders(package, hash, files, Vec::new())
+        let header = ManifestHeader::default();
+        self.publish_with(package, hash, files, header, Vec::new())
             .await
     }
 
-    /// [`World::publish_to`], with metadata for folders.
-    async fn publish_with_folders(
+    /// [`World::publish_to`], under `header` and with metadata for folders.
+    async fn publish_with(
         &self,
         package: &str,
         hash: &str,
         files: &[(&str, &[u8])],
+        header: ManifestHeader,
         dir_meta: Vec<crate::manifest::DirMeta>,
     ) -> Res {
         let mut rows = Vec::new();
@@ -143,7 +145,7 @@ impl World {
             rows.push(row);
         }
         let manifest = Manifest {
-            header: ManifestHeader::default(),
+            header,
             rows,
             dir_meta,
         };
@@ -647,6 +649,62 @@ async fn after_data_toml_is_edited_a_commit_whose_latest_is_gone_is_not_pushed()
 }
 
 #[test(tokio::test)]
+async fn a_revision_read_after_a_push_finds_the_metadata_file_unchanged() -> Res {
+    let world = World::filled(&[("a.txt", b"v1"), ("b.txt", b"v1")]).await?;
+    world.write("a.txt", "v2")?;
+    advanced(&world.tick().await?);
+    let theirs = ManifestHeader {
+        message: crate::manifest::HeaderMessage::Text("theirs".to_string()),
+        ..ManifestHeader::default()
+    };
+    world
+        .publish_with(
+            "team/raw",
+            SECOND,
+            &[("a.txt", b"v2"), ("b.txt", b"v2")],
+            theirs,
+            Vec::new(),
+        )
+        .await?;
+
+    let outcome = world.tick().await?;
+
+    assert!(
+        matches!(&outcome, EntrySync::Ran { read: Some(read), .. } if read.revision == SECOND),
+        "{outcome:?}"
+    );
+    assert_eq!(world.text("b.txt").as_deref(), Some("v2"));
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_change_undone_before_its_push_releases_the_commits() -> Res {
+    let world = World::filled(&[("a.txt", b"v1")]).await?;
+    world.write("a.txt", "v2")?;
+    let base = advanced(&world.tick().await?);
+    world.write("a.txt", "v3")?;
+    stopping_at("push.object", 0, world.tick()).await?;
+    world.write("a.txt", "v2")?;
+
+    let outcome = world.tick().await?;
+
+    assert!(
+        matches!(
+            &outcome,
+            EntrySync::Ran {
+                published: None,
+                ..
+            }
+        ),
+        "{outcome:?}"
+    );
+    let locked = world.locked().await?.ok_or("no lock entry")?;
+    assert_eq!(locked.base, base);
+    assert_eq!(locked.commits, Vec::<String>::new());
+    Ok(())
+}
+
+#[test(tokio::test)]
 async fn a_folder_turned_into_a_file_loses_the_folders_metadata() -> Res {
     let world = World::synced()?;
     let folder = crate::manifest::DirMeta::new(
@@ -654,10 +712,11 @@ async fn a_folder_turned_into_a_file_loses_the_folders_metadata() -> Res {
         serde_json::json!({"user_meta": {"units": "m"}}),
     );
     world
-        .publish_with_folders(
+        .publish_with(
             "team/raw",
             FIRST,
             &[("dir/a.txt", b"v1"), ("b.txt", b"v1")],
+            ManifestHeader::default(),
             vec![folder],
         )
         .await?;
@@ -683,7 +742,13 @@ async fn metadata_of_a_folder_that_held_no_files_is_no_change() -> Res {
         serde_json::json!({"user_meta": {"units": "m"}}),
     );
     world
-        .publish_with_folders("team/raw", FIRST, &[("a.txt", b"v1")], vec![folder])
+        .publish_with(
+            "team/raw",
+            FIRST,
+            &[("a.txt", b"v1")],
+            ManifestHeader::default(),
+            vec![folder],
+        )
         .await?;
     world.sync().await?;
 
