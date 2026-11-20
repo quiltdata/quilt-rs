@@ -164,9 +164,8 @@ the folder as the whole package, with `metadata.toml` setting the message and
 metadata. What a commit leaves out is left out: files the folder's
 `.quiltignore`, the domain folder's user-wide one or the built-in rules ignore.
 A package also listed under `read` publishes only on its base, the revision the
-lock names; where `latest` has moved past it, or `data.toml` changed since the
-lock was written, the package is read first, as `read` would, and a read that
-does not complete publishes nothing. Each
+lock names; where `latest` has moved past it, the package is read first, as
+`read` would, and a read that does not complete publishes nothing. Each
 revision that becomes `latest` is recorded in `data.lock.toml`; a lock from
 another host, user or folder is refused. It exits 1 unless `latest` holds
 every package's folder. Under `--json` it prints `dataspace`, `completed`

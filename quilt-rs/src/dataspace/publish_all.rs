@@ -113,8 +113,8 @@ impl From<LockError> for PublishAllError {
 ///
 /// A package also under `read` has one base, the lock's: it is published
 /// only while that base is `latest`, or with no base while the package has no
-/// revision. Where it is not, or the lock was written for another `data.toml`,
-/// the `read` entry is read first and the publish is on the revision read.
+/// revision. Where it is not, the `read` entry is read first and the publish
+/// is on the revision read.
 ///
 /// The lock is then written where any base moved. A lock written for another
 /// `data.toml` is used: the contract was edited here. One written for another
@@ -145,11 +145,6 @@ pub async fn publish_all(
         }
         None => (Lock::new(&contract, writer), writer.clone()),
     };
-    // A base recorded before `data.toml` was edited may predate the read
-    // paths, which are then read before anything is published on it.
-    let edited = lock
-        .mismatches(&contract, &writer)
-        .contains(&Mismatch::DataToml);
 
     let mut moved = false;
     let mut entries = Vec::new();
@@ -168,7 +163,7 @@ pub async fn publish_all(
         } else if let Some(reads) = reads {
             let base = locked.map(|locked| locked.base.as_str());
             Box::pin(publish_on_base(
-                storage, remote, entry, reads, base, edited, user_rules,
+                storage, remote, entry, reads, base, user_rules,
             ))
             .await
         } else {
@@ -190,10 +185,6 @@ pub async fn publish_all(
         if let Some(base) = published_base.or(read.as_ref().and_then(EntryRead::lock_base)) {
             lock.packages.insert(key, based_on(base));
             moved = true;
-        } else if edited && matches!(published, EntryPublish::NotRead) {
-            // The lock is written for this `data.toml`, so it would vouch for
-            // a base the new read paths were never read from.
-            moved |= lock.packages.remove(&key).is_some();
         }
         entries.push(PackagePublish {
             entry: entry.clone(),
@@ -209,22 +200,18 @@ pub async fn publish_all(
 }
 
 /// Publishes `entry` on `base`, first reading `reads`, the package's `read`
-/// entry, where `latest` is not `base`, or a `base` is not to be trusted,
-/// `read_first`.
+/// entry, where `latest` is not `base`.
 async fn publish_on_base(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
     entry: &Entry,
     reads: &Entry,
     base: Option<&str>,
-    read_first: bool,
     user_rules: &Path,
 ) -> (Option<EntryRead>, EntryPublish) {
-    if !(read_first && base.is_some()) {
-        match publish(storage, remote, entry, None, Base::Locked(base), user_rules).await {
-            Ok(Published::Behind { .. }) => {}
-            published => return (None, ran(published)),
-        }
+    match publish(storage, remote, entry, None, Base::Locked(base), user_rules).await {
+        Ok(Published::Behind { .. }) => {}
+        published => return (None, ran(published)),
     }
     let read = match read(storage, remote, reads, base).await {
         Ok(outcome) => EntryRead::Ran(outcome),
