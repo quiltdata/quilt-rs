@@ -342,7 +342,17 @@ impl Runner {
         let publishes: Vec<Entry> = [of(Access::Write), of(Access::Replace)].concat();
         self.read(storage, remote, &of(Access::Read), now, &mut tick)
             .await?;
-        self.publish(storage, remote, &publishes, &base, now, &mut tick)
+        // A read of the same package may have moved the lock; a publish is
+        // kept against the base it ran on.
+        let after = Lock::read(storage, &contract).await.ok().flatten();
+        let ran_on = |entry: &Entry| match &after {
+            Some(lock) => lock
+                .packages
+                .get(&entry.key())
+                .and_then(|locked| locked.base.clone()),
+            None => base(entry),
+        };
+        self.publish(storage, remote, &publishes, &ran_on, now, &mut tick)
             .await?;
         self.sync(storage, remote, &of(Access::Sync), now, &mut tick)
             .await?;

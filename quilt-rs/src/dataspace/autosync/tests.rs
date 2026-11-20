@@ -22,6 +22,9 @@ type Got<T> = Result<T, Box<dyn std::error::Error>>;
 const LATEST: &str = "s3://b/.quilt/named_packages/team/raw/latest";
 const FIRST: &str = "1111111111111111111111111111111111111111111111111111111111111111";
 const SECOND: &str = "2222222222222222222222222222222222222222222222222222222222222222";
+/// The looks at `latest` a tick of a read and a write entry makes before the
+/// write publishes.
+const LOOKS: usize = 5;
 const THIRD: &str = "3333333333333333333333333333333333333333333333333333333333333333";
 
 /// A dataspace on autosync holding `team/raw` of bucket `b`, its Domain and
@@ -612,6 +615,50 @@ async fn a_push_stopped_after_the_lock_holds_its_commit_is_published_on_the_next
     assert_eq!(world.base().await?.as_deref(), Some(revision.as_str()));
     assert_eq!(world.text("a.txt").as_deref(), Some("first"));
     assert_eq!(world.jobs().await?, 0);
+    Ok(())
+}
+
+/// A publish `latest` moved past, after the tick's read moved the lock, is
+/// kept against the base that read left, so the next tick does not release it.
+#[test(tokio::test)]
+async fn a_publish_kept_after_a_read_is_kept_against_the_base_the_read_left() -> Res {
+    let world = World::new(
+        "read = [{ package = \"team/raw\", path = \"in/\" }]\nwrite = [{ package = \"team/raw\", path = \"out/\" }]\n",
+    )
+    .await?;
+    world.publish(FIRST, &[("in/a.txt", b"v1")]).await?;
+    world.write("out/b.txt", "mine")?;
+    world.changed("out/b.txt").await?;
+
+    // Each look at `latest` is parked in turn; a rival moves it before the
+    // last one, the publish's read before its tag write.
+    let rival = async {
+        let mut gate = world.remote.park(LATEST);
+        for _ in 1..LOOKS {
+            gate.arrived().await;
+            let next = world.remote.park(LATEST);
+            gate.release();
+            gate = next;
+        }
+        gate.arrived().await;
+        world.publish(SECOND, &[("theirs.txt", b"t")]).await?;
+        gate.release();
+        Res::Ok(())
+    };
+    let (tick, rivalled) = tokio::join!(world.tick(), rival);
+    rivalled?;
+    let tick = tick?;
+
+    let stored = tick.entries.iter().any(|(entry, outcome)| {
+        entry.access == Access::Write
+            && matches!(
+                outcome,
+                EntryTick::Published(EntryPublish::Ran(Published::Stored { .. }))
+            )
+    });
+    assert!(stored, "{tick:?}");
+    let kept = world.kept().await?.ok_or("nothing kept")?;
+    assert_eq!(kept.base.as_deref(), Some(FIRST));
     Ok(())
 }
 
