@@ -771,3 +771,136 @@ fn a_package_under_two_names_of_the_local_registry_in_two_folders_is_refused() -
     );
     Ok(())
 }
+
+/// A dataspace of two packages, with `ignore` as its `[ignore]` table.
+fn ignoring(ignore: &str) -> Result<Contract, ContractError> {
+    parse(&format!(
+        "{}\n[ignore]\n{ignore}",
+        with_defaults(r#"sync = ["team/raw", "team/clean"]"#)
+    ))
+}
+
+#[test]
+fn the_ignore_table_defaults_every_switch_on() -> Res {
+    let expected = Ignore {
+        packages: true,
+        lockfile: true,
+        standard_patterns: true,
+        extend_patterns: Vec::new(),
+    };
+    assert_eq!(parse(&with_defaults(""))?.ignore(), &expected);
+    assert_eq!(ignoring("")?.ignore(), &expected);
+    let set = ignoring(
+        "packages = false\nlockfile = false\nstandard_patterns = false\nextend_patterns = [\"*.tmp\", \"!keep.tmp\"]\n",
+    )?;
+    assert_eq!(
+        set.ignore(),
+        &Ignore {
+            packages: false,
+            lockfile: false,
+            standard_patterns: false,
+            extend_patterns: vec!["*.tmp".to_string(), "!keep.tmp".to_string()],
+        }
+    );
+    Ok(())
+}
+
+#[test]
+fn an_unknown_key_or_a_wrong_type_in_the_ignore_table_is_refused() {
+    for table in [
+        "package = false",
+        "secrets = false",
+        "packages = \"no\"",
+        "lockfile = 0",
+        "standard_patterns = []",
+        "extend_patterns = \"*.tmp\"",
+        "extend_patterns = [1]",
+        "[ignore.packages]",
+    ] {
+        let refused = ignoring(table);
+        assert!(
+            matches!(refused, Err(ContractError::Syntax(_))),
+            "{table}: {refused:?}"
+        );
+    }
+}
+
+#[test]
+fn an_extend_pattern_that_is_not_one_valid_line_is_refused() {
+    for (patterns, index) in [(r#"["ok", "a{b"]"#, 1), (r#"["a\nb"]"#, 0)] {
+        let refused = ignoring(&format!("extend_patterns = {patterns}"));
+        assert!(
+            matches!(refused, Err(ContractError::Ignore { index: i, .. }) if i == index),
+            "{patterns}: {refused:?}"
+        );
+    }
+}
+
+/// An entry's folder never holds the dataspace or another package, so only
+/// the files at its own top are left out.
+#[test]
+fn an_entrys_folder_leaves_out_its_own_control_files() -> Res {
+    let contract = ignoring("")?;
+    let policy = contract.ignore_policy(&folder("team/raw"));
+    assert_eq!(
+        policy.left_out,
+        [PathBuf::from("data.toml"), PathBuf::from("metadata.toml")]
+    );
+    assert!(policy.standard_patterns);
+    assert!(!policy.fold_case);
+    Ok(())
+}
+
+/// Packaging a folder that holds the dataspace leaves out its contract and
+/// conflict map always, and the lock and the declared folders while their
+/// switches are on.
+#[test]
+fn the_lockfile_and_packages_switches_set_what_a_folder_above_leaves_out() -> Res {
+    let above = |ignore: &str| -> Result<Vec<PathBuf>, ContractError> {
+        Ok(ignoring(ignore)?.ignore_policy(Path::new("/work")).left_out)
+    };
+    let always = [
+        "data.toml",
+        "metadata.toml",
+        "rnaseq/conflict.json",
+        "rnaseq/data.toml",
+    ];
+    let paths = |extra: &[&str]| -> Vec<PathBuf> {
+        let mut paths: Vec<PathBuf> = always.iter().chain(extra).map(PathBuf::from).collect();
+        paths.sort();
+        paths
+    };
+    let lock = "rnaseq/data.lock.toml";
+    let (raw, clean) = ("rnaseq/team/raw", "rnaseq/team/clean");
+    assert_eq!(above("")?, paths(&[lock, raw, clean]));
+    assert_eq!(above("lockfile = false")?, paths(&[raw, clean]));
+    assert_eq!(above("packages = false")?, paths(&[lock]));
+    assert_eq!(above("lockfile = false\npackages = false")?, paths(&[]));
+    // The dataspace itself is such a folder.
+    let root = ignoring("")?.ignore_policy(Path::new(ROOT)).left_out;
+    for path in ["conflict.json", "data.lock.toml", "team/raw", "team/clean"] {
+        assert!(root.contains(&PathBuf::from(path)), "{path}: {root:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn the_ignore_policy_carries_the_pattern_switches_and_the_folder_case() -> Res {
+    let contract = parse_as(
+        &format!(
+            "{}\n[ignore]\nstandard_patterns = false\nextend_patterns = [\"*.tmp\"]\n",
+            with_defaults(r#"sync = ["Team/Raw"]"#)
+        ),
+        FolderCase::Insensitive,
+    )?;
+    let policy = contract.ignore_policy(Path::new("/WORK"));
+    assert!(!policy.standard_patterns);
+    assert!(policy.fold_case);
+    assert_eq!(policy.extend_patterns, ["*.tmp"]);
+    assert!(
+        policy.left_out.contains(&PathBuf::from("rnaseq/Team/Raw")),
+        "{:?}",
+        policy.left_out
+    );
+    Ok(())
+}

@@ -38,6 +38,7 @@ async fn publish(
         message,
         Base::Latest,
         Path::new(NO_USER_RULES),
+        &Policy::default(),
     ))
     .await
 }
@@ -48,10 +49,14 @@ fn entry(packages: &str) -> Entry {
 
 /// The first entry of a contract in `dataspace`.
 fn entry_in(dataspace: &Path, packages: &str) -> Entry {
+    contract_in(dataspace, packages).entries()[0].clone()
+}
+
+/// A contract in `dataspace` whose `[packages]` table is `packages`, and
+/// whatever tables follow it.
+fn contract_in(dataspace: &Path, packages: &str) -> Contract {
     let text = format!("registry = \"s3://b\"\n[packages]\n{packages}");
-    let contract =
-        Contract::parse(text.as_bytes(), dataspace, FolderCase::Sensitive, None).expect("contract");
-    contract.entries()[0].clone()
+    Contract::parse(text.as_bytes(), dataspace, FolderCase::Sensitive, None).expect("contract")
 }
 
 fn folder() -> PathBuf {
@@ -1467,6 +1472,7 @@ async fn files_the_ignore_rules_leave_out_of_a_commit_are_not_published() -> Res
         None,
         Base::Latest,
         &user_rules,
+        &Policy::default(),
     ))
     .await?;
 
@@ -1507,6 +1513,113 @@ async fn a_key_latest_has_is_left_out_only_by_the_folders_own_rules() -> Res {
     Ok(())
 }
 
+/// Publishes the first entry of `contract`, against `latest`, with its
+/// ignore policy and no user-wide rules.
+async fn publish_under(
+    storage: &(impl Storage + Sync),
+    remote: &impl Remote,
+    contract: &Contract,
+) -> Result<Published, EntryError> {
+    let entry = &contract.entries()[0];
+    Box::pin(super::publish(
+        storage,
+        remote,
+        None,
+        entry,
+        None,
+        Base::Latest,
+        Path::new(NO_USER_RULES),
+        &contract.ignore_policy(&entry.folder),
+    ))
+    .await
+}
+
+/// The files of a folder with clutter, secrets and scratch files in it.
+const CLUTTERED: &[(&str, &str)] = &[
+    ("a.txt", "a"),
+    (".DS_Store", "d"),
+    ("mod.pyc", "p"),
+    (".env", "SECRET=1"),
+    ("key.pem", "k"),
+    (".git/config", "g"),
+    ("scratch.tmp", "t"),
+    ("keep.tmp", "k"),
+];
+
+#[test(tokio::test)]
+async fn the_ignore_table_sets_the_patterns_a_publish_leaves_out() -> Res {
+    for (ignore, expected) in [
+        ("", &["a.txt", "keep.tmp", "scratch.tmp"][..]),
+        (
+            "standard_patterns = true",
+            &["a.txt", "keep.tmp", "scratch.tmp"][..],
+        ),
+        (
+            "standard_patterns = false",
+            &[".DS_Store", "a.txt", "keep.tmp", "mod.pyc", "scratch.tmp"][..],
+        ),
+        (
+            "standard_patterns = false\nextend_patterns = [\"*.tmp\", \"!keep.tmp\"]",
+            &[".DS_Store", "a.txt", "keep.tmp", "mod.pyc"][..],
+        ),
+    ] {
+        let remote = MockRemote::default();
+        let storage = &remote.storage;
+        let dataspace = storage.temp_dir.path().join("rnaseq");
+        let contract = contract_in(
+            &dataspace,
+            &format!("write = [\"team/raw\"]\n[ignore]\n{ignore}"),
+        );
+        write_on_disk(&contract.entries()[0].folder, CLUTTERED)?;
+
+        let outcome = publish_under(storage, &remote, &contract).await?;
+
+        let published = revision(&remote, advanced(&outcome)).await?;
+        assert_eq!(keys(&published), expected, "{ignore}");
+        // The table is read, never written out as rules.
+        assert!(!contract.entries()[0].folder.join(".quiltignore").exists());
+        assert!(!dataspace.join(".quiltignore").exists());
+        assert!(!Path::new(NO_USER_RULES).exists());
+    }
+    Ok(())
+}
+
+/// A folder with a `data.toml` of its own is another dataspace, left out
+/// even with `packages = false`, and even where `latest` has its files.
+#[test(tokio::test)]
+async fn a_folder_with_its_own_contract_is_not_published() -> Res {
+    for ignore in ["", "packages = false"] {
+        let remote = MockRemote::default();
+        let storage = &remote.storage;
+        seed(
+            &remote,
+            FIRST,
+            &[("a.txt", b"a"), ("inner/b.txt", b"b")],
+            ManifestHeader::default(),
+        )
+        .await?;
+        let contract = contract_in(
+            &storage.temp_dir.path().join("rnaseq"),
+            &format!("replace = [\"team/raw\"]\n[ignore]\n{ignore}"),
+        );
+        write_on_disk(
+            &contract.entries()[0].folder,
+            &[
+                ("a.txt", "a"),
+                ("inner/b.txt", "b"),
+                ("inner/data.toml", "[packages]\n"),
+                ("other/c.txt", "c"),
+            ],
+        )?;
+
+        let outcome = publish_under(storage, &remote, &contract).await?;
+
+        let published = revision(&remote, advanced(&outcome)).await?;
+        assert_eq!(keys(&published), ["a.txt", "other/c.txt"], "{ignore}");
+    }
+    Ok(())
+}
+
 #[test(tokio::test)]
 async fn a_publish_on_a_base_latest_has_moved_past_publishes_nothing() -> Res {
     let remote = MockRemote::default();
@@ -1528,6 +1641,7 @@ async fn a_publish_on_a_base_latest_has_moved_past_publishes_nothing() -> Res {
         None,
         Base::Locked(Some(FIRST)),
         Path::new(NO_USER_RULES),
+        &Policy::default(),
     ))
     .await?;
 
@@ -1568,6 +1682,7 @@ async fn a_publish_on_a_base_is_not_composed_again_on_a_latest_that_moved() -> R
             None,
             Base::Locked(Some(FIRST)),
             Path::new(NO_USER_RULES),
+            &Policy::default(),
         )),
     )
     .await?;
@@ -1611,6 +1726,7 @@ async fn a_publish_on_a_base_that_cannot_read_latest_is_refused() -> Res {
         None,
         Base::Locked(Some(FIRST)),
         Path::new(NO_USER_RULES),
+        &Policy::default(),
     ))
     .await;
 

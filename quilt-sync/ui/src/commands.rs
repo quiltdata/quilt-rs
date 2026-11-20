@@ -61,6 +61,12 @@ pub enum RuleSource {
     Package {
         line: u64,
     },
+    /// What a dataspace's `data.toml` leaves out whatever any rule says.
+    Contract,
+    /// A line of a dataspace's `[ignore] extend_patterns`.
+    Extend {
+        line: u64,
+    },
 }
 
 impl RuleSource {
@@ -70,6 +76,8 @@ impl RuleSource {
             Self::Default => "Built-in rule".to_string(),
             Self::User { line } => format!("Your rules, line {line}"),
             Self::Package { line } => format!("This package's .quiltignore, line {line}"),
+            Self::Contract => "The dataspace's data.toml".to_string(),
+            Self::Extend { line } => format!("The dataspace's extend_patterns, line {line}"),
         }
     }
 }

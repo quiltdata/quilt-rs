@@ -161,6 +161,17 @@ folder:
   unchanged, and `post-write` a publish that stored a revision. A `pre-` hook
   that fails stops its entry, and a `pre-write` hook may rewrite
   `metadata.toml` before the publish takes it.
+- `dataspace::ignore` reads the `[ignore]` table of `data.toml`, which sets
+  what packaging any folder of the dataspace leaves out, in a publish and in
+  the sync tick's commit. `packages` and `lockfile`, both on by default, leave
+  out the folders of the packages `data.toml` declares and `data.lock.toml`,
+  and no `!` line brings them back; `data.toml`, `conflict.json`,
+  `metadata.toml` and any folder holding a `data.toml` of its own are always
+  left out. `standard_patterns = false` turns off the built-in rules but the
+  secrets (`.*/`, `.env`, `.env.*`, `.netrc`, `*.pem`). `extend_patterns`
+  adds gitignore lines just above the built-in rules, for new files only, so
+  the user-wide and the package's `.quiltignore` win over them. The table
+  changes nothing a read writes, and no `.quiltignore` is written for it.
 
 ## Hash Algorithms
 

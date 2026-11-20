@@ -16,6 +16,7 @@ use crate::Res;
 use crate::dataspace::EntryError;
 use crate::dataspace::METADATA_FILE;
 use crate::dataspace::contract::Access;
+use crate::dataspace::contract::CONTRACT_FILE;
 use crate::dataspace::contract::Entry;
 use crate::dataspace::contract::Paths;
 use crate::dataspace::contract::Registry;
@@ -52,6 +53,7 @@ use crate::manifest::ManifestHeader;
 use crate::manifest::ManifestRow;
 use crate::manifest::RawNumbers;
 use crate::object_hash::ObjectHash;
+use crate::quiltignore::Policy;
 use crate::quiltignore::Rules;
 use quilt_uri::S3PackageHandle;
 use quilt_uri::S3Uri;
@@ -141,8 +143,12 @@ pub enum Base<'a> {
 /// removed. The revision takes the bucket's default workflow.
 ///
 /// A file the ignore rules leave out is not published, as a commit leaves it
-/// out: the folder's `.quiltignore`, then the user-wide `user_rules` file and
-/// the built-in rules, which spare a key `latest` has.
+/// out: the folder's `.quiltignore`, then the user-wide `user_rules` file,
+/// the contract's `extend_patterns` and the built-in rules, which spare a key
+/// `latest` has. `policy`, the contract's
+/// [`ignore_policy`](crate::dataspace::contract::Contract::ignore_policy) for
+/// the folder, sets the last two, and what is left out whatever any rule
+/// says. A folder inside it with a `data.toml` of its own is left out too.
 ///
 /// On a [`Base::Locked`] it publishes only while `latest` is that base, and is
 /// never composed on another.
@@ -176,6 +182,7 @@ pub async fn publish(
     message: Option<&str>,
     base: Base<'_>,
     user_rules: &Path,
+    policy: &Policy,
 ) -> Result<Published, EntryError> {
     let whole = match entry.access {
         Access::Write => false,
@@ -192,7 +199,7 @@ pub async fn publish(
     if storage.read_dir(folder).await.is_err() {
         return Err(EntryError::FolderUnavailable(folder.clone()));
     }
-    let rules = Rules::load(folder, user_rules)?;
+    let rules = Rules::load_with(folder, user_rules, policy)?;
     let metadata = metadata_file(storage, folder).await?;
 
     let mut header = ManifestHeader {
@@ -625,7 +632,8 @@ fn quilts_own(name: &str) -> bool {
 }
 
 /// The files in `folder` under `paths` by logical key, leaving out what
-/// [`quilts_own`] names, anything that is not a file or a folder, and what
+/// [`quilts_own`] names, anything that is not a file or a folder, a folder
+/// with a `data.toml` of its own, which is another dataspace, and what
 /// `rules` leave out of a commit on `base`.
 pub(crate) async fn walk(
     storage: &(impl Storage + Sync),
@@ -652,6 +660,13 @@ pub(crate) async fn walk(
             let relative = crate::paths::logical_key(&prefix.join(&name));
             let file_type = entry.file_type().await?;
             if file_type.is_dir() {
+                if storage.is_file(path.join(CONTRACT_FILE)).await {
+                    info!(
+                        "Left out: {}/ holds a {CONTRACT_FILE} of its own",
+                        relative.display()
+                    );
+                    continue;
+                }
                 let tracked = tracked.dirs.contains(&relative);
                 match rules.dir_ignored_by(&relative, tracked) {
                     Some(by) => info!("Left out by {}: {}/", by.pattern, relative.display()),

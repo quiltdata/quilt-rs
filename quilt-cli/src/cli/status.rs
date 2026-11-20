@@ -117,6 +117,8 @@ fn source_words(source: &RuleSource) -> String {
         RuleSource::Default => "built-in".to_string(),
         RuleSource::User { path, line } => format!("{}:{line}", path.display()),
         RuleSource::Package { line } => format!(".quiltignore:{line}"),
+        RuleSource::Contract => "data.toml".to_string(),
+        RuleSource::Extend { line } => format!("data.toml extend_patterns:{line}"),
     }
 }
 
@@ -227,6 +229,8 @@ impl Render for Output {
                             ("user", Some(path.display().to_string()), Some(*line))
                         }
                         RuleSource::Package { line } => ("package", None, Some(*line)),
+                        RuleSource::Contract => ("contract", None, None),
+                        RuleSource::Extend { line } => ("extend", None, Some(*line)),
                     };
                     JsonIgnored {
                         kind: if i.size.is_some() { "file" } else { "folder" },

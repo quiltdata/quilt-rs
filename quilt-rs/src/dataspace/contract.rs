@@ -20,8 +20,10 @@ use thiserror::Error;
 
 use crate::LogicalKey;
 use crate::LogicalKeyError;
+use crate::dataspace::METADATA_FILE;
 use crate::dataspace::conflict::CONFLICT_FILE;
 use crate::dataspace::hooks::Hooks;
+use crate::dataspace::ignore::Ignore;
 use crate::dataspace::lock::LOCK_FILE;
 use crate::domain::LocalNames;
 use crate::io::storage::Storage;
@@ -319,7 +321,9 @@ impl Entry {
 pub struct Contract {
     entries: Vec<Entry>,
     hooks: Hooks,
+    ignore: Ignore,
     dataspace: PathBuf,
+    case: FolderCase,
     data_toml_hash: String,
 }
 
@@ -400,6 +404,54 @@ impl Contract {
         &self.hooks
     }
 
+    /// The `[ignore]` table.
+    #[must_use]
+    pub fn ignore(&self) -> &Ignore {
+        &self.ignore
+    }
+
+    /// What the `[ignore]` table sets for packaging `folder`, an absolute
+    /// path, which may be any folder: an entry's, or one that holds the
+    /// dataspace. Under
+    /// `folder`, whatever any rule says, it leaves out `metadata.toml` and
+    /// `data.toml` at its top; where the dataspace is `folder` or inside it,
+    /// the contract and `conflict.json`, and the lock unless `lockfile =
+    /// false`; and the folder of each other package the contract declares
+    /// inside it, unless `packages = false`.
+    #[must_use]
+    pub fn ignore_policy(&self, folder: &Path) -> crate::quiltignore::Policy {
+        let folders = Folders::new(&self.dataspace, self.case);
+        let folder = normalize(folder);
+        let top = folders.names(&folder);
+        // `path` below `folder`, as its own names, by the file system's
+        // comparison.
+        let under = |path: &Path| -> Option<PathBuf> {
+            let names = folders.names(path);
+            (names.len() > top.len() && names.starts_with(&top))
+                .then(|| path.components().skip(top.len()).collect())
+        };
+        let mut left_out = vec![PathBuf::from(METADATA_FILE), PathBuf::from(CONTRACT_FILE)];
+        let mut own = vec![CONTRACT_FILE, CONFLICT_FILE];
+        if self.ignore.lockfile {
+            own.push(LOCK_FILE);
+        }
+        left_out.extend(
+            own.iter()
+                .filter_map(|file| under(&self.dataspace.join(file))),
+        );
+        if self.ignore.packages {
+            left_out.extend(self.entries.iter().filter_map(|entry| under(&entry.folder)));
+        }
+        left_out.sort();
+        left_out.dedup();
+        crate::quiltignore::Policy {
+            left_out,
+            fold_case: self.case == FolderCase::Insensitive,
+            standard_patterns: self.ignore.standard_patterns,
+            extend_patterns: self.ignore.extend_patterns.clone(),
+        }
+    }
+
     /// The dataspace's folder, as an absolute path.
     #[must_use]
     pub fn dataspace(&self) -> &Path {
@@ -420,6 +472,9 @@ impl Contract {
         local_registry: Option<&str>,
     ) -> Result<Self, ContractError> {
         let raw: RawContract = toml::from_slice(bytes)?;
+        if let Some((index, reason)) = raw.ignore.problem() {
+            return Err(ContractError::Ignore { index, reason });
+        }
         let folders = Folders::new(dataspace, case);
         let defaults = Defaults::new(&raw, local_registry)?;
         let lists = [
@@ -467,7 +522,9 @@ impl Contract {
         Ok(Self {
             entries,
             hooks: raw.hooks,
+            ignore: raw.ignore,
             dataspace: dataspace.to_path_buf(),
+            case,
             data_toml_hash: hex::encode(Sha256::digest(bytes)),
         })
     }
@@ -508,6 +565,9 @@ pub enum ContractError {
         first: Box<PackageKey>,
         second: Box<PackageKey>,
     },
+
+    #[error("ignore.extend_patterns[{index}] is not a valid pattern: {reason}")]
+    Ignore { index: usize, reason: String },
 }
 
 /// Why one entry, on its own, was refused.
@@ -610,6 +670,8 @@ struct RawContract {
     packages: RawPackages,
     #[serde(default)]
     hooks: Hooks,
+    #[serde(default)]
+    ignore: Ignore,
 }
 
 #[derive(Default, Deserialize)]
