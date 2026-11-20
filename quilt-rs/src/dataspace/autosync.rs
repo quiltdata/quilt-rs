@@ -1,6 +1,7 @@
 //! Autosync's runner: the flow a host calls on each tick. For each dataspace
 //! on autosync it reads the contract and the lock, queues an entry's job
-//! where the revision it follows is not the lock's base, and runs each job
+//! where the revision it follows is not the lock's base, or a `sync` entry's
+//! where the lock holds commits not pushed, and runs each job
 //! that is not waiting out a failure, by its access: `read` reads, `write`
 //! and `replace` publish, and `sync` runs the tick. Jobs, failures and kept
 //! revisions are kept in the [`Queue`], so they outlast the process.
@@ -282,11 +283,19 @@ impl Runner {
                 .and_then(|lock| lock.packages.get(&entry.key()))
                 .and_then(|locked| locked.base.clone())
         };
+        let unpushed = |entry: &Entry| {
+            lock.as_ref()
+                .and_then(|lock| lock.packages.get(&entry.key()))
+                .is_some_and(|locked| !locked.commits.is_empty())
+        };
 
         for entry in contract.entries() {
             let outcome = match skip(&contract, entry) {
                 Some(skip) => EntryTick::Skipped(skip),
-                None => match self.observe(remote, entry, base(entry), &mut tick).await? {
+                None => match self
+                    .observe(remote, entry, base(entry), unpushed(entry), &mut tick)
+                    .await?
+                {
                     Ok(()) => EntryTick::Idle,
                     Err(err) => EntryTick::Unobserved(err),
                 },
@@ -328,12 +337,16 @@ impl Runner {
 
     /// Looks up the revision `entry` follows, releases the revision kept for
     /// its folder where that is done with, and queues its job where the
-    /// revision is not `base`.
+    /// revision is not `base`. A `sync` entry whose lock holds `unpushed`
+    /// commits is queued too, so that a push that was lost or interrupted is
+    /// tried again, unless the revision kept for it is one the workflow
+    /// refused, which waits for its release.
     async fn observe(
         &self,
         remote: &impl Remote,
         entry: &Entry,
         base: Option<String>,
+        unpushed: bool,
         tick: &mut DataspaceTick,
     ) -> Result<Result<(), EntryError>, QueueError> {
         let followed = match follows(remote, entry).await {
@@ -342,6 +355,7 @@ impl Runner {
         };
         let folder = folder_key(entry);
         let mut held = false;
+        let mut refused = false;
         if entry.access != Access::Read
             && let Some(kept) = self.queue.kept(&folder).await?
         {
@@ -350,13 +364,15 @@ impl Runner {
                 tick.released.push((entry.clone(), kept));
             } else {
                 held = true;
+                refused = kept.reason == KeptReason::WorkflowBlocked;
             }
         }
         // A publish keeps its stored revision rather than publishing it again
         // over the `latest` that outran it; a `sync` job still reads that
         // `latest`.
         let republish = held && matches!(entry.access, Access::Write | Access::Replace);
-        if followed != base && !republish {
+        let retry = unpushed && entry.access == Access::Sync && !refused;
+        if (followed != base || retry) && !republish {
             self.queue.enqueue(&job_key(entry)).await?;
         }
         Ok(Ok(()))
