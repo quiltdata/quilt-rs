@@ -558,3 +558,132 @@ async fn a_local_package_never_published_whose_registry_gained_a_latest_is_merge
     assert_eq!(out_locked(&world).await?, Some(LockEntry::at(revision)));
     Ok(())
 }
+
+/// [`committed`], with `data.toml` edited since, so the next sync only
+/// fills.
+async fn committed_then_edited() -> Result<(World, LockEntry), Error> {
+    let (world, locked) = committed().await?;
+    world.contract("sync = [\"team/raw\"]\n# edited")?;
+    Ok((world, locked))
+}
+
+fn filled_entry(synced: &DataspaceSync) -> &EntrySync {
+    assert!(synced.read_only, "{synced:?}");
+    assert_eq!(synced.entries.len(), 1, "{synced:?}");
+    &synced.entries[0].1
+}
+
+/// A fill merges the lock's commits alone onto a moved `latest`, and reads
+/// the merge whole, the folder's edits not yet committed kept as local work:
+/// the dataspace is filled, and the next tick publishes the merge with them.
+#[test(tokio::test)]
+async fn a_fill_merges_commits_onto_a_moved_latest_and_reads_the_merge_whole() -> Res {
+    let (world, _) = committed_then_edited().await?;
+    world
+        .publish(
+            SECOND,
+            &[("a.txt", b"v1"), ("b.txt", b"v2"), ("c.txt", b"new")],
+        )
+        .await?;
+    world.write("a.txt", "mine, then more")?;
+    world.write("d.txt", "not committed")?;
+
+    let synced = world.sync().await?;
+
+    let outcome = filled_entry(&synced);
+    assert!(
+        matches!(
+            outcome,
+            EntrySync::Ran {
+                read: Some(_),
+                published: None
+            }
+        ),
+        "{outcome:?}"
+    );
+    assert_eq!(world.latest().await?, SECOND);
+    assert_eq!(world.text("a.txt").as_deref(), Some("mine, then more"));
+    assert_eq!(world.text("b.txt").as_deref(), Some("v2"));
+    assert_eq!(world.text("c.txt").as_deref(), Some("new"));
+    let locked = world.locked().await?.ok_or("no lock entry")?;
+    assert_eq!(locked.base.as_deref(), Some(SECOND));
+    assert_eq!(locked.commits.len(), 1, "{locked:?}");
+    let contract = Contract::read(&world.storage, &world.dataspace(), None).await?;
+    assert_eq!(
+        world.lock().await?.header.data_toml_hash,
+        contract.data_toml_hash()
+    );
+
+    let outcome = world.tick().await?;
+
+    let revision = advanced(&outcome);
+    assert_eq!(
+        world.revision(&revision).await?,
+        files(&[
+            ("a.txt", "mine, then more"),
+            ("b.txt", "v2"),
+            ("c.txt", "new"),
+            ("d.txt", "not committed"),
+        ])
+    );
+    assert_eq!(world.locked().await?, Some(LockEntry::at(revision)));
+    Ok(())
+}
+
+/// A fill whose commits collide with a moved `latest` blocks with the
+/// publish's rows, applying nothing, and the dataspace stays unfilled.
+#[test(tokio::test)]
+async fn a_fill_whose_commits_collide_with_a_moved_latest_blocks_with_a_publish_row() -> Res {
+    let (world, locked) = committed_then_edited().await?;
+    world
+        .publish(SECOND, &[("a.txt", b"theirs"), ("b.txt", b"v2")])
+        .await?;
+
+    let synced = world.sync().await?;
+
+    let outcome = filled_entry(&synced);
+    assert!(blocked_at(outcome, SECOND, &["a.txt"]), "{outcome:?}");
+    assert_eq!(world.text("a.txt").as_deref(), Some("mine"));
+    assert_eq!(world.text("b.txt").as_deref(), Some("v1"));
+    assert_eq!(world.locked().await?, Some(locked));
+    let row = row(&world, &key(), "a.txt").await?;
+    assert!(matches!(&row.other, Other::Destination(Some(_))), "{row:?}");
+    assert!(world.sync().await?.read_only, "still unfilled");
+    Ok(())
+}
+
+/// A fill applies the decision on a publish's row to the merge: here the
+/// folder's own file, which the merge takes and the next tick publishes.
+#[test(tokio::test)]
+async fn a_fill_applies_a_decision_on_a_publish_row_to_the_merge() -> Res {
+    let (world, _) = committed_then_edited().await?;
+    world
+        .publish(SECOND, &[("a.txt", b"theirs"), ("b.txt", b"v2")])
+        .await?;
+    assert!(blocked_at(
+        filled_entry(&world.sync().await?),
+        SECOND,
+        &["a.txt"]
+    ));
+    decide(&world, &key(), "a.txt", |row| {
+        row.current.as_ref()?.physical_key.clone()
+    })
+    .await?;
+
+    let synced = world.sync().await?;
+
+    let outcome = filled_entry(&synced);
+    assert!(
+        matches!(outcome, EntrySync::Ran { read: Some(_), .. }),
+        "{outcome:?}"
+    );
+    assert_eq!(world.text("a.txt").as_deref(), Some("mine"));
+    assert_eq!(world.text("b.txt").as_deref(), Some("v2"));
+    assert!(!world.dataspace().join("conflict.json").exists());
+    let revision = advanced(&world.tick().await?);
+    assert_eq!(
+        world.revision(&revision).await?,
+        files(&[("a.txt", "mine"), ("b.txt", "v2")])
+    );
+    Ok(())
+}

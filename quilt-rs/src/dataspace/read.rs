@@ -278,12 +278,18 @@ enum Revision<'a> {
         package: &'a Namespace,
         hash: String,
     },
+    /// A local commit of a bucket's package, not yet pushed: each of its
+    /// rows fetched from the bucket, or copied from the store's `objects`.
+    Recorded {
+        uri: ManifestUri,
+        objects: PathBuf,
+    },
 }
 
 impl Revision<'_> {
     fn hash(&self) -> &str {
         match self {
-            Self::Bucket(uri) => &uri.hash,
+            Self::Bucket(uri) | Self::Recorded { uri, .. } => &uri.hash,
             Self::Local { hash, .. } => hash,
         }
     }
@@ -292,7 +298,7 @@ impl Revision<'_> {
     /// none.
     fn origin(&self) -> Option<&Host> {
         match self {
-            Self::Bucket(uri) => uri.origin.as_ref(),
+            Self::Bucket(uri) | Self::Recorded { uri, .. } => uri.origin.as_ref(),
             Self::Local { .. } => None,
         }
     }
@@ -301,11 +307,12 @@ impl Revision<'_> {
         match self {
             Self::Bucket(uri) => uri.display(),
             Self::Local { package, hash, .. } => format!("{package}@{hash} in the local registry"),
+            Self::Recorded { uri, .. } => format!("{} as committed locally", uri.display()),
         }
     }
 
     /// Puts the bytes of `rows` of the revision in `staging`: fetched from
-    /// the bucket, or copied from the local registry.
+    /// the bucket, or copied from the local registry or the store.
     async fn fetch(
         &self,
         storage: &(impl Storage + Sync),
@@ -313,23 +320,31 @@ impl Revision<'_> {
         rows: Vec<ManifestRow>,
         staging: &Path,
     ) -> Res<InstallToReport> {
+        let fetch = |rows| async {
+            let manifest = Manifest {
+                rows,
+                ..Manifest::default()
+            };
+            install_to(storage, remote, self.origin(), &manifest, staging, None).await
+        };
         match self {
-            Self::Bucket(uri) => {
-                let manifest = Manifest {
-                    rows,
-                    ..Manifest::default()
-                };
-                install_to(
-                    storage,
-                    remote,
-                    uri.origin.as_ref(),
-                    &manifest,
-                    staging,
-                    None,
-                )
-                .await
+            Self::Bucket(_) => fetch(rows).await,
+            Self::Local { registry, .. } => {
+                copy_from(storage, &registry.objects_dir(), &rows, staging).await
             }
-            Self::Local { registry, .. } => copy_from(storage, registry, &rows, staging).await,
+            Self::Recorded { objects, .. } => {
+                let (fetched, copied): (Vec<ManifestRow>, Vec<ManifestRow>) = rows
+                    .into_iter()
+                    .partition(|row| row.physical_key.starts_with("s3://"));
+                let mut report = copy_from(storage, objects, &copied, staging).await?;
+                if !fetched.is_empty() {
+                    let mut more = fetch(fetched).await?;
+                    report.placed.append(&mut more.placed);
+                    report.skipped.append(&mut more.skipped);
+                    report.hash_mismatch.append(&mut more.hash_mismatch);
+                }
+                Ok(report)
+            }
         }
     }
 
@@ -341,7 +356,7 @@ impl Revision<'_> {
         hash: &str,
     ) -> Res<Manifest> {
         match self {
-            Self::Bucket(uri) => {
+            Self::Bucket(uri) | Self::Recorded { uri, .. } => {
                 let uri = ManifestUri {
                     hash: hash.to_string(),
                     ..uri.clone()
@@ -447,10 +462,6 @@ pub(crate) async fn read_deciding(
         return Err(EntryError::Access(entry.access));
     }
     let (revision, target) = revision_of(storage, remote, local, entry).await?;
-    if holds_metadata_file(&target) {
-        return Err(EntryError::HoldsMetadataFile);
-    }
-    let metadata = render(&target).map_err(EntryError::MetadataUnwritable)?;
     let deletes = entry.access == Access::Sync;
     let other_base = match base {
         Some(hash) if hash != revision.hash() => {
@@ -462,7 +473,60 @@ pub(crate) async fn read_deciding(
         Some(hash) if hash == revision.hash() => Some(&target),
         _ => other_base.as_ref(),
     };
+    read_onto(storage, remote, entry, &revision, &target, base, decided).await
+}
 
+/// Reads `target`, a revision a merge recorded in `store` and has not
+/// pushed, or `latest` itself where the merge left it as it was, into
+/// `entry`'s folder over `base`, as [`read_deciding`] reads a revision: the
+/// rows the merge took from `latest`, the revision `latest`, are fetched from
+/// its registry, and the rest copied from the store.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn read_recorded(
+    storage: &(impl Storage + Sync),
+    remote: &impl Remote,
+    local: Option<&LocalRegistry>,
+    store: &impl PackageStore,
+    entry: &Entry,
+    hash: &str,
+    target: &Manifest,
+    base: &Manifest,
+    decided: &BTreeMap<LogicalKey, Row>,
+) -> Result<(ReadOutcome, BTreeMap<LogicalKey, Row>), EntryError> {
+    let revision = match revision_at(storage, local, entry, hash).await? {
+        Revision::Bucket(uri) => Revision::Recorded {
+            uri,
+            objects: store.objects_dir(),
+        },
+        revision => revision,
+    };
+    read_onto(
+        storage,
+        remote,
+        entry,
+        &revision,
+        target,
+        Some(base),
+        decided,
+    )
+    .await
+}
+
+/// [`read_deciding`], of `target`, the manifest of `revision`, over `base`.
+async fn read_onto(
+    storage: &(impl Storage + Sync),
+    remote: &impl Remote,
+    entry: &Entry,
+    revision: &Revision<'_>,
+    target: &Manifest,
+    base: Option<&Manifest>,
+    decided: &BTreeMap<LogicalKey, Row>,
+) -> Result<(ReadOutcome, BTreeMap<LogicalKey, Row>), EntryError> {
+    if holds_metadata_file(target) {
+        return Err(EntryError::HoldsMetadataFile);
+    }
+    let metadata = render(target).map_err(EntryError::MetadataUnwritable)?;
+    let deletes = entry.access == Access::Sync;
     let folder = &entry.folder;
     if deletes
         && let Some(base) = base
@@ -474,7 +538,7 @@ pub(crate) async fn read_deciding(
         storage,
         folder,
         &entry.paths,
-        &target,
+        target,
         base,
         metadata,
         deletes,
@@ -505,7 +569,7 @@ pub(crate) async fn read_deciding(
     let applied = apply(
         storage,
         remote,
-        &revision,
+        revision,
         folder,
         &staging,
         &plan.steps,
@@ -1187,19 +1251,18 @@ async fn apply(
     Ok(true)
 }
 
-/// Copies `rows` from the local registry's objects into `staging`, as
-/// [`install_to`] fetches a bucket's: each copy is checked against its row's
-/// hash, and a row whose object is gone, or whose copy does not hash to it,
-/// is reported and left out. Two keys that name one local file are refused
-/// before the first copy.
+/// Copies `rows` from `objects`, the local registry's or a store's, into
+/// `staging`, as [`install_to`] fetches a bucket's: each copy is checked
+/// against its row's hash, and a row whose object is gone, or whose copy does
+/// not hash to it, is reported and left out. Two keys that name one local
+/// file are refused before the first copy.
 async fn copy_from(
     storage: &(impl Storage + Sync),
-    registry: &LocalRegistry,
+    objects: &Path,
     rows: &[ManifestRow],
     staging: &Path,
 ) -> Res<InstallToReport> {
     refuse_clashing_local_paths(rows)?;
-    let objects = registry.objects_dir();
     let mut report = InstallToReport::default();
     for row in rows {
         let key = row.logical_key.to_path_buf();

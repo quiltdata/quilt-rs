@@ -106,9 +106,7 @@ pub enum EntrySync {
     },
     /// `latest` is gone while the lock names a base, or the package is moving
     /// from the local registry to a bucket that has a `latest` for it
-    /// already, or, before the dataspace is filled, `latest` is neither the
-    /// lock's base nor its last commit and the lock names commits not
-    /// pushed: nothing was read or published.
+    /// already: nothing was read or published.
     Diverged { latest: Option<String> },
     /// The working folder was missing or empty, so the lock's current
     /// revision was read back into it and nothing was published.
@@ -227,7 +225,9 @@ impl<S: Storage + Sync> LockFile<'_, S> {
 /// Until the dataspace is filled, and after `data.toml` is edited, the tick
 /// only reads: each entry is read in full, a missing file filled rather than
 /// taken for a deletion, and nothing new is committed; commits the lock
-/// already names are pushed first. `filled` is set once
+/// already names are pushed first, or, where `latest` moved past their base,
+/// merged onto it without the folder's changes and read whole, the merge
+/// left for the first tick after to push. `filled` is set once
 /// every `read` and `sync` entry is in the lock, and the lock takes the
 /// edited contract only once every `sync` entry was read whole.
 ///
@@ -390,7 +390,9 @@ async fn filled(
 /// base where the read completes. Commits the lock names were made against
 /// the contract they were committed under, so they are pushed first, with no
 /// new commit, where `latest` is still their base; one the workflow refuses
-/// is read at instead, and one `latest` moved past leaves the entry unread.
+/// is read at instead. Commits `latest` moved past are merged onto it alone,
+/// the folder's changes left out, and the merge read whole, as
+/// [`merge::filling`] does, to be pushed once the dataspace is filled.
 async fn fill(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
@@ -422,7 +424,12 @@ async fn fill(
             // The push landed and the lock was not written after it.
             set_base(lock, lock_file, &key, head.clone()).await?;
         } else if latest != locked.base {
-            return Ok(EntrySync::Diverged { latest });
+            let Some(theirs) = latest.as_deref() else {
+                return Ok(EntrySync::Diverged { latest });
+            };
+            // Commits on a base `latest` moved from, or on none where
+            // `latest` now names a revision: merged onto it, then read whole.
+            return merge::filling(storage, remote, &store, entry, lock, lock_file, theirs).await;
         } else {
             let (pushed, wrote) = push_head(
                 storage,
