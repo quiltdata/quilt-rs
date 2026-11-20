@@ -109,6 +109,18 @@ impl World {
 
     /// [`World::publish`] for `package`.
     async fn publish_to(&self, package: &str, hash: &str, files: &[(&str, &[u8])]) -> Res {
+        self.publish_with_folders(package, hash, files, Vec::new())
+            .await
+    }
+
+    /// [`World::publish_to`], with metadata for folders.
+    async fn publish_with_folders(
+        &self,
+        package: &str,
+        hash: &str,
+        files: &[(&str, &[u8])],
+        dir_meta: Vec<crate::manifest::DirMeta>,
+    ) -> Res {
         let mut rows = Vec::new();
         for (key, body) in files {
             use sha2::Digest;
@@ -133,7 +145,7 @@ impl World {
         let manifest = Manifest {
             header: ManifestHeader::default(),
             rows,
-            ..Manifest::default()
+            dir_meta,
         };
         self.remote
             .put_object(
@@ -631,6 +643,53 @@ async fn after_data_toml_is_edited_a_commit_whose_latest_is_gone_is_not_pushed()
         "{outcome:?}"
     );
     assert!(world.remote.current(LATEST).await?.is_none());
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_folder_turned_into_a_file_loses_the_folders_metadata() -> Res {
+    let world = World::synced()?;
+    let folder = crate::manifest::DirMeta::new(
+        LogicalKey::new("dir")?,
+        serde_json::json!({"user_meta": {"units": "m"}}),
+    );
+    world
+        .publish_with_folders(
+            "team/raw",
+            FIRST,
+            &[("dir/a.txt", b"v1"), ("b.txt", b"v1")],
+            vec![folder],
+        )
+        .await?;
+    world.sync().await?;
+    std::fs::remove_dir_all(world.folder().join("dir"))?;
+    world.write("dir", "now a file")?;
+
+    let outcome = world.tick().await?;
+
+    let revision = advanced(&outcome);
+    assert_eq!(
+        world.revision(&revision).await?,
+        files(&[("b.txt", "v1"), ("dir", "now a file")])
+    );
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_fill_that_does_not_read_every_entry_whole_leaves_the_dataspace_unfilled() -> Res {
+    let world = World::filled(&[("a.txt", b"v1")]).await?;
+    // As a lock carried from another checkout is taken up.
+    let contract = Contract::read(&world.storage, &world.dataspace()).await?;
+    let mut lock = world.lock().await?;
+    lock.header.filled = None;
+    lock.write(&world.storage, &contract, &writer()).await?;
+    world.publish(SECOND, &[("a.txt", b"v2")]).await?;
+    world.write("a.txt", "mine")?;
+
+    let synced = world.sync().await?;
+
+    assert!(synced.read_only, "{synced:?}");
+    assert!(world.lock().await?.header.filled.is_none());
     Ok(())
 }
 

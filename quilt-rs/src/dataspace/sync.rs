@@ -3,6 +3,7 @@
 //! the lock and its paths from the contract.
 
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -233,7 +234,7 @@ pub async fn sync(
                 .is_none_or(|read| read.skipped.is_empty() && read.hash_mismatch.is_empty()),
             _ => false,
         });
-        if lock.header.filled.is_none() && filled(&contract, &lock, &entries) {
+        if lock.header.filled.is_none() && filled(&contract, &lock, whole) {
             lock.header.filled = Some(Utc::now().trunc_subsecs(0));
         }
         if whole {
@@ -265,19 +266,16 @@ pub async fn sync(
     })
 }
 
-/// Whether every `read` and `sync` entry is in the lock, or, under `sync`,
-/// has no revision to read.
-fn filled(contract: &Contract, lock: &Lock, synced: &[(Entry, EntrySync)]) -> bool {
-    let no_revision = |entry: &Entry| {
-        synced.iter().any(|(synced, outcome)| {
-            synced == entry && matches!(outcome, EntrySync::Ran { read: None, .. })
-        })
-    };
-    contract
-        .entries()
-        .iter()
-        .filter(|entry| matches!(entry.access, Access::Read | Access::Sync))
-        .all(|entry| lock.packages.contains_key(&entry.key()) || no_revision(entry))
+/// Whether every `read` entry is in the lock and every `sync` entry was read
+/// whole by this fill: a lock carried from elsewhere names packages whose
+/// folders this one may not hold.
+fn filled(contract: &Contract, lock: &Lock, whole: bool) -> bool {
+    whole
+        && contract
+            .entries()
+            .iter()
+            .filter(|entry| entry.access == Access::Read)
+            .all(|entry| lock.packages.contains_key(&entry.key()))
 }
 
 /// Reads `entry` in full at `latest`, filling what is missing, and moves its
@@ -649,10 +647,23 @@ async fn compose(
         content.insert(key.clone(), RowContent::Path(path.clone()));
     }
     rows.sort_by(|a, b| a.logical_key.cmp(&b.logical_key));
+    // A folder keeps its metadata only while it holds a file: one deleted,
+    // or turned into a file, has none.
+    let folders: BTreeSet<&str> = rows
+        .iter()
+        .filter_map(|row| row.logical_key.to_str())
+        .flat_map(|key| key.match_indices('/').map(move |(at, _)| &key[..at]))
+        .collect();
+    let mut dir_meta = current.dir_meta.clone();
+    dir_meta.retain(|dir| {
+        dir.logical_key
+            .to_str()
+            .is_some_and(|key| folders.contains(key))
+    });
     let manifest = Manifest {
         header: current.header.clone(),
         rows,
-        dir_meta: current.dir_meta.clone(),
+        dir_meta,
     };
     Ok((manifest, content))
 }
