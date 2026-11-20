@@ -102,12 +102,6 @@ impl std::fmt::Display for Output {
     }
 }
 
-/// RFC 3339 with `+00:00`, the shape `obtained` has always had here.
-fn rfc3339_utc(time: jiff::Timestamp) -> String {
-    let text = quilt_rs::time::rfc3339(time);
-    format!("{}+00:00", text.trim_end_matches('Z'))
-}
-
 impl Render for Output {
     fn to_json(&self) -> serde_json::Value {
         let revisions: Vec<_> = self
@@ -119,7 +113,7 @@ impl Render for Output {
                     .then(|| row.kept.iter().map(ToString::to_string).collect::<Vec<_>>());
                 serde_json::json!({
                     "hash": &row.revision.hash,
-                    "obtained": rfc3339_utc(row.revision.obtained),
+                    "obtained": row.revision.obtained.to_string(),
                     "message": row.revision.message.as_deref(),
                     "kept": kept,
                     "frees": row.frees,
@@ -277,30 +271,30 @@ mod tests {
         );
     }
 
-    /// The table shows whole seconds in UTC; JSON writes RFC 3339 with
-    /// `+00:00` and sub-second digits in groups of three.
+    /// The table shows whole seconds in UTC; JSON writes RFC 3339 in UTC
+    /// with `Z` and only the sub-second digits it needs.
     #[test]
     fn obtained_times_keep_their_text() {
         for (obtained, shown, json) in [
             (
                 "2026-11-20T14:05:09Z",
                 "2026-11-20 14:05:09",
-                "2026-11-20T14:05:09+00:00",
+                "2026-11-20T14:05:09Z",
             ),
             (
                 "2026-11-20T15:05:09.1+01:00",
                 "2026-11-20 14:05:09",
-                "2026-11-20T14:05:09.100+00:00",
+                "2026-11-20T14:05:09.1Z",
             ),
             (
                 "2026-11-20T14:05:09.9876Z",
                 "2026-11-20 14:05:09",
-                "2026-11-20T14:05:09.987600+00:00",
+                "2026-11-20T14:05:09.9876Z",
             ),
             (
                 "2026-11-20T14:05:09.123456789Z",
                 "2026-11-20 14:05:09",
-                "2026-11-20T14:05:09.123456789+00:00",
+                "2026-11-20T14:05:09.123456789Z",
             ),
         ] {
             let output = Output {
@@ -585,7 +579,7 @@ mod tests {
 
         assert_eq!(
             output.to_json().to_string(),
-            r#"{"revisions":[{"hash":"0123456789abcdef","obtained":"1970-01-01T00:00:00+00:00","message":"first","kept":[],"frees":null},{"hash":"fedcba9876543210","obtained":"1970-01-01T00:00:00+00:00","message":null,"kept":["current","not pushed"],"frees":null}]}"#
+            r#"{"revisions":[{"hash":"0123456789abcdef","obtained":"1970-01-01T00:00:00Z","message":"first","kept":[],"frees":null},{"hash":"fedcba9876543210","obtained":"1970-01-01T00:00:00Z","message":null,"kept":["current","not pushed"],"frees":null}]}"#
         );
     }
 

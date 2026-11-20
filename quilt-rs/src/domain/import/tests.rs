@@ -238,10 +238,7 @@ impl Storage for Recording {
     async fn is_file(&self, path: impl AsRef<Path>) -> bool {
         self.inner.is_file(path).await
     }
-    async fn modified_timestamp(
-        &self,
-        path: impl AsRef<Path>,
-    ) -> crate::Res<chrono::DateTime<chrono::Utc>> {
+    async fn modified_timestamp(&self, path: impl AsRef<Path>) -> crate::Res<jiff::Timestamp> {
         self.inner.modified_timestamp(path).await
     }
     async fn open_file(&self, path: impl AsRef<Path> + Send) -> crate::Res<tokio::fs::File> {
