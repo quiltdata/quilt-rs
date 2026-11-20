@@ -336,6 +336,34 @@ impl RegistryStore {
         remote: &impl Remote,
         host: Option<&Host>,
     ) -> Res<GcReport> {
+        self.clear(storage, remote, host, None).await
+    }
+
+    /// [`clear_published`](Self::clear_published) for one package: clears
+    /// the manifests in its `installed/` folder whose top hash the bucket
+    /// holds, and the objects they name that no manifest the store keeps
+    /// names, any other package's and the fetched ones in `packages/`
+    /// included. Its manifests the bucket lacks, such as unpushed commits,
+    /// are kept with their objects. What uninstalling the package with
+    /// pruning cleared, re-expressed on the bucket's store.
+    pub async fn clear_package(
+        &self,
+        storage: &(impl Storage + Sync),
+        remote: &impl Remote,
+        host: Option<&Host>,
+        namespace: &Namespace,
+    ) -> Res<GcReport> {
+        self.clear(storage, remote, host, Some(namespace)).await
+    }
+
+    /// Clears what the bucket has, of every package or of `only`.
+    async fn clear(
+        &self,
+        storage: &(impl Storage + Sync),
+        remote: &impl Remote,
+        host: Option<&Host>,
+        only: Option<&Namespace>,
+    ) -> Res<GcReport> {
         let _held = self
             .lock_every_package(storage, &self.installed_packages(storage).await?)
             .await?;
@@ -354,6 +382,10 @@ impl RegistryStore {
         }
         manifests.extend(list_files(storage, &self.dir.join(PACKAGES_DIR)).await?);
         manifests.retain(|(hash, _, _)| is_top_hash(hash));
+        let scope = only.map(|namespace| self.installed_manifests_dir(namespace));
+        let (manifests, others): (Vec<_>, Vec<_>) = manifests
+            .into_iter()
+            .partition(|(_, path, _)| scope.as_ref().is_none_or(|dir| path.starts_with(dir)));
 
         let hashes: BTreeSet<&String> = manifests.iter().map(|(hash, _, _)| hash).collect();
         // With no answer from the bucket, nothing shows it can be reached.
@@ -371,9 +403,22 @@ impl RegistryStore {
                 published.insert(hash.clone());
             }
         }
-        let (cleared, kept): (Vec<_>, Vec<_>) = manifests
+        let (cleared, mut kept): (Vec<_>, Vec<_>) = manifests
             .into_iter()
             .partition(|(hash, _, _)| published.contains(hash));
+        kept.extend(others);
+
+        // For one package, only the objects its cleared manifests name are
+        // candidates: the rest are `gc`'s to clear.
+        if only.is_some() {
+            let mut named = BTreeSet::new();
+            for (_, path, _) in &cleared {
+                for row in Manifest::from_path(storage, path).await?.rows {
+                    named.extend(row_objects(&row.hash, &row.physical_key));
+                }
+            }
+            unused.retain(|name, _| named.contains(name));
+        }
 
         // Every copy, even of one hash: the top hash leaves out a row's
         // physical key, so two copies can name different objects.
@@ -1003,6 +1048,58 @@ mod tests {
             assert!(object.exists(), "{} is the commit's", object.display());
         }
         assert_eq!((report.cached_manifests, report.objects), (2, 1));
+        Ok(())
+    }
+
+    /// Clearing one package drops only its published manifests and the
+    /// objects only they name: its unpushed commit, another package's
+    /// revisions, an object the other package shares, and an object no
+    /// manifest names, which is `gc`'s, all stay.
+    #[test(tokio::test)]
+    async fn clearing_a_package_keeps_its_unpushed_work_and_every_other_package() -> Res {
+        let dir = tempfile::tempdir()?;
+        let store = DomainRoot::new(dir.path()).registry("bucket")?;
+        let storage = LocalStorage::new();
+        let remote = MockRemote::default();
+        let (ours, theirs) = (
+            Namespace::from(("acme", "demo")),
+            Namespace::from(("acme", "other")),
+        );
+        let (pushed, pushed_objects) = commit(
+            &store,
+            &ours,
+            &[("only.txt", b"pushed"), ("shared.txt", b"both")],
+        )
+        .await?;
+        let (unpushed, unpushed_objects) = commit(&store, &ours, &[("mine.txt", b"local")]).await?;
+        let (other, other_objects) = commit(
+            &store,
+            &theirs,
+            &[("theirs.txt", b"theirs"), ("shared.txt", b"both")],
+        )
+        .await?;
+        publish(&remote, &store, &pushed).await?;
+        publish(&remote, &store, &other).await?;
+        let orphan = store.objects_dir().join("orphan");
+        std::fs::write(&orphan, b"x")?;
+
+        let report = store.clear_package(&storage, &remote, None, &ours).await?;
+
+        assert!(!store.installed_manifest(&ours, &pushed).exists());
+        assert!(!pushed_objects[0].exists(), "used only by what was pushed");
+        assert!(pushed_objects[1].exists(), "shared with the other package");
+        assert!(store.installed_manifest(&ours, &unpushed).exists());
+        assert!(unpushed_objects[0].exists());
+        assert!(store.installed_manifest(&theirs, &other).exists());
+        for object in &other_objects {
+            assert!(
+                object.exists(),
+                "{} is the other package's",
+                object.display()
+            );
+        }
+        assert!(orphan.exists(), "an object no manifest names is gc's");
+        assert_eq!((report.cached_manifests, report.objects), (1, 1));
         Ok(())
     }
 

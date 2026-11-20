@@ -59,6 +59,7 @@ thiserror.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
 toml.workspace = true
+toml_edit.workspace = true
 tracing.workspace = true
 quilt-uri = { path = "../quilt-uri", version = "0.5.1-dev" }
 url.workspace = true

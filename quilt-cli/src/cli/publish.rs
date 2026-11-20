@@ -1,19 +1,20 @@
 use std::path::PathBuf;
 
 use quilt_rs::dataspace::contract::CONTRACT_FILE;
-use quilt_rs::dataspace::lock::Writer;
 use quilt_rs::dataspace::publish::Published;
 use quilt_rs::dataspace::publish_all::DataspacePublish;
 use quilt_rs::dataspace::publish_all::EntryPublish;
-use quilt_rs::dataspace::publish_all::PublishAllError;
 use quilt_rs::dataspace::publish_all::publish_all;
 use quilt_rs::dataspace::read_all::EntryRead;
+use quilt_rs::domain::DomainRoot;
+use quilt_rs::domain::LocalRegistry;
 use quilt_rs::io::remote::Remote;
 use quilt_rs::io::remote::RemoteS3;
 use quilt_rs::io::storage::LocalStorage;
 use quilt_rs::paths::DomainPaths;
 
 use crate::cli::Error;
+use crate::cli::dataspace;
 use crate::cli::output::Render;
 use crate::cli::output::Std;
 use crate::cli::read;
@@ -173,29 +174,36 @@ impl Render for Output {
     }
 }
 
-pub async fn command(domain: PathBuf, args: Input) -> Std {
-    Std::from_result(model(domain, args).await)
+pub async fn command(credentials: PathBuf, domain: Option<DomainRoot>, args: Input) -> Std {
+    Std::from_result(model(credentials, domain.as_ref(), args).await)
 }
 
-/// Publishes with no Domain: the domain folder supplies only the credentials
+/// Publishes with the local registry of `domain`, where there is one, and no
+/// other part of a Domain: the `credentials` folder supplies the credentials
 /// a catalog's login keeps there, and the user-wide ignore rules.
-pub async fn model(domain: PathBuf, args: Input) -> Result<Output, Error> {
-    let paths = DomainPaths::new(domain);
+pub async fn model(
+    credentials: PathBuf,
+    domain: Option<&DomainRoot>,
+    args: Input,
+) -> Result<Output, Error> {
+    let paths = DomainPaths::new(credentials);
     let user_rules = paths.user_quiltignore();
     let remote = RemoteS3::new(paths, LocalStorage::new());
-    publish_with(&remote, args, &user_rules).await
+    let local = domain.map(DomainRoot::local);
+    publish_with(&remote, local.as_ref(), args, &user_rules).await
 }
 
 async fn publish_with(
     remote: &impl Remote,
+    local: Option<&LocalRegistry>,
     Input { dataspace }: Input,
     user_rules: &std::path::Path,
 ) -> Result<Output, Error> {
-    let writer = Writer::without_domain().map_err(PublishAllError::from)?;
+    let writer = dataspace::writer(local).await?;
     let published = Box::pin(publish_all(
         &LocalStorage::new(),
         remote,
-        None,
+        local,
         &dataspace,
         &writer,
         user_rules,
@@ -215,6 +223,8 @@ mod tests {
 
     use test_log::test;
 
+    use quilt_rs::dataspace::lock::Writer;
+    use quilt_rs::dataspace::publish_all::PublishAllError;
     use quilt_rs::io::remote::mocks::MockRemote;
     use quilt_rs::manifest::Manifest;
     use quilt_rs::manifest::ManifestRow;
@@ -287,7 +297,58 @@ mod tests {
             dataspace: dataspace.to_path_buf(),
         };
         let no_user_rules = dataspace.join("no-user-rules");
-        Std::from_result(publish_with(remote, input, &no_user_rules).await)
+        Std::from_result(publish_with(remote, None, input, &no_user_rules).await)
+    }
+
+    /// With a Domain, `quilt publish` reaches its local registry: a local
+    /// package's folder is published there, and `latest` moves to it.
+    #[test(tokio::test)]
+    async fn a_local_package_is_published_to_the_domains_local_registry() -> Result<(), Error> {
+        let domain = tempfile::TempDir::new()?;
+        let local = DomainRoot::new(domain.path()).local();
+        let storage = LocalStorage::new();
+        local.rename(&storage, "lab-mac").await?;
+        let dataspace = tempfile::TempDir::new()?;
+        std::fs::write(
+            dataspace.path().join("data.toml"),
+            "[packages]\nwrite = [\"quilt+local://#package=me/analysis\"]\n",
+        )?;
+        let folder = dataspace.path().join("lab-mac@local/me/analysis");
+        std::fs::create_dir_all(&folder)?;
+        std::fs::write(folder.join("r.txt"), b"result")?;
+        let input = || Input {
+            dataspace: dataspace.path().to_path_buf(),
+        };
+        let no_user_rules = dataspace.path().join("no-user-rules");
+
+        let without = Std::from_result(
+            publish_with(&MockRemote::default(), None, input(), &no_user_rules).await,
+        );
+        let with = Std::from_result(
+            publish_with(
+                &MockRemote::default(),
+                Some(&local),
+                input(),
+                &no_user_rules,
+            )
+            .await,
+        );
+
+        assert!(without.failed(), "{without:?}");
+        let Std::Out(output) = with else {
+            panic!("expected a success, got {with:?}");
+        };
+        let json = output.to_json();
+        assert_eq!(json["entries"][0]["outcome"], "published", "{json}");
+        let latest = local
+            .read_latest(&storage, &quilt_uri::Namespace::try_from("me/analysis")?)
+            .await?;
+        assert_eq!(
+            latest.as_deref(),
+            json["entries"][0]["revision"].as_str(),
+            "{json}"
+        );
+        Ok(())
     }
 
     async fn read(remote: &MockRemote, dataspace: &Path) -> Result<(), Error> {
@@ -415,6 +476,7 @@ mod tests {
 
         let std = model(
             domain.path().to_path_buf(),
+            None,
             Input {
                 dataspace: dataspace.path().to_path_buf(),
             },
@@ -434,7 +496,7 @@ mod tests {
         let input = read::Input {
             dataspace: reader.path().to_path_buf(),
         };
-        let read = read::model(domain.path().to_path_buf(), input)
+        let read = read::model(domain.path().to_path_buf(), None, input)
             .await?
             .to_json();
         assert_eq!(read["entries"][0]["revision"], *revision, "{read}");

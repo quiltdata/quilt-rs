@@ -1,14 +1,24 @@
 //! A dataspace: a folder of working folders, with the contract, `data.toml`,
 //! that says what should happen to the packages they hold, and the lock,
 //! `data.lock.toml`, that records which revisions were used.
+//!
+//! Each operation is a module of its own, named for its verb, with its
+//! tests in `<verb>/tests.rs`: the flows a contract runs (`read`,
+//! `publish`, `sync` and their `_all` forms, `autosync`), and the commands a
+//! user gives a dataspace (`install`, `uninstall`, `prune`, `reattach`). A
+//! command that changes `data.toml` does so through `edit`, the one writer
+//! of the contract, and writes the lock last.
 
 pub mod autosync;
 pub mod conflict;
 pub mod contract;
+mod edit;
 pub mod hooks;
 pub mod ignore;
+pub mod install;
 pub mod lock;
 mod metadata;
+pub mod prune;
 pub mod publish;
 pub mod publish_all;
 pub mod read;
@@ -16,6 +26,7 @@ pub mod read_all;
 pub mod reattach;
 mod store;
 pub mod sync;
+pub mod uninstall;
 
 use std::path::PathBuf;
 

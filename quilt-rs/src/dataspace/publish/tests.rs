@@ -1079,7 +1079,14 @@ async fn a_revision_read_and_published_again_unchanged_keeps_its_top_hash() -> R
     };
     original.rows[1].meta = Some(serde_json::json!({"user_meta": {"kind": "raw", "n": null}}));
     seed_manifest(&remote, FIRST, &original).await?;
-    crate::dataspace::read::read(storage, &remote, &entry("read = [\"team/raw\"]"), None).await?;
+    crate::dataspace::read::read(
+        storage,
+        &remote,
+        None,
+        &entry("read = [\"team/raw\"]"),
+        None,
+    )
+    .await?;
     // `latest` moves to the same files with no metadata, so publishing has
     // something to set.
     seed_manifest(

@@ -251,16 +251,21 @@ impl OnDisk {
 ///
 /// A revision whose metadata holds an integer TOML cannot is refused before
 /// anything is written.
+///
+/// An entry of the local registry `local`, under its name or one it had, is
+/// read from it as a bucket's entry is read from the bucket. With no local
+/// registry given, or another machine's, such an entry is refused.
 pub async fn read(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
+    local: Option<&LocalRegistry>,
     entry: &Entry,
     base: Option<&str>,
 ) -> Result<ReadOutcome, EntryError> {
     let (outcome, _) = Box::pin(read_deciding(
         storage,
         remote,
-        None,
+        local,
         entry,
         base,
         &BTreeMap::new(),

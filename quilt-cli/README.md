@@ -45,8 +45,8 @@ cargo install quilt-cli
 | `undo-commit` | Undo the newest commit, before the first push  |
 | `push`      | Upload a local revision to the remote            |
 | `pull`      | Fetch the latest remote revision                 |
-| `read`      | Read a dataspace's `read` entries, with no Domain |
-| `publish`   | Publish a dataspace's `write` and `replace` entries, with no Domain |
+| `read`      | Read a dataspace's `read` entries, with no Domain but its local registry |
+| `publish`   | Publish a dataspace's `write` and `replace` entries, with no Domain but its local registry |
 | `reattach`  | List or reattach local commits a dataspace's lock lost |
 | `list`      | List installed packages and their commit status  |
 | `log`       | List the revisions this copy has, and why each is kept |
@@ -138,8 +138,10 @@ exits 0; under `--json` the same shape has `"hash": null` and empty groups.
 lists under `read` in its working folder: the revision's files under the
 entry's paths, and all of the revision that is not a file as `metadata.toml`:
 its message, workflow and metadata, with `"$NULL"` for JSON `null`. A revision
-holding an integer beyond TOML's 64 bits is refused. It uses no Domain; the
-domain folder supplies only a catalog's login. A file changed
+holding an integer beyond TOML's 64 bits is refused. It uses no Domain but its
+local registry, where `bio.quilt.dataspace` exists in the OS's local data
+folder: a `quilt+local://` package is read from it, and left unread without
+one. The domain folder supplies only a catalog's login. A file changed
 here is kept, unless the revision changed it too: then that package is blocked,
 nothing of it changes, and the colliding files are listed and written to the
 dataspace's `conflict.json`, under the package, with what the revision
@@ -164,7 +166,8 @@ It exits 1 when any package was not read whole. Under `--json` it prints
 `skipped`, `hash_mismatch` and `conflicts` lists, and `error`.
 
 `publish <DATASPACE>` publishes each package the folder's `data.toml` lists
-under `write` or `replace` from its working folder, with no Domain: `write`
+under `write` or `replace` from its working folder, with no Domain but its
+local registry, which a `quilt+local://` package is published to: `write`
 lays the files under the entry's paths over `latest`, and `replace` publishes
 the folder as the whole package, with `metadata.toml` setting the message and
 metadata. What a commit leaves out is left out: files the folder's
@@ -202,6 +205,36 @@ published, with no base: its next publish expects no `latest`. PACKAGE is
 another host, user or folder wrote, is refused. Under `--json` it prints
 `package`, `unattached` (`hash` and `message`; `null` after an attach),
 `attached` and `base` (`null` with `--unpublished`).
+
+`install <PKG_URI> --dataspace <DIR>` adds the package to the folder's
+`data.toml`, making the file if there is none, under `--access` (`read`,
+`write`, `replace` or `sync`, the default), then reads it into its working
+folder as `read` would and records the revision in `data.lock.toml`, after
+`data.toml`. The entry is never pinned: a revision the URI names is read and
+recorded in the lock, and the next read or sync moves the folder on. The
+bucket is written only when it is not the contract's default `registry`, so the
+folder is `owner/name/`, or `bucket/owner/name/` for another bucket, unless
+`--folder` names one. `--path`, or a `&path=` in the URI, installs that part;
+a later install of another path joins the same entry and folder, and the new
+path is read at the lock's revision first. Installing what the lock already
+names into a folder that holds it writes nothing. A package listed under
+another access, in another folder or pinned to another revision is refused;
+edit `data.toml` to change it. `quilt+local://#package=owner/name` installs from
+the Domain's local registry. A `write` or `replace` entry is not read. It exits
+1 when the package was not read whole. Under `--json` it prints `package`,
+`access`, `folder`, `declared` (whether `data.toml` changed) and the read as
+`read` reports an entry, its `outcome` also `unchanged` or `not_read`.
+
+`uninstall --dataspace <DIR> <PACKAGE>`, or `-n owner/name` for the package
+`data.toml` lists under that name, removes every entry of the package from
+`data.toml`, deletes its working folder when a read filled it inside the
+dataspace, and then drops it from `data.lock.toml`. A folder outside the
+dataspace, or of a `write` or `replace` entry, is left. Local commits the lock
+named that were not pushed stay in the Domain and are listed: install the
+package again and `reattach` one. `--prune` then clears what the Domain holds
+of the package that its bucket holds too, never its unpushed commits or the
+local registry, and nothing while the bucket cannot be asked. Under `--json`
+it prints `package`, `removed`, `kept`, `unpushed` and `pruned`.
 
 `push` with no commit to push prints `Nothing to push` and exits 0; under
 `--json` the same shape has `"hash": null`, `"manifest_uri": null` and
