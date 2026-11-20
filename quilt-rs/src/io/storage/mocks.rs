@@ -220,6 +220,11 @@ impl Storage for MockStorage {
         super::LocalStorage::new().sync_dir(rel_path).await;
     }
 
+    async fn sync_file(&self, path: impl AsRef<Path> + Send) -> Res {
+        let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
+        super::LocalStorage::new().sync_file(rel_path).await
+    }
+
     /// The same real lock as [`LocalStorage`](super::LocalStorage)'s, on the
     /// path re-rooted under this mock's temp directory: two mocks never share
     /// a lock, and two handles on one mock always do.

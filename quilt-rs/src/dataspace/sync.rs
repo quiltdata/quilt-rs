@@ -4,6 +4,7 @@
 
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+use std::ops::ControlFlow;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -20,6 +21,7 @@ use crate::dataspace::contract::Access;
 use crate::dataspace::contract::Contract;
 use crate::dataspace::contract::ContractError;
 use crate::dataspace::contract::Entry;
+use crate::dataspace::contract::PackageKey;
 use crate::dataspace::contract::Registry;
 use crate::dataspace::hooks;
 use crate::dataspace::hooks::HookPoint;
@@ -43,6 +45,7 @@ use crate::dataspace::read::gone;
 use crate::dataspace::read::write_metadata;
 use crate::dataspace::read_all::usable_lock;
 use crate::domain::DomainRoot;
+use crate::domain::LocalRegistry;
 use crate::domain::RegistryStore;
 use crate::flow::PackageStore;
 use crate::flow::PushTarget;
@@ -97,8 +100,9 @@ pub enum EntrySync {
         conflicts: Vec<PathBuf>,
     },
     /// `latest` is neither the lock's base nor its last commit, and the lock
-    /// names commits not pushed, or `latest` is gone: nothing was read or
-    /// published.
+    /// names commits not pushed, or `latest` is gone, or the package is
+    /// moving from the local registry to a bucket that has a `latest` for it
+    /// already: nothing was read or published.
     Diverged { latest: Option<String> },
     /// The working folder was missing or empty, so the lock's current
     /// revision was read back into it and nothing was published.
@@ -214,6 +218,15 @@ impl<S: Storage + Sync> LockFile<'_, S> {
 /// edited contract only once every `sync` entry was read whole. A local
 /// registry's entry is refused, so it keeps the dataspace unfilled.
 ///
+/// A package `data.toml` was edited to move from this machine's local
+/// registry to a bucket, which the lock still holds under the local
+/// registry's key, is moved first: its last local commit is pushed as the
+/// bucket's first revision, squashing the commits before it, and the lock
+/// then holds the package under the bucket's key, based at that revision.
+/// The local registry keeps the package. A bucket that has the package
+/// already leaves it [`EntrySync::Diverged`], and a push that does not
+/// advance `latest` leaves the lock as it was, to move on a later tick.
+///
 /// The lock is used as [`read_all`](crate::dataspace::read_all::read_all)
 /// uses it, and `conflict.json` as [`read_resolving`] does. Each commit's
 /// message is `message`, and its workflow the bucket's default.
@@ -266,6 +279,12 @@ pub async fn sync(
             entries.push((entry.clone(), outcome));
         }
         let whole = entries.iter().all(|(_, outcome)| match outcome {
+            // A move the workflow refused read nothing: the folder is still
+            // to be read whole once it goes through.
+            EntrySync::Ran {
+                read: None,
+                published: Some(Published::WorkflowBlocked { .. }),
+            } => false,
             EntrySync::Ran {
                 read,
                 published:
@@ -361,8 +380,12 @@ async fn fill(
         return Ok(EntrySync::Busy);
     };
     let key = entry.key();
+    let mut published =
+        match move_to_bucket(storage, remote, domain, queue, entry, lock, lock_file).await? {
+            ControlFlow::Break(outcome) => return Ok(outcome),
+            ControlFlow::Continue(pushed) => pushed,
+        };
     let mut latest = latest(remote, entry).await?;
-    let mut published = None;
     if let Some(locked) = lock.packages.get(&key).cloned()
         && let Some(head) = locked.commits.last()
     {
@@ -499,6 +522,99 @@ fn bucket(entry: &Entry) -> Result<&str, EntryError> {
     Ok(bucket)
 }
 
+/// Where `data.toml` was edited to move `entry`'s package from this
+/// machine's local registry to its bucket: the lock holds the package under
+/// the local registry's key and not under the bucket's, and no entry names
+/// the local one. The local key, with the package's last local commit.
+fn moved_from(
+    lock: &Lock,
+    lock_file: &LockFile<'_, impl Storage + Sync>,
+    entry: &Entry,
+) -> Option<(PackageKey, String)> {
+    let name = lock_file.writer.local_registry_name()?;
+    if !matches!(entry.registry, Registry::S3(_)) || lock.packages.contains_key(&entry.key()) {
+        return None;
+    }
+    let local = PackageKey {
+        registry: Registry::Local(name.to_string()),
+        package: entry.package.clone(),
+    };
+    if lock_file
+        .contract
+        .entries()
+        .iter()
+        .any(|other| other.key() == local)
+    {
+        return None;
+    }
+    let locked = lock.packages.get(&local)?;
+    let head = locked.commits.last().unwrap_or(&locked.base).clone();
+    Some((local, head))
+}
+
+/// Moves `entry`'s package to its bucket where `data.toml` was edited to,
+/// as [`moved_from`] tells: its last local commit is the bucket's first
+/// revision, the commits before it squashed, and the lock then holds the
+/// package under the bucket's key, based at it. Continues with the push,
+/// `None` where there was no move or its push had landed already; breaks
+/// with how the tick ends where the bucket's `latest` names another
+/// revision, or the push did not advance it, the lock left as it was.
+#[allow(clippy::too_many_arguments)]
+async fn move_to_bucket(
+    storage: &(impl Storage + Sync),
+    remote: &impl Remote,
+    domain: &DomainRoot,
+    queue: &Queue,
+    entry: &Entry,
+    lock: &mut Lock,
+    lock_file: &LockFile<'_, impl Storage + Sync>,
+) -> Result<ControlFlow<EntrySync, Option<Published>>, Stop> {
+    let Some((local, head)) = moved_from(lock, lock_file, entry) else {
+        return Ok(ControlFlow::Continue(None));
+    };
+    let latest = latest(remote, entry).await?;
+    let (base, pushed) = match latest.as_deref() {
+        // The push landed and the lock was not written after it.
+        Some(latest) if latest == head => (head, None),
+        Some(_) => return Ok(ControlFlow::Break(EntrySync::Diverged { latest })),
+        None => {
+            let manifest = local_commit(storage, &domain.local(), entry, &head).await?;
+            let (pushed, wrote) =
+                push_manifest(storage, remote, queue, entry, &head, manifest, None).await?;
+            if wrote {
+                after_write(lock_file.contract, entry, &pushed).await;
+            }
+            let Published::Advanced { revision, .. } = &pushed else {
+                return Ok(ControlFlow::Break(EntrySync::Ran {
+                    read: None,
+                    published: Some(pushed),
+                }));
+            };
+            (revision.clone(), Some(pushed))
+        }
+    };
+    lock.packages.remove(&local);
+    set_base(lock, lock_file, &entry.key(), base).await?;
+    Ok(ControlFlow::Continue(pushed))
+}
+
+/// The manifest of `hash`, a commit of `entry`'s package in `local`, or a
+/// revision published there.
+async fn local_commit(
+    storage: &(impl Storage + Sync),
+    local: &LocalRegistry,
+    entry: &Entry,
+    hash: &str,
+) -> Result<Manifest, EntryError> {
+    let installed = local.installed_manifest(&entry.package, hash);
+    let path = if storage.exists(&installed).await {
+        installed
+    } else {
+        local.revision(hash)
+    };
+    Ok(Manifest::from_path(storage, &path).await?)
+}
+
 /// One entry's tick; see [`sync`].
 #[allow(clippy::too_many_arguments)]
 async fn tick(
@@ -519,6 +635,17 @@ async fn tick(
     else {
         return Ok(EntrySync::Busy);
     };
+    // A move a fill did not complete; its publish is the tick's.
+    match move_to_bucket(storage, remote, domain, queue, entry, lock, lock_file).await? {
+        ControlFlow::Break(outcome) => return Ok(outcome),
+        ControlFlow::Continue(Some(pushed)) => {
+            return Ok(EntrySync::Ran {
+                read: None,
+                published: Some(pushed),
+            });
+        }
+        ControlFlow::Continue(None) => {}
+    }
     let key = entry.key();
     let (base, commits) = match lock.packages.get(&key) {
         Some(locked) => (Some(locked.base.clone()), locked.commits.clone()),
@@ -595,7 +722,7 @@ async fn tick(
 async fn set_base(
     lock: &mut Lock,
     lock_file: &LockFile<'_, impl Storage + Sync>,
-    key: &crate::dataspace::contract::PackageKey,
+    key: &PackageKey,
     base: String,
 ) -> Result<(), Stop> {
     lock.packages.insert(
@@ -828,6 +955,19 @@ async fn push_head(
 ) -> Result<(Published, bool), EntryError> {
     let head_only = [head.to_string()];
     let manifest = manifest_at(storage, remote, store, entry, head, &head_only).await?;
+    push_manifest(storage, remote, queue, entry, head, manifest, base).await
+}
+
+/// [`push_head`], of `manifest`, the revision `head`.
+async fn push_manifest(
+    storage: &(impl Storage + Sync),
+    remote: &impl Remote,
+    queue: &Queue,
+    entry: &Entry,
+    head: &str,
+    manifest: Manifest,
+    base: Option<&str>,
+) -> Result<(Published, bool), EntryError> {
     let target = PushTarget {
         handle: handle(entry)?,
         origin: entry.catalog.clone(),
