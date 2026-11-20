@@ -20,6 +20,7 @@
 
 ### Added
 
+- `mask_user` writes an address with the user and password before its host shown as `***`, for an error to repeat (<https://github.com/quiltdata/quilt-rs/pull/1474>)
 - `LocalPackageUri` reads and writes `quilt+local://<name>#package=owner/name`, a package in a local registry, with a revision and a path but no catalog; `quilt+local://#package=owner/name` names this machine's. `check_local_registry_name` holds a name to letters, digits, `-` and `.`, and not `.` or `..` (<https://github.com/quiltdata/quilt-rs/pull/1458>)
 - `paths::TAGS_PREFIX` is the prefix every package's tags share, `.quilt/named_packages/` (<https://github.com/quiltdata/quilt-rs/pull/1452>)
 - A package URI's `@` may be a short hash of 6 to 63 lowercase hex characters, as in quilt3. It parses to the new `RevisionPointer::HashPrefix` and displays as written, `ManifestUri::try_from` refuses it, and a hash of any other length, or not lowercase hex, is an error that says which; `MIN_HASH_PREFIX_LEN` and `TOP_HASH_LEN` are exported (<https://github.com/quiltdata/quilt-rs/pull/1392>)
@@ -32,7 +33,7 @@
 
 ### Fixed
 
-- URI and namespace errors no longer repeat the address, so a user and password given in it stay out of the message; each error names the part that was wrong instead (<https://github.com/quiltdata/quilt-rs/pull/1474>)
+- URI and namespace errors no longer repeat the user and password given in the address: they show it as `***`, and an unexpected fragment parameter is named without its value (<https://github.com/quiltdata/quilt-rs/pull/1474>)
 - In a `quilt+s3://` fragment, `+` is a literal `+`, so `path=C++.csv` names `C++.csv`, and a %-escape that is not UTF-8, such as `%FF`, is an error instead of U+FFFD (<https://github.com/quiltdata/quilt-rs/pull/1372>)
 - A `path=` with leading or trailing whitespace, or an empty `path=`, is accepted the way quilt3 accepts it, then trimmed (with a warning) so the URI does not silently name a different entry; an empty path is no path (<https://github.com/quiltdata/quilt-rs/pull/1385>)
 

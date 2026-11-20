@@ -644,7 +644,7 @@ fn a_registry_field_that_is_neither_spelling_is_refused() {
     ] {
         let problem = entry_problem(&with_defaults(list));
         assert!(
-            matches!(problem, EntryProblem::Registry | EntryProblem::Uri(_)),
+            matches!(problem, EntryProblem::Registry(_) | EntryProblem::Uri(_)),
             "{list}: {problem}"
         );
     }
@@ -660,7 +660,7 @@ fn a_registry_field_that_is_neither_spelling_is_refused() {
         matches!(
             read,
             Err(ContractError::Entry {
-                problem: EntryProblem::Registry,
+                problem: EntryProblem::Registry(_),
                 ..
             })
         ),
@@ -725,10 +725,9 @@ fn a_package_key_is_its_canonical_uri() -> Res {
     Ok(())
 }
 
-/// The error for a registry does not repeat it, so a user and password
-/// written in it stay out of the message.
+/// The error for a registry masks a user and password in it.
 #[test]
-fn a_registry_error_does_not_repeat_it() {
+fn a_registry_error_masks_a_user_and_password() {
     for list in [
         r#"read = [{ registry = "s3://KEY:secret@bucket", package = "me/analysis" }]"#,
         r#"read = [{ registry = "quilt+local://KEY:secret@lab-mac", package = "me/analysis" }]"#,
@@ -738,6 +737,7 @@ fn a_registry_error_does_not_repeat_it() {
         };
         for text in [err.to_string(), format!("{err:?}")] {
             assert!(!text.contains("secret") && !text.contains("KEY"), "{text}");
+            assert!(text.contains("***@"), "{text}");
         }
     }
 }

@@ -3806,7 +3806,10 @@ mod tests {
         let output_str = String::from_utf8(output).unwrap();
         assert_eq!(
             output_str,
-            "quilt_rs error: Invalid package URI: S3 package URI must contain a fragment `#package=…`\n"
+            format!(
+                "quilt_rs error: Invalid package URI: S3 package URI must contain a fragment: {}\n",
+                pkg::URI
+            )
         );
 
         Ok(())
@@ -3867,7 +3870,10 @@ mod tests {
         let output_str = String::from_utf8(output).unwrap();
         assert_eq!(
             output_str,
-            "quilt_rs error: Invalid package URI: S3 package URI must contain a fragment `#package=…`\n"
+            format!(
+                "quilt_rs error: Invalid package URI: S3 package URI must contain a fragment: {}\n",
+                pkg::URI
+            )
         );
 
         Ok(())

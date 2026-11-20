@@ -15,6 +15,7 @@ mod s3;
 mod tag;
 
 pub use error::UriError;
+pub use error::mask_user;
 pub use host::Host;
 pub use local::LocalPackageUri;
 pub use local::check_local_registry_name;

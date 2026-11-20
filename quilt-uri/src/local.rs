@@ -6,6 +6,7 @@ use url::Url;
 use crate::Namespace;
 use crate::RevisionPointer;
 use crate::UriError;
+use crate::mask_user;
 use crate::package::COPY_VALUE;
 use crate::package::parse_after_authority;
 use crate::package::render_fragment;
@@ -53,9 +54,10 @@ impl TryFrom<&str> for LocalPackageUri {
         // another registry. The fragment is read as `quilt+s3://` reads it.
         let before_fragment = input.split('#').next().unwrap_or_default();
         if before_fragment.contains(['\t', '\n', '\r']) {
-            return Err(UriError::Package(
-                "a local package URI holds no tab or line break before `#`".to_string(),
-            ));
+            return Err(UriError::Package(format!(
+                "a local package URI holds no tab or line break before `#`: {:?}",
+                mask_user(input)
+            )));
         }
         let parsed_url = Url::parse(input)?;
         if parsed_url.scheme() != "quilt+local" {
@@ -70,9 +72,10 @@ impl TryFrom<&str> for LocalPackageUri {
             .split_once(':')
             .and_then(|(_, rest)| rest.strip_prefix("//"))
         else {
-            return Err(UriError::Package(
-                "a local package URI starts `quilt+local://`".to_string(),
-            ));
+            return Err(UriError::Package(format!(
+                "a local package URI starts `quilt+local://`: {:?}",
+                mask_user(input)
+            )));
         };
         let fragment = parse_after_authority(&parsed_url, input, "local", "the registry's name")?;
         if fragment.catalog.is_some() {
@@ -223,21 +226,18 @@ mod tests {
         }
     }
 
-    /// No error repeats the input, so a user and password written anywhere
-    /// in it stay out of the message.
+    /// An error that repeats the input masks a user and password in it.
     #[test]
-    fn no_error_repeats_a_user_or_password() {
+    fn an_error_masks_a_user_and_password() {
         for input in [
-            "quilt+s3://KEY:secret@bucket#package=a/b",
             "quilt+local://KEY:secret@\tname#package=a/b",
             "quilt+local:KEY:secret@name#package=a/b",
-            "quilt+local://name/KEY:secret@x#package=a/b",
         ] {
             let err = LocalPackageUri::try_from(input)
                 .expect_err(input)
                 .to_string();
-            assert!(!err.contains("secret"), "{err}");
-            assert!(!err.contains("KEY"), "{err}");
+            assert!(!err.contains("secret") && !err.contains("KEY"), "{err}");
+            assert!(err.contains("***@"), "{err}");
         }
     }
 

@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use aws_sdk_s3::primitives::ByteStream;
+use quilt_uri::mask_user;
 use serde::Deserialize;
 use serde::Serialize;
 use tracing::warn;
@@ -89,9 +90,12 @@ impl ConflictMap {
             serde_json::from_slice(&bytes).map_err(invalid)?;
         let mut packages = BTreeMap::new();
         for (text, rows) in raw {
-            let key: PackageKey = text
-                .parse()
-                .map_err(|err| invalid(format!("a key is not a package's canonical URI: {err}")))?;
+            let key: PackageKey = text.parse().map_err(|err| {
+                invalid(format!(
+                    "{:?} is not a package's canonical URI: {err}",
+                    mask_user(&text)
+                ))
+            })?;
             packages.insert(key, rows);
         }
         Ok(Self { packages })
