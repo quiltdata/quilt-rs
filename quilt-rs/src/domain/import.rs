@@ -240,9 +240,8 @@ impl Package {
 /// dataspace. The whole import holds `domain.lock`.
 ///
 /// Refused before anything is copied where the packages' folders can't all be
-/// declared together, as for two names differing only in case on a drive that
-/// ignores case. Each object copied is synced, and each folder the copies
-/// made, before the import records itself done.
+/// declared together, as for names differing only in case on a drive that
+/// ignores case. What is copied is synced before the import records itself done.
 pub async fn import(
     storage: &(impl Storage + Sync),
     from: &Path,
@@ -343,8 +342,8 @@ async fn import_comparing(
     for bucket in &buckets {
         copy_cached_manifests(storage, &paths, domain, bucket).await?;
     }
-    sync_folders(storage, domain).await?;
     let autosync = move_queue(storage, &paths, domain).await?;
+    sync_folders(storage, domain).await?;
     write_dataspace(storage, &target, &declarations, entries).await?;
 
     record.autosync.clone_from(&autosync);
@@ -383,8 +382,8 @@ async fn resuming(
 /// Refuses the import, before anything is copied, where the entries it would
 /// write can't be read back together under `case`: two packages whose names
 /// differ only in case are one folder on a drive that ignores it. A package
-/// the import would leave out is not counted, and one its entry alone refuses
-/// is left out as [`PackageImport::Undeclarable`] later.
+/// the import would leave out for a reason known before copying is not
+/// counted; one left out only on copying, as [`PackageImport::LocalTaken`], is.
 async fn check_together(
     storage: &(impl Storage + Sync),
     refs: &RefStore,
@@ -419,26 +418,27 @@ async fn check_together(
 
 /// Syncs each folder under the Domain's `registries/`, and the root, so the
 /// folders the copies made survive a power loss as the copies do: this run's
-/// and those of a run that stopped part way. A store's `objects/` and
+/// and those of a run that stopped part way. A store's own `objects/` and
 /// `packages/` hold only files, so they are synced and not listed.
 async fn sync_folders(storage: &(impl Storage + Sync), domain: &DomainRoot) -> Res {
-    let mut folders = vec![domain.root().join(super::REGISTRIES_DIR)];
-    while let Some(folder) = folders.pop() {
-        storage.sync_dir(&folder).await;
+    // Each folder with its depth below `registries/`: a store is at 1.
+    let mut folders = vec![(domain.root().join(super::REGISTRIES_DIR), 0)];
+    while let Some((folder, depth)) = folders.pop() {
         let mut entries = match storage.read_dir(&folder).await {
             Ok(entries) => entries,
             Err(err) if err.is_not_found() => continue,
             Err(err) => return Err(err),
         };
+        storage.sync_dir(&folder).await;
         while let Some(entry) = entries.next_entry().await? {
             if !entry.file_type().await?.is_dir() {
                 continue;
             }
             let name = entry.file_name();
-            if name == OBJECTS_DIR || name == super::PACKAGES_DIR {
+            if depth == 1 && (name == OBJECTS_DIR || name == super::PACKAGES_DIR) {
                 storage.sync_dir(entry.path()).await;
             } else {
-                folders.push(entry.path());
+                folders.push((entry.path(), depth + 1));
             }
         }
     }
@@ -462,7 +462,12 @@ async fn move_queue(
     if storage.exists(&new_queue).await {
         storage.remove_file(&new_queue).await?;
     }
-    Ok(copy_queue(&old_queue, &new_queue).await?)
+    let autosync = copy_queue(&old_queue, &new_queue).await?;
+    // A queue this build can't read is skipped, and no copy is made.
+    if storage.is_file(&new_queue).await {
+        storage.sync_file(&new_queue).await?;
+    }
+    Ok(autosync)
 }
 
 /// Writes the default dataspace's contract, then its lock.

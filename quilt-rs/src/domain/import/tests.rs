@@ -873,6 +873,8 @@ async fn the_copies_are_durable_before_the_import_is_done() -> Res {
     let old = Old::new()?;
     let namespace = Namespace::from(("acme", "demo"));
     pushed_with_commits(&old, &namespace, "bucket").await?;
+    // A bucket named for a store's own folder is still a store to sync.
+    pushed_with_commits(&old, &Namespace::from(("acme", "other")), "packages").await?;
     let storage = Recording::default();
 
     import(&storage, &old.app(), &old.domain()).await?;
@@ -904,6 +906,7 @@ async fn the_copies_are_durable_before_the_import_is_done() -> Res {
         store.objects_dir(),
         store.installed_manifests_dir(&namespace),
         store.dir().to_path_buf(),
+        old.domain().registry("packages")?.objects_dir(),
         old.domain().root().to_path_buf(),
     ] {
         assert!(
@@ -911,6 +914,29 @@ async fn the_copies_are_durable_before_the_import_is_done() -> Res {
             "{folder:?} is synced before the import is done"
         );
     }
+    Ok(())
+}
+
+/// The queue copied beside `state.db` is synced before the import is done.
+#[test(tokio::test)]
+async fn the_copied_queue_is_synced_before_the_import_is_done() -> Res {
+    let old = Old::new()?;
+    rusqlite::Connection::open(old.paths.queue_db())?.execute_batch(
+        "CREATE TABLE autosync (dataspace BLOB NOT NULL UNIQUE); PRAGMA user_version = 1;",
+    )?;
+    let storage = Recording::default();
+
+    import(&storage, &old.app(), &old.domain()).await?;
+
+    let steps = storage.steps();
+    let done = steps
+        .iter()
+        .rposition(|step| *step == Step::Write(old.domain().domain_file()))
+        .expect("the import recorded done");
+    assert!(
+        steps[..done].contains(&Step::SyncFile(old.domain().queue_db())),
+        "the queue is synced before the import is done"
+    );
     Ok(())
 }
 

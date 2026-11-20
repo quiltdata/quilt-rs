@@ -344,12 +344,14 @@ impl Storage for LocalStorage {
     async fn sync_file(&self, path: impl AsRef<Path> + Send) -> Res {
         let path = path.as_ref();
         // Windows flushes only a file opened for writing; Unix syncs any.
-        let opened = if cfg!(windows) {
-            fs::OpenOptions::new().write(true).open(path).await
-        } else {
-            fs::File::open(path).await
+        let synced = async {
+            let file = if cfg!(windows) {
+                fs::OpenOptions::new().write(true).open(path).await?
+            } else {
+                fs::File::open(path).await?
+            };
+            file.sync_all().await
         };
-        let synced = async { opened?.sync_all().await };
         synced.await.map_err(|source| {
             Error::Fs(FsError::Write {
                 path: path.to_path_buf(),
