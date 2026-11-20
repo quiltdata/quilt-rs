@@ -252,7 +252,8 @@ pub struct Rules {
     user: Option<(PathBuf, RuleFile)>,
     user_file: PathBuf,
     extend: Option<RuleFile>,
-    left_out: Vec<PathBuf>,
+    /// [`Policy::left_out`], each with its names folded for comparing.
+    left_out: Vec<(Vec<String>, PathBuf)>,
     fold_case: bool,
     standard_patterns: bool,
 }
@@ -286,7 +287,11 @@ impl Rules {
             user,
             user_file: user_file.to_path_buf(),
             extend,
-            left_out: policy.left_out.clone(),
+            left_out: policy
+                .left_out
+                .iter()
+                .map(|path| (folded_names(path, policy.fold_case), path.clone()))
+                .collect(),
             fold_case: policy.fold_case,
             standard_patterns: policy.standard_patterns,
         })
@@ -441,20 +446,11 @@ impl Rules {
 
     /// The [`Policy::left_out`] path that `relative_path` is, if any.
     fn left_out_by(&self, relative_path: &Path) -> Option<IgnoredBy> {
-        let names = |path: &Path| -> Vec<String> {
-            path.components()
-                .map(|part| {
-                    let name = part.as_os_str().to_string_lossy();
-                    if self.fold_case {
-                        name.to_lowercase()
-                    } else {
-                        name.into_owned()
-                    }
-                })
-                .collect()
-        };
-        let wanted = names(relative_path);
-        let left_out = self.left_out.iter().find(|path| names(path) == wanted)?;
+        if self.left_out.is_empty() {
+            return None;
+        }
+        let wanted = folded_names(relative_path, self.fold_case);
+        let (_, left_out) = self.left_out.iter().find(|(names, _)| *names == wanted)?;
         Some(IgnoredBy {
             pattern: crate::paths::logical_key(left_out)
                 .to_string_lossy()
@@ -462,6 +458,20 @@ impl Rules {
             source: RuleSource::Contract,
         })
     }
+}
+
+/// `path`'s names, lowercased where the folder compares ignoring case.
+fn folded_names(path: &Path, fold_case: bool) -> Vec<String> {
+    path.components()
+        .map(|part| {
+            let name = part.as_os_str().to_string_lossy();
+            if fold_case {
+                name.to_lowercase()
+            } else {
+                name.into_owned()
+            }
+        })
+        .collect()
 }
 
 /// Where *Stop ignoring* writes its `!` lines.
