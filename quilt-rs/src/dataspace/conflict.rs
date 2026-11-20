@@ -56,13 +56,13 @@ pub struct Row {
 }
 
 impl Row {
-    /// Whether `other` describes the same bytes on each side, however the
-    /// working folder's path was spelled.
+    /// Whether `other` describes the same incoming object and the same bytes
+    /// in the working folder, however the folder's path was spelled.
     pub(crate) fn same_collision(&self, other: &Row) -> bool {
         fn bytes(side: Option<&Side>) -> Option<(Option<&ObjectHash>, Option<u64>)> {
             side.map(|side| (side.hash.as_ref(), side.size))
         }
-        bytes(self.incoming.as_ref()) == bytes(other.incoming.as_ref())
+        self.incoming == other.incoming
             && bytes(self.current.as_ref()) == bytes(other.current.as_ref())
     }
 }
@@ -163,9 +163,9 @@ pub async fn read_resolving(
     let written = async {
         let mut map = ConflictMap::read(storage, dataspace).await?;
         let mut rows = blocked.then_some(rows);
-        // A decision saved while the read ran stays.
+        // A decision saved while the read ran, or changed, stays.
         if let (Some(rows), Some(saved)) = (&mut rows, map.packages.get(&key)) {
-            for (name, row) in rows.iter_mut().filter(|(_, row)| row.resolved.is_none()) {
+            for (name, row) in rows.iter_mut() {
                 if let Some(saved) = saved.get(name).filter(|saved| saved.same_collision(row)) {
                     row.resolved.clone_from(&saved.resolved);
                 }

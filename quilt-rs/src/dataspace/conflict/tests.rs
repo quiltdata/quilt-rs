@@ -382,12 +382,15 @@ async fn a_decision_holds_however_the_folders_path_was_spelled() -> Res {
 }
 
 #[test(tokio::test)]
-async fn a_decision_saved_while_the_read_runs_is_kept() -> Res {
+async fn decisions_saved_or_changed_while_the_read_runs_are_kept() -> Res {
     let (storage, remote) = collided().await?;
+    decide(&storage, "b.txt", "").await?;
+    let incoming = row("b.txt", b"v2").physical_key;
     let manifest = remote.park(&format!("s3://b/.quilt/packages/{SECOND}"));
     let deciding = async {
         manifest.arrived().await;
         decide(&storage, "a.txt", "").await?;
+        decide(&storage, "b.txt", &incoming).await?;
         manifest.release();
         Res::Ok(())
     };
@@ -396,9 +399,46 @@ async fn a_decision_saved_while_the_read_runs_is_kept() -> Res {
 
     decided?;
     assert!(matches!(outcome?, ReadOutcome::Blocked { .. }));
+    let rows = rows(&storage).await?;
+    assert_eq!(rows[&key("a.txt")].resolved.as_deref(), Some(""));
     assert_eq!(
-        rows(&storage).await?[&key("a.txt")].resolved.as_deref(),
-        Some("")
+        rows[&key("b.txt")].resolved.as_deref(),
+        Some(incoming.as_str())
+    );
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_decision_on_an_incoming_object_since_replaced_is_not_applied() -> Res {
+    let (storage, remote) = collided().await?;
+    decide(&storage, "a.txt", &row("a.txt", b"v2").physical_key).await?;
+    decide(&storage, "b.txt", "").await?;
+    let mut rows = vec![
+        row("a.txt", b"v2"),
+        row("b.txt", b"v2"),
+        row("c.txt", b"v2"),
+    ];
+    // The same bytes, as another object.
+    rows[0].physical_key = "s3://b/team/raw/a.txt?versionId=again".to_string();
+    let again = S3Uri::try_from(rows[0].physical_key.as_str())?;
+    remote.put_object(None, &again, b"v2".to_vec()).await?;
+    let at = S3Uri::try_from(format!("s3://b/.quilt/packages/{SECOND}").as_str())?;
+    let manifest = Manifest {
+        rows,
+        ..Manifest::default()
+    };
+    remote
+        .put_object(None, &at, manifest.to_jsonlines().into_bytes())
+        .await?;
+
+    let outcome = read(&storage, &remote, Some(FIRST)).await?;
+
+    assert_eq!(
+        outcome,
+        ReadOutcome::Blocked {
+            revision: SECOND.to_string(),
+            conflicts: vec![PathBuf::from("a.txt")],
+        }
     );
     Ok(())
 }
