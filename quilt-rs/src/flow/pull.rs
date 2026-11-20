@@ -414,6 +414,7 @@ pub async fn pull_package(
     // interleave verification with deletion. Fail-safe in the same direction as
     // the conflict rule: the worst case is a spurious, retryable `PullConflict`,
     // never data loss.
+    let base_rows = manifest.rows_by_key();
     let mut drifted = Vec::new();
     for path in &touched {
         // Verify only what this copy actually INSTALLED. Under
@@ -431,7 +432,7 @@ pub async fn pull_package(
         }
         // A tracked path always has a base row (`create_status` hard-errors
         // otherwise for a remote-backed package), so this is defensive only.
-        let Some(base_row) = manifest.get_record(path) else {
+        let Some(base_row) = base_rows.get(path.as_path()).copied() else {
             continue;
         };
         match refresh_hash(

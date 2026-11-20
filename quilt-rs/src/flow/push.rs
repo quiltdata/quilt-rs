@@ -39,10 +39,11 @@ async fn use_existing_row_or_upload(
     rows: StreamItem,
 ) -> StreamItem {
     let mut output = Vec::new();
+    let remote_rows = remote_manifest.rows_by_key();
     for row in rows? {
         let row = row?;
         debug!("⏳ Processing row: {}", row.logical_key.display());
-        if let Some(remote_row) = remote_manifest.get_record(&row.logical_key) {
+        if let Some(remote_row) = remote_rows.get(row.logical_key.as_path()) {
             if remote_row.matches_content(&row) {
                 debug!(
                     "✔️ Using existing remote row for: {}",

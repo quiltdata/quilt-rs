@@ -696,10 +696,10 @@ pub(crate) async fn install_paths_over(
     // the shape instead of a list of call sites to remember.
     let staging: Res<Vec<(PathBuf, PathBuf, ManifestRow)>> = async {
         let mut staged: Vec<(PathBuf, PathBuf, ManifestRow)> = Vec::new();
+        let rows = manifest.rows_by_key();
 
         for path in entries_paths {
-            // TODO: Consider using a hashmap or treemap for manifest.rows
-            let row = manifest.get_record(path).ok_or_else(|| {
+            let row = *rows.get(path.as_path()).ok_or_else(|| {
                 Error::InstallPath(InstallPathError::NotInRevision((*path).clone()))
             })?;
 

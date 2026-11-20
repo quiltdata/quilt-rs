@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
-use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -14,7 +13,6 @@ use crate::lineage::Change;
 use crate::lineage::InstalledPackageStatus;
 use crate::lineage::LineagePaths;
 use crate::manifest::Manifest;
-use crate::manifest::ManifestRow;
 use crate::object_hash::ObjectHash;
 
 /// A *dry-run* verdict of what a [`pull`](super::pull) **would** do, computed
@@ -76,8 +74,9 @@ pub(crate) enum RemoteChange {
 /// [`classify_pull`] decides that from whole-manifest identity instead.
 pub(crate) fn remote_delta(base: &Manifest, latest: &Manifest) -> BTreeMap<PathBuf, RemoteChange> {
     let mut delta = BTreeMap::new();
+    let (base_rows, latest_rows) = (base.rows_by_key(), latest.rows_by_key());
     for base_row in &base.rows {
-        match latest.get_record(&base_row.logical_key) {
+        match latest_rows.get(base_row.logical_key.as_path()) {
             Some(latest_row) if latest_row.hash == base_row.hash => {}
             Some(latest_row) => {
                 delta.insert(
@@ -91,7 +90,7 @@ pub(crate) fn remote_delta(base: &Manifest, latest: &Manifest) -> BTreeMap<PathB
         }
     }
     for latest_row in &latest.rows {
-        if base.get_record(&latest_row.logical_key).is_none() {
+        if !base_rows.contains_key(latest_row.logical_key.as_path()) {
             delta.insert(
                 latest_row.logical_key.to_path_buf(),
                 RemoteChange::Added(latest_row.hash.clone()),
@@ -267,12 +266,7 @@ pub async fn identical_to_latest(
     // Untracked files the walk gave no hash, at paths the remote writes:
     // ignored ones, and ones inside a folder it skipped whole. An interrupted
     // pull leaves such a file holding `latest`'s bytes.
-    let base_rows: HashMap<&Path, &ManifestRow> = base
-        .rows
-        .iter()
-        .rev()
-        .map(|row| (row.logical_key.as_path(), row))
-        .collect();
+    let (base_rows, latest_rows) = (base.rows_by_key(), latest.rows_by_key());
     for latest_row in &latest.rows {
         let path = latest_row.logical_key.as_path();
         if tracked.contains_key(path) || status.changes.contains_key(path) {
@@ -312,7 +306,7 @@ pub async fn identical_to_latest(
             // no content at all.
             Change::Removed(_) => continue,
         };
-        let Some(latest_row) = latest.get_record(path) else {
+        let Some(latest_row) = latest_rows.get(path.as_path()).copied() else {
             continue;
         };
         // Only a path the remote also changed reaches the comparison at all —
@@ -320,8 +314,8 @@ pub async fn identical_to_latest(
         // Without this, a package whose rows are all in the other algorithm
         // would re-hash every locally edited file on every pull for an answer
         // nothing reads.
-        if base
-            .get_record(path)
+        if base_rows
+            .get(path.as_path())
             .is_some_and(|base_row| base_row.hash == latest_row.hash)
         {
             continue;
@@ -520,6 +514,21 @@ mod tests {
             rows,
             ..Manifest::default()
         }
+    }
+
+    /// Where two rows share a key, which only a hand-built manifest can have,
+    /// each base row is compared with the first `latest` row of its key.
+    #[test]
+    fn remote_delta_compares_with_the_first_row_of_a_key() -> Res {
+        let base = manifest_of(vec![row("a.csv", b"1")?, row("a.csv", b"2")?]);
+        let latest = manifest_of(vec![row("a.csv", b"1")?, row("a.csv", b"3")?]);
+        let delta = remote_delta(&base, &latest);
+        assert_eq!(delta.len(), 1);
+        assert!(matches!(
+            &delta[Path::new("a.csv")],
+            RemoteChange::Modified(hash) if *hash == latest.rows[0].hash
+        ));
+        Ok(())
     }
 
     /// Each path lands in exactly one list, by how `latest` treats it: gained

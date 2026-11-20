@@ -11,6 +11,7 @@ pub(crate) use top_hasher::same_entry_meta;
 pub use crate::workflow::Workflow;
 pub use crate::workflow::WorkflowId;
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -606,6 +607,18 @@ impl Manifest {
             .find(|row| row.logical_key.as_path() == path)
     }
 
+    /// The rows by logical key, for a flow that looks up many files:
+    /// [`Self::get_record`] walks every row on each call. Where two rows
+    /// share a key, the first is kept, the one `get_record` finds.
+    #[must_use]
+    pub fn rows_by_key(&self) -> HashMap<&Path, &ManifestRow> {
+        let mut rows = HashMap::with_capacity(self.rows.len());
+        for row in &self.rows {
+            rows.entry(row.logical_key.as_path()).or_insert(row);
+        }
+        rows
+    }
+
     /// Check if manifest contains a record for the given path
     #[must_use]
     pub fn contains_record(&self, path: &Path) -> bool {
@@ -690,6 +703,34 @@ mod tests {
     use crate::io::storage::LocalStorage;
     use crate::io::storage::Storage;
     use crate::io::storage::mocks::MockStorage;
+
+    /// `rows_by_key` finds the row `get_record` finds for every key: the
+    /// first one where two rows share a key, which only a hand-built manifest
+    /// can have.
+    #[test]
+    fn rows_by_key_finds_what_get_record_finds() -> Res {
+        let row = |key: &str, size| -> Res<ManifestRow> {
+            Ok(ManifestRow {
+                logical_key: crate::LogicalKey::new(key)?,
+                size,
+                ..ManifestRow::default()
+            })
+        };
+        let manifest = Manifest {
+            rows: vec![row("b", 1)?, row("a/c", 2)?, row("b", 3)?, row("a-b", 4)?],
+            ..Manifest::default()
+        };
+        let rows = manifest.rows_by_key();
+        assert_eq!(rows.len(), 3);
+        for row in &manifest.rows {
+            let key = row.logical_key.as_path();
+            assert!(std::ptr::eq(rows[key], manifest.get_record(key).unwrap()));
+        }
+        assert_eq!(rows[Path::new("b")].size, 1);
+        assert!(!rows.contains_key(Path::new("a")));
+        assert!(!manifest.contains_record(Path::new("a")));
+        Ok(())
+    }
 
     #[test]
     fn test_matches_content_identical_rows() -> Res {

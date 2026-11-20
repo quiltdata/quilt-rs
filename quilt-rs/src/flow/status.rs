@@ -361,6 +361,7 @@ pub async fn rehash_changes(
     host_config: &HostConfig,
 ) -> Res<InstalledPackageStatus> {
     let package_home = package_home.as_ref();
+    let rows = manifest.rows_by_key();
     let mut changes = ChangeSet::new();
     for (logical_key, change) in std::mem::take(&mut status.changes) {
         let path = LogicalKey::new(&logical_key)?.join_to(package_home);
@@ -369,7 +370,7 @@ pub async fn rehash_changes(
             Change::Added(_) => Some(Change::Added(
                 calculate_hash(storage, &path, &logical_key, host_config).await?,
             )),
-            Change::Modified(current) => match manifest.get_record(&logical_key) {
+            Change::Modified(current) => match rows.get(logical_key.as_path()).copied() {
                 Some(base) => verify_hash(storage, &path, base.clone(), host_config)
                     .await?
                     .map(Change::Modified),
@@ -444,6 +445,7 @@ pub async fn create_status_cached(
     // modified entries marked as "modified", etc
 
     trace!("⏳ Collecting paths from lineage");
+    let rows = manifest.rows_by_key();
     let mut orig_paths = HashMap::new();
     for path in lineage.paths.keys() {
         // `trace`, not `debug`: this fires once per *file*, and status is recomputed
@@ -451,7 +453,7 @@ pub async fn create_status_cached(
         // of a real log — thirty thousand lines in ten minutes — which made the
         // file useless to read and buried everything else.
         trace!("🔍 Checking manifest for path: {}", path.display());
-        match manifest.get_record(path) {
+        match rows.get(path.as_path()).copied() {
             Some(row) => {
                 orig_paths.insert(path.clone(), row.clone());
             }
