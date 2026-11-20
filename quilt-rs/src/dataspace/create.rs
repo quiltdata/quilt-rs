@@ -267,7 +267,12 @@ pub async fn create(
             return Err(err);
         }
     };
-    write_lock(storage, &mut lock, &edited, &writer, matched).await?;
+    if let Err(err) = write_lock(storage, &mut lock, &edited, &writer, matched).await {
+        if let Err(undo) = edit.restore(storage).await {
+            warn!("{CONTRACT_FILE} was left edited: {undo}");
+        }
+        return Err(err.into());
+    }
     info!(
         "✔️ Created {} in {}",
         entry.key(),
