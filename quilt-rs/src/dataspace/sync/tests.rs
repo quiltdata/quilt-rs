@@ -883,6 +883,28 @@ async fn a_package_with_no_revision_is_published_once_the_dataspace_is_filled() 
     Ok(())
 }
 
+/// The publish leaves a link out, as a commit does; it deletes nothing.
+#[cfg(unix)]
+#[test(tokio::test)]
+async fn a_link_where_a_file_was_is_no_deletion() -> Res {
+    let world = World::filled(&[("a.txt", b"v1"), ("b.txt", b"v1")]).await?;
+    world.remove("a.txt")?;
+    std::os::unix::fs::symlink(
+        world.dir.path().join("elsewhere"),
+        world.folder().join("a.txt"),
+    )?;
+    world.write("b.txt", "v2")?;
+
+    let outcome = world.tick().await?;
+
+    let revision = advanced(&outcome);
+    assert_eq!(
+        world.revision(&revision).await?,
+        files(&[("a.txt", "v1"), ("b.txt", "v2")])
+    );
+    Ok(())
+}
+
 #[test(tokio::test)]
 async fn a_package_with_no_revision_and_no_folder_publishes_nothing() -> Res {
     let world = World::synced()?;

@@ -690,6 +690,13 @@ async fn compose(
             continue;
         }
         let Some(path) = on_disk.remove(&row.logical_key) else {
+            // A link where the file was is not its deletion: the row stays.
+            if storage
+                .is_symlink(row.logical_key.join_to(&entry.folder))
+                .await
+            {
+                rows.push(row.clone());
+            }
             continue;
         };
         if OnDisk::read(storage, path, row.hash.algorithm())
