@@ -191,10 +191,10 @@ pub async fn read_all(
         // read never fills them.
         if lock.header.filled.is_none()
             && read.completed()
-            && !contract
-                .entries()
-                .iter()
-                .any(|entry| entry.access == Access::Sync || needs_domain(entry))
+            && !contract.entries().iter().any(|entry| {
+                entry.access == Access::Sync
+                    || (entry.access == Access::Read && needs_domain(entry))
+            })
         {
             lock.header.filled = Some(Utc::now().trunc_subsecs(0));
         }

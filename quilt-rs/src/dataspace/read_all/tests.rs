@@ -299,6 +299,25 @@ async fn a_local_read_entry_is_left_to_the_domain() -> Res {
     Ok(())
 }
 
+/// A local package that is only written is not read anywhere, so it does
+/// not keep the dataspace from being filled.
+#[test(tokio::test)]
+async fn a_local_write_entry_does_not_hold_back_filled() -> Res {
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    publish(&remote, "team/raw", FIRST, &[("a.txt", b"alpha")]).await?;
+    let root = dataspace(
+        &storage,
+        "read = [\"team/raw\"]\nwrite = [\"quilt+local://lab-mac#package=me/out\"]\n",
+    )?;
+
+    read_all(&storage, &remote, &root, &writer()).await?;
+
+    let lock = lock(&storage, &root).await?.expect("a lock");
+    assert!(lock.header.filled.is_some());
+    Ok(())
+}
+
 #[test(tokio::test)]
 async fn a_contract_edited_by_hand_keeps_the_bases_of_the_packages_it_still_names() -> Res {
     let remote = MockRemote::default();
