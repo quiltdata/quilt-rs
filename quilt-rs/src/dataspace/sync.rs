@@ -239,7 +239,13 @@ pub async fn sync(
                 .is_none_or(|read| read.skipped.is_empty() && read.hash_mismatch.is_empty()),
             _ => false,
         });
-        if lock.header.filled.is_none() && filled(&contract, &lock, whole) {
+        // A `read` entry that cannot be asked about keeps the dataspace
+        // unfilled; the next tick asks again.
+        if lock.header.filled.is_none()
+            && filled(remote, &contract, &lock, whole)
+                .await
+                .unwrap_or(false)
+        {
             lock.header.filled = Some(Utc::now().trunc_subsecs(0));
         }
         if whole {
@@ -271,16 +277,27 @@ pub async fn sync(
     })
 }
 
-/// Whether every `read` entry is in the lock and every `sync` entry was read
-/// whole by this fill: a lock carried from elsewhere names packages whose
-/// folders this one may not hold.
-fn filled(contract: &Contract, lock: &Lock, whole: bool) -> bool {
-    whole
-        && contract
-            .entries()
-            .iter()
-            .filter(|entry| entry.access == Access::Read)
-            .all(|entry| lock.packages.contains_key(&entry.key()))
+/// Whether every `sync` entry was read whole by this fill, a lock carried
+/// from elsewhere naming packages whose folders this one may not hold, and
+/// every `read` entry is in the lock or has no revision to read.
+async fn filled(
+    remote: &impl Remote,
+    contract: &Contract,
+    lock: &Lock,
+    whole: bool,
+) -> Result<bool, EntryError> {
+    if !whole {
+        return Ok(false);
+    }
+    for entry in contract.entries() {
+        if entry.access == Access::Read
+            && !lock.packages.contains_key(&entry.key())
+            && latest(remote, entry).await?.is_some()
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// Reads `entry` in full at `latest`, filling what is missing, and moves its
@@ -691,7 +708,8 @@ async fn compose(
     }
     rows.sort_by(|a, b| a.logical_key.cmp(&b.logical_key));
     // A folder whose files were all deleted, or that turned into a file,
-    // loses its metadata; one that held none keeps it.
+    // loses its metadata; one that held none keeps it, until a file takes its
+    // name.
     let folders = |rows: &[ManifestRow]| -> BTreeSet<String> {
         rows.iter()
             .filter_map(|row| row.logical_key.to_str())
@@ -702,11 +720,14 @@ async fn compose(
             .collect()
     };
     let (before, after) = (folders(&current.rows), folders(&rows));
+    let files: BTreeSet<&LogicalKey> = rows.iter().map(|row| &row.logical_key).collect();
     let mut dir_meta = current.dir_meta.clone();
     dir_meta.retain(|dir| {
-        dir.logical_key
-            .to_str()
-            .is_none_or(|key| !before.contains(key) || after.contains(key))
+        !files.contains(&dir.logical_key)
+            && dir
+                .logical_key
+                .to_str()
+                .is_none_or(|key| !before.contains(key) || after.contains(key))
     });
     let manifest = Manifest {
         header: current.header.clone(),

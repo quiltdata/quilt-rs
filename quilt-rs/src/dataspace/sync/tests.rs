@@ -806,6 +806,9 @@ async fn a_fill_that_does_not_read_every_entry_whole_leaves_the_dataspace_unfill
 #[test(tokio::test)]
 async fn a_dataspace_is_not_filled_while_a_read_entry_is_unread() -> Res {
     let world = World::new("read = [\"team/ref\"]\nsync = [\"team/raw\"]")?;
+    world
+        .publish_to("team/ref", THIRD, &[("r.txt", b"ref")])
+        .await?;
     world.publish(FIRST, &[("a.txt", b"v1")]).await?;
 
     world.sync().await?;
@@ -815,6 +818,47 @@ async fn a_dataspace_is_not_filled_while_a_read_entry_is_unread() -> Res {
     assert!(synced.read_only);
     assert!(world.lock().await?.header.filled.is_none());
     assert_eq!(world.latest().await?, FIRST);
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_read_entry_with_no_revision_does_not_keep_the_dataspace_unfilled() -> Res {
+    let world = World::new("read = [\"team/ref\"]\nsync = [\"team/raw\"]")?;
+    world.publish(FIRST, &[("a.txt", b"v1")]).await?;
+
+    let synced = world.sync().await?;
+
+    assert!(synced.read_only);
+    assert!(world.lock().await?.header.filled.is_some());
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_file_named_as_a_folder_that_held_none_takes_its_place() -> Res {
+    let world = World::synced()?;
+    let folder = crate::manifest::DirMeta::new(
+        LogicalKey::new("empty")?,
+        serde_json::json!({"user_meta": {"units": "m"}}),
+    );
+    world
+        .publish_with(
+            "team/raw",
+            FIRST,
+            &[("a.txt", b"v1")],
+            ManifestHeader::default(),
+            vec![folder],
+        )
+        .await?;
+    world.sync().await?;
+    world.write("empty", "now a file")?;
+
+    let outcome = world.tick().await?;
+
+    let revision = advanced(&outcome);
+    assert_eq!(
+        world.revision(&revision).await?,
+        files(&[("a.txt", "v1"), ("empty", "now a file")])
+    );
     Ok(())
 }
 
