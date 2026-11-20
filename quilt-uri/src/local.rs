@@ -233,6 +233,7 @@ mod tests {
             "quilt+local://KEY:secret@\tname#package=a/b",
             "quilt+local:KEY:secret@name#package=a/b",
             "quilt+local:\t//KEY:secret@name#package=a/b",
+            "quilt+local:KEY:secret@name\t#package=a/b&path=x:\t//name",
         ] {
             let err = LocalPackageUri::try_from(input)
                 .expect_err(input)
