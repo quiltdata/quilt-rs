@@ -129,6 +129,18 @@ pub async fn read_all(
     dataspace: &Path,
     writer: &Writer,
 ) -> Result<DataspaceRead, ReadAllError> {
+    read_some(storage, remote, dataspace, writer, |_| true).await
+}
+
+/// [`read_all`], reading only the `read` entries `select` picks. `filled` is
+/// set only once every `read` entry is in the lock.
+pub(crate) async fn read_some(
+    storage: &(impl Storage + Sync),
+    remote: &impl Remote,
+    dataspace: &Path,
+    writer: &Writer,
+    select: impl Fn(&Entry) -> bool,
+) -> Result<DataspaceRead, ReadAllError> {
     let contract = Contract::read(storage, dataspace, writer.local_registry_name()).await?;
     let (mut lock, writer) = usable_lock(storage, &contract, writer)
         .await?
@@ -136,7 +148,7 @@ pub async fn read_all(
 
     let mut entries = Vec::new();
     for entry in contract.entries() {
-        if entry.access != Access::Read || needs_domain(entry) {
+        if entry.access != Access::Read || needs_domain(entry) || !select(entry) {
             continue;
         }
         let entry_key = entry.key();
@@ -159,8 +171,11 @@ pub async fn read_all(
 
     let read = DataspaceRead { entries };
     if read.entries.iter().any(|(_, read)| read.completed()) {
+        // An entry left unselected is unfilled until the lock holds it.
         let unfilled = contract.entries().iter().any(|entry| {
-            entry.access == Access::Sync || (entry.access == Access::Read && needs_domain(entry))
+            entry.access == Access::Sync
+                || (entry.access == Access::Read
+                    && (needs_domain(entry) || !lock.packages.contains_key(&entry.key())))
         });
         // `sync` entries and local packages need a Domain, so a domainless
         // read never fills them.
