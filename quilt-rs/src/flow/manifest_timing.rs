@@ -53,6 +53,10 @@ fn secs(duration: Duration) -> String {
     format!("{:.2} s", duration.as_secs_f64())
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "one fixture, then each flow in the order a user runs them"
+)]
 async fn measure(rows: usize) -> Res<Vec<(&'static str, Duration)>> {
     let dir = tempfile::tempdir()?;
     let storage = LocalStorage::new();
