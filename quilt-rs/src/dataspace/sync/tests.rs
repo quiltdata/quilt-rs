@@ -247,6 +247,11 @@ impl World {
         Ok(self.lock().await?.packages.get(&key()).cloned())
     }
 
+    /// The lock's base for the package, `None` where it has none.
+    async fn base(&self) -> Result<Option<String>, Box<dyn std::error::Error>> {
+        Ok(self.locked().await?.and_then(|locked| locked.base))
+    }
+
     fn write(&self, key: &str, body: &str) -> std::io::Result<()> {
         let path = self.folder().join(key);
         std::fs::create_dir_all(path.parent().expect("a folder"))?;
@@ -267,10 +272,7 @@ impl World {
         world.publish(FIRST, files).await?;
         let synced = world.sync().await?;
         assert!(synced.read_only, "{synced:?}");
-        assert_eq!(
-            world.locked().await?.map(|locked| locked.base).as_deref(),
-            Some(FIRST)
-        );
+        assert_eq!(world.base().await?.as_deref(), Some(FIRST));
         Ok(world)
     }
 }
@@ -316,10 +318,7 @@ async fn a_first_tick_fills_the_folder_and_publishes_nothing() -> Res {
     assert_eq!(world.latest().await?, FIRST);
     let lock = world.lock().await?;
     assert!(lock.header.filled.is_some());
-    assert_eq!(
-        lock.packages.get(&key()).map(|locked| locked.base.as_str()),
-        Some(FIRST)
-    );
+    assert_eq!(lock.packages.get(&key()), Some(&LockEntry::at(FIRST)));
     Ok(())
 }
 
@@ -338,9 +337,7 @@ async fn a_tick_publishes_additions_changes_and_deletions_against_the_base() -> 
         world.revision(&revision).await?,
         files(&[("a.txt", "v2"), ("c.txt", "v1"), ("new/d.txt", "added")])
     );
-    let locked = world.locked().await?.ok_or("no lock entry")?;
-    assert_eq!(locked.base, revision);
-    assert_eq!(locked.commits, Vec::<String>::new());
+    assert_eq!(world.locked().await?, Some(LockEntry::at(revision)));
     Ok(())
 }
 
@@ -414,10 +411,7 @@ async fn a_collision_blocks_the_tick_before_anything_is_applied_or_published() -
     );
     assert_eq!(world.text("b.txt").as_deref(), Some("v1"));
     assert_eq!(world.latest().await?, SECOND);
-    assert_eq!(
-        world.locked().await?.map(|locked| locked.base).as_deref(),
-        Some(FIRST)
-    );
+    assert_eq!(world.base().await?.as_deref(), Some(FIRST));
     Ok(())
 }
 
@@ -531,7 +525,7 @@ async fn a_push_that_latest_moved_past_is_left_stored_and_the_lock_unmoved() -> 
     assert_eq!(latest.as_deref(), Some(SECOND));
     assert_eq!(world.revision(revision).await?, files(&[("a.txt", "v2")]));
     let locked = world.locked().await?.ok_or("no lock entry")?;
-    assert_eq!(locked.base, FIRST);
+    assert_eq!(locked.base.as_deref(), Some(FIRST));
     assert_eq!(locked.commits, std::slice::from_ref(revision));
     assert_eq!(
         world.kept().await?,
@@ -577,10 +571,7 @@ async fn a_package_whose_latest_is_gone_is_diverged_and_its_lock_kept() -> Res {
         matches!(&outcome, Ok(EntrySync::Diverged { latest: None })),
         "{outcome:?}"
     );
-    assert_eq!(
-        world.locked().await?.map(|locked| locked.base).as_deref(),
-        Some(FIRST)
-    );
+    assert_eq!(world.base().await?.as_deref(), Some(FIRST));
     Ok(())
 }
 
@@ -600,9 +591,7 @@ async fn a_push_squashes_the_commits_not_pushed_and_releases_them() -> Res {
         world.revision(&revision).await?,
         files(&[("a.txt", "v2"), ("b.txt", "added")])
     );
-    let locked = world.locked().await?.ok_or("no lock entry")?;
-    assert_eq!(locked.base, revision);
-    assert_eq!(locked.commits, Vec::<String>::new());
+    assert_eq!(world.locked().await?, Some(LockEntry::at(revision.clone())));
     // Squashed: only the last commit was stored in the bucket.
     assert!(world.revision(&squashed[0]).await.is_err());
     Ok(())
@@ -631,8 +620,7 @@ async fn a_missing_or_empty_folder_is_read_back_at_the_lock_and_nothing_publishe
         assert_eq!(world.text("b.txt").as_deref(), Some("v1"));
         assert!(world.folder().join(METADATA_FILE).exists());
         assert_eq!(world.latest().await?, SECOND);
-        let locked = world.locked().await?.ok_or("no lock entry")?;
-        assert_eq!(locked.base, FIRST);
+        assert_eq!(world.base().await?.as_deref(), Some(FIRST));
     }
     Ok(())
 }
@@ -656,7 +644,7 @@ async fn a_missing_folder_is_read_back_at_the_local_commit_the_lock_names() -> R
     assert_eq!(world.text("b.txt").as_deref(), Some("v1"));
     assert_eq!(world.latest().await?, FIRST);
     let locked = world.locked().await?.ok_or("no lock entry")?;
-    assert_eq!(locked.base, FIRST);
+    assert_eq!(locked.base.as_deref(), Some(FIRST));
     assert_eq!(locked.commits, commits);
     Ok(())
 }
@@ -704,9 +692,10 @@ async fn after_data_toml_is_edited_commits_not_pushed_are_pushed_before_the_read
         files(&[("a.txt", "v2"), ("b.txt", "v1")])
     );
     assert_eq!(world.text("b.txt").as_deref(), Some("v1"));
-    let locked = world.locked().await?.ok_or("no lock entry")?;
-    assert_eq!(locked.base, commit[0]);
-    assert_eq!(locked.commits, Vec::<String>::new());
+    assert_eq!(
+        world.locked().await?,
+        Some(LockEntry::at(commit[0].clone()))
+    );
     Ok(())
 }
 
@@ -755,10 +744,7 @@ async fn after_data_toml_is_edited_an_entry_read_whole_keeps_its_base_while_anot
     assert!(synced.read_only, "{synced:?}");
     assert_eq!(world.text("a.txt").as_deref(), Some("v2"));
     let lock = world.lock().await?;
-    assert_eq!(
-        lock.packages.get(&key()).map(|locked| locked.base.as_str()),
-        Some(SECOND)
-    );
+    assert_eq!(lock.packages.get(&key()), Some(&LockEntry::at(SECOND)));
     let contract = Contract::read(&world.storage, &world.dataspace(), None).await?;
     assert_ne!(lock.header.data_toml_hash, contract.data_toml_hash());
     Ok(())
@@ -836,9 +822,7 @@ async fn a_change_undone_before_its_push_releases_the_commits() -> Res {
         ),
         "{outcome:?}"
     );
-    let locked = world.locked().await?.ok_or("no lock entry")?;
-    assert_eq!(locked.base, base);
-    assert_eq!(locked.commits, Vec::<String>::new());
+    assert_eq!(world.locked().await?, Some(LockEntry::at(base)));
     Ok(())
 }
 
@@ -1072,7 +1056,7 @@ async fn moving() -> Result<(World, String, String), Box<dyn std::error::Error>>
     lock.packages.insert(
         local_key(),
         LockEntry {
-            base: first.clone(),
+            base: Some(first.clone()),
             commits: vec![head.clone()],
         },
     );
@@ -1141,10 +1125,7 @@ async fn a_local_package_moved_to_a_bucket_starts_there_at_its_last_local_commit
     assert_eq!(lock.packages.get(&local_key()), None);
     assert_eq!(
         lock.packages.get(&key()),
-        Some(&LockEntry {
-            base: head.clone(),
-            commits: Vec::new(),
-        })
+        Some(&LockEntry::at(head.clone()))
     );
     assert_eq!(world.text("a.txt").as_deref(), Some("v2"));
     // The local registry keeps the package.
@@ -1173,7 +1154,7 @@ async fn a_move_to_a_bucket_that_has_the_package_is_diverged_and_keeps_the_local
     assert_eq!(
         lock.packages.get(&local_key()),
         Some(&LockEntry {
-            base: first,
+            base: Some(first),
             commits: vec![head],
         })
     );
@@ -1204,10 +1185,7 @@ async fn a_move_whose_push_landed_before_the_lock_was_written_is_not_pushed_agai
     assert_eq!(world.latest().await?, head);
     let lock = world.lock().await?;
     assert_eq!(lock.packages.get(&local_key()), None);
-    assert_eq!(
-        lock.packages.get(&key()).map(|locked| locked.base.as_str()),
-        Some(head.as_str())
-    );
+    assert_eq!(lock.packages.get(&key()), Some(&LockEntry::at(head)));
     Ok(())
 }
 
@@ -1250,10 +1228,7 @@ async fn a_move_the_buckets_workflow_refuses_keeps_the_local_key_until_it_is_acc
     };
     assert_eq!(advanced(moved), head);
     assert_eq!(world.latest().await?, head);
-    assert_eq!(
-        world.locked().await?.map(|locked| locked.base).as_deref(),
-        Some(head.as_str())
-    );
+    assert_eq!(world.base().await?, Some(head));
     Ok(())
 }
 
@@ -1373,10 +1348,7 @@ async fn a_package_with_no_revision_is_published_once_the_dataspace_is_filled() 
         world.revision(&revision).await?,
         files(&[("a.txt", "first")])
     );
-    assert_eq!(
-        world.locked().await?.map(|locked| locked.base),
-        Some(revision)
-    );
+    assert_eq!(world.locked().await?, Some(LockEntry::at(revision)));
     Ok(())
 }
 
@@ -1441,6 +1413,180 @@ async fn a_package_with_no_revision_and_no_folder_publishes_nothing() -> Res {
     Ok(())
 }
 
+/// A filled dataspace whose package has no revision, its folder holding a
+/// file to publish first.
+async fn unpublished() -> Result<World, Box<dyn std::error::Error>> {
+    let world = World::synced()?;
+    world.write("a.txt", "first")?;
+    assert!(world.sync().await?.read_only);
+    Ok(world)
+}
+
+/// The commit of a package never published is in the lock, with no base,
+/// before its push: a push that is lost leaves it there, and a lock deleted
+/// after that loses nothing, since reattach reaches the commit. Its first
+/// push then bases the entry at it.
+#[test(tokio::test)]
+async fn a_commit_never_published_is_locked_before_its_push_and_reattached() -> Res {
+    let world = unpublished().await?;
+
+    let stopped = stopping_at("push.object", 0, world.tick()).await?;
+
+    assert!(matches!(stopped, EntrySync::Failed(_)), "{stopped:?}");
+    assert!(world.remote.current(LATEST).await?.is_none());
+    let locked = world.locked().await?;
+    let commit = match &locked {
+        Some(LockEntry {
+            base: None,
+            commits,
+        }) if commits.len() == 1 => commits[0].clone(),
+        other => panic!("expected one commit locked with no base, got {other:?}"),
+    };
+
+    std::fs::remove_file(world.dataspace().join(crate::dataspace::lock::LOCK_FILE))?;
+    let dataspace = world.dataspace();
+    let (domain, storage) = (world.domain(), &world.storage);
+    let listed = crate::dataspace::reattach::unattached(
+        storage,
+        &world.remote,
+        &domain,
+        &dataspace,
+        &writer(),
+        &key(),
+    )
+    .await?;
+    assert_eq!(
+        listed.iter().map(|commit| &commit.hash).collect::<Vec<_>>(),
+        [&commit]
+    );
+    crate::dataspace::reattach::reattach(
+        storage,
+        &world.remote,
+        &domain,
+        &dataspace,
+        &writer(),
+        &key(),
+        &commit,
+        None,
+    )
+    .await?;
+    assert_eq!(world.locked().await?, locked);
+
+    // A new lock is not filled, so the commit is pushed by a read-only tick.
+    let synced = world.sync().await?;
+
+    assert!(synced.read_only, "{synced:?}");
+    assert_eq!(advanced(&synced.entries[0].1), commit);
+    assert_eq!(world.latest().await?, commit);
+    assert_eq!(world.revision(&commit).await?, files(&[("a.txt", "first")]));
+    assert_eq!(world.locked().await?, Some(LockEntry::at(commit)));
+    Ok(())
+}
+
+/// The first push of a package expects no `latest`: one that appears while
+/// it runs leaves the revision stored and kept, and the lock holding the
+/// commit with no base.
+#[test(tokio::test)]
+async fn a_first_push_that_a_latest_appeared_before_is_left_stored_and_locked() -> Res {
+    let world = unpublished().await?;
+    let gate = world.remote.park(LATEST);
+
+    let rival = async {
+        // The tick's own read of `latest`, then the push's.
+        gate.arrived().await;
+        let push = world.remote.park(LATEST);
+        gate.release();
+        push.arrived().await;
+        world.publish(SECOND, &[("a.txt", b"theirs")]).await?;
+        push.release();
+        Res::Ok(())
+    };
+    let (outcome, rivalled) = tokio::join!(world.tick(), rival);
+    rivalled?;
+    let outcome = outcome?;
+
+    let EntrySync::Ran {
+        published: Some(Published::Stored { revision, latest }),
+        ..
+    } = &outcome
+    else {
+        panic!("expected the revision stored, got {outcome:?}");
+    };
+    assert_eq!(latest.as_deref(), Some(SECOND));
+    assert_eq!(world.latest().await?, SECOND);
+    assert_eq!(
+        world.locked().await?,
+        Some(LockEntry {
+            base: None,
+            commits: vec![revision.clone()],
+        })
+    );
+    assert_eq!(
+        world.kept().await?,
+        Some(KeptRevision {
+            hash: revision.clone(),
+            base: None,
+            reason: KeptReason::LatestMoved,
+        })
+    );
+    Ok(())
+}
+
+/// A `latest` that appears before the first push of a package's commits
+/// diverges from them: nothing is read or published, and the lock and the
+/// folder keep them.
+#[test(tokio::test)]
+async fn a_latest_that_appears_before_a_first_push_is_diverged() -> Res {
+    let world = unpublished().await?;
+    stopping_at("push.object", 0, world.tick()).await?;
+    let locked = world.locked().await?;
+    world.publish(SECOND, &[("a.txt", b"theirs")]).await?;
+
+    let outcome = world.tick().await?;
+
+    assert!(
+        matches!(&outcome, EntrySync::Diverged { latest } if latest.as_deref() == Some(SECOND)),
+        "{outcome:?}"
+    );
+    assert!(locked.as_ref().is_some_and(|locked| locked.base.is_none()));
+    assert_eq!(world.locked().await?, locked);
+    assert_eq!(world.text("a.txt").as_deref(), Some("first"));
+    Ok(())
+}
+
+/// [`a_tick_stopped_at_any_file_manifest_or_lock_step_ends_as_one_that_was_not`]
+/// for a package's first publication.
+#[test(tokio::test)]
+async fn a_first_publication_stopped_at_any_step_ends_as_one_that_was_not() -> Res {
+    let uninterrupted = unpublished().await?;
+    let expected = advanced(&uninterrupted.tick().await?);
+
+    for point in [
+        "record.object",
+        "sync.recorded",
+        "push.object",
+        "push.stored",
+        "sync.pushed",
+    ] {
+        let world = unpublished().await?;
+        let stopped = stopping_at(point, 0, world.tick()).await?;
+        assert!(
+            matches!(stopped, EntrySync::Failed(_)),
+            "{point} did not stop the tick: {stopped:?}"
+        );
+
+        world.tick().await?;
+
+        assert_eq!(world.latest().await?, expected, "stopped at {point}");
+        assert_eq!(
+            world.locked().await?,
+            Some(LockEntry::at(expected.clone())),
+            "stopped at {point}"
+        );
+    }
+    Ok(())
+}
+
 #[test(tokio::test)]
 async fn a_change_the_buckets_workflow_refuses_is_stored_kept_and_not_uploaded_again() -> Res {
     let world = World::filled(&[("a.txt", b"v1")]).await?;
@@ -1458,10 +1604,7 @@ async fn a_change_the_buckets_workflow_refuses_is_stored_kept_and_not_uploaded_a
     };
     assert_eq!(world.revision(revision).await?, files(&[("a.txt", "v2")]));
     assert_eq!(world.latest().await?, FIRST);
-    assert_eq!(
-        world.locked().await?.map(|locked| locked.base).as_deref(),
-        Some(FIRST)
-    );
+    assert_eq!(world.base().await?.as_deref(), Some(FIRST));
     assert_eq!(
         world.kept().await?,
         Some(KeptRevision {
@@ -1630,7 +1773,7 @@ async fn after_data_toml_is_edited_a_blocked_commit_is_read_whole_and_kept() -> 
     let contract = Contract::read(&world.storage, &world.dataspace(), None).await?;
     assert_eq!(lock.header.data_toml_hash, contract.data_toml_hash());
     let locked = lock.packages.get(&key()).ok_or("no lock entry")?;
-    assert_eq!(locked.base, FIRST);
+    assert_eq!(locked.base.as_deref(), Some(FIRST));
     assert_eq!(locked.commits, commits);
     Ok(())
 }
@@ -1752,8 +1895,7 @@ async fn a_tick_stopped_at_any_file_manifest_or_lock_step_ends_as_one_that_was_n
             let context = format!("stopped at {point} #{pass}");
             assert_eq!(world.latest().await?, expected, "{context}");
             let locked = world.locked().await?.ok_or("no lock entry")?;
-            assert_eq!(locked.base, expected, "{context}");
-            assert_eq!(locked.commits, Vec::<String>::new(), "{context}");
+            assert_eq!(locked, LockEntry::at(expected.clone()), "{context}");
             for (key, body) in &expected_files {
                 assert_eq!(world.text(key).as_ref(), Some(body), "{context}: {key}");
             }

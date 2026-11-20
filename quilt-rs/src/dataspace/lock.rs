@@ -1,6 +1,6 @@
-//! `data.lock.toml`, a dataspace's lock: each package's base and unpushed
-//! local commits, under a header that names the contract, the dataspace and
-//! the writer it was written for.
+//! `data.lock.toml`, a dataspace's lock: each package's base, once it was
+//! published, and unpushed local commits, under a header that names the
+//! contract, the dataspace and the writer it was written for.
 //!
 //! A tool writes the lock after an operation completes, whole, by renaming a
 //! temporary file over it. No lock file is held, so of two overlapping
@@ -86,10 +86,33 @@ pub struct LockHeader {
 }
 
 /// A package's base, and its unpushed local commits, oldest first.
+///
+/// A package with local commits that was never published has no base: its
+/// first publication establishes one. An entry holds a base or a commit.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LockEntry {
-    pub base: String,
+    pub base: Option<String>,
     pub commits: Vec<String>,
+}
+
+impl LockEntry {
+    /// An entry at `base`, with no unpushed commits.
+    #[must_use]
+    pub fn at(base: impl Into<String>) -> Self {
+        Self {
+            base: Some(base.into()),
+            commits: Vec::new(),
+        }
+    }
+
+    /// The package's current revision: its last commit, or else its base.
+    #[must_use]
+    pub fn current(&self) -> Option<&str> {
+        self.commits
+            .last()
+            .or(self.base.as_ref())
+            .map(String::as_str)
+    }
 }
 
 /// A dataspace's lock.
@@ -254,13 +277,12 @@ fn raw(
                 // What the reader would refuse is never written over a lock.
                 let text = key.to_string();
                 checked(&text, entry)?;
-                let raw = if entry.commits.is_empty() {
-                    RawEntry::Base(entry.base.clone())
-                } else {
-                    RawEntry::Commits(RawCommits {
-                        base: entry.base.clone(),
+                let raw = match &entry.base {
+                    Some(base) if entry.commits.is_empty() => RawEntry::Base(base.clone()),
+                    base => RawEntry::Commits(RawCommits {
+                        base: base.clone(),
                         commits: entry.commits.clone(),
-                    })
+                    }),
                 };
                 Ok((text, raw))
             })
@@ -269,13 +291,15 @@ fn raw(
 }
 
 /// The key `text` names, where it is a canonical package URI and the entry
-/// holds whole top hashes.
+/// holds whole top hashes, a base or a commit among them.
 fn checked(text: &str, entry: &LockEntry) -> Result<PackageKey, LockError> {
     let key = text.parse().map_err(|source| LockError::Key {
         key: mask_user(text),
         source,
     })?;
-    if let Some(hash) = std::iter::once(&entry.base)
+    if let Some(hash) = entry
+        .base
+        .iter()
         .chain(&entry.commits)
         .find(|hash| !is_top_hash(hash))
     {
@@ -283,6 +307,9 @@ fn checked(text: &str, entry: &LockEntry) -> Result<PackageKey, LockError> {
             package: text.to_string(),
             hash: hash.clone(),
         });
+    }
+    if entry.current().is_none() {
+        return Err(LockError::Empty(text.to_string()));
     }
     Ok(key)
 }
@@ -320,6 +347,9 @@ pub enum LockError {
 
     #[error("{LOCK_FILE} holds {hash:?} for {package}, which is not a whole top hash")]
     Hash { package: String, hash: String },
+
+    #[error("{LOCK_FILE} holds neither a base nor a commit for {0}")]
+    Empty(String),
 
     #[error("{LOCK_FILE}'s `{0}` is not a UTC time")]
     Time(&'static str),
@@ -359,7 +389,7 @@ fn parse(bytes: &[u8]) -> Result<Lock, LockError> {
     let mut packages = BTreeMap::new();
     for (text, raw) in raw.packages {
         let (base, commits) = match raw {
-            RawEntry::Base(base) => (base, Vec::new()),
+            RawEntry::Base(base) => (Some(base), Vec::new()),
             RawEntry::Commits(RawCommits { base, commits }) => (base, commits),
         };
         let entry = LockEntry { base, commits };
@@ -432,10 +462,12 @@ enum RawEntry {
     Commits(RawCommits),
 }
 
+/// A package's commits, and its base where it was published.
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct RawCommits {
-    base: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    base: Option<String>,
     commits: Vec<String>,
 }
 

@@ -194,12 +194,14 @@ package read at a newer revision, and `post-write` for each revision stored.
 lacks, kept in `bio.quilt.dataspace` in the OS's local data folder. Commits
 made with `quilt commit` are not among them.
 `reattach ... <COMMIT> --base <HASH>` attaches one as the package's unpushed
-commit on that base, which its next publish expects `latest` to be. PACKAGE is
+commit on that base, which its next publish expects `latest` to be.
+`reattach ... <COMMIT> --unpublished` attaches a commit of a package never
+published, with no base: its next publish expects no `latest`. PACKAGE is
 `quilt+s3://bucket#package=owner/name`, listed under `write`, `replace` or
 `sync`. A lock that already names unpushed commits of the package, or that
 another host, user or folder wrote, is refused. Under `--json` it prints
 `package`, `unattached` (`hash` and `message`; `null` after an attach),
-`attached` and `base`.
+`attached` and `base` (`null` with `--unpublished`).
 
 `push` with no commit to push prints `Nothing to push` and exits 0; under
 `--json` the same shape has `"hash": null`, `"manifest_uri": null` and

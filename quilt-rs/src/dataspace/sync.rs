@@ -202,11 +202,13 @@ impl<S: Storage + Sync> LockFile<'_, S> {
 /// bucket, and pushes the lock's last commit against its base. The lock is
 /// written after each step: the base after a read, a commit once it is
 /// recorded, and the base again, with the commits the push squashed dropped,
-/// once `latest` names the push. Commits are not checked against the
-/// bucket's workflow; their push is. A push that `latest` moved past, or that
-/// the workflow refuses, is left stored, recorded with [`Queue::keep`], and
-/// not uploaded again while the bucket holds it; the lock stays where it
-/// was. A working folder the lock says was
+/// once `latest` names the push. A package never published is recorded with
+/// its commits and no base, and its first push expects no `latest`; a
+/// `latest` that appears first leaves it diverged. Commits are not checked
+/// against the bucket's workflow; their push is. A push that `latest` moved
+/// past, or that the workflow refuses, is left stored, recorded with
+/// [`Queue::keep`], and not uploaded again while the bucket holds it; the
+/// lock stays where it was. A working folder the lock says was
 /// filled and that is now missing or empty is read back at the lock's
 /// current revision, its last commit or else its base, and nothing is
 /// published. What the ignore rules leave out of a commit is not committed,
@@ -394,7 +396,7 @@ async fn fill(
         if latest.as_ref() == Some(head) {
             // The push landed and the lock was not written after it.
             set_base(lock, lock_file, &key, head.clone()).await?;
-        } else if latest.as_ref() != Some(&locked.base) {
+        } else if latest != locked.base {
             return Ok(EntrySync::Diverged { latest });
         } else {
             let (pushed, wrote) = push_head(
@@ -404,7 +406,7 @@ async fn fill(
                 queue,
                 entry,
                 head,
-                Some(&locked.base),
+                locked.base.as_deref(),
             )
             .await?;
             if let Published::Advanced { revision, .. } = &pushed {
@@ -437,7 +439,10 @@ async fn fill(
             }
         }
     }
-    let base = lock.packages.get(&key).map(|locked| locked.base.clone());
+    let base = lock
+        .packages
+        .get(&key)
+        .and_then(|locked| locked.base.clone());
     let Some(latest) = latest else {
         return Ok(match base {
             None => EntrySync::Ran {
@@ -550,8 +555,7 @@ fn moved_from(
         return None;
     }
     let locked = lock.packages.get(&local)?;
-    let head = locked.commits.last().unwrap_or(&locked.base).clone();
-    Some((local, head))
+    Some((local, locked.current()?.to_string()))
 }
 
 /// Moves `entry`'s package to its bucket where `data.toml` was edited to,
@@ -650,7 +654,7 @@ async fn tick(
     }
     let key = entry.key();
     let (base, commits) = match lock.packages.get(&key) {
-        Some(locked) => (Some(locked.base.clone()), locked.commits.clone()),
+        Some(locked) => (locked.base.clone(), locked.commits.clone()),
         None => (None, Vec::new()),
     };
     let mut current = None;
@@ -673,7 +677,9 @@ async fn tick(
     {
         // The push landed and the lock was not written after it.
         set_base(lock, lock_file, &key, pushed.clone()).await?;
-    } else if base.is_some() && (latest.is_none() || !commits.is_empty()) {
+    } else if !commits.is_empty() || (base.is_some() && latest.is_none()) {
+        // Commits on a base `latest` moved from, or on none where `latest`
+        // now names a revision; or a base whose `latest` is gone.
         return Ok(EntrySync::Diverged { latest });
     } else if let Some(hash) = &latest {
         let contract = lock_file.contract;
@@ -730,7 +736,7 @@ async fn set_base(
     lock.packages.insert(
         key.clone(),
         LockEntry {
-            base,
+            base: Some(base),
             commits: Vec::new(),
         },
     );
@@ -756,7 +762,7 @@ async fn publish(
 ) -> Result<Option<Published>, Stop> {
     let key = entry.key();
     let (base, commits) = match lock.packages.get(&key) {
-        Some(locked) => (Some(locked.base.clone()), locked.commits.clone()),
+        Some(locked) => (locked.base.clone(), locked.commits.clone()),
         None => (None, Vec::new()),
     };
     let current_hash = commits.last().or(base.as_ref());
@@ -820,12 +826,17 @@ async fn publish(
         .await?;
         if let Some(hash) = recorded.hash() {
             crate::failpoint::stop("sync.recorded")?;
-            // A package not yet published has no base for the lock to hold
-            // its commit against, so the commit is pushed at once.
-            if let Some(locked) = lock.packages.get_mut(&key) {
-                locked.commits.push(hash.to_string());
-                lock_file.save(lock).await?;
-            }
+            // A package not yet published gets an entry with no base: its
+            // first push, which expects no `latest`, establishes one.
+            lock.packages
+                .entry(key.clone())
+                .or_insert(LockEntry {
+                    base: None,
+                    commits: Vec::new(),
+                })
+                .commits
+                .push(hash.to_string());
+            lock_file.save(lock).await?;
             if let Err(err) =
                 rewrite_metadata(storage, store, entry, hash, metadata_text.as_deref()).await
             {

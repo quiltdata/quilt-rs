@@ -176,7 +176,7 @@ pub(crate) async fn publish_some(
         }
         let key = entry.key();
         let locked = lock.packages.get(&key);
-        let before = locked.map(|locked| locked.base.clone());
+        let before = locked.and_then(|locked| locked.base.clone());
         let reads = contract
             .entries()
             .iter()
@@ -291,7 +291,7 @@ fn ran(published: Result<Published, EntryError>) -> EntryPublish {
 
 fn based_on(base: &str) -> LockEntry {
     LockEntry {
-        base: base.to_string(),
+        base: Some(base.to_string()),
         commits: Vec::new(),
     }
 }

@@ -120,7 +120,7 @@ async fn lock(
 fn base(lock: &Lock, package: &str) -> Option<String> {
     lock.packages
         .get(&key(package))
-        .map(|entry| entry.base.clone())
+        .and_then(|entry| entry.base.clone())
 }
 
 fn report(read: &EntryRead) -> &ReadReport {
@@ -255,7 +255,7 @@ async fn a_package_with_unpushed_commits_is_not_read() -> Res {
     let contract = Contract::read(&storage, &root, None).await?;
     let mut lock = Lock::new(&contract, &writer());
     let committed = LockEntry {
-        base: SECOND.to_string(),
+        base: Some(SECOND.to_string()),
         commits: vec![FIRST.to_string()],
     };
     lock.packages.insert(key("team/raw"), committed.clone());
@@ -377,7 +377,7 @@ async fn lock_from(storage: &MockStorage, root: &Path, writer: &Writer, entry: L
 
 fn at(base: &str) -> LockEntry {
     LockEntry {
-        base: base.to_string(),
+        base: Some(base.to_string()),
         commits: Vec::new(),
     }
 }
@@ -472,7 +472,7 @@ async fn a_lock_from_another_host_naming_unpushed_commits_is_refused() -> Res {
     publish(&remote, "team/raw", FIRST, &[("a.txt", b"alpha")]).await?;
     let root = dataspace(&storage, "read = [\"team/raw\"]\n")?;
     let committed = LockEntry {
-        base: FIRST.to_string(),
+        base: Some(FIRST.to_string()),
         commits: vec![SECOND.to_string()],
     };
     lock_from(&storage, &root, &elsewhere(), committed).await?;

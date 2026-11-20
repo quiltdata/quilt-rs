@@ -98,9 +98,9 @@ pub enum PackageImport {
         base: String,
         commits: Vec<String>,
     },
-    /// Under `sync` in the contract, and not in the lock: it was never
-    /// published, and a lock entry needs a base. Its commits, oldest first,
-    /// are in its store's `installed/`, and its folder keeps its files.
+    /// Under `sync` in the contract, never published: the lock holds its
+    /// commits, oldest first, with no base, which its first publication
+    /// establishes.
     Unpublished {
         key: PackageKey,
         commits: Vec<String>,
@@ -637,7 +637,7 @@ async fn copy_package(
                     },
                     declaration: Some(declaration),
                     entry: Some(LockEntry {
-                        base: first.clone(),
+                        base: Some(first.clone()),
                         commits: commits.to_vec(),
                     }),
                 },
@@ -660,10 +660,13 @@ async fn copy_package(
         (true, false) => Package {
             outcome: PackageImport::Unpublished {
                 key,
-                commits: since_base,
+                commits: since_base.clone(),
             },
             declaration: Some(declaration),
-            entry: None,
+            entry: Some(LockEntry {
+                base: None,
+                commits: since_base,
+            }),
         },
         (false, _) => Package {
             outcome: PackageImport::Locked {
@@ -673,7 +676,7 @@ async fn copy_package(
             },
             declaration: Some(declaration),
             entry: Some(LockEntry {
-                base,
+                base: Some(base),
                 commits: since_base,
             }),
         },

@@ -185,7 +185,7 @@ impl World {
             return Ok(None);
         };
         let entry = contract.entries().first().ok_or("no entry")?;
-        Ok(lock.packages.get(&entry.key()).map(|l| l.base.clone()))
+        Ok(lock.packages.get(&entry.key()).and_then(|l| l.base.clone()))
     }
 
     fn write(&self, key: &str, body: &str) -> std::io::Result<()> {

@@ -121,8 +121,9 @@ pub async fn unattached(
 
 /// Attaches `commit`, one of [`unattached`]'s, to the lock as `package`'s
 /// one unpushed commit on `base`, a revision the bucket holds, which its next
-/// publish expects `latest` to be. A lock entry for the package that names no
-/// unpushed commits is replaced.
+/// publish expects `latest` to be. With no `base`, the commit is of a package
+/// never published, whose next publish expects no `latest`. A lock entry for
+/// the package that names no unpushed commits is replaced.
 #[allow(clippy::too_many_arguments, reason = "each is a distinct input")]
 pub async fn reattach(
     storage: &(impl Storage + Sync),
@@ -132,9 +133,9 @@ pub async fn reattach(
     writer: &Writer,
     package: &PackageKey,
     commit: &str,
-    base: &str,
+    base: Option<&str>,
 ) -> Result<(), ReattachError> {
-    if !is_top_hash(base) {
+    if let Some(base) = base.filter(|base| !is_top_hash(base)) {
         return Err(ReattachError::Base(base.to_string()));
     }
     let mut opened = Opened::open(storage, domain, dataspace, writer, package).await?;
@@ -159,13 +160,15 @@ pub async fn reattach(
         return Err(ReattachError::NotUnattached(commit.to_string()));
     }
     // A base the bucket lacks could never be `latest`, so no publish would pass.
-    if !opened.holds(remote, base).await? {
+    if let Some(base) = base
+        && !opened.holds(remote, base).await?
+    {
         return Err(ReattachError::Base(base.to_string()));
     }
     opened.lock.packages.insert(
         package.clone(),
         LockEntry {
-            base: base.to_string(),
+            base: base.map(str::to_string),
             commits: vec![commit.to_string()],
         },
     );

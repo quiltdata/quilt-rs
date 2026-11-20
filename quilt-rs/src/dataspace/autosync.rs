@@ -280,7 +280,7 @@ impl Runner {
         let base = |entry: &Entry| {
             lock.as_ref()
                 .and_then(|lock| lock.packages.get(&entry.key()))
-                .map(|locked| locked.base.clone())
+                .and_then(|locked| locked.base.clone())
         };
 
         for entry in contract.entries() {
