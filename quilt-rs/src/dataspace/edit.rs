@@ -287,11 +287,20 @@ impl ContractEdit {
     }
 
     /// Puts the file back as it was when opened, or removes it where there
-    /// was none: undoes [`Self::write`].
+    /// was none: undoes [`Self::write`], and only while the file still holds
+    /// what it wrote.
     pub(crate) async fn restore(
         &self,
         storage: &(impl Storage + Sync),
     ) -> Result<(), ContractError> {
+        let written = ContractFile::read(storage, &self.dataspace)
+            .await
+            .is_ok_and(|file| file.bytes == self.text().into_bytes());
+        if !written {
+            return Err(ContractError::Edit(format!(
+                "{CONTRACT_FILE} changed since this edit wrote it"
+            )));
+        }
         if self.found {
             return self.write_bytes(storage, self.original.clone()).await;
         }

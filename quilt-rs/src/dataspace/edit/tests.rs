@@ -16,6 +16,30 @@ async fn open(
     Ok(ContractEdit::open(storage, &root).await?)
 }
 
+/// An edit is undone only while the file holds what it wrote; a newer save
+/// is left alone.
+#[test(tokio::test)]
+async fn an_edit_is_undone_only_while_the_file_is_as_written() -> Res {
+    let storage = MockStorage::default();
+    let text = "registry = \"s3://b\"\n";
+    let mut edit = open(&storage, text).await?;
+    let path = storage.temp_dir.path().join("rnaseq").join(CONTRACT_FILE);
+    edit.add(Access::Sync, package("team/notes"));
+    edit.write(&storage).await?;
+
+    edit.restore(&storage).await?;
+    assert_eq!(std::fs::read_to_string(&path)?, text);
+
+    edit.write(&storage).await?;
+    std::fs::write(&path, "registry = \"s3://other\"\n")?;
+    assert!(edit.restore(&storage).await.is_err());
+    assert_eq!(
+        std::fs::read_to_string(&path)?,
+        "registry = \"s3://other\"\n"
+    );
+    Ok(())
+}
+
 fn package(name: &str) -> InlineTable {
     let mut table = InlineTable::new();
     table.insert("package", name.into());
