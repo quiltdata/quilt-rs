@@ -85,7 +85,7 @@
 
 ### Fixed
 
-- A push whose upload fails now fails with that error instead of building and recording a manifest from the files uploaded so far (PRLINK)
+- A push whose upload fails now fails with that error instead of building and recording a manifest from the files uploaded so far (<https://github.com/quiltdata/quilt-rs/pull/1473>)
 - `install_paths` refuses a requested path inside a folder that is a symbolic link, or at a symbolic link, before fetching anything and again before placing, as `install_to` does (<https://github.com/quiltdata/quilt-rs/pull/1443>)
 - `StorageExt::read_bytes` reads the file it opened to its end, so lineage, settings or tokens that another process replaces during the read no longer come back cut to the old file's length and fail to parse. **Breaking:** the future it returns is no longer `Sync` (<https://github.com/quiltdata/quilt-rs/pull/1416>)
 - On macOS and Linux, a `LocalStorage` byte-stream write also syncs the folder it writes into, so a power loss no longer undoes one into an existing folder, such as `.quilt/data.json`. A failed folder sync is logged, and the write still succeeds (<https://github.com/quiltdata/quilt-rs/pull/1379>)
