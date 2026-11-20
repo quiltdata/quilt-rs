@@ -814,8 +814,6 @@ async fn copy_manifests(
         }
         // A manifest that survives a power loss must not outlive the names of
         // the objects it points at: a run that stopped there skips it.
-        // A manifest that survives a power loss must not outlive the names of
-        // the objects it points at: a run that stopped there skips it.
         storage.sync_dir(&objects).await;
         let bytes = if moved && top_hash(&manifest)? == hash {
             manifest.try_to_jsonlines()?.into_bytes()
