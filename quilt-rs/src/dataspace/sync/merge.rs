@@ -505,7 +505,9 @@ impl<S: Storage + Sync, R: Remote> Merge<'_, S, R> {
         user_rules: &Path,
     ) -> Result<ControlFlow<EntrySync, Settled>, Stop> {
         let (storage, entry, theirs) = (self.storage, self.entry, &self.theirs);
-        let rules = Rules::load(&entry.folder, user_rules)?;
+        // As a commit takes it, the contract's ignore policy included.
+        let policy = contract.ignore_policy(&entry.folder);
+        let rules = Rules::load_with(&entry.folder, user_rules, &policy)?;
         let taken = take(storage, entry, &rules, current).await?;
         let found = Collisions::of(&self.base, &hashed(storage, &taken).await?, theirs)?;
         let folder = (&taken.manifest, taken.metadata_text.as_deref());
