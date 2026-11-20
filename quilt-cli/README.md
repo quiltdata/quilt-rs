@@ -180,6 +180,15 @@ and `entries`, each with `package`, `folder`, `access`, `outcome`
 `failed`), `completed`, `revision`, `latest`, `latest_unchecked`, `read` (the
 read run first, as `read` reports an entry, or `null`) and `error`.
 
+`read` and `publish` run the scripts `data.toml` declares under
+`[hooks.pre-read]`, `[hooks.post-read]`, `[hooks.pre-write]` and
+`[hooks.post-write]`, each a `command` with its `args` and `env`, from the
+dataspace's folder, with `QUILT_HOOK`, `QUILT_DATASPACE`, `QUILT_PACKAGE`,
+`QUILT_FOLDER` and, after a read or write, `QUILT_REVISION` set. Their output
+goes to standard error. A `pre-` script that fails leaves its package unread
+or unpublished, with the failure as its `error`; `post-read` runs only for a
+package read at a newer revision, and `post-write` for each revision stored.
+
 `reattach <DATASPACE> <PACKAGE>` lists the package's local commits that
 `data.lock.toml` does not name, as after the lock was deleted: those its bucket
 lacks, kept in `bio.quilt.dataspace` in the OS's local data folder. Commits

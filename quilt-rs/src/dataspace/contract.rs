@@ -14,7 +14,6 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use serde::Deserialize;
-use serde::de::IgnoredAny;
 use sha2::Digest;
 use sha2::Sha256;
 use thiserror::Error;
@@ -22,6 +21,7 @@ use thiserror::Error;
 use crate::LogicalKey;
 use crate::LogicalKeyError;
 use crate::dataspace::conflict::CONFLICT_FILE;
+use crate::dataspace::hooks::Hooks;
 use crate::dataspace::lock::LOCK_FILE;
 use crate::io::storage::Storage;
 use crate::io::storage::StorageExt;
@@ -317,6 +317,7 @@ impl Entry {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Contract {
     entries: Vec<Entry>,
+    hooks: Hooks,
     dataspace: PathBuf,
     data_toml_hash: String,
 }
@@ -353,6 +354,12 @@ impl Contract {
     #[must_use]
     pub fn entries(&self) -> &[Entry] {
         &self.entries
+    }
+
+    /// The scripts declared under `[hooks]`.
+    #[must_use]
+    pub fn hooks(&self) -> &Hooks {
+        &self.hooks
     }
 
     /// The dataspace's folder, as an absolute path.
@@ -421,6 +428,7 @@ impl Contract {
         }
         Ok(Self {
             entries,
+            hooks: raw.hooks,
             dataspace: dataspace.to_path_buf(),
             data_toml_hash: hex::encode(Sha256::digest(bytes)),
         })
@@ -562,9 +570,8 @@ struct RawContract {
     default_suffix: Option<String>,
     #[serde(default)]
     packages: RawPackages,
-    // Read where hooks are run.
-    #[serde(rename = "hooks")]
-    _hooks: Option<IgnoredAny>,
+    #[serde(default)]
+    hooks: Hooks,
 }
 
 #[derive(Default, Deserialize)]
