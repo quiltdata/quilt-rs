@@ -18,6 +18,7 @@ use serde::Serialize;
 use thiserror::Error;
 use toml::value::Datetime;
 
+use crate::dataspace::contract::Access;
 use crate::dataspace::contract::CONTRACT_FILE;
 use crate::dataspace::contract::Contract;
 use crate::dataspace::contract::PackageKey;
@@ -171,13 +172,40 @@ impl Lock {
     /// Writes the lock beside `contract`, its header made `contract`'s and
     /// `writer`'s and `filled` kept. That hides any mismatch, so a caller
     /// deals with [`Lock::mismatches`] first.
+    ///
+    /// Where the contract has `sync` entries, the lock goes on naming the
+    /// `data.toml` it was written for: an edit is the sync tick's to take,
+    /// once it has read them again.
     pub async fn write(
         &mut self,
         storage: &(impl Storage + Sync),
         contract: &Contract,
         writer: &Writer,
     ) -> Result<(), LockError> {
-        let header = header(contract, writer, self.header.filled);
+        let synced = contract
+            .entries()
+            .iter()
+            .any(|entry| entry.access == Access::Sync);
+        let written_for = if synced {
+            self.header.data_toml_hash.clone()
+        } else {
+            contract.data_toml_hash().to_string()
+        };
+        self.write_for(storage, contract, writer, &written_for)
+            .await
+    }
+
+    /// [`Lock::write`], naming `data_toml_hash` as the contract it was
+    /// written for, so an edit to `data.toml` still shows as one.
+    pub(crate) async fn write_for(
+        &mut self,
+        storage: &(impl Storage + Sync),
+        contract: &Contract,
+        writer: &Writer,
+        data_toml_hash: &str,
+    ) -> Result<(), LockError> {
+        let mut header = header(contract, writer, self.header.filled);
+        header.data_toml_hash = data_toml_hash.to_string();
         let text = toml::to_string(&raw(&header, &self.packages)?)?;
         let path = contract.dataspace().join(LOCK_FILE);
         // Unique, so two writers never write into one temporary file, and not

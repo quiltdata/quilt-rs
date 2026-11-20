@@ -291,7 +291,7 @@ async fn attempt_on_latest(
 
 /// What a push came to. Where it cannot say whether `latest` moved, `latest`
 /// is read again.
-async fn settle(
+pub(crate) async fn settle(
     remote: &impl Remote,
     target: &PushTarget,
     pushed: Res<PushOutcome>,
@@ -339,7 +339,7 @@ async fn settle(
     })
 }
 
-async fn metadata_file(
+pub(crate) async fn metadata_file(
     storage: &(impl Storage + Sync),
     folder: &Path,
 ) -> Result<MetadataFile, EntryError> {
@@ -440,7 +440,7 @@ async fn compose(
 
 /// Whether `manifest`, its rows sorted, writes the same files, metadata and
 /// folder metadata as `base`, and the same message where `with_message`.
-fn same_as(manifest: &Manifest, base: Option<&Manifest>, with_message: bool) -> bool {
+pub(crate) fn same_as(manifest: &Manifest, base: Option<&Manifest>, with_message: bool) -> bool {
     let Some(base) = base else {
         return manifest.rows.is_empty() && manifest.header.user_meta.is_none();
     };
@@ -473,7 +473,7 @@ fn quilts_own(name: &str) -> bool {
 /// The files in `folder` under `paths` by logical key, leaving out what
 /// [`quilts_own`] names, anything that is not a file or a folder, and what
 /// `rules` leave out of a commit on `base`.
-async fn walk(
+pub(crate) async fn walk(
     storage: &(impl Storage + Sync),
     folder: &Path,
     paths: &Paths,

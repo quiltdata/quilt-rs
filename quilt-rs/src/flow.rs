@@ -40,6 +40,7 @@ pub(crate) use apply_update::Applied;
 pub(crate) use apply_update::LocalWork;
 pub(crate) use apply_update::apply_latest_update;
 pub use browse::browse_remote_manifest as browse;
+pub(crate) use browse::cache_manifest_at;
 pub use browse::cache_remote_manifest;
 pub use certify_latest::certify_latest;
 pub use commit::Committed;

@@ -10,6 +10,7 @@ pub mod publish_all;
 pub mod read;
 pub mod read_all;
 pub mod reattach;
+pub mod sync;
 
 use std::path::PathBuf;
 
@@ -54,7 +55,7 @@ pub enum EntryError {
     #[error("{METADATA_FILE} cannot hold this revision: {0}")]
     MetadataUnwritable(String),
 
-    #[error("`latest` cannot be read, so `write` has nothing to lay its files over")]
+    #[error("`latest` cannot be read, so there is no revision to build on")]
     LatestUnreadable,
 
     #[error(transparent)]

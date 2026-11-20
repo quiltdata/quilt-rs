@@ -54,19 +54,31 @@ pub async fn cache_remote_manifest(
 
     // let manifest_uri = resolve_manifest_uri(remote, uri).await?;
     let cache_dir = paths.cached_manifests_dir(&manifest_uri.bucket);
-    let cache_path = cache_dir.join(&manifest_uri.hash);
+    cache_manifest_at(
+        storage,
+        remote,
+        manifest_uri,
+        &cache_dir.join(&manifest_uri.hash),
+    )
+    .await
+}
 
-    let manifest_path = cache_path.clone();
-
-    if !storage.exists(&cache_path).await {
-        let manifest = fetch_and_cache(storage, remote, manifest_uri, &cache_path).await?;
+/// [`cache_remote_manifest`], keeping the manifest at `cache_path`.
+pub(crate) async fn cache_manifest_at(
+    storage: &(impl Storage + Sync),
+    remote: &impl Remote,
+    manifest_uri: &ManifestUri,
+    cache_path: &std::path::Path,
+) -> Res<Manifest> {
+    if !storage.exists(cache_path).await {
+        let manifest = fetch_and_cache(storage, remote, manifest_uri, cache_path).await?;
         info!("✔️ Successfully cached:\n{:?}", manifest.header);
         return Ok(manifest);
     }
 
     debug!("✔️ Manifest exists already in {}", cache_path.display());
 
-    match Manifest::from_path(storage, &manifest_path).await {
+    match Manifest::from_path(storage, cache_path).await {
         Ok(manifest) => {
             info!("✔️ Successfully cached:\n{:?}", manifest.header);
             Ok(manifest)
@@ -75,11 +87,11 @@ pub async fn cache_remote_manifest(
             // Cached file is unreadable (e.g. legacy Parquet format), re-fetch
             warn!(
                 "Cached manifest at {} is invalid, re-fetching: {}",
-                manifest_path.display(),
+                cache_path.display(),
                 source
             );
-            storage.remove_file(&manifest_path).await?;
-            fetch_and_cache(storage, remote, manifest_uri, &cache_path).await
+            storage.remove_file(cache_path).await?;
+            fetch_and_cache(storage, remote, manifest_uri, cache_path).await
         }
         Err(e) => Err(e),
     }
