@@ -518,10 +518,17 @@ impl<'a> Plan<'a> {
         mut row: Row,
         decided: &BTreeMap<LogicalKey, Row>,
     ) -> Option<String> {
+        let here = |side: &Option<Side>| side.as_ref().and_then(|side| side.physical_key.clone());
         row.resolved = decided
             .get(key)
             .filter(|earlier| earlier.same_collision(&row))
-            .and_then(|earlier| earlier.resolved.clone());
+            .and_then(|earlier| match &earlier.resolved {
+                // The folder's own file, wherever its path was spelled then.
+                Some(resolved) if Some(resolved) == here(&earlier.current).as_ref() => {
+                    here(&row.current)
+                }
+                resolved => resolved.clone(),
+            });
         let resolved = row.resolved.clone();
         match resolved {
             Some(_) => self.resolved.push(key.to_path_buf()),
@@ -961,7 +968,8 @@ async fn apply(
             Some(Source::Object(uri)) => {
                 let object = remote
                     .get_object_stream(revision.origin.as_ref(), uri)
-                    .await?;
+                    .await
+                    .map_err(|err| refused(step.key, err))?;
                 storage
                     .create_dir_all(staged.parent().unwrap_or(staging))
                     .await?;

@@ -368,16 +368,41 @@ async fn a_decision_on_a_link_is_refused() -> Res {
 async fn a_decision_holds_however_the_folders_path_was_spelled() -> Res {
     let (storage, remote) = collided().await?;
     let mut map = map(&storage).await?;
-    for row in map.packages.values_mut().flat_map(BTreeMap::values_mut) {
+    for (name, row) in map.packages.values_mut().flat_map(BTreeMap::iter_mut) {
+        let elsewhere = format!("file:///another/spelling/{name}");
         let current = row.current.as_mut().ok_or("no current")?;
-        current.physical_key = Some("file:///another/spelling".to_string());
-        row.resolved = Some(String::new());
+        current.physical_key = Some(elsewhere.clone());
+        // `b.txt` is kept as the folder holds it, by the path the row named.
+        row.resolved = Some(if name == &key("b.txt") {
+            elsewhere
+        } else {
+            String::new()
+        });
     }
     map.write(&storage, &dataspace()).await?;
 
-    let outcome = read(&storage, &remote, Some(FIRST)).await?;
+    let outcome = read(&storage, &remote, Some(FIRST)).await;
 
+    let outcome = outcome.unwrap_or_else(|err| panic!("the decisions were refused: {err}"));
     assert_eq!(completed(&outcome).len(), 2);
+    assert_eq!(text(&storage, "a.txt").await, None);
+    assert_eq!(text(&storage, "b.txt").await.as_deref(), Some("mine b"));
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn an_s3_version_that_cannot_be_fetched_names_its_key() -> Res {
+    let (storage, remote) = collided().await?;
+    decide(&storage, "a.txt", "").await?;
+    decide(&storage, "b.txt", "s3://b/nowhere.txt?versionId=v1").await?;
+
+    let outcome = read(&storage, &remote, Some(FIRST)).await;
+
+    assert!(
+        matches!(&outcome, Err(EntryError::ConflictMap(why)) if why.starts_with("b.txt cannot be set")),
+        "{outcome:?}"
+    );
+    assert_eq!(text(&storage, "a.txt").await.as_deref(), Some("mine a"));
     Ok(())
 }
 
