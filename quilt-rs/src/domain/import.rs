@@ -702,7 +702,7 @@ async fn copy_manifests(
             storage.read_bytes(&source).await?
         };
         storage
-            .write_byte_stream_via(&target, temp_name(), ByteStream::from(bytes), None)
+            .write_byte_stream(&target, ByteStream::from(bytes))
             .await?;
     }
     Ok(())
@@ -773,7 +773,7 @@ async fn copy_cached_manifests(
         }
         let bytes = storage.read_bytes(&source).await?;
         storage
-            .write_byte_stream_via(&target, temp_name(), ByteStream::from(bytes), None)
+            .write_byte_stream(&target, ByteStream::from(bytes))
             .await?;
     }
     Ok(())

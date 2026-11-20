@@ -28,10 +28,8 @@ use crate::state_store::to_millis;
 
 const SCHEMA_VERSION: i64 = 2;
 
-/// Version 1 also held the dataspaces on autosync, in this table, which the
-/// move to version 2 drops: the import into the Domain's root has read them
-/// out into `domain.json` by then.
-pub(crate) const AUTOSYNC_TABLE_V1: &str = "autosync";
+/// Version 1's table of the dataspaces on autosync.
+const AUTOSYNC_TABLE_V1: &str = "autosync";
 
 /// `running_in` names the process that started a job; `NULL` while it waits.
 /// `again` marks a running job queued again, which waits once its run ends.
