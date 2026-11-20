@@ -149,8 +149,10 @@ pub enum Base<'a> {
 ///
 /// The [metadata file](METADATA_FILE) sets the revision's message, the
 /// package's metadata, and that of each file and folder under the entry's
-/// paths; what it leaves out is cleared, so an empty one clears them all. With
-/// none, the metadata is kept. A `message` given here wins over the file's,
+/// paths; what it leaves out is cleared, so an empty one clears them all. A
+/// file or folder outside the paths keeps `latest`'s metadata, whatever the
+/// file, which a read writes whole, says of it. With none, the metadata is
+/// kept. A `message` given here wins over the file's,
 /// and the file's workflow is not taken. A `replace` whose role may not read
 /// `latest` has no metadata to keep.
 ///

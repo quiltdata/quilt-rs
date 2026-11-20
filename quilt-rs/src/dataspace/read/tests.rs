@@ -165,8 +165,10 @@ async fn ignores_case(storage: &MockStorage) -> Result<bool, crate::Error> {
     Ok(ignores)
 }
 
+/// The files are those under the entry's paths, but the metadata is the
+/// whole revision's: a file's and a folder's outside the paths too.
 #[test(tokio::test)]
-async fn a_first_read_fills_the_entrys_paths_and_writes_the_metadata() -> Res {
+async fn a_first_read_fills_the_entrys_paths_and_writes_the_whole_revisions_metadata() -> Res {
     let remote = MockRemote::default();
     let storage = MockStorage::default();
     let mut header = ManifestHeader::default();
@@ -175,6 +177,10 @@ async fn a_first_read_fills_the_entrys_paths_and_writes_the_metadata() -> Res {
     let mut manifest = publish_with(&remote, FIRST, files, header).await?;
     manifest.rows[0].meta = Some(serde_json::json!({"user_meta": {"kind": "raw"}}));
     manifest.rows[1].meta = Some(serde_json::json!({"user_meta": {"kind": "docs"}}));
+    manifest.dir_meta.push(crate::manifest::DirMeta::new(
+        LogicalKey::new("docs")?,
+        serde_json::json!({"user_meta": {"owner": "them"}}),
+    ));
     put_manifest(&remote, FIRST, &manifest).await?;
     let entry = entry(&format!(
         "read = [{{ package = \"team/raw\", revision = \"{FIRST}\", path = \"src/\" }}]"
@@ -194,9 +200,12 @@ async fn a_first_read_fills_the_entrys_paths_and_writes_the_metadata() -> Res {
         text(&storage, METADATA_FILE).await.as_deref(),
         Some(
             "message = \"\"\nversion = \"v0\"\n\n\
+             [metadata.entries.\"docs/\"]\nowner = \"them\"\n\n\
+             [metadata.entries.\"docs/b.txt\"]\nkind = \"docs\"\n\n\
              [metadata.entries.\"src/a.txt\"]\nkind = \"raw\"\n\n\
              [metadata.package]\nrun = 7\n"
-        )
+        ),
+        "the metadata outside the entry's paths is written too"
     );
     Ok(())
 }
