@@ -551,8 +551,7 @@ fn handle(entry: &Entry) -> Result<S3PackageHandle, EntryError> {
     })
 }
 
-/// `entry`'s bucket; a local registry's package, which the tick does not
-/// reach, is refused.
+/// `entry`'s bucket; a local registry's package, which has none, is refused.
 fn bucket(entry: &Entry) -> Result<&str, EntryError> {
     let Registry::S3(bucket) = &entry.registry else {
         return Err(EntryError::LocalRegistry);
