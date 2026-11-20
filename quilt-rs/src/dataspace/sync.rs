@@ -733,13 +733,7 @@ async fn set_base(
     key: &PackageKey,
     base: String,
 ) -> Result<(), Stop> {
-    lock.packages.insert(
-        key.clone(),
-        LockEntry {
-            base: Some(base),
-            commits: Vec::new(),
-        },
-    );
+    lock.packages.insert(key.clone(), LockEntry::at(base));
     lock_file.save(lock).await
 }
 

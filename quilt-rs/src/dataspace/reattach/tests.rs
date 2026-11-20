@@ -247,15 +247,7 @@ async fn an_entry_with_no_commits_takes_the_named_base() -> Res {
     let commit = fixture.commit("mine", b"m").await?;
     fixture.publish(BASE).await?;
     let older = "2222222222222222222222222222222222222222222222222222222222222222";
-    fixture
-        .lock(
-            LockEntry {
-                base: Some(older.to_string()),
-                commits: Vec::new(),
-            },
-            &writer(),
-        )
-        .await?;
+    fixture.lock(LockEntry::at(older), &writer()).await?;
 
     fixture.reattach(&commit, BASE).await?;
 
@@ -400,15 +392,7 @@ async fn a_lock_written_elsewhere_is_refused() -> Res {
         host: "elsewhere".to_string(),
         ..writer()
     };
-    fixture
-        .lock(
-            LockEntry {
-                base: Some(BASE.to_string()),
-                commits: Vec::new(),
-            },
-            &elsewhere,
-        )
-        .await?;
+    fixture.lock(LockEntry::at(BASE), &elsewhere).await?;
 
     let listed = fixture.unattached().await;
 

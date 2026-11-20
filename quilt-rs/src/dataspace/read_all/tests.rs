@@ -376,10 +376,7 @@ async fn lock_from(storage: &MockStorage, root: &Path, writer: &Writer, entry: L
 }
 
 fn at(base: &str) -> LockEntry {
-    LockEntry {
-        base: Some(base.to_string()),
-        commits: Vec::new(),
-    }
+    LockEntry::at(base)
 }
 
 fn elsewhere() -> Writer {

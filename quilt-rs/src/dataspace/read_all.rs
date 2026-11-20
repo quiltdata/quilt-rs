@@ -173,11 +173,7 @@ pub(crate) async fn read_some(
             read
         };
         if let Some(base) = outcome.lock_base() {
-            let entry = LockEntry {
-                base: Some(base.to_string()),
-                commits: Vec::new(),
-            };
-            lock.packages.insert(entry_key, entry);
+            lock.packages.insert(entry_key, LockEntry::at(base));
         }
         entries.push((entry.clone(), outcome));
     }
