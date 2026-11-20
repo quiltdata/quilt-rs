@@ -867,16 +867,16 @@ async fn read_back(
             }
             storage.copy(store.object_path(&row.hash), &staged).await?;
         }
+        let text = render(current, &entry.paths).map_err(EntryError::MetadataUnwritable)?;
         let keys = || rows.iter().map(|row| &row.logical_key);
         refuse_linked_ancestors(storage, folder, keys()).await?;
-        for key in keys() {
-            if storage.exists(&key.join_to(folder)).await {
-                return Err(EntryError::Changed(key.to_path_buf()));
-            }
-        }
         let placed = async {
             for key in keys() {
                 let path = key.join_to(folder);
+                // A rename replaces what it finds.
+                if storage.exists(&path).await {
+                    return Err(EntryError::Changed(key.to_path_buf()));
+                }
                 if let Some(parent) = path.parent() {
                     storage.create_dir_all(parent).await?;
                 }
@@ -884,7 +884,17 @@ async fn read_back(
                 report.placed.push(key.to_path_buf());
                 crate::failpoint::stop("sync.read_back")?;
             }
-            Ok::<_, crate::Error>(())
+            match bytes_at(storage, &folder.join(METADATA_FILE)).await? {
+                None => {
+                    write_metadata(storage, folder, text, None).await?;
+                    report.placed.push(PathBuf::from(METADATA_FILE));
+                }
+                Some(bytes) if bytes != text.as_bytes() => {
+                    report.kept.push(PathBuf::from(METADATA_FILE));
+                }
+                Some(_) => {}
+            }
+            Ok(())
         }
         .await;
         if let Err(err) = placed {
@@ -892,18 +902,7 @@ async fn read_back(
             for done in &report.placed {
                 let _ = storage.remove_file(folder.join(done)).await;
             }
-            return Err(err.into());
-        }
-        let text = render(current, &entry.paths).map_err(EntryError::MetadataUnwritable)?;
-        match bytes_at(storage, &folder.join(METADATA_FILE)).await? {
-            None => {
-                write_metadata(storage, folder, text, None).await?;
-                report.placed.push(PathBuf::from(METADATA_FILE));
-            }
-            Some(bytes) if bytes != text.as_bytes() => {
-                report.kept.push(PathBuf::from(METADATA_FILE));
-            }
-            Some(_) => {}
+            return Err(err);
         }
         Ok::<_, EntryError>(report)
     }
