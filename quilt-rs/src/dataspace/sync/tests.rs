@@ -80,18 +80,37 @@ impl World {
         self.dir.path().join("user.quiltignore")
     }
 
-    async fn sync(&self) -> Result<DataspaceSync, SyncError> {
+    /// The Domain's queue, opened again by each tick as a new process would.
+    async fn queue(&self) -> Result<Queue, Box<dyn std::error::Error>> {
+        Ok(Queue::open(&self.dir.path().join("queue.db")).await?)
+    }
+
+    async fn sync(&self) -> Result<DataspaceSync, Box<dyn std::error::Error>> {
         let dataspace = self.dataspace();
-        Box::pin(sync(
+        Ok(Box::pin(sync(
             &self.storage,
             &self.remote,
             &self.domain(),
+            &self.queue().await?,
             &dataspace,
             &writer(),
             MESSAGE,
             &self.user_rules(),
         ))
-        .await
+        .await?)
+    }
+
+    async fn kept(&self) -> Result<Option<KeptRevision>, Box<dyn std::error::Error>> {
+        // The contract's spelling of the folder, which on Windows is not
+        // `folder()`'s.
+        let contract = Contract::read(&self.storage, &self.dataspace(), None).await?;
+        let entry = contract.entries().first().ok_or("no entry")?;
+        let folder = FolderKey {
+            registry: Some(entry.registry.clone()),
+            package: entry.package.clone(),
+            folder: entry.folder.clone(),
+        };
+        Ok(self.queue().await?.kept(&folder).await?)
     }
 
     async fn read_all(&self) -> Result<(), Box<dyn std::error::Error>> {
@@ -470,6 +489,14 @@ async fn a_push_that_latest_moved_past_is_left_stored_and_the_lock_unmoved() -> 
     let locked = world.locked().await?.ok_or("no lock entry")?;
     assert_eq!(locked.base, FIRST);
     assert_eq!(locked.commits, std::slice::from_ref(revision));
+    assert_eq!(
+        world.kept().await?,
+        Some(KeptRevision {
+            hash: revision.clone(),
+            base: Some(FIRST.to_string()),
+            reason: KeptReason::LatestMoved,
+        })
+    );
     Ok(())
 }
 
@@ -538,21 +565,55 @@ async fn a_push_squashes_the_commits_not_pushed_and_releases_them() -> Res {
 }
 
 #[test(tokio::test)]
-async fn a_folder_that_holds_none_of_the_packages_files_publishes_nothing() -> Res {
+async fn a_missing_or_empty_folder_is_read_back_at_the_lock_and_nothing_published() -> Res {
     let world = World::filled(&[("a.txt", b"v1"), ("b.txt", b"v1")]).await?;
-    std::fs::remove_dir_all(world.folder())?;
+    world
+        .publish(SECOND, &[("a.txt", b"v2"), ("b.txt", b"v2")])
+        .await?;
 
-    let gone = world.tick().await?;
-    std::fs::create_dir_all(world.folder())?;
-    let emptied = world.tick().await?;
+    for empty in [false, true] {
+        std::fs::remove_dir_all(world.folder())?;
+        if empty {
+            std::fs::create_dir_all(world.folder())?;
+        }
 
-    for outcome in [gone, emptied] {
+        let outcome = world.tick().await?;
+
         assert!(
-            matches!(&outcome, EntrySync::Failed(EntryError::FolderGone(_))),
+            matches!(&outcome, EntrySync::ReadBack(read) if read.revision == FIRST),
             "{outcome:?}"
         );
+        assert_eq!(world.text("a.txt").as_deref(), Some("v1"));
+        assert_eq!(world.text("b.txt").as_deref(), Some("v1"));
+        assert!(world.folder().join(METADATA_FILE).exists());
+        assert_eq!(world.latest().await?, SECOND);
+        let locked = world.locked().await?.ok_or("no lock entry")?;
+        assert_eq!(locked.base, FIRST);
     }
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_missing_folder_is_read_back_at_the_local_commit_the_lock_names() -> Res {
+    let world = World::filled(&[("a.txt", b"v1"), ("b.txt", b"v1")]).await?;
+    world.write("a.txt", "v2")?;
+    stopping_at("push.object", 0, world.tick()).await?;
+    let commits = world.locked().await?.ok_or("no lock entry")?.commits;
+    assert_eq!(commits.len(), 1);
+    std::fs::remove_dir_all(world.folder())?;
+
+    let outcome = world.tick().await?;
+
+    assert!(
+        matches!(&outcome, EntrySync::ReadBack(read) if read.revision == commits[0]),
+        "{outcome:?}"
+    );
+    assert_eq!(world.text("a.txt").as_deref(), Some("v2"));
+    assert_eq!(world.text("b.txt").as_deref(), Some("v1"));
     assert_eq!(world.latest().await?, FIRST);
+    let locked = world.locked().await?.ok_or("no lock entry")?;
+    assert_eq!(locked.base, FIRST);
+    assert_eq!(locked.commits, commits);
     Ok(())
 }
 
@@ -1045,7 +1106,7 @@ async fn a_package_with_no_revision_and_no_folder_publishes_nothing() -> Res {
 }
 
 #[test(tokio::test)]
-async fn a_change_the_buckets_workflow_refuses_is_not_committed() -> Res {
+async fn a_change_the_buckets_workflow_refuses_is_stored_kept_and_not_uploaded_again() -> Res {
     let world = World::filled(&[("a.txt", b"v1")]).await?;
     for (key, body) in [
         (
@@ -1066,10 +1127,124 @@ async fn a_change_the_buckets_workflow_refuses_is_not_committed() -> Res {
 
     let outcome = world.tick().await?;
 
-    assert!(matches!(&outcome, EntrySync::Failed(_)), "{outcome:?}");
+    let EntrySync::Ran {
+        published: Some(Published::WorkflowBlocked { revision, .. }),
+        ..
+    } = &outcome
+    else {
+        panic!("expected the revision stored and blocked, got {outcome:?}");
+    };
+    assert_eq!(world.revision(revision).await?, files(&[("a.txt", "v2")]));
     assert_eq!(world.latest().await?, FIRST);
-    let locked = world.locked().await?.ok_or("no lock entry")?;
-    assert_eq!(locked.commits, Vec::<String>::new());
+    assert_eq!(
+        world.locked().await?.map(|locked| locked.base).as_deref(),
+        Some(FIRST)
+    );
+    assert_eq!(
+        world.kept().await?,
+        Some(KeptRevision {
+            hash: revision.clone(),
+            base: Some(FIRST.to_string()),
+            reason: KeptReason::WorkflowBlocked,
+        })
+    );
+
+    // Overwritten in the bucket, the file would be put back by an upload.
+    let stored = fetch_jsonl(
+        &world.remote,
+        &ManifestUri {
+            origin: None,
+            bucket: "b".to_string(),
+            namespace: package(),
+            hash: revision.clone(),
+        },
+    )
+    .await?;
+    let object = &stored.rows.first().ok_or("no row")?.physical_key;
+    world
+        .remote
+        .put_object(
+            None,
+            &S3Uri::try_from(object.as_str())?,
+            b"overwritten".to_vec(),
+        )
+        .await?;
+    let again = world.tick().await?;
+
+    assert!(
+        matches!(&again, EntrySync::Ran {
+            published: Some(Published::WorkflowBlocked { revision: again, .. }),
+            ..
+        } if again == revision),
+        "{again:?}"
+    );
+    assert_eq!(
+        world.revision(revision).await?,
+        files(&[("a.txt", "overwritten")])
+    );
+    assert_eq!(world.latest().await?, FIRST);
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_kept_revision_the_bucket_no_longer_holds_is_stored_again() -> Res {
+    let world = World::filled(&[("a.txt", b"v1")]).await?;
+    world.write("a.txt", "v2")?;
+    let gate = world.remote.park(LATEST);
+    let rival = async {
+        gate.arrived().await;
+        let push = world.remote.park(LATEST);
+        gate.release();
+        push.arrived().await;
+        world.publish(SECOND, &[("a.txt", b"theirs")]).await?;
+        push.release();
+        Res::Ok(())
+    };
+    let (outcome, rivalled) = tokio::join!(world.tick(), rival);
+    rivalled?;
+    let EntrySync::Ran {
+        published: Some(Published::Stored { revision, .. }),
+        ..
+    } = &outcome?
+    else {
+        panic!("expected the revision stored");
+    };
+    let revision = revision.clone();
+    let stored = format!("b/.quilt/packages/{revision}");
+    world.remote.storage.remove_file(&stored).await?;
+    // `latest` back on the base, so the kept commit is pushed again.
+    world.publish(FIRST, &[("a.txt", b"v1")]).await?;
+
+    let outcome = world.tick().await?;
+
+    assert_eq!(advanced(&outcome), revision);
+    assert!(world.remote.current(&stored).await?.is_some());
+    assert_eq!(world.revision(&revision).await?, files(&[("a.txt", "v2")]));
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_workflow_that_cannot_be_read_fails_the_push_before_anything_is_uploaded() -> Res {
+    let world = World::filled(&[("a.txt", b"v1")]).await?;
+    world.write("a.txt", "v2")?;
+    stopping_at("push.object", 0, world.tick()).await?;
+    let commits = world.locked().await?.ok_or("no lock entry")?.commits;
+    assert_eq!(commits.len(), 1);
+    world
+        .remote
+        .put_object(
+            None,
+            &S3Uri::try_from("s3://b/.quilt/workflows/config.yml")?,
+            b"not: [yaml".to_vec(),
+        )
+        .await?;
+
+    let outcome = world.tick().await?;
+
+    assert!(matches!(&outcome, EntrySync::Failed(_)), "{outcome:?}");
+    let stored = format!("b/.quilt/packages/{}", commits[0]);
+    assert!(world.remote.current(&stored).await?.is_none());
+    assert_eq!(world.kept().await?, None);
     Ok(())
 }
 
