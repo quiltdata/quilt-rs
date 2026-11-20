@@ -724,3 +724,20 @@ fn a_package_key_is_its_canonical_uri() -> Res {
     );
     Ok(())
 }
+
+/// The error for a registry masks a user and password in it.
+#[test]
+fn a_registry_error_masks_a_user_and_password() {
+    for list in [
+        r#"read = [{ registry = "s3://KEY:secret@bucket", package = "me/analysis" }]"#,
+        r#"read = [{ registry = "quilt+local://KEY:secret@lab-mac", package = "me/analysis" }]"#,
+    ] {
+        let Err(err) = parse(&with_defaults(list)) else {
+            panic!("{list} should be refused");
+        };
+        for text in [err.to_string(), format!("{err:?}")] {
+            assert!(!text.contains("secret") && !text.contains("KEY"), "{text}");
+            assert!(text.contains("***@"), "{text}");
+        }
+    }
+}

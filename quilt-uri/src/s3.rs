@@ -4,6 +4,7 @@ use url::Url;
 
 use crate::Host;
 use crate::UriError;
+use crate::mask_user;
 
 /// A bucket name under S3's legacy rule: 1 to 255 of `A-Z a-z 0-9 . _ -`,
 /// and not `.` or `..`. Every name S3 allows passes, and each one is also a
@@ -63,7 +64,8 @@ impl TryFrom<&str> for S3Uri {
         let parsed_url = Url::parse(input)?;
         if parsed_url.scheme() != "s3" {
             return Err(UriError::Scheme(format!(
-                "Expected s3:// scheme in {input}"
+                "Expected s3:// scheme in {}",
+                mask_user(input)
             )));
         }
         let bucket = parsed_url.host_str().unwrap_or_default();
@@ -79,25 +81,28 @@ impl TryFrom<&str> for S3Uri {
         }
         if parsed_url.fragment().is_some() {
             return Err(UriError::S3(format!(
-                "A fragment is not allowed in {input}; write `#` in a key as `%23`"
+                "A fragment is not allowed in {}; write `#` in a key as `%23`",
+                mask_user(input)
             )));
         }
-        let bucket = parsed_url
-            .host_str()
-            .ok_or(UriError::S3(format!("Missing bucket in {input}")))?;
+        let bucket = parsed_url.host_str().ok_or(UriError::S3(format!(
+            "Missing bucket in {}",
+            mask_user(input)
+        )))?;
         check_bucket(bucket)?;
 
         let path = parsed_url
             .path()
             .strip_prefix('/')
             .filter(|rest| !rest.is_empty())
-            .ok_or_else(|| UriError::S3(format!("Missing object key in {input}")))?;
+            .ok_or_else(|| UriError::S3(format!("Missing object key in {}", mask_user(input))))?;
 
         let key = percent_encoding::percent_decode_str(path).decode_utf8()?;
         let queries = parsed_url.query_pairs().into_owned().collect::<Vec<_>>();
         if queries.len() > 1 {
             return Err(UriError::S3(format!(
-                "Too many query parameters in {input}. Only single versionId is allowed"
+                "Too many query parameters in {}. Only single versionId is allowed",
+                mask_user(input)
             )));
         }
 
@@ -106,7 +111,8 @@ impl TryFrom<&str> for S3Uri {
             Some((key, value)) if key == "versionId" => Some(value),
             Some(_) => {
                 return Err(UriError::S3(format!(
-                    "Unknown query parameter in {input}. Only single versionId is allowed"
+                    "Unknown query parameter in {}. Only single versionId is allowed",
+                    mask_user(input)
                 )));
             }
         };
@@ -408,6 +414,19 @@ mod tests {
             assert!(err.contains("bucket"), "{err}");
             assert!(!err.contains("secret"), "{err}");
             assert!(!err.contains("KEY") && !err.contains("user:"), "{err}");
+        }
+    }
+
+    /// An error that repeats the input masks a user and password in it.
+    #[test]
+    fn an_error_masks_a_user_and_password() {
+        for input in [
+            "quilt+s3://KEY:secret@bucket#package=a/b",
+            "s3:KEY:secret@bucket/k",
+        ] {
+            let err = S3Uri::try_from(input).expect_err(input).to_string();
+            assert!(!err.contains("secret") && !err.contains("KEY"), "{err}");
+            assert!(err.contains("***@bucket"), "{err}");
         }
     }
 

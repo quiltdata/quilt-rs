@@ -18,6 +18,7 @@ use crate::Host;
 use crate::ManifestUri;
 use crate::Tag;
 use crate::UriError;
+use crate::mask_user;
 use crate::s3::check_bucket;
 
 /// This is the revision (or "hash") of the package.
@@ -155,21 +156,27 @@ impl TryFrom<&str> for Namespace {
 
     fn try_from(input: &str) -> Result<Self, Self::Error> {
         let (prefix, name) = input.split_once('/').ok_or_else(|| {
-            UriError::Namespace(format!("namespace must be `<prefix>/<name>`; got: {input}"))
+            UriError::Namespace(format!(
+                "namespace must be `<prefix>/<name>`; got: {}",
+                mask_user(input)
+            ))
         })?;
         if prefix.is_empty() || name.is_empty() {
             return Err(UriError::Namespace(format!(
-                "namespace prefix and name must be non-empty; got: {input}"
+                "namespace prefix and name must be non-empty; got: {}",
+                mask_user(input)
             )));
         }
         if name.contains('/') {
             return Err(UriError::Namespace(format!(
-                "namespace must contain exactly one `/`; got: {input}"
+                "namespace must contain exactly one `/`; got: {}",
+                mask_user(input)
             )));
         }
         if !is_plain_half(prefix) || !is_plain_half(name) {
             return Err(UriError::Namespace(format!(
-                "namespace prefix and name must not be `.` or `..` or hold `\\`, `:` or control characters; got: {input:?}"
+                "namespace prefix and name must not be `.` or `..` or hold `\\`, `:` or control characters; got: {:?}",
+                mask_user(input)
             )));
         }
         Ok(Namespace {
@@ -403,12 +410,14 @@ pub(crate) fn parse_after_authority(
     }
     if !parsed_url.path().is_empty() || parsed_url.query().is_some() {
         return Err(UriError::Package(format!(
-            "a path or query is not allowed after {authority}: {input}"
+            "a path or query is not allowed after {authority}: {}",
+            mask_user(input)
         )));
     }
 
     let fragment = parsed_url.fragment().ok_or(UriError::Package(format!(
-        "{kind} package URI must contain a fragment: {input}"
+        "{kind} package URI must contain a fragment: {}",
+        mask_user(input)
     )))?;
     let mut params = HashMap::new();
     for (key, value) in parse_fragment(fragment)? {
@@ -468,8 +477,11 @@ pub(crate) fn parse_after_authority(
     };
 
     if !params.is_empty() {
+        let mut names: Vec<_> = params.into_keys().collect();
+        names.sort();
         return Err(UriError::Package(format!(
-            "unexpected parameters in fragment: {params:?}"
+            "unexpected parameters in fragment: {}",
+            names.join(", ")
         )));
     }
 
@@ -855,7 +867,7 @@ mod tests {
         let uri = S3PackageUri::try_from("quilt+s3://bucket#package=a/b&foo=bar");
         assert_eq!(
             uri.unwrap_err().to_string(),
-            r#"Invalid package URI: unexpected parameters in fragment: {"foo": "bar"}"#.to_string(),
+            "Invalid package URI: unexpected parameters in fragment: foo".to_string(),
         );
     }
 
@@ -894,6 +906,21 @@ mod tests {
             assert!(err.contains("bucket"), "{err}");
             assert!(!err.contains("secret"), "{err}");
             assert!(!err.contains("KEY") && !err.contains("user:"), "{err}");
+        }
+    }
+
+    /// An error that repeats the input masks a user and password in it.
+    #[test]
+    fn an_error_masks_a_user_and_password() {
+        let err = S3PackageUri::try_from("quilt+s3:KEY:secret@bucket#package=a/b")
+            .expect_err("no authority")
+            .to_string();
+        assert!(!err.contains("secret") && !err.contains("KEY"), "{err}");
+        assert!(err.contains("***@bucket"), "{err}");
+        for input in ["quilt+s3://KEY:secret@bucket", "KEY:secret@bucket"] {
+            let err = Namespace::try_from(input).expect_err(input).to_string();
+            assert!(!err.contains("secret") && !err.contains("KEY"), "{err}");
+            assert!(err.contains("***@bucket"), "{err}");
         }
     }
 
