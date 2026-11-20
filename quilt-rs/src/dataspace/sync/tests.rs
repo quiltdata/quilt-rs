@@ -17,7 +17,18 @@ type Res = Result<(), Box<dyn std::error::Error>>;
 const LATEST: &str = "s3://b/.quilt/named_packages/team/raw/latest";
 const FIRST: &str = "1111111111111111111111111111111111111111111111111111111111111111";
 const SECOND: &str = "2222222222222222222222222222222222222222222222222222222222222222";
+// A bucket stores a manifest by its hash alone, so each package has its own.
+const THIRD: &str = "3333333333333333333333333333333333333333333333333333333333333333";
+const FOURTH: &str = "4444444444444444444444444444444444444444444444444444444444444444";
 const MESSAGE: &str = "autosync";
+
+fn writer() -> Writer {
+    Writer {
+        host: "here".to_string(),
+        user: "me".to_string(),
+        local_registry: String::new(),
+    }
+}
 
 /// A dataspace with `team/raw` in bucket `b`, its Domain beside it, and the
 /// bucket on a mock remote.
@@ -65,21 +76,23 @@ impl World {
     }
 
     async fn sync(&self) -> Result<DataspaceSync, SyncError> {
-        let writer = Writer {
-            host: "here".to_string(),
-            user: "me".to_string(),
-            local_registry: String::new(),
-        };
         let dataspace = self.dataspace();
         Box::pin(sync(
             &self.storage,
             &self.remote,
             &self.domain(),
             &dataspace,
-            &writer,
+            &writer(),
             MESSAGE,
         ))
         .await
+    }
+
+    async fn read_all(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let dataspace = self.dataspace();
+        crate::dataspace::read_all::read_all(&self.storage, &self.remote, &dataspace, &writer())
+            .await?;
+        Ok(())
     }
 
     /// The tick's one entry.
@@ -91,13 +104,18 @@ impl World {
 
     /// Stores `files` as revision `hash` and tags it `latest`.
     async fn publish(&self, hash: &str, files: &[(&str, &[u8])]) -> Res {
+        self.publish_to("team/raw", hash, files).await
+    }
+
+    /// [`World::publish`] for `package`.
+    async fn publish_to(&self, package: &str, hash: &str, files: &[(&str, &[u8])]) -> Res {
         let mut rows = Vec::new();
         for (key, body) in files {
             use sha2::Digest;
             let digest = multihash::Multihash::<256>::wrap(0x12, &sha2::Sha256::digest(body))?;
             let row = ManifestRow {
                 logical_key: LogicalKey::new(*key)?,
-                physical_key: format!("s3://b/team/raw/{key}?versionId={}", hex::encode(body)),
+                physical_key: format!("s3://b/{package}/{key}?versionId={}", hex::encode(body)),
                 hash: digest.try_into()?,
                 size: body.len() as u64,
                 meta: None,
@@ -124,12 +142,14 @@ impl World {
                 manifest.to_jsonlines().into_bytes(),
             )
             .await?;
-        self.tag(hash).await
-    }
-
-    async fn tag(&self, hash: &str) -> Res {
         self.remote
-            .put_object(None, &S3Uri::try_from(LATEST)?, hash.as_bytes().to_vec())
+            .put_object(
+                None,
+                &S3Uri::try_from(
+                    format!("s3://b/.quilt/named_packages/{package}/latest").as_str(),
+                )?,
+                hash.as_bytes().to_vec(),
+            )
             .await?;
         Ok(())
     }
@@ -535,6 +555,82 @@ async fn after_data_toml_is_edited_commits_not_pushed_are_pushed_before_the_read
     let locked = world.locked().await?.ok_or("no lock entry")?;
     assert_eq!(locked.base, commit[0]);
     assert_eq!(locked.commits, Vec::<String>::new());
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn an_edit_to_data_toml_that_read_all_saw_is_still_read_whole_by_the_tick() -> Res {
+    let world = World::new("read = [\"team/ref\"]\nsync = [\"team/raw\"]")?;
+    world
+        .publish_to("team/ref", THIRD, &[("r.txt", b"ref")])
+        .await?;
+    world
+        .publish(FIRST, &[("a.txt", b"v1"), ("b.txt", b"v1")])
+        .await?;
+    world.read_all().await?;
+    world.sync().await?;
+    assert!(world.lock().await?.header.filled.is_some());
+    world.remove("a.txt")?;
+    world.contract("# edited\nread = [\"team/ref\"]\nsync = [\"team/raw\"]")?;
+
+    world.read_all().await?;
+    let synced = world.sync().await?;
+
+    assert!(synced.read_only, "{synced:?}");
+    assert_eq!(world.text("a.txt").as_deref(), Some("v1"));
+    assert_eq!(world.latest().await?, FIRST);
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn after_data_toml_is_edited_an_entry_read_whole_keeps_its_base_while_another_is_blocked()
+-> Res {
+    let world = World::new("sync = [\"team/raw\", \"team/ref\"]")?;
+    world.publish(FIRST, &[("a.txt", b"v1")]).await?;
+    world
+        .publish_to("team/ref", THIRD, &[("r.txt", b"v1")])
+        .await?;
+    world.sync().await?;
+    world.publish(SECOND, &[("a.txt", b"v2")]).await?;
+    world
+        .publish_to("team/ref", FOURTH, &[("r.txt", b"v2")])
+        .await?;
+    std::fs::write(world.dataspace().join("team/ref/r.txt"), "mine")?;
+    world.contract("# edited\nsync = [\"team/raw\", \"team/ref\"]")?;
+
+    let synced = world.sync().await?;
+
+    assert!(synced.read_only, "{synced:?}");
+    assert_eq!(world.text("a.txt").as_deref(), Some("v2"));
+    let lock = world.lock().await?;
+    assert_eq!(
+        lock.packages.get(&key()).map(|locked| locked.base.as_str()),
+        Some(SECOND)
+    );
+    let contract = Contract::read(&world.storage, &world.dataspace()).await?;
+    assert_ne!(lock.header.data_toml_hash, contract.data_toml_hash());
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn after_data_toml_is_edited_a_commit_whose_latest_is_gone_is_not_pushed() -> Res {
+    let world = World::filled(&[("a.txt", b"v1")]).await?;
+    world.write("a.txt", "v2")?;
+    stopping_at("push.object", 0, world.tick()).await?;
+    world
+        .remote
+        .storage
+        .remove_file(LATEST.strip_prefix("s3://").ok_or("an s3 URI")?)
+        .await?;
+    world.contract("# edited\nsync = [\"team/raw\"]")?;
+
+    let outcome = world.tick().await?;
+
+    assert!(
+        matches!(&outcome, EntrySync::Diverged { latest: None }),
+        "{outcome:?}"
+    );
+    assert!(world.remote.current(LATEST).await?.is_none());
     Ok(())
 }
 

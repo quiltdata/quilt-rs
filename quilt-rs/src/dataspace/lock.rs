@@ -177,7 +177,21 @@ impl Lock {
         contract: &Contract,
         writer: &Writer,
     ) -> Result<(), LockError> {
-        let header = header(contract, writer, self.header.filled);
+        self.write_for(storage, contract, writer, contract.data_toml_hash())
+            .await
+    }
+
+    /// [`Lock::write`], naming `data_toml_hash` as the contract it was
+    /// written for, so an edit to `data.toml` still shows as one.
+    pub(crate) async fn write_for(
+        &mut self,
+        storage: &(impl Storage + Sync),
+        contract: &Contract,
+        writer: &Writer,
+        data_toml_hash: &str,
+    ) -> Result<(), LockError> {
+        let mut header = header(contract, writer, self.header.filled);
+        header.data_toml_hash = data_toml_hash.to_string();
         let text = toml::to_string(&raw(&header, &self.packages)?)?;
         let path = contract.dataspace().join(LOCK_FILE);
         // Unique, so two writers never write into one temporary file, and not

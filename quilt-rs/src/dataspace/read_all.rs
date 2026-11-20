@@ -116,7 +116,8 @@ impl From<LockError> for ReadAllError {
 /// be read has been.
 ///
 /// A lock written for another `data.toml` is used: the contract was edited
-/// here. One written for another folder, host or user is used only while no
+/// here. Where the contract has `sync` entries, the lock keeps naming the
+/// `data.toml` it was written for, so the sync tick still sees the edit. One written for another folder, host or user is used only while no
 /// entry's working folder holds files and it names no unpushed commits;
 /// otherwise nothing is read or written. A read has no Domain, so the local
 /// registry a lock names is not compared, and is kept unless the lock is
@@ -157,17 +158,23 @@ pub async fn read_all(
 
     let read = DataspaceRead { entries };
     if read.entries.iter().any(|(_, read)| read.completed()) {
+        let synced = contract
+            .entries()
+            .iter()
+            .any(|entry| entry.access == Access::Sync);
         // `sync` entries need a Domain, so a domainless read never fills them.
-        if lock.header.filled.is_none()
-            && read.completed()
-            && !contract
-                .entries()
-                .iter()
-                .any(|entry| entry.access == Access::Sync)
-        {
+        if lock.header.filled.is_none() && read.completed() && !synced {
             lock.header.filled = Some(Utc::now().trunc_subsecs(0));
         }
-        lock.write(storage, &contract, &writer).await?;
+        // An edit to `data.toml` is the sync tick's to take, once it has read
+        // its entries again.
+        let written_for = if synced {
+            lock.header.data_toml_hash.clone()
+        } else {
+            contract.data_toml_hash().to_string()
+        };
+        lock.write_for(storage, &contract, &writer, &written_for)
+            .await?;
     }
     Ok(read)
 }

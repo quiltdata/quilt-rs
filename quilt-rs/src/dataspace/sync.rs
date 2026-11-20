@@ -151,16 +151,17 @@ impl From<crate::Error> for Stop {
 }
 
 /// Writes the lock after each step, so an interrupted tick leaves it naming
-/// what completed.
+/// what completed, written for the `data.toml` whose hash is `written_for`.
 struct LockFile<'a, S> {
     storage: &'a S,
     contract: &'a Contract,
     writer: &'a Writer,
+    written_for: String,
 }
 
 impl<S: Storage + Sync> LockFile<'_, S> {
     async fn save(&self, lock: &mut Lock) -> Result<(), Stop> {
-        lock.write(self.storage, self.contract, self.writer)
+        lock.write_for(self.storage, self.contract, self.writer, &self.written_for)
             .await
             .map_err(Stop::Lock)
     }
@@ -198,24 +199,28 @@ pub async fn sync(
     let (mut lock, writer) = usable_lock(storage, &contract, writer)
         .await?
         .map_err(SyncError::Mismatch)?;
-    let lock_file = LockFile {
-        storage,
-        contract: &contract,
-        writer: &writer,
-    };
     let synced: Vec<&Entry> = contract
         .entries()
         .iter()
         .filter(|entry| entry.access == Access::Sync)
         .collect();
     let edited = lock.header.data_toml_hash != contract.data_toml_hash();
+    // A lock written for the edited contract would let absence count under
+    // paths not yet read, so it keeps naming the one before until they are.
+    let lock_file = LockFile {
+        storage,
+        contract: &contract,
+        writer: &writer,
+        written_for: lock.header.data_toml_hash.clone(),
+    };
 
     let mut entries = Vec::new();
     if edited || lock.header.filled.is_none() {
         for entry in synced {
-            let outcome = match fill(storage, remote, domain, entry, &mut lock).await {
+            let outcome = match fill(storage, remote, domain, entry, &mut lock, &lock_file).await {
                 Ok(outcome) => outcome,
-                Err(err) => EntrySync::Failed(err),
+                Err(Stop::Entry(err)) => EntrySync::Failed(err),
+                Err(Stop::Lock(err)) => return Err(err.into()),
             };
             entries.push((entry.clone(), outcome));
         }
@@ -231,10 +236,10 @@ pub async fn sync(
         if lock.header.filled.is_none() && filled(&contract, &lock, &entries) {
             lock.header.filled = Some(Utc::now().trunc_subsecs(0));
         }
-        // A lock written for the edited contract would let absence count
-        // under paths not yet read.
-        if !edited || whole {
+        if whole {
             lock.write(storage, &contract, &writer).await?;
+        } else if let Err(Stop::Lock(err)) = lock_file.save(&mut lock).await {
+            return Err(err.into());
         }
         return Ok(DataspaceSync {
             entries,
@@ -276,49 +281,53 @@ fn filled(contract: &Contract, lock: &Lock, synced: &[(Entry, EntrySync)]) -> bo
 }
 
 /// Reads `entry` in full at `latest`, filling what is missing, and moves its
-/// base in `lock` where the read completes. Commits the lock names were made
-/// against the contract they were committed under, so they are pushed first,
-/// with no new commit; one that does not become `latest` leaves the entry
-/// unread.
+/// base where the read completes. Commits the lock names were made against
+/// the contract they were committed under, so they are pushed first, with no
+/// new commit, where `latest` is still their base; one that does not become
+/// `latest` leaves the entry unread.
 async fn fill(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
     domain: &DomainRoot,
     entry: &Entry,
     lock: &mut Lock,
-) -> Result<EntrySync, EntryError> {
+    lock_file: &LockFile<'_, impl Storage + Sync>,
+) -> Result<EntrySync, Stop> {
     let key = entry.key();
+    let mut latest = latest(remote, entry).await?;
     let mut published = None;
-    if let Some(locked) = lock
-        .packages
-        .get(&key)
-        .filter(|locked| !locked.commits.is_empty())
+    if let Some(locked) = lock.packages.get(&key).cloned()
+        && let Some(head) = locked.commits.last()
     {
-        let Registry::S3(bucket) = &entry.registry;
-        let store = domain.registry(bucket)?;
-        let Some(_held) = storage
-            .try_lock_exclusive(store.package_lock(&entry.package))
-            .await?
-        else {
-            return Ok(EntrySync::Busy);
-        };
-        let head = locked.commits.last().map_or("", String::as_str);
-        let pushed = push_head(storage, remote, &store, entry, head, Some(&locked.base)).await?;
-        let Published::Advanced { revision, .. } = &pushed else {
-            return Ok(EntrySync::Ran {
-                read: None,
-                published: Some(pushed),
-            });
-        };
-        let locked = LockEntry {
-            base: revision.clone(),
-            commits: Vec::new(),
-        };
-        lock.packages.insert(key.clone(), locked);
-        published = Some(pushed);
+        if latest.as_ref() == Some(head) {
+            // The push landed and the lock was not written after it.
+            set_base(lock, lock_file, &key, head.clone()).await?;
+        } else if latest.as_ref() != Some(&locked.base) {
+            return Ok(EntrySync::Diverged { latest });
+        } else {
+            let Registry::S3(bucket) = &entry.registry;
+            let store = domain.registry(bucket)?;
+            let Some(_held) = storage
+                .try_lock_exclusive(store.package_lock(&entry.package))
+                .await?
+            else {
+                return Ok(EntrySync::Busy);
+            };
+            let pushed =
+                push_head(storage, remote, &store, entry, head, Some(&locked.base)).await?;
+            let Published::Advanced { revision, .. } = &pushed else {
+                return Ok(EntrySync::Ran {
+                    read: None,
+                    published: Some(pushed),
+                });
+            };
+            set_base(lock, lock_file, &key, revision.clone()).await?;
+            latest = Some(revision.clone());
+            published = Some(pushed);
+        }
     }
     let base = lock.packages.get(&key).map(|locked| locked.base.clone());
-    let Some(latest) = latest(remote, entry).await? else {
+    let Some(latest) = latest else {
         return Ok(match base {
             None => EntrySync::Ran {
                 read: None,
@@ -331,11 +340,7 @@ async fn fill(
     whole.access = Access::Read;
     let outcome = read(storage, remote, &whole, base.as_deref()).await?;
     if let Some(revision) = outcome.lock_base() {
-        let locked = LockEntry {
-            base: revision.to_string(),
-            commits: Vec::new(),
-        };
-        lock.packages.insert(key, locked);
+        set_base(lock, lock_file, &key, revision.to_string()).await?;
     }
     Ok(match outcome {
         ReadOutcome::Read(report) => EntrySync::Ran {
