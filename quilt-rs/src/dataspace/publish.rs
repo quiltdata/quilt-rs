@@ -71,6 +71,13 @@ pub enum Published {
         /// What `latest` named instead, where that is known.
         latest: Option<String>,
     },
+    /// The revision is stored under its hash, and the bucket's workflow
+    /// refused it, so `latest` was left alone.
+    WorkflowBlocked {
+        revision: String,
+        /// Why the workflow refused it.
+        reason: String,
+    },
     /// The folder holds nothing `latest` lacks, so nothing was published.
     Unchanged {
         /// `latest`, `None` where the package has none.
@@ -93,7 +100,10 @@ impl Published {
     pub fn lock_base(&self) -> Option<&str> {
         match self {
             Self::Advanced { revision, .. } => Some(revision),
-            Self::Stored { .. } | Self::Unchanged { .. } | Self::Behind { .. } => None,
+            Self::Stored { .. }
+            | Self::WorkflowBlocked { .. }
+            | Self::Unchanged { .. }
+            | Self::Behind { .. } => None,
         }
     }
 }

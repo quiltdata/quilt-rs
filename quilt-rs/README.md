@@ -127,7 +127,11 @@ folder:
   working folder's changes, deletions included and without what the ignore
   rules leave out of a commit, into the Domain's store for the bucket, and
   pushes the lock's last commit against the base, writing the lock after each
-  step. A push `latest` moved past is left stored.
+  step. A push `latest` moved past, or that the bucket's workflow refuses, is
+  still stored, and kept in the Domain's queue so that it is not uploaded
+  again. A working folder that
+  is missing or empty is read back at the lock's revision, and nothing is
+  published from it.
 - `dataspace::publish::publish` publishes a `data.toml` entry under `write`
   or `replace` from its working folder, against the `latest` read just before.
   `write` lays the files under the entry's paths over `latest` and keeps its

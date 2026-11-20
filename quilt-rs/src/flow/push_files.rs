@@ -94,10 +94,35 @@ pub async fn push_files(
     mut manifest: Manifest,
     files: &BTreeMap<LogicalKey, RowContent>,
 ) -> Res<PushOutcome> {
-    refuse_unplaceable_rows(&manifest, files)?;
-
     // Measured before validation, so the entries schema sees what will be
     // uploaded rather than the placeholder size of a row the caller never sized.
+    measure(storage, &mut manifest, files).await?;
+    check_workflow(remote, target, &manifest).await?;
+    let manifest_uri = upload(storage, remote, target, manifest, files).await?;
+    tag_stored(remote, target, manifest_uri).await
+}
+
+/// Stores `manifest` as [`push_files`] does, with no workflow check and no
+/// tag.
+pub(crate) async fn store_files(
+    storage: &(impl Storage + Sync),
+    remote: &impl Remote,
+    target: &PushTarget,
+    mut manifest: Manifest,
+    files: &BTreeMap<LogicalKey, RowContent>,
+) -> Res<ManifestUri> {
+    measure(storage, &mut manifest, files).await?;
+    upload(storage, remote, target, manifest, files).await
+}
+
+/// Refuses rows [`push_files`] cannot place, and sizes each row from its
+/// supplied content.
+async fn measure(
+    storage: &(impl Storage + Sync),
+    manifest: &mut Manifest,
+    files: &BTreeMap<LogicalKey, RowContent>,
+) -> Res {
+    refuse_unplaceable_rows(manifest, files)?;
     let mut measured: BTreeMap<&LogicalKey, u64> = BTreeMap::new();
     for (key, content) in files {
         measured.insert(key, content.size(storage).await?);
@@ -107,7 +132,15 @@ pub async fn push_files(
             row.size = *size;
         }
     }
+    Ok(())
+}
 
+/// Checks `manifest` against the bucket's current workflows config.
+pub(crate) async fn check_workflow(
+    remote: &impl Remote,
+    target: &PushTarget,
+    manifest: &Manifest,
+) -> Res {
     let mut sorted: Vec<&ManifestRow> = manifest.rows.iter().collect();
     sorted.sort_by(|a, b| a.logical_key.cmp(&b.logical_key));
     let entries: Vec<_> = sorted.into_iter().map(entry_view).collect();
@@ -121,8 +154,16 @@ pub async fn push_files(
         manifest.header.workflow.as_ref(),
         &entries,
     )
-    .await?;
+    .await
+}
 
+async fn upload(
+    storage: &(impl Storage + Sync),
+    remote: &impl Remote,
+    target: &PushTarget,
+    manifest: Manifest,
+    files: &BTreeMap<LogicalKey, RowContent>,
+) -> Res<ManifestUri> {
     let host_config = remote.host_config(target.origin.as_ref()).await?;
     let rows = upload_rows(storage, remote, target, &host_config, manifest.rows, files).await?;
     let manifest = Manifest {
@@ -149,12 +190,11 @@ pub async fn push_files(
     };
     upload_manifest(storage, remote, &manifest_uri, &cache_path).await?;
     crate::failpoint::stop("push.stored")?;
-
-    tag_stored(remote, target, manifest_uri).await
+    Ok(manifest_uri)
 }
 
 /// Tags the stored revision; see [`push_files`].
-async fn tag_stored(
+pub(crate) async fn tag_stored(
     remote: &impl Remote,
     target: &PushTarget,
     manifest_uri: ManifestUri,

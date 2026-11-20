@@ -14,6 +14,7 @@ use tracing::warn;
 
 use crate::LogicalKey;
 use crate::Res;
+use crate::WorkflowValidationError;
 use crate::dataspace::EntryError;
 use crate::dataspace::METADATA_FILE;
 use crate::dataspace::contract::Access;
@@ -35,6 +36,7 @@ use crate::dataspace::publish::walk;
 use crate::dataspace::read::OnDisk;
 use crate::dataspace::read::ReadOutcome;
 use crate::dataspace::read::ReadReport;
+use crate::dataspace::read::STAGING_PREFIX;
 use crate::dataspace::read::bytes_at;
 use crate::dataspace::read::gone;
 use crate::dataspace::read::read;
@@ -42,11 +44,16 @@ use crate::dataspace::read::write_metadata;
 use crate::dataspace::read_all::usable_lock;
 use crate::domain::DomainRoot;
 use crate::domain::RegistryStore;
+use crate::flow::PackageStore;
 use crate::flow::PushTarget;
 use crate::flow::WorkflowCheck;
 use crate::flow::cache_manifest_at;
-use crate::flow::push_files;
+use crate::flow::check_workflow;
+use crate::flow::install_to;
 use crate::flow::record;
+use crate::flow::refuse_linked_ancestors;
+use crate::flow::store_files;
+use crate::flow::tag_stored;
 use crate::io::manifest::LatestSeen;
 use crate::io::manifest::RowContent;
 use crate::io::manifest::read_latest;
@@ -61,7 +68,11 @@ use crate::manifest::Manifest;
 use crate::manifest::ManifestRow;
 use crate::manifest::RawNumbers;
 use crate::object_hash::ObjectHash;
+use crate::queue::KeptReason;
+use crate::queue::KeptRevision;
+use crate::queue::Queue;
 use crate::quiltignore::Rules;
+use crate::state_store::FolderKey;
 use quilt_uri::ManifestUri;
 use quilt_uri::RevisionPointer;
 use quilt_uri::S3PackageHandle;
@@ -89,6 +100,9 @@ pub enum EntrySync {
     /// names commits not pushed, or `latest` is gone: nothing was read or
     /// published.
     Diverged { latest: Option<String> },
+    /// The working folder was missing or empty, so the lock's current
+    /// revision was read back into it and nothing was published.
+    ReadBack(ReadReport),
     /// Another process holds the package in the Domain, so it was left for
     /// the next tick.
     Busy,
@@ -182,9 +196,15 @@ impl<S: Storage + Sync> LockFile<'_, S> {
 /// bucket, and pushes the lock's last commit against its base. The lock is
 /// written after each step: the base after a read, a commit once it is
 /// recorded, and the base again, with the commits the push squashed dropped,
-/// once `latest` names the push. A push that `latest` moved past is left
-/// stored, and the lock where it was. What the ignore rules leave out of a
-/// commit is not committed, `user_rules` being the user-wide file.
+/// once `latest` names the push. Commits are not checked against the
+/// bucket's workflow; their push is. A push that `latest` moved past, or that
+/// the workflow refuses, is left stored, recorded with [`Queue::keep`], and
+/// not uploaded again while the bucket holds it; the lock stays where it
+/// was. A working folder the lock says was
+/// filled and that is now missing or empty is read back at the lock's
+/// current revision, its last commit or else its base, and nothing is
+/// published. What the ignore rules leave out of a commit is not committed,
+/// `user_rules` being the user-wide file.
 ///
 /// Until the dataspace is filled, and after `data.toml` is edited, the tick
 /// only reads: each entry is read in full, a missing file filled rather than
@@ -197,10 +217,12 @@ impl<S: Storage + Sync> LockFile<'_, S> {
 /// The lock is used as [`read_all`](crate::dataspace::read_all::read_all)
 /// uses it. Each commit's message is `message`, and its workflow the
 /// bucket's default.
+#[allow(clippy::too_many_arguments)]
 pub async fn sync(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
     domain: &DomainRoot,
+    queue: &Queue,
     dataspace: &Path,
     writer: &Writer,
     message: &str,
@@ -228,17 +250,19 @@ pub async fn sync(
     let mut entries = Vec::new();
     if edited || lock.header.filled.is_none() {
         for entry in synced {
-            let outcome = match fill(storage, remote, domain, entry, &mut lock, &lock_file).await {
-                Ok(outcome) => outcome,
-                Err(Stop::Entry(err)) => EntrySync::Failed(err),
-                Err(Stop::Lock(err)) => return Err(err.into()),
-            };
+            let outcome =
+                match fill(storage, remote, domain, queue, entry, &mut lock, &lock_file).await {
+                    Ok(outcome) => outcome,
+                    Err(Stop::Entry(err)) => EntrySync::Failed(err),
+                    Err(Stop::Lock(err)) => return Err(err.into()),
+                };
             entries.push((entry.clone(), outcome));
         }
         let whole = entries.iter().all(|(_, outcome)| match outcome {
             EntrySync::Ran {
                 read,
-                published: None | Some(Published::Advanced { .. }),
+                published:
+                    None | Some(Published::Advanced { .. } | Published::WorkflowBlocked { .. }),
             } => read
                 .as_ref()
                 .is_none_or(|read| read.skipped.is_empty() && read.hash_mismatch.is_empty()),
@@ -267,7 +291,7 @@ pub async fn sync(
 
     for entry in synced {
         let outcome = match tick(
-            storage, remote, domain, entry, &mut lock, &lock_file, message, user_rules,
+            storage, remote, domain, queue, entry, &mut lock, &lock_file, message, user_rules,
         )
         .await
         {
@@ -311,12 +335,13 @@ async fn filled(
 /// Reads `entry` in full at `latest`, filling what is missing, and moves its
 /// base where the read completes. Commits the lock names were made against
 /// the contract they were committed under, so they are pushed first, with no
-/// new commit, where `latest` is still their base; one that does not become
-/// `latest` leaves the entry unread.
+/// new commit, where `latest` is still their base; one the workflow refuses
+/// is read at instead, and one `latest` moved past leaves the entry unread.
 async fn fill(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
     domain: &DomainRoot,
+    queue: &Queue,
     entry: &Entry,
     lock: &mut Lock,
     lock_file: &LockFile<'_, impl Storage + Sync>,
@@ -340,17 +365,37 @@ async fn fill(
         } else if latest.as_ref() != Some(&locked.base) {
             return Ok(EntrySync::Diverged { latest });
         } else {
-            let pushed =
-                push_head(storage, remote, &store, entry, head, Some(&locked.base)).await?;
-            let Published::Advanced { revision, .. } = &pushed else {
-                return Ok(EntrySync::Ran {
-                    read: None,
-                    published: Some(pushed),
-                });
-            };
-            set_base(lock, lock_file, &key, revision.clone()).await?;
-            latest = Some(revision.clone());
-            published = Some(pushed);
+            let pushed = push_head(
+                storage,
+                remote,
+                &store,
+                queue,
+                entry,
+                head,
+                Some(&locked.base),
+            )
+            .await?;
+            match &pushed {
+                Published::Advanced { revision, .. } => {
+                    set_base(lock, lock_file, &key, revision.clone()).await?;
+                    latest = Some(revision.clone());
+                    published = Some(pushed);
+                }
+                // The bucket holds the refused commit, so the folder is read
+                // whole at it, and the lock keeps it for a fix to build on.
+                Published::WorkflowBlocked { revision, .. } => {
+                    let mut whole = at(entry, revision);
+                    whole.access = Access::Read;
+                    let outcome = read(storage, remote, &whole, Some(revision)).await?;
+                    return Ok(ran(outcome, Some(pushed)));
+                }
+                _ => {
+                    return Ok(EntrySync::Ran {
+                        read: None,
+                        published: Some(pushed),
+                    });
+                }
+            }
         }
     }
     let base = lock.packages.get(&key).map(|locked| locked.base.clone());
@@ -369,7 +414,11 @@ async fn fill(
     if let Some(revision) = outcome.lock_base() {
         set_base(lock, lock_file, &key, revision.to_string()).await?;
     }
-    Ok(match outcome {
+    Ok(ran(outcome, published))
+}
+
+fn ran(outcome: ReadOutcome, published: Option<Published>) -> EntrySync {
+    match outcome {
         ReadOutcome::Read(report) => EntrySync::Ran {
             read: Some(report),
             published,
@@ -381,7 +430,7 @@ async fn fill(
             revision,
             conflicts,
         },
-    })
+    }
 }
 
 /// The hash `latest` names for `entry`'s package, `None` where it has none.
@@ -423,6 +472,7 @@ async fn tick(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
     domain: &DomainRoot,
+    queue: &Queue,
     entry: &Entry,
     lock: &mut Lock,
     lock_file: &LockFile<'_, impl Storage + Sync>,
@@ -441,6 +491,15 @@ async fn tick(
         Some(locked) => (Some(locked.base.clone()), locked.commits.clone()),
         None => (None, Vec::new()),
     };
+    let mut current = None;
+    if let Some(hash) = commits.last().or(base.as_ref()) {
+        let manifest = manifest_at(storage, remote, &store, entry, hash, &commits).await?;
+        if gone(storage, &entry.folder, &manifest, &entry.paths).await? {
+            let report = read_back(storage, remote, &store, entry, hash, &manifest).await?;
+            return Ok(EntrySync::ReadBack(report));
+        }
+        current = Some((hash.clone(), manifest));
+    }
     let latest = latest(remote, entry).await?;
 
     let mut read_report = None;
@@ -479,8 +538,10 @@ async fn tick(
         read_report = Some(report);
     }
 
+    // A base that moved names a revision the bucket holds, read from there.
+    let known = current.filter(|_| latest == base);
     let published = publish(
-        storage, remote, &store, entry, lock, lock_file, message, user_rules,
+        storage, remote, &store, queue, entry, lock, lock_file, known, message, user_rules,
     )
     .await?;
     Ok(EntrySync::Ran {
@@ -508,15 +569,18 @@ async fn set_base(
 
 /// Commits the working folder's changes on the lock's current revision, then
 /// pushes the last commit against the base. `None` where there was nothing
-/// to commit or push.
+/// to commit or push. `known` is a revision's manifest already read, by its
+/// hash.
 #[allow(clippy::too_many_arguments)]
 async fn publish(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
     store: &RegistryStore,
+    queue: &Queue,
     entry: &Entry,
     lock: &mut Lock,
     lock_file: &LockFile<'_, impl Storage + Sync>,
+    known: Option<(String, Manifest)>,
     message: &str,
     user_rules: &Path,
 ) -> Result<Option<Published>, Stop> {
@@ -526,12 +590,10 @@ async fn publish(
         None => (None, Vec::new()),
     };
     let current_hash = commits.last().or(base.as_ref());
-    let current = match current_hash {
-        None => Manifest::default(),
-        Some(hash) if commits.last() == Some(hash) => {
-            Manifest::from_path(storage, &store.installed_manifest(&entry.package, hash)).await?
-        }
-        Some(hash) => base_manifest(storage, remote, store, entry, hash).await?,
+    let current = match (current_hash, known) {
+        (None, _) => Manifest::default(),
+        (Some(hash), Some((known, manifest))) if *hash == known => manifest,
+        (Some(hash), _) => manifest_at(storage, remote, store, entry, hash, &commits).await?,
     };
 
     let folder = &entry.folder;
@@ -576,8 +638,9 @@ async fn publish(
             store,
             storage,
             remote,
-            // The push would refuse it, and the lock would hold it meanwhile.
-            WorkflowCheck::Gate {
+            // The lineage names no bucket, so nothing is checked here: the
+            // push checks the revision, and stores one the workflow refuses.
+            WorkflowCheck::Warn {
                 host: entry.catalog.as_ref(),
             },
             &entry.package,
@@ -615,7 +678,7 @@ async fn publish(
         }
         return Ok(None);
     };
-    let published = push_head(storage, remote, store, entry, &head, base.as_deref()).await?;
+    let published = push_head(storage, remote, store, queue, entry, &head, base.as_deref()).await?;
     if let Published::Advanced { revision, .. } = &published {
         crate::failpoint::stop("sync.pushed")?;
         set_base(lock, lock_file, &key, revision.clone()).await?;
@@ -641,31 +704,211 @@ async fn rewrite_metadata(
 }
 
 /// Pushes the local commit `head` against `base`, squashing the commits
-/// before it.
+/// before it. A revision the bucket's workflow refuses is still stored, and
+/// one stored without becoming `latest` is kept in `queue`; a later push of
+/// it that the bucket still holds is not uploaded again.
 async fn push_head(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
     store: &RegistryStore,
+    queue: &Queue,
     entry: &Entry,
     head: &str,
     base: Option<&str>,
 ) -> Result<Published, EntryError> {
-    let manifest =
-        Manifest::from_path(storage, &store.installed_manifest(&entry.package, head)).await?;
+    let head_only = [head.to_string()];
+    let manifest = manifest_at(storage, remote, store, entry, head, &head_only).await?;
     let target = PushTarget {
         handle: handle(entry)?,
         origin: entry.catalog.clone(),
         parent: base.map(str::to_string),
     };
-    let pushed = Box::pin(push_files(
-        storage,
-        remote,
-        &target,
-        manifest,
-        &BTreeMap::new(),
-    ))
+    let folder = folder_key(entry);
+    let kept = queue.kept(&folder).await?;
+    let keep = |hash: &str, reason| {
+        let revision = KeptRevision {
+            hash: hash.to_string(),
+            base: base.map(str::to_string),
+            reason,
+        };
+        queue.keep(&folder, revision)
+    };
+    // A config that cannot be read or applied fails the push before anything
+    // is uploaded; only the workflow's refusal is stored and kept.
+    let refused = match check_workflow(remote, &target, &manifest).await {
+        Ok(()) => None,
+        Err(crate::Error::WorkflowValidation(err @ WorkflowValidationError::Rejected(_))) => {
+            Some(err.to_string())
+        }
+        Err(err) => return Err(err.into()),
+    };
+    let uri = revision(entry, head)?;
+    let in_bucket = kept
+        .as_ref()
+        .is_some_and(|kept| kept.hash == head && kept.base.as_deref() == base)
+        && remote
+            .exists(entry.catalog.as_ref(), &S3Uri::from(uri.clone()))
+            .await?;
+    let stored = if in_bucket {
+        uri
+    } else {
+        Box::pin(store_files(
+            storage,
+            remote,
+            &target,
+            manifest,
+            &BTreeMap::new(),
+        ))
+        .await?
+    };
+    if let Some(reason) = refused {
+        keep(&stored.hash, KeptReason::WorkflowBlocked).await?;
+        return Ok(Published::WorkflowBlocked {
+            revision: stored.hash,
+            reason,
+        });
+    }
+    let pushed = tag_stored(remote, &target, stored).await;
+    let published = settle(remote, &target, pushed).await?;
+    if let Published::Stored { revision, .. } = &published {
+        keep(revision, KeptReason::LatestMoved).await?;
+    }
+    Ok(published)
+}
+
+/// The key `queue.db` keeps `entry`'s working folder under.
+fn folder_key(entry: &Entry) -> FolderKey {
+    FolderKey {
+        registry: Some(entry.registry.clone()),
+        package: entry.package.clone(),
+        folder: entry.folder.clone(),
+    }
+}
+
+fn revision(entry: &Entry, hash: &str) -> Result<ManifestUri, EntryError> {
+    Ok(ManifestUri {
+        origin: entry.catalog.clone(),
+        bucket: bucket(entry)?.to_string(),
+        namespace: entry.package.clone(),
+        hash: hash.to_string(),
+    })
+}
+
+/// The manifest of `hash`, the lock's current revision of `entry`: the last
+/// of `commits`, from `store`, or else the base. A commit the store cleared
+/// once the bucket held it, as one stored without becoming `latest`, is read
+/// from the bucket.
+async fn manifest_at(
+    storage: &(impl Storage + Sync),
+    remote: &impl Remote,
+    store: &RegistryStore,
+    entry: &Entry,
+    hash: &str,
+    commits: &[String],
+) -> Result<Manifest, EntryError> {
+    let installed = store.installed_manifest(&entry.package, hash);
+    if commits.last().is_some_and(|head| head == hash) && storage.exists(&installed).await {
+        Ok(Manifest::from_path(storage, &installed).await?)
+    } else {
+        base_manifest(storage, remote, store, entry, hash).await
+    }
+}
+
+/// Puts every file of `current`, the revision `hash`, under `entry`'s paths
+/// back into its working folder, which is missing or empty, and writes the
+/// metadata file where there is none. A file a local commit changed is
+/// copied from `store`, the rest fetched from the bucket. Nothing is placed
+/// unless every file can be: a folder left partly filled would publish the
+/// rest as deleted.
+async fn read_back(
+    storage: &(impl Storage + Sync),
+    remote: &impl Remote,
+    store: &RegistryStore,
+    entry: &Entry,
+    hash: &str,
+    current: &Manifest,
+) -> Result<ReadReport, EntryError> {
+    let folder = &entry.folder;
+    let rows: Vec<&ManifestRow> = current
+        .rows
+        .iter()
+        .filter(|row| entry.paths.covers(&row.logical_key))
+        .collect();
+    let (fetched, copied): (Vec<&ManifestRow>, Vec<&ManifestRow>) = rows
+        .iter()
+        .partition(|row| row.physical_key.starts_with("s3://"));
+    let staging = folder.join(format!("{STAGING_PREFIX}{}", uuid::Uuid::new_v4()));
+    let read = async {
+        let installed = install_to(
+            storage,
+            remote,
+            entry.catalog.as_ref(),
+            &Manifest {
+                rows: fetched.into_iter().cloned().collect(),
+                ..Manifest::default()
+            },
+            &staging,
+            None,
+        )
+        .await?;
+        let mut report = ReadReport {
+            revision: hash.to_string(),
+            skipped: installed.skipped,
+            hash_mismatch: installed.hash_mismatch,
+            ..ReadReport::default()
+        };
+        if !report.skipped.is_empty() || !report.hash_mismatch.is_empty() {
+            return Ok(report);
+        }
+        for row in copied {
+            let staged = row.logical_key.join_to(&staging);
+            if let Some(parent) = staged.parent() {
+                storage.create_dir_all(parent).await?;
+            }
+            storage.copy(store.object_path(&row.hash), &staged).await?;
+        }
+        let text = render(current, &entry.paths).map_err(EntryError::MetadataUnwritable)?;
+        let keys = || rows.iter().map(|row| &row.logical_key);
+        refuse_linked_ancestors(storage, folder, keys()).await?;
+        let placed = async {
+            for key in keys() {
+                let path = key.join_to(folder);
+                // A rename replaces what it finds.
+                if storage.exists(&path).await {
+                    return Err(EntryError::Changed(key.to_path_buf()));
+                }
+                if let Some(parent) = path.parent() {
+                    storage.create_dir_all(parent).await?;
+                }
+                storage.rename(key.join_to(&staging), &path).await?;
+                report.placed.push(key.to_path_buf());
+                crate::failpoint::stop("sync.read_back")?;
+            }
+            match bytes_at(storage, &folder.join(METADATA_FILE)).await? {
+                None => {
+                    write_metadata(storage, folder, text, None).await?;
+                    report.placed.push(PathBuf::from(METADATA_FILE));
+                }
+                Some(bytes) if bytes != text.as_bytes() => {
+                    report.kept.push(PathBuf::from(METADATA_FILE));
+                }
+                Some(_) => {}
+            }
+            Ok(())
+        }
+        .await;
+        if let Err(err) = placed {
+            // Back to empty, so the next tick reads it back again.
+            for done in &report.placed {
+                let _ = storage.remove_file(folder.join(done)).await;
+            }
+            return Err(err);
+        }
+        Ok::<_, EntryError>(report)
+    }
     .await;
-    settle(remote, &target, pushed).await
+    let _ = storage.remove_dir_all(&staging).await;
+    read
 }
 
 /// The manifest of `hash`, a revision of `entry`'s package in its bucket,
@@ -677,12 +920,7 @@ async fn base_manifest(
     entry: &Entry,
     hash: &str,
 ) -> Result<Manifest, EntryError> {
-    let uri = ManifestUri {
-        origin: entry.catalog.clone(),
-        bucket: bucket(entry)?.to_string(),
-        namespace: entry.package.clone(),
-        hash: hash.to_string(),
-    };
+    let uri = revision(entry, hash)?;
     Ok(cache_manifest_at(storage, remote, &uri, &store.cached_manifest(hash)).await?)
 }
 

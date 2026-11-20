@@ -39,7 +39,7 @@ use quilt_uri::S3PackageUri;
 
 /// The prefix of the folder a read stages its downloads in, inside the
 /// working folder so that each file is renamed into place.
-const STAGING_PREFIX: &str = ".quilt-read-";
+pub(crate) const STAGING_PREFIX: &str = ".quilt-read-";
 
 /// Whether `name`, at a working folder's root, is a staging folder or a
 /// temporary file that a read leaves while it runs: the metadata file's, or

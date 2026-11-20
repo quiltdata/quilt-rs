@@ -62,7 +62,16 @@ pub enum EntryError {
     LatestUnreadable,
 
     #[error(transparent)]
+    Queue(#[from] Box<crate::queue::QueueError>),
+
+    #[error(transparent)]
     Failed(#[from] Box<crate::Error>),
+}
+
+impl From<crate::queue::QueueError> for EntryError {
+    fn from(err: crate::queue::QueueError) -> Self {
+        Self::Queue(Box::new(err))
+    }
 }
 
 impl From<crate::Error> for EntryError {
