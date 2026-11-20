@@ -17,6 +17,7 @@ use crate::dataspace::EntryError;
 use crate::dataspace::METADATA_FILE;
 use crate::dataspace::contract::Access;
 use crate::dataspace::contract::Entry;
+use crate::dataspace::contract::Paths;
 use crate::dataspace::contract::Registry;
 use crate::dataspace::metadata::MetadataFile;
 use crate::dataspace::metadata::at_metadata_file;
@@ -27,6 +28,7 @@ use crate::dataspace::read::left_by_read;
 use crate::dataspace::read::metadata_place_free;
 use crate::error::PackageOpError;
 use crate::flow::PushTarget;
+use crate::flow::Tracked;
 use crate::flow::push_files;
 use crate::installed_package::PushOutcome;
 use crate::io::manifest::LatestSeen;
@@ -44,6 +46,7 @@ use crate::manifest::ManifestHeader;
 use crate::manifest::ManifestRow;
 use crate::manifest::RawNumbers;
 use crate::object_hash::ObjectHash;
+use crate::quiltignore::Rules;
 use quilt_uri::S3PackageHandle;
 use quilt_uri::S3Uri;
 
@@ -73,20 +76,36 @@ pub enum Published {
         /// `latest`, `None` where the package has none.
         latest: Option<String>,
     },
+    /// `latest` is not the [locked base](Base::Locked), so nothing was
+    /// published.
+    Behind {
+        /// `latest`, `None` where the package has none.
+        latest: Option<String>,
+    },
 }
 
 impl Published {
-    /// The base the lock takes for a package listed only under `write` or
-    /// `replace`: the new revision, once it is `latest`. `None` leaves the
-    /// lock as it is. A package also listed under `read` shares its base with
-    /// the read paths, which this revision may not have been read into.
+    /// The base the lock takes: the new revision, once it is `latest`. `None`
+    /// leaves the lock as it is. A package also listed under `read` takes it
+    /// only from a publish on [`Base::Locked`], the revision its read paths
+    /// hold.
     #[must_use]
     pub fn lock_base(&self) -> Option<&str> {
         match self {
             Self::Advanced { revision, .. } => Some(revision),
-            Self::Stored { .. } | Self::Unchanged { .. } => None,
+            Self::Stored { .. } | Self::Unchanged { .. } | Self::Behind { .. } => None,
         }
     }
+}
+
+/// The revision a [`publish`] builds on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Base<'a> {
+    /// The `latest` read just before.
+    Latest,
+    /// The base of a package also listed under `read`, `None` where the
+    /// package has no revision yet.
+    Locked(Option<&'a str>),
 }
 
 /// Publishes `entry`'s working folder as a new revision, built on the
@@ -94,6 +113,13 @@ impl Published {
 /// the entry's paths are added or replaced, and every other key of `latest`
 /// is kept. Under `replace` it is a snapshot: a key the folder lacks is
 /// removed. The revision takes the bucket's default workflow.
+///
+/// A file the ignore rules leave out is not published, as a commit leaves it
+/// out: the folder's `.quiltignore`, then the user-wide `user_rules` file and
+/// the built-in rules, which spare a key `latest` has.
+///
+/// On a [`Base::Locked`] it publishes only while `latest` is that base, and is
+/// never composed on another.
 ///
 /// The [metadata file](METADATA_FILE) sets the revision's message, the
 /// package's metadata, and that of each file and folder under the entry's
@@ -112,6 +138,8 @@ pub async fn publish(
     remote: &impl Remote,
     entry: &Entry,
     message: Option<&str>,
+    base: Base<'_>,
+    user_rules: &Path,
 ) -> Result<Published, EntryError> {
     let whole = match entry.access {
         Access::Write => false,
@@ -122,14 +150,7 @@ pub async fn publish(
     if storage.read_dir(folder).await.is_err() {
         return Err(EntryError::FolderUnavailable(folder.clone()));
     }
-    let files: Vec<(LogicalKey, PathBuf)> = walk(storage, folder)
-        .await?
-        .into_iter()
-        .filter(|(key, _)| entry.paths.covers(key))
-        .collect();
-    if whole && files.is_empty() {
-        return Err(EntryError::NothingToReplace(folder.clone()));
-    }
+    let rules = Rules::load(folder, user_rules)?;
     let metadata = metadata_file(storage, folder).await?;
 
     let Registry::S3(bucket) = &entry.registry;
@@ -171,10 +192,11 @@ pub async fn publish(
             storage,
             remote,
             entry,
-            &files,
+            &rules,
             &metadata,
             header.clone(),
             message.is_none() && metadata.message().is_some(),
+            base,
             &mut target,
         ))
         .await;
@@ -189,7 +211,9 @@ pub async fn publish(
             return Ok(stored);
         }
         match outcome {
-            Ok(stored @ Published::Stored { .. }) if !whole && attempt < ATTEMPTS => {
+            Ok(stored @ Published::Stored { .. })
+                if !whole && base == Base::Latest && attempt < ATTEMPTS =>
+            {
                 lost = Some(stored);
                 attempt += 1;
             }
@@ -198,21 +222,33 @@ pub async fn publish(
     }
 }
 
-/// One publish of `files` on the `latest` read now. The message counts as a
-/// change only where the metadata file gave it, `with_message`.
+/// One publish of the folder on the `latest` read now, where that is `base`.
+/// The message counts as a change only where the metadata file gave it,
+/// `with_message`.
 #[allow(clippy::too_many_arguments)]
 async fn attempt_on_latest(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
     entry: &Entry,
-    files: &[(LogicalKey, PathBuf)],
+    rules: &Rules,
     metadata: &MetadataFile,
     header: ManifestHeader,
     with_message: bool,
+    base: Base<'_>,
     target: &mut PushTarget,
 ) -> Result<Published, EntryError> {
     let whole = entry.access == Access::Replace;
     let seen = read_latest(remote, target.origin.as_ref(), target.handle.clone()).await?;
+    if let Base::Locked(locked) = base {
+        if matches!(seen, LatestSeen::Unreadable) {
+            return Err(EntryError::LatestUnreadable);
+        }
+        if seen.hash() != locked {
+            return Ok(Published::Behind {
+                latest: seen.hash().map(str::to_string),
+            });
+        }
+    }
     let base = match &seen {
         LatestSeen::Tagged { uri, .. } => Some(fetch_jsonl(remote, uri).await?),
         LatestSeen::Absent => None,
@@ -222,7 +258,11 @@ async fn attempt_on_latest(
     if base.as_ref().is_some_and(holds_metadata_file) {
         return Err(EntryError::HoldsMetadataFile);
     }
-    let (mut manifest, content) = compose(storage, files, base.as_ref(), whole, header).await?;
+    let files = walk(storage, &entry.folder, &entry.paths, rules, base.as_ref()).await?;
+    if whole && files.is_empty() {
+        return Err(EntryError::NothingToReplace(entry.folder.clone()));
+    }
+    let (mut manifest, content) = compose(storage, &files, base.as_ref(), whole, header).await?;
     // `push_files` uploads the file a `file://` key names, so a row of
     // `latest` kept as it is must already be in S3.
     if let Some(row) = manifest
@@ -430,9 +470,21 @@ fn quilts_own(name: &str) -> bool {
     left_by_read(name)
 }
 
-/// The files in `folder` by logical key, leaving out what [`quilts_own`]
-/// names and anything that is not a file or a folder.
-async fn walk(storage: &(impl Storage + Sync), folder: &Path) -> Res<Vec<(LogicalKey, PathBuf)>> {
+/// The files in `folder` under `paths` by logical key, leaving out what
+/// [`quilts_own`] names, anything that is not a file or a folder, and what
+/// `rules` leave out of a commit on `base`.
+async fn walk(
+    storage: &(impl Storage + Sync),
+    folder: &Path,
+    paths: &Paths,
+    rules: &Rules,
+    base: Option<&Manifest>,
+) -> Res<Vec<(LogicalKey, PathBuf)>> {
+    let tracked = Tracked::new(
+        base.iter()
+            .flat_map(|base| &base.rows)
+            .map(|row| row.logical_key.as_path()),
+    );
     let mut files = Vec::new();
     let mut queue = VecDeque::from([(folder.to_path_buf(), PathBuf::new())]);
     while let Some((dir, prefix)) = queue.pop_front() {
@@ -443,14 +495,27 @@ async fn walk(storage: &(impl Storage + Sync), folder: &Path) -> Res<Vec<(Logica
                 continue;
             }
             let path = dir.join(&name);
-            let relative = prefix.join(&name);
+            let relative = crate::paths::logical_key(&prefix.join(&name));
             let file_type = entry.file_type().await?;
             if file_type.is_dir() {
-                queue.push_back((path, relative));
+                let tracked = tracked.dirs.contains(&relative);
+                match rules.dir_ignored_by(&relative, tracked) {
+                    Some(by) => info!("Left out by {}: {}/", by.pattern, relative.display()),
+                    None => queue.push_back((path, relative)),
+                }
             } else if file_type.is_file() {
-                match LogicalKey::new(crate::paths::logical_key(&relative)) {
-                    Ok(key) => files.push((key, path)),
-                    Err(err) => warn!("Left out of the package: {err}"),
+                let key = match LogicalKey::new(&relative) {
+                    Ok(key) if paths.covers(&key) => key,
+                    Ok(_) => continue,
+                    Err(err) => {
+                        warn!("Left out of the package: {err}");
+                        continue;
+                    }
+                };
+                let tracked = tracked.files.contains(&relative);
+                match rules.file_ignored_by(&relative, tracked) {
+                    Some(by) => info!("Left out by {}: {}", by.pattern, relative.display()),
+                    None => files.push((key, path)),
                 }
             } else {
                 warn!(
