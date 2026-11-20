@@ -317,6 +317,38 @@ async fn an_install_under_one_of_two_declared_accesses_takes_that_entry() -> Res
     Ok(())
 }
 
+/// A read that could not fetch a missing file is reported as that read,
+/// not as an install with nothing to do.
+#[test(tokio::test)]
+async fn a_repeated_install_that_cannot_refill_a_file_says_so() -> Res {
+    let (storage, remote) = (MockStorage::default(), MockRemote::default());
+    publish(&remote, "b", "team/raw", FIRST, &[("a.txt", b"alpha")]).await?;
+    let root = empty(&storage)?;
+    let mut request = Install::new("quilt+s3://b#package=team/raw");
+    request.access = Access::Read;
+    run(&storage, &remote, &root, &request).await?;
+    std::fs::remove_file(root.join("team/raw/a.txt"))?;
+    remote
+        .put_object(
+            None,
+            &S3Uri::try_from(
+                row("b", "team/raw", "a.txt", b"alpha")
+                    .physical_key
+                    .as_str(),
+            )?,
+            b"other".to_vec(),
+        )
+        .await?;
+
+    let again = run(&storage, &remote, &root, &request).await?;
+
+    assert!(
+        matches!(&again.read, InstallRead::Ran(ReadOutcome::Read(report)) if !report.skipped.is_empty() || !report.hash_mismatch.is_empty()),
+        "{again:?}"
+    );
+    Ok(())
+}
+
 /// A package of a bucket that is not the default states its registry, and
 /// is placed under the bucket's folder.
 #[test(tokio::test)]

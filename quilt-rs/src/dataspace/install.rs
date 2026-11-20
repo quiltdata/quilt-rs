@@ -611,6 +611,8 @@ async fn first_read(
             if report.revision == base
                 && report.placed.is_empty()
                 && report.removed.is_empty()
+                && report.skipped.is_empty()
+                && report.hash_mismatch.is_empty()
                 && added.is_empty() =>
         {
             InstallRead::Unchanged

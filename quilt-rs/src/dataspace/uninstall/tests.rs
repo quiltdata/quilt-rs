@@ -239,6 +239,28 @@ async fn an_uninstall_leaves_a_folder_outside_the_dataspace() -> Res {
     Ok(())
 }
 
+/// A folder reached through a link out of the dataspace is outside it, and
+/// is left.
+#[cfg(unix)]
+#[test(tokio::test)]
+async fn an_uninstall_leaves_a_folder_reached_through_a_link() -> Res {
+    let (storage, remote) = (MockStorage::default(), MockRemote::default());
+    publish(&remote, "team/raw", FIRST, b"alpha").await?;
+    let outside = storage.temp_dir.path().join("analysis");
+    std::fs::create_dir_all(&outside)?;
+    let text = "registry = \"s3://b\"\n[packages]\nread = [{ package = \"team/raw\", folder = \"linked/raw\" }]\n";
+    let root = dataspace(&storage, text)?;
+    std::os::unix::fs::symlink(&outside, root.join("linked"))?;
+    crate::dataspace::read_all::read_all(&storage, &remote, None, &root, &writer()).await?;
+    assert_eq!(std::fs::read(outside.join("raw/a.txt"))?, b"alpha");
+
+    let uninstalled = uninstall(&storage, None, &root, &writer(), &key("team/raw")).await?;
+
+    assert_eq!(uninstalled.removed, None);
+    assert_eq!(std::fs::read(outside.join("raw/a.txt"))?, b"alpha");
+    Ok(())
+}
+
 /// A package neither file names is refused, and nothing is written.
 #[test(tokio::test)]
 async fn uninstalling_a_package_not_installed_is_refused() -> Res {

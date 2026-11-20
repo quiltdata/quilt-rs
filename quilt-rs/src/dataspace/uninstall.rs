@@ -161,7 +161,7 @@ pub async fn uninstall(
     let (mut removed, mut kept) = (None, None);
     if let Some(folder) = entries.first().map(|entry| entry.folder.clone()) {
         let read = entries.iter().all(|entry| entry.access.is_read());
-        if read && folder.starts_with(contract.dataspace()) {
+        if read && inside(storage, contract.dataspace(), &folder).await {
             match storage.remove_dir_all(&folder).await {
                 Ok(()) => {}
                 Err(err) if err.is_not_found() => {}
@@ -184,6 +184,20 @@ pub async fn uninstall(
         kept,
         locked,
     })
+}
+
+/// Whether `folder` is inside `dataspace` with no link on the way, which
+/// would take a removal to a folder outside it.
+async fn inside(storage: &(impl Storage + Sync), dataspace: &Path, folder: &Path) -> bool {
+    if !folder.starts_with(dataspace) {
+        return false;
+    }
+    for part in folder.ancestors().take_while(|part| *part != dataspace) {
+        if storage.is_symlink(part).await {
+            return false;
+        }
+    }
+    true
 }
 
 /// `package` under the local registry's current name, where `local`
