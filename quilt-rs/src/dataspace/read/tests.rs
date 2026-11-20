@@ -735,6 +735,32 @@ async fn under_sync_a_file_deleted_while_the_revision_downloads_stays_deleted() 
 }
 
 #[test(tokio::test)]
+async fn under_sync_a_folder_left_with_empty_folders_and_files_outside_the_paths_is_refused() -> Res
+{
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    let entry = entry("sync = [{ package = \"team/raw\", path = \"data/\" }]");
+    publish(&remote, FIRST, &[("data/a.txt", b"v1")]).await?;
+    read(&storage, &remote, &entry, None).await?;
+    storage.remove_file(folder().join("data/a.txt")).await?;
+    write(&storage, "notes.txt", b"not the entry's").await?;
+    publish(
+        &remote,
+        SECOND,
+        &[("data/a.txt", b"v1"), ("data/b.txt", b"new")],
+    )
+    .await?;
+
+    let outcome = read(&storage, &remote, &entry, Some(FIRST)).await;
+
+    assert!(
+        matches!(&outcome, Err(EntryError::FolderGone(gone)) if *gone == folder()),
+        "{outcome:?}"
+    );
+    Ok(())
+}
+
+#[test(tokio::test)]
 async fn under_sync_files_moved_to_new_keys_are_not_a_folder_gone() -> Res {
     let remote = MockRemote::default();
     let storage = MockStorage::default();

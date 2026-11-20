@@ -2,6 +2,7 @@
 //! folder with no Domain.
 
 use std::collections::BTreeMap;
+use std::collections::VecDeque;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -462,8 +463,9 @@ async fn not_found(storage: &(impl Storage + Sync), path: &Path) -> Res<bool> {
 }
 
 /// Whether `base` covers a key under `paths` and `folder` is missing or
-/// empty, holding nothing but what Quilt writes there. A folder that is there
-/// and cannot be listed is an error, not a folder gone.
+/// empty: no file or link under `paths`, empty folders and what Quilt writes
+/// there aside. A folder that is there and cannot be listed is an error, not
+/// a folder gone.
 async fn gone(
     storage: &(impl Storage + Sync),
     folder: &Path,
@@ -473,16 +475,27 @@ async fn gone(
     if covered(base, paths).is_empty() {
         return Ok(false);
     }
-    let mut listing = match storage.read_dir(folder).await {
-        Ok(listing) => listing,
-        Err(err) if err.is_not_found() => return Ok(true),
-        Err(err) => return Err(err),
-    };
-    while let Some(entry) = listing.next_entry().await? {
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        if !at_metadata_file(&name) && !left_by_read(&name) {
-            return Ok(false);
+    let mut queue = VecDeque::from([(folder.to_path_buf(), PathBuf::new())]);
+    while let Some((dir, prefix)) = queue.pop_front() {
+        let mut listing = match storage.read_dir(&dir).await {
+            Ok(listing) => listing,
+            Err(err) if err.is_not_found() && prefix.as_os_str().is_empty() => return Ok(true),
+            Err(err) => return Err(err),
+        };
+        while let Some(entry) = listing.next_entry().await? {
+            let name = entry.file_name();
+            let text = name.to_string_lossy();
+            if prefix.as_os_str().is_empty() && (at_metadata_file(&text) || left_by_read(&text)) {
+                continue;
+            }
+            let relative = prefix.join(&name);
+            if entry.file_type().await?.is_dir() {
+                queue.push_back((dir.join(&name), relative));
+            } else if LogicalKey::new(crate::paths::logical_key(&relative))
+                .is_ok_and(|key| paths.covers(&key))
+            {
+                return Ok(false);
+            }
         }
     }
     Ok(true)
