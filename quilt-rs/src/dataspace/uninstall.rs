@@ -160,9 +160,7 @@ pub async fn uninstall(
 
     let (mut removed, mut kept) = (None, None);
     if let Some(folder) = entries.first().map(|entry| entry.folder.clone()) {
-        let read = entries
-            .iter()
-            .all(|entry| matches!(entry.access, Access::Read | Access::Sync));
+        let read = entries.iter().all(|entry| entry.access.is_read());
         if read && folder.starts_with(contract.dataspace()) {
             match storage.remove_dir_all(&folder).await {
                 Ok(()) => {}

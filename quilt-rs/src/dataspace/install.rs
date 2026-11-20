@@ -273,11 +273,6 @@ fn latest() -> RevisionPointer {
     RevisionPointer::Tag(Tag::Latest)
 }
 
-/// Whether `entry`'s access reads it.
-fn is_read(access: Access) -> bool {
-    matches!(access, Access::Read | Access::Sync)
-}
-
 /// Installs the package `request` names in the dataspace in the folder
 /// `dataspace`: adds an entry to `data.toml` under `request.access`, then,
 /// for a `read` or `sync` entry, reads it into its working folder. A
@@ -327,7 +322,7 @@ pub async fn install(
     let matched = lock.header.data_toml_hash == contract.data_toml_hash();
     name_local(storage, local, &mut contract, &mut lock, &mut writer).await?;
     let wanted = Wanted::parse(storage, local, &writer, request).await?;
-    if wanted.revision.is_some() && !is_read(request.access) {
+    if wanted.revision.is_some() && !request.access.is_read() {
         return Err(InstallError::RevisionNotRead(request.access));
     }
 
@@ -399,18 +394,23 @@ fn declare(
 ) -> Result<Vec<Option<PackagePath>>, InstallError> {
     let package = || Box::new(wanted.key.clone());
     let mut existing = None;
+    let mut other = None;
     for entry in contract.entries() {
         if entry.key() != wanted.key {
             continue;
         }
-        if entry.access != request.access {
-            return Err(InstallError::Access {
-                package: package(),
-                declared: entry.access,
-                requested: request.access,
-            });
+        if entry.access == request.access {
+            existing = Some(entry);
+        } else {
+            other.get_or_insert(entry.access);
         }
-        existing = Some(entry);
+    }
+    if let (None, Some(declared)) = (existing, other) {
+        return Err(InstallError::Access {
+            package: package(),
+            declared,
+            requested: request.access,
+        });
     }
     let stated = contract.default_registry() != Some(&wanted.key.registry);
     let Some(existing) = existing else {
@@ -565,7 +565,7 @@ async fn first_read(
     added: &[Option<PackagePath>],
     locked: Option<&LockEntry>,
 ) -> InstallRead {
-    if !is_read(entry.access) {
+    if !entry.access.is_read() {
         return InstallRead::NotRead;
     }
     if locked.is_some_and(|locked| !locked.commits.is_empty()) {

@@ -463,7 +463,7 @@ pub(crate) async fn read_deciding(
     base: Option<&str>,
     decided: &BTreeMap<LogicalKey, Row>,
 ) -> Result<(ReadOutcome, BTreeMap<LogicalKey, Row>), EntryError> {
-    if !matches!(entry.access, Access::Read | Access::Sync) {
+    if !entry.access.is_read() {
         return Err(EntryError::Access(entry.access));
     }
     let (revision, target) = revision_of(storage, remote, local, entry).await?;

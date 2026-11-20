@@ -58,6 +58,11 @@ pub enum Access {
 }
 
 impl Access {
+    /// The entry fills its folder from the package.
+    pub(crate) fn is_read(self) -> bool {
+        matches!(self, Self::Read | Self::Sync)
+    }
+
     /// A package under `replace` or `sync` is listed under nothing else.
     fn is_exclusive(self) -> bool {
         matches!(self, Self::Replace | Self::Sync)

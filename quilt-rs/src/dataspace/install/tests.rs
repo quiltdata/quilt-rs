@@ -300,6 +300,23 @@ async fn an_install_under_another_access_fails_and_changes_nothing() -> Res {
     Ok(())
 }
 
+/// A package listed under two accesses over disjoint paths installs under
+/// either one, and only an access it is not listed under is refused.
+#[test(tokio::test)]
+async fn an_install_under_one_of_two_declared_accesses_takes_that_entry() -> Res {
+    let (storage, remote) = (MockStorage::default(), MockRemote::default());
+    publish(&remote, "b", "team/raw", FIRST, &[("a/x.txt", b"alpha")]).await?;
+    let text = "registry = \"s3://b\"\n[packages]\nread = [{ package = \"team/raw\", path = \"a/\" }]\nwrite = [{ package = \"team/raw\", path = \"b/\" }]\n";
+    let root = dataspace(&storage, text)?;
+
+    let mut request = Install::new("quilt+s3://b#package=team/raw&path=a/");
+    request.access = Access::Read;
+    run(&storage, &remote, &root, &request).await?;
+
+    assert_eq!(std::fs::read(root.join("team/raw/a/x.txt"))?, b"alpha");
+    Ok(())
+}
+
 /// A package of a bucket that is not the default states its registry, and
 /// is placed under the bucket's folder.
 #[test(tokio::test)]
