@@ -812,6 +812,11 @@ async fn copy_manifests(
                 moved = true;
             }
         }
+        // A manifest that survives a power loss must not outlive the names of
+        // the objects it points at: a run that stopped there skips it.
+        // A manifest that survives a power loss must not outlive the names of
+        // the objects it points at: a run that stopped there skips it.
+        storage.sync_dir(&objects).await;
         let bytes = if moved && top_hash(&manifest)? == hash {
             manifest.try_to_jsonlines()?.into_bytes()
         } else {
@@ -860,7 +865,7 @@ fn top_hash(manifest: &Manifest) -> Res<String> {
 
 /// Copies `from` to `to`, by way of a hidden name beside it, unless `to` is
 /// there already. The copy is synced before it takes its name; its folder is
-/// synced by [`sync_folders`].
+/// synced by [`copy_manifests`] before a manifest naming it is written.
 async fn copy_object(storage: &(impl Storage + Sync), from: &Path, to: &Path) -> Res {
     if storage.is_file(to).await {
         return Ok(());

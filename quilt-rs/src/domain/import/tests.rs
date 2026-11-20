@@ -902,6 +902,14 @@ async fn the_copies_are_durable_before_the_import_is_done() -> Res {
             "{object:?} is synced before it takes its name"
         );
     }
+    let manifest = steps
+        .iter()
+        .position(|step| matches!(step, Step::Write(path) if path.parent() == Some(&store.installed_manifests_dir(&namespace))))
+        .expect("the manifest was written");
+    assert!(
+        steps[..manifest].contains(&Step::SyncDir(store.objects_dir())),
+        "the objects folder is synced before a manifest naming its objects is written"
+    );
     for folder in [
         store.objects_dir(),
         store.installed_manifests_dir(&namespace),
