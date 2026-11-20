@@ -156,9 +156,9 @@ impl FromStr for PackageKey {
         let uri = parse_uri(text, None).map_err(|problem| match problem {
             EntryProblem::Uri(err) => err,
             EntryProblem::NoLocalRegistry => {
-                UriError::Package(format!("a package's key names its registry: {text:?}"))
+                UriError::Package("a package's key names its registry".to_string())
             }
-            other => UriError::Package(format!("{other}: {text:?}")),
+            other => UriError::Package(other.to_string()),
         })?;
         let key = Self {
             registry: uri.registry,
@@ -167,9 +167,10 @@ impl FromStr for PackageKey {
         if key.to_string() == text {
             Ok(key)
         } else {
-            Err(UriError::Package(format!(
-                "not a package's canonical URI: {text:?}"
-            )))
+            Err(UriError::Package(
+                "a package's key is its canonical URI, with no revision, path or catalog"
+                    .to_string(),
+            ))
         }
     }
 }

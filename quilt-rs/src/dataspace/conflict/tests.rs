@@ -511,13 +511,17 @@ async fn a_read_that_cannot_place_every_file_sets_no_key() -> Res {
 /// it stay out of the message.
 #[test(tokio::test)]
 async fn a_key_error_does_not_repeat_the_key() -> Res {
-    let storage = MockStorage::default();
-    let body = r#"{"quilt+s3://KEY:secret@b#package=team/raw": {}}"#;
-    write(&storage, &dataspace().join(CONFLICT_FILE), body.as_bytes()).await?;
-    let Err(err) = map(&storage).await else {
-        panic!("the key should be refused");
-    };
-    let text = err.to_string();
-    assert!(!text.contains("secret") && !text.contains("KEY"), "{text}");
+    for body in [
+        r#"{"quilt+s3://KEY:secret@b#package=team/raw": {}}"#,
+        r#"{"quilt+s3://b#package=team/raw&path=KEY:secret@y": {}}"#,
+    ] {
+        let storage = MockStorage::default();
+        write(&storage, &dataspace().join(CONFLICT_FILE), body.as_bytes()).await?;
+        let Err(err) = map(&storage).await else {
+            panic!("{body} should be refused");
+        };
+        let text = err.to_string();
+        assert!(!text.contains("secret") && !text.contains("KEY"), "{text}");
+    }
     Ok(())
 }

@@ -599,9 +599,7 @@ fn parse_fragment(fragment: &str) -> Result<Vec<(String, String)>, UriError> {
             .decode_utf8()
             .map(std::borrow::Cow::into_owned)
             .map_err(|_| {
-                UriError::Package(format!(
-                    "the fragment has a %-escape that is not UTF-8: {part:?}"
-                ))
+                UriError::Package("the fragment has a %-escape that is not UTF-8".to_string())
             })
     };
     fragment
@@ -908,6 +906,7 @@ mod tests {
             "quilt+s3://bucket#package=a/b&KEY:secret@x=1",
             "quilt+s3://bucket#package=a/b&x=KEY:secret@y",
             "quilt+s3://bucket#package=quilt+s3://KEY:secret@b",
+            "quilt+s3://bucket#package=a/b&x=KEY:secret@y%FF",
         ] {
             let err = S3PackageUri::try_from(input).expect_err(input).to_string();
             assert!(!err.contains("secret"), "{err}");
