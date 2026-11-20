@@ -17,6 +17,7 @@ use crate::flow::refuse_linked_ancestors;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::manifest::Manifest;
+use tracing::warn;
 
 /// The files [`replace`] could not fetch whole, so it changed nothing.
 pub(crate) struct Unfetched(pub(crate) Vec<PathBuf>);
@@ -52,6 +53,8 @@ pub(crate) async fn replace(
             .collect(),
         ..Manifest::default()
     };
+    // What could not be moved back stays in `aside`, the only copy.
+    let mut restored = true;
     let replaced = async {
         let report = stage(storage, remote, store, entry, hash, &placing, &staging).await?;
         if !report.complete() {
@@ -65,14 +68,20 @@ pub(crate) async fn replace(
             .run(storage, folder, &staging, &aside, place, clear, metadata)
             .await;
         if let Err(err) = done {
-            moves.undo(storage, folder).await;
+            restored = moves.undo(storage, folder).await;
             return Err(err);
         }
         Ok(Ok(()))
     }
     .await;
-    for dir in [&staging, &aside] {
-        let _ = storage.remove_dir_all(dir).await;
+    let _ = storage.remove_dir_all(&staging).await;
+    if restored {
+        let _ = storage.remove_dir_all(&aside).await;
+    } else {
+        warn!(
+            "Files that could not be put back are kept in {}",
+            aside.display()
+        );
     }
     replaced
 }
@@ -141,8 +150,10 @@ impl Moves {
         Ok(())
     }
 
-    /// Removes what was placed and moves back what was moved aside.
-    async fn undo(&self, storage: &(impl Storage + Sync), folder: &Path) {
+    /// Removes what was placed and moves back what was moved aside, and
+    /// says whether all of it went back.
+    async fn undo(&self, storage: &(impl Storage + Sync), folder: &Path) -> bool {
+        let mut restored = true;
         let written = self.metadata.then(|| folder.join(METADATA_FILE));
         for path in self.placed.iter().chain(&written) {
             let _ = storage.remove_file(path).await;
@@ -152,8 +163,9 @@ impl Moves {
             if let Some(parent) = path.parent() {
                 let _ = storage.create_dir_all(parent).await;
             }
-            let _ = storage.rename(kept, path).await;
+            restored &= storage.rename(kept, path).await.is_ok();
         }
+        restored
     }
 }
 
