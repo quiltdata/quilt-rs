@@ -590,8 +590,8 @@ fn read_ended(read: &EntryRead) -> Ended {
     })
 }
 
-/// A publish stored without becoming `latest` is done: it is kept, and
-/// publishing the same folder again would only store it again.
+/// A publish stored without becoming `latest` ends its job; the revision is
+/// kept in the queue.
 fn publish_ended(published: &EntryPublish) -> Ended {
     Ended::Failed(match published {
         EntryPublish::Ran(Published::Behind { .. }) => {
