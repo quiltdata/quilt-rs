@@ -18,6 +18,10 @@ const RECORD_VAR: &str = "QUILT_TEST_HOOK_RECORD";
 pub(crate) const FAIL_VAR: &str = "QUILT_TEST_HOOK_FAIL";
 /// The text the hook writes to the working folder's metadata file.
 pub(crate) const METADATA_VAR: &str = "QUILT_TEST_HOOK_METADATA";
+/// The text the hook writes to the working folder's `.quiltignore`.
+pub(crate) const IGNORE_VAR: &str = "QUILT_TEST_HOOK_IGNORE";
+/// Set, the hook deletes every file in the working folder.
+pub(crate) const CLEAR_VAR: &str = "QUILT_TEST_HOOK_CLEAR";
 
 /// The package every flow's tests use.
 pub(crate) const PACKAGE: &str = "quilt+s3://b#package=team/raw";
@@ -83,6 +87,19 @@ fn child_records_its_call() -> Res {
     if let Ok(text) = std::env::var(METADATA_VAR) {
         let folder = std::env::var(FOLDER_VAR)?;
         std::fs::write(Path::new(&folder).join(METADATA_FILE), text)?;
+    }
+    if let Ok(text) = std::env::var(IGNORE_VAR) {
+        let folder = std::env::var(FOLDER_VAR)?;
+        std::fs::write(Path::new(&folder).join(".quiltignore"), text)?;
+    }
+    if std::env::var_os(CLEAR_VAR).is_some() {
+        let folder = std::env::var(FOLDER_VAR)?;
+        for file in std::fs::read_dir(folder)? {
+            let path = file?.path();
+            if path.is_file() {
+                std::fs::remove_file(path)?;
+            }
+        }
     }
     if std::env::var_os(FAIL_VAR).is_some() {
         return Err("asked to fail".into());

@@ -9,7 +9,9 @@ use crate::dataspace::hooks::HookPoint::PostRead;
 use crate::dataspace::hooks::HookPoint::PostWrite;
 use crate::dataspace::hooks::HookPoint::PreRead;
 use crate::dataspace::hooks::HookPoint::PreWrite;
+use crate::dataspace::hooks::tests::CLEAR_VAR;
 use crate::dataspace::hooks::tests::FAIL_VAR;
+use crate::dataspace::hooks::tests::IGNORE_VAR;
 use crate::dataspace::hooks::tests::METADATA_VAR;
 use crate::dataspace::hooks::tests::call;
 use crate::dataspace::hooks::tests::calls;
@@ -1532,6 +1534,40 @@ async fn a_pre_write_hook_rewrites_metadata_toml_before_the_commit() -> Res {
     let header = fetch_jsonl(&world.remote, &uri).await?.header;
     assert_eq!(header.user_meta, Some(serde_json::json!({"stamped": true})));
     assert_eq!(header.message(), Some(MESSAGE));
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_pre_write_hook_may_ignore_a_file_it_leaves_in_the_folder() -> Res {
+    let world = hooked(|record| table(PreWrite, record, &[(IGNORE_VAR, "b.txt\n")])).await?;
+    world.write("a.txt", "v2")?;
+    world.write("b.txt", "generated")?;
+
+    let pushed = advanced(&world.tick().await?);
+
+    let keys: Vec<String> = world
+        .revision(&pushed)
+        .await?
+        .into_iter()
+        .map(|(key, _)| key)
+        .collect();
+    assert!(keys.contains(&"a.txt".to_string()), "{keys:?}");
+    assert!(!keys.contains(&"b.txt".to_string()), "{keys:?}");
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_pre_write_hook_that_empties_the_folder_publishes_nothing() -> Res {
+    let world = hooked(|record| table(PreWrite, record, &[(CLEAR_VAR, "1")])).await?;
+    world.write("a.txt", "v2")?;
+
+    let outcome = world.tick().await?;
+
+    assert!(
+        matches!(&outcome, EntrySync::Failed(EntryError::FolderGone(_))),
+        "{outcome:?}"
+    );
+    assert_eq!(world.latest().await?, FIRST);
     Ok(())
 }
 

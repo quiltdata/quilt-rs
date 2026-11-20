@@ -645,10 +645,9 @@ async fn publish(
     if current_hash.is_none() && !storage.exists(folder).await {
         return Ok(None);
     }
-    let rules = Rules::load(folder, user_rules)?;
     let contract = lock_file.contract;
     let on = current_hash.map(|_| &current);
-    let (taken, changed) = take_changed(storage, contract, entry, &rules, &current, on).await?;
+    let (taken, changed) = take_changed(storage, contract, entry, user_rules, &current, on).await?;
     let Taken {
         mut manifest,
         content,
@@ -742,25 +741,33 @@ struct Taken {
 
 /// [`take`]s `entry`'s working folder, and says whether it changed from `on`,
 /// the lock's current revision `current` where there is one. Where it did,
-/// the contract's `pre-write` hook runs first, and may change the folder,
-/// `metadata.toml` included, so it is taken again.
+/// the contract's `pre-write` hook runs first, and may change the folder, its
+/// ignore rules and `metadata.toml` included, so the folder is checked and
+/// taken again.
 async fn take_changed(
     storage: &(impl Storage + Sync),
     contract: &Contract,
     entry: &Entry,
-    rules: &Rules,
+    user_rules: &Path,
     current: &Manifest,
     on: Option<&Manifest>,
-) -> Result<(Taken, bool), EntryError> {
-    let taken = take(storage, entry, rules, current).await?;
+) -> Result<(Taken, bool), Stop> {
+    let rules = Rules::load(&entry.folder, user_rules)?;
+    let taken = take(storage, entry, &rules, current).await?;
     // The tick's message wins over the metadata file's, so the file's alone
     // is no change.
     let changed = !same_as(&taken.manifest, on, false);
     if !changed || contract.hooks().get(HookPoint::PreWrite).is_none() {
         return Ok((taken, changed));
     }
-    hooks::run(contract, HookPoint::PreWrite, entry, None).await?;
-    let taken = take(storage, entry, rules, current).await?;
+    hooks::run(contract, HookPoint::PreWrite, entry, None)
+        .await
+        .map_err(EntryError::from)?;
+    if on.is_some() && gone(storage, &entry.folder, current, &entry.paths).await? {
+        return Err(EntryError::FolderGone(entry.folder.clone()).into());
+    }
+    let rules = Rules::load(&entry.folder, user_rules)?;
+    let taken = take(storage, entry, &rules, current).await?;
     let changed = !same_as(&taken.manifest, on, false);
     Ok((taken, changed))
 }
