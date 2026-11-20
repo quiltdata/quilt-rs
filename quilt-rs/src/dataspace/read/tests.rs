@@ -717,6 +717,36 @@ async fn under_sync_a_file_deleted_while_the_revision_downloads_stays_deleted() 
     Ok(())
 }
 
+/// The download puts the folder back around its staging folder, so what is
+/// asked is whether the base's files are still there.
+#[test(tokio::test)]
+async fn under_sync_a_folder_deleted_while_the_revision_downloads_stays_gone() -> Res {
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    let entry = sync();
+    publish(&remote, FIRST, &[("a.txt", b"v1")]).await?;
+    read(&storage, &remote, &entry, None).await?;
+    publish(&remote, SECOND, &[("a.txt", b"v1"), ("b.txt", b"new")]).await?;
+    let download = remote.park(&row("b.txt", b"new").physical_key);
+    let delete = async {
+        download.arrived().await;
+        storage.remove_file(folder().join("a.txt")).await?;
+        storage.remove_file(folder().join(METADATA_FILE)).await?;
+        download.release();
+        Ok::<_, crate::Error>(())
+    };
+
+    let (outcome, deleted) = tokio::join!(read(&storage, &remote, &entry, Some(FIRST)), delete);
+    deleted?;
+
+    assert!(
+        matches!(&outcome, Err(EntryError::FolderGone(gone)) if *gone == folder()),
+        "{outcome:?}"
+    );
+    assert_eq!(text(&storage, "b.txt").await, None);
+    Ok(())
+}
+
 /// Whether the files are there cannot be told, so the folder is not gone.
 #[cfg(unix)]
 #[test(tokio::test)]

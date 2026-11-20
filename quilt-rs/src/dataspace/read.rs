@@ -260,7 +260,7 @@ pub async fn read(
         &plan.steps,
         plan.metadata.as_ref(),
         &mut report,
-        deletes,
+        base.filter(|_| deletes).map(|base| (base, &entry.paths)),
     )
     .await;
     let _ = storage.remove_dir_all(&staging).await;
@@ -534,8 +534,8 @@ async fn listed(storage: &(impl Storage + Sync), folder: &Path, key: &LogicalKey
 
 /// Whether the folder still holds what `step` was planned against: its
 /// `had`, or nothing at all. A link holds neither. Where `deletes`, a file
-/// to be replaced that has gone since, or the folder itself, was deleted,
-/// which the read must not undo.
+/// to be replaced that has gone since was deleted, which the read must not
+/// undo.
 async fn as_planned(
     storage: &(impl Storage + Sync),
     folder: &Path,
@@ -546,10 +546,7 @@ async fn as_planned(
     if storage.is_symlink(&path).await {
         return Ok(false);
     }
-    if deletes
-        && (!storage.exists(folder).await
-            || (step.want.is_some() && step.had.is_some() && !storage.exists(&path).await))
-    {
+    if deletes && step.want.is_some() && step.had.is_some() && !storage.exists(&path).await {
         return Ok(false);
     }
     Ok(match step.had {
@@ -619,7 +616,9 @@ pub(crate) async fn metadata_place_free(storage: &(impl Storage + Sync), path: &
 /// seen to hold what every step and the metadata file, where it is to be
 /// written, were planned against, renames each into the folder and deletes
 /// the files they remove. Changes nothing, and returns `false`, where a file
-/// could not be fetched.
+/// could not be fetched. Under `sync`, with its base and paths in
+/// `sync_base`, a folder that lost every file of the base meanwhile is
+/// refused: the staging folder inside it may have put it back.
 #[allow(clippy::too_many_arguments)]
 async fn apply(
     storage: &(impl Storage + Sync),
@@ -630,8 +629,9 @@ async fn apply(
     steps: &[Step<'_>],
     metadata: Option<&(String, Option<Vec<u8>>)>,
     report: &mut ReadReport,
-    deletes: bool,
+    sync_base: Option<(&Manifest, &Paths)>,
 ) -> Result<bool, EntryError> {
+    let deletes = sync_base.is_some();
     // A linked folder would put a write or a deletion outside the folder. Asked
     // before the fetch, and again after it.
     refuse_linked_ancestors(storage, folder, steps.iter().map(Step::key)).await?;
@@ -658,6 +658,11 @@ async fn apply(
         return Ok(false);
     }
     refuse_linked_ancestors(storage, folder, steps.iter().map(Step::key)).await?;
+    if let Some((base, paths)) = sync_base
+        && gone(storage, folder, base, paths).await?
+    {
+        return Err(EntryError::FolderGone(folder.to_path_buf()));
+    }
     // Every step before the first change, so a concurrent edit stops the read
     // whole, then each again right before its own change.
     for step in steps {
