@@ -17,6 +17,7 @@ use tracing::warn;
 
 use crate::Res;
 use crate::error::RoleError;
+use crate::io::remote::PublishedRevision;
 use crate::io::remote::client::HttpClient;
 use quilt_uri::Host;
 use quilt_uri::Namespace;
@@ -225,9 +226,21 @@ struct PackageRevisionsVariables<'a> {
     per_page: u32,
 }
 
+/// [`PACKAGE_REVISIONS_QUERY`] with each pointer's time, `modified`, which
+/// the registry reads from the pointer's name. A message is left out: the
+/// registry would read every revision's manifest for it.
+const PACKAGE_REVISION_TIMES_QUERY: &str = "\
+query($bucket: String!, $name: String!, $number: Int!, $perPage: Int!) { \
+package(bucket: $bucket, name: $name) { \
+revisions { total page(number: $number, perPage: $perPage) { hash modified } } \
+} }";
+
 #[derive(Deserialize)]
 struct RevisionHash {
     hash: String,
+    /// Asked for by [`PACKAGE_REVISION_TIMES_QUERY`] only.
+    #[serde(default)]
+    modified: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -257,6 +270,66 @@ pub(super) async fn query_package_revisions(
     namespace: &Namespace,
     access_token: &str,
 ) -> Res<Vec<String>> {
+    let rows = query_revision_rows(
+        http_client,
+        registry,
+        bucket,
+        namespace,
+        access_token,
+        PACKAGE_REVISIONS_QUERY,
+    )
+    .await?;
+    Ok(rows.into_iter().map(|row| row.hash).collect())
+}
+
+/// [`query_package_revisions`], with the time each pointer is named for,
+/// where the registry's answer can be read as one.
+pub(super) async fn query_package_revision_history(
+    http_client: &impl HttpClient,
+    registry: &url::Host,
+    bucket: &str,
+    namespace: &Namespace,
+    access_token: &str,
+) -> Res<Vec<PublishedRevision>> {
+    let rows = query_revision_rows(
+        http_client,
+        registry,
+        bucket,
+        namespace,
+        access_token,
+        PACKAGE_REVISION_TIMES_QUERY,
+    )
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| PublishedRevision {
+            hash: row.hash,
+            modified: row.modified.as_deref().and_then(parse_datetime),
+            message: None,
+        })
+        .collect())
+}
+
+/// A registry `Datetime`: RFC 3339, or an ISO 8601 time with no offset,
+/// which the registry writes in UTC.
+fn parse_datetime(text: &str) -> Option<jiff::Timestamp> {
+    text.parse::<jiff::Timestamp>().ok().or_else(|| {
+        text.parse::<jiff::civil::DateTime>()
+            .ok()
+            .and_then(|time| jiff::tz::TimeZone::UTC.to_timestamp(time).ok())
+    })
+}
+
+/// The rows `query` lists for `namespace` in `bucket`, page by page; see
+/// [`query_package_revisions`].
+async fn query_revision_rows(
+    http_client: &impl HttpClient,
+    registry: &url::Host,
+    bucket: &str,
+    namespace: &Namespace,
+    access_token: &str,
+    query: &str,
+) -> Res<Vec<RevisionHash>> {
     let mut hashes = Vec::new();
     for number in 1.. {
         let variables = PackageRevisionsVariables {
@@ -265,14 +338,8 @@ pub(super) async fn query_package_revisions(
             number,
             per_page: REVISIONS_PER_PAGE,
         };
-        let data: PackageRevisionsData = execute(
-            http_client,
-            registry,
-            PACKAGE_REVISIONS_QUERY,
-            variables,
-            access_token,
-        )
-        .await?;
+        let data: PackageRevisionsData =
+            execute(http_client, registry, query, variables, access_token).await?;
         let Some(package) = data.package else {
             if number == 1 {
                 break;
@@ -285,7 +352,7 @@ pub(super) async fn query_package_revisions(
         let RevisionPage { total, page } = package.revisions;
         // A page drops pointers that vanished before resolving, so a short or
         // even empty page is not the end: only `total` says whether more follow.
-        hashes.extend(page.into_iter().map(|r| r.hash));
+        hashes.extend(page);
         if u64::from(number) * u64::from(REVISIONS_PER_PAGE) >= u64::from(total) {
             break;
         }
@@ -611,6 +678,18 @@ mod tests {
         let buckets = query_buckets(&client, &get_registry_host(), ACCESS_TOKEN).await?;
 
         assert_eq!(buckets, [] as [String; 0]);
+        Ok(())
+    }
+
+    /// A registry `Datetime` is read with its offset, or as UTC without one;
+    /// anything else is no time.
+    #[test]
+    fn a_revision_time_is_read_with_or_without_an_offset() -> Result<(), jiff::Error> {
+        let at = jiff::Timestamp::from_second(1_700_000_000)?;
+        assert_eq!(parse_datetime("2023-11-14T22:13:20+00:00"), Some(at));
+        assert_eq!(parse_datetime("2023-11-14T23:13:20+01:00"), Some(at));
+        assert_eq!(parse_datetime("2023-11-14T22:13:20"), Some(at));
+        assert_eq!(parse_datetime("yesterday"), None);
         Ok(())
     }
 

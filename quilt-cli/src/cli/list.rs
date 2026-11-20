@@ -1,3 +1,5 @@
+pub mod dataspace;
+
 use std::borrow::Cow;
 
 use quilt_rs::lineage::PackageLineage;

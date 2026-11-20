@@ -13,11 +13,13 @@ use tracing::log;
 
 use quilt_rs::dataspace::contract::Access;
 use quilt_rs::dataspace::contract::PackageKey;
+use quilt_rs::dataspace::history::HistoryError;
 use quilt_rs::dataspace::install::InstallError;
 use quilt_rs::dataspace::lock::LockError;
 use quilt_rs::dataspace::publish_all::PublishAllError;
 use quilt_rs::dataspace::read_all::ReadAllError;
 use quilt_rs::dataspace::reattach::ReattachError;
+use quilt_rs::dataspace::status::StatusError;
 use quilt_rs::dataspace::uninstall::UninstallError;
 use quilt_rs::domain::DOMAIN_DIR_NAME;
 use quilt_rs::domain::DomainRoot;
@@ -648,11 +650,19 @@ enum Commands {
     ///
     /// Without `--fetch`, reads only what this machine recorded, so each status
     /// is as of the package's last install, pull or push.
+    ///
+    /// With `--dataspace`, lists the packages that dataspace's `data.toml`
+    /// declares, each with its status against `data.lock.toml`, and writes
+    /// nothing.
     List {
         /// Check each package's remote now, and count files changed since the
         /// last commit. Reads the remotes; leaves local packages unchanged.
         #[arg(long)]
         fetch: bool,
+        /// List this dataspace's packages, the folder holding `data.toml`,
+        /// rather than the home's
+        #[arg(long, value_name = "DIR")]
+        dataspace: Option<PathBuf>,
     },
     /// List the revisions of a package this copy has, newest first.
     ///
@@ -666,9 +676,26 @@ enum Commands {
     /// much removing it frees. Reading what is kept asks the remote's
     /// registry; if that fails, the log leaves both columns out and warns on
     /// stderr.
+    ///
+    /// With `--dataspace`, lists the revisions the package's registry has,
+    /// newest first by when each was published, and the local commits the
+    /// Domain holds that it does not have yet, marked as local. Writes
+    /// nothing.
     Log {
         #[command(flatten)]
         pkg: PackageRef,
+        /// The package, by its URI, as the dataspace's `data.toml` names it.
+        /// Ex. `quilt+s3://bucket#package=foo/bar`
+        #[arg(
+            value_name = "PACKAGE",
+            requires = "dataspace",
+            conflicts_with = "namespace"
+        )]
+        package: Option<PackageKey>,
+        /// Read the package's history as this dataspace, the folder holding
+        /// `data.toml`, has it
+        #[arg(long, value_name = "DIR", requires = "package")]
+        dataspace: Option<PathBuf>,
     },
     /// Pull
     Pull {
@@ -784,6 +811,12 @@ enum Commands {
     /// Status of the package: modified, up-to-date, outdated
     ///
     /// Also says how many files and folders the ignore rules leave out.
+    ///
+    /// With `--dataspace`, shows each entry of that dataspace's `data.toml`:
+    /// its hashes in `data.lock.toml` against the registry's `latest`, its
+    /// working folder's changes under the dataspace's ignore policy, its
+    /// conflicts in `conflict.json`, a revision autosync kept, and its local
+    /// commits not pushed. Writes nothing.
     Status {
         #[command(flatten)]
         pkg: PackageRef,
@@ -791,6 +824,10 @@ enum Commands {
         /// rule comes from: a built-in rule, or a rules file and its line.
         #[arg(long)]
         ignored: bool,
+        /// Show this dataspace, the folder holding `data.toml`, rather than
+        /// one package of the home
+        #[arg(long, value_name = "DIR", conflicts_with_all = ["namespace", "ignored"])]
+        dataspace: Option<PathBuf>,
     },
     /// Undo the newest commit, restoring the revision before it
     ///
@@ -994,6 +1031,39 @@ pub async fn init(args: Args) -> Result<Std, Error> {
         let domain = DomainRoot::new(dataspace_domain_dir()?);
         return Ok(reattach::command(root_dir, domain, input).await);
     }
+    // The dataspace queries write nothing, and reach the Domain's stores
+    // where one exists.
+    if let Commands::Status {
+        dataspace: Some(dataspace),
+        ..
+    } = args.command
+    {
+        let input = status::dataspace::Input { dataspace };
+        log::debug!("Status of a dataspace {input:?}");
+        let reading = status::dataspace::command(root_dir, existing_domain(), input);
+        return Ok(Box::pin(reading).await);
+    }
+    if let Commands::List {
+        dataspace: Some(dataspace),
+        fetch,
+    } = args.command
+    {
+        let input = list::dataspace::Input { dataspace, fetch };
+        log::debug!("Listing a dataspace {input:?}");
+        let listing = list::dataspace::command(root_dir, existing_domain(), input);
+        return Ok(Box::pin(listing).await);
+    }
+    if let Commands::Log {
+        dataspace: Some(dataspace),
+        package: Some(package),
+        ..
+    } = args.command
+    {
+        let input = history::dataspace::Input { dataspace, package };
+        log::debug!("Log of a dataspace's package {input:?}");
+        let reading = history::dataspace::command(root_dir, existing_domain(), input);
+        return Ok(Box::pin(reading).await);
+    }
     let m = Model::from(root_dir);
     // Every other command refuses a rollback that was interrupted, so this
     // one runs before anything reads the lineage.
@@ -1130,13 +1200,13 @@ pub async fn init(args: Args) -> Result<Std, Error> {
                 Ok(Std::Err(Error::LoginRequired(host)))
             }
         }
-        Commands::List { fetch } => {
+        Commands::List { fetch, .. } => {
             let args = list::Input { fetch };
 
             log::info!("Listing installed packages {args:?}");
             Ok(list::command(m, args).await)
         }
-        Commands::Log { pkg } => {
+        Commands::Log { pkg, .. } => {
             let namespace = pkg.resolve(&m).await?;
             let args = history::Input { namespace };
 
@@ -1196,7 +1266,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             log::debug!("Role {args:?}");
             Ok(role::command(m, args).await)
         }
-        Commands::Status { pkg, ignored } => {
+        Commands::Status { pkg, ignored, .. } => {
             let namespace = pkg.resolve(&m).await?;
             let args = status::Input {
                 namespace,
@@ -1283,6 +1353,12 @@ Then run:
 
     #[error(transparent)]
     Uninstall(#[from] UninstallError),
+
+    #[error(transparent)]
+    Status(#[from] StatusError),
+
+    #[error(transparent)]
+    History(#[from] HistoryError),
 
     #[error(transparent)]
     Lock(#[from] LockError),
@@ -1431,9 +1507,19 @@ impl Error {
                 UninstallError::NotInstalled(_) => "not_installed",
                 _ => "dataspace",
             },
-            Error::Lock(_) => "lock",
             Error::PackageRequired => "package_required",
             Error::AmbiguousPackage(_) => "ambiguous_package",
+            Error::Status(err) => match err {
+                StatusError::Contract(_) => "contract",
+                StatusError::Lock(_) => "lock",
+                _ => "dataspace",
+            },
+            Error::History(err) => match err {
+                HistoryError::Contract(_) => "contract",
+                HistoryError::Lock(_) => "lock",
+                _ => "dataspace",
+            },
+            Error::Lock(_) => "lock",
             Error::NoDownloadWithPath => "no_download_with_path",
             Error::NamespaceRequired => "namespace_required",
             Error::CommitMetaInvalid(_) => "commit_meta_invalid",
@@ -2072,6 +2158,48 @@ mod tests {
         assert!(parse(&["--dataspace", "ds", "quilt+s3://b#package=a/b", "-n", "a/b"]).is_err());
     }
 
+    /// `--dataspace` turns `status`, `list` and `log` to a dataspace:
+    /// `status` then takes no namespace or `--ignored`, and `log` takes the
+    /// package by its URI, which needs the dataspace.
+    #[test]
+    fn status_list_and_log_take_a_dataspace() {
+        let parse = |args: &[&str]| Args::try_parse_from([&["quilt"], args].concat());
+        let uri = "quilt+s3://b#package=a/b";
+        assert!(matches!(
+            parse(&["status", "--dataspace", "ds"])
+                .expect("parses")
+                .command,
+            Commands::Status {
+                dataspace: Some(_),
+                ..
+            }
+        ));
+        assert!(parse(&["status", "--dataspace", "ds", "-n", "a/b"]).is_err());
+        assert!(parse(&["status", "--dataspace", "ds", "--ignored"]).is_err());
+        assert!(matches!(
+            parse(&["list", "--dataspace", "ds", "--fetch"])
+                .expect("parses")
+                .command,
+            Commands::List {
+                dataspace: Some(_),
+                fetch: true
+            }
+        ));
+        assert!(matches!(
+            parse(&["log", "--dataspace", "ds", uri])
+                .expect("parses")
+                .command,
+            Commands::Log {
+                dataspace: Some(_),
+                package: Some(_),
+                ..
+            }
+        ));
+        assert!(parse(&["log", uri]).is_err());
+        assert!(parse(&["log", "--dataspace", "ds"]).is_err());
+        assert!(parse(&["log", "--dataspace", "ds", uri, "-n", "a/b"]).is_err());
+    }
+
     #[test]
     fn remove_revisions_count_is_optional_and_at_least_one() {
         let all = Args::try_parse_from(["quilt", "remove-revisions", "-n", "a/b"]).expect("parses");
@@ -2097,11 +2225,14 @@ mod tests {
     fn json_flag_parses_before_or_after_the_subcommand() {
         let after = Args::try_parse_from(["quilt", "list", "--json"]).expect("parses");
         assert!(after.json);
-        assert!(matches!(after.command, Commands::List { fetch: false }));
+        assert!(matches!(after.command, Commands::List { fetch: false, .. }));
 
         let before = Args::try_parse_from(["quilt", "--json", "list"]).expect("parses");
         assert!(before.json);
-        assert!(matches!(before.command, Commands::List { fetch: false }));
+        assert!(matches!(
+            before.command,
+            Commands::List { fetch: false, .. }
+        ));
 
         let status = Args::try_parse_from(["quilt", "status", "-n", "demo/sales", "--json"])
             .expect("parses");
@@ -2125,7 +2256,7 @@ mod tests {
             let args = Args::try_parse_from(argv).expect("parses");
             assert_eq!(args.domain, domain, "{argv:?}");
             assert!(
-                matches!(args.command, Commands::List { fetch: false }),
+                matches!(args.command, Commands::List { fetch: false, .. }),
                 "{argv:?}"
             );
         }
@@ -2145,6 +2276,7 @@ mod tests {
             Commands::Status {
                 pkg: PackageRef { namespace: Some(namespace) },
                 ignored: false,
+                dataspace: None,
             } if namespace == "demo/sales"
         ));
     }
@@ -2542,6 +2674,7 @@ mod tests {
             Commands::Status {
                 pkg: PackageRef { namespace: None },
                 ignored: false,
+                dataspace: None,
             }
         ));
 
@@ -2552,6 +2685,7 @@ mod tests {
             Commands::Status {
                 pkg: PackageRef { namespace: Some(namespace) },
                 ignored: false,
+                dataspace: None,
             } if namespace == "demo/sales"
         ));
     }
@@ -2706,7 +2840,10 @@ mod tests {
             log: None,
             format: None,
             json: false,
-            command: Commands::List { fetch: false },
+            command: Commands::List {
+                fetch: false,
+                dataspace: None,
+            },
         };
 
         let mut output = Vec::new();
@@ -3827,7 +3964,10 @@ mod tests {
             log: None,
             format: None,
             json: false,
-            command: Commands::List { fetch: false },
+            command: Commands::List {
+                fetch: false,
+                dataspace: None,
+            },
         };
 
         // Default home initialization now reaches the same write-protected
@@ -3850,7 +3990,10 @@ mod tests {
             log: None,
             format: None,
             json: false,
-            command: Commands::List { fetch: false },
+            command: Commands::List {
+                fetch: false,
+                dataspace: None,
+            },
         };
 
         // Test init with empty domain
@@ -3871,6 +4014,8 @@ mod tests {
     ///
     /// Covers the commands reachable without a remote; `browse`, `install`,
     /// `login`, `pull`, `push` and `role` all need one.
+    // Most of its length is the table of commands, one per row.
+    #[allow(clippy::too_many_lines)]
     #[test(tokio::test)]
     async fn json_mode_emits_one_parseable_object_per_local_command() -> Result<(), Error> {
         let (_, temp_dir) = create_model_in_temp_dir().await?;
@@ -3903,12 +4048,19 @@ mod tests {
                     user_meta: None,
                 },
             ),
-            ("list", Commands::List { fetch: false }),
+            (
+                "list",
+                Commands::List {
+                    fetch: false,
+                    dataspace: None,
+                },
+            ),
             (
                 "status",
                 Commands::Status {
                     pkg: pkg(),
                     ignored: false,
+                    dataspace: None,
                 },
             ),
             (
@@ -3921,7 +4073,14 @@ mod tests {
                     no_workflow: true,
                 },
             ),
-            ("log", Commands::Log { pkg: pkg() }),
+            (
+                "log",
+                Commands::Log {
+                    pkg: pkg(),
+                    package: None,
+                    dataspace: None,
+                },
+            ),
             ("undo-commit", Commands::UndoCommit { pkg: pkg() }),
             (
                 "remove-revisions",
@@ -3991,6 +4150,7 @@ mod tests {
                     namespace: Some("no/such".to_string()),
                 },
                 ignored: false,
+                dataspace: None,
             },
         };
 

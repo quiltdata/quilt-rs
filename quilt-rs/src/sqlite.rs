@@ -28,6 +28,19 @@ impl Connection {
         Self::open_with(move || rusqlite::Connection::open(path)).await
     }
 
+    /// Opens the file at `path` for reading only; it must exist.
+    pub(crate) async fn open_read_only(path: &Path) -> Result<Self, ConnectionError> {
+        let path = path.to_owned();
+        Self::open_with(move || {
+            rusqlite::Connection::open_with_flags(
+                path,
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
+                    | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+            )
+        })
+        .await
+    }
+
     pub(crate) async fn open_in_memory() -> Result<Self, ConnectionError> {
         Self::open_with(rusqlite::Connection::open_in_memory).await
     }

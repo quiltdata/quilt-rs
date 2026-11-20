@@ -484,6 +484,29 @@ async fn a_version_1_queue_keeps_its_work_and_drops_the_autosync_list() -> Res {
     Ok(())
 }
 
+/// Opened to read, a version 1 queue is left as it was: no migration, and it
+/// still answers.
+#[test(tokio::test)]
+async fn a_queue_opened_to_read_is_not_migrated() -> Res {
+    let dir = tempfile::tempdir()?;
+    let path = queue_path(&dir);
+    version_1(&path, &[dir.path().join("on")])?;
+
+    let queue = Queue::open_read_only(&path).await?;
+
+    assert_eq!(queue.jobs().await?.len(), 1);
+    assert_eq!(tables(&path)?, ["autosync", "failure", "job", "kept"]);
+    let version: i64 =
+        rusqlite::Connection::open(&path)?.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    assert_eq!(version, 1);
+    assert!(
+        Queue::open_read_only(&dir.path().join("none"))
+            .await
+            .is_err()
+    );
+    Ok(())
+}
+
 /// The copy holds the source's work at this build's version, the list comes
 /// back in the order autosync was turned on with what this build can't read
 /// skipped, and the source is left as it was.

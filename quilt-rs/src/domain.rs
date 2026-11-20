@@ -179,6 +179,36 @@ impl DomainRoot {
             dir: self.root.join(REGISTRIES_DIR).join(LOCAL_DIR),
         }
     }
+
+    /// The Package Store of each bucket the Domain has one for, by name: a
+    /// folder under `registries/` that names no bucket is not one.
+    pub async fn stores(&self, storage: &(impl Storage + Sync)) -> Res<Vec<RegistryStore>> {
+        let mut stores = Vec::new();
+        for dir in list_dirs(storage, &self.root.join(REGISTRIES_DIR)).await? {
+            let name = dir.file_name().unwrap_or_default().to_string_lossy();
+            if let Ok(store) = self.registry(&name) {
+                stores.push(store);
+            }
+        }
+        stores.sort_by(|a, b| a.bucket.cmp(&b.bucket));
+        Ok(stores)
+    }
+}
+
+/// The packages with a folder, or a file, at `<dir>/<owner>/<name>`.
+async fn namespaces_under(storage: &(impl Storage + Sync), dir: &Path) -> Res<Vec<Namespace>> {
+    let mut namespaces = Vec::new();
+    for owner in list_dirs(storage, dir).await? {
+        let mut entries = storage.read_dir(&owner).await?;
+        while let Some(entry) = entries.next_entry().await? {
+            if entry.file_name().to_string_lossy().starts_with('.') {
+                continue;
+            }
+            namespaces.extend(namespace_of(&entry.path()));
+        }
+    }
+    namespaces.sort();
+    Ok(namespaces)
 }
 
 /// Whether Windows takes a file named `name` for a device: `con`, `prn`,
@@ -447,6 +477,11 @@ impl RegistryStore {
         Ok(report)
     }
 
+    /// The packages installed or committed here, unpushed commits included.
+    pub async fn installed(&self, storage: &(impl Storage + Sync)) -> Res<Vec<Namespace>> {
+        namespaces_under(storage, &self.dir.join(INSTALLED_DIR)).await
+    }
+
     /// The folders under `installed/`, one per package.
     async fn installed_packages(&self, storage: &(impl Storage + Sync)) -> Res<Vec<PathBuf>> {
         let mut packages = Vec::new();
@@ -556,6 +591,16 @@ impl LocalRegistry {
     #[must_use]
     pub fn package_lock(&self, namespace: &Namespace) -> PathBuf {
         package_path(&self.dir.join(LOCKS_DIR), namespace, ".lock")
+    }
+
+    /// Every package the registry holds: those with a `latest`, and those
+    /// committed to it and never published.
+    pub async fn packages(&self, storage: &(impl Storage + Sync)) -> Res<Vec<Namespace>> {
+        let mut packages = namespaces_under(storage, &self.dir.join(LATEST_DIR)).await?;
+        packages.extend(namespaces_under(storage, &self.dir.join(INSTALLED_DIR)).await?);
+        packages.sort();
+        packages.dedup();
+        Ok(packages)
     }
 
     /// The hash `namespace`'s `latest` names, or `None` where it has none.
@@ -732,7 +777,10 @@ impl LocalRegistry {
         storage.lock_exclusive(self.dir.join(NAME_LOCK)).await
     }
 
-    async fn read_names(&self, storage: &(impl Storage + Sync)) -> Res<Option<LocalNames>> {
+    /// The registry's names, or `None` where it was never named. Unlike
+    /// [`names`](Self::names), it never names the registry, so it writes
+    /// nothing.
+    pub async fn read_names(&self, storage: &(impl Storage + Sync)) -> Res<Option<LocalNames>> {
         match storage.read_bytes(self.dir.join(NAME_FILE)).await {
             Ok(bytes) => Ok(Some(serde_json::from_slice(&bytes)?)),
             Err(err) if err.is_not_found() => Ok(None),

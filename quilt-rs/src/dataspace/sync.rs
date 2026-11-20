@@ -944,9 +944,9 @@ async fn publish(
 }
 
 /// What a commit would take from a working folder.
-struct Taken {
+pub(crate) struct Taken {
     /// `current` as the folder has it.
-    manifest: Manifest,
+    pub(crate) manifest: Manifest,
     /// The content of each row a file changed or added.
     content: BTreeMap<LogicalKey, RowContent>,
     /// `metadata.toml` as it was read, if there is one.
@@ -989,7 +989,7 @@ async fn take_changed(
 
 /// Takes `entry`'s working folder over `current`, the lock's current
 /// revision, with its metadata file applied.
-async fn take(
+pub(crate) async fn take(
     storage: &(impl Storage + Sync),
     entry: &Entry,
     rules: &Rules,

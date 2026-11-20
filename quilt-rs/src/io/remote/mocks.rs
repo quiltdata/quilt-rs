@@ -368,6 +368,35 @@ impl Remote for MockRemote {
         Ok(hashes)
     }
 
+    /// [`MockRemote::published_revisions`], each with the time its pointer
+    /// is named for.
+    async fn published_revision_history(
+        &self,
+        _host: Option<&Host>,
+        bucket: &str,
+        namespace: &Namespace,
+    ) -> Res<Vec<super::PublishedRevision>> {
+        let dir = format!("s3://{bucket}/{}", tag_key(namespace, ""));
+        if !self.storage.exists(storage_path(&dir)).await {
+            return Ok(Vec::new());
+        }
+        let mut entries = self.storage.read_dir(storage_path(&dir)).await?;
+        let mut revisions = Vec::new();
+        while let Some(entry) = entries.next_entry().await? {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let Some(modified) = super::s3::pointer_time(&name, "") else {
+                continue;
+            };
+            let pointer = tokio::fs::read_to_string(entry.path()).await?;
+            revisions.push(super::PublishedRevision {
+                hash: pointer.trim().to_string(),
+                modified: Some(modified),
+                message: None,
+            });
+        }
+        Ok(revisions)
+    }
+
     /// The names under `<bucket>/.quilt/packages/` that start with `prefix`
     /// and are a whole top hash, as `put_object` stored them.
     async fn manifest_hashes_with_prefix(

@@ -179,6 +179,16 @@ folder:
   adds gitignore lines just above the built-in rules, for new files only, so
   the user-wide and the package's `.quiltignore` win over them. The table
   changes nothing a read writes, and no `.quiltignore` is written for it.
+- `dataspace::status::status` reads each entry of a dataspace and writes
+  nothing, not even the Domain's caches: its four hashes and their
+  `UpstreamState`, its working folder's changes as the tick's commit would
+  take them, its rows in `conflict.json`, the revision `queue.db` kept, its
+  unpushed commits, whether the dataspace is filled and what in the lock's
+  header does not fit. `dataspace::list` summarises each declared package,
+  lists every package the Domain's stores hold, and a registry's packages
+  from its latest index. `dataspace::history` lists a package's revisions
+  newest first, from its bucket or the local registry, with local commits
+  not pushed yet marked.
 
 ## Hash Algorithms
 
