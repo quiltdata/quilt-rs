@@ -1235,8 +1235,8 @@ impl Error {
     /// A stable machine-readable discriminant for `--json` consumers, so a
     /// caller can branch without matching English prose.
     ///
-    /// Reaches one level into `quilt_rs::Error` for the variants a caller can
-    /// act on. Everything else is `quilt_error`: a new library variant lands in
+    /// Reaches one level into `quilt_rs::Error`, under any failed upload, for
+    /// the variants a caller can act on. Everything else is `quilt_error`: a new library variant lands in
     /// the catch-all rather than breaking the build, and earns its own kind only
     /// when something needs to branch on it.
     pub fn kind(&self) -> &'static str {
@@ -1246,7 +1246,7 @@ impl Error {
             Error::HomeInUse { .. } => "home_in_use",
             Error::HomeTwice => "home_twice",
             Error::PackageBusy(_) => "package_busy",
-            Error::Quilt(err) => match err {
+            Error::Quilt(err) => match err.cause() {
                 quilt_rs::Error::Uri(_) => "invalid_uri",
                 quilt_rs::Error::Auth(..) => "auth",
                 quilt_rs::Error::Login(_) => "login",
@@ -1468,6 +1468,18 @@ mod tests {
         for (err, expected) in cases {
             assert_eq!(err.kind(), expected, "kind for {err:?}");
         }
+    }
+
+    /// A failed upload has its cause's kind.
+    #[test]
+    fn a_failed_upload_has_its_causes_kind() {
+        let err = Error::Quilt(quilt_rs::Error::Upload {
+            key: quilt_rs::LogicalKey::new("b.txt").expect("valid key"),
+            source: Box::new(quilt_rs::Error::Login(quilt_rs::LoginError::NoSession(
+                None,
+            ))),
+        });
+        assert_eq!(err.kind(), "login");
     }
 
     /// [`error_kinds_are_stable`] for `publish`'s refusal of another's lock.

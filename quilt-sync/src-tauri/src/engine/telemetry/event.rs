@@ -320,6 +320,8 @@ impl From<&crate::engine::quilt::Error> for Failure {
 
             // The uninstall happened; what kept the objects is the failure.
             E::PruneFailed(_, inner, _) => Self::from(inner.as_ref()),
+            // The file is context; the cause is the failure.
+            E::Upload { source, .. } => Self::from(source.as_ref()),
 
             // The remaining opaque-string and mechanical variants. Ours, or
             // unclassifiable without giving them variants first — which is the same
@@ -619,6 +621,18 @@ mod tests {
         let err = Error::Quilt(quilt::Error::PackageBusy(("acme", "demo").into()));
 
         assert_eq!(refusal(&err), Some(RefusalKind::Busy));
+    }
+
+    /// A failed upload is placed by its cause: an expired session is the
+    /// user's to sign back in to, whichever file it stopped on.
+    #[test]
+    fn a_failed_upload_is_placed_by_its_cause() {
+        let err = Error::Quilt(quilt::Error::Upload {
+            key: quilt::LogicalKey::new("b.txt").expect("valid key"),
+            source: Box::new(quilt::Error::Login(quilt::LoginError::NoSession(None))),
+        });
+
+        assert_eq!(refusal(&err), Some(RefusalKind::LoginRequired));
     }
 
     /// A typed name the format refuses is the user's to retype, not a bug.

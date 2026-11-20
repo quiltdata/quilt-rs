@@ -1182,7 +1182,7 @@ mod tests {
             .await;
 
             assert!(
-                matches!(&pushed, Err(Error::PackageOp(PackageOpError::Push(message))) if message.contains("do not hash")),
+                matches!(&pushed, Err(Error::Upload { key, source }) if key.to_string() == "a.txt" && matches!(&**source, Error::PackageOp(PackageOpError::Push(message)) if message.contains("do not hash"))),
                 "algorithm {algorithm:#x}: {pushed:?}"
             );
             assert_eq!(revisions(&remote).await?, Vec::<String>::new());
@@ -1313,7 +1313,7 @@ mod tests {
         .await;
 
         assert!(
-            matches!(&pushed, Err(Error::PackageOp(PackageOpError::Push(message))) if message.contains("changed while")),
+            matches!(pushed.as_ref().map_err(Error::cause), Err(Error::PackageOp(PackageOpError::Push(message))) if message.contains("changed while")),
             "{pushed:?}"
         );
         assert_eq!(revisions(&remote.inner).await?, Vec::<String>::new());

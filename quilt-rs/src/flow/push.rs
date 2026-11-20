@@ -1189,12 +1189,8 @@ mod tests {
         .unwrap_err();
 
         assert!(
-            !matches!(
-                &err,
-                Error::PackageOp(PackageOpError::Push(msg))
-                    if msg.contains("not equal to pushed manifest commit")
-            ),
-            "the failed upload must end the push, got: {err:?}"
+            matches!(&err, Error::Upload { key, source } if key.to_string() == "b.txt" && source.is_not_found()),
+            "the failed upload must end the push, naming its file, got: {err:?}"
         );
         assert!(!storage.exists(&paths.cached_manifests_dir("b")).await);
         assert_eq!(

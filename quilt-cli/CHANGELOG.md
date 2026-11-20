@@ -43,6 +43,7 @@
 
 ### Fixed
 
+- `quilt push` and `quilt publish` fail when an upload fails, naming the file, where they recorded a revision holding only the files uploaded so far; under `--json` the error's kind is its cause's, such as `login` (<https://github.com/quiltdata/quilt-rs/pull/1473>)
 - `quilt` runs every command with 8 MiB of stack on every OS, where on Windows it had the 1 MB of the main thread, which a debug build nearly filled (<https://github.com/quiltdata/quilt-rs/pull/1429>)
 - `quilt list`, `quilt status` and the commands that write lineage no longer fail now and then with a parse error such as `EOF while parsing` while another `quilt` or QuiltSync writes the same domain's lineage (<https://github.com/quiltdata/quilt-rs/pull/1416>)
 - `quilt status` of a package whose folder is missing says the working copy is unavailable and lists no changes, where it listed every file as removed, and `quilt commit` refuses, naming the folder, where it recorded an empty revision; `quilt list --fetch` shows it as `folder missing`, where it showed `latest`, and under `--json` gives it no `changed_files` count, where it gave `0` (<https://github.com/quiltdata/quilt-rs/pull/1397>, <https://github.com/quiltdata/quilt-rs/pull/1431>)
