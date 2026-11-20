@@ -142,11 +142,11 @@ async fn a_first_read_fills_the_entrys_paths_and_writes_the_metadata() -> Res {
     let remote = MockRemote::default();
     let storage = MockStorage::default();
     let mut header = ManifestHeader::default();
-    let (meta, numbers) = RawNumbers::parse(r#"{"run": 18446744073709551616}"#)?;
-    header.set_meta(meta, numbers);
+    header.set_meta(serde_json::json!({"run": 7}), RawNumbers::default());
     let files: &[(&str, &[u8])] = &[("src/a.txt", b"alpha"), ("docs/b.txt", b"beta")];
     let mut manifest = publish_with(&remote, FIRST, files, header).await?;
     manifest.rows[0].meta = Some(serde_json::json!({"user_meta": {"kind": "raw"}}));
+    manifest.rows[1].meta = Some(serde_json::json!({"user_meta": {"kind": "docs"}}));
     put_manifest(&remote, FIRST, &manifest).await?;
     let entry = entry(&format!(
         "read = [{{ package = \"team/raw\", revision = \"{FIRST}\", path = \"src/\" }}]"
@@ -164,8 +164,32 @@ async fn a_first_read_fills_the_entrys_paths_and_writes_the_metadata() -> Res {
     );
     assert_eq!(
         text(&storage, METADATA_FILE).await.as_deref(),
-        Some("{\".\":{\"run\":18446744073709551616},\"src/a.txt\":{\"kind\":\"raw\"}}\n")
+        Some(
+            "message = \"\"\nversion = \"v0\"\n\n\
+             [metadata.entries.\"src/a.txt\"]\nkind = \"raw\"\n\n\
+             [metadata.package]\nrun = 7\n"
+        )
     );
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_revision_whose_metadata_toml_cannot_hold_is_not_read() -> Res {
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    let mut header = ManifestHeader::default();
+    let (meta, numbers) = RawNumbers::parse(r#"{"run": 18446744073709551616}"#)?;
+    header.set_meta(meta, numbers);
+    publish_with(&remote, FIRST, &[("a.txt", b"alpha")], header).await?;
+
+    let outcome = read(&storage, &remote, &whole(), None).await;
+
+    assert!(
+        matches!(outcome, Err(EntryError::MetadataUnwritable(_))),
+        "{outcome:?}"
+    );
+    assert_eq!(text(&storage, "a.txt").await, None);
+    assert_eq!(text(&storage, METADATA_FILE).await, None);
     Ok(())
 }
 
@@ -173,9 +197,9 @@ async fn a_first_read_fills_the_entrys_paths_and_writes_the_metadata() -> Res {
 async fn a_package_holding_anything_at_the_metadata_files_place_is_refused() -> Res {
     for name in [
         METADATA_FILE,
-        "Package-Metadata.JSON",
-        "package-metadata.json/inside.txt",
-        "package-metadata.json\\inside.txt",
+        "Metadata.TOML",
+        "metadata.toml/inside.txt",
+        "metadata.toml\\inside.txt",
     ] {
         let remote = MockRemote::default();
         let storage = MockStorage::default();
@@ -374,7 +398,12 @@ async fn the_metadata_file_is_compared_like_any_other_file() -> Res {
     let files: &[(&str, &[u8])] = &[("a.txt", b"alpha")];
     publish_with(&remote, FIRST, files, with_meta(1)).await?;
     read(&storage, &remote, &entry, None).await?;
-    write(&storage, METADATA_FILE, b"{\".\":{\"v\":\"mine\"}}\n").await?;
+    write(
+        &storage,
+        METADATA_FILE,
+        b"[metadata.package]\nv = \"mine\"\n",
+    )
+    .await?;
     publish_with(&remote, SECOND, files, with_meta(1)).await?;
 
     let unchanged_remotely = read(&storage, &remote, &entry, Some(FIRST)).await?;
@@ -731,7 +760,12 @@ async fn metadata_held_in_another_order_is_the_same_metadata() -> Res {
     )
     .await?;
     read(&storage, &remote, &entry, None).await?;
-    write(&storage, METADATA_FILE, b"{\".\":{\"x\":\"mine\"}}\n").await?;
+    write(
+        &storage,
+        METADATA_FILE,
+        b"[metadata.package]\nx = \"mine\"\n",
+    )
+    .await?;
     publish_with(
         &remote,
         SECOND,

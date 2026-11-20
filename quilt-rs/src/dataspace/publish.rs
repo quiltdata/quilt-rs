@@ -95,15 +95,18 @@ impl Published {
 /// is kept. Under `replace` it is a snapshot: a key the folder lacks is
 /// removed. The revision takes the bucket's default workflow.
 ///
-/// The [metadata file](METADATA_FILE) sets the metadata; with none, the
-/// metadata is kept, and an empty one clears it. Under `write` a key the file
-/// leaves out keeps its metadata, and under `replace` loses it. A `replace`
-/// whose role may not read `latest` has none to keep.
+/// The [metadata file](METADATA_FILE) sets the revision's message, the
+/// package's metadata, and that of each file and folder under the entry's
+/// paths; what it leaves out is cleared, so an empty one clears them all. With
+/// none, the metadata is kept. A `message` given here wins over the file's,
+/// and the file's workflow is not taken. A `replace` whose role may not read
+/// `latest` has no metadata to keep.
 ///
 /// When `latest` moves while it publishes, a `write` is composed again on
-/// the new `latest`, so another writer's additions are never dropped, and a
-/// `replace` is left stored and not `latest`. Either way a revision that did
-/// not become `latest` is reported with its hash.
+/// the new `latest`, so another writer's added files are never dropped,
+/// though a metadata file clears the metadata it leaves out under the entry's
+/// paths, theirs too. A `replace` is left stored and not `latest`. Either way
+/// a revision that did not become `latest` is reported with its hash.
 pub async fn publish(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
@@ -144,9 +147,11 @@ pub async fn publish(
         version: None,
     };
     let header = ManifestHeader {
-        message: message.map_or(HeaderMessage::Missing, |text| {
-            HeaderMessage::Text(text.to_string())
-        }),
+        message: match (message, metadata.message()) {
+            (Some(text), _) => HeaderMessage::Text(text.to_string()),
+            (None, Some(message)) => message.clone(),
+            (None, None) => HeaderMessage::Missing,
+        },
         // Taken from `latest`, or from the metadata file; a default `{}` would
         // make an empty first publish look like a change.
         user_meta: None,
@@ -169,6 +174,7 @@ pub async fn publish(
             &files,
             &metadata,
             header.clone(),
+            message.is_none() && metadata.message().is_some(),
             &mut target,
         ))
         .await;
@@ -192,7 +198,9 @@ pub async fn publish(
     }
 }
 
-/// One publish of `files` on the `latest` read now.
+/// One publish of `files` on the `latest` read now. The message counts as a
+/// change only where the metadata file gave it, `with_message`.
+#[allow(clippy::too_many_arguments)]
 async fn attempt_on_latest(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
@@ -200,6 +208,7 @@ async fn attempt_on_latest(
     files: &[(LogicalKey, PathBuf)],
     metadata: &MetadataFile,
     header: ManifestHeader,
+    with_message: bool,
     target: &mut PushTarget,
 ) -> Result<Published, EntryError> {
     let whole = entry.access == Access::Replace;
@@ -228,9 +237,9 @@ async fn attempt_on_latest(
         )))
         .into());
     }
-    metadata.apply(&mut manifest, &entry.paths, whole);
+    metadata.apply(&mut manifest, &entry.paths);
     target.parent = seen.hash().map(str::to_string);
-    if same_as(&manifest, base.as_ref()) {
+    if same_as(&manifest, base.as_ref(), with_message) {
         info!("Nothing to publish from {}", entry.folder.display());
         return Ok(Published::Unchanged {
             latest: target.parent.clone(),
@@ -390,14 +399,15 @@ async fn compose(
 }
 
 /// Whether `manifest`, its rows sorted, writes the same files, metadata and
-/// folder metadata as `base`.
-fn same_as(manifest: &Manifest, base: Option<&Manifest>) -> bool {
+/// folder metadata as `base`, and the same message where `with_message`.
+fn same_as(manifest: &Manifest, base: Option<&Manifest>, with_message: bool) -> bool {
     let Some(base) = base else {
         return manifest.rows.is_empty() && manifest.header.user_meta.is_none();
     };
     let mut theirs: Vec<&ManifestRow> = base.rows.iter().collect();
     theirs.sort_by(|a, b| a.logical_key.cmp(&b.logical_key));
-    manifest.header.same_user_meta(&base.header)
+    (!with_message || manifest.header.message == base.header.message)
+        && manifest.header.same_user_meta(&base.header)
         && manifest.dir_meta == base.dir_meta
         && manifest.rows.len() == theirs.len()
         && manifest
