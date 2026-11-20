@@ -182,7 +182,9 @@ mod tests {
             dataspace.path().join("data.toml"),
             "registry = \"s3://b\"\n[packages]\nsync = [\"team/raw\"]\n",
         )?;
-        let folder = dataspace.path().join("team/raw");
+        // Joined part by part, so it displays as the contract's folder does
+        // on Windows too.
+        let folder = dataspace.path().join("team").join("raw");
         std::fs::create_dir_all(&folder)?;
         std::fs::write(folder.join("a.txt"), b"alpha")?;
         let input = Input {
