@@ -61,6 +61,7 @@ use crate::manifest::Manifest;
 use crate::manifest::ManifestRow;
 use crate::manifest::RawNumbers;
 use crate::object_hash::ObjectHash;
+use crate::quiltignore::Rules;
 use quilt_uri::ManifestUri;
 use quilt_uri::RevisionPointer;
 use quilt_uri::S3PackageHandle;
@@ -182,7 +183,8 @@ impl<S: Storage + Sync> LockFile<'_, S> {
 /// written after each step: the base after a read, a commit once it is
 /// recorded, and the base again, with the commits the push squashed dropped,
 /// once `latest` names the push. A push that `latest` moved past is left
-/// stored, and the lock where it was.
+/// stored, and the lock where it was. What the ignore rules leave out of a
+/// commit is not committed, `user_rules` being the user-wide file.
 ///
 /// Until the dataspace is filled, and after `data.toml` is edited, the tick
 /// only reads: each entry is read in full, a missing file filled rather than
@@ -201,6 +203,7 @@ pub async fn sync(
     dataspace: &Path,
     writer: &Writer,
     message: &str,
+    user_rules: &Path,
 ) -> Result<DataspaceSync, SyncError> {
     let contract = Contract::read(storage, dataspace).await?;
     let (mut lock, writer) = usable_lock(storage, &contract, writer)
@@ -262,7 +265,7 @@ pub async fn sync(
 
     for entry in synced {
         let outcome = match tick(
-            storage, remote, domain, entry, &mut lock, &lock_file, message,
+            storage, remote, domain, entry, &mut lock, &lock_file, message, user_rules,
         )
         .await
         {
@@ -406,6 +409,7 @@ fn handle(entry: &Entry) -> S3PackageHandle {
 }
 
 /// One entry's tick; see [`sync`].
+#[allow(clippy::too_many_arguments)]
 async fn tick(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
@@ -414,6 +418,7 @@ async fn tick(
     lock: &mut Lock,
     lock_file: &LockFile<'_, impl Storage + Sync>,
     message: &str,
+    user_rules: &Path,
 ) -> Result<EntrySync, Stop> {
     let Registry::S3(bucket) = &entry.registry;
     let store = domain.registry(bucket)?;
@@ -466,7 +471,10 @@ async fn tick(
         read_report = Some(report);
     }
 
-    let published = publish(storage, remote, &store, entry, lock, lock_file, message).await?;
+    let published = publish(
+        storage, remote, &store, entry, lock, lock_file, message, user_rules,
+    )
+    .await?;
     Ok(EntrySync::Ran {
         read: read_report,
         published,
@@ -493,6 +501,7 @@ async fn set_base(
 /// Commits the working folder's changes on the lock's current revision, then
 /// pushes the last commit against the base. `None` where there was nothing
 /// to commit or push.
+#[allow(clippy::too_many_arguments)]
 async fn publish(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
@@ -501,6 +510,7 @@ async fn publish(
     lock: &mut Lock,
     lock_file: &LockFile<'_, impl Storage + Sync>,
     message: &str,
+    user_rules: &Path,
 ) -> Result<Option<Published>, Stop> {
     let key = entry.key();
     let (base, commits) = match lock.packages.get(&key) {
@@ -525,11 +535,8 @@ async fn publish(
     if current_hash.is_none() && !storage.exists(folder).await {
         return Ok(None);
     }
-    let files: Vec<(LogicalKey, PathBuf)> = walk(storage, folder)
-        .await?
-        .into_iter()
-        .filter(|(key, _)| entry.paths.covers(key))
-        .collect();
+    let rules = Rules::load(folder, user_rules)?;
+    let files = walk(storage, folder, &entry.paths, &rules, Some(&current)).await?;
     let (mut manifest, content) = compose(storage, &current, entry, &files).await?;
     let metadata_text = bytes_at(storage, &folder.join(METADATA_FILE)).await?;
     metadata_file(storage, folder)

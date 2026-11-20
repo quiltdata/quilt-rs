@@ -75,6 +75,11 @@ impl World {
         DomainRoot::new(self.dir.path().join("domain"))
     }
 
+    /// The user-wide ignore rules file, which need not exist.
+    fn user_rules(&self) -> PathBuf {
+        self.dir.path().join("user.quiltignore")
+    }
+
     async fn sync(&self) -> Result<DataspaceSync, SyncError> {
         let dataspace = self.dataspace();
         Box::pin(sync(
@@ -84,6 +89,7 @@ impl World {
             &dataspace,
             &writer(),
             MESSAGE,
+            &self.user_rules(),
         ))
         .await
     }
@@ -304,6 +310,33 @@ async fn a_tick_publishes_additions_changes_and_deletions_against_the_base() -> 
     let locked = world.locked().await?.ok_or("no lock entry")?;
     assert_eq!(locked.base, revision);
     assert_eq!(locked.commits, Vec::<String>::new());
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_tick_leaves_out_what_the_ignore_rules_leave_out_of_a_commit() -> Res {
+    let world = World::filled(&[("a.txt", b"a"), (".env", b"old"), ("old.csv", b"o")]).await?;
+    std::fs::write(world.user_rules(), "*.tmp\n")?;
+    world.write(".quiltignore", "*.log\nold.csv\n")?;
+    world.write(".env", "new")?;
+    world.write("new.txt", "n")?;
+    world.write("run.log", "l")?;
+    world.write("scratch.tmp", "t")?;
+    world.write("cache/.DS_Store", "d")?;
+
+    let outcome = world.tick().await?;
+
+    // The built-in rules spare a key the package has; the folder's own rules
+    // do not.
+    assert_eq!(
+        world.revision(&advanced(&outcome)).await?,
+        files(&[
+            (".env", "new"),
+            (".quiltignore", "*.log\nold.csv\n"),
+            ("a.txt", "a"),
+            ("new.txt", "n"),
+        ])
+    );
     Ok(())
 }
 

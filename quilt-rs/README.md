@@ -124,9 +124,10 @@ folder:
   no working folder holds files and it names no unpushed commits.
 - `dataspace::sync::sync` ticks every `sync` entry of a dataspace with a
   Domain: it reads `latest` where it moved past the lock's base, commits the
-  working folder's changes, deletions included, into the Domain's store for
-  the bucket, and pushes the lock's last commit against the base, writing
-  the lock after each step. A push `latest` moved past is left stored.
+  working folder's changes, deletions included and without what the ignore
+  rules leave out of a commit, into the Domain's store for the bucket, and
+  pushes the lock's last commit against the base, writing the lock after each
+  step. A push `latest` moved past is left stored.
 - `dataspace::publish::publish` publishes a `data.toml` entry under `write`
   or `replace` from its working folder, against the `latest` read just before.
   `write` lays the files under the entry's paths over `latest` and keeps its
