@@ -167,14 +167,14 @@ async fn a_queue_from_a_newer_build_is_refused_while_another_process_writes() ->
     let path = queue_path(&dir);
     drop(Queue::open(&path).await?);
     let other = rusqlite::Connection::open(&path)?;
-    other.pragma_update(None, "user_version", 2)?;
+    other.pragma_update(None, "user_version", 3)?;
     other.execute_batch("BEGIN IMMEDIATE")?;
 
     let opened = tokio::time::timeout(Duration::from_secs(2), Queue::open(&path)).await;
 
     other.execute_batch("COMMIT")?;
     assert!(
-        matches!(opened, Ok(Err(QueueError::Version(2)))),
+        matches!(opened, Ok(Err(QueueError::Version(3)))),
         "{opened:?}"
     );
     Ok(())
@@ -335,11 +335,11 @@ async fn a_queue_from_a_newer_build_is_refused_and_left_as_it_is() -> Res {
         let queue = Queue::open(&path).await?;
         queue.keep(&copy("bucket", "/one"), kept("aaaa")).await?;
     }
-    rusqlite::Connection::open(&path)?.pragma_update(None, "user_version", 2)?;
+    rusqlite::Connection::open(&path)?.pragma_update(None, "user_version", 3)?;
 
     let opened = Queue::open(&path).await;
 
-    assert!(matches!(opened, Err(QueueError::Version(2))), "{opened:?}");
+    assert!(matches!(opened, Err(QueueError::Version(3))), "{opened:?}");
     let db = rusqlite::Connection::open(&path)?;
     let hashes: i64 = db.query_row("SELECT count(*) FROM kept", [], |row| row.get(0))?;
     assert_eq!(hashes, 1);
@@ -430,57 +430,93 @@ async fn a_failure_counted_while_another_process_writes_waits_its_turn() -> Res 
     Ok(())
 }
 
-#[test(tokio::test)]
-async fn dataspaces_stay_on_autosync_across_a_restart_in_the_order_turned_on() -> Res {
-    let dir = tempfile::tempdir()?;
-    let path = queue_path(&dir);
-    let [first, second, third] = ["first", "second", "third"].map(|name| dir.path().join(name));
-    {
-        let queue = Queue::open(&path).await?;
-        for dataspace in [&first, &second, &third] {
-            queue.set_autosync(dataspace, true).await?;
+/// A queue as version 1 left it: one job, and `dataspaces` on autosync in
+/// that order, the one named `damaged` stored as text this build can't read.
+fn version_1(path: &Path, dataspaces: &[PathBuf]) -> Res {
+    std::fs::create_dir_all(path.parent().expect("a parent"))?;
+    let db = rusqlite::Connection::open(path)?;
+    db.execute_batch(SCHEMA)?;
+    db.execute_batch(&format!(
+        "CREATE TABLE {AUTOSYNC_TABLE_V1} (dataspace BLOB NOT NULL UNIQUE)"
+    ))?;
+    db.pragma_update(None, "user_version", 1)?;
+    db.execute(
+        "INSERT INTO job (registry, namespace, folder, access) VALUES ('s3://bucket', 'acme/demo', ?1, 'sync')",
+        [crate::state_store::os_bytes(Path::new("/one"))],
+    )?;
+    for dataspace in dataspaces {
+        if dataspace.ends_with("damaged") {
+            db.execute("INSERT INTO autosync (dataspace) VALUES ('text')", [])?;
+        } else {
+            db.execute(
+                "INSERT INTO autosync (dataspace) VALUES (?1)",
+                [crate::state_store::os_bytes(dataspace)],
+            )?;
         }
-        queue.set_autosync(&first, true).await?;
-        queue.set_autosync(&second, false).await?;
     }
-
-    let queue = Queue::open(&path).await?;
-
-    assert_eq!(queue.autosync().await?, [first, third]);
     Ok(())
 }
 
+fn tables(path: &Path) -> Result<Vec<String>, rusqlite::Error> {
+    let db = rusqlite::Connection::open(path)?;
+    let mut query =
+        db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")?;
+    query
+        .query_map([], |row| row.get(0))?
+        .collect::<Result<_, _>>()
+}
+
+/// The list of dataspaces on autosync moved to `domain.json`; a version 1
+/// queue opens without it and keeps its work.
 #[test(tokio::test)]
-async fn a_dataspace_this_build_cant_read_is_skipped_and_the_rest_listed() -> Res {
+async fn a_version_1_queue_keeps_its_work_and_drops_the_autosync_list() -> Res {
     let dir = tempfile::tempdir()?;
     let path = queue_path(&dir);
-    let [damaged, kept_on] = ["damaged", "kept"].map(|name| dir.path().join(name));
+    version_1(&path, &[dir.path().join("on")])?;
+
     let queue = Queue::open(&path).await?;
-    queue.set_autosync(&damaged, true).await?;
-    queue.set_autosync(&kept_on, true).await?;
-    rusqlite::Connection::open(&path)?
-        .execute("UPDATE autosync SET dataspace = 'text' WHERE rowid = 1", [])?;
 
-    let listed = queue.autosync().await;
-
-    assert_eq!(listed.ok(), Some(vec![kept_on]));
+    assert_eq!(queue.jobs().await?.len(), 1);
+    assert_eq!(tables(&path)?, ["failure", "job", "kept"]);
+    let version: i64 =
+        rusqlite::Connection::open(&path)?.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    assert_eq!(version, SCHEMA_VERSION);
     Ok(())
 }
 
-/// One dataspace spelled with `.` or `..` and without is one entry, named as
-/// its contract names it, so turning it off by either spelling turns it off.
+/// The copy holds the source's work at this build's version, the list comes
+/// back in the order autosync was turned on with what this build can't read
+/// skipped, and the source is left as it was.
 #[test(tokio::test)]
-async fn a_dataspace_is_named_as_its_contract_names_it() -> Res {
+async fn a_copied_queue_brings_its_work_and_its_autosync_list() -> Res {
     let dir = tempfile::tempdir()?;
-    let queue = Queue::in_memory().await?;
-    let dataspace = dir.path().join("rnaseq");
-    let roundabout = dir.path().join("other").join("..").join(".").join("rnaseq");
+    let source = queue_path(&dir);
+    let [first, damaged, second] = ["first", "damaged", "second"].map(|name| dir.path().join(name));
+    version_1(&source, &[first.clone(), damaged, second.clone()])?;
+    let before = std::fs::read(&source)?;
+    let copy = dir.path().join("new").join("queue.db");
+    std::fs::create_dir_all(copy.parent().expect("a parent"))?;
 
-    queue.set_autosync(&roundabout, true).await?;
-    queue.set_autosync(&dataspace, true).await?;
-    assert_eq!(queue.autosync().await?, std::slice::from_ref(&dataspace));
+    let autosync = copy_queue(&source, &copy).await?;
 
-    queue.set_autosync(&roundabout, false).await?;
-    assert_eq!(queue.autosync().await?, Vec::<PathBuf>::new());
+    assert_eq!(autosync, [first, second]);
+    assert_eq!(std::fs::read(&source)?, before);
+    assert_eq!(tables(&copy)?, ["failure", "job", "kept"]);
+    assert_eq!(Queue::open(&copy).await?.jobs().await?.len(), 1);
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_queue_from_a_newer_build_is_not_copied() -> Res {
+    let dir = tempfile::tempdir()?;
+    let source = queue_path(&dir);
+    drop(Queue::open(&source).await?);
+    rusqlite::Connection::open(&source)?.pragma_update(None, "user_version", 3)?;
+    let copy = dir.path().join("queue-copy.db");
+
+    let copied = copy_queue(&source, &copy).await;
+
+    assert!(matches!(copied, Err(QueueError::Version(3))), "{copied:?}");
+    assert!(!copy.exists());
     Ok(())
 }

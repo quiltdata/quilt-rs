@@ -1,8 +1,8 @@
 //! The Domain's durable queue, `queue.db` beside `state.db`: autosync's jobs,
 //! the failures it waits out before trying a job again, and the revisions it
-//! stored without making them `latest`. It also holds the list of dataspaces
-//! on autosync, until existing state is imported into the new Domain folder,
-//! whose `domain.json` takes it.
+//! stored without making them `latest`. The list of dataspaces on autosync,
+//! which version 1 also held, is in the Domain's `domain.json`
+//! ([`DomainRoot::autosync`](crate::domain::DomainRoot::autosync)).
 //!
 //! Nothing here can be rebuilt from elsewhere, so unlike `state.db` a file
 //! this build cannot read is an error, and is never replaced.
@@ -19,20 +19,23 @@ use thiserror::Error;
 use tracing::warn;
 
 use crate::dataspace::contract::Access;
-use crate::dataspace::contract::dataspace_path;
 use crate::sqlite::Connection;
 use crate::sqlite::ConnectionError;
 use crate::state_store::FolderKey;
 use crate::state_store::from_millis;
-use crate::state_store::os_bytes;
 use crate::state_store::os_path;
 use crate::state_store::to_millis;
 
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
+
+/// Version 1 also held the dataspaces on autosync, in this table, which the
+/// move to version 2 drops: the import into the Domain's root has read them
+/// out into `domain.json` by then.
+pub(crate) const AUTOSYNC_TABLE_V1: &str = "autosync";
 
 /// `running_in` names the process that started a job; `NULL` while it waits.
 /// `again` marks a running job queued again, which waits once its run ends.
-/// A `folder` or a `dataspace` is the path as the OS spells it.
+/// A `folder` is the path as the OS spells it.
 const SCHEMA: &str = "
 CREATE TABLE job (
   registry   TEXT NOT NULL,
@@ -62,7 +65,6 @@ CREATE TABLE kept (
   reason    TEXT NOT NULL,
   PRIMARY KEY (folder, registry, namespace)
 ) WITHOUT ROWID;
-CREATE TABLE autosync (dataspace BLOB NOT NULL UNIQUE);
 ";
 
 const ENQUEUE: &str = "
@@ -468,42 +470,6 @@ impl Queue {
         .await
     }
 
-    /// The dataspaces on autosync, in the order autosync was turned on.
-    pub async fn autosync(&self) -> Result<Vec<PathBuf>, QueueError> {
-        self.run(|db, _| {
-            let mut query = db.prepare("SELECT dataspace FROM autosync ORDER BY rowid")?;
-            // As in `jobs`, a value of the wrong type skips its row only.
-            let rows = query.query_map([], |row| Ok(row.get::<_, Vec<u8>>(0).ok()))?;
-            let mut dataspaces = Vec::new();
-            for row in rows {
-                if let Some(path) = row?.as_deref().and_then(os_path) {
-                    dataspaces.push(path);
-                } else {
-                    warn!("queue: skipping a dataspace on autosync this build can't read");
-                }
-            }
-            Ok(dataspaces)
-        })
-        .await
-    }
-
-    /// Turn autosync on or off for the dataspace at `dataspace`, named as
-    /// [`Contract::dataspace`](crate::dataspace::contract::Contract::dataspace)
-    /// names it. Turning it on again keeps its place.
-    pub async fn set_autosync(&self, dataspace: &Path, on: bool) -> Result<(), QueueError> {
-        let dataspace = os_bytes(&dataspace_path(dataspace)?);
-        self.run(move |db, _| {
-            let sql = if on {
-                "INSERT OR IGNORE INTO autosync (dataspace) VALUES (?1)"
-            } else {
-                "DELETE FROM autosync WHERE dataspace = ?1"
-            };
-            db.execute(sql, [dataspace])?;
-            Ok(())
-        })
-        .await
-    }
-
     async fn run<T, F>(&self, op: F) -> Result<T, QueueError>
     where
         T: Send + 'static,
@@ -523,20 +489,79 @@ fn migrate(db: &mut rusqlite::Connection) -> Result<(), QueueError> {
     };
     match version(db)? {
         SCHEMA_VERSION => return Ok(()),
-        0 => {}
+        0 | 1 => {}
         other => return Err(QueueError::Version(other)),
     }
     let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
     match version(&tx)? {
-        SCHEMA_VERSION => Ok(()),
-        0 => {
-            tx.execute_batch(SCHEMA)?;
-            tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
-            tx.commit()?;
-            Ok(())
-        }
-        other => Err(QueueError::Version(other)),
+        SCHEMA_VERSION => return Ok(()),
+        0 => tx.execute_batch(SCHEMA)?,
+        1 => tx.execute_batch(&format!("DROP TABLE {AUTOSYNC_TABLE_V1}"))?,
+        other => return Err(QueueError::Version(other)),
     }
+    tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+    tx.commit()?;
+    Ok(())
+}
+
+/// Copies the queue at `from`, which is left as it is, to `to`, which must
+/// not exist, at this build's version, and returns the dataspaces a version 1
+/// queue held on autosync, in the order autosync was turned on. A path this
+/// build can't read is skipped.
+pub(crate) async fn copy_queue(from: &Path, to: &Path) -> Result<Vec<PathBuf>, QueueError> {
+    let (from, copy) = (from.to_owned(), to.to_owned());
+    let autosync = tokio::task::spawn_blocking(move || {
+        let source = rusqlite::Connection::open_with_flags(
+            &from,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        source.busy_timeout(BUSY_TIMEOUT)?;
+        let target = copy.to_str().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("{} is no UTF-8 path", copy.display()),
+            )
+        })?;
+        // One snapshot of the source; the list is read from it, not from a
+        // source another process may have written since.
+        source.execute("VACUUM INTO ?1", [target])?;
+        source.close().map_err(|(_, err)| err)?;
+        let copied = rusqlite::Connection::open(&copy)?;
+        let version: i64 = copied.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+        let autosync = match version {
+            1 => read_autosync_v1(&copied),
+            0 | SCHEMA_VERSION => Ok(Vec::new()),
+            other => Err(QueueError::Version(other)),
+        };
+        drop(copied);
+        if autosync.is_err() {
+            let _ = std::fs::remove_file(&copy);
+        }
+        autosync
+    })
+    .await
+    .map_err(|_| QueueError::Closed)??;
+    // Opened once, so the copy is at this build's version before it is used.
+    let queue = Queue::open(to).await?;
+    queue.db.close().await?;
+    Ok(autosync)
+}
+
+fn read_autosync_v1(db: &rusqlite::Connection) -> Result<Vec<PathBuf>, QueueError> {
+    let mut query = db.prepare(&format!(
+        "SELECT dataspace FROM {AUTOSYNC_TABLE_V1} ORDER BY rowid"
+    ))?;
+    // As in `jobs`, a value of the wrong type skips its row only.
+    let rows = query.query_map([], |row| Ok(row.get::<_, Vec<u8>>(0).ok()))?;
+    let mut dataspaces = Vec::new();
+    for row in rows {
+        if let Some(path) = row?.as_deref().and_then(os_path) {
+            dataspaces.push(path);
+        } else {
+            warn!("queue: skipping a dataspace on autosync this build can't read");
+        }
+    }
+    Ok(dataspaces)
 }
 
 /// A job's key as SQLite holds it.

@@ -1,13 +1,22 @@
 //! The Domain's storage: an ordinary folder, `bio.quilt.dataspace/`, holding
 //! a Package Store for each remote registry under `registries/<bucket>/`, and
-//! the local registry under `registries/@local/`.
+//! the local registry under `registries/@local/`. Beside them are
+//! `domain.json`, `queue.db`, `state.db`, `staging/` and `domain.lock`.
 //!
 //! A [`LocalDomain`](crate::LocalDomain) still keeps its packages in
-//! `.quilt/` ([`DomainPaths`](crate::paths::DomainPaths)); nothing moves here
-//! until existing state is imported.
+//! `.quilt/` ([`DomainPaths`](crate::paths::DomainPaths)); [`import`] copies
+//! them here, leaving `.quilt/` as it is.
+
+mod file;
+pub mod import;
+
+pub use file::DOMAIN_FILE;
+pub use file::DomainFile;
+pub use file::ImportRecord;
 
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+use std::ffi::OsString;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -38,7 +47,44 @@ use quilt_uri::paths::get_manifest_key;
 /// The Domain's folder name in the OS's local data folder.
 pub const DOMAIN_DIR_NAME: &str = "bio.quilt.dataspace";
 
+/// The environment variable that names the Domain's folder when no
+/// `--domain` does.
+pub const DOMAIN_ENV: &str = "QUILT_DOMAIN";
+
+/// Where the Domain is: `explicit`, as a `--domain` flag gives it, else
+/// `QUILT_DOMAIN`, else [`DOMAIN_DIR_NAME`] in the OS's local data folder:
+/// `~/Library/Application Support/` on macOS, `~/.local/share/` on Linux,
+/// `%LOCALAPPDATA%` on Windows. An empty value counts as none, and a relative
+/// one is made absolute. `None` where the OS has no local data folder.
+#[must_use]
+pub fn locate(explicit: Option<&Path>) -> Option<PathBuf> {
+    locate_from(
+        explicit,
+        std::env::var_os(DOMAIN_ENV),
+        dirs::data_local_dir(),
+    )
+}
+
+fn locate_from(
+    explicit: Option<&Path>,
+    env: Option<OsString>,
+    data_local_dir: Option<PathBuf>,
+) -> Option<PathBuf> {
+    let named = explicit
+        .map(Path::to_path_buf)
+        .or(env.map(PathBuf::from))
+        .filter(|named| !named.as_os_str().is_empty());
+    match named {
+        Some(named) => Some(std::path::absolute(&named).unwrap_or(named)),
+        None => data_local_dir.map(|dir| dir.join(DOMAIN_DIR_NAME)),
+    }
+}
+
 const REGISTRIES_DIR: &str = "registries";
+const QUEUE_DB_FILE: &str = "queue.db";
+const STATE_DB_FILE: &str = "state.db";
+const STAGING_DIR: &str = "staging";
+const DOMAIN_LOCK: &str = "domain.lock";
 const LATEST_DIR: &str = "latest";
 const PACKAGES_DIR: &str = "packages";
 const INSTALLED_DIR: &str = "installed";
@@ -59,6 +105,43 @@ impl DomainRoot {
     #[must_use]
     pub fn new(root: impl Into<PathBuf>) -> Self {
         Self { root: root.into() }
+    }
+
+    /// The Domain's folder.
+    #[must_use]
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// `domain.json`: see [`DomainFile`].
+    #[must_use]
+    pub fn domain_file(&self) -> PathBuf {
+        self.root.join(DOMAIN_FILE)
+    }
+
+    /// Autosync's durable queue: see [`crate::queue::Queue`].
+    #[must_use]
+    pub fn queue_db(&self) -> PathBuf {
+        self.root.join(QUEUE_DB_FILE)
+    }
+
+    /// The rebuildable state store, beside the queue: see
+    /// [`crate::state_store::PackageStateStore`].
+    #[must_use]
+    pub fn state_db(&self) -> PathBuf {
+        self.root.join(STATE_DB_FILE)
+    }
+
+    /// Files staged mid-write, on the Domain's volume.
+    #[must_use]
+    pub fn staging_dir(&self) -> PathBuf {
+        self.root.join(STAGING_DIR)
+    }
+
+    /// Held by a writer of `domain.json`, and by an import throughout.
+    #[must_use]
+    pub fn domain_lock(&self) -> PathBuf {
+        self.root.join(DOMAIN_LOCK)
     }
 
     /// The Package Store of `bucket`. A name that is no bucket name, even
@@ -1049,6 +1132,56 @@ mod tests {
             store.package_lock(&namespace),
             bucket_dir.join("locks/acme/demo.lock")
         );
+        Ok(())
+    }
+
+    /// The files beside the stores, structural because other clients and the
+    /// import read them.
+    #[test]
+    fn the_domains_own_files_are_at_its_root() {
+        let root = DomainRoot::new("/data/bio.quilt.dataspace");
+        let dir = Path::new("/data/bio.quilt.dataspace");
+
+        assert_eq!(root.root(), dir);
+        assert_eq!(root.domain_file(), dir.join("domain.json"));
+        assert_eq!(root.queue_db(), dir.join("queue.db"));
+        assert_eq!(root.state_db(), dir.join("state.db"));
+        assert_eq!(root.staging_dir(), dir.join("staging"));
+        assert_eq!(root.domain_lock(), dir.join("domain.lock"));
+    }
+
+    /// `--domain` names the Domain, else `QUILT_DOMAIN`, else the folder in
+    /// the OS's local data folder; an empty one names none.
+    #[test]
+    fn the_domain_is_named_by_flag_then_variable_then_the_os() {
+        let data = Some(PathBuf::from("/os/data"));
+        let flag = std::env::temp_dir().join("flag");
+        let variable = std::env::temp_dir().join("variable");
+        let from_os = Some(PathBuf::from("/os/data").join(DOMAIN_DIR_NAME));
+
+        assert_eq!(
+            locate_from(Some(&flag), Some(variable.clone().into()), data.clone()),
+            Some(flag)
+        );
+        assert_eq!(
+            locate_from(None, Some(variable.clone().into()), data.clone()),
+            Some(variable)
+        );
+        assert_eq!(locate_from(None, None, data.clone()), from_os);
+        assert_eq!(
+            locate_from(None, Some(OsString::new()), data.clone()),
+            from_os
+        );
+        assert_eq!(locate_from(Some(Path::new("")), None, data), from_os);
+        assert_eq!(locate_from(None, None, None), None);
+    }
+
+    /// A relative name is taken from the current folder, so the Domain does
+    /// not move when the process changes folder.
+    #[test]
+    fn a_relative_domain_is_made_absolute() -> Res {
+        let located = locate_from(Some(Path::new("relative")), None, None);
+        assert_eq!(located, Some(std::env::current_dir()?.join("relative")));
         Ok(())
     }
 
