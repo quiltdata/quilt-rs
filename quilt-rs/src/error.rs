@@ -675,6 +675,13 @@ pub enum Error {
     #[error("Unimplemented")]
     Unimplemented,
 
+    /// A row's file could not be uploaded. Classify on [`Error::cause`].
+    #[error("Couldn't upload {key}: {source}")]
+    Upload {
+        key: crate::LogicalKey,
+        source: Box<Error>,
+    },
+
     #[error(transparent)]
     Uri(#[from] UriError),
 
@@ -710,13 +717,23 @@ impl From<crate::workflow::ConfigError> for Error {
 }
 
 impl Error {
+    /// The error under any [`Error::Upload`]: what went wrong, without the
+    /// file it happened to.
+    #[must_use]
+    pub fn cause(&self) -> &Error {
+        match self {
+            Error::Upload { source, .. } => source.cause(),
+            _ => self,
+        }
+    }
+
     /// Returns `true` if this error represents a "not found" — an S3
     /// `NoSuchKey` response, or a local filesystem miss (a working-tree file
     /// that was deleted). Lets callers tell an absent object/file apart from a
     /// genuine I/O failure (permission denied, transient storage error).
     #[must_use]
     pub fn is_not_found(&self) -> bool {
-        match self {
+        match self.cause() {
             Error::S3(s3) => s3.is_not_found(),
             Error::Fs(FsError::NotFound { .. }) => true,
             Error::Fs(FsError::Read { source, .. }) => {
@@ -736,7 +753,7 @@ impl Error {
     /// unchanged.
     #[must_use]
     pub fn is_access_denied(&self) -> bool {
-        matches!(self, Error::S3(s3) if s3.is_access_denied())
+        matches!(self.cause(), Error::S3(s3) if s3.is_access_denied())
     }
 
     /// Returns `true` if S3 rejected the credentials themselves.
@@ -747,7 +764,7 @@ impl Error {
     /// check this first — retrying a rejected credential never succeeds.
     #[must_use]
     pub fn is_invalid_credentials(&self) -> bool {
-        matches!(self, Error::S3(s3) if s3.is_invalid_credentials())
+        matches!(self.cause(), Error::S3(s3) if s3.is_invalid_credentials())
     }
 
     /// No usable session, by either route — refused before issue
@@ -756,7 +773,8 @@ impl Error {
     /// on the state; which route it took is where the failure was noticed.
     #[must_use]
     pub fn is_session_absent(&self) -> bool {
-        self.is_invalid_credentials() || matches!(self, Error::Login(LoginError::NoSession(_)))
+        self.is_invalid_credentials()
+            || matches!(self.cause(), Error::Login(LoginError::NoSession(_)))
     }
 
     /// No usable session and no deployment to sign in to: the AWS credentials
@@ -764,7 +782,7 @@ impl Error {
     /// refused. The remedy is `~/.aws` or `aws sso login`, not a sign-in.
     #[must_use]
     pub fn is_ambient_session_absent(&self) -> bool {
-        match self {
+        match self.cause() {
             Error::Login(LoginError::NoSession(host)) => host.is_none(),
             Error::S3(s3) => s3.is_invalid_credentials() && s3.host.is_none(),
             _ => false,
@@ -779,7 +797,7 @@ impl Error {
     /// says there is no stack to sign back in to.
     #[must_use]
     pub fn s3_host(&self) -> Option<&quilt_uri::Host> {
-        match self {
+        match self.cause() {
             Error::S3(s3) => s3.host.as_ref(),
             _ => None,
         }
@@ -824,6 +842,37 @@ mod tests {
     use super::*;
 
     use quilt_uri::fixtures;
+
+    #[test]
+    fn an_upload_failure_is_classified_by_its_cause() {
+        let upload = |source| Error::Upload {
+            key: crate::LogicalKey::new("b.txt").expect("valid key"),
+            source: Box::new(source),
+        };
+
+        let expired = upload(Error::S3(S3Error {
+            host: Some(fixtures::host()),
+            kind: S3ErrorKind::InvalidCredentials("ExpiredToken".to_string()),
+        }));
+        assert!(expired.is_invalid_credentials());
+        assert!(expired.is_session_absent());
+        assert!(!expired.is_ambient_session_absent());
+        assert_eq!(expired.s3_host(), Some(&fixtures::host()));
+        assert!(matches!(expired.cause(), Error::S3(_)));
+
+        let no_session = upload(Error::Login(LoginError::NoSession(None)));
+        assert!(no_session.is_session_absent());
+        assert!(no_session.is_ambient_session_absent());
+
+        let missing = upload(Error::Io(std::io::Error::from(
+            std::io::ErrorKind::NotFound,
+        )));
+        assert!(missing.is_not_found());
+        assert!(
+            missing.to_string().starts_with("Couldn't upload b.txt: "),
+            "{missing}"
+        );
+    }
 
     #[test]
     fn an_ambient_session_is_absent_only_without_a_host() {

@@ -180,8 +180,8 @@ pub(crate) enum WatchError {
 // - Everything else lands in `Other(_)` — the new default arm flips the
 //   bias from "keep trying quietly" to "stop and surface."
 pub(crate) fn classify_sync_err(err: Error) -> Result<(), WatchError> {
-    match &err {
-        Error::Quilt(quilt::Error::PackageOp(quilt::PackageOpError::Package(msg))) => {
+    match err.quilt_cause() {
+        Some(quilt::Error::PackageOp(quilt::PackageOpError::Package(msg))) => {
             if msg == "package has pending changes" {
                 Err(WatchError::Conflict(PausedReason::PendingChanges))
             } else if msg == "package has pending commits" {
@@ -192,7 +192,7 @@ pub(crate) fn classify_sync_err(err: Error) -> Result<(), WatchError> {
                 Err(WatchError::Conflict(PausedReason::Other(msg.clone())))
             }
         }
-        Error::Quilt(quilt::Error::PackageOp(
+        Some(quilt::Error::PackageOp(
             quilt::PackageOpError::Push(msg)
             | quilt::PackageOpError::Commit(msg)
             | quilt::PackageOpError::Publish(msg),
@@ -201,7 +201,7 @@ pub(crate) fn classify_sync_err(err: Error) -> Result<(), WatchError> {
         // dry-run classifier didn't foresee (a race between classify and
         // apply). Map it to the same `PullConflict` pause the dry-run path
         // produces so both routes agree on the reason the UI renders.
-        Error::Quilt(quilt::Error::PackageOp(quilt::PackageOpError::PullConflict(conflicts))) => {
+        Some(quilt::Error::PackageOp(quilt::PackageOpError::PullConflict(conflicts))) => {
             Err(WatchError::Conflict(PausedReason::pull_conflict(conflicts)))
         }
         // The package's working folder is gone (a drive unplugged, a folder
@@ -211,9 +211,9 @@ pub(crate) fn classify_sync_err(err: Error) -> Result<(), WatchError> {
         // folder is back. It must not fall to the default arm, which would
         // pause the package until the user clears it by hand, nor be retried
         // on backoff, which logs it every attempt.
-        Error::Quilt(quilt::Error::PackageOp(quilt::PackageOpError::WorkingCopyUnavailable(
-            home,
-        ))) => Err(WatchError::Unavailable(home.clone())),
+        Some(quilt::Error::PackageOp(quilt::PackageOpError::WorkingCopyUnavailable(home))) => {
+            Err(WatchError::Unavailable(home.clone()))
+        }
         // Workflow rejection (commit- or push-side): user-actionable, so
         // pause rather than retry. Bind the inner `WorkflowValidationError`
         // so the reason text is the validator's own message (which names the
@@ -222,7 +222,7 @@ pub(crate) fn classify_sync_err(err: Error) -> Result<(), WatchError> {
         // Kept as `PausedReason::Other` (not a dedicated variant): the UI
         // already renders the free-form message for `Other`, so a new variant
         // would add wire churn for no user-visible gain.
-        Error::Quilt(quilt::Error::WorkflowValidation(inner)) => {
+        Some(quilt::Error::WorkflowValidation(inner)) => {
             Err(WatchError::Conflict(PausedReason::Other(inner.to_string())))
         }
         // A malformed `.quilt/workflows/config.yml` is a user-actionable
@@ -230,7 +230,7 @@ pub(crate) fn classify_sync_err(err: Error) -> Result<(), WatchError> {
         // the inner error so the tray/tooltip reason is the focused
         // "Invalid workflows config: …" message rather than the outer
         // "Quilt error:" wrapper the default arm's `err.to_string()` would add.
-        Error::Quilt(quilt::Error::RemoteCatalog(
+        Some(quilt::Error::RemoteCatalog(
             inner @ quilt::RemoteCatalogError::InvalidWorkflowsConfig(_),
         )) => Err(WatchError::Conflict(PausedReason::Other(inner.to_string()))),
         // Must stay **above** the S3 arm below: a denial arrives as
@@ -251,10 +251,10 @@ pub(crate) fn classify_sync_err(err: Error) -> Result<(), WatchError> {
             host: err.s3_host().cloned(),
             expired: true,
         }),
-        Error::Quilt(quilt::Error::Reqwest(_) | quilt::Error::Io(_) | quilt::Error::S3(_)) => {
+        Some(quilt::Error::Reqwest(_) | quilt::Error::Io(_) | quilt::Error::S3(_)) => {
             Err(WatchError::Transient(err))
         }
-        Error::Quilt(quilt::Error::Login(quilt::LoginError::NoSession(host))) => {
+        Some(quilt::Error::Login(quilt::LoginError::NoSession(host))) => {
             Err(WatchError::LoginRequired {
                 host: host.clone(),
                 expired: false,
@@ -269,13 +269,13 @@ pub(crate) fn classify_sync_err(err: Error) -> Result<(), WatchError> {
 // instead of one backoff (~2 s) later, while everything else backs off as a
 // `Transient`.
 fn classify_transient_or_login(err: Error) -> WatchError {
-    match &err {
+    match err.quilt_cause() {
         // The pull dry-run refuses a folder it cannot read; see the same arm
         // in `classify_sync_err`.
-        Error::Quilt(quilt::Error::PackageOp(quilt::PackageOpError::WorkingCopyUnavailable(
-            home,
-        ))) => WatchError::Unavailable(home.clone()),
-        Error::Quilt(quilt::Error::Login(quilt::LoginError::NoSession(host))) => {
+        Some(quilt::Error::PackageOp(quilt::PackageOpError::WorkingCopyUnavailable(home))) => {
+            WatchError::Unavailable(home.clone())
+        }
+        Some(quilt::Error::Login(quilt::LoginError::NoSession(host))) => {
             WatchError::LoginRequired {
                 host: host.clone(),
                 expired: false,

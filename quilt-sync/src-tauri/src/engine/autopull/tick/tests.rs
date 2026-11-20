@@ -265,6 +265,33 @@ fn classify_io_is_transient() {
     }
 }
 
+/// A failed upload is classified by its cause: a network blip on one file
+/// backs off, and an expired session asks for a sign-in, as when the same
+/// failure is not an upload's.
+#[test]
+fn classify_a_failed_upload_by_its_cause() {
+    let upload = |source| {
+        Error::from(quilt::Error::Upload {
+            key: quilt::LogicalKey::new("b.txt").expect("valid key"),
+            source: Box::new(source),
+        })
+    };
+
+    let blip = upload(quilt::Error::S3(quilt::S3Error::new(
+        quilt::S3ErrorKind::PutObject("connection reset by peer".to_string()),
+    )));
+    match classify_sync_err(blip) {
+        Err(WatchError::Transient(_)) => {}
+        other => panic!("expected Transient(_), got {other:?}"),
+    }
+
+    let no_session = upload(quilt::Error::Login(quilt::LoginError::NoSession(None)));
+    match classify_sync_err(no_session) {
+        Err(WatchError::LoginRequired { expired: false, .. }) => {}
+        other => panic!("expected LoginRequired, got {other:?}"),
+    }
+}
+
 /// An S3 refusal carrying the `AccessDenied` code, as it reaches the
 /// classifiers from a publish, a pull, or the cheap status refresh.
 fn access_denied_error() -> Error {

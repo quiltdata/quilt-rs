@@ -376,7 +376,29 @@ pub async fn resolve_manifest_uri(
 /// than republishing another bucket's objects. (An `s3://` key would fail
 /// `to_file_path` anyway; the check's own catch is host-less schemes like
 /// `foo:///abs/path`.)
+///
+/// A failure is an [`Error::Upload`] that names the row's logical key.
 pub async fn upload_row(
+    remote: &impl Remote,
+    host_config: &HostConfig,
+    package_handle: S3PackageHandle,
+    row: ManifestRow,
+) -> Res<ManifestRow> {
+    let key = row.logical_key.clone();
+    upload_local_row(remote, host_config, package_handle, row)
+        .await
+        .map_err(|source| upload_error(key, source))
+}
+
+/// The error for a row whose upload failed.
+fn upload_error(key: crate::LogicalKey, source: Error) -> Error {
+    Error::Upload {
+        key,
+        source: Box::new(source),
+    }
+}
+
+async fn upload_local_row(
     remote: &impl Remote,
     host_config: &HostConfig,
     package_handle: S3PackageHandle,
@@ -452,7 +474,23 @@ async fn file_stat(
 /// [`RowContent::Bytes`] is staged to a private temporary file for the length
 /// of the upload and removed after it, success or failure. Nothing lands in any
 /// package home.
+///
+/// A failure is an [`Error::Upload`] that names the row's logical key.
 pub async fn upload_row_content(
+    storage: &(impl Storage + Sync),
+    remote: &impl Remote,
+    host_config: &HostConfig,
+    package_handle: S3PackageHandle,
+    row: ManifestRow,
+    content: &RowContent,
+) -> Res<ManifestRow> {
+    let key = row.logical_key.clone();
+    upload_content(storage, remote, host_config, package_handle, row, content)
+        .await
+        .map_err(|source| upload_error(key, source))
+}
+
+async fn upload_content(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
     host_config: &HostConfig,
@@ -543,8 +581,7 @@ async fn verify_claimed_hash(
     };
     if !verified {
         return Err(Error::PackageOp(PackageOpError::Push(format!(
-            "{} was uploaded, but its bytes do not hash to the hash the row carries ({claimed})",
-            uploaded.logical_key
+            "its bytes do not hash to the hash the row carries ({claimed})"
         ))));
     }
     Ok(ManifestRow {
@@ -624,8 +661,8 @@ pub async fn build_manifest_from_rows_stream(
 
     top_hasher.append_header(&header)?;
 
-    while let Some(Ok(chunk)) = stream.next().await {
-        for row_result in &chunk {
+    while let Some(chunk) = stream.next().await {
+        for row_result in &chunk? {
             match row_result {
                 Ok(row) => {
                     top_hasher.append(row)?;
@@ -873,6 +910,42 @@ mod tests {
 
         assert_eq!(calculated_hash, fixtures::manifest::TOP_HASH);
 
+        Ok(())
+    }
+
+    /// A chunk that fails ends the build with its error, and no manifest is
+    /// written from the rows read before it.
+    #[test(tokio::test)]
+    async fn test_build_fails_on_a_failed_chunk() -> Res {
+        let storage = MockStorage::default();
+        let dest_dir = storage.temp_dir.path().join("manifests");
+
+        let row = ManifestRow {
+            logical_key: crate::LogicalKey::new("a.txt")?,
+            ..ManifestRow::default()
+        };
+        let rows_stream = tokio_stream::iter(vec![
+            Ok(vec![Ok(row)]),
+            Err(Error::PackageOp(PackageOpError::Push(
+                "upload failed".to_string(),
+            ))),
+        ]);
+
+        let err = build_manifest_from_rows_stream(
+            &storage,
+            dest_dir.clone(),
+            ManifestHeader::default(),
+            Vec::new(),
+            rows_stream,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            matches!(&err, Error::PackageOp(PackageOpError::Push(msg)) if msg == "upload failed"),
+            "got: {err:?}"
+        );
+        assert!(!storage.exists(&dest_dir).await);
         Ok(())
     }
 

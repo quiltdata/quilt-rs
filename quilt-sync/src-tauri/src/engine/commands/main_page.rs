@@ -422,8 +422,8 @@ pub(super) async fn read_blocked(
 /// [`quilt::LoginError::NoSession`] instead, and this surface names the
 /// deployment whichever route the failure took.
 fn session_host(err: &Error) -> Option<String> {
-    match err {
-        Error::Quilt(quilt::Error::Login(quilt::LoginError::NoSession(host))) => {
+    match err.quilt_cause() {
+        Some(quilt::Error::Login(quilt::LoginError::NoSession(host))) => {
             host.as_ref().map(ToString::to_string)
         }
         _ => err.s3_host().map(ToString::to_string),
