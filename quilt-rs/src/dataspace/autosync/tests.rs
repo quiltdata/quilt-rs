@@ -44,10 +44,8 @@ impl World {
             world.dataspace().join("data.toml"),
             format!("registry = \"s3://b\"\n\n[packages]\n{packages}"),
         )?;
-        let runner = world.runner().await?;
-        runner
-            .queue()
-            .set_autosync(&world.dataspace(), true)
+        DomainRoot::new(world.dir.path().join("domain"))
+            .set_autosync(&world.storage, &world.dataspace(), true)
             .await?;
         Ok(world)
     }

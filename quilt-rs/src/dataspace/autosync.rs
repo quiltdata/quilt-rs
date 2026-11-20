@@ -151,6 +151,23 @@ pub enum DataspaceError {
     Sync(Box<SyncError>),
 }
 
+/// Why a tick or a change could not be run at all.
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum RunnerError {
+    #[error(transparent)]
+    Queue(#[from] QueueError),
+    /// The Domain's list of dataspaces on autosync could not be read.
+    #[error(transparent)]
+    Domain(Box<crate::Error>),
+}
+
+impl From<crate::Error> for RunnerError {
+    fn from(err: crate::Error) -> Self {
+        Self::Domain(Box::new(err))
+    }
+}
+
 /// How a job's run ends in the queue.
 enum Ended {
     /// It worked, or trying again would only repeat it: it leaves the queue.
@@ -177,7 +194,7 @@ impl Runner {
         }
     }
 
-    /// The queue, where autosync is turned on and off for a dataspace.
+    /// The queue the runner owns.
     #[must_use]
     pub fn queue(&self) -> &Queue {
         &self.queue
@@ -192,9 +209,9 @@ impl Runner {
         &self,
         storage: &(impl Storage + Sync),
         path: &Path,
-    ) -> Result<Vec<JobKey>, QueueError> {
+    ) -> Result<Vec<JobKey>, RunnerError> {
         let mut queued = Vec::new();
-        for dataspace in self.queue.autosync().await? {
+        for dataspace in self.settings.domain.autosync(storage).await? {
             let local = self.settings.writer.local_registry_name();
             let Ok(contract) = Contract::read(storage, &dataspace, local).await else {
                 continue;
@@ -223,10 +240,10 @@ impl Runner {
         storage: &(impl Storage + Sync),
         remote: &impl Remote,
         now: SystemTime,
-    ) -> Result<Tick, QueueError> {
+    ) -> Result<Tick, RunnerError> {
         let _one = self.ticking.lock().await;
         let mut dataspaces = Vec::new();
-        for dataspace in self.queue.autosync().await? {
+        for dataspace in self.settings.domain.autosync(storage).await? {
             dataspaces.push(Box::pin(self.dataspace(storage, remote, &dataspace, now)).await?);
         }
         Ok(Tick { dataspaces })
