@@ -1,7 +1,9 @@
 //! `metadata.toml`, everything in a package revision that is not a file, as a
 //! file in its working folder: the manifest's `version`, `message` and
-//! `workflow`, the package's metadata, and that of each file and folder under
-//! the entry's paths, a folder's key ending in `/`.
+//! `workflow`, the package's metadata, and that of each of its files and
+//! folders, a folder's key ending in `/`. A read writes all of it, whatever
+//! the entry's paths. A publish takes the entries' metadata from it only under
+//! the entry's paths, and keeps the rest as the base has it.
 //!
 //! The string `"$NULL"` is JSON `null` at any depth, with no escape, so a JSON
 //! string `"$NULL"` reads back as `null`.
@@ -49,34 +51,27 @@ pub(crate) fn at_metadata_file(path: &str) -> bool {
         .is_some_and(|first| first.eq_ignore_ascii_case(METADATA_FILE))
 }
 
-/// The metadata file's text for `manifest`, holding the files and folders
-/// `paths` cover that have a `user_meta`. The same revision is the same text
-/// whatever order its manifest held keys in. quilt-rs reads no system
-/// metadata from a manifest, so none is written.
-pub(crate) fn render(manifest: &Manifest, paths: &Paths) -> Result<String, String> {
+/// The metadata file's text for `manifest`, holding every file and folder of
+/// it that has a `user_meta`, whatever an entry's paths: the revision's
+/// metadata is written whole, so that a publish under other paths keeps it.
+/// The same revision is the same text whatever order its manifest held keys
+/// in. quilt-rs reads no system metadata from a manifest, so none is written.
+pub(crate) fn render(manifest: &Manifest) -> Result<String, String> {
     let header = &manifest.header;
-    let rows = manifest
-        .rows
-        .iter()
-        .filter(|row| paths.covers(&row.logical_key))
-        .map(|row| {
-            (
-                row.logical_key.to_string(),
-                row.meta.as_ref(),
-                &row.meta_numbers,
-            )
-        });
-    let folders = manifest
-        .dir_meta
-        .iter()
-        .filter(|dir| paths.covers_folder(&dir.logical_key))
-        .map(|dir| {
-            (
-                format!("{}/", dir.logical_key),
-                Some(&dir.meta),
-                &dir.meta_numbers,
-            )
-        });
+    let rows = manifest.rows.iter().map(|row| {
+        (
+            row.logical_key.to_string(),
+            row.meta.as_ref(),
+            &row.meta_numbers,
+        )
+    });
+    let folders = manifest.dir_meta.iter().map(|dir| {
+        (
+            format!("{}/", dir.logical_key),
+            Some(&dir.meta),
+            &dir.meta_numbers,
+        )
+    });
     let mut entries = Table::new();
     for (key, meta, numbers) in rows.chain(folders) {
         if let Some(user_meta) = meta.and_then(|meta| meta.get("user_meta")) {
@@ -265,7 +260,9 @@ impl MetadataFile {
 
     /// Sets `manifest`'s metadata from the file: the package's, and that of
     /// each file and folder `paths` cover, which loses its metadata where the
-    /// file leaves it out.
+    /// file leaves it out. A file or folder outside `paths` keeps the
+    /// metadata `manifest` has, whatever the file says of it, as a read writes
+    /// it there; one the file gives other metadata is logged as not taken.
     pub(crate) fn apply(&self, manifest: &mut Manifest, paths: &Paths) {
         let Self::Supplied {
             package, entries, ..
@@ -307,6 +304,14 @@ impl MetadataFile {
         });
         // A folder exists only while it holds a file.
         for (key, value) in pending {
+            if let Some(edited) = edited_outside(manifest, paths, key, value) {
+                if edited {
+                    warn!(
+                        "{METADATA_FILE} gives {key} other metadata, which is outside the entry's paths; it was not published"
+                    );
+                }
+                continue;
+            }
             let Some(folder) = key
                 .strip_suffix('/')
                 .and_then(|folder| LogicalKey::new(folder).ok())
@@ -327,6 +332,38 @@ impl MetadataFile {
             manifest.dir_meta.push(DirMeta::new(folder, meta));
         }
     }
+}
+
+/// Where `key`, a file's or a folder's key as the metadata file spells it,
+/// names a file or folder of `manifest` outside `paths`, whether `value`
+/// differs from the `user_meta` `manifest` holds for it. `None` where it names
+/// one under `paths`, or none at all.
+fn edited_outside(manifest: &Manifest, paths: &Paths, key: &str, value: &Value) -> Option<bool> {
+    let edited = |meta: Option<&Value>| meta.and_then(|meta| meta.get("user_meta")) != Some(value);
+    if let Some(folder) = key.strip_suffix('/') {
+        let folder = LogicalKey::new(folder).ok()?;
+        if paths.covers_folder(&folder) {
+            return None;
+        }
+        if let Some(dir) = manifest
+            .dir_meta
+            .iter()
+            .find(|dir| dir.logical_key == folder)
+        {
+            return Some(edited(Some(&dir.meta)));
+        }
+        let holds_a_file = manifest
+            .rows
+            .iter()
+            .any(|row| folder.is_folder_of(&row.logical_key));
+        return holds_a_file.then(|| edited(None));
+    }
+    let file = LogicalKey::new(key).ok()?;
+    if paths.covers(&file) {
+        return None;
+    }
+    let row = manifest.rows.iter().find(|row| row.logical_key == file)?;
+    Some(edited(row.meta.as_ref()))
 }
 
 /// `meta` with its `user_meta` replaced, or removed with `None`, keeping the

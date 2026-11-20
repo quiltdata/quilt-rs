@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use test_log::test;
 
 use crate::LogicalKey;
+use crate::dataspace::METADATA_FILE;
 use crate::dataspace::contract::PackageKey;
 use crate::dataspace::contract::Registry;
 use crate::dataspace::hooks::HookPoint::PostRead;
@@ -558,6 +559,136 @@ async fn manifest(remote: &MockRemote, hash: &str) -> Result<Manifest, crate::Er
         origin: None,
     };
     fetch_jsonl(remote, &uri).await
+}
+
+/// Gives revision `hash` of `team/raw` the `user_meta` of each file in
+/// `files`, and of each folder in `folders`.
+async fn set_meta(
+    remote: &MockRemote,
+    hash: &str,
+    files: &[(&str, serde_json::Value)],
+    folders: &[(&str, serde_json::Value)],
+) -> Res {
+    let mut revision = manifest(remote, hash).await?;
+    for (key, value) in files {
+        let row = revision
+            .rows
+            .iter_mut()
+            .find(|row| row.logical_key.to_string() == *key)
+            .ok_or("no such row")?;
+        row.meta = Some(serde_json::json!({ "user_meta": value }));
+    }
+    for (key, value) in folders {
+        revision.dir_meta.push(crate::manifest::DirMeta::new(
+            LogicalKey::new(*key)?,
+            serde_json::json!({ "user_meta": value }),
+        ));
+    }
+    remote
+        .put_object(
+            None,
+            &S3Uri::try_from(format!("s3://b/.quilt/packages/{hash}").as_str())?,
+            revision.to_jsonlines().into_bytes(),
+        )
+        .await?;
+    Ok(())
+}
+
+fn user_meta_of(revision: &Manifest, key: &str) -> Option<serde_json::Value> {
+    let row = revision
+        .rows
+        .iter()
+        .find(|row| row.logical_key.to_string() == key)?;
+    row.meta.as_ref()?.get("user_meta").cloned()
+}
+
+fn folder_meta_of(revision: &Manifest, key: &str) -> Option<serde_json::Value> {
+    let dir = revision
+        .dir_meta
+        .iter()
+        .find(|dir| dir.logical_key.to_string() == key)?;
+    dir.meta.get("user_meta").cloned()
+}
+
+/// Another writer set metadata under the write paths, which this dataspace
+/// does not read: its read writes it to `metadata.toml` all the same, so the
+/// publish, which takes the file as complete under the write paths, keeps it.
+#[test(tokio::test)]
+async fn a_package_under_read_and_write_keeps_the_metadata_other_writers_set() -> Res {
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    seed(&remote, FIRST, &[("in/a.txt", b"a"), ("out/b.txt", b"b")]).await?;
+    let theirs = serde_json::json!({"by": "another writer"});
+    set_meta(
+        &remote,
+        FIRST,
+        &[("out/b.txt", theirs.clone())],
+        &[("out", theirs.clone())],
+    )
+    .await?;
+    let root = dataspace(&storage, READ_AND_WRITE)?;
+    read_all(&storage, &remote, None, &root, &writer()).await?;
+    write(&root, "team/raw", "out/c.txt", b"c")?;
+
+    let published = publish_all_here(&storage, &remote, &root, &writer()).await?;
+
+    let new = manifest(&remote, advanced(&published.entries[0])).await?;
+    assert_eq!(
+        keys(&remote, "team/raw", &latest(&remote, "team/raw").await?).await?,
+        ["in/a.txt", "out/b.txt", "out/c.txt"]
+    );
+    assert_eq!(
+        user_meta_of(&new, "out/b.txt"),
+        Some(theirs.clone()),
+        "a file's metadata under the write paths"
+    );
+    assert_eq!(
+        folder_meta_of(&new, "out"),
+        Some(theirs),
+        "a folder's metadata under the write paths"
+    );
+    Ok(())
+}
+
+/// The read writes `in/a.txt`'s metadata to `metadata.toml`, but `in/` is
+/// outside the write paths: an edit to it there is not published, while one
+/// under them is.
+#[test(tokio::test)]
+async fn an_edit_in_metadata_toml_outside_the_write_paths_is_not_published() -> Res {
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    seed(&remote, FIRST, &[("in/a.txt", b"a"), ("out/b.txt", b"b")]).await?;
+    set_meta(
+        &remote,
+        FIRST,
+        &[
+            ("in/a.txt", serde_json::json!({"v": 1})),
+            ("out/b.txt", serde_json::json!({"v": 1})),
+        ],
+        &[],
+    )
+    .await?;
+    let root = dataspace(&storage, READ_AND_WRITE)?;
+    read_all(&storage, &remote, None, &root, &writer()).await?;
+    let path = root.join("team/raw").join(METADATA_FILE);
+    let text = std::fs::read_to_string(&path)?;
+    assert!(text.contains("[metadata.entries.\"in/a.txt\"]"), "{text}");
+    std::fs::write(&path, text.replace("v = 1", "v = 2"))?;
+
+    let published = publish_all_here(&storage, &remote, &root, &writer()).await?;
+
+    let new = manifest(&remote, advanced(&published.entries[0])).await?;
+    assert_eq!(
+        user_meta_of(&new, "in/a.txt"),
+        Some(serde_json::json!({"v": 1})),
+        "outside the write paths, the base's metadata stays"
+    );
+    assert_eq!(
+        user_meta_of(&new, "out/b.txt"),
+        Some(serde_json::json!({"v": 2})),
+        "under the write paths, the file's is taken"
+    );
+    Ok(())
 }
 
 #[test(tokio::test)]

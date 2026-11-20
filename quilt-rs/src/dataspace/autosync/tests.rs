@@ -401,7 +401,7 @@ async fn a_failed_job_waits_out_its_retry_delay_across_restarts() -> Res {
 }
 
 #[test(tokio::test)]
-async fn a_package_under_read_and_write_is_read_and_not_published() -> Res {
+async fn a_package_under_read_and_write_is_read_and_published_unattended() -> Res {
     let world = World::new(
         "read = [{ package = \"team/raw\", path = \"in/\" }]\nwrite = [{ package = \"team/raw\", path = \"out/\" }]\n",
     )
@@ -409,7 +409,12 @@ async fn a_package_under_read_and_write_is_read_and_not_published() -> Res {
     world.publish(FIRST, &[("in/a.txt", b"v1")]).await?;
     world.write("out/b.txt", "mine")?;
 
-    assert_eq!(world.changed("out/b.txt").await?, []);
+    let queued = world.changed("out/b.txt").await?;
+    assert_eq!(
+        queued.iter().map(|job| job.access).collect::<Vec<_>>(),
+        [Access::Write],
+        "the watcher queues its publish"
+    );
     let tick = world.tick().await?;
 
     assert!(tick.errors.is_empty(), "{tick:?}");
@@ -421,12 +426,12 @@ async fn a_package_under_read_and_write_is_read_and_not_published() -> Res {
         matches!(read_tick, EntryTick::Read(read) if read.completed()),
         "{tick:?}"
     );
-    assert!(
-        matches!(write_tick, EntryTick::Skipped(Skip::ReadAndWrite)),
-        "{tick:?}"
-    );
+    let EntryTick::Published(EntryPublish::Ran(Published::Advanced { revision, .. })) = write_tick
+    else {
+        panic!("expected the write entry to publish, got {tick:?}");
+    };
     assert_eq!(world.text("in/a.txt").as_deref(), Some("v1"));
-    assert_eq!(world.latest().await?.as_deref(), Some(FIRST));
+    assert_eq!(world.latest().await?.as_deref(), Some(revision.as_str()));
     assert_eq!(world.jobs().await?, 0);
     Ok(())
 }

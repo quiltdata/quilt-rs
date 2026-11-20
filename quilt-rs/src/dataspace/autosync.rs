@@ -116,8 +116,6 @@ pub enum EntryTick {
     /// Nothing ran: no job was queued, the revision it follows being the
     /// lock's base.
     Idle,
-    /// The runner does not run it.
-    Skipped(Skip),
     /// The revision it follows could not be looked up, so no job was queued
     /// or run; the next tick looks again.
     Unobserved(EntryError),
@@ -131,16 +129,6 @@ pub enum EntryTick {
     /// The run of its access stopped for the whole dataspace; see
     /// [`DataspaceTick::errors`]. Its job counts a failure.
     Stopped,
-}
-
-/// Why the runner leaves an entry alone.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum Skip {
-    /// A `write` or `replace` entry whose package is also under `read`.
-    /// Whose metadata a publish of such a package keeps is not ruled yet, so
-    /// it is not published unattended; its `read` entry is still read.
-    ReadAndWrite,
 }
 
 /// Why a dataspace, or one access's run in it, stopped.
@@ -232,10 +220,7 @@ impl Runner {
                 continue;
             }
             for entry in contract.entries() {
-                if entry.access != Access::Read
-                    && skip(&contract, entry).is_none()
-                    && path.starts_with(&entry.folder)
-                {
+                if entry.access != Access::Read && path.starts_with(&entry.folder) {
                     let key = job_key(entry);
                     self.queue.enqueue(&key).await?;
                     queued.push(key);
@@ -315,22 +300,19 @@ impl Runner {
         };
 
         for entry in contract.entries() {
-            let outcome = match skip(&contract, entry) {
-                Some(skip) => EntryTick::Skipped(skip),
-                None => match self
-                    .observe(
-                        storage,
-                        remote,
-                        entry,
-                        base(entry),
-                        unpushed(entry),
-                        &mut tick,
-                    )
-                    .await?
-                {
-                    Ok(()) => EntryTick::Idle,
-                    Err(err) => EntryTick::Unobserved(err),
-                },
+            let outcome = match self
+                .observe(
+                    storage,
+                    remote,
+                    entry,
+                    base(entry),
+                    unpushed(entry),
+                    &mut tick,
+                )
+                .await?
+            {
+                Ok(()) => EntryTick::Idle,
+                Err(err) => EntryTick::Unobserved(err),
             };
             tick.entries.push((entry.clone(), outcome));
         }
@@ -604,20 +586,6 @@ impl Runner {
         }
         Ok(())
     }
-}
-
-/// Why the runner leaves `entry` alone, if it does.
-fn skip(contract: &Contract, entry: &Entry) -> Option<Skip> {
-    let read_too = || {
-        contract
-            .entries()
-            .iter()
-            .any(|other| other.access == Access::Read && other.key() == entry.key())
-    };
-    if matches!(entry.access, Access::Write | Access::Replace) && read_too() {
-        return Some(Skip::ReadAndWrite);
-    }
-    None
 }
 
 /// The revision `entry` follows: `latest`, or the one a pinned `read` entry

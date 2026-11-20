@@ -989,7 +989,7 @@ async fn rewrite_metadata(
 ) -> Result<(), EntryError> {
     let committed =
         Manifest::from_path(storage, &store.installed_manifest(&entry.package, hash)).await?;
-    let text = render(&committed, &entry.paths).map_err(EntryError::MetadataUnwritable)?;
+    let text = render(&committed).map_err(EntryError::MetadataUnwritable)?;
     write_metadata(storage, &entry.folder, text, planned_on).await
 }
 
@@ -1222,7 +1222,7 @@ async fn read_back(
                 return Ok(report);
             }
         }
-        let text = render(current, &entry.paths).map_err(EntryError::MetadataUnwritable)?;
+        let text = render(current).map_err(EntryError::MetadataUnwritable)?;
         let keys = || rows.iter().map(|row| &row.logical_key);
         refuse_linked_ancestors(storage, folder, keys()).await?;
         let placed = async {

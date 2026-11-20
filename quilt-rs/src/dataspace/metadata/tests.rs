@@ -79,7 +79,7 @@ fn revision(message: HeaderMessage) -> Result<Manifest, Box<dyn std::error::Erro
 /// `manifest` written to the metadata file, then read back from it onto
 /// `onto`.
 fn write_back(manifest: &Manifest, onto: &mut Manifest) -> Result<(), String> {
-    let file = MetadataFile::parse(Some(&render(manifest, &Paths::Whole)?))?;
+    let file = MetadataFile::parse(Some(&render(manifest)?))?;
     onto.header.message = file.message().expect("a file").clone();
     file.apply(onto, &Paths::Whole);
     Ok(())
@@ -187,7 +187,7 @@ fn an_integer_beyond_tomls_64_bits_is_refused() -> Res {
         let (value, numbers) = RawNumbers::parse(text)?;
         let mut package = Manifest::default();
         package.header.set_meta(value.clone(), numbers.clone());
-        assert!(render(&package, &Paths::Whole).is_err(), "package: {text}");
+        assert!(render(&package).is_err(), "package: {text}");
 
         let (meta, meta_numbers) = RawNumbers::parse(&format!(r#"{{"user_meta": {text}}}"#))?;
         let entry = Manifest {
@@ -198,7 +198,7 @@ fn an_integer_beyond_tomls_64_bits_is_refused() -> Res {
             }],
             ..Manifest::default()
         };
-        assert!(render(&entry, &Paths::Whole).is_err(), "entry: {text}");
+        assert!(render(&entry).is_err(), "entry: {text}");
     }
     Ok(())
 }
@@ -222,7 +222,7 @@ fn a_file_that_is_not_the_metadata_file_is_refused() {
 fn the_workflow_stamp_is_shown_and_not_taken() -> Res {
     let original = revision(HeaderMessage::Missing)?;
 
-    let text = render(&original, &Paths::Whole)?;
+    let text = render(&original)?;
 
     let written: Table = toml::from_str(&text)?;
     let stamp: Table = toml::from_str(

@@ -228,7 +228,8 @@ impl OnDisk {
 }
 
 /// Puts `entry`'s revision, under its paths, in its working folder, and
-/// writes the [metadata file](METADATA_FILE) beside it. `base` is the
+/// writes the [metadata file](METADATA_FILE) beside it, which holds the
+/// metadata of the whole revision, outside the paths too. `base` is the
 /// revision the lock names for the package, if any.
 ///
 /// A file unchanged since `base` takes the revision's version, and one the
@@ -448,7 +449,7 @@ pub(crate) async fn read_deciding(
     if holds_metadata_file(&target) {
         return Err(EntryError::HoldsMetadataFile);
     }
-    let metadata = render(&target, &entry.paths).map_err(EntryError::MetadataUnwritable)?;
+    let metadata = render(&target).map_err(EntryError::MetadataUnwritable)?;
     let deletes = entry.access == Access::Sync;
     let other_base = match base {
         Some(hash) if hash != revision.hash() => {
@@ -657,16 +658,7 @@ async fn plan<'a>(
             }
         }
     }
-    plan_metadata(
-        storage,
-        folder,
-        paths,
-        wanted_text,
-        base,
-        decided,
-        &mut plan,
-    )
-    .await?;
+    plan_metadata(storage, folder, wanted_text, base, decided, &mut plan).await?;
     Ok(plan)
 }
 
@@ -800,7 +792,6 @@ fn local_file(resolved: &str) -> Result<PathBuf, String> {
 async fn plan_metadata(
     storage: &(impl Storage + Sync),
     folder: &Path,
-    paths: &Paths,
     wanted_text: String,
     base: Option<&Manifest>,
     decided: &BTreeMap<LogicalKey, Row>,
@@ -808,7 +799,7 @@ async fn plan_metadata(
 ) -> Result<(), EntryError> {
     let metadata_path = folder.join(METADATA_FILE);
     // A base TOML cannot hold was never written, so no file holds it.
-    let had_text = base.and_then(|base| render(base, paths).ok());
+    let had_text = base.and_then(|base| render(base).ok());
     // `None` where something other than a file is there.
     let place = if metadata_place_free(storage, &metadata_path).await {
         Some(bytes_at(storage, &metadata_path).await?)
