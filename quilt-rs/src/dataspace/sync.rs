@@ -97,15 +97,15 @@ pub enum EntrySync {
         read: Option<ReadReport>,
         published: Option<Published>,
     },
-    /// Local changes collide with the revision's, so nothing was applied or
-    /// published.
+    /// Local changes collide with the revision's, that being read or the
+    /// `latest` local commits were to be merged onto, so nothing was applied
+    /// or published; `conflict.json` holds the colliding keys.
     Blocked {
         revision: String,
         conflicts: Vec<PathBuf>,
     },
-    /// `latest` is neither the lock's base nor its last commit, and the lock
-    /// names commits not pushed, or `latest` is gone, or the package is
-    /// moving from the local registry to a bucket that has a `latest` for it
+    /// `latest` is gone while the lock names a base, or the package is moving
+    /// from the local registry to a bucket that has a `latest` for it
     /// already: nothing was read or published.
     Diverged { latest: Option<String> },
     /// The working folder was missing or empty, so the lock's current
@@ -205,8 +205,14 @@ impl<S: Storage + Sync> LockFile<'_, S> {
 /// written after each step: the base after a read, a commit once it is
 /// recorded, and the base again, with the commits the push squashed dropped,
 /// once `latest` names the push. A package never published is recorded with
-/// its commits and no base, and its first push expects no `latest`; a
-/// `latest` that appears first leaves it diverged. Commits are not checked
+/// its commits and no base, and its first push expects no `latest`. Where
+/// `latest` moved past the base of commits the lock names, or appeared
+/// before a package's first push, the commits and the folder's changes are
+/// merged onto it, the empty revision standing for a missing base: where
+/// nothing collides the folder takes `latest`'s change, and the merge is one
+/// commit on `latest`, pushed as any is; where something does, nothing is
+/// applied and `conflict.json` holds a publish's row for each colliding key,
+/// whose decisions a later tick applies. Commits are not checked
 /// against the bucket's workflow; their push is. A push that `latest` moved
 /// past, or that the workflow refuses, is left stored, recorded with
 /// [`Queue::keep`], and not uploaded again while the bucket holds it; the
@@ -219,7 +225,9 @@ impl<S: Storage + Sync> LockFile<'_, S> {
 /// Until the dataspace is filled, and after `data.toml` is edited, the tick
 /// only reads: each entry is read in full, a missing file filled rather than
 /// taken for a deletion, and nothing new is committed; commits the lock
-/// already names are pushed first. `filled` is set once
+/// already names are pushed first, or, where `latest` moved past their base,
+/// merged onto it without the folder's changes and read whole, the merge
+/// left for the first tick after to push. `filled` is set once
 /// every `read` and `sync` entry is in the lock, and the lock takes the
 /// edited contract only once every `sync` entry was read whole.
 ///
@@ -245,7 +253,8 @@ impl<S: Storage + Sync> LockFile<'_, S> {
 /// the local registry.
 ///
 /// The contract's hooks run around each half: `pre-read` before the tick
-/// reads `latest`, and `post-read` once the lock moved to a newer revision;
+/// reads `latest` or merges onto it, and `post-read` once the lock moved to a
+/// newer revision;
 /// `pre-write` before it commits a folder that changed, which is then taken
 /// again, and `post-write` once a push stored a revision or moved `latest`.
 /// A `pre-` hook that fails stops the entry. Reading a missing folder back
@@ -381,7 +390,9 @@ async fn filled(
 /// base where the read completes. Commits the lock names were made against
 /// the contract they were committed under, so they are pushed first, with no
 /// new commit, where `latest` is still their base; one the workflow refuses
-/// is read at instead, and one `latest` moved past leaves the entry unread.
+/// is read at instead. Commits `latest` moved past are merged onto it alone,
+/// the folder's changes left out, and the merge read whole, as
+/// [`merge::filling`] does, to be pushed once the dataspace is filled.
 async fn fill(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
@@ -413,7 +424,12 @@ async fn fill(
             // The push landed and the lock was not written after it.
             set_base(lock, lock_file, &key, head.clone()).await?;
         } else if latest != locked.base {
-            return Ok(EntrySync::Diverged { latest });
+            let Some(theirs) = latest.as_deref() else {
+                return Ok(EntrySync::Diverged { latest });
+            };
+            // Commits on a base `latest` moved from, or on none where
+            // `latest` now names a revision: merged onto it, then read whole.
+            return merge::filling(storage, remote, &store, entry, lock, lock_file, theirs).await;
         } else {
             let (pushed, wrote) = push_head(
                 storage,
@@ -708,9 +724,25 @@ async fn tick(
     {
         // The push landed and the lock was not written after it.
         set_base(lock, lock_file, &key, pushed.clone()).await?;
-    } else if !commits.is_empty() || (base.is_some() && latest.is_none()) {
+    } else if !commits.is_empty()
+        && let (Some(theirs), Some((_, manifest))) = (&latest, &current)
+    {
         // Commits on a base `latest` moved from, or on none where `latest`
-        // now names a revision; or a base whose `latest` is gone.
+        // now names a revision: merged onto it.
+        let ours = merge::Local {
+            base: base.as_deref(),
+            current: manifest,
+        };
+        match merge::onto_latest(
+            storage, remote, &store, entry, lock, lock_file, ours, theirs, message, user_rules,
+        )
+        .await?
+        {
+            ControlFlow::Continue(report) => read_report = Some(report),
+            ControlFlow::Break(outcome) => return Ok(outcome),
+        }
+    } else if base.is_some() && latest.is_none() {
+        // A base whose `latest` is gone.
         return Ok(EntrySync::Diverged { latest });
     } else if let Some(hash) = &latest {
         let contract = lock_file.contract;
@@ -1382,6 +1414,8 @@ fn changed(logical_key: LogicalKey, was: Option<&ManifestRow>) -> ManifestRow {
         meta_numbers: was.map_or_else(RawNumbers::default, |row| row.meta_numbers.clone()),
     }
 }
+
+mod merge;
 
 #[cfg(test)]
 mod tests;

@@ -1,7 +1,8 @@
-//! `conflict.json`, a dataspace's conflict map: for each package whose read
-//! local changes blocked, each colliding key with what the revision and the
-//! working folder hold there, and the decision a person or a tool returns in
-//! its `resolved` field.
+//! `conflict.json`, a dataspace's conflict map: for each package whose read,
+//! or whose merge of local commits onto `latest`, local changes blocked, each
+//! colliding key with what the other revision and the working folder hold
+//! there, and the decision a person or a tool returns in its `resolved`
+//! field.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -44,30 +45,117 @@ pub struct Side {
     pub size: Option<u64>,
 }
 
-/// A key the revision being read and the working folder both changed.
+/// A key the working folder changed, and so did the revision it collides
+/// with: the one being read, or `latest`, where local commits are merged onto
+/// it to be published.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(try_from = "RawRow", into = "RawRow")]
 pub struct Row {
-    /// What the revision holds; `None` where it removed the key.
-    pub incoming: Option<Side>,
+    /// What that revision holds.
+    pub other: Other,
     /// What the working folder holds; `None` where nothing is there.
     pub current: Option<Side>,
     /// The decision: missing leaves the key undecided, `""` deletes it, and a
     /// physical key puts that file there: a `file://` URL, an `s3://` object
-    /// with its `versionId`, or the incoming object.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// with its `versionId`, or the other side's object.
     pub resolved: Option<String>,
 }
 
+/// The revision a [`Row`]'s working folder collides with, and what it holds
+/// at the key; `None` where it removed the key.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Other {
+    /// A read's row: the revision being read, written as `incoming`.
+    Incoming(Option<Side>),
+    /// A publish's row: `latest`, which the local commits are merged onto,
+    /// written as `destination`.
+    Destination(Option<Side>),
+}
+
 impl Row {
-    /// Whether `other` describes the same incoming object and the same bytes
-    /// in the working folder, however the folder's path was spelled.
+    /// Whether `other` describes the same object on the other side and the
+    /// same bytes in the working folder, however the folder's path was
+    /// spelled.
     pub(crate) fn same_collision(&self, other: &Row) -> bool {
         fn bytes(side: Option<&Side>) -> Option<(Option<&ObjectHash>, Option<u64>)> {
             side.map(|side| (side.hash.as_ref(), side.size))
         }
-        self.incoming == other.incoming
-            && bytes(self.current.as_ref()) == bytes(other.current.as_ref())
+        self.other == other.other && bytes(self.current.as_ref()) == bytes(other.current.as_ref())
+    }
+
+    /// The other side's physical key, which a decision names to take it.
+    pub(crate) fn others_key(&self) -> Option<&str> {
+        let (Other::Incoming(side) | Other::Destination(side)) = &self.other;
+        side.as_ref()?.physical_key.as_deref()
+    }
+}
+
+/// A row as `conflict.json` holds it: `incoming` or `destination`, never
+/// both, either `null` where that side removed the key.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(
+    clippy::option_option,
+    reason = "a side missing from the row is not one that is `null`"
+)]
+struct RawRow {
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    incoming: Option<Option<Side>>,
+    current: Option<Side>,
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    destination: Option<Option<Side>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    resolved: Option<String>,
+}
+
+/// A field that is there, `null` or not.
+#[allow(
+    clippy::option_option,
+    reason = "a side missing from the row is not one that is `null`"
+)]
+fn present<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Option<Side>>, D::Error> {
+    Option::<Side>::deserialize(deserializer).map(Some)
+}
+
+impl TryFrom<RawRow> for Row {
+    type Error = &'static str;
+
+    fn try_from(raw: RawRow) -> Result<Self, Self::Error> {
+        let other = match (raw.incoming, raw.destination) {
+            (Some(incoming), None) => Other::Incoming(incoming),
+            (None, Some(destination)) => Other::Destination(destination),
+            _ => return Err("a row holds either `incoming` or `destination`"),
+        };
+        Ok(Self {
+            other,
+            current: raw.current,
+            resolved: raw.resolved,
+        })
+    }
+}
+
+impl From<Row> for RawRow {
+    fn from(row: Row) -> Self {
+        let (incoming, destination) = match row.other {
+            Other::Incoming(side) => (Some(side), None),
+            Other::Destination(side) => (None, Some(side)),
+        };
+        Self {
+            incoming,
+            current: row.current,
+            destination,
+            resolved: row.resolved,
+        }
     }
 }
 
@@ -185,43 +273,14 @@ pub async fn read_resolving(
     entry: &Entry,
     base: Option<&str>,
 ) -> Result<ReadOutcome, EntryError> {
-    let names = match (local, &entry.registry) {
-        (Some(local), Registry::Local(_)) => local.names(storage).await.ok(),
-        _ => None,
-    };
-    let key = current_key(names.as_ref(), entry);
-    let decided = read_named(storage, dataspace, names.as_ref())
-        .await?
-        .packages
-        .remove(&key)
-        .unwrap_or_default();
+    let package = PackageRows::of(storage, local, dataspace, entry).await;
+    let decided = package.saved(storage).await?;
     let (outcome, rows) = read_deciding(storage, remote, local, entry, base, &decided).await?;
     let blocked = matches!(outcome, ReadOutcome::Blocked { .. });
     if !blocked && (outcome.lock_base().is_none() || decided.is_empty()) {
         return Ok(outcome);
     }
-    let written = async {
-        let mut map = read_named(storage, dataspace, names.as_ref()).await?;
-        let mut rows = blocked.then_some(rows);
-        // A decision saved while the read ran, or changed, stays.
-        if let (Some(rows), Some(saved)) = (&mut rows, map.packages.get(&key)) {
-            for (name, row) in rows.iter_mut() {
-                if let Some(saved) = saved.get(name).filter(|saved| saved.same_collision(row)) {
-                    row.resolved.clone_from(&saved.resolved);
-                }
-            }
-        }
-        // A tick that finds the same collision leaves the file as it is.
-        if map.packages.get(&key) == rows.as_ref() {
-            return Ok(());
-        }
-        match rows {
-            Some(rows) => map.packages.insert(key, rows),
-            None => map.packages.remove(&key),
-        };
-        map.write(storage, dataspace).await
-    }
-    .await;
+    let written = package.write(storage, blocked.then_some(rows)).await;
     match written {
         // Nothing was applied, and without the map nothing can be decided.
         Err(err) if blocked => Err(err),
@@ -230,6 +289,77 @@ pub async fn read_resolving(
             Ok(outcome)
         }
         Ok(()) => Ok(outcome),
+    }
+}
+
+/// Where one package's rows are kept: the `conflict.json` of a dataspace,
+/// under the package's key.
+pub(crate) struct PackageRows<'a> {
+    dataspace: &'a Path,
+    key: PackageKey,
+    names: Option<LocalNames>,
+}
+
+impl<'a> PackageRows<'a> {
+    /// `entry`'s package, in the `conflict.json` of the folder `dataspace`; an
+    /// entry of the local registry `local` under the registry's current name.
+    pub(crate) async fn of(
+        storage: &(impl Storage + Sync),
+        local: Option<&LocalRegistry>,
+        dataspace: &'a Path,
+        entry: &Entry,
+    ) -> Self {
+        let names = match (local, &entry.registry) {
+            (Some(local), Registry::Local(_)) => local.names(storage).await.ok(),
+            _ => None,
+        };
+        Self {
+            dataspace,
+            key: current_key(names.as_ref(), entry),
+            names,
+        }
+    }
+
+    /// The package's rows, none where the map holds none.
+    pub(crate) async fn saved(
+        &self,
+        storage: &(impl Storage + Sync),
+    ) -> Result<BTreeMap<LogicalKey, Row>, EntryError> {
+        Ok(read_named(storage, self.dataspace, self.names.as_ref())
+            .await?
+            .packages
+            .remove(&self.key)
+            .unwrap_or_default())
+    }
+
+    /// Replaces the package's rows with `rows`, or removes them where `None`.
+    /// The map is read again first, so an edit made to another package's
+    /// rows meanwhile is kept, and so is a decision saved meanwhile on a row
+    /// that still describes its key. A map this would not change is not
+    /// written.
+    pub(crate) async fn write(
+        &self,
+        storage: &(impl Storage + Sync),
+        mut rows: Option<BTreeMap<LogicalKey, Row>>,
+    ) -> Result<(), EntryError> {
+        let mut map = read_named(storage, self.dataspace, self.names.as_ref()).await?;
+        // A decision saved while the read ran, or changed, stays.
+        if let (Some(rows), Some(saved)) = (&mut rows, map.packages.get(&self.key)) {
+            for (name, row) in rows.iter_mut() {
+                if let Some(saved) = saved.get(name).filter(|saved| saved.same_collision(row)) {
+                    row.resolved.clone_from(&saved.resolved);
+                }
+            }
+        }
+        // A tick that finds the same collision leaves the file as it is.
+        if map.packages.get(&self.key) == rows.as_ref() {
+            return Ok(());
+        }
+        match rows {
+            Some(rows) => map.packages.insert(self.key.clone(), rows),
+            None => map.packages.remove(&self.key),
+        };
+        map.write(storage, self.dataspace).await
     }
 }
 

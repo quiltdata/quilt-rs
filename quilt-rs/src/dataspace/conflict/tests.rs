@@ -532,7 +532,7 @@ fn rows_under_an_old_name_of_the_local_registry_move_to_its_current_name() -> Re
         package: Namespace::try_from("me/analysis").unwrap(),
     };
     let row_of = |resolved: &str| Row {
-        incoming: None,
+        other: Other::Incoming(None),
         current: None,
         resolved: Some(resolved.to_string()),
     };
@@ -573,5 +573,43 @@ fn an_entry_naming_the_local_registry_by_an_alias_is_keyed_by_its_current_name()
     let key = current_key(Some(&names), &entry);
 
     assert_eq!(key.registry, Registry::Local("lab-mac".to_string()));
+    Ok(())
+}
+
+/// A publish's row holds `current` and `destination`, a read's `incoming`
+/// and `current`; either side is `null` where it holds nothing, and a row
+/// holding both or neither is refused.
+#[test]
+fn a_row_is_a_reads_or_a_publishs_and_keeps_a_side_that_removed_the_key() -> Res {
+    let side = Side {
+        physical_key: Some("s3://b/a.txt?versionId=v1".to_string()),
+        hash: None,
+        size: Some(1),
+    };
+    for (other, text) in [
+        (
+            Other::Destination(Some(side.clone())),
+            r#"{"current":null,"destination":{"physical_key":"s3://b/a.txt?versionId=v1","size":1}}"#,
+        ),
+        (
+            Other::Destination(None),
+            r#"{"current":null,"destination":null}"#,
+        ),
+        (Other::Incoming(None), r#"{"incoming":null,"current":null}"#),
+    ] {
+        let row = Row {
+            other,
+            current: None,
+            resolved: None,
+        };
+        assert_eq!(serde_json::to_string(&row)?, text);
+        assert_eq!(serde_json::from_str::<Row>(text)?, row);
+    }
+    for text in [
+        r#"{"incoming":null,"current":null,"destination":null}"#,
+        r#"{"current":null}"#,
+    ] {
+        assert!(serde_json::from_str::<Row>(text).is_err(), "{text}");
+    }
     Ok(())
 }
