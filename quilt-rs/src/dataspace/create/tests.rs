@@ -231,7 +231,7 @@ async fn a_failed_first_commit_leaves_the_contract_as_it_was() -> Res {
     std::fs::create_dir_all(&folder)?;
     let file = folder.join("a.txt");
     std::fs::write(&file, b"alpha")?;
-    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0))?;
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o000))?;
     let before = std::fs::read(world.dataspace().join(CONTRACT_FILE))?;
 
     let refused = world
