@@ -8,10 +8,13 @@ type Res = Result<(), Box<dyn std::error::Error>>;
 
 const ROOT: &str = "/work/rnaseq";
 
+/// This machine's local registry.
+const HERE: &str = "lab-mac";
+
 const FULL_HASH: &str = "abc1230000000000000000000000000000000000000000000000000000000000";
 
 fn parse_as(text: &str, case: FolderCase) -> Result<Contract, ContractError> {
-    Contract::parse(text.as_bytes(), Path::new(ROOT), case)
+    Contract::parse(text.as_bytes(), Path::new(ROOT), case, Some(HERE))
 }
 
 fn parse(text: &str) -> Result<Contract, ContractError> {
@@ -247,7 +250,7 @@ async fn read_compares_folders_as_the_dataspace_file_system_does() -> Res {
         dataspace.join(CONTRACT_FILE),
         with_defaults(r#"read = ["Team/Raw", "team/raw"]"#),
     )?;
-    let read = Contract::read(&storage, &dataspace).await;
+    let read = Contract::read(&storage, &dataspace, None).await;
     if ignores_case(storage.temp_dir.path())? {
         assert!(matches!(read, Err(ContractError::FoldersOverlap { .. })));
     } else {
@@ -540,19 +543,127 @@ fn a_mistyped_uri_is_refused_rather_than_read_as_a_folder() {
     ));
 }
 
+/// A local package, by URI or by field, its registry named or left to this
+/// machine's, is that registry's, and is placed under `<name>@local/`.
 #[test]
-fn the_local_registry_is_refused_until_it_is_supported() {
+fn a_local_package_is_placed_under_its_registry() -> Res {
     for list in [
-        r#"read = ["quilt+local://host#package=me/analysis"]"#,
-        r#"read = ["quilt+local:host#package=me/analysis"]"#,
-        r#"read = [{ registry = "quilt+local://host", package = "me/analysis" }]"#,
+        r#"sync = ["quilt+local://lab-mac#package=me/analysis"]"#,
+        r#"sync = ["quilt+local://#package=me/analysis"]"#,
+        r#"sync = [{ registry = "quilt+local://lab-mac", package = "me/analysis" }]"#,
+        r#"sync = [{ registry = "quilt+local://", package = "me/analysis" }]"#,
+    ] {
+        let entry = only(&format!(
+            "catalog = \"quilt.test\"\n{}",
+            with_defaults(list)
+        ))?;
+        assert_eq!(entry.registry, Registry::Local(HERE.to_string()), "{list}");
+        assert_eq!(entry.folder, folder("lab-mac@local/me/analysis"), "{list}");
+        assert_eq!(
+            entry.catalog, None,
+            "{list}: the default catalog is a bucket's"
+        );
+        assert_eq!(
+            entry.key().to_string(),
+            "quilt+local://lab-mac#package=me/analysis"
+        );
+    }
+    let other = only(&with_defaults(
+        r#"read = ["quilt+local://other-mac#package=me/analysis@abc123"]"#,
+    ))?;
+    assert_eq!(other.registry, Registry::Local("other-mac".to_string()));
+    assert_eq!(other.folder, folder("other-mac@local/me/analysis"));
+    Ok(())
+}
+
+/// A default local registry is stated by no entry, so its packages are placed
+/// as any default registry's are.
+#[test]
+fn a_default_local_registry_places_packages_by_name() -> Res {
+    let entry =
+        only("registry = \"quilt+local://\"\n[packages]\nsync = [{ package = \"me/analysis\" }]")?;
+    assert_eq!(entry.registry, Registry::Local(HERE.to_string()));
+    assert_eq!(entry.folder, folder("me/analysis"));
+    Ok(())
+}
+
+/// With no local registry here, a URI or field that leaves its name to this
+/// machine names none.
+#[test]
+fn this_machines_registry_needs_one_here() {
+    for list in [
+        r#"sync = ["quilt+local://#package=me/analysis"]"#,
+        r#"sync = [{ registry = "quilt+local://", package = "me/analysis" }]"#,
+    ] {
+        let text = with_defaults(list);
+        let read = Contract::parse(
+            text.as_bytes(),
+            Path::new(ROOT),
+            FolderCase::Sensitive,
+            None,
+        );
+        assert!(
+            matches!(
+                read,
+                Err(ContractError::Entry {
+                    problem: EntryProblem::NoLocalRegistry,
+                    ..
+                })
+            ),
+            "{list}: {read:?}"
+        );
+    }
+}
+
+#[test]
+fn a_local_package_has_no_catalog() {
+    for list in [
+        r#"sync = [{ registry = "quilt+local://", package = "me/analysis", catalog = "quilt.test" }]"#,
+        r#"sync = [{ uri = "quilt+local://lab-mac#package=me/analysis", catalog = "quilt.test" }]"#,
     ] {
         let problem = entry_problem(&with_defaults(list));
         assert!(
-            matches!(problem, EntryProblem::LocalRegistry),
+            matches!(problem, EntryProblem::LocalCatalog),
             "{list}: {problem}"
         );
     }
+}
+
+#[test]
+fn a_registry_field_that_is_neither_spelling_is_refused() {
+    for list in [
+        r#"read = [{ registry = "quilt+local://lab_mac", package = "me/analysis" }]"#,
+        r#"read = [{ registry = "quilt+local:lab-mac", package = "me/analysis" }]"#,
+        r#"read = [{ registry = "local://lab-mac", package = "me/analysis" }]"#,
+        r#"read = [{ registry = "quilt+local://--", package = "me/analysis" }]"#,
+        r#"read = ["quilt+local://--#package=me/analysis"]"#,
+        r#"read = ["quilt+local://.lab-mac#package=me/analysis"]"#,
+        r#"read = ["QUILT+LOCAL://lab-mac#package=me/analysis"]"#,
+    ] {
+        let problem = entry_problem(&with_defaults(list));
+        assert!(
+            matches!(problem, EntryProblem::Registry(_) | EntryProblem::Uri(_)),
+            "{list}: {problem}"
+        );
+    }
+    // This machine's name is held to the same rule as one written.
+    let text = with_defaults(r#"read = ["quilt+local://#package=me/analysis"]"#);
+    let read = Contract::parse(
+        text.as_bytes(),
+        Path::new(ROOT),
+        FolderCase::Sensitive,
+        Some("../x"),
+    );
+    assert!(
+        matches!(
+            read,
+            Err(ContractError::Entry {
+                problem: EntryProblem::Registry(_),
+                ..
+            })
+        ),
+        "{read:?}"
+    );
 }
 
 #[test]

@@ -133,7 +133,7 @@ async fn base(
     root: &Path,
     package: &str,
 ) -> Result<Option<String>, Box<dyn std::error::Error>> {
-    let contract = Contract::read(storage, root).await?;
+    let contract = Contract::read(storage, root, None).await?;
     let lock = Lock::read(storage, &contract).await?;
     Ok(lock.and_then(|lock| lock.packages.get(&key(package)).map(|e| e.base.clone())))
 }
@@ -192,6 +192,38 @@ async fn each_write_and_replace_entry_is_published_and_its_revision_locked() -> 
         base(&storage, &root, "team/ref").await?.as_deref(),
         Some(reference)
     );
+    Ok(())
+}
+
+/// A local registry is in the Domain, so its packages are refused, read and
+/// written ones alike, and a bucket's beside them still publishes.
+#[test(tokio::test)]
+async fn a_local_registrys_packages_are_refused() -> Res {
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    seed(&remote, FIRST, &[("a.txt", b"a")]).await?;
+    let root = dataspace(
+        &storage,
+        "read = [{ registry = \"quilt+local://lab-mac\", package = \"me/both\", path = \"in/\" }]\nwrite = [\"team/raw\", \"quilt+local://lab-mac#package=me/out\", { registry = \"quilt+local://lab-mac\", package = \"me/both\", path = \"out/\" }]\n",
+    )?;
+    write(&root, "team/raw", "new.txt", b"n")?;
+
+    let published = publish_all_here(&storage, &remote, &root, &writer()).await?;
+
+    for entry in &published.entries {
+        if entry.entry.key().registry == Registry::S3("b".to_string()) {
+            advanced(entry);
+        } else {
+            assert!(
+                matches!(
+                    entry.published,
+                    EntryPublish::Failed(EntryError::LocalRegistry)
+                ) && entry.read.is_none(),
+                "{entry:?}"
+            );
+        }
+    }
+    assert_eq!(published.entries.len(), 3);
     Ok(())
 }
 
@@ -352,7 +384,7 @@ async fn a_package_with_unpushed_commits_is_not_published() -> Res {
     let storage = MockStorage::default();
     seed(&remote, FIRST, &[("a.txt", b"a")]).await?;
     let root = dataspace(&storage, "write = [\"team/raw\"]\n")?;
-    let contract = Contract::read(&storage, &root).await?;
+    let contract = Contract::read(&storage, &root, None).await?;
     let mut lock = Lock::new(&contract, &writer());
     lock.packages.insert(
         key("team/raw"),
@@ -384,7 +416,7 @@ async fn a_lock_from_another_host_is_refused_and_nothing_published() -> Res {
         host: "elsewhere".to_string(),
         ..writer()
     };
-    let contract = Contract::read(&storage, &root).await?;
+    let contract = Contract::read(&storage, &root, None).await?;
     Lock::new(&contract, &elsewhere)
         .write(&storage, &contract, &elsewhere)
         .await?;
@@ -408,7 +440,7 @@ async fn an_edit_to_data_toml_under_sync_entries_is_left_for_the_sync_tick() -> 
     let root = dataspace(&storage, packages)?;
     write(&root, "team/out", "a.txt", b"a")?;
     publish_all_here(&storage, &remote, &root, &writer()).await?;
-    let before = Contract::read(&storage, &root).await?;
+    let before = Contract::read(&storage, &root, None).await?;
     let written_for = before.data_toml_hash().to_string();
 
     dataspace(&storage, &format!("{packages}# edited\n"))?;
@@ -416,7 +448,7 @@ async fn an_edit_to_data_toml_under_sync_entries_is_left_for_the_sync_tick() -> 
     let published = publish_all_here(&storage, &remote, &root, &writer()).await?;
 
     advanced(&published.entries[0]);
-    let contract = Contract::read(&storage, &root).await?;
+    let contract = Contract::read(&storage, &root, None).await?;
     assert_ne!(contract.data_toml_hash(), written_for);
     let lock = Lock::read(&storage, &contract).await?.ok_or("no lock")?;
     assert_eq!(lock.header.data_toml_hash, written_for);

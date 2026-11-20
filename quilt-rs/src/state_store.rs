@@ -20,6 +20,7 @@ use tokio::sync::Mutex;
 use tracing::info;
 use tracing::warn;
 
+use crate::dataspace::contract::LOCAL_SUFFIX;
 use crate::dataspace::contract::Registry;
 use crate::file_stamp::FileId;
 use crate::file_stamp::FileStamp;
@@ -63,9 +64,10 @@ CREATE TABLE stat_walk (
 );
 ",
     // Stat records gain the registry and the folder, which earlier ones lack,
-    // so they are dropped. `registry` is the bucket, or '' for none; `folder`
-    // is the path as the OS spells it, so no two paths share one. Keys start with the
-    // folder, which a full walk clears of other buckets by.
+    // so they are dropped. `registry` is the bucket, `<name>@local` for a
+    // local registry, or '' for none; `folder` is the path as the OS spells
+    // it, so no two paths share one. Keys start with the folder, which a full
+    // walk clears of other buckets by.
     "
 DROP TABLE file_stat;
 DROP TABLE stat_walk;
@@ -110,17 +112,27 @@ impl FolderKey {
     /// stores them too, and is never rebuilt: changing them needs its
     /// migration as well.
     pub(crate) fn columns(&self) -> (String, String, Vec<u8>) {
-        let registry = match &self.registry {
-            Some(Registry::S3(bucket)) => bucket.clone(),
-            None => String::new(),
-        };
+        let registry = self
+            .registry
+            .as_ref()
+            .map_or_else(String::new, Registry::dir_name);
         (registry, self.package.to_string(), os_bytes(&self.folder))
     }
 
     /// The key [`Self::columns`] gave, or `None` for columns no key gives.
     pub(crate) fn from_columns(registry: String, namespace: &str, folder: &[u8]) -> Option<Self> {
+        let registry = if registry.is_empty() {
+            None
+        } else if let Some(name) = registry.strip_suffix(LOCAL_SUFFIX) {
+            if name.is_empty() {
+                return None;
+            }
+            Some(Registry::Local(name.to_string()))
+        } else {
+            Some(Registry::S3(registry))
+        };
         Some(Self {
-            registry: (!registry.is_empty()).then_some(Registry::S3(registry)),
+            registry,
             package: Namespace::try_from(namespace).ok()?,
             folder: os_path(folder)?,
         })
@@ -779,6 +791,41 @@ mod tests {
 
     fn at(secs: u64) -> SystemTime {
         UNIX_EPOCH + Duration::from_secs(secs)
+    }
+
+    /// A local registry's column holds `@`, so no bucket's can match it.
+    #[test]
+    fn a_local_registrys_column_is_no_buckets() {
+        let local = FolderKey {
+            registry: Some(Registry::Local("lab-mac".to_string())),
+            ..key()
+        };
+        assert_eq!(local.columns().0, "lab-mac@local");
+        assert!(quilt_uri::check_bucket(&local.columns().0).is_err());
+    }
+
+    /// `queue.db` is never rebuilt, so every key reads back from its
+    /// columns as it was written: a bucket's, a local registry's, and none.
+    #[test]
+    fn a_key_reads_back_from_its_columns() {
+        for registry in [
+            Some(Registry::S3("bucket-a".to_string())),
+            Some(Registry::Local("lab-mac".to_string())),
+            None,
+        ] {
+            let written = FolderKey { registry, ..key() };
+            let (registry, namespace, folder) = written.columns();
+            assert_eq!(
+                FolderKey::from_columns(registry, &namespace, &folder),
+                Some(written)
+            );
+        }
+        // A local registry has a name, so no key gives a bare `@local`.
+        let (_, namespace, folder) = key().columns();
+        assert_eq!(
+            FolderKey::from_columns("@local".to_string(), &namespace, &folder),
+            None
+        );
     }
 
     #[test(tokio::test)]

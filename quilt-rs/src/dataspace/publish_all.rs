@@ -126,7 +126,7 @@ pub async fn publish_all(
     writer: &Writer,
     user_rules: &Path,
 ) -> Result<DataspacePublish, PublishAllError> {
-    let contract = Contract::read(storage, dataspace).await?;
+    let contract = Contract::read(storage, dataspace, writer.local_registry_name()).await?;
     let (mut lock, writer) = match Lock::read(storage, &contract).await? {
         Some(lock) => {
             let writer = Writer {

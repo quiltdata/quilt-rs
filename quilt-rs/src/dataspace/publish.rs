@@ -146,6 +146,9 @@ pub async fn publish(
         Access::Replace => true,
         access => return Err(EntryError::Access(access)),
     };
+    let Registry::S3(bucket) = &entry.registry else {
+        return Err(EntryError::LocalRegistry);
+    };
     let folder = &entry.folder;
     if storage.read_dir(folder).await.is_err() {
         return Err(EntryError::FolderUnavailable(folder.clone()));
@@ -153,7 +156,6 @@ pub async fn publish(
     let rules = Rules::load(folder, user_rules)?;
     let metadata = metadata_file(storage, folder).await?;
 
-    let Registry::S3(bucket) = &entry.registry;
     let mut target = PushTarget {
         handle: S3PackageHandle {
             bucket: bucket.clone(),

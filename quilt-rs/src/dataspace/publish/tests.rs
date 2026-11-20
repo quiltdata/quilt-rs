@@ -49,7 +49,7 @@ fn entry(packages: &str) -> Entry {
 fn entry_in(dataspace: &Path, packages: &str) -> Entry {
     let text = format!("registry = \"s3://b\"\n[packages]\n{packages}");
     let contract =
-        Contract::parse(text.as_bytes(), dataspace, FolderCase::Sensitive).expect("contract");
+        Contract::parse(text.as_bytes(), dataspace, FolderCase::Sensitive, None).expect("contract");
     contract.entries()[0].clone()
 }
 
@@ -1242,6 +1242,10 @@ async fn an_entry_or_folder_that_cannot_be_published_is_refused() -> Res {
         matches!(read, Err(EntryError::Access(Access::Read))),
         "{read:?}"
     );
+
+    let local = entry("write = [\"quilt+local://lab-mac#package=team/raw\"]");
+    let local = publish(storage, &remote, &local, None).await;
+    assert!(matches!(local, Err(EntryError::LocalRegistry)), "{local:?}");
 
     let missing = publish(storage, &remote, &entry("write = [\"team/raw\"]"), None).await;
     assert!(

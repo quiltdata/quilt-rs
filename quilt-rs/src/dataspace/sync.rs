@@ -191,7 +191,8 @@ impl<S: Storage + Sync> LockFile<'_, S> {
 /// taken for a deletion, and nothing new is committed; commits the lock
 /// already names are pushed first. `filled` is set once
 /// every `read` and `sync` entry is in the lock, and the lock takes the
-/// edited contract only once every `sync` entry was read whole.
+/// edited contract only once every `sync` entry was read whole. A local
+/// registry's entry is refused, so it keeps the dataspace unfilled.
 ///
 /// The lock is used as [`read_all`](crate::dataspace::read_all::read_all)
 /// uses it. Each commit's message is `message`, and its workflow the
@@ -205,7 +206,7 @@ pub async fn sync(
     message: &str,
     user_rules: &Path,
 ) -> Result<DataspaceSync, SyncError> {
-    let contract = Contract::read(storage, dataspace).await?;
+    let contract = Contract::read(storage, dataspace, writer.local_registry_name()).await?;
     let (mut lock, writer) = usable_lock(storage, &contract, writer)
         .await?
         .map_err(SyncError::Mismatch)?;
@@ -320,8 +321,7 @@ async fn fill(
     lock: &mut Lock,
     lock_file: &LockFile<'_, impl Storage + Sync>,
 ) -> Result<EntrySync, Stop> {
-    let Registry::S3(bucket) = &entry.registry;
-    let store = domain.registry(bucket)?;
+    let store = domain.registry(bucket(entry)?)?;
     let Some(_held) = storage
         .try_lock_exclusive(store.package_lock(&entry.package))
         .await?
@@ -386,7 +386,7 @@ async fn fill(
 
 /// The hash `latest` names for `entry`'s package, `None` where it has none.
 async fn latest(remote: &impl Remote, entry: &Entry) -> Result<Option<String>, EntryError> {
-    match read_latest(remote, entry.catalog.as_ref(), handle(entry)).await? {
+    match read_latest(remote, entry.catalog.as_ref(), handle(entry)?).await? {
         LatestSeen::Tagged { uri, .. } => Ok(Some(uri.hash)),
         LatestSeen::Absent => Ok(None),
         LatestSeen::Unreadable => Err(EntryError::LatestUnreadable),
@@ -401,12 +401,20 @@ fn at(entry: &Entry, hash: &str) -> Entry {
     pinned
 }
 
-fn handle(entry: &Entry) -> S3PackageHandle {
-    let Registry::S3(bucket) = &entry.registry;
-    S3PackageHandle {
-        bucket: bucket.clone(),
+fn handle(entry: &Entry) -> Result<S3PackageHandle, EntryError> {
+    Ok(S3PackageHandle {
+        bucket: bucket(entry)?.to_string(),
         namespace: entry.package.clone(),
-    }
+    })
+}
+
+/// `entry`'s bucket; a local registry's package, which the tick does not
+/// reach, is refused.
+fn bucket(entry: &Entry) -> Result<&str, EntryError> {
+    let Registry::S3(bucket) = &entry.registry else {
+        return Err(EntryError::LocalRegistry);
+    };
+    Ok(bucket)
 }
 
 /// One entry's tick; see [`sync`].
@@ -421,8 +429,7 @@ async fn tick(
     message: &str,
     user_rules: &Path,
 ) -> Result<EntrySync, Stop> {
-    let Registry::S3(bucket) = &entry.registry;
-    let store = domain.registry(bucket)?;
+    let store = domain.registry(bucket(entry)?)?;
     let Some(_held) = storage
         .try_lock_exclusive(store.package_lock(&entry.package))
         .await?
@@ -548,9 +555,8 @@ async fn publish(
     // The tick's message wins over the metadata file's, so the file's alone
     // is no change.
     if !same_as(&manifest, current_hash.map(|_| &current), false) {
-        let Registry::S3(bucket) = &entry.registry;
         let workflows = S3Uri {
-            bucket: bucket.clone(),
+            bucket: bucket(entry)?.to_string(),
             key: WORKFLOWS_CONFIG_KEY.to_string(),
             version: None,
         };
@@ -647,7 +653,7 @@ async fn push_head(
     let manifest =
         Manifest::from_path(storage, &store.installed_manifest(&entry.package, head)).await?;
     let target = PushTarget {
-        handle: handle(entry),
+        handle: handle(entry)?,
         origin: entry.catalog.clone(),
         parent: base.map(str::to_string),
     };
@@ -670,15 +676,14 @@ async fn base_manifest(
     store: &RegistryStore,
     entry: &Entry,
     hash: &str,
-) -> Res<Manifest> {
-    let Registry::S3(bucket) = &entry.registry;
+) -> Result<Manifest, EntryError> {
     let uri = ManifestUri {
         origin: entry.catalog.clone(),
-        bucket: bucket.clone(),
+        bucket: bucket(entry)?.to_string(),
         namespace: entry.package.clone(),
         hash: hash.to_string(),
     };
-    cache_manifest_at(storage, remote, &uri, &store.cached_manifest(hash)).await
+    Ok(cache_manifest_at(storage, remote, &uri, &store.cached_manifest(hash)).await?)
 }
 
 /// The manifest the folder holds: `current` with its rows under the entry's

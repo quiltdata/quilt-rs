@@ -111,7 +111,9 @@ impl Fixture {
     }
 
     async fn contract(&self) -> Res<Contract> {
-        Ok(Contract::read(&LocalStorage::new(), &self.dataspace).await?)
+        let storage = LocalStorage::new();
+        let here = self.domain.local().names(&storage).await?.name;
+        Ok(Contract::read(&storage, &self.dataspace, Some(&here)).await?)
     }
 
     /// Writes a lock holding `entry` for `team/raw`, as `writer`.
@@ -306,6 +308,60 @@ async fn a_package_only_read_is_refused() -> Res {
         matches!(listed, Err(ReattachError::Undeclared)),
         "{listed:?}"
     );
+    Ok(())
+}
+
+/// A local registry's package is the Domain's, not a bucket's, so its
+/// commits are not listed here.
+#[test(tokio::test)]
+async fn a_local_registrys_package_is_refused() -> Res {
+    let fixture = Fixture::new("sync")?;
+    std::fs::write(
+        fixture.dataspace.join("data.toml"),
+        "[packages]\nsync = [\"quilt+local://lab-mac#package=team/raw\"]\n",
+    )?;
+    let local = PackageKey {
+        registry: Registry::Local("lab-mac".to_string()),
+        ..key()
+    };
+
+    let listed = unattached(
+        &LocalStorage::new(),
+        &fixture.remote,
+        &fixture.domain,
+        &fixture.dataspace,
+        &writer(),
+        &local,
+    )
+    .await;
+
+    assert!(
+        matches!(listed, Err(ReattachError::LocalRegistry)),
+        "{listed:?}"
+    );
+    Ok(())
+}
+
+/// `quilt+local://` with no name stands for the Domain's own local registry,
+/// so a contract that holds one still lists a bucket package's commits.
+#[test(tokio::test)]
+async fn a_contract_naming_this_machines_registry_still_lists() -> Res {
+    let fixture = Fixture::new("sync")?;
+    std::fs::write(
+        fixture.dataspace.join("data.toml"),
+        "registry = \"s3://b\"\n[packages]\nsync = [\"team/raw\", \"quilt+local://#package=me/x\"]\n",
+    )?;
+
+    let commit = fixture.commit("mine", b"m").await?;
+    fixture.publish(BASE).await?;
+
+    assert_eq!(fixture.unattached().await?.len(), 1);
+    fixture.reattach(&commit, BASE).await?;
+
+    // The new lock names the registry its keys were resolved with.
+    let names = fixture.domain.local().names(&LocalStorage::new()).await?;
+    let lock = fixture.read_lock().await?.expect("a lock");
+    assert_eq!(lock.header.writer.local_registry, names.name);
     Ok(())
 }
 

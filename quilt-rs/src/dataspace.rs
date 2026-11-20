@@ -26,6 +26,9 @@ pub enum EntryError {
     #[error("the entry is under `{0}`, which this operation does not take")]
     Access(Access),
 
+    #[error("the entry names a local registry, which this operation does not reach")]
+    LocalRegistry,
+
     #[error(
         "the package holds a file named {METADATA_FILE}, which is where Quilt puts its metadata; move the file in the package, then try again"
     )]

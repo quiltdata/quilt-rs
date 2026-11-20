@@ -630,12 +630,13 @@ fn name_from_host(host: &str) -> Option<String> {
 }
 
 /// A name a local registry may keep: a valid name in a URI, holding at
-/// least one letter or digit.
-fn check_name(name: &str) -> Res {
+/// least one letter or digit, and not starting with `.`.
+pub(crate) fn check_name(name: &str) -> Res {
     quilt_uri::check_local_registry_name(name)?;
-    if !name.bytes().any(|b| b.is_ascii_alphanumeric()) {
+    // A leading `.` would hide its packages' `<name>@local` folder.
+    if !name.bytes().any(|b| b.is_ascii_alphanumeric()) || name.starts_with('.') {
         return Err(UriError::Package(format!(
-            "a local registry's name holds a letter or digit; got {name:?}"
+            "a local registry's name holds a letter or digit and does not start with `.`; got {name:?}"
         ))
         .into());
     }

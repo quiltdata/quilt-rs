@@ -59,6 +59,9 @@ pub enum ReattachError {
     #[error("{CONTRACT_FILE} does not list the package under `write`, `replace` or `sync`")]
     Undeclared,
 
+    #[error("the package is in a local registry, whose commits are not reattached here")]
+    LocalRegistry,
+
     #[error("{LOCK_FILE} already names unpushed commits of the package")]
     Attached,
 
@@ -101,7 +104,7 @@ pub async fn unattached(
     writer: &Writer,
     package: &PackageKey,
 ) -> Result<Vec<Unattached>, ReattachError> {
-    let opened = Opened::open(storage, dataspace, writer, package).await?;
+    let opened = Opened::open(storage, domain, dataspace, writer, package).await?;
     let store = opened.store(domain)?;
     let mut found = Vec::new();
     for (hash, path, _) in
@@ -134,7 +137,7 @@ pub async fn reattach(
     if !is_top_hash(base) {
         return Err(ReattachError::Base(base.to_string()));
     }
-    let mut opened = Opened::open(storage, dataspace, writer, package).await?;
+    let mut opened = Opened::open(storage, domain, dataspace, writer, package).await?;
     if opened
         .lock
         .packages
@@ -181,6 +184,7 @@ struct Opened {
     /// kept yet to compare it with.
     writer: Writer,
     package: PackageKey,
+    bucket: String,
     catalog: Option<Host>,
 }
 
@@ -190,11 +194,21 @@ impl Opened {
     /// `data.toml` is used, as `read_all` does: the contract was edited here.
     async fn open(
         storage: &(impl Storage + Sync),
+        domain: &DomainRoot,
         dataspace: &Path,
         writer: &Writer,
         package: &PackageKey,
     ) -> Result<Self, ReattachError> {
-        let contract = Contract::read(storage, dataspace).await?;
+        // The Domain names this machine's local registry, which a contract's
+        // `quilt+local://` with no name stands for.
+        let local = domain
+            .local()
+            .names(storage)
+            .await
+            .ok()
+            .map(|names| names.name);
+        let local = local.as_deref().or(writer.local_registry_name());
+        let contract = Contract::read(storage, dataspace, local).await?;
         let catalog = contract
             .entries()
             .iter()
@@ -202,40 +216,44 @@ impl Opened {
             .ok_or(ReattachError::Undeclared)?
             .catalog
             .clone();
-        let (lock, writer) = match Lock::read(storage, &contract).await? {
-            Some(lock) => {
-                let writer = Writer {
-                    local_registry: lock.header.writer.local_registry.clone(),
-                    ..writer.clone()
-                };
-                let foreign: Vec<Mismatch> = lock
-                    .mismatches(&contract, &writer)
-                    .into_iter()
-                    .filter(|mismatch| *mismatch != Mismatch::DataToml)
-                    .collect();
-                if !foreign.is_empty() {
-                    return Err(ReattachError::Mismatch(foreign));
-                }
-                (lock, writer)
+        let Registry::S3(bucket) = &package.registry else {
+            return Err(ReattachError::LocalRegistry);
+        };
+        let read = Lock::read(storage, &contract).await?;
+        // A lock keeps the registry it names; a new one names the registry its
+        // keys were resolved with.
+        let writer = Writer {
+            local_registry: read.as_ref().map_or_else(
+                || local.unwrap_or_default().to_string(),
+                |lock| lock.header.writer.local_registry.clone(),
+            ),
+            ..writer.clone()
+        };
+        let lock = if let Some(lock) = read {
+            let foreign: Vec<Mismatch> = lock
+                .mismatches(&contract, &writer)
+                .into_iter()
+                .filter(|mismatch| *mismatch != Mismatch::DataToml)
+                .collect();
+            if !foreign.is_empty() {
+                return Err(ReattachError::Mismatch(foreign));
             }
-            None => (Lock::new(&contract, writer), writer.clone()),
+            lock
+        } else {
+            Lock::new(&contract, &writer)
         };
         Ok(Self {
             contract,
             lock,
             writer,
             package: package.clone(),
+            bucket: bucket.clone(),
             catalog,
         })
     }
 
-    fn bucket(&self) -> &str {
-        let Registry::S3(bucket) = &self.package.registry;
-        bucket
-    }
-
     fn store(&self, domain: &DomainRoot) -> Result<RegistryStore, ReattachError> {
-        Ok(domain.registry(self.bucket())?)
+        Ok(domain.registry(&self.bucket)?)
     }
 
     /// Whether `hash` is a top hash the bucket lacks and the lock names as
@@ -256,7 +274,7 @@ impl Opened {
     /// Whether the bucket holds the manifest `hash`.
     async fn holds(&self, remote: &impl Remote, hash: &str) -> Result<bool, ReattachError> {
         let manifest = S3Uri {
-            bucket: self.bucket().to_string(),
+            bucket: self.bucket.clone(),
             key: get_manifest_key(hash),
             version: None,
         };

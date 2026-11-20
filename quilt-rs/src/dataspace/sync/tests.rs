@@ -206,7 +206,7 @@ impl World {
     }
 
     async fn lock(&self) -> Result<Lock, Box<dyn std::error::Error>> {
-        let contract = Contract::read(&self.storage, &self.dataspace()).await?;
+        let contract = Contract::read(&self.storage, &self.dataspace(), None).await?;
         Ok(Lock::read(&self.storage, &contract)
             .await?
             .ok_or("no lock")?)
@@ -654,7 +654,7 @@ async fn after_data_toml_is_edited_an_entry_read_whole_keeps_its_base_while_anot
         lock.packages.get(&key()).map(|locked| locked.base.as_str()),
         Some(SECOND)
     );
-    let contract = Contract::read(&world.storage, &world.dataspace()).await?;
+    let contract = Contract::read(&world.storage, &world.dataspace(), None).await?;
     assert_ne!(lock.header.data_toml_hash, contract.data_toml_hash());
     Ok(())
 }
@@ -822,7 +822,7 @@ async fn a_package_another_process_holds_is_not_filled() -> Res {
 async fn a_fill_that_does_not_read_every_entry_whole_leaves_the_dataspace_unfilled() -> Res {
     let world = World::filled(&[("a.txt", b"v1")]).await?;
     // As a lock carried from another checkout is taken up.
-    let contract = Contract::read(&world.storage, &world.dataspace()).await?;
+    let contract = Contract::read(&world.storage, &world.dataspace(), None).await?;
     let mut lock = world.lock().await?;
     lock.header.filled = None;
     lock.write(&world.storage, &contract, &writer()).await?;
@@ -876,6 +876,60 @@ async fn a_pinned_read_entry_keeps_the_dataspace_unfilled_until_it_is_read() -> 
     world.sync().await?;
 
     assert!(world.lock().await?.header.filled.is_none());
+    Ok(())
+}
+
+const WITH_LOCAL: &str = "sync = [\"team/raw\", \"quilt+local://lab-mac#package=me/out\"]";
+
+#[test(tokio::test)]
+async fn a_local_registrys_entry_is_refused_and_keeps_the_dataspace_unfilled() -> Res {
+    let world = World::new(WITH_LOCAL)?;
+    world.publish(FIRST, &[("a.txt", b"v1")]).await?;
+
+    let synced = world.sync().await?;
+
+    let [(_, raw), (_, local)] = synced.entries.as_slice() else {
+        panic!("{synced:?}");
+    };
+    assert!(matches!(raw, EntrySync::Ran { .. }), "{raw:?}");
+    assert!(
+        matches!(local, EntrySync::Failed(EntryError::LocalRegistry)),
+        "{local:?}"
+    );
+    assert_eq!(world.text("a.txt").as_deref(), Some("v1"));
+    assert!(world.lock().await?.header.filled.is_none());
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_filled_tick_refuses_a_local_registrys_entry_and_publishes_the_rest() -> Res {
+    let world = World::new(WITH_LOCAL)?;
+    world.publish(FIRST, &[("a.txt", b"v1")]).await?;
+    world.sync().await?;
+    // As a lock carried from another checkout, filled for this contract.
+    let contract = Contract::read(&world.storage, &world.dataspace(), None).await?;
+    let mut lock = world.lock().await?;
+    lock.header.filled = Some(Utc::now().trunc_subsecs(0));
+    lock.write_for(
+        &world.storage,
+        &contract,
+        &writer(),
+        contract.data_toml_hash(),
+    )
+    .await?;
+    world.write("a.txt", "v2")?;
+
+    let synced = world.sync().await?;
+
+    assert!(!synced.read_only, "{synced:?}");
+    let [(_, raw), (_, local)] = synced.entries.as_slice() else {
+        panic!("{synced:?}");
+    };
+    advanced(raw);
+    assert!(
+        matches!(local, EntrySync::Failed(EntryError::LocalRegistry)),
+        "{local:?}"
+    );
     Ok(())
 }
 

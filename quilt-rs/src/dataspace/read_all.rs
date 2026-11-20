@@ -13,6 +13,7 @@ use crate::dataspace::contract::Access;
 use crate::dataspace::contract::Contract;
 use crate::dataspace::contract::ContractError;
 use crate::dataspace::contract::Entry;
+use crate::dataspace::contract::Registry;
 use crate::dataspace::lock::LOCK_FILE;
 use crate::dataspace::lock::Lock;
 use crate::dataspace::lock::LockEntry;
@@ -128,14 +129,14 @@ pub async fn read_all(
     dataspace: &Path,
     writer: &Writer,
 ) -> Result<DataspaceRead, ReadAllError> {
-    let contract = Contract::read(storage, dataspace).await?;
+    let contract = Contract::read(storage, dataspace, writer.local_registry_name()).await?;
     let (mut lock, writer) = usable_lock(storage, &contract, writer)
         .await?
         .map_err(ReadAllError::Mismatch)?;
 
     let mut entries = Vec::new();
     for entry in contract.entries() {
-        if entry.access != Access::Read {
+        if entry.access != Access::Read || needs_domain(entry) {
             continue;
         }
         let entry_key = entry.key();
@@ -158,12 +159,12 @@ pub async fn read_all(
 
     let read = DataspaceRead { entries };
     if read.entries.iter().any(|(_, read)| read.completed()) {
-        let synced = contract
-            .entries()
-            .iter()
-            .any(|entry| entry.access == Access::Sync);
-        // `sync` entries need a Domain, so a domainless read never fills them.
-        if lock.header.filled.is_none() && read.completed() && !synced {
+        let unfilled = contract.entries().iter().any(|entry| {
+            entry.access == Access::Sync || (entry.access == Access::Read && needs_domain(entry))
+        });
+        // `sync` entries and local packages need a Domain, so a domainless
+        // read never fills them.
+        if lock.header.filled.is_none() && read.completed() && !unfilled {
             lock.header.filled = Some(Utc::now().trunc_subsecs(0));
         }
         lock.write(storage, &contract, &writer).await?;
@@ -248,6 +249,11 @@ async fn read_entry(
         Ok(outcome) => EntryRead::Ran(outcome),
         Err(err) => EntryRead::Failed(err),
     }
+}
+
+/// A local registry's package, which only the Domain holds.
+fn needs_domain(entry: &Entry) -> bool {
+    matches!(entry.registry, Registry::Local(_))
 }
 
 /// Whether `folder` holds anything. One that cannot be listed, for any reason
