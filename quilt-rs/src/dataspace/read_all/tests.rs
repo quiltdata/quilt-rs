@@ -203,13 +203,7 @@ async fn a_blocked_or_failed_read_leaves_the_packages_base() -> Res {
     read_all(&storage, &remote, &root, &writer()).await?;
     std::fs::write(root.join("team/raw/a.txt"), b"edited")?;
     publish(&remote, "team/raw", SECOND, &[("a.txt", b"ALPHA")]).await?;
-    publish(
-        &remote,
-        "team/ref",
-        REF_SECOND,
-        &[("package-metadata.json", b"{}")],
-    )
-    .await?;
+    publish(&remote, "team/ref", REF_SECOND, &[("metadata.toml", b"")]).await?;
 
     let read = read_all(&storage, &remote, &root, &writer()).await?;
 

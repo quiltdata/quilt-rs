@@ -352,7 +352,7 @@ async fn a_package_with_no_latest_is_published_as_its_first_revision() -> Res {
 async fn a_first_revision_may_hold_only_metadata() -> Res {
     let remote = MockRemote::default();
     let storage = &remote.storage;
-    write(storage, METADATA_FILE, br#"{".": {"v": 1}}"#).await?;
+    write(storage, METADATA_FILE, b"[metadata.package]\nv = 1\n").await?;
 
     let outcome = publish(storage, &remote, &entry("write = [\"team/raw\"]"), None).await;
 
@@ -779,29 +779,23 @@ async fn the_metadata_file_sets_the_package_and_entry_metadata() -> Res {
     write(
         storage,
         METADATA_FILE,
-        br#"{".": {"v": 2, "big": 123456789012345678901234567890}, "a.txt": {"big": 98765432109876543210987654321}}"#,
+        b"message = \"from the file\"\n\
+          [metadata.package]\nv = 2\nnested = { list = [1, \"$NULL\", false] }\n\
+          [metadata.entries.\"a.txt\"]\nkind = \"raw\"\n",
     )
     .await?;
 
     let outcome = publish(storage, &remote, &entry("write = [\"team/raw\"]"), None).await?;
 
     let published = revision(&remote, advanced(&outcome)).await?;
+    assert_eq!(published.header.message(), Some("from the file"));
     assert_eq!(
-        published.header.user_meta_text().as_deref(),
-        Some(r#"{"big":123456789012345678901234567890,"v":2}"#),
-        "integers beyond 64 bits keep their digits"
+        published.header.user_meta,
+        Some(serde_json::json!({"nested": {"list": [1, null, false]}, "v": 2}))
     );
-    let (meta, meta_numbers) =
-        RawNumbers::parse(r#"{"user_meta": {"big": 98765432109876543210987654321}}"#)?;
-    let expected = ManifestRow {
-        meta: Some(meta),
-        meta_numbers,
-        ..row("a.txt", b"a")
-    };
-    assert!(
-        row_of(&published, "a.txt").same_meta(&expected),
-        "{:?}",
-        row_of(&published, "a.txt").meta
+    assert_eq!(
+        row_of(&published, "a.txt").meta,
+        Some(serde_json::json!({"user_meta": {"kind": "raw"}}))
     );
     assert_eq!(
         keys(&published),
@@ -811,57 +805,287 @@ async fn the_metadata_file_sets_the_package_and_entry_metadata() -> Res {
     Ok(())
 }
 
-/// What the metadata file leaves out is kept under `write`, removed under
-/// `replace`; an empty file clears what it covers.
+fn user_meta(row: &ManifestRow) -> Option<serde_json::Value> {
+    row.meta
+        .as_ref()
+        .and_then(|meta| meta.get("user_meta").cloned())
+}
+
+/// The file is the whole of what it covers under either access, so what it
+/// leaves out is cleared, and an empty file clears it all.
 #[test(tokio::test)]
-async fn metadata_the_file_leaves_out_is_kept_by_write_and_dropped_by_replace() -> Res {
-    for (access, file, kept) in [
-        ("write", &br#"{"a.txt": {"k": 2}}"#[..], true),
-        ("replace", &br#"{"a.txt": {"k": 2}}"#[..], false),
-        ("write", &b""[..], false),
+async fn metadata_the_file_leaves_out_is_cleared() -> Res {
+    for access in ["write", "replace"] {
+        for file in [&b"[metadata.entries.\"a.txt\"]\nk = 2\n"[..], b""] {
+            let remote = MockRemote::default();
+            let storage = &remote.storage;
+            let mut manifest = Manifest {
+                header: with_meta(serde_json::json!({"v": 1})),
+                rows: vec![row("a.txt", b"a"), row("b.txt", b"b")],
+                ..Manifest::default()
+            };
+            manifest.rows[1].meta = Some(serde_json::json!({"user_meta": {"k": 1}}));
+            seed(
+                &remote,
+                FIRST,
+                &[("a.txt", b"a"), ("b.txt", b"b")],
+                ManifestHeader::default(),
+            )
+            .await?;
+            seed_manifest(&remote, FIRST, &manifest).await?;
+            write(storage, "a.txt", b"a").await?;
+            write(storage, "b.txt", b"b").await?;
+            write(storage, METADATA_FILE, file).await?;
+
+            let outcome = publish(
+                storage,
+                &remote,
+                &entry(&format!("{access} = [\"team/raw\"]")),
+                None,
+            )
+            .await?;
+
+            let published = revision(&remote, advanced(&outcome)).await?;
+            let a_meta = (!file.is_empty()).then(|| serde_json::json!({"k": 2}));
+            assert_eq!(user_meta(row_of(&published, "a.txt")), a_meta, "{access}");
+            assert_eq!(user_meta(row_of(&published, "b.txt")), None, "{access}");
+            assert_eq!(published.header.user_meta, None, "{access}");
+        }
+    }
+    Ok(())
+}
+
+/// Entry metadata is complete only under the entry's paths; the package's is
+/// covered whole.
+#[test(tokio::test)]
+async fn metadata_outside_the_entrys_paths_is_kept() -> Res {
+    let remote = MockRemote::default();
+    let storage = &remote.storage;
+    let mut manifest = Manifest {
+        header: with_meta(serde_json::json!({"v": 1})),
+        rows: vec![row("src/a.txt", b"a"), row("other.txt", b"o")],
+        ..Manifest::default()
+    };
+    for row in &mut manifest.rows {
+        row.meta = Some(serde_json::json!({"user_meta": {"k": 1}}));
+    }
+    seed(
+        &remote,
+        FIRST,
+        &[("src/a.txt", b"a"), ("other.txt", b"o")],
+        ManifestHeader::default(),
+    )
+    .await?;
+    seed_manifest(&remote, FIRST, &manifest).await?;
+    write(storage, "src/a.txt", b"a").await?;
+    write(storage, METADATA_FILE, b"").await?;
+
+    let outcome = publish(
+        storage,
+        &remote,
+        &entry("write = [{ package = \"team/raw\", path = \"src/\" }]"),
+        None,
+    )
+    .await?;
+
+    let published = revision(&remote, advanced(&outcome)).await?;
+    assert_eq!(user_meta(row_of(&published, "src/a.txt")), None);
+    assert_eq!(
+        user_meta(row_of(&published, "other.txt")),
+        Some(serde_json::json!({"k": 1}))
+    );
+    assert_eq!(published.header.user_meta, None);
+    Ok(())
+}
+
+/// A folder's key ends in `/`. A folder the file leaves out loses its
+/// metadata, and one it names gets it while it holds a file.
+#[test(tokio::test)]
+async fn the_file_sets_and_clears_folder_metadata_under_the_entrys_paths() -> Res {
+    let folder_meta = |key: &str, value: serde_json::Value| {
+        crate::manifest::DirMeta::new(
+            LogicalKey::new(key).expect("key"),
+            serde_json::json!({ "user_meta": value }),
+        )
+    };
+    for (paths, file, expected) in [
+        (
+            "\"team/raw\"",
+            "[metadata.entries.\"keep/\"]\nk = 2\n[metadata.entries.\"new/\"]\nn = 1\n",
+            vec![
+                folder_meta("keep", serde_json::json!({"k": 2})),
+                folder_meta("new", serde_json::json!({"n": 1})),
+            ],
+        ),
+        (
+            "{ package = \"team/raw\", path = \"results/\" }",
+            "[metadata.entries.\"results/\"]\nr = 2\n",
+            vec![
+                folder_meta("keep", serde_json::json!({"k": 1})),
+                folder_meta("results", serde_json::json!({"r": 2})),
+            ],
+        ),
     ] {
         let remote = MockRemote::default();
         let storage = &remote.storage;
-        let mut manifest = Manifest {
-            header: with_meta(serde_json::json!({"v": 1})),
-            rows: vec![row("a.txt", b"a"), row("b.txt", b"b")],
+        let files: &[(&str, &[u8])] = &[
+            ("results/a.csv", b"a"),
+            ("keep/b.csv", b"b"),
+            ("new/c.csv", b"c"),
+        ];
+        seed(&remote, FIRST, files, ManifestHeader::default()).await?;
+        let manifest = Manifest {
+            rows: files.iter().map(|(key, body)| row(key, body)).collect(),
+            dir_meta: vec![
+                folder_meta("results", serde_json::json!({"r": 1})),
+                folder_meta("keep", serde_json::json!({"k": 1})),
+            ],
             ..Manifest::default()
         };
-        manifest.rows[1].meta = Some(serde_json::json!({"user_meta": {"k": 1}}));
-        seed(
-            &remote,
-            FIRST,
-            &[("a.txt", b"a"), ("b.txt", b"b")],
-            ManifestHeader::default(),
-        )
-        .await?;
         seed_manifest(&remote, FIRST, &manifest).await?;
-        write(storage, "a.txt", b"a").await?;
-        write(storage, "b.txt", b"b").await?;
-        write(storage, METADATA_FILE, file).await?;
+        for (key, body) in files {
+            write(storage, key, body).await?;
+        }
+        write(storage, METADATA_FILE, file.as_bytes()).await?;
 
         let outcome = publish(
             storage,
             &remote,
-            &entry(&format!("{access} = [\"team/raw\"]")),
+            &entry(&format!("write = [{paths}]")),
             None,
         )
         .await?;
 
-        let published = revision(&remote, advanced(&outcome)).await?;
-        let b_meta = row_of(&published, "b.txt")
-            .meta
-            .as_ref()
-            .and_then(|meta| meta.get("user_meta").cloned());
-        let package_meta = published.header.user_meta.clone();
-        if kept {
-            assert_eq!(b_meta, Some(serde_json::json!({"k": 1})), "{access}");
-            assert_eq!(package_meta, Some(serde_json::json!({"v": 1})), "{access}");
-        } else {
-            assert_eq!(b_meta, None, "{access}");
-            assert_eq!(package_meta, None, "{access}");
-        }
+        let mut published = revision(&remote, advanced(&outcome)).await?.dir_meta;
+        published.sort_by(|a, b| a.logical_key.cmp(&b.logical_key));
+        assert_eq!(published, expected, "{paths}");
     }
+    Ok(())
+}
+
+/// With the file supplied, its message is a change like any other. A message
+/// given to the publish wins over the file's, and alone, as with no file, is
+/// no change.
+#[test(tokio::test)]
+async fn the_files_message_is_the_revisions() -> Res {
+    let remote = MockRemote::default();
+    let storage = &remote.storage;
+    seed(
+        &remote,
+        FIRST,
+        &[("a.txt", b"a")],
+        ManifestHeader {
+            message: HeaderMessage::Text("first".to_string()),
+            ..ManifestHeader::default()
+        },
+    )
+    .await?;
+    let entry_text = "write = [\"team/raw\"]";
+    write(storage, "a.txt", b"a").await?;
+    write(
+        storage,
+        METADATA_FILE,
+        b"message = \"first\"\n[metadata.package]\n",
+    )
+    .await?;
+
+    let unchanged = publish(storage, &remote, &entry(entry_text), None).await?;
+    assert_eq!(
+        unchanged,
+        Published::Unchanged {
+            latest: Some(FIRST.to_string())
+        }
+    );
+
+    write(
+        storage,
+        METADATA_FILE,
+        b"message = \"$NULL\"\n[metadata.package]\n",
+    )
+    .await?;
+    let edited = publish(storage, &remote, &entry(entry_text), None).await?;
+    let second = revision(&remote, advanced(&edited)).await?;
+    assert_eq!(second.header.message, HeaderMessage::Null);
+
+    write(
+        storage,
+        METADATA_FILE,
+        b"message = \"the file's\"\n[metadata.package]\n",
+    )
+    .await?;
+    let alone = publish(storage, &remote, &entry(entry_text), Some("the file's")).await?;
+    assert_eq!(
+        alone,
+        Published::Unchanged {
+            latest: Some(advanced(&edited).to_string())
+        }
+    );
+
+    write(storage, "a.txt", b"a2").await?;
+    let given = publish(storage, &remote, &entry(entry_text), Some("given")).await?;
+    let third = revision(&remote, advanced(&given)).await?;
+    assert_eq!(third.header.message(), Some("given"));
+    Ok(())
+}
+
+/// A revision read into a folder and published from it unchanged is the same
+/// revision: its top hash is the same.
+#[test(tokio::test)]
+async fn a_revision_read_and_published_again_unchanged_keeps_its_top_hash() -> Res {
+    let remote = MockRemote::default();
+    let storage = &remote.storage;
+    let files: &[(&str, &[u8])] = &[("a.txt", b"a"), ("data/b.csv", b"b")];
+    seed(&remote, SECOND, files, ManifestHeader::default()).await?;
+    let mut original = Manifest {
+        header: ManifestHeader {
+            message: HeaderMessage::Null,
+            user_meta: Some(serde_json::json!({
+                "nested": {"list": [1, 2.5, false, null, "$$NULL", {"deep": []}]},
+                "zero": -0.0,
+            })),
+            ..ManifestHeader::default()
+        },
+        rows: files.iter().map(|(key, body)| row(key, body)).collect(),
+        dir_meta: vec![crate::manifest::DirMeta::new(
+            LogicalKey::new("data")?,
+            serde_json::json!({"user_meta": {"units": "m"}}),
+        )],
+    };
+    original.rows[1].meta = Some(serde_json::json!({"user_meta": {"kind": "raw", "n": null}}));
+    seed_manifest(&remote, FIRST, &original).await?;
+    crate::dataspace::read::read(storage, &remote, &entry("read = [\"team/raw\"]"), None).await?;
+    // `latest` moves to the same files with no metadata, so publishing has
+    // something to set.
+    seed_manifest(
+        &remote,
+        SECOND,
+        &Manifest {
+            rows: original
+                .rows
+                .iter()
+                .map(|row| ManifestRow {
+                    meta: None,
+                    ..row.clone()
+                })
+                .collect(),
+            ..Manifest::default()
+        },
+    )
+    .await?;
+
+    let outcome = publish(storage, &remote, &entry("replace = [\"team/raw\"]"), None).await?;
+
+    let mut hasher = crate::manifest::TopHasher::new();
+    hasher.append_header(&original.header)?;
+    for row in &original.rows {
+        hasher.append(row)?;
+    }
+    let republished = advanced(&outcome);
+    assert_eq!(republished, hasher.finalize());
+    assert_eq!(
+        revision(&remote, republished).await?.dir_meta,
+        original.dir_meta
+    );
     Ok(())
 }
 
@@ -886,7 +1110,12 @@ async fn metadata_that_is_not_an_object_survives_a_replace_that_leaves_it_out() 
     seed_manifest(&remote, FIRST, &manifest).await?;
     write(storage, "a.txt", b"a").await?;
     write(storage, "b.txt", b"b").await?;
-    write(storage, METADATA_FILE, br#"{"a.txt": {"k": 2}}"#).await?;
+    write(
+        storage,
+        METADATA_FILE,
+        b"[metadata.entries.\"a.txt\"]\nk = 2\n",
+    )
+    .await?;
 
     let outcome = publish(storage, &remote, &entry("replace = [\"team/raw\"]"), None).await?;
 
@@ -903,7 +1132,7 @@ async fn a_file_named_like_the_metadata_file_in_another_case_is_not_published() 
     let remote = MockRemote::default();
     let storage = &remote.storage;
     write(storage, "a.txt", b"a").await?;
-    write(storage, "Package-Metadata.json", b"{}").await?;
+    write(storage, "Metadata.TOML", b"").await?;
 
     let outcome = publish(storage, &remote, &entry("write = [\"team/raw\"]"), None).await?;
 
@@ -923,7 +1152,7 @@ async fn a_file_inside_the_metadata_files_name_after_a_backslash_is_not_publishe
     let remote = MockRemote::default();
     let storage = &remote.storage;
     write(storage, "a.txt", b"a").await?;
-    write(storage, "package-metadata.json\\inside.txt", b"x").await?;
+    write(storage, "metadata.toml\\inside.txt", b"x").await?;
 
     let outcome = publish(storage, &remote, &entry("write = [\"team/raw\"]"), None).await?;
 
@@ -941,7 +1170,7 @@ async fn a_folder_at_the_metadata_files_place_is_refused() -> Res {
     let remote = MockRemote::default();
     let storage = &remote.storage;
     write(storage, "a.txt", b"a").await?;
-    write(storage, "package-metadata.json/inside.txt", b"x").await?;
+    write(storage, "metadata.toml/inside.txt", b"x").await?;
 
     let outcome = publish(storage, &remote, &entry("write = [\"team/raw\"]"), None).await;
 
@@ -959,7 +1188,7 @@ async fn what_an_interrupted_read_leaves_is_not_published() -> Res {
     let storage = &remote.storage;
     write(storage, "a.txt", b"a").await?;
     write(storage, ".quilt-read-0123/a.txt", b"staged").await?;
-    write(storage, "package-metadata.json.tmp-0123", b"{}").await?;
+    write(storage, "metadata.toml.tmp-0123", b"").await?;
     write(
         storage,
         ".tmp-67e55044-10b1-426f-9247-bb680e5fe0c8",

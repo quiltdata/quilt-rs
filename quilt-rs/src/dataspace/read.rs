@@ -174,8 +174,11 @@ impl OnDisk {
 /// A failure after the first rename leaves the files already placed; the
 /// lock, which moves only on [`ReadOutcome::lock_base`], still names `base`.
 /// A call dropped before it returns, such as a cancelled task, leaves its
-/// `.quilt-read-*` staging folder, or a `package-metadata.json.tmp-*` file,
-/// in the working folder; either is safe to delete.
+/// `.quilt-read-*` staging folder, or a `metadata.toml.tmp-*` file, in the
+/// working folder; either is safe to delete.
+///
+/// A revision whose metadata holds an integer TOML cannot is refused before
+/// anything is written.
 pub async fn read(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
@@ -200,6 +203,7 @@ pub async fn read(
     if holds_metadata_file(&target) {
         return Err(EntryError::HoldsMetadataFile);
     }
+    let metadata = render(&target, &entry.paths).map_err(EntryError::MetadataUnwritable)?;
     let other_base = match base {
         Some(hash) if hash != revision.hash => {
             let uri = ManifestUri {
@@ -227,7 +231,7 @@ pub async fn read(
     };
 
     let folder = &entry.folder;
-    let plan = plan(storage, folder, &entry.paths, &target, base).await?;
+    let plan = plan(storage, folder, &entry.paths, &target, base, metadata).await?;
     if !plan.conflicts.is_empty() {
         info!(
             "Reading {} into {} is blocked by {} local changes",
@@ -280,13 +284,14 @@ pub async fn read(
 }
 
 /// Compares each file `paths` cover in `folder` against `target` and `base`,
-/// and the metadata file against theirs; see [`read`].
+/// and the metadata file against `wanted_text` and `base`'s; see [`read`].
 async fn plan<'a>(
     storage: &(impl Storage + Sync),
     folder: &Path,
     paths: &Paths,
     target: &'a Manifest,
     base: Option<&'a Manifest>,
+    wanted_text: String,
 ) -> Res<Plan<'a>> {
     let mut plan = Plan::default();
     let wanted = covered(target, paths);
@@ -375,8 +380,8 @@ async fn plan<'a>(
     }
 
     let metadata_path = folder.join(METADATA_FILE);
-    let wanted_text = render(target, paths);
-    let had_text = base.map(|base| render(base, paths));
+    // A base TOML cannot hold was never written, so no file holds it.
+    let had_text = base.and_then(|base| render(base, paths).ok());
     if !metadata_place_free(storage, &metadata_path).await {
         plan.conflicts.push(PathBuf::from(METADATA_FILE));
         return Ok(plan);

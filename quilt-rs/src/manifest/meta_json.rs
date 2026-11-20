@@ -264,7 +264,7 @@ fn write_string(out: &mut String, s: &str, style: Style) {
     }
 }
 
-pub(crate) fn escape_pointer(key: &str) -> String {
+fn escape_pointer(key: &str) -> String {
     key.replace('~', "~0").replace('/', "~1")
 }
 
