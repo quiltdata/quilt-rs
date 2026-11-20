@@ -203,10 +203,8 @@ pub async fn publish_all(
             lock.packages.insert(key, based_on(base));
             moved = true;
         }
-        let read_newer = read.as_ref().map(EntryRead::lock_base);
-        if let (Some(reads), Some(revision)) =
-            (reads, hooks::newer(before.as_deref(), read_newer.flatten()))
-        {
+        let read_base = read.as_ref().and_then(EntryRead::lock_base);
+        if let (Some(reads), Some(revision)) = (reads, hooks::newer(before.as_deref(), read_base)) {
             after.push((HookPoint::PostRead, reads, revision.to_string()));
         }
         if let EntryPublish::Ran(published) = &published

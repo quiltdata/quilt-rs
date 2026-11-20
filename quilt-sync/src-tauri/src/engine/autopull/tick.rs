@@ -973,9 +973,6 @@ pub(crate) async fn run_once(
     let now = Instant::now();
     for pkg in packages {
         let pass = sync_package(model, roles, inner, &pkg, &run, now).await;
-        // The `agent_exec` dispatch. It moves behind the contract's
-        // `post-read` hook, which `quilt_rs::dataspace::sync` runs once a
-        // read takes a newer revision, when that tick replaces this one.
         if let Some(tasks) = run.tasks.as_ref()
             && matches!(pass, Pass::Done | Pass::LeftToTasks)
         {

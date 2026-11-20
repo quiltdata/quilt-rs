@@ -2,12 +2,8 @@
 //! writing, declared in `data.toml` under `[hooks.<point>]` and run as the
 //! user who runs the flow.
 //!
-//! `pre-read` runs before a flow reads an entry, and `pre-write` before it
-//! publishes one, so a `pre-write` script may rewrite `metadata.toml` first;
-//! either one exiting with a failure stops that entry. `post-read` runs once
-//! a read moved the lock to a newer revision, even one whose files are all
-//! unchanged, and `post-write` once a publish stored a revision; their
-//! failure is logged, since what they follow is done.
+//! A failing `pre-` script stops its entry; a failing `post-` script is only
+//! logged, since what it follows is done.
 
 use std::collections::BTreeMap;
 use std::fmt;
