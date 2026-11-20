@@ -47,6 +47,11 @@ pub const DEFAULT_RULES: &[&str] = &[
     "node_modules/",
 ];
 
+/// The [`DEFAULT_RULES`] that keep secrets out: hidden folders, environment
+/// files, `.netrc` and keys. A dataspace's `standard_patterns = false` turns
+/// the other built-in rules off, never these.
+pub const SECRET_RULES: &[&str] = &[".*/", ".env", ".env.*", ".netrc", "*.pem"];
+
 /// Where the rule that ignored a path came from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuleSource {
@@ -56,6 +61,13 @@ pub enum RuleSource {
     User { path: PathBuf, line: u64 },
     /// The package's own `.quiltignore`; `line` is 1-based.
     Package { line: u64 },
+    /// What a dataspace's `data.toml` leaves out of every folder packaged
+    /// from it: the dataspace's own files, and the folders of the packages it
+    /// declares. No rule brings it back.
+    Contract,
+    /// A line of a dataspace's `[ignore] extend_patterns`; `line` is its
+    /// 1-based place in the list.
+    Extend { line: u64 },
 }
 
 /// The rule that ignored a path: its line as written, and where it came from.
@@ -158,50 +170,125 @@ pub fn load(dir: &Path) -> Res<Option<Gitignore>> {
     Ok(load_file(dir, &dir.join(QUILTIGNORE))?.map(|file| file.gitignore))
 }
 
+fn built_in(rules: &[&str]) -> Gitignore {
+    let mut builder = GitignoreBuilder::new("/");
+    builder
+        .case_insensitive(true)
+        .expect("case_insensitive never fails");
+    for line in rules {
+        builder
+            .add_line(None, line)
+            .expect("built-in ignore rule parses");
+    }
+    builder.build().expect("built-in ignore rules build")
+}
+
 fn defaults() -> &'static Gitignore {
     static INSTANCE: OnceLock<Gitignore> = OnceLock::new();
-    INSTANCE.get_or_init(|| {
-        let mut builder = GitignoreBuilder::new("/");
-        builder
-            .case_insensitive(true)
-            .expect("case_insensitive never fails");
-        for line in DEFAULT_RULES {
-            builder
-                .add_line(None, line)
-                .expect("built-in ignore rule parses");
+    INSTANCE.get_or_init(|| built_in(DEFAULT_RULES))
+}
+
+fn secrets() -> &'static Gitignore {
+    static INSTANCE: OnceLock<Gitignore> = OnceLock::new();
+    INSTANCE.get_or_init(|| built_in(SECRET_RULES))
+}
+
+/// Why `line` cannot be one line of a rules file, if it cannot.
+pub(crate) fn line_problem(line: &str) -> Option<String> {
+    if line.contains(['\n', '\r']) {
+        return Some("a pattern is one line".to_string());
+    }
+    GitignoreBuilder::new("/")
+        .add_line(None, line)
+        .err()
+        .map(|err| err.to_string())
+}
+
+/// What a dataspace's `[ignore]` table sets for packaging one of its
+/// folders, on top of the rules files. The default sets nothing: every
+/// built-in rule is on, and nothing more is left out.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Policy {
+    /// Paths under the folder, files and folders alike, that are left out
+    /// whatever any rule says: no `!` line brings one back.
+    pub left_out: Vec<PathBuf>,
+    /// Whether `left_out` is compared ignoring case, as the folder's file
+    /// system compares names.
+    pub fold_case: bool,
+    /// Whether the built-in rules other than [`SECRET_RULES`] are on.
+    pub standard_patterns: bool,
+    /// Gitignore lines just above the built-in rules and below the user-wide
+    /// file. Like it, they apply to new files only.
+    pub extend_patterns: Vec<String>,
+}
+
+impl Default for Policy {
+    fn default() -> Self {
+        Self {
+            left_out: Vec::new(),
+            fold_case: false,
+            standard_patterns: true,
+            extend_patterns: Vec::new(),
         }
-        builder.build().expect("built-in ignore rules build")
-    })
+    }
 }
 
 /// The ignore rules for one package, strongest first: the package's
-/// `.quiltignore`, the user-wide file, then [`DEFAULT_RULES`].
+/// `.quiltignore`, the user-wide file, a dataspace's `extend_patterns`, then
+/// [`DEFAULT_RULES`]. What a dataspace leaves out of every folder, its
+/// [`Policy::left_out`], is decided before them all.
 ///
 /// As in git, a path is decided level by level from its top folder down. At
 /// each level the strongest layer with a line matching that folder or file
 /// decides, and within a layer the last matching line wins. An ignored folder
 /// ignores everything under it, so a `!folder/` line in a stronger layer brings
 /// the folder back but not the files in it that a weaker layer names.
-/// Only the package layer can hide a path the package already has; the other two
+/// Only the package layer can hide a path the package already has; the others
 /// apply to new files only, so personal rules never change a shared package.
+#[derive(Clone)]
 pub struct Rules {
     package_dir: PathBuf,
     package: Option<RuleFile>,
     user: Option<(PathBuf, RuleFile)>,
     user_file: PathBuf,
+    extend: Option<RuleFile>,
+    left_out: Vec<PathBuf>,
+    fold_case: bool,
+    standard_patterns: bool,
 }
 
 impl Rules {
     /// Load the package's `.quiltignore` and the user-wide `user_file`.
     /// Either may be missing; an unreadable or invalid one is an error.
     pub fn load(package_dir: &Path, user_file: &Path) -> Res<Rules> {
+        Self::load_with(package_dir, user_file, &Policy::default())
+    }
+
+    /// [`Rules::load`], with what a dataspace's `[ignore]` table sets for
+    /// packaging `package_dir`. A line of `policy.extend_patterns` that is
+    /// not valid is an error.
+    pub fn load_with(package_dir: &Path, user_file: &Path, policy: &Policy) -> Res<Rules> {
         let package = load_file(package_dir, &package_dir.join(QUILTIGNORE))?;
         let user = load_file(package_dir, user_file)?.map(|file| (user_file.to_path_buf(), file));
+        let extend = if policy.extend_patterns.is_empty() {
+            None
+        } else {
+            let contract = Path::new(crate::dataspace::contract::CONTRACT_FILE);
+            if let Some(problem) = policy.extend_patterns.iter().find_map(|l| line_problem(l)) {
+                return Err(read_error(contract, problem));
+            }
+            let contents = appended("", &policy.extend_patterns);
+            Some(parse_file(package_dir, contract, contents)?)
+        };
         Ok(Rules {
             package_dir: package_dir.to_path_buf(),
             package,
             user,
             user_file: user_file.to_path_buf(),
+            extend,
+            left_out: policy.left_out.clone(),
+            fold_case: policy.fold_case,
+            standard_patterns: policy.standard_patterns,
         })
     }
 
@@ -223,16 +310,12 @@ impl Rules {
         };
         let contents = appended(current.map_or("", |file| file.contents.as_str()), lines);
         let file = parse_file(&self.package_dir, &path, contents)?;
-        let (package, user) = match scope {
-            Scope::Package => (Some(file), self.user.clone()),
-            Scope::AllPackages => (self.package.clone(), Some((path, file))),
-        };
-        Ok(Rules {
-            package_dir: self.package_dir.clone(),
-            package,
-            user,
-            user_file: self.user_file.clone(),
-        })
+        let mut rules = self.clone();
+        match scope {
+            Scope::Package => rules.package = Some(file),
+            Scope::AllPackages => rules.user = Some((path, file)),
+        }
+        Ok(rules)
     }
 
     /// The `!` lines that bring back the file or folder at `relative_path` in
@@ -307,6 +390,9 @@ impl Rules {
         is_dir: bool,
         tracked: bool,
     ) -> Option<IgnoredBy> {
+        if let Some(by) = self.left_out_by(relative_path) {
+            return Some(by);
+        }
         if let Some(file) = &self.package {
             match file.gitignore.matched(relative_path, is_dir) {
                 Match::Ignore(glob) => {
@@ -339,7 +425,26 @@ impl Rules {
                 Match::None => {}
             }
         }
-        match defaults().matched(relative_path, is_dir) {
+        if let Some(file) = &self.extend {
+            match file.gitignore.matched(relative_path, is_dir) {
+                Match::Ignore(glob) => {
+                    return Some(IgnoredBy {
+                        pattern: glob.original().to_string(),
+                        source: RuleSource::Extend {
+                            line: file.line_of(glob.original()),
+                        },
+                    });
+                }
+                Match::Whitelist(_) => return None,
+                Match::None => {}
+            }
+        }
+        let built_in = if self.standard_patterns {
+            defaults()
+        } else {
+            secrets()
+        };
+        match built_in.matched(relative_path, is_dir) {
             Match::Ignore(glob) => Some(IgnoredBy {
                 pattern: glob.original().to_string(),
                 source: RuleSource::Default,
@@ -347,6 +452,36 @@ impl Rules {
             Match::Whitelist(_) | Match::None => None,
         }
     }
+
+    /// The [`Policy::left_out`] path that `relative_path` is, if any.
+    fn left_out_by(&self, relative_path: &Path) -> Option<IgnoredBy> {
+        let names = |path: &Path| -> Vec<String> {
+            path.components()
+                .map(|part| {
+                    let name = part.as_os_str().to_string_lossy();
+                    if self.fold_case {
+                        name.to_lowercase()
+                    } else {
+                        name.into_owned()
+                    }
+                })
+                .collect()
+        };
+        let wanted = names(relative_path);
+        let left_out = self.left_out.iter().find(|path| names(path) == wanted)?;
+        Some(IgnoredBy {
+            pattern: names_with_slashes(left_out),
+            source: RuleSource::Contract,
+        })
+    }
+}
+
+/// `path`'s names joined by `/`, as a logical key writes them.
+fn names_with_slashes(path: &Path) -> String {
+    path.components()
+        .map(|part| part.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 /// Where *Stop ignoring* writes its `!` lines.
@@ -784,6 +919,179 @@ mod tests {
 
     fn source(by: Option<IgnoredBy>) -> Option<RuleSource> {
         by.map(|by| by.source)
+    }
+
+    /// [`rules`] with a dataspace's `policy`.
+    fn rules_with(package: Option<&str>, user: Option<&str>, policy: &Policy) -> (TempDir, Rules) {
+        let (dir, _) = rules(package, user);
+        let rules = Rules::load_with(
+            &dir.path().join("pkg"),
+            &dir.path().join("user-quiltignore"),
+            policy,
+        )
+        .unwrap();
+        (dir, rules)
+    }
+
+    fn extending(lines: &[&str]) -> Policy {
+        Policy {
+            extend_patterns: lines.iter().map(ToString::to_string).collect(),
+            ..Policy::default()
+        }
+    }
+
+    #[test]
+    fn the_secret_rules_are_default_rules() {
+        for rule in SECRET_RULES {
+            assert!(DEFAULT_RULES.contains(rule), "{rule}");
+        }
+    }
+
+    #[test]
+    fn standard_patterns_off_keeps_only_the_secrets_out() {
+        let on = Policy::default();
+        let off = Policy {
+            standard_patterns: false,
+            ..Policy::default()
+        };
+        let (_dir, with) = rules_with(None, None, &on);
+        let (_dir, without) = rules_with(None, None, &off);
+        for (path, is_dir) in [
+            (".DS_Store", false),
+            ("a.pyc", false),
+            ("notes.txt~", false),
+            ("node_modules", true),
+            ("a/__pycache__", true),
+        ] {
+            let path = Path::new(path);
+            assert!(with.ignored_by(path, is_dir, false).is_some(), "{path:?}");
+            assert_eq!(without.ignored_by(path, is_dir, false), None, "{path:?}");
+        }
+        for (path, is_dir) in [
+            (".env", false),
+            (".env.local", false),
+            (".netrc", false),
+            ("key.pem", false),
+            ("sub/KEY.PEM", false),
+            (".git", true),
+            ("sub/.venv", true),
+        ] {
+            let by = without.ignored_by(Path::new(path), is_dir, false);
+            assert_eq!(source(by), Some(RuleSource::Default), "{path:?}");
+        }
+    }
+
+    #[test]
+    fn extend_patterns_sit_above_the_built_ins_for_new_files() {
+        let (_dir, rules) = rules_with(None, None, &extending(&["*.tmp", "!keep.tmp", "!*.pyc"]));
+        let by = rules.file_ignored_by(Path::new("a.tmp"), false).unwrap();
+        assert_eq!(
+            (by.pattern.as_str(), by.source),
+            ("*.tmp", RuleSource::Extend { line: 1 })
+        );
+        assert_eq!(
+            rules.file_ignored_by(Path::new("sub/keep.tmp"), false),
+            None
+        );
+        // A `!` line brings back what a built-in rule leaves out.
+        assert_eq!(rules.file_ignored_by(Path::new("a.pyc"), false), None);
+        // New files only.
+        assert_eq!(rules.file_ignored_by(Path::new("a.tmp"), true), None);
+        // Never the package's own rules file.
+        let (_dir, dotfiles) = rules_with(None, None, &extending(&[".*"]));
+        assert_eq!(
+            dotfiles.file_ignored_by(Path::new(".quiltignore"), false),
+            None
+        );
+    }
+
+    #[test]
+    fn the_rules_files_beat_extend_patterns() {
+        let policy = extending(&["*.tmp", "!*.csv", "!*.log"]);
+        let (_dir, rules) = rules_with(Some("a.csv\n!b.tmp\n"), Some("!c.tmp\n*.log\n"), &policy);
+        let by = rules.file_ignored_by(Path::new("a.csv"), false).unwrap();
+        assert_eq!(by.source, RuleSource::Package { line: 1 });
+        assert_eq!(rules.file_ignored_by(Path::new("b.tmp"), false), None);
+        assert_eq!(rules.file_ignored_by(Path::new("c.tmp"), false), None);
+        let by = rules.file_ignored_by(Path::new("d.log"), false).unwrap();
+        assert!(matches!(by.source, RuleSource::User { line: 2, .. }));
+        assert_eq!(
+            source(rules.file_ignored_by(Path::new("d.tmp"), false)),
+            Some(RuleSource::Extend { line: 1 })
+        );
+    }
+
+    #[test]
+    fn an_invalid_extend_pattern_is_an_error() {
+        let dir = TempDir::new().unwrap();
+        for line in ["a{b", "a\nb"] {
+            assert!(
+                Rules::load_with(dir.path(), &dir.path().join("u"), &extending(&[line])).is_err(),
+                "{line:?}"
+            );
+        }
+    }
+
+    /// No `!` line in any layer brings back what the dataspace leaves out,
+    /// tracked or not, and *Stop ignoring* finds no line that would.
+    #[test]
+    fn no_rule_brings_back_what_the_dataspace_leaves_out() {
+        let policy = Policy {
+            left_out: vec![PathBuf::from("data.lock.toml"), PathBuf::from("raw/team")],
+            standard_patterns: false,
+            extend_patterns: vec!["!data.lock.toml".into(), "!raw/team/".into()],
+            ..Policy::default()
+        };
+        let (_dir, rules) = rules_with(
+            Some("!data.lock.toml\n!/raw/team/\n!/raw/team/a.csv\n"),
+            Some("!data.lock.toml\n!team/\n"),
+            &policy,
+        );
+        for tracked in [false, true] {
+            let by = rules
+                .file_ignored_by(Path::new("data.lock.toml"), tracked)
+                .unwrap();
+            assert_eq!(
+                (by.pattern.as_str(), by.source),
+                ("data.lock.toml", RuleSource::Contract)
+            );
+            for (path, is_dir) in [("raw/team", true), ("raw/team/a.csv", false)] {
+                let by = rules.ignored_by(Path::new(path), is_dir, tracked).unwrap();
+                assert_eq!(
+                    (by.pattern.as_str(), by.source),
+                    ("raw/team", RuleSource::Contract),
+                    "{path}"
+                );
+            }
+        }
+        assert_eq!(rules.dir_ignored_by(Path::new("raw/other"), false), None);
+        assert_eq!(
+            rules.file_ignored_by(Path::new("sub/data.lock.toml"), false),
+            None
+        );
+        for scope in [Scope::Package, Scope::AllPackages] {
+            assert_eq!(lines(&rules, "data.lock.toml", false, scope), None);
+            assert_eq!(lines(&rules, "raw/team", true, scope), None);
+        }
+    }
+
+    #[test]
+    fn what_the_dataspace_leaves_out_is_compared_as_its_file_system_compares() {
+        let left_out = vec![PathBuf::from("Raw/Team")];
+        let sensitive = Policy {
+            left_out: left_out.clone(),
+            ..Policy::default()
+        };
+        let insensitive = Policy {
+            left_out,
+            fold_case: true,
+            ..Policy::default()
+        };
+        let (_dir, rules) = rules_with(None, None, &sensitive);
+        assert!(rules.dir_ignored_by(Path::new("Raw/Team"), false).is_some());
+        assert_eq!(rules.dir_ignored_by(Path::new("raw/team"), false), None);
+        let (_dir, rules) = rules_with(None, None, &insensitive);
+        assert!(rules.dir_ignored_by(Path::new("raw/team"), false).is_some());
     }
 
     #[test]

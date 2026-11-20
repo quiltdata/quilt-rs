@@ -226,6 +226,7 @@ pub(crate) async fn publish_some(
                 None,
                 Base::Latest,
                 user_rules,
+                &contract.ignore_policy(&entry.folder),
             ))
             .await;
             (None, ran(published))
@@ -277,8 +278,13 @@ async fn publish_on_base(
     base: Option<&str>,
     user_rules: &Path,
 ) -> (Option<EntryRead>, EntryPublish) {
+    let policy = contract.ignore_policy(&entry.folder);
     let locked = Base::Locked(base);
-    match publish(storage, remote, local, entry, None, locked, user_rules).await {
+    match publish(
+        storage, remote, local, entry, None, locked, user_rules, &policy,
+    )
+    .await
+    {
         Ok(Published::Behind { .. }) => {}
         // A package never read has no folder until its read makes one.
         Err(EntryError::FolderUnavailable(_)) if base.is_none() => {}
@@ -303,6 +309,7 @@ async fn publish_on_base(
         None,
         Base::Locked(Some(base)),
         user_rules,
+        &policy,
     )
     .await;
     (Some(read), ran(published))

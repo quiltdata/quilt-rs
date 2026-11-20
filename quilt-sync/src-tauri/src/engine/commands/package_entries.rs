@@ -42,6 +42,8 @@ pub enum RuleSourceData {
     Default,
     User { line: u64 },
     Package { line: u64 },
+    Contract,
+    Extend { line: u64 },
 }
 
 impl From<&quilt::quiltignore::IgnoredBy> for IgnoredByData {
@@ -53,6 +55,8 @@ impl From<&quilt::quiltignore::IgnoredBy> for IgnoredByData {
                 RuleSource::Default => RuleSourceData::Default,
                 RuleSource::User { line, .. } => RuleSourceData::User { line },
                 RuleSource::Package { line } => RuleSourceData::Package { line },
+                RuleSource::Contract => RuleSourceData::Contract,
+                RuleSource::Extend { line } => RuleSourceData::Extend { line },
             },
         }
     }

@@ -185,6 +185,10 @@ fn push_ignored_by(
         quilt::quiltignore::RuleSource::Package { line } => {
             let _ = write!(out, "package:{line}");
         }
+        quilt::quiltignore::RuleSource::Contract => out.push_str("contract"),
+        quilt::quiltignore::RuleSource::Extend { line } => {
+            let _ = write!(out, "extend:{line}");
+        }
     }
     out.push(':');
     push_hex(out, ignored_by.pattern.as_bytes());

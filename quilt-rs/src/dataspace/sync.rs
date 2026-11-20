@@ -934,7 +934,8 @@ async fn take_changed(
     current: &Manifest,
     on: Option<&Manifest>,
 ) -> Result<(Taken, bool), Stop> {
-    let rules = Rules::load(&entry.folder, user_rules)?;
+    let policy = contract.ignore_policy(&entry.folder);
+    let rules = Rules::load_with(&entry.folder, user_rules, &policy)?;
     let taken = take(storage, entry, &rules, current).await?;
     // The tick's message wins over the metadata file's, so the file's alone
     // is no change.
@@ -948,7 +949,7 @@ async fn take_changed(
     if on.is_some() && gone(storage, &entry.folder, current, &entry.paths).await? {
         return Err(EntryError::FolderGone(entry.folder.clone()).into());
     }
-    let rules = Rules::load(&entry.folder, user_rules)?;
+    let rules = Rules::load_with(&entry.folder, user_rules, &policy)?;
     let taken = take(storage, entry, &rules, current).await?;
     let changed = !same_as(&taken.manifest, on, false);
     Ok((taken, changed))

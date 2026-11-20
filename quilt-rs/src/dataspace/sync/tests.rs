@@ -277,7 +277,14 @@ impl World {
 
     /// A dataspace filled at [`FIRST`], holding `files`.
     async fn filled(files: &[(&str, &[u8])]) -> Result<Self, Box<dyn std::error::Error>> {
-        let world = Self::synced()?;
+        Self::filled_in(Self::synced()?, files).await
+    }
+
+    /// [`World::filled`], for `world`'s contract.
+    async fn filled_in(
+        world: Self,
+        files: &[(&str, &[u8])],
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         world.publish(FIRST, files).await?;
         let synced = world.sync().await?;
         assert!(synced.read_only, "{synced:?}");
@@ -374,6 +381,34 @@ async fn a_tick_leaves_out_what_the_ignore_rules_leave_out_of_a_commit() -> Res 
             ("new.txt", "n"),
         ])
     );
+    Ok(())
+}
+
+/// The tick's commit takes the contract's `[ignore]` table, and writes no
+/// rules file for it.
+#[test(tokio::test)]
+async fn a_tick_leaves_out_what_the_ignore_table_leaves_out() -> Res {
+    let world = World::new(
+        "sync = [\"team/raw\"]\n\n[ignore]\npackages = false\nstandard_patterns = false\nextend_patterns = [\"*.tmp\", \"!keep.tmp\"]\n",
+    )?;
+    let world = World::filled_in(world, &[("a.txt", b"a")]).await?;
+    world.write(".DS_Store", "d")?;
+    world.write(".env", "SECRET=1")?;
+    world.write("key.pem", "k")?;
+    world.write("scratch.tmp", "t")?;
+    world.write("keep.tmp", "k")?;
+    world.write("inner/data.toml", "[packages]\n")?;
+    world.write("inner/b.txt", "b")?;
+
+    let outcome = world.tick().await?;
+
+    assert_eq!(
+        world.revision(&advanced(&outcome)).await?,
+        files(&[(".DS_Store", "d"), ("a.txt", "a"), ("keep.tmp", "k")])
+    );
+    assert!(!world.folder().join(".quiltignore").exists());
+    assert!(!world.dataspace().join(".quiltignore").exists());
+    assert!(!world.user_rules().exists());
     Ok(())
 }
 

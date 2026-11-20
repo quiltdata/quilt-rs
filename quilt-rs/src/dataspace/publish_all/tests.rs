@@ -213,6 +213,37 @@ async fn each_write_and_replace_entry_is_published_and_its_revision_locked() -> 
     Ok(())
 }
 
+/// Each entry is published with the contract's `[ignore]` table, one also
+/// under `read` included.
+#[test(tokio::test)]
+async fn each_entry_leaves_out_what_the_ignore_table_leaves_out() -> Res {
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    seed(&remote, FIRST, &[("in/a.txt", b"a")]).await?;
+    let root = dataspace(
+        &storage,
+        &format!(
+            "{READ_AND_WRITE}replace = [\"team/ref\"]\n\n[ignore]\nextend_patterns = [\"*.tmp\"]\n"
+        ),
+    )?;
+    read_all(&storage, &remote, None, &root, &writer()).await?;
+    for package in ["team/raw", "team/ref"] {
+        write(&root, package, "out/b.txt", b"b")?;
+        write(&root, package, "out/scratch.tmp", b"t")?;
+    }
+
+    let published = publish_all_here(&storage, &remote, &root, &writer()).await?;
+
+    let raw = advanced(&published.entries[0]);
+    let reference = advanced(&published.entries[1]);
+    assert_eq!(
+        keys(&remote, "team/raw", raw).await?,
+        ["in/a.txt", "out/b.txt"]
+    );
+    assert_eq!(keys(&remote, "team/ref", reference).await?, ["out/b.txt"]);
+    Ok(())
+}
+
 /// A local registry is in the Domain, so with none given its packages are
 /// refused, read and written ones alike, and a bucket's beside them still
 /// publishes.

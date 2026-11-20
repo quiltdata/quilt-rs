@@ -6,6 +6,7 @@ pub mod autosync;
 pub mod conflict;
 pub mod contract;
 pub mod hooks;
+pub mod ignore;
 pub mod lock;
 mod metadata;
 pub mod publish;
