@@ -575,7 +575,7 @@ async fn move_to_bucket(
         Some(_) => return Ok(ControlFlow::Break(EntrySync::Diverged { latest })),
         None => {
             let manifest = local_commit(storage, &domain.local(), entry, &head).await?;
-            let pushed =
+            let (pushed, _) =
                 push_manifest(storage, remote, queue, entry, &head, manifest, None).await?;
             let Published::Advanced { revision, .. } = &pushed else {
                 return Ok(ControlFlow::Break(EntrySync::Ran {
@@ -960,7 +960,7 @@ async fn push_manifest(
     head: &str,
     manifest: Manifest,
     base: Option<&str>,
-) -> Result<Published, EntryError> {
+) -> Result<(Published, bool), EntryError> {
     let target = PushTarget {
         handle: handle(entry)?,
         origin: entry.catalog.clone(),

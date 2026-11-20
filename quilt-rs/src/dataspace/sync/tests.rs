@@ -1104,7 +1104,7 @@ impl World {
             rows,
             ..Manifest::default()
         };
-        let (_, recorded) = record(
+        let (_, recorded) = crate::flow::record(
             &self.domain().local(),
             &self.storage,
             &self.remote,
