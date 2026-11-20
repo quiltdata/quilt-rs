@@ -274,8 +274,8 @@ fn auth_failure_message(err: &Error) -> Option<String> {
     if !err.is_session_absent() {
         return None;
     }
-    let host = match err {
-        Error::Quilt(quilt::Error::Login(quilt::LoginError::NoSession(host))) => host.as_ref(),
+    let host = match err.quilt_cause() {
+        Some(quilt::Error::Login(quilt::LoginError::NoSession(host))) => host.as_ref(),
         _ => err.s3_host(),
     };
     Some(match host {
@@ -2493,6 +2493,27 @@ mod tests {
         assert!(msg.contains("sign in again"), "got: {msg}");
         assert!(msg.contains("quilt.test"), "must name the host: {msg}");
         assert!(!msg.contains("Failed to commit"), "fell through: {msg}");
+    }
+
+    /// A session lost during an upload arrives wrapped with the file it stopped
+    /// on; the remedy is still signing in to that deployment, not `~/.aws`.
+    #[test]
+    fn publish_signed_out_during_an_upload_names_signing_in() {
+        let host = fixtures::host();
+        let err = Error::from(quilt::Error::Upload {
+            key: quilt::LogicalKey::new("b.txt").expect("valid key"),
+            source: Box::new(quilt::Error::Login(quilt::LoginError::NoSession(Some(
+                host.clone(),
+            )))),
+        });
+        let msg = super::write_failure_message("publish package", &err);
+
+        assert!(msg.contains("sign in again"), "got: {msg}");
+        assert!(msg.contains("quilt.test"), "must name the host: {msg}");
+        assert!(
+            !msg.contains("aws"),
+            "ambient advice for a deployment: {msg}"
+        );
     }
 
     /// Anything that is not an auth failure must keep its existing text, so the
