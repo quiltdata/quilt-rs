@@ -286,7 +286,7 @@ impl Fixture {
                 Vec::new()
             };
             lineage.commit = Some(quilt::lineage::CommitState {
-                timestamp: chrono::Utc::now(),
+                timestamp: jiff::Timestamp::now(),
                 hash: "c1".to_string(),
                 prev_hashes,
             });
@@ -434,7 +434,7 @@ async fn a_claim_changes_only_the_claim_and_starts_the_run() {
     let invocation_id = claim["invocation_id"].as_str().expect("an invocation ID");
     assert!(uuid::Uuid::parse_str(invocation_id).is_ok());
     let claimed_at = claim["claimed_at"].as_str().expect("a claim time");
-    assert!(chrono::DateTime::parse_from_rfc3339(claimed_at).is_ok());
+    assert!(claimed_at.parse::<jiff::Timestamp>().is_ok());
     assert!(
         own_at_push.contains(invocation_id),
         "the claim was on disk as ours before it was pushed"

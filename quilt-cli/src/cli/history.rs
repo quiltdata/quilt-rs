@@ -86,7 +86,7 @@ impl std::fmt::Display for Output {
             write!(
                 f,
                 "{short_hash}  {}  ",
-                revision.obtained.format("%Y-%m-%d %H:%M:%S"),
+                revision.obtained.strftime("%Y-%m-%d %H:%M:%S"),
             )?;
             if self.judged {
                 write!(
@@ -102,6 +102,12 @@ impl std::fmt::Display for Output {
     }
 }
 
+/// RFC 3339 with `+00:00`, the shape `obtained` has always had here.
+fn rfc3339_utc(time: jiff::Timestamp) -> String {
+    let text = quilt_rs::time::rfc3339(time);
+    format!("{}+00:00", text.trim_end_matches('Z'))
+}
+
 impl Render for Output {
     fn to_json(&self) -> serde_json::Value {
         let revisions: Vec<_> = self
@@ -113,7 +119,7 @@ impl Render for Output {
                     .then(|| row.kept.iter().map(ToString::to_string).collect::<Vec<_>>());
                 serde_json::json!({
                     "hash": &row.revision.hash,
-                    "obtained": row.revision.obtained.to_rfc3339(),
+                    "obtained": rfc3339_utc(row.revision.obtained),
                     "message": row.revision.message.as_deref(),
                     "kept": kept,
                     "frees": row.frees,
@@ -542,7 +548,7 @@ mod tests {
         Row {
             revision: Revision {
                 hash: hash.to_string(),
-                obtained: std::time::SystemTime::UNIX_EPOCH.into(),
+                obtained: jiff::Timestamp::UNIX_EPOCH,
                 message: message.map(str::to_string),
                 meta: None,
                 workflow: None,

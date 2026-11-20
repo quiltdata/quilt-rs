@@ -1000,10 +1000,7 @@ mod tests {
         async fn is_file(&self, path: impl AsRef<Path>) -> bool {
             self.inner.is_file(path).await
         }
-        async fn modified_timestamp(
-            &self,
-            path: impl AsRef<Path>,
-        ) -> Res<chrono::DateTime<chrono::Utc>> {
+        async fn modified_timestamp(&self, path: impl AsRef<Path>) -> Res<jiff::Timestamp> {
             self.inner.modified_timestamp(path).await
         }
         async fn open_file(&self, path: impl AsRef<Path> + Send) -> Res<tokio::fs::File> {

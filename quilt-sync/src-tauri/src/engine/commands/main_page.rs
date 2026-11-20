@@ -6,8 +6,7 @@ use std::str::FromStr;
 use std::time::Duration;
 use std::time::SystemTime;
 
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use serde::Serialize;
 use tokio::time::Instant;
 use tokio::time::timeout_at;
@@ -647,12 +646,12 @@ pub(super) async fn get_main_page_packages_from_model(
 fn last_changed(
     commit: Option<&quilt::lineage::CommitState>,
     seen: Option<SystemTime>,
-    installed: Option<DateTime<Utc>>,
+    installed: Option<Timestamp>,
 ) -> Option<f64> {
     let newest = commit
         .map(|commit| commit.timestamp)
         .into_iter()
-        .chain(seen.map(DateTime::<Utc>::from))
+        .chain(seen.and_then(|seen| Timestamp::try_from(seen).ok()))
         .chain(installed)
         .max()?;
     Some(epoch_millis(newest))
@@ -664,7 +663,7 @@ fn last_changed(
 async fn installed_at(
     package: &quilt::InstalledPackage,
     lineage: &quilt::lineage::PackageLineage,
-) -> Option<DateTime<Utc>> {
+) -> Option<Timestamp> {
     let hash = lineage.current_hash().filter(|hash| !hash.is_empty())?;
     let manifest = package.paths.installed_manifest(&package.namespace, hash);
     package.storage.modified_timestamp(&manifest).await.ok()
@@ -1208,13 +1207,13 @@ pub struct MainPageWatcher {
     clippy::cast_precision_loss,
     reason = "epoch millis fit f64 exactly for any date this program can see"
 )]
-fn epoch_millis(at: DateTime<Utc>) -> f64 {
-    at.timestamp_millis() as f64
+fn epoch_millis(at: Timestamp) -> f64 {
+    at.as_millisecond() as f64
 }
 
 /// The pull's state. A pause doesn't stop it: the check still runs for every
 /// other package.
-fn toggle_state(enabled: bool, deadline: Option<DateTime<Utc>>, interval: Duration) -> ToggleState {
+fn toggle_state(enabled: bool, deadline: Option<Timestamp>, interval: Duration) -> ToggleState {
     let (activity, deadline) = match deadline.filter(|_| enabled) {
         Some(at) => (ToggleActivity::Armed, Some(epoch_millis(at))),
         None => (ToggleActivity::Idle, None),
@@ -1653,7 +1652,7 @@ mod tests {
 
     fn commit_at(ms: i64) -> quilt::lineage::CommitState {
         quilt::lineage::CommitState {
-            timestamp: chrono::DateTime::from_timestamp_millis(ms).unwrap(),
+            timestamp: jiff::Timestamp::from_millisecond(ms).unwrap(),
             hash: String::new(),
             prev_hashes: Vec::new(),
         }
@@ -1663,8 +1662,8 @@ mod tests {
         SystemTime::UNIX_EPOCH + Duration::from_millis(ms)
     }
 
-    fn installed_ms(ms: i64) -> Option<DateTime<Utc>> {
-        DateTime::from_timestamp_millis(ms)
+    fn installed_ms(ms: i64) -> Option<Timestamp> {
+        Timestamp::from_millisecond(ms).ok()
     }
 
     #[test]
@@ -3286,7 +3285,7 @@ mod tests {
 
     #[test]
     fn an_armed_toggle_is_exactly_the_one_that_carries_a_deadline() {
-        let at = Utc::now() + Duration::from_secs(30);
+        let at = Timestamp::now() + Duration::from_secs(30);
         let interval = Duration::from_secs(30);
         for (enabled, deadline, expected) in [
             (true, Some(at), ToggleActivity::Armed),
@@ -3324,7 +3323,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_pause_leaves_the_pull_ring_and_the_other_packages() {
-        let at = Utc::now() + Duration::from_secs(30);
+        let at = Timestamp::now() + Duration::from_secs(30);
         let reason = PausedReason::Other("workflow rejected metadata".to_string());
         let payload = MainPageWatcher::from(WatcherFacts {
             paused: vec![(("team", "plate-07").into(), reason.clone())],
@@ -3356,7 +3355,7 @@ mod tests {
     #[tokio::test]
     async fn the_watcher_payload_serializes_the_wire_shape() {
         // The UI's `MainPageWatcherData` test deserializes this exact JSON.
-        let at = chrono::DateTime::from_timestamp_millis(1_754_500_030_000).unwrap();
+        let at = jiff::Timestamp::from_millisecond(1_754_500_030_000).unwrap();
         let conflict = PausedReason::PullConflict(vec!["a.csv".to_string(), "b.csv".to_string()]);
         let payload = MainPageWatcher::from(WatcherFacts {
             paused: vec![(("team", "plate-07").into(), conflict.clone())],
@@ -3425,7 +3424,7 @@ mod tests {
 
     #[tokio::test]
     async fn times_cross_as_json_floats() {
-        let at = chrono::DateTime::from_timestamp_millis(1_754_500_030_000).unwrap();
+        let at = jiff::Timestamp::from_millisecond(1_754_500_030_000).unwrap();
         let json = serde_json::to_value(MainPageWatcher::from(WatcherFacts {
             next_pull_at: Some(at),
             ..facts(vec![(

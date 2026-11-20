@@ -411,7 +411,7 @@ mod quilt3_bucket {
             if hash == local {
                 // Ours was named just now; a name in milliseconds would be
                 // about a thousand times too large.
-                let now = chrono::Utc::now().timestamp();
+                let now = jiff::Timestamp::now().as_second();
                 assert!(
                     (now - seconds).abs() < 3600,
                     "pointer {name} is not now in seconds"

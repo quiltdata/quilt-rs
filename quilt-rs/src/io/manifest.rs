@@ -120,7 +120,7 @@ pub async fn upload_manifest(
 pub async fn tag_timestamp(
     remote: &impl Remote,
     manifest_uri: &ManifestUri,
-    timestamp: chrono::DateTime<chrono::Utc>,
+    timestamp: jiff::Timestamp,
 ) -> Res {
     // Tag the new commit.
     // If {self.commit.tag} does not already exist at
@@ -133,7 +133,8 @@ pub async fn tag_timestamp(
     // pushed hours apart. `upload_tag` overwrites, so the second push silently
     // takes over the tag and the *first* revision is left with a manifest but no
     // history entry.
-    let tag_timestamp = TagUri::timestamp(manifest_uri, Seconds(timestamp.timestamp()));
+    let tag_timestamp =
+        TagUri::timestamp(manifest_uri, Seconds(crate::time::whole_seconds(timestamp)));
     upload_tag(remote, manifest_uri, tag_timestamp).await
 }
 

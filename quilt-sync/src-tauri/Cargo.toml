@@ -20,12 +20,12 @@ agent-client-protocol = "5.1.0"
 async-trait.workspace = true
 axum = { version = "0.8.9", features = ["ws"] }
 base64.workspace = true
-chrono.workspace = true
 clap.workspace = true
 dotenv = "0.15"
 dunce = "1"
 dirs.workspace = true
 futures-util = "0.3.34"
+jiff.workspace = true
 # Named only to hold quilt-rs's `.quiltignore` matcher in the watched-root map;
 # quilt-rs owns the loading and matching (`quilt::quiltignore`).
 mockall = "0.15.0"

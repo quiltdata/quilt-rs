@@ -85,7 +85,7 @@ fn remote(namespace: &Namespace, hash: &str) -> ManifestUri {
 
 fn lineage(namespace: &Namespace, package: usize, files: usize) -> Res<PackageLineage> {
     let state = PathState {
-        timestamp: chrono::Utc::now(),
+        timestamp: jiff::Timestamp::now(),
         hash: Some(create_multihash(ZERO_HASH_B64)?),
     };
     let paths = (0..files)

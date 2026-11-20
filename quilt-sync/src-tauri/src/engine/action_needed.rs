@@ -11,8 +11,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 use std::time::Instant;
 
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use quilt_uri::Host;
 use quilt_uri::Namespace;
 use serde::Serialize;
@@ -121,7 +120,7 @@ pub struct Entry {
     pub subject: Subject,
     pub cause: Cause,
     /// When the cause started. Kept while its details change.
-    pub since: DateTime<Utc>,
+    pub since: Timestamp,
 }
 
 #[derive(Serialize)]
@@ -129,7 +128,8 @@ pub struct Entry {
 struct Wire {
     subject: Subject,
     cause: Cause,
-    since: DateTime<Utc>,
+    #[serde(with = "quilt_rs::time::json")]
+    since: Timestamp,
     line: String,
     page: String,
 }
@@ -286,7 +286,7 @@ impl ActionNeeded {
                     set.push(Entry {
                         subject,
                         cause,
-                        since: Utc::now(),
+                        since: Timestamp::now(),
                     });
                     true
                 }
@@ -509,7 +509,7 @@ mod tests {
         let entry = |subject, cause| Entry {
             subject,
             cause,
-            since: Utc::now(),
+            since: Timestamp::now(),
         };
         assert_eq!(
             entry(
@@ -546,7 +546,7 @@ mod tests {
         let entry = |subject, cause| Entry {
             subject,
             cause,
-            since: Utc::now(),
+            since: Timestamp::now(),
         };
         assert_eq!(
             entry(
@@ -577,7 +577,7 @@ mod tests {
         let entry = |subject, cause| Entry {
             subject,
             cause,
-            since: Utc::now(),
+            since: Timestamp::now(),
         };
         assert_eq!(
             routes::page(
@@ -642,7 +642,7 @@ mod tests {
         let entry = Entry {
             subject: Subject::package(&ns("a/b")),
             cause: Cause::of_pause(&PausedReason::PullConflict(vec!["x".into()])),
-            since: DateTime::from_timestamp(0, 0).unwrap(),
+            since: Timestamp::from_second(0).unwrap(),
         };
         assert_eq!(
             serde_json::to_value(&entry).unwrap(),

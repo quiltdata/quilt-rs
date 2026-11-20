@@ -184,7 +184,7 @@ pub async fn recommit_for_remote(
 
     lineage.commit = Some(CommitState {
         hash: new_top_hash,
-        timestamp: chrono::Utc::now(),
+        timestamp: jiff::Timestamp::now(),
         prev_hashes,
     });
 
@@ -261,7 +261,7 @@ mod tests {
 
         let commit = CommitState {
             hash: top_hash,
-            timestamp: chrono::Utc::now(),
+            timestamp: jiff::Timestamp::now(),
             prev_hashes: Vec::new(),
         };
 
@@ -273,7 +273,7 @@ mod tests {
             paths: BTreeMap::from([(
                 logical_key,
                 PathState {
-                    timestamp: chrono::Utc::now(),
+                    timestamp: jiff::Timestamp::now(),
                     hash: Some(row.hash.into()),
                 },
             )]),
@@ -617,7 +617,7 @@ mod tests {
         let lineage = PackageLineage {
             commit: Some(CommitState {
                 hash: top_hash.clone(),
-                timestamp: chrono::Utc::now(),
+                timestamp: jiff::Timestamp::now(),
                 prev_hashes: Vec::new(),
             }),
             ..PackageLineage::default()
@@ -672,7 +672,7 @@ mod tests {
         let lineage = PackageLineage {
             commit: Some(CommitState {
                 hash: top_hash.clone(),
-                timestamp: chrono::Utc::now(),
+                timestamp: jiff::Timestamp::now(),
                 prev_hashes: Vec::new(),
             }),
             ..PackageLineage::default()

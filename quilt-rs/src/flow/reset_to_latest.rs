@@ -230,7 +230,7 @@ mod tests {
         for base in ["OUTDATED_HASH", test_hash] {
             let source_lineage = PackageLineage {
                 commit: Some(crate::lineage::CommitState {
-                    timestamp: chrono::Utc::now(),
+                    timestamp: jiff::Timestamp::now(),
                     hash: "PENDING_LOCAL_COMMIT".to_string(),
                     prev_hashes: Vec::new(),
                 }),

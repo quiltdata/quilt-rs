@@ -41,7 +41,7 @@ pub mod settings;
 mod sqlite;
 pub mod stat_cache;
 pub mod state_store;
-mod time;
+pub mod time;
 
 pub mod workflow;
 

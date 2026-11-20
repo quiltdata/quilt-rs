@@ -71,7 +71,7 @@ pub async fn push_onto(
         ..parent.clone()
     };
     upload_manifest(storage, remote, &manifest_uri, &cache_path).await?;
-    tag_timestamp(remote, &manifest_uri, chrono::Utc::now()).await?;
+    tag_timestamp(remote, &manifest_uri, jiff::Timestamp::now()).await?;
 
     let latest = read_latest(remote, parent.origin.as_ref(), parent.clone()).await?;
     let on_parent = match &latest {

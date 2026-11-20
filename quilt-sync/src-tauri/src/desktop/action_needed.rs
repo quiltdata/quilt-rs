@@ -111,8 +111,7 @@ pub(super) fn open(app: &AppHandle, page: Option<&str>) {
 
 #[cfg(test)]
 mod tests {
-    use chrono::DateTime;
-    use chrono::Utc;
+    use jiff::Timestamp;
 
     use super::*;
     use crate::engine::action_needed::Cause;
@@ -122,7 +121,7 @@ mod tests {
         Entry {
             subject,
             cause,
-            since: DateTime::from_timestamp(0, 0).unwrap(),
+            since: Timestamp::from_second(0).unwrap(),
         }
     }
 
@@ -151,7 +150,7 @@ mod tests {
     fn an_entry_that_came_back_enters_again() {
         let before = [entry(Subject::App, Cause::Credentials)];
         let back = Entry {
-            since: Utc::now(),
+            since: Timestamp::now(),
             ..before[0].clone()
         };
         assert_eq!(

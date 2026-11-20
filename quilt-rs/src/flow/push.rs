@@ -412,7 +412,7 @@ mod tests {
     fn first_push_governed_lineage() -> PackageLineage {
         PackageLineage {
             commit: Some(CommitState {
-                timestamp: chrono::Utc::now(),
+                timestamp: jiff::Timestamp::now(),
                 // Deliberately not the built hash: the valid-path test relies on
                 // the push reaching the post-upload hash check, which proves the
                 // gate let it through.
@@ -1083,7 +1083,7 @@ mod tests {
         };
         let lineage = PackageLineage {
             commit: Some(CommitState {
-                timestamp: chrono::Utc::now(),
+                timestamp: jiff::Timestamp::now(),
                 hash: fixtures::top_hash::EMPTY_NULL_TOP_HASH.to_string(),
                 prev_hashes: Vec::new(),
             }),
@@ -1213,7 +1213,7 @@ mod tests {
         };
         let lineage = PackageLineage {
             commit: Some(CommitState {
-                timestamp: chrono::Utc::now(),
+                timestamp: jiff::Timestamp::now(),
                 hash: fixtures::manifest::TOP_HASH.to_string(),
                 prev_hashes: Vec::new(),
             }),
@@ -1321,7 +1321,7 @@ mod tests {
         };
         let lineage = PackageLineage {
             commit: Some(CommitState {
-                timestamp: chrono::Utc::now(),
+                timestamp: jiff::Timestamp::now(),
                 hash: fixtures::top_hash::EMPTY_NULL_TOP_HASH.to_string(),
                 prev_hashes: Vec::new(),
             }),

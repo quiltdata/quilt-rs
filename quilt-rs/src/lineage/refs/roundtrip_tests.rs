@@ -5,8 +5,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::path::PathBuf;
 
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use serde_json::Value;
 use serde_json::json;
 use tempfile::TempDir;
@@ -185,8 +184,8 @@ fn assert_round_trip(
     name: &str,
     original: &Value,
     back: &Value,
-    before: DateTime<Utc>,
-    after: DateTime<Utc>,
+    before: Timestamp,
+    after: Timestamp,
 ) -> Res {
     // A missing home reads as an empty one, as `data.json`'s parser has it.
     let home = |lineage: &Value| {
@@ -207,7 +206,7 @@ fn assert_round_trip(
         let paths: BTreeMap<String, Value> = serde_json::from_value(returned["paths"].clone())?;
         for (key, path) in paths {
             assert_eq!(path.get("hash"), None, "{at}: {key}");
-            let timestamp: DateTime<Utc> = serde_json::from_value(path["timestamp"].clone())?;
+            let timestamp: Timestamp = serde_json::from_value(path["timestamp"].clone())?;
             assert!(before <= timestamp && timestamp <= after, "{at}: {key}");
         }
     }
@@ -239,9 +238,9 @@ async fn each_fixture_moves_to_refs_and_back_keeping_what_it_held() -> Res {
         }
         assert_eq!(moved, expected, "{name}");
 
-        let before = Utc::now();
+        let before = Timestamp::now();
         on_refs.rollback_lineage().await?;
-        let after = Utc::now();
+        let after = Timestamp::now();
 
         assert_round_trip(name, original, &domain.data_json()?, before, after)?;
     }
@@ -282,13 +281,13 @@ async fn two_rollbacks_with_an_upgrade_between_both_complete() -> Res {
     let first_data_json = std::fs::read(domain.paths.lineage())?;
     let mut rolled = Vec::new();
 
-    let before = Utc::now();
+    let before = Timestamp::now();
     for _ in 0..2 {
         let on_refs = domain.on_refs();
         on_refs.list_installed_packages().await?;
         rolled.push(on_refs.rollback_lineage().await?);
     }
-    let after = Utc::now();
+    let after = Timestamp::now();
 
     rolled.sort();
     assert_eq!(domain.archives()?, rolled);

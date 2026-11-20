@@ -7,7 +7,7 @@ use crate::io::storage::auth::Tokens;
 use crate::lineage::CommitState;
 use crate::lineage::PathState;
 
-type Time = chrono::DateTime<chrono::Utc>;
+type Time = jiff::Timestamp;
 
 fn at(text: &str) -> Time {
     text.parse().expect("a time")

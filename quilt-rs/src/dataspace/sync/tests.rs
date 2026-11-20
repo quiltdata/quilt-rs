@@ -1014,7 +1014,7 @@ async fn a_filled_tick_refuses_a_local_registrys_entry_and_publishes_the_rest() 
     // As a lock carried from another checkout, filled for this contract.
     let contract = Contract::read(&world.storage, &world.dataspace(), None).await?;
     let mut lock = world.lock().await?;
-    lock.header.filled = Some(Utc::now().trunc_subsecs(0));
+    lock.header.filled = Some(crate::time::to_second(jiff::Timestamp::now()));
     lock.write_for(
         &world.storage,
         &contract,

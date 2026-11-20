@@ -5,8 +5,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use tokio::sync::RwLock;
 
 use crate::engine::autopull::AutosyncSettings;
@@ -448,7 +447,7 @@ async fn a_running_tick_advertises_the_next_tick_not_the_one_it_is_serving() -> 
         "precondition: a cold start has nothing armed"
     );
 
-    let before = DateTime::<Utc>::from(crate::engine::autopull::last_change::now());
+    let before = Timestamp::try_from(crate::engine::autopull::last_change::now()).unwrap();
     run_once(&model, &RoleCache::default(), &inner).await?;
 
     let at = inner
@@ -1598,7 +1597,7 @@ fn an_unattributed_login_failure_does_not_join_a_hosts_episode() {
 #[tokio::test]
 async fn arming_the_pull_records_a_deadline_one_cadence_out() {
     let inner = make_inner(enabled());
-    let before = DateTime::<Utc>::from(crate::engine::autopull::last_change::now());
+    let before = Timestamp::try_from(crate::engine::autopull::last_change::now()).unwrap();
     crate::engine::autopull::arm_next_pull(&inner, Duration::from_secs(30)).await;
     let at = inner
         .clocks
@@ -1635,7 +1634,7 @@ fn local_status(files: usize) -> quilt::lineage::InstalledPackageStatus {
 }
 
 /// The card's deadline, with the wait `enabled()` sets.
-async fn card_deadline(inner: &WatcherInner) -> Option<DateTime<Utc>> {
+async fn card_deadline(inner: &WatcherInner) -> Option<Timestamp> {
     crate::engine::autopull::next_publish_at(inner, Duration::from_secs(300)).await
 }
 
@@ -1646,7 +1645,7 @@ async fn a_local_edit_starts_the_countdown_without_waiting_for_a_tick() {
     // "1 file changed".
     let inner = make_inner(enabled());
     let ns: Namespace = ("acme", "demo").into();
-    let before = DateTime::<Utc>::from(crate::engine::autopull::last_change::now());
+    let before = Timestamp::try_from(crate::engine::autopull::last_change::now()).unwrap();
 
     crate::engine::autopull::observe_walk(
         &inner,
@@ -1722,7 +1721,7 @@ async fn a_deadline_already_past_still_shows_the_package_waiting() {
     assert!(
         card_deadline(&inner)
             .await
-            .is_some_and(|at| at < Utc::now())
+            .is_some_and(|at| at < Timestamp::now())
     );
 }
 
@@ -1745,7 +1744,7 @@ async fn the_card_reads_the_wait_as_it_is_now() {
     let long = crate::engine::autopull::next_publish_at(&inner, Duration::from_mins(10)).await;
     let short = crate::engine::autopull::next_publish_at(&inner, Duration::from_mins(5)).await;
     let (long, short) = (long.expect("waiting"), short.expect("waiting"));
-    assert_eq!(long - short, chrono::Duration::minutes(5));
+    assert_eq!(long - short, jiff::SignedDuration::from_mins(5));
 }
 
 #[tokio::test]

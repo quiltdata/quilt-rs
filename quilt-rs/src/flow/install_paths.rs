@@ -142,7 +142,7 @@ async fn commit_staged(
     storage: &impl Storage,
     staged: &Path,
     mutable_target: &Path,
-) -> Res<chrono::DateTime<chrono::Utc>> {
+) -> Res<jiff::Timestamp> {
     if let Some(parent) = mutable_target.parent() {
         storage.create_dir_all(parent).await?;
     }

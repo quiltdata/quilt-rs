@@ -5,8 +5,7 @@
 use std::path::Path;
 use std::path::PathBuf;
 
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use serde_json::Map;
 use serde_json::Value;
 use uuid::Uuid;
@@ -135,7 +134,7 @@ async fn legacy_file(
     store: &RefStore,
 ) -> Res<Vec<u8>> {
     let home = store.home(storage).await?;
-    let now = Utc::now();
+    let now = Timestamp::now();
     let mut packages = Map::new();
     for namespace in store.listed(storage).await? {
         let read = {
@@ -175,7 +174,7 @@ async fn entry(
     namespace: &Namespace,
     mut stored: PackageRef,
     tip: Option<TipCache>,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Res<Value> {
     let extra = std::mem::take(&mut stored.extra);
     let mut lineage = stored.into_lineage(tip.as_ref());
@@ -422,15 +421,15 @@ mod tests {
         let file = domain.home.join("acme/tipped/a.csv");
         std::fs::create_dir_all(file.parent().expect("a folder"))?;
         std::fs::write(&file, b"a")?;
-        let mtime: DateTime<Utc> = "2026-01-02T03:04:05Z".parse().expect("a time");
+        let mtime: Timestamp = "2026-01-02T03:04:05Z".parse().expect("a time");
         std::fs::File::options()
             .write(true)
             .open(&file)?
-            .set_modified(mtime.into())?;
+            .set_modified(std::time::SystemTime::try_from(mtime).expect("a system time"))?;
 
-        let before = Utc::now();
+        let before = Timestamp::now();
         let rolled = domain.down().await?;
-        let after = Utc::now();
+        let after = Timestamp::now();
 
         domain.assert_rolled_back(&rolled.archive)?;
         let legacy = domain.legacy()?;
@@ -470,7 +469,7 @@ mod tests {
             paths.values().all(|path| path.get("hash").is_none()),
             "{paths:?}"
         );
-        let timestamp = |key: &str| -> Res<DateTime<Utc>> {
+        let timestamp = |key: &str| -> Res<Timestamp> {
             Ok(serde_json::from_value(paths[key]["timestamp"].clone())?)
         };
         assert_eq!(timestamp("a.csv")?, mtime);

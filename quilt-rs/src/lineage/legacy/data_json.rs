@@ -541,7 +541,7 @@ mod tests {
                             paths: BTreeMap::from([(
                                 PathBuf::from("foo"),
                                 PathState {
-                                    timestamp: chrono::DateTime::from_timestamp_millis(
+                                    timestamp: jiff::Timestamp::from_millisecond(
                                         1_737_031_820_534,
                                     )
                                     .unwrap(),
@@ -729,7 +729,7 @@ mod tests {
         // Update the package lineage
         let updated_package_lineage = PackageLineage {
             commit: Some(CommitState {
-                timestamp: chrono::Utc::now(),
+                timestamp: jiff::Timestamp::now(),
                 hash: String::new(),
                 prev_hashes: Vec::new(),
             }),

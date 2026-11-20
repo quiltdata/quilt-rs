@@ -6,8 +6,7 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::path::PathBuf;
 
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use serde::Deserialize;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -200,7 +199,8 @@ pub(crate) struct TipCache {
     /// signs the read.
     pub bucket: String,
     pub namespace: Namespace,
-    pub checked_at: DateTime<Utc>,
+    #[serde(with = "crate::time::json")]
+    pub checked_at: Timestamp,
 }
 
 impl TipCache {
@@ -213,7 +213,7 @@ impl TipCache {
             latest_hash: latest_hash.to_string(),
             bucket: remote.bucket.clone(),
             namespace: remote.namespace.clone(),
-            checked_at: Utc::now(),
+            checked_at: Timestamp::now(),
         }
     }
 

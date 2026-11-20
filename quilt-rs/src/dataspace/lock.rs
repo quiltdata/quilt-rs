@@ -10,9 +10,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use aws_sdk_s3::primitives::ByteStream;
-use chrono::DateTime;
-use chrono::SubsecRound;
-use chrono::Utc;
+use jiff::Timestamp;
 use serde::Deserialize;
 use serde::Serialize;
 use thiserror::Error;
@@ -79,8 +77,8 @@ pub struct LockHeader {
     /// The hex SHA-256 of the `data.toml` the lock was written for.
     pub data_toml_hash: String,
     /// When the dataspace was first filled; `None` until then.
-    pub filled: Option<DateTime<Utc>>,
-    pub modified: DateTime<Utc>,
+    pub filled: Option<Timestamp>,
+    pub modified: Timestamp,
     pub dataspace: PathBuf,
     pub writer: Writer,
 }
@@ -331,11 +329,11 @@ pub enum LockError {
     Identity(&'static str),
 }
 
-fn header(contract: &Contract, writer: &Writer, filled: Option<DateTime<Utc>>) -> LockHeader {
+fn header(contract: &Contract, writer: &Writer, filled: Option<Timestamp>) -> LockHeader {
     LockHeader {
         data_toml_hash: contract.data_toml_hash().to_string(),
-        filled: filled.map(|time| time.trunc_subsecs(0)),
-        modified: Utc::now().trunc_subsecs(0),
+        filled: filled.map(crate::time::to_second),
+        modified: crate::time::to_second(Timestamp::now()),
         dataspace: contract.dataspace().to_path_buf(),
         writer: writer.clone(),
     }
@@ -384,23 +382,21 @@ fn parse(bytes: &[u8]) -> Result<Lock, LockError> {
     })
 }
 
-fn to_toml_time(time: DateTime<Utc>, field: &'static str) -> Result<Datetime, LockError> {
-    time.format("%Y-%m-%dT%H:%M:%SZ")
+fn to_toml_time(time: Timestamp, field: &'static str) -> Result<Datetime, LockError> {
+    time.strftime("%Y-%m-%dT%H:%M:%SZ")
         .to_string()
         .parse()
         .map_err(|_| LockError::Time(field))
 }
 
-fn from_toml_time(time: Datetime, field: &'static str) -> Result<DateTime<Utc>, LockError> {
+fn from_toml_time(time: Datetime, field: &'static str) -> Result<Timestamp, LockError> {
     if !matches!(
         time.offset,
         Some(toml::value::Offset::Z | toml::value::Offset::Custom { minutes: 0 })
     ) {
         return Err(LockError::Time(field));
     }
-    DateTime::parse_from_rfc3339(&time.to_string())
-        .map(|time| time.with_timezone(&Utc))
-        .map_err(|_| LockError::Time(field))
+    time.to_string().parse().map_err(|_| LockError::Time(field))
 }
 
 #[derive(Deserialize, Serialize)]

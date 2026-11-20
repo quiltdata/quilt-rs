@@ -348,7 +348,7 @@ impl HttpClient for TestHttpClient {
                     access_key_id: "test-access-key".to_string(),
                     secret_access_key: "test-secret-key".to_string(),
                     session_token: "test-session-token".to_string(),
-                    expiration: chrono::DateTime::from_timestamp(TIMESTAMP, 0).unwrap(),
+                    expiration: jiff::Timestamp::from_second(TIMESTAMP).unwrap(),
                 };
                 Ok(serde_json::from_value(serde_json::to_value(creds)?)?)
             }
@@ -373,7 +373,7 @@ impl HttpClient for TestHttpClient {
         let tokens = RemoteTokens {
             access_token: ACCESS_TOKEN.to_string(),
             refresh_token: "new-refresh-token".to_string(),
-            expires_at: chrono::DateTime::from_timestamp(TIMESTAMP, 0).unwrap(),
+            expires_at: jiff::Timestamp::from_second(TIMESTAMP).unwrap(),
         };
         Ok(serde_json::from_value(serde_json::to_value(tokens)?)?)
     }
@@ -431,7 +431,7 @@ impl HttpClient for OAuthTestHttpClient {
                     access_key_id: "oauth-access-key".to_string(),
                     secret_access_key: "oauth-secret-key".to_string(),
                     session_token: "oauth-session-token".to_string(),
-                    expiration: chrono::DateTime::from_timestamp(TIMESTAMP, 0).unwrap(),
+                    expiration: jiff::Timestamp::from_second(TIMESTAMP).unwrap(),
                 };
                 Ok(serde_json::from_value(serde_json::to_value(creds)?)?)
             }

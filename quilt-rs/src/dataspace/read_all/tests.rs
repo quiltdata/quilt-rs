@@ -2,6 +2,7 @@ use super::*;
 
 use std::path::PathBuf;
 
+use jiff::Timestamp;
 use test_log::test;
 
 use crate::LogicalKey;
@@ -360,7 +361,7 @@ async fn a_contract_edited_by_hand_keeps_the_bases_of_the_packages_it_still_name
     Ok(())
 }
 
-fn long_ago() -> chrono::DateTime<Utc> {
+fn long_ago() -> Timestamp {
     "2026-01-01T00:00:00Z".parse().expect("a time")
 }
 

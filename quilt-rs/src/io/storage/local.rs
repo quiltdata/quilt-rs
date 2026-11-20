@@ -1,8 +1,7 @@
 use std::path::Path;
 
 use aws_sdk_s3::primitives::ByteStream;
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 #[cfg(unix)]
@@ -260,9 +259,9 @@ impl Storage for LocalStorage {
             .is_ok_and(|m| m.file_type().is_symlink())
     }
 
-    async fn modified_timestamp(&self, path: impl AsRef<Path>) -> Res<DateTime<Utc>> {
+    async fn modified_timestamp(&self, path: impl AsRef<Path>) -> Res<Timestamp> {
         let modified = fs::metadata(path).await.map(|m| m.modified())??;
-        Ok(DateTime::<Utc>::from(modified))
+        Ok(crate::time::from_system(modified)?)
     }
 
     async fn open_file(&self, path: impl AsRef<Path>) -> Res<fs::File> {
@@ -512,7 +511,7 @@ pub(crate) mod tests {
         async fn is_file(&self, path: impl AsRef<Path>) -> bool {
             self.inner.is_file(path).await
         }
-        async fn modified_timestamp(&self, path: impl AsRef<Path>) -> Res<DateTime<Utc>> {
+        async fn modified_timestamp(&self, path: impl AsRef<Path>) -> Res<Timestamp> {
             self.inner.modified_timestamp(path).await
         }
         async fn open_file(&self, path: impl AsRef<Path> + Send) -> Res<fs::File> {

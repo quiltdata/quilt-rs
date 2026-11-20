@@ -606,7 +606,7 @@ impl<S: Storage + Send + Sync> Auth<S> {
             .await?
             .ok_or_else(|| LoginError::NoSession(Some(host.to_owned())))?;
 
-        if tokens.expires_at <= chrono::Utc::now() + chrono::Duration::seconds(60) {
+        if tokens.expires_at <= jiff::Timestamp::now() + jiff::SignedDuration::from_secs(60) {
             info!("⏳ Access token expired for {}, refreshing", host);
             let refreshed = self
                 .refresh_tokens_with_retry(http_client, &auth_io, host, &tokens)

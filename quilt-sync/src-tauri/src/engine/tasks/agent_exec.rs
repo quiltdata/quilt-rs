@@ -119,8 +119,8 @@ pub fn recheck(
 
 /// A claim's time as it lands in the manifest: RFC 3339 in whole seconds,
 /// rounded down, with `Z`.
-pub fn claim_time(now: chrono::DateTime<chrono::Utc>) -> String {
-    now.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+pub fn claim_time(now: jiff::Timestamp) -> String {
+    quilt_rs::time::rfc3339(quilt_rs::time::to_second(now))
 }
 
 /// The claim one run writes in every revision it publishes.

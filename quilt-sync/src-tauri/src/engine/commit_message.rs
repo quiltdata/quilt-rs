@@ -1,7 +1,5 @@
 use std::path::PathBuf;
 
-use chrono::Local;
-
 use crate::engine::quilt::lineage::{Change, ChangeSet};
 use quilt_uri::Namespace;
 
@@ -122,9 +120,9 @@ pub fn render_publish_message(template: &str, ctx: &PublishMessageContext<'_>) -
     if trimmed.is_empty() {
         return ctx.changes_summary.clone();
     }
-    let now = Local::now();
-    let date = now.format("%Y-%m-%d").to_string();
-    let time = now.format("%H:%M").to_string();
+    let now = jiff::ZonedDateTime::now();
+    let date = now.strftime("%Y-%m-%d").to_string();
+    let time = now.strftime("%H:%M").to_string();
     let datetime = format!("{date} {time}");
     let namespace = ctx.namespace.to_string();
     apply_placeholders(

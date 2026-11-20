@@ -4,7 +4,6 @@
 use std::collections::HashMap;
 use std::fmt;
 
-use chrono::serde::ts_seconds;
 use serde::Deserialize;
 use serde::Deserializer;
 use serde::Serialize;
@@ -20,8 +19,8 @@ use quilt_uri::Host;
 pub struct RemoteTokens {
     pub access_token: String,
     pub refresh_token: String,
-    #[serde(with = "ts_seconds")]
-    pub expires_at: chrono::DateTime<chrono::Utc>,
+    #[serde(with = "jiff::fmt::serde::timestamp::second::required")]
+    pub expires_at: jiff::Timestamp,
 }
 
 impl fmt::Debug for RemoteTokens {
@@ -49,7 +48,7 @@ impl From<RemoteTokens> for Tokens {
 pub(super) struct RemoteCredentials {
     pub(super) access_key_id: String,
     #[serde(deserialize_with = "date_from_rfc3339")]
-    pub(super) expiration: chrono::DateTime<chrono::Utc>,
+    pub(super) expiration: jiff::Timestamp,
     pub(super) secret_access_key: String,
     pub(super) session_token: String,
 }
@@ -78,12 +77,11 @@ impl From<RemoteCredentials> for Credentials {
 
 fn date_from_rfc3339<'de, D: Deserializer<'de>>(
     deserializer: D,
-) -> Result<chrono::DateTime<chrono::Utc>, D::Error> {
+) -> Result<jiff::Timestamp, D::Error> {
     use serde::de::Error;
     String::deserialize(deserializer).and_then(|s| {
-        chrono::DateTime::parse_from_rfc3339(&s)
+        s.parse::<jiff::Timestamp>()
             .map_err(|e| Error::custom(format!("Invalid RFC3339 date: {e}")))
-            .map(|dt| dt.with_timezone(&chrono::Utc))
     })
 }
 
@@ -167,7 +165,7 @@ mod tests {
         assert_eq!(tokens.refresh_token, "new-refresh-token");
         assert_eq!(
             tokens.expires_at,
-            chrono::DateTime::from_timestamp(1_708_444_800, 0).unwrap()
+            jiff::Timestamp::from_second(1_708_444_800).unwrap()
         );
     }
 
@@ -182,7 +180,7 @@ mod tests {
         assert_eq!(credentials.token, "test-session-token");
         assert_eq!(
             credentials.expires_at,
-            chrono::DateTime::from_timestamp(1_708_444_800, 0).unwrap()
+            jiff::Timestamp::from_second(1_708_444_800).unwrap()
         );
     }
 
@@ -202,9 +200,7 @@ mod tests {
         assert_eq!(creds.session_token, "test-token");
         assert_eq!(
             creds.expiration,
-            chrono::DateTime::parse_from_rfc3339("2024-02-20T15:00:00Z")
-                .unwrap()
-                .with_timezone(&chrono::Utc)
+            "2024-02-20T15:00:00Z".parse::<jiff::Timestamp>().unwrap()
         );
 
         // Test invalid RFC3339 date
@@ -229,9 +225,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             tokens.expires_at,
-            "2024-02-20T16:00:00Z"
-                .parse::<chrono::DateTime<chrono::Utc>>()
-                .unwrap()
+            "2024-02-20T16:00:00Z".parse::<jiff::Timestamp>().unwrap()
         );
         let later = RemoteTokens {
             expires_at: "2024-02-20T16:00:00.900Z".parse().unwrap(),
@@ -257,15 +251,13 @@ mod tests {
                 .unwrap()
                 .expiration
         };
-        let utc = "2024-02-20T16:00:00Z"
-            .parse::<chrono::DateTime<chrono::Utc>>()
-            .unwrap();
+        let utc = "2024-02-20T16:00:00Z".parse::<jiff::Timestamp>().unwrap();
         assert_eq!(read("2024-02-20T16:00:00Z"), utc);
         assert_eq!(read("2024-02-20T17:00:00+01:00"), utc);
         assert_eq!(
             read("2024-02-20T16:00:00.123Z"),
             "2024-02-20T16:00:00.123Z"
-                .parse::<chrono::DateTime<chrono::Utc>>()
+                .parse::<jiff::Timestamp>()
                 .unwrap()
         );
     }
@@ -275,7 +267,7 @@ mod tests {
         let tokens = RemoteTokens {
             access_token: "secret-access".to_string(),
             refresh_token: "secret-refresh".to_string(),
-            expires_at: chrono::DateTime::from_timestamp(TIMESTAMP, 0).unwrap(),
+            expires_at: jiff::Timestamp::from_second(TIMESTAMP).unwrap(),
         };
         let output = format!("{tokens:?}");
         assert!(output.contains("[REDACTED]"));
@@ -287,7 +279,7 @@ mod tests {
     fn remote_credentials_debug_redacts_secrets() {
         let creds = RemoteCredentials {
             access_key_id: "secret-key-id".to_string(),
-            expiration: chrono::DateTime::from_timestamp(TIMESTAMP, 0).unwrap(),
+            expiration: jiff::Timestamp::from_second(TIMESTAMP).unwrap(),
             secret_access_key: "secret-access-key".to_string(),
             session_token: "secret-session-token".to_string(),
         };

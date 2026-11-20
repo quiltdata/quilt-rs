@@ -23,7 +23,8 @@ use crate::paths::AUTH_TOKENS;
 pub struct Tokens {
     pub access_token: String,
     pub refresh_token: String,
-    pub expires_at: chrono::DateTime<chrono::Utc>,
+    #[serde(with = "crate::time::json")]
+    pub expires_at: jiff::Timestamp,
 }
 
 impl fmt::Debug for Tokens {
@@ -41,7 +42,8 @@ pub struct Credentials {
     pub access_key: String,
     pub secret_key: String,
     pub token: String,
-    pub expires_at: chrono::DateTime<chrono::Utc>,
+    #[serde(with = "crate::time::json")]
+    pub expires_at: jiff::Timestamp,
 }
 
 impl fmt::Debug for Credentials {
@@ -134,7 +136,7 @@ impl<S: Storage + Sync> AuthIo<S> {
         let credentials: Credentials = serde_json::from_slice(&bytes)?;
 
         // Check if credentials are expired
-        if credentials.expires_at <= chrono::Utc::now() {
+        if credentials.expires_at <= jiff::Timestamp::now() {
             warn!("❌ Credentials have expired");
             return Ok(None);
         }
@@ -216,9 +218,8 @@ impl<S: Storage> AuthIo<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use jiff::Timestamp;
     use test_log::test;
-
-    use chrono::Utc;
 
     use crate::io::storage::mocks::MockStorage;
 
@@ -237,7 +238,7 @@ mod tests {
         let test_tokens = Tokens {
             access_token: "test_access".to_string(),
             refresh_token: "test_refresh".to_string(),
-            expires_at: Utc::now(),
+            expires_at: Timestamp::now(),
         };
 
         // Write tokens
@@ -268,7 +269,7 @@ mod tests {
             access_key: "expired_key".to_string(),
             secret_key: "expired_secret".to_string(),
             token: "expired_token".to_string(),
-            expires_at: Utc::now() - chrono::Duration::minutes(1),
+            expires_at: Timestamp::now() - jiff::SignedDuration::from_mins(1),
         };
         auth.write_credentials(&expired_creds).await?;
         assert!(auth.read_credentials().await?.is_none());
@@ -278,7 +279,7 @@ mod tests {
             access_key: "test_key".to_string(),
             secret_key: "test_secret".to_string(),
             token: "test_token".to_string(),
-            expires_at: Utc::now() + chrono::Duration::minutes(1),
+            expires_at: Timestamp::now() + jiff::SignedDuration::from_mins(1),
         };
         auth.write_credentials(&valid_creds).await?;
 
@@ -300,14 +301,14 @@ mod tests {
         auth.write_tokens(&Tokens {
             access_token: "keep_access".to_string(),
             refresh_token: "keep_refresh".to_string(),
-            expires_at: Utc::now() + chrono::Duration::hours(1),
+            expires_at: Timestamp::now() + jiff::SignedDuration::from_hours(1),
         })
         .await?;
         auth.write_credentials(&Credentials {
             access_key: "drop_key".to_string(),
             secret_key: "drop_secret".to_string(),
             token: "drop_token".to_string(),
-            expires_at: Utc::now() + chrono::Duration::minutes(30),
+            expires_at: Timestamp::now() + jiff::SignedDuration::from_mins(30),
         })
         .await?;
 
@@ -352,14 +353,14 @@ mod tests {
         auth.write_tokens(&Tokens {
             access_token: "access".to_string(),
             refresh_token: "refresh".to_string(),
-            expires_at: Utc::now(),
+            expires_at: Timestamp::now(),
         })
         .await?;
         auth.write_credentials(&Credentials {
             access_key: "key".to_string(),
             secret_key: "secret".to_string(),
             token: "token".to_string(),
-            expires_at: Utc::now(),
+            expires_at: Timestamp::now(),
         })
         .await?;
         auth.write_client(&OAuthClient {
@@ -402,7 +403,7 @@ mod tests {
         let tokens = Tokens {
             access_token: "secret-access".to_string(),
             refresh_token: "secret-refresh".to_string(),
-            expires_at: Utc::now(),
+            expires_at: Timestamp::now(),
         };
         let output = format!("{tokens:?}");
         assert!(output.contains("[REDACTED]"));
@@ -416,7 +417,7 @@ mod tests {
             access_key: "secret-key".to_string(),
             secret_key: "secret-secret".to_string(),
             token: "secret-token".to_string(),
-            expires_at: Utc::now(),
+            expires_at: Timestamp::now(),
         };
         let output = format!("{creds:?}");
         assert!(output.contains("[REDACTED]"));
