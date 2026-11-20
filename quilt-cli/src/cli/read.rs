@@ -2,18 +2,19 @@ use std::path::PathBuf;
 
 use quilt_rs::dataspace::conflict::CONFLICT_FILE;
 use quilt_rs::dataspace::contract::CONTRACT_FILE;
-use quilt_rs::dataspace::lock::Writer;
 use quilt_rs::dataspace::read::ReadOutcome;
 use quilt_rs::dataspace::read_all::DataspaceRead;
 use quilt_rs::dataspace::read_all::EntryRead;
-use quilt_rs::dataspace::read_all::ReadAllError;
 use quilt_rs::dataspace::read_all::read_all;
+use quilt_rs::domain::DomainRoot;
+use quilt_rs::domain::LocalRegistry;
 use quilt_rs::io::remote::Remote;
 use quilt_rs::io::remote::RemoteS3;
 use quilt_rs::io::storage::LocalStorage;
 use quilt_rs::paths::DomainPaths;
 
 use crate::cli::Error;
+use crate::cli::dataspace;
 use crate::cli::output::Render;
 use crate::cli::output::Std;
 use crate::cli::text::printable;
@@ -217,20 +218,30 @@ impl Render for Output {
     }
 }
 
-pub async fn command(domain: PathBuf, args: Input) -> Std {
-    Std::from_result(model(domain, args).await)
+pub async fn command(credentials: PathBuf, domain: Option<DomainRoot>, args: Input) -> Std {
+    Std::from_result(model(credentials, domain.as_ref(), args).await)
 }
 
-/// Reads with no Domain: the domain folder supplies only the credentials a
-/// catalog's login keeps there.
-pub async fn model(domain: PathBuf, args: Input) -> Result<Output, Error> {
-    let remote = RemoteS3::new(DomainPaths::new(domain), LocalStorage::new());
-    read_with(&remote, args).await
+/// Reads with the local registry of `domain`, where there is one, and no
+/// other part of a Domain: the `credentials` folder supplies the credentials
+/// a catalog's login keeps there.
+pub async fn model(
+    credentials: PathBuf,
+    domain: Option<&DomainRoot>,
+    args: Input,
+) -> Result<Output, Error> {
+    let remote = RemoteS3::new(DomainPaths::new(credentials), LocalStorage::new());
+    let local = domain.map(DomainRoot::local);
+    read_with(&remote, local.as_ref(), args).await
 }
 
-async fn read_with(remote: &impl Remote, Input { dataspace }: Input) -> Result<Output, Error> {
-    let writer = Writer::without_domain().map_err(ReadAllError::from)?;
-    let read = read_all(&LocalStorage::new(), remote, None, &dataspace, &writer).await?;
+async fn read_with(
+    remote: &impl Remote,
+    local: Option<&LocalRegistry>,
+    Input { dataspace }: Input,
+) -> Result<Output, Error> {
+    let writer = dataspace::writer(local).await?;
+    let read = read_all(&LocalStorage::new(), remote, local, &dataspace, &writer).await?;
     Ok(Output { dataspace, read })
 }
 
@@ -322,12 +333,87 @@ mod tests {
         Std::from_result(
             read_with(
                 remote,
+                None,
                 Input {
                     dataspace: dataspace.to_path_buf(),
                 },
             )
             .await,
         )
+    }
+
+    /// With a Domain, `quilt read` reaches its local registry: a local
+    /// package is read from it, and the lock names the registry.
+    #[test(tokio::test)]
+    async fn a_local_package_is_read_from_the_domains_local_registry() -> Result<(), Error> {
+        let domain = tempfile::TempDir::new()?;
+        let domain = DomainRoot::new(domain.path());
+        let local = domain.local();
+        let storage = LocalStorage::new();
+        local.rename(&storage, "lab-mac").await?;
+        let hash = publish_local(&local, "me/analysis", b"result").await?;
+        let dataspace = tempfile::TempDir::new()?;
+        std::fs::write(
+            dataspace.path().join("data.toml"),
+            "[packages]\nread = [\"quilt+local://#package=me/analysis\"]\n",
+        )?;
+        let input = || Input {
+            dataspace: dataspace.path().to_path_buf(),
+        };
+
+        let without = Std::from_result(read_with(&MockRemote::default(), None, input()).await);
+        let with = Std::from_result(read_with(&MockRemote::default(), Some(&local), input()).await);
+
+        assert!(without.failed(), "{without:?}");
+        assert!(!with.failed(), "{with:?}");
+        let Std::Out(output) = with else {
+            panic!("expected a success, got {with:?}");
+        };
+        assert_eq!(output.to_json()["entries"][0]["revision"], hash);
+        let folder = dataspace.path().join("lab-mac@local/me/analysis");
+        assert_eq!(std::fs::read(folder.join("a.txt"))?, b"result");
+        let lock = std::fs::read_to_string(dataspace.path().join("data.lock.toml"))?;
+        assert!(lock.contains("local_registry = \"lab-mac\""), "{lock}");
+        Ok(())
+    }
+
+    /// Commits `body` as `a.txt` of `package` in `local` and publishes it
+    /// there, as another dataspace's publish would; returns its hash.
+    async fn publish_local(
+        local: &LocalRegistry,
+        package: &str,
+        body: &'static [u8],
+    ) -> Result<String, Error> {
+        use quilt_rs::flow::WorkflowCheck;
+        use quilt_rs::io::manifest::RowContent;
+        let storage = LocalStorage::new();
+        let namespace = quilt_uri::Namespace::try_from(package)?;
+        let key = quilt_rs::LogicalKey::new("a.txt")?;
+        let manifest = Manifest {
+            rows: vec![ManifestRow {
+                logical_key: key.clone(),
+                ..ManifestRow::default()
+            }],
+            ..Manifest::default()
+        };
+        let source = tempfile::TempDir::new()?;
+        let file = source.path().join("a.txt");
+        std::fs::write(&file, body)?;
+        let content = std::collections::BTreeMap::from([(key, RowContent::Path(file))]);
+        let (_, recorded) = quilt_rs::flow::record(
+            local,
+            &storage,
+            &MockRemote::default(),
+            WorkflowCheck::Warn { host: None },
+            &namespace,
+            quilt_rs::lineage::PackageLineage::default(),
+            manifest,
+            &content,
+        )
+        .await?;
+        let hash = recorded.hash().expect("a revision").to_string();
+        local.publish(&storage, &namespace, None, &hash).await?;
+        Ok(hash)
     }
 
     #[test(tokio::test)]
@@ -490,8 +576,8 @@ mod tests {
             dataspace: dataspace.path().to_path_buf(),
         };
 
-        let first = Std::from_result(model(domain.path().to_path_buf(), input()).await);
-        let again = Std::from_result(model(domain.path().to_path_buf(), input()).await);
+        let first = Std::from_result(model(domain.path().to_path_buf(), None, input()).await);
+        let again = Std::from_result(model(domain.path().to_path_buf(), None, input()).await);
 
         assert!(!first.failed() && !again.failed(), "{first:?} {again:?}");
         let Std::Out(first) = first else {

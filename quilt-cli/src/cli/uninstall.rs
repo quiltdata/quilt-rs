@@ -6,6 +6,8 @@ use crate::cli::output::Std;
 use quilt_rs::flow::Pruned;
 use quilt_uri::Namespace;
 
+pub mod dataspace;
+
 #[derive(Debug)]
 pub struct Input {
     pub namespace: Namespace,

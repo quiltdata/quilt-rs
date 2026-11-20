@@ -11,10 +11,14 @@ use clap::Subcommand;
 use clap::builder::TypedValueParser as _;
 use tracing::log;
 
+use quilt_rs::dataspace::contract::Access;
 use quilt_rs::dataspace::contract::PackageKey;
+use quilt_rs::dataspace::install::InstallError;
+use quilt_rs::dataspace::lock::LockError;
 use quilt_rs::dataspace::publish_all::PublishAllError;
 use quilt_rs::dataspace::read_all::ReadAllError;
 use quilt_rs::dataspace::reattach::ReattachError;
+use quilt_rs::dataspace::uninstall::UninstallError;
 use quilt_rs::domain::DOMAIN_DIR_NAME;
 use quilt_rs::domain::DomainRoot;
 use quilt_rs::flow::UserMeta;
@@ -27,6 +31,7 @@ mod browse;
 mod catalog;
 mod commit;
 mod create;
+mod dataspace;
 mod gc;
 mod history;
 mod home;
@@ -147,6 +152,13 @@ fn dataspace_domain_dir() -> Result<PathBuf, Error> {
     dirs::data_local_dir()
         .map(|dir| dir.join(DOMAIN_DIR_NAME))
         .ok_or(Error::Domain)
+}
+
+/// The Domain in [`dataspace_domain_dir`], where one exists.
+fn existing_domain() -> Option<DomainRoot> {
+    dataspace_domain_dir()
+        .ok()
+        .and_then(|dir| dataspace::existing(&dir))
 }
 
 fn get_default_home_dir() -> Result<PathBuf, Error> {
@@ -544,12 +556,36 @@ enum Commands {
         overwrite: bool,
     },
     /// Install package locally
+    ///
+    /// With `--dataspace`, adds the package to that dataspace's `data.toml`
+    /// under `--access`, unpinned, then reads it into its working folder and
+    /// records the revision in `data.lock.toml`. A revision the URI names is
+    /// read and recorded in the lock, not pinned. A package already listed
+    /// under another access is refused: edit `data.toml` to change it.
+    /// Exits 1 when the package was not read whole.
     #[command(group(clap::ArgGroup::new("keep").args(["keep_all", "keep_folder"])))]
     Install {
         /// Source URI for the package.
-        /// Ex. `quilt+s3://bucket#package=foo/bar`
+        /// Ex. `quilt+s3://bucket#package=foo/bar`, or with `--dataspace`
+        /// `quilt+local://#package=foo/bar` for this machine's local registry
         #[arg(value_name = "PKG_URI")]
         uri: String,
+        /// Install into this dataspace, the folder holding `data.toml`,
+        /// rather than the home. One with no `data.toml` gets one
+        #[arg(
+            long,
+            value_name = "DIR",
+            conflicts_with_all = ["namespace", "keep_all", "keep_folder", "no_download"]
+        )]
+        dataspace: Option<PathBuf>,
+        /// With --dataspace, the list the package goes in: read, write,
+        /// replace or sync (the default)
+        #[arg(long, requires = "dataspace")]
+        access: Option<Access>,
+        /// With --dataspace, the working folder, relative to the dataspace;
+        /// omit to place it by its registry and name
+        #[arg(long, value_name = "DIR", requires = "dataspace")]
+        folder: Option<PathBuf>,
         /// Namespace for the package, ex. foo/bar.
         #[arg(short, long)]
         namespace: Option<String>,
@@ -666,9 +702,10 @@ enum Commands {
         no_workflow: bool,
     },
     /// Publish a dataspace's `write` and `replace` entries from their working
-    /// folders, with no Domain
+    /// folders, with no Domain but its local registry
     ///
-    /// Leaves out what the ignore rules leave out of a commit. A package also
+    /// A `quilt+local://` entry is published to the Domain's local registry,
+    /// where a Domain exists, and refused otherwise. Leaves out what the ignore rules leave out of a commit. A package also
     /// under `read` publishes only on its base, and is read first where
     /// `latest` has moved. Records each revision that became `latest` in
     /// `data.lock.toml`. Exits 1 unless `latest` holds every package's folder.
@@ -678,9 +715,10 @@ enum Commands {
         dataspace: PathBuf,
     },
     /// Read a dataspace's `read` entries into their working folders, with no
-    /// Domain
+    /// Domain but its local registry
     ///
-    /// Records each revision read in `data.lock.toml`. A file changed here is
+    /// A `quilt+local://` entry is read from the Domain's local registry,
+    /// where a Domain exists, and left unread otherwise. Records each revision read in `data.lock.toml`. A file changed here is
     /// kept, unless the revision changed it too: then that package is left as
     /// it is. Exits 1 when any package was not read whole.
     Read {
@@ -767,9 +805,28 @@ enum Commands {
     ///
     /// Deletes the working files and the installed manifests. The downloaded
     /// objects stay for `quilt gc` unless `--prune` is given.
+    ///
+    /// With `--dataspace`, removes the package from that dataspace's
+    /// `data.toml` and `data.lock.toml`, and deletes its working folder if a
+    /// read filled it inside the dataspace. Local commits not pushed stay in
+    /// the Domain, for `quilt reattach`. `--prune` then clears what the
+    /// Domain holds of the package that its bucket holds too.
     Uninstall {
         #[command(flatten)]
         pkg: PackageRef,
+        /// The package, by its URI, to uninstall from `--dataspace`; or name
+        /// it with `--namespace`.
+        /// Ex. `quilt+s3://bucket#package=foo/bar`
+        #[arg(
+            value_name = "PACKAGE",
+            requires = "dataspace",
+            conflicts_with = "namespace"
+        )]
+        package: Option<PackageKey>,
+        /// Uninstall from this dataspace, the folder holding `data.toml`,
+        /// rather than the home
+        #[arg(long, value_name = "DIR")]
+        dataspace: Option<PathBuf>,
         /// Also delete the package's downloaded objects that no other
         /// installed package uses, and print what was freed
         #[arg(long)]
@@ -867,12 +924,58 @@ pub async fn init(args: Args) -> Result<Std, Error> {
         .await);
     }
     let root_dir = get_domain_dir(args.domain)?;
-    // It uses no Domain, so it runs before anything touches one.
+    // The dataspace commands use no lineage, so they run before anything
+    // touches it; they reach the Domain's local registry where one exists.
     if let Commands::Read { dataspace } = args.command {
-        return Ok(read::command(root_dir, read::Input { dataspace }).await);
+        let input = read::Input { dataspace };
+        return Ok(read::command(root_dir, existing_domain(), input).await);
     }
     if let Commands::Publish { dataspace } = args.command {
-        return Ok(publish::command(root_dir, publish::Input { dataspace }).await);
+        let input = publish::Input { dataspace };
+        return Ok(publish::command(root_dir, existing_domain(), input).await);
+    }
+    if let Commands::Install {
+        dataspace: Some(dataspace),
+        uri,
+        access,
+        folder,
+        path,
+        ..
+    } = args.command
+    {
+        let input = install::dataspace::Input {
+            dataspace,
+            uri,
+            access: access.unwrap_or(Access::Sync),
+            paths: path.unwrap_or_default(),
+            folder,
+        };
+        log::debug!("Installing into a dataspace {input:?}");
+        let installing = install::dataspace::command(root_dir, existing_domain(), input);
+        return Ok(Box::pin(installing).await);
+    }
+    if let Commands::Uninstall {
+        dataspace: Some(dataspace),
+        package,
+        pkg,
+        prune,
+    } = args.command
+    {
+        let package = match (package, pkg.namespace) {
+            (Some(key), _) => uninstall::dataspace::Package::Key(key),
+            (None, Some(namespace)) => {
+                uninstall::dataspace::Package::Namespace(namespace.try_into()?)
+            }
+            (None, None) => return Err(Error::PackageRequired),
+        };
+        let input = uninstall::dataspace::Input {
+            dataspace,
+            package,
+            prune,
+        };
+        log::debug!("Uninstalling from a dataspace {input:?}");
+        let uninstalling = uninstall::dataspace::command(root_dir, existing_domain(), input);
+        return Ok(Box::pin(uninstalling).await);
     }
     if let Commands::Reattach {
         dataspace,
@@ -985,6 +1088,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             keep_all,
             keep_folder,
             no_download,
+            ..
         } => {
             let args = install::Input {
                 namespace: parse_optional_namespace(namespace)?,
@@ -1110,7 +1214,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             log::debug!("Undoing commit {args:?}");
             Ok(undo_commit::command(m, args).await)
         }
-        Commands::Uninstall { pkg, prune } => {
+        Commands::Uninstall { pkg, prune, .. } => {
             let namespace = pkg.resolve(&m).await?;
             let args = uninstall::Input { namespace, prune };
 
@@ -1173,6 +1277,21 @@ Then run:
 
     #[error(transparent)]
     Reattach(#[from] ReattachError),
+
+    #[error(transparent)]
+    Install(#[from] InstallError),
+
+    #[error(transparent)]
+    Uninstall(#[from] UninstallError),
+
+    #[error(transparent)]
+    Lock(#[from] LockError),
+
+    #[error("Name the package to uninstall from the dataspace: its URI, or --namespace")]
+    PackageRequired,
+
+    #[error("{0} is in more than one registry in data.toml; name the one to uninstall by its URI")]
+    AmbiguousPackage(Namespace),
 
     #[error("--no-download downloads nothing, so it cannot install --path or a &path= in the URI")]
     NoDownloadWithPath,
@@ -1292,6 +1411,29 @@ impl Error {
                 ReattachError::Base(_) => "invalid_base",
                 _ => "dataspace",
             },
+            Error::Install(err) => match err {
+                InstallError::Contract(_) => "contract",
+                InstallError::Lock(_) => "lock",
+                InstallError::Mismatch(_) => "lock_mismatch",
+                InstallError::Uri { .. } => "invalid_uri",
+                InstallError::Access { .. } => "access_declared",
+                InstallError::Folder { .. } => "folder_declared",
+                InstallError::Catalog { .. } => "catalog_declared",
+                InstallError::Pinned { .. } => "pinned",
+                InstallError::RevisionNotRead(_) => "revision_not_read",
+                InstallError::LocalRegistry => "local_registry",
+                _ => "dataspace",
+            },
+            Error::Uninstall(err) => match err {
+                UninstallError::Contract(_) => "contract",
+                UninstallError::Lock(_) => "lock",
+                UninstallError::Mismatch(_) => "lock_mismatch",
+                UninstallError::NotInstalled(_) => "not_installed",
+                _ => "dataspace",
+            },
+            Error::Lock(_) => "lock",
+            Error::PackageRequired => "package_required",
+            Error::AmbiguousPackage(_) => "ambiguous_package",
             Error::NoDownloadWithPath => "no_download_with_path",
             Error::NamespaceRequired => "namespace_required",
             Error::CommitMetaInvalid(_) => "commit_meta_invalid",
@@ -1880,6 +2022,54 @@ mod tests {
         ));
         assert!(parse(&["--keep-all", "--keep-folder", "a"]).is_err());
         assert!(parse(&["--no-download"]).is_err());
+    }
+
+    /// `--dataspace` takes an access, which needs it, and none of the home's
+    /// flags.
+    #[test]
+    fn install_into_a_dataspace_takes_an_access_and_no_home_flags() {
+        let parse = |args: &[&str]| {
+            Args::try_parse_from([&["quilt", "install", "quilt+s3://b#package=a/b"], args].concat())
+        };
+        assert!(matches!(
+            parse(&["--dataspace", "ds", "--access", "read", "--path", "x/"])
+                .expect("parses")
+                .command,
+            Commands::Install {
+                dataspace: Some(_),
+                access: Some(Access::Read),
+                path: Some(_),
+                ..
+            }
+        ));
+        assert!(matches!(
+            parse(&["--dataspace", "ds"]).expect("parses").command,
+            Commands::Install { access: None, .. }
+        ));
+        assert!(parse(&["--access", "read"]).is_err());
+        assert!(parse(&["--dataspace", "ds", "--access", "all"]).is_err());
+        assert!(parse(&["--dataspace", "ds", "--keep-all"]).is_err());
+        assert!(parse(&["--dataspace", "ds", "-n", "a/b"]).is_err());
+    }
+
+    /// A package URI names what to uninstall from a dataspace, which it
+    /// needs; `-n` names it instead.
+    #[test]
+    fn uninstall_from_a_dataspace_takes_a_package_or_a_namespace() {
+        let parse = |args: &[&str]| Args::try_parse_from([&["quilt", "uninstall"], args].concat());
+        assert!(matches!(
+            parse(&["--dataspace", "ds", "quilt+s3://b#package=a/b"])
+                .expect("parses")
+                .command,
+            Commands::Uninstall {
+                dataspace: Some(_),
+                package: Some(_),
+                ..
+            }
+        ));
+        assert!(parse(&["--dataspace", "ds", "-n", "a/b"]).is_ok());
+        assert!(parse(&["quilt+s3://b#package=a/b"]).is_err());
+        assert!(parse(&["--dataspace", "ds", "quilt+s3://b#package=a/b", "-n", "a/b"]).is_err());
     }
 
     #[test]
@@ -2595,6 +2785,9 @@ mod tests {
                 keep_all: false,
                 keep_folder: Vec::new(),
                 no_download: false,
+                dataspace: None,
+                access: None,
+                folder: None,
             },
         };
         let mut output = Vec::new();
@@ -3564,6 +3757,8 @@ mod tests {
                     namespace: Some(pkg::NAMESPACE_STR.to_string()),
                 },
                 prune: false,
+                package: None,
+                dataspace: None,
             },
         };
 
@@ -3597,6 +3792,8 @@ mod tests {
                     namespace: Some("in/valid".to_string()),
                 },
                 prune: false,
+                package: None,
+                dataspace: None,
             },
         };
 
@@ -3738,6 +3935,8 @@ mod tests {
                 Commands::Uninstall {
                     pkg: pkg(),
                     prune: false,
+                    package: None,
+                    dataspace: None,
                 },
             ),
         ];
@@ -3830,6 +4029,9 @@ mod tests {
                 keep_all: false,
                 keep_folder: Vec::new(),
                 no_download: false,
+                dataspace: None,
+                access: None,
+                folder: None,
             },
         };
 

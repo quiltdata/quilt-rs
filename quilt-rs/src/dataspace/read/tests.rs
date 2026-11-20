@@ -186,7 +186,7 @@ async fn a_first_read_fills_the_entrys_paths_and_writes_the_whole_revisions_meta
         "read = [{{ package = \"team/raw\", revision = \"{FIRST}\", path = \"src/\" }}]"
     ));
 
-    let outcome = read(&storage, &remote, &entry, None).await?;
+    let outcome = read(&storage, &remote, None, &entry, None).await?;
 
     assert_eq!(outcome.lock_base(), Some(FIRST));
     assert_eq!(report(outcome).placed, keys(&["src/a.txt", METADATA_FILE]));
@@ -219,7 +219,7 @@ async fn a_revision_whose_metadata_toml_cannot_hold_is_not_read() -> Res {
     header.set_meta(meta, numbers);
     publish_with(&remote, FIRST, &[("a.txt", b"alpha")], header).await?;
 
-    let outcome = read(&storage, &remote, &whole(), None).await;
+    let outcome = read(&storage, &remote, None, &whole(), None).await;
 
     assert!(
         matches!(outcome, Err(EntryError::MetadataUnwritable(_))),
@@ -242,7 +242,7 @@ async fn a_package_holding_anything_at_the_metadata_files_place_is_refused() -> 
         let storage = MockStorage::default();
         publish(&remote, FIRST, &[("a.txt", b"alpha"), (name, b"{}")]).await?;
 
-        let outcome = read(&storage, &remote, &whole(), None).await;
+        let outcome = read(&storage, &remote, None, &whole(), None).await;
 
         assert!(
             matches!(outcome, Err(EntryError::HoldsMetadataFile)),
@@ -260,7 +260,7 @@ async fn a_package_holding_anything_at_the_metadata_files_place_is_refused() -> 
     )];
     put_manifest(&remote, FIRST, &manifest).await?;
 
-    let folder_meta = read(&storage, &remote, &whole(), None).await;
+    let folder_meta = read(&storage, &remote, None, &whole(), None).await;
 
     assert!(
         matches!(folder_meta, Err(EntryError::HoldsMetadataFile)),
@@ -275,7 +275,14 @@ async fn an_entry_under_another_access_is_not_read() -> Res {
     let storage = MockStorage::default();
     publish(&remote, FIRST, &[("a.txt", b"alpha")]).await?;
 
-    let outcome = read(&storage, &remote, &entry("write = [\"team/raw\"]"), None).await;
+    let outcome = read(
+        &storage,
+        &remote,
+        None,
+        &entry("write = [\"team/raw\"]"),
+        None,
+    )
+    .await;
 
     assert!(
         matches!(outcome, Err(EntryError::Access(Access::Write))),
@@ -292,6 +299,7 @@ async fn a_local_registrys_package_is_not_read() {
     let outcome = read(
         &MockStorage::default(),
         &MockRemote::default(),
+        None,
         &entry,
         None,
     )
@@ -303,6 +311,29 @@ async fn a_local_registrys_package_is_not_read() {
     );
 }
 
+/// Given the local registry it names, a local package is read from it.
+#[test(tokio::test)]
+async fn a_local_registrys_package_is_read_from_the_registry_given() -> Res {
+    let storage = MockStorage::default();
+    let local = crate::domain::DomainRoot::new(storage.temp_dir.path().join("domain")).local();
+    local.rename(&storage, "lab-mac").await?;
+    let hash = crate::dataspace::store::tests::publish_local(
+        &storage,
+        &local,
+        "team/raw",
+        &[("a.txt", b"alpha")],
+    )
+    .await?;
+    let mut entry = entry("read = [\"quilt+local://lab-mac#package=team/raw\"]");
+    entry.folder = storage.temp_dir.path().join("rnaseq/team/raw");
+
+    let outcome = read(&storage, &MockRemote::default(), Some(&local), &entry, None).await?;
+
+    assert_eq!(report(outcome).revision, hash);
+    assert_eq!(std::fs::read(entry.folder.join("a.txt"))?, b"alpha");
+    Ok(())
+}
+
 #[test(tokio::test)]
 async fn a_first_read_agrees_with_identical_files_and_leaves_local_work() -> Res {
     let remote = MockRemote::default();
@@ -311,7 +342,7 @@ async fn a_first_read_agrees_with_identical_files_and_leaves_local_work() -> Res
     write(&storage, "a.txt", b"alpha").await?;
     write(&storage, "mine.txt", b"local").await?;
 
-    let outcome = read(&storage, &remote, &whole(), None).await?;
+    let outcome = read(&storage, &remote, None, &whole(), None).await?;
 
     assert_eq!(report(outcome).placed, keys(&["b.txt", METADATA_FILE]));
     assert_eq!(text(&storage, "mine.txt").await.as_deref(), Some("local"));
@@ -325,7 +356,7 @@ async fn a_first_read_over_a_differing_file_is_blocked_and_changes_nothing() -> 
     publish(&remote, FIRST, &[("a.txt", b"alpha"), ("b.txt", b"beta")]).await?;
     write(&storage, "a.txt", b"mine").await?;
 
-    let outcome = read(&storage, &remote, &whole(), None).await?;
+    let outcome = read(&storage, &remote, None, &whole(), None).await?;
 
     assert_eq!(outcome.lock_base(), None);
     assert_eq!(
@@ -357,7 +388,7 @@ async fn a_newer_revision_replaces_unchanged_files_and_keeps_local_changes() -> 
         ],
     )
     .await?;
-    read(&storage, &remote, &entry, None).await?;
+    read(&storage, &remote, None, &entry, None).await?;
     write(&storage, "mine.txt", b"local edit").await?;
     publish(
         &remote,
@@ -371,7 +402,7 @@ async fn a_newer_revision_replaces_unchanged_files_and_keeps_local_changes() -> 
     )
     .await?;
 
-    let outcome = read(&storage, &remote, &entry, Some(FIRST)).await?;
+    let outcome = read(&storage, &remote, None, &entry, Some(FIRST)).await?;
 
     assert_eq!(outcome.lock_base(), Some(SECOND));
     let report = report(outcome);
@@ -402,7 +433,7 @@ async fn a_local_change_to_a_file_the_revision_changed_blocks_the_read() -> Res 
         ],
     )
     .await?;
-    read(&storage, &remote, &entry, None).await?;
+    read(&storage, &remote, None, &entry, None).await?;
     write(&storage, "edit.txt", b"local edit").await?;
     write(&storage, "gone.txt", b"local edit").await?;
     publish(
@@ -412,7 +443,7 @@ async fn a_local_change_to_a_file_the_revision_changed_blocks_the_read() -> Res 
     )
     .await?;
 
-    let outcome = read(&storage, &remote, &entry, Some(FIRST)).await?;
+    let outcome = read(&storage, &remote, None, &entry, Some(FIRST)).await?;
 
     assert_eq!(
         outcome,
@@ -431,10 +462,10 @@ async fn a_file_missing_from_the_folder_is_filled_again() -> Res {
     let storage = MockStorage::default();
     let entry = whole();
     publish(&remote, FIRST, &[("a.txt", b"alpha")]).await?;
-    read(&storage, &remote, &entry, None).await?;
+    read(&storage, &remote, None, &entry, None).await?;
     storage.remove_file(folder().join("a.txt")).await?;
 
-    let outcome = read(&storage, &remote, &entry, Some(FIRST)).await?;
+    let outcome = read(&storage, &remote, None, &entry, Some(FIRST)).await?;
 
     assert_eq!(report(outcome).placed, keys(&["a.txt"]));
     assert_eq!(text(&storage, "a.txt").await.as_deref(), Some("alpha"));
@@ -447,11 +478,11 @@ async fn under_sync_a_file_deleted_from_the_folder_stays_deleted() -> Res {
     let storage = MockStorage::default();
     let entry = sync();
     publish(&remote, FIRST, &[("a.txt", b"alpha"), ("b.txt", b"v1")]).await?;
-    read(&storage, &remote, &entry, None).await?;
+    read(&storage, &remote, None, &entry, None).await?;
     storage.remove_file(folder().join("a.txt")).await?;
     publish(&remote, SECOND, &[("a.txt", b"alpha"), ("b.txt", b"v2")]).await?;
 
-    let outcome = read(&storage, &remote, &entry, Some(FIRST)).await?;
+    let outcome = read(&storage, &remote, None, &entry, Some(FIRST)).await?;
 
     assert_eq!(outcome.lock_base(), Some(SECOND));
     let report = report(outcome);
@@ -467,11 +498,11 @@ async fn under_sync_a_deleted_file_the_revision_changed_blocks_the_read() -> Res
     let storage = MockStorage::default();
     let entry = sync();
     publish(&remote, FIRST, &[("a.txt", b"v1"), ("b.txt", b"v1")]).await?;
-    read(&storage, &remote, &entry, None).await?;
+    read(&storage, &remote, None, &entry, None).await?;
     storage.remove_file(folder().join("a.txt")).await?;
     publish(&remote, SECOND, &[("a.txt", b"v2"), ("b.txt", b"v2")]).await?;
 
-    let outcome = read(&storage, &remote, &entry, Some(FIRST)).await?;
+    let outcome = read(&storage, &remote, None, &entry, Some(FIRST)).await?;
 
     assert_eq!(
         outcome,
@@ -491,14 +522,14 @@ async fn under_sync_a_missing_or_emptied_folder_is_refused() -> Res {
     let storage = MockStorage::default();
     let entry = sync();
     publish(&remote, FIRST, &[("a.txt", b"v1"), ("b.txt", b"v1")]).await?;
-    read(&storage, &remote, &entry, None).await?;
+    read(&storage, &remote, None, &entry, None).await?;
     storage.remove_file(folder().join("a.txt")).await?;
     storage.remove_file(folder().join("b.txt")).await?;
     publish(&remote, SECOND, &[("a.txt", b"v1"), ("b.txt", b"v2")]).await?;
 
-    let emptied = read(&storage, &remote, &entry, Some(FIRST)).await;
+    let emptied = read(&storage, &remote, None, &entry, Some(FIRST)).await;
     storage.remove_dir_all(folder()).await?;
-    let missing = read(&storage, &remote, &entry, Some(FIRST)).await;
+    let missing = read(&storage, &remote, None, &entry, Some(FIRST)).await;
 
     for outcome in [emptied, missing] {
         assert!(
@@ -516,7 +547,7 @@ async fn under_sync_a_base_the_registry_no_longer_holds_is_refused() -> Res {
     publish(&remote, SECOND, &[("a.txt", b"alpha"), ("b.txt", b"beta")]).await?;
     write(&storage, "b.txt", b"beta").await?;
 
-    let outcome = read(&storage, &remote, &sync(), Some(FIRST)).await;
+    let outcome = read(&storage, &remote, None, &sync(), Some(FIRST)).await;
 
     assert!(
         matches!(&outcome, Err(EntryError::Failed(err)) if err.is_not_found()),
@@ -535,13 +566,13 @@ async fn under_sync_a_file_in_a_folder_that_cannot_be_read_is_not_a_deletion() -
     let storage = MockStorage::default();
     let entry = sync();
     publish(&remote, FIRST, &[("sub/a.txt", b"v1"), ("b.txt", b"v1")]).await?;
-    read(&storage, &remote, &entry, None).await?;
+    read(&storage, &remote, None, &entry, None).await?;
     publish(&remote, SECOND, &[("sub/a.txt", b"v1"), ("b.txt", b"v2")]).await?;
     let sub = storage.temp_dir.path().join("work/rnaseq/team/raw/sub");
     std::fs::set_permissions(&sub, std::fs::Permissions::from_mode(0o000))?;
     let readable = std::fs::read_dir(&sub).is_ok();
 
-    let outcome = read(&storage, &remote, &entry, Some(FIRST)).await;
+    let outcome = read(&storage, &remote, None, &entry, Some(FIRST)).await;
 
     std::fs::set_permissions(&sub, std::fs::Permissions::from_mode(0o755))?;
     // Root reads it anyway.
@@ -565,13 +596,13 @@ async fn under_sync_a_file_in_a_folder_that_cannot_be_searched_is_not_a_deletion
     let storage = MockStorage::default();
     let entry = sync();
     publish(&remote, FIRST, &[("sub/a.txt", b"v1"), ("b.txt", b"v1")]).await?;
-    read(&storage, &remote, &entry, None).await?;
+    read(&storage, &remote, None, &entry, None).await?;
     publish(&remote, SECOND, &[("sub/a.txt", b"v1"), ("b.txt", b"v2")]).await?;
     let sub = storage.temp_dir.path().join("work/rnaseq/team/raw/sub");
     std::fs::set_permissions(&sub, std::fs::Permissions::from_mode(0o444))?;
     let searchable = std::fs::metadata(sub.join("a.txt")).is_ok();
 
-    let outcome = read(&storage, &remote, &entry, Some(FIRST)).await;
+    let outcome = read(&storage, &remote, None, &entry, Some(FIRST)).await;
 
     std::fs::set_permissions(&sub, std::fs::Permissions::from_mode(0o755))?;
     // Root searches it anyway.
@@ -590,12 +621,12 @@ async fn under_sync_a_working_folder_that_cannot_be_listed_is_not_gone() -> Res 
     let remote = MockRemote::default();
     let storage = MockStorage::default();
     publish(&remote, FIRST, &[("a.txt", b"v1")]).await?;
-    read(&storage, &remote, &sync(), None).await?;
+    read(&storage, &remote, None, &sync(), None).await?;
     let raw = storage.temp_dir.path().join("work/rnaseq/team/raw");
     std::fs::set_permissions(&raw, std::fs::Permissions::from_mode(0o000))?;
     let readable = std::fs::read_dir(&raw).is_ok();
 
-    let outcome = read(&storage, &remote, &sync(), Some(FIRST)).await;
+    let outcome = read(&storage, &remote, None, &sync(), Some(FIRST)).await;
 
     std::fs::set_permissions(&raw, std::fs::Permissions::from_mode(0o755))?;
     // Root reads it anyway.
@@ -610,11 +641,11 @@ async fn under_sync_a_file_where_a_deleted_files_folder_was_collides() -> Res {
     let remote = MockRemote::default();
     let storage = MockStorage::default();
     publish(&remote, FIRST, &[("sub/a.txt", b"v1"), ("b.txt", b"v1")]).await?;
-    read(&storage, &remote, &sync(), None).await?;
+    read(&storage, &remote, None, &sync(), None).await?;
     storage.remove_dir_all(folder().join("sub")).await?;
     write(&storage, "sub", b"a file").await?;
 
-    let outcome = read(&storage, &remote, &sync(), Some(FIRST)).await?;
+    let outcome = read(&storage, &remote, None, &sync(), Some(FIRST)).await?;
 
     assert_eq!(
         outcome,
@@ -632,7 +663,7 @@ async fn under_sync_a_first_read_fills_every_file() -> Res {
     let storage = MockStorage::default();
     publish(&remote, FIRST, &[("a.txt", b"alpha")]).await?;
 
-    let outcome = read(&storage, &remote, &sync(), None).await;
+    let outcome = read(&storage, &remote, None, &sync(), None).await;
 
     assert!(
         matches!(&outcome, Ok(outcome) if outcome.lock_base() == Some(FIRST)),
@@ -654,7 +685,7 @@ async fn the_metadata_file_is_compared_like_any_other_file() -> Res {
     };
     let files: &[(&str, &[u8])] = &[("a.txt", b"alpha")];
     publish_with(&remote, FIRST, files, with_meta(1)).await?;
-    read(&storage, &remote, &entry, None).await?;
+    read(&storage, &remote, None, &entry, None).await?;
     write(
         &storage,
         METADATA_FILE,
@@ -663,11 +694,11 @@ async fn the_metadata_file_is_compared_like_any_other_file() -> Res {
     .await?;
     publish_with(&remote, SECOND, files, with_meta(1)).await?;
 
-    let unchanged_remotely = read(&storage, &remote, &entry, Some(FIRST)).await?;
+    let unchanged_remotely = read(&storage, &remote, None, &entry, Some(FIRST)).await?;
 
     assert_eq!(report(unchanged_remotely).kept, keys(&[METADATA_FILE]));
     publish_with(&remote, SECOND, files, with_meta(2)).await?;
-    let changed_remotely = read(&storage, &remote, &entry, Some(FIRST)).await?;
+    let changed_remotely = read(&storage, &remote, None, &entry, Some(FIRST)).await?;
     assert_eq!(
         changed_remotely,
         ReadOutcome::Blocked {
@@ -696,7 +727,7 @@ async fn a_revision_some_of_whose_bytes_are_gone_changes_nothing() -> Res {
     manifest.rows = vec![row("a.txt", b"alpha"), replaced];
     put_manifest(&remote, FIRST, &manifest).await?;
 
-    let outcome = read(&storage, &remote, &whole(), None).await;
+    let outcome = read(&storage, &remote, None, &whole(), None).await;
 
     assert!(
         matches!(
@@ -718,7 +749,7 @@ async fn a_file_edited_while_the_revision_downloads_stops_the_read_before_any_ch
     let storage = MockStorage::default();
     let entry = whole();
     publish(&remote, FIRST, &[("a.txt", b"v1"), ("edit.txt", b"v1")]).await?;
-    read(&storage, &remote, &entry, None).await?;
+    read(&storage, &remote, None, &entry, None).await?;
     publish(&remote, SECOND, &[("a.txt", b"v2"), ("edit.txt", b"v2")]).await?;
     let download = remote.park(&row("edit.txt", b"v2").physical_key);
     let edit = async {
@@ -728,7 +759,7 @@ async fn a_file_edited_while_the_revision_downloads_stops_the_read_before_any_ch
         Ok::<_, crate::Error>(())
     };
 
-    let (outcome, edited) = tokio::join!(read(&storage, &remote, &entry, Some(FIRST)), edit);
+    let (outcome, edited) = tokio::join!(read(&storage, &remote, None, &entry, Some(FIRST)), edit);
     edited?;
 
     assert!(
@@ -746,7 +777,7 @@ async fn under_sync_a_file_deleted_while_the_revision_downloads_stays_deleted() 
     let storage = MockStorage::default();
     let entry = sync();
     publish(&remote, FIRST, &[("a.txt", b"v1"), ("edit.txt", b"v1")]).await?;
-    read(&storage, &remote, &entry, None).await?;
+    read(&storage, &remote, None, &entry, None).await?;
     publish(&remote, SECOND, &[("a.txt", b"v2"), ("edit.txt", b"v2")]).await?;
     let download = remote.park(&row("edit.txt", b"v2").physical_key);
     let delete = async {
@@ -756,7 +787,7 @@ async fn under_sync_a_file_deleted_while_the_revision_downloads_stays_deleted() 
         Ok::<_, crate::Error>(())
     };
 
-    let outcome = beside(read(&storage, &remote, &entry, Some(FIRST)), delete).await?;
+    let outcome = beside(read(&storage, &remote, None, &entry, Some(FIRST)), delete).await?;
 
     assert!(
         matches!(&outcome, Err(EntryError::Changed(key)) if key == Path::new("edit.txt")),
@@ -774,7 +805,7 @@ async fn under_sync_a_folder_left_with_empty_folders_and_files_outside_the_paths
     let storage = MockStorage::default();
     let entry = entry("sync = [{ package = \"team/raw\", path = \"data/\" }]");
     publish(&remote, FIRST, &[("data/a.txt", b"v1")]).await?;
-    read(&storage, &remote, &entry, None).await?;
+    read(&storage, &remote, None, &entry, None).await?;
     storage.remove_file(folder().join("data/a.txt")).await?;
     write(&storage, "notes.txt", b"not the entry's").await?;
     publish(
@@ -784,7 +815,7 @@ async fn under_sync_a_folder_left_with_empty_folders_and_files_outside_the_paths
     )
     .await?;
 
-    let outcome = read(&storage, &remote, &entry, Some(FIRST)).await;
+    let outcome = read(&storage, &remote, None, &entry, Some(FIRST)).await;
 
     assert!(
         matches!(&outcome, Err(EntryError::FolderGone(gone)) if *gone == folder()),
@@ -799,11 +830,11 @@ async fn under_sync_a_folder_left_with_what_the_os_writes_is_refused() -> Res {
     let storage = MockStorage::default();
     let entry = sync();
     publish(&remote, FIRST, &[("a.txt", b"v1")]).await?;
-    read(&storage, &remote, &entry, None).await?;
+    read(&storage, &remote, None, &entry, None).await?;
     storage.remove_file(folder().join("a.txt")).await?;
     write(&storage, ".DS_Store", b"finder").await?;
 
-    let outcome = read(&storage, &remote, &entry, Some(FIRST)).await;
+    let outcome = read(&storage, &remote, None, &entry, Some(FIRST)).await;
 
     assert!(
         matches!(&outcome, Err(EntryError::FolderGone(gone)) if *gone == folder()),
@@ -818,7 +849,7 @@ async fn under_sync_a_package_file_named_like_os_litter_keeps_its_folder() -> Re
     let storage = MockStorage::default();
     let entry = sync();
     publish(&remote, FIRST, &[(".gitignore", b"*.tmp")]).await?;
-    read(&storage, &remote, &entry, None).await?;
+    read(&storage, &remote, None, &entry, None).await?;
     publish(
         &remote,
         SECOND,
@@ -826,7 +857,7 @@ async fn under_sync_a_package_file_named_like_os_litter_keeps_its_folder() -> Re
     )
     .await?;
 
-    let outcome = read(&storage, &remote, &entry, Some(FIRST)).await;
+    let outcome = read(&storage, &remote, None, &entry, Some(FIRST)).await;
 
     assert!(
         matches!(&outcome, Ok(outcome) if outcome.lock_base() == Some(SECOND)),
@@ -844,7 +875,7 @@ async fn under_sync_a_folder_that_cannot_be_listed_outside_the_paths_is_passed_o
     let storage = MockStorage::default();
     let entry = entry("sync = [{ package = \"team/raw\", path = \"data/\" }]");
     publish(&remote, FIRST, &[("data/a.txt", b"v1")]).await?;
-    read(&storage, &remote, &entry, None).await?;
+    read(&storage, &remote, None, &entry, None).await?;
     storage.remove_file(folder().join("data/a.txt")).await?;
     // Deeper than the folder that cannot be listed, so that one is asked first.
     write(&storage, "data/deep/b.txt", b"mine").await?;
@@ -853,7 +884,7 @@ async fn under_sync_a_folder_that_cannot_be_listed_outside_the_paths_is_passed_o
     std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o000))?;
     publish(&remote, SECOND, &[("data/a.txt", b"v1"), ("c.txt", b"c")]).await?;
 
-    let outcome = read(&storage, &remote, &entry, Some(FIRST)).await;
+    let outcome = read(&storage, &remote, None, &entry, Some(FIRST)).await;
 
     std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o755))?;
     assert!(
@@ -869,13 +900,13 @@ async fn under_sync_files_moved_to_new_keys_are_not_a_folder_gone() -> Res {
     let storage = MockStorage::default();
     let entry = sync();
     publish(&remote, FIRST, &[("a.txt", b"v1")]).await?;
-    read(&storage, &remote, &entry, None).await?;
+    read(&storage, &remote, None, &entry, None).await?;
     storage
         .rename(folder().join("a.txt"), folder().join("moved.txt"))
         .await?;
     publish(&remote, SECOND, &[("a.txt", b"v1"), ("b.txt", b"new")]).await?;
 
-    let outcome = read(&storage, &remote, &entry, Some(FIRST)).await;
+    let outcome = read(&storage, &remote, None, &entry, Some(FIRST)).await;
 
     assert!(
         matches!(&outcome, Ok(outcome) if outcome.lock_base() == Some(SECOND)),
@@ -894,7 +925,7 @@ async fn under_sync_a_folder_deleted_while_the_revision_downloads_stays_gone() -
     let storage = MockStorage::default();
     let entry = sync();
     publish(&remote, FIRST, &[("a.txt", b"v1")]).await?;
-    read(&storage, &remote, &entry, None).await?;
+    read(&storage, &remote, None, &entry, None).await?;
     publish(&remote, SECOND, &[("a.txt", b"v1"), ("b.txt", b"new")]).await?;
     let download = remote.park(&row("b.txt", b"new").physical_key);
     let delete = async {
@@ -905,7 +936,7 @@ async fn under_sync_a_folder_deleted_while_the_revision_downloads_stays_gone() -
         Ok::<_, crate::Error>(())
     };
 
-    let outcome = beside(read(&storage, &remote, &entry, Some(FIRST)), delete).await?;
+    let outcome = beside(read(&storage, &remote, None, &entry, Some(FIRST)), delete).await?;
 
     assert!(
         matches!(&outcome, Err(EntryError::FolderGone(gone)) if *gone == folder()),
@@ -928,12 +959,12 @@ async fn under_sync_a_folder_whose_files_cannot_be_searched_is_not_gone() -> Res
         &[("sub/a.txt", b"v1"), ("sub/b.txt", b"v1")],
     )
     .await?;
-    read(&storage, &remote, &sync(), None).await?;
+    read(&storage, &remote, None, &sync(), None).await?;
     let sub = storage.temp_dir.path().join("work/rnaseq/team/raw/sub");
     std::fs::set_permissions(&sub, std::fs::Permissions::from_mode(0o444))?;
     let searchable = std::fs::metadata(sub.join("a.txt")).is_ok();
 
-    let outcome = read(&storage, &remote, &sync(), Some(FIRST)).await;
+    let outcome = read(&storage, &remote, None, &sync(), Some(FIRST)).await;
 
     std::fs::set_permissions(&sub, std::fs::Permissions::from_mode(0o755))?;
     // Root searches it anyway.
@@ -949,7 +980,7 @@ async fn a_dropped_file_deleted_while_the_revision_downloads_is_not_reported_rem
     let storage = MockStorage::default();
     let entry = whole();
     publish(&remote, FIRST, &[("a.txt", b"v1"), ("gone.txt", b"old")]).await?;
-    read(&storage, &remote, &entry, None).await?;
+    read(&storage, &remote, None, &entry, None).await?;
     publish(&remote, SECOND, &[("a.txt", b"v2")]).await?;
     let download = remote.park(&row("a.txt", b"v2").physical_key);
     let delete = async {
@@ -959,7 +990,8 @@ async fn a_dropped_file_deleted_while_the_revision_downloads_is_not_reported_rem
         Ok::<_, std::io::Error>(())
     };
 
-    let (outcome, deleted) = tokio::join!(read(&storage, &remote, &entry, Some(FIRST)), delete);
+    let (outcome, deleted) =
+        tokio::join!(read(&storage, &remote, None, &entry, Some(FIRST)), delete);
     deleted?;
 
     let report = report(outcome?);
@@ -979,7 +1011,7 @@ async fn a_metadata_file_edited_while_the_revision_downloads_is_left_as_it_is() 
         header
     };
     publish_with(&remote, FIRST, &[("a.txt", b"v1")], with_meta(1)).await?;
-    read(&storage, &remote, &entry, None).await?;
+    read(&storage, &remote, None, &entry, None).await?;
     publish_with(&remote, SECOND, &[("a.txt", b"v2")], with_meta(2)).await?;
     let download = remote.park(&row("a.txt", b"v2").physical_key);
     let edit = async {
@@ -989,7 +1021,7 @@ async fn a_metadata_file_edited_while_the_revision_downloads_is_left_as_it_is() 
         Ok::<_, crate::Error>(())
     };
 
-    let (outcome, edited) = tokio::join!(read(&storage, &remote, &entry, Some(FIRST)), edit);
+    let (outcome, edited) = tokio::join!(read(&storage, &remote, None, &entry, Some(FIRST)), edit);
     edited?;
 
     assert!(
@@ -1009,7 +1041,7 @@ async fn a_linked_folder_inside_the_working_folder_is_not_written_through() -> R
     let storage = MockStorage::default();
     let entry = whole();
     publish(&remote, FIRST, &[("data/x.csv", b"v1")]).await?;
-    read(&storage, &remote, &entry, None).await?;
+    read(&storage, &remote, None, &entry, None).await?;
     let outside = Path::new("/elsewhere");
     storage
         .write_byte_stream(outside.join("x.csv"), ByteStream::from(b"v1".to_vec()))
@@ -1022,7 +1054,7 @@ async fn a_linked_folder_inside_the_working_folder_is_not_written_through() -> R
     )?;
     publish(&remote, SECOND, &[("data/x.csv", b"v2")]).await?;
 
-    let outcome = read(&storage, &remote, &entry, Some(FIRST)).await;
+    let outcome = read(&storage, &remote, None, &entry, Some(FIRST)).await;
 
     assert!(matches!(outcome, Err(EntryError::Failed(_))), "{outcome:?}");
     let outside_bytes = storage.read_bytes(outside.join("x.csv")).await?;
@@ -1047,7 +1079,7 @@ async fn a_key_renamed_only_in_case_keeps_its_file() -> Res {
         &[("data.csv", b"rows"), ("sub/a.csv", b"a")],
     )
     .await?;
-    read(&storage, &remote, &entry, None).await?;
+    read(&storage, &remote, None, &entry, None).await?;
     publish(
         &remote,
         SECOND,
@@ -1055,7 +1087,7 @@ async fn a_key_renamed_only_in_case_keeps_its_file() -> Res {
     )
     .await?;
 
-    let outcome = read(&storage, &remote, &entry, Some(FIRST)).await?;
+    let outcome = read(&storage, &remote, None, &entry, Some(FIRST)).await?;
 
     assert_eq!(outcome.lock_base(), Some(SECOND));
     assert_eq!(text(&storage, "Data.csv").await.as_deref(), Some("rows"));
@@ -1072,11 +1104,11 @@ async fn on_a_disk_that_ignores_case_a_local_change_to_a_key_renamed_only_in_cas
     }
     let entry = whole();
     publish(&remote, FIRST, &[("data.csv", b"v1")]).await?;
-    read(&storage, &remote, &entry, None).await?;
+    read(&storage, &remote, None, &entry, None).await?;
     write(&storage, "data.csv", b"mine").await?;
     publish(&remote, SECOND, &[("Data.csv", b"v1")]).await?;
 
-    let outcome = read(&storage, &remote, &entry, Some(FIRST)).await?;
+    let outcome = read(&storage, &remote, None, &entry, Some(FIRST)).await?;
 
     assert!(matches!(outcome, ReadOutcome::Read(_)), "{outcome:?}");
     assert_eq!(text(&storage, "data.csv").await.as_deref(), Some("mine"));
@@ -1089,10 +1121,10 @@ async fn a_key_renamed_in_case_and_changed_takes_the_revisions_version() -> Res 
     let storage = MockStorage::default();
     let entry = whole();
     publish(&remote, FIRST, &[("data.csv", b"v1")]).await?;
-    read(&storage, &remote, &entry, None).await?;
+    read(&storage, &remote, None, &entry, None).await?;
     publish(&remote, SECOND, &[("Data.csv", b"v2")]).await?;
 
-    let outcome = read(&storage, &remote, &entry, Some(FIRST)).await?;
+    let outcome = read(&storage, &remote, None, &entry, Some(FIRST)).await?;
 
     assert_eq!(outcome.lock_base(), Some(SECOND));
     assert_eq!(text(&storage, "Data.csv").await.as_deref(), Some("v2"));
@@ -1105,12 +1137,12 @@ async fn a_file_renamed_locally_to_the_revisions_spelling_is_kept() -> Res {
     let storage = MockStorage::default();
     let entry = whole();
     publish(&remote, FIRST, &[("a.txt", b"alpha")]).await?;
-    read(&storage, &remote, &entry, None).await?;
+    read(&storage, &remote, None, &entry, None).await?;
     storage.remove_file(folder().join("a.txt")).await?;
     write(&storage, "A.txt", b"alpha").await?;
     publish(&remote, SECOND, &[("A.txt", b"alpha")]).await?;
 
-    let outcome = read(&storage, &remote, &entry, Some(FIRST)).await?;
+    let outcome = read(&storage, &remote, None, &entry, Some(FIRST)).await?;
 
     assert_eq!(outcome.lock_base(), Some(SECOND));
     assert_eq!(text(&storage, "A.txt").await.as_deref(), Some("alpha"));
@@ -1124,7 +1156,7 @@ async fn a_folder_at_the_metadata_files_place_collides() -> Res {
     publish(&remote, FIRST, &[("a.txt", b"alpha")]).await?;
     storage.create_dir_all(folder().join(METADATA_FILE)).await?;
 
-    let outcome = read(&storage, &remote, &whole(), None).await;
+    let outcome = read(&storage, &remote, None, &whole(), None).await;
 
     assert!(
         matches!(
@@ -1147,7 +1179,7 @@ async fn a_link_where_a_file_goes_collides() -> Res {
     let link = storage.temp_dir.path().join("work/rnaseq/team/raw/a.txt");
     std::os::unix::fs::symlink(storage.temp_dir.path().join("nowhere"), &link)?;
 
-    let outcome = read(&storage, &remote, &whole(), None).await;
+    let outcome = read(&storage, &remote, None, &whole(), None).await;
 
     assert!(
         matches!(
@@ -1168,13 +1200,13 @@ async fn under_sync_a_dangling_link_at_the_bases_file_collides() -> Res {
     let remote = MockRemote::default();
     let storage = MockStorage::default();
     publish(&remote, FIRST, &[("a.txt", b"v1")]).await?;
-    read(&storage, &remote, &sync(), None).await?;
+    read(&storage, &remote, None, &sync(), None).await?;
     let link = storage.temp_dir.path().join("work/rnaseq/team/raw/a.txt");
     std::fs::remove_file(&link)?;
     std::os::unix::fs::symlink(storage.temp_dir.path().join("nowhere"), &link)?;
     publish(&remote, SECOND, &[("a.txt", b"v2")]).await?;
 
-    let outcome = read(&storage, &remote, &sync(), Some(FIRST)).await;
+    let outcome = read(&storage, &remote, None, &sync(), Some(FIRST)).await;
 
     assert!(
         matches!(
@@ -1198,7 +1230,7 @@ async fn a_file_where_the_revision_needs_a_folder_collides() -> Res {
     .await?;
     write(&storage, "results", b"mine").await?;
 
-    let outcome = read(&storage, &remote, &whole(), None).await;
+    let outcome = read(&storage, &remote, None, &whole(), None).await;
 
     assert!(
         matches!(
@@ -1219,7 +1251,7 @@ async fn a_base_the_registry_no_longer_holds_is_read_as_a_first_read() -> Res {
     publish(&remote, SECOND, &[("a.txt", b"alpha"), ("b.txt", b"beta")]).await?;
     write(&storage, "a.txt", b"alpha").await?;
 
-    let outcome = read(&storage, &remote, &whole(), Some(GONE)).await;
+    let outcome = read(&storage, &remote, None, &whole(), Some(GONE)).await;
 
     assert!(outcome.is_ok(), "{outcome:?}");
     let outcome = outcome?;
@@ -1245,7 +1277,7 @@ async fn metadata_held_in_another_order_is_the_same_metadata() -> Res {
         with_meta(serde_json::json!({"x": 1, "y": 2})),
     )
     .await?;
-    read(&storage, &remote, &entry, None).await?;
+    read(&storage, &remote, None, &entry, None).await?;
     write(
         &storage,
         METADATA_FILE,
@@ -1260,7 +1292,7 @@ async fn metadata_held_in_another_order_is_the_same_metadata() -> Res {
     )
     .await?;
 
-    let outcome = read(&storage, &remote, &entry, Some(FIRST)).await?;
+    let outcome = read(&storage, &remote, None, &entry, Some(FIRST)).await?;
 
     assert_eq!(report(outcome).kept, keys(&[METADATA_FILE]));
     Ok(())
@@ -1282,10 +1314,10 @@ async fn on_a_disk_that_tells_case_apart_a_key_dropped_in_one_case_is_removed() 
         &[("data.csv", b"rows"), ("Data.csv", b"rows")],
     )
     .await?;
-    read(&storage, &remote, &entry, None).await?;
+    read(&storage, &remote, None, &entry, None).await?;
     publish(&remote, SECOND, &[("Data.csv", b"rows")]).await?;
 
-    let outcome = read(&storage, &remote, &entry, Some(FIRST)).await?;
+    let outcome = read(&storage, &remote, None, &entry, Some(FIRST)).await?;
 
     assert_eq!(report(outcome).removed, keys(&["data.csv"]));
     assert_eq!(text(&storage, "data.csv").await, None);
@@ -1307,7 +1339,7 @@ async fn a_link_at_the_metadata_files_place_collides() -> Res {
         root.join("work/rnaseq/team/raw").join(METADATA_FILE),
     )?;
 
-    let outcome = read(&storage, &remote, &whole(), None).await;
+    let outcome = read(&storage, &remote, None, &whole(), None).await;
 
     assert!(
         matches!(
@@ -1327,7 +1359,7 @@ async fn a_link_put_in_a_files_place_while_the_revision_downloads_stops_the_read
     let storage = MockStorage::default();
     let entry = whole();
     publish(&remote, FIRST, &[("edit.txt", b"v1")]).await?;
-    read(&storage, &remote, &entry, None).await?;
+    read(&storage, &remote, None, &entry, None).await?;
     publish(&remote, SECOND, &[("edit.txt", b"v2")]).await?;
     let root = storage.temp_dir.path().to_path_buf();
     storage
@@ -1346,7 +1378,7 @@ async fn a_link_put_in_a_files_place_while_the_revision_downloads_stops_the_read
         Ok::<_, std::io::Error>(())
     };
 
-    let (outcome, swapped) = tokio::join!(read(&storage, &remote, &entry, Some(FIRST)), swap);
+    let (outcome, swapped) = tokio::join!(read(&storage, &remote, None, &entry, Some(FIRST)), swap);
     swapped?;
 
     assert!(

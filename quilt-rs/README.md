@@ -115,7 +115,14 @@ folder:
   the revision also changed blocks the read before anything is written. Under
   `sync` a file deleted from the folder is a local change like any other, kept
   or colliding, and a missing or empty folder, or a base the bucket no longer
-  holds, is refused.
+  holds, is refused. A `quilt+local://` entry is read from the local registry
+  given.
+- `dataspace::install::install` adds a package to `data.toml` under an
+  access, unpinned, then reads it and writes `data.lock.toml` last; a revision
+  named goes in the lock. `dataspace::uninstall::uninstall` removes the
+  package from both files and its working folder, leaving unpushed commits in
+  the Domain, and `dataspace::prune::prune` clears what a bucket's store holds
+  of it that the bucket holds too.
 - `dataspace::read_all::read_all` reads every `read` entry of a dataspace,
   then writes `data.lock.toml`, moving a package's base only where its read
   completed. A missing or empty working folder is filled at the revision the

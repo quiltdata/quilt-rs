@@ -614,6 +614,44 @@ async fn a_folder_whose_locked_revision_is_gone_is_filled_at_the_contracts() -> 
     Ok(())
 }
 
+/// A revision the lock names that the local registry does not hold gives way
+/// to the contract's, as one a bucket no longer holds does.
+#[test(tokio::test)]
+async fn a_local_folder_whose_locked_revision_is_gone_is_filled_at_the_contracts() -> Res {
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    let local = DomainRoot::new(storage.temp_dir.path().join("domain")).local();
+    local.rename(&storage, "lab-mac").await?;
+    let hash = publish_local(&storage, &local, "me/analysis", &[("r.txt", b"result")]).await?;
+    let root = dataspace(
+        &storage,
+        "read = [\"quilt+local://lab-mac#package=me/analysis\"]\n",
+    )?;
+    let package = PackageKey {
+        registry: Registry::Local("lab-mac".to_string()),
+        package: Namespace::try_from("me/analysis")?,
+    };
+    let contract = Contract::read(&storage, &root, None).await?;
+    let mut locked = Lock::new(&contract, &writer());
+    locked.packages.insert(package.clone(), at(SECOND));
+    locked.write(&storage, &contract, &writer()).await?;
+
+    let read = read_all(&storage, &remote, Some(&local), &root, &writer()).await?;
+
+    assert!(read.completed(), "{read:?}");
+    assert_eq!(report(&read.entries[0].1).revision, hash);
+    let folder = root.join("lab-mac@local/me/analysis");
+    assert_eq!(std::fs::read(folder.join("r.txt"))?, b"result");
+    let lock = lock(&storage, &root).await?.expect("a lock");
+    assert_eq!(
+        lock.packages
+            .get(&package)
+            .and_then(|locked| locked.base.as_ref()),
+        Some(&hash)
+    );
+    Ok(())
+}
+
 #[test(tokio::test)]
 async fn a_refill_the_bucket_refuses_fails_rather_than_taking_latest() -> Res {
     let remote = MockRemote::default();

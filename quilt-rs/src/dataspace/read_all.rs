@@ -274,10 +274,8 @@ async fn read_entry(
             }
             Ok(ReadOutcome::Read(_)) => "some of its files are gone".to_string(),
             Ok(outcome) => return EntryRead::Ran(outcome),
-            // The bucket no longer holds it; any other failure is reported.
-            Err(EntryError::Failed(err)) if matches!(&*err, crate::Error::S3(s3) if s3.is_not_found()) => {
-                err.to_string()
-            }
+            // Its registry no longer holds it; any other failure is reported.
+            Err(EntryError::Failed(err)) if no_longer_held(entry, &err) => err.to_string(),
             Err(err) => return EntryRead::Failed(err),
         };
         warn!(
@@ -291,6 +289,16 @@ async fn read_entry(
     }
 }
 
+/// Whether `err`, from reading a revision of `entry`, says its registry does
+/// not hold that revision: S3's not-found for a bucket, and for the local
+/// registry a revision missing from its `packages/`.
+fn no_longer_held(entry: &Entry, err: &crate::Error) -> bool {
+    match entry.registry {
+        Registry::S3(_) => matches!(err, crate::Error::S3(s3) if s3.is_not_found()),
+        Registry::Local(_) => err.is_not_found(),
+    }
+}
+
 /// A local registry's package, which only the Domain holds.
 fn needs_domain(entry: &Entry) -> bool {
     matches!(entry.registry, Registry::Local(_))
@@ -298,7 +306,7 @@ fn needs_domain(entry: &Entry) -> bool {
 
 /// Whether `folder` holds anything. One that cannot be listed, for any reason
 /// but that it is not there, counts as holding files.
-async fn holds_files(storage: &(impl Storage + Sync), folder: &Path) -> bool {
+pub(crate) async fn holds_files(storage: &(impl Storage + Sync), folder: &Path) -> bool {
     match storage.read_dir(folder).await {
         Ok(mut listing) => !matches!(listing.next_entry().await, Ok(None)),
         Err(err) => !err.is_not_found(),

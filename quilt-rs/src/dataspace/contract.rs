@@ -58,6 +58,11 @@ pub enum Access {
 }
 
 impl Access {
+    /// The entry fills its folder from the package.
+    pub(crate) fn is_read(self) -> bool {
+        matches!(self, Self::Read | Self::Sync)
+    }
+
     /// A package under `replace` or `sync` is listed under nothing else.
     fn is_exclusive(self) -> bool {
         matches!(self, Self::Replace | Self::Sync)
@@ -111,6 +116,16 @@ impl Registry {
         match self {
             Self::S3(bucket) => bucket.clone(),
             Self::Local(name) => format!("{name}{LOCAL_SUFFIX}"),
+        }
+    }
+
+    /// The registry as a contract's `registry` field spells it:
+    /// `s3://<bucket>` or `quilt+local://<name>`.
+    #[must_use]
+    pub fn spelled(&self) -> String {
+        match self {
+            Self::S3(bucket) => format!("s3://{bucket}"),
+            Self::Local(name) => format!("quilt+local://{name}"),
         }
     }
 }
@@ -190,12 +205,22 @@ pub enum PackagePath {
 }
 
 impl PackagePath {
-    fn parse(text: &str) -> Result<Self, EntryProblem> {
+    /// A path as a contract spells it: a folder ends in `/`.
+    pub fn parse(text: &str) -> Result<Self, EntryProblem> {
         match text.strip_suffix('/') {
             Some(folder) => LogicalKey::new(folder).map(Self::Folder),
             None => LogicalKey::new(text).map(Self::File),
         }
         .map_err(EntryProblem::Path)
+    }
+
+    /// The path as a contract spells it, which [`PackagePath::parse`] reads.
+    #[must_use]
+    pub fn spelled(&self) -> String {
+        match self {
+            Self::Folder(key) => format!("{}/", key.to_string_lossy()),
+            Self::File(key) => key.to_string_lossy().into_owned(),
+        }
     }
 
     fn key(&self) -> &LogicalKey {
@@ -230,7 +255,7 @@ impl Paths {
     /// The union of what the declarations cover, a `None` among them being the
     /// whole package. `None` where one names as a file what another puts
     /// inside a folder of that name.
-    fn union(declared: &[Option<&PackagePath>]) -> Option<Self> {
+    pub(crate) fn union(declared: &[Option<&PackagePath>]) -> Option<Self> {
         let paths: Vec<&PackagePath> = declared.iter().flatten().copied().collect();
         let collides = |one: &PackagePath, other: &PackagePath| {
             one.overlaps(other) && !one.covers(other) && !other.covers(one)
@@ -265,6 +290,15 @@ impl Paths {
                 PackagePath::Folder(folder) => folder.is_folder_of(key),
                 PackagePath::File(file) => file == key,
             }),
+        }
+    }
+
+    /// Whether `path` is one of these paths or inside one.
+    #[must_use]
+    pub fn covers_path(&self, path: &PackagePath) -> bool {
+        match self {
+            Self::Whole => true,
+            Self::Only(paths) => paths.iter().any(|kept| kept.covers(path)),
         }
     }
 
@@ -320,6 +354,10 @@ impl Entry {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Contract {
     entries: Vec<Entry>,
+    /// Each declaration's package, by its list and its place in the list.
+    declared: Vec<(Access, usize, PackageKey)>,
+    registry: Option<Registry>,
+    catalog: Option<Host>,
     hooks: Hooks,
     ignore: Ignore,
     dataspace: PathBuf,
@@ -337,22 +375,8 @@ impl Contract {
         dataspace: &Path,
         local_registry: Option<&str>,
     ) -> Result<Self, ContractError> {
-        let unreadable = |path: &Path, source: crate::Error| ContractError::Read {
-            path: path.to_path_buf(),
-            source: Box::new(source),
-        };
-        let root = dataspace_path(dataspace).map_err(|err| unreadable(dataspace, err.into()))?;
-        let path = root.join(CONTRACT_FILE);
-        let bytes = storage
-            .read_bytes(&path)
-            .await
-            .map_err(|err| unreadable(&path, err))?;
-        let case = if same_file(&path, &root.join(CONTRACT_FILE.to_uppercase())).await {
-            FolderCase::Insensitive
-        } else {
-            FolderCase::Sensitive
-        };
-        Self::parse(&bytes, &root, case, local_registry)
+        let file = ContractFile::read(storage, dataspace).await?;
+        Self::parse(&file.bytes, &file.dataspace, file.case, local_registry)
     }
 
     /// One entry per package and access, in the order of their keys.
@@ -372,12 +396,22 @@ impl Contract {
     /// under different names.
     pub(crate) fn name_local(&mut self, names: &LocalNames) -> Result<(), ContractError> {
         let mut renamed = false;
-        for entry in &mut self.entries {
-            if let Registry::Local(name) = &entry.registry
+        let registries = self
+            .entries
+            .iter_mut()
+            .map(|entry| &mut entry.registry)
+            .chain(
+                self.declared
+                    .iter_mut()
+                    .map(|(_, _, key)| &mut key.registry),
+            )
+            .chain(self.registry.as_mut());
+        for registry in registries {
+            if let Registry::Local(name) = registry
                 && name != &names.name
                 && names.answers_to(name)
             {
-                entry.registry = Registry::Local(names.name.clone());
+                *registry = Registry::Local(names.name.clone());
                 renamed = true;
             }
         }
@@ -464,6 +498,36 @@ impl Contract {
         &self.data_toml_hash
     }
 
+    /// The default `registry`, which an entry that names none takes.
+    #[must_use]
+    pub fn default_registry(&self) -> Option<&Registry> {
+        self.registry.as_ref()
+    }
+
+    /// The default `catalog`, which a bucket's entry that names none takes.
+    #[must_use]
+    pub fn default_catalog(&self) -> Option<&Host> {
+        self.catalog.as_ref()
+    }
+
+    /// Each declaration's package, by the list it is in and its place there,
+    /// in the order of the lists and then of the file.
+    pub(crate) fn declared(&self) -> &[(Access, usize, PackageKey)] {
+        &self.declared
+    }
+
+    /// The folder a declaration of `key` that names none is placed in: under
+    /// its registry's folder only where it `states` the registry.
+    pub(crate) fn placed(&self, stated: bool, key: &PackageKey) -> Result<PathBuf, EntryProblem> {
+        Folders::new(&self.dataspace, self.case).placed(stated, key)
+    }
+
+    /// Whether two folders are one, compared as the file system holding the
+    /// dataspace compares names.
+    pub(crate) fn same_folder(&self, one: &Path, other: &Path) -> bool {
+        Folders::new(&self.dataspace, self.case).same(one, other)
+    }
+
     /// Parses a contract held in `dataspace`, an absolute path.
     pub(crate) fn parse(
         bytes: &[u8],
@@ -484,6 +548,7 @@ impl Contract {
             (Access::Sync, raw.packages.sync),
         ];
         let mut packages: BTreeMap<PackageKey, Vec<Declared>> = BTreeMap::new();
+        let mut keys = Vec::new();
         for (access, list) in lists {
             for (index, value) in list.into_iter().enumerate() {
                 let declared = expand(value, access, &defaults, &folders).map_err(|problem| {
@@ -493,6 +558,7 @@ impl Contract {
                         problem,
                     }
                 })?;
+                keys.push((access, index, declared.key.clone()));
                 packages
                     .entry(declared.key.clone())
                     .or_default()
@@ -521,11 +587,52 @@ impl Contract {
         }
         Ok(Self {
             entries,
+            declared: keys,
+            registry: defaults.registry,
+            catalog: defaults.catalog,
             hooks: raw.hooks,
             ignore: raw.ignore,
             dataspace: dataspace.to_path_buf(),
             case,
             data_toml_hash: hex::encode(Sha256::digest(bytes)),
+        })
+    }
+}
+
+/// `data.toml`'s bytes, as [`Contract::read`] finds them, before they are
+/// parsed.
+pub(crate) struct ContractFile {
+    /// The dataspace's folder, as [`Contract::dataspace`] names it.
+    pub(crate) dataspace: PathBuf,
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) case: FolderCase,
+}
+
+impl ContractFile {
+    /// `data.toml` in the folder `dataspace`; see [`Contract::read`].
+    pub(crate) async fn read(
+        storage: &(impl Storage + Sync),
+        dataspace: &Path,
+    ) -> Result<Self, ContractError> {
+        let unreadable = |path: &Path, source: crate::Error| ContractError::Read {
+            path: path.to_path_buf(),
+            source: Box::new(source),
+        };
+        let root = dataspace_path(dataspace).map_err(|err| unreadable(dataspace, err.into()))?;
+        let path = root.join(CONTRACT_FILE);
+        let bytes = storage
+            .read_bytes(&path)
+            .await
+            .map_err(|err| unreadable(&path, err))?;
+        let case = if same_file(&path, &root.join(CONTRACT_FILE.to_uppercase())).await {
+            FolderCase::Insensitive
+        } else {
+            FolderCase::Sensitive
+        };
+        Ok(Self {
+            dataspace: root,
+            bytes,
+            case,
         })
     }
 }
@@ -540,6 +647,16 @@ pub enum ContractError {
         #[source]
         source: Box<crate::Error>,
     },
+
+    #[error("can't write {}: {source}", .path.display())]
+    Write {
+        path: PathBuf,
+        #[source]
+        source: Box<crate::Error>,
+    },
+
+    #[error("{CONTRACT_FILE} can't be edited: {0}")]
+    Edit(String),
 
     #[error("{CONTRACT_FILE} is not a valid contract: {0}")]
     Syntax(#[from] toml::de::Error),
@@ -911,12 +1028,12 @@ fn local(name: Option<String>, local_registry: Option<&str>) -> Result<Registry,
 }
 
 /// What a package URI in a contract names.
-struct ParsedUri {
-    registry: Registry,
-    catalog: Option<Host>,
-    namespace: Namespace,
-    revision: RevisionPointer,
-    path: Option<PathBuf>,
+pub(crate) struct ParsedUri {
+    pub(crate) registry: Registry,
+    pub(crate) catalog: Option<Host>,
+    pub(crate) namespace: Namespace,
+    pub(crate) revision: RevisionPointer,
+    pub(crate) path: Option<PathBuf>,
 }
 
 /// Whether a package URI's text names a revision, which the parsed URI cannot
@@ -937,7 +1054,12 @@ fn names_revision(uri: &str) -> bool {
     })
 }
 
-fn parse_uri(text: &str, local_registry: Option<&str>) -> Result<ParsedUri, EntryProblem> {
+/// A `quilt+s3://` or `quilt+local://` package URI, `quilt+local://` with no
+/// name standing for `local_registry`, held to the names a contract takes.
+pub(crate) fn parse_uri(
+    text: &str,
+    local_registry: Option<&str>,
+) -> Result<ParsedUri, EntryProblem> {
     if is_local(text) {
         let uri = LocalPackageUri::try_from(text).map_err(EntryProblem::Uri)?;
         return Ok(ParsedUri {
@@ -1223,7 +1345,7 @@ pub(crate) fn dataspace_path(dataspace: &Path) -> std::io::Result<PathBuf> {
 }
 
 /// `path` with its `.` and `..` resolved by name, never by the file system.
-fn normalize(path: &Path) -> PathBuf {
+pub(crate) fn normalize(path: &Path) -> PathBuf {
     let mut normal = PathBuf::new();
     for part in path.components() {
         match part {
