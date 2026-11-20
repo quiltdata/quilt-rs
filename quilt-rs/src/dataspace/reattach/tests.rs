@@ -142,7 +142,11 @@ impl Fixture {
         .await
     }
 
-    async fn reattach(&self, commit: &str, base: &str) -> Result<(), ReattachError> {
+    async fn reattach<'a>(
+        &self,
+        commit: &str,
+        base: impl Into<Option<&'a str>>,
+    ) -> Result<(), ReattachError> {
         reattach(
             &LocalStorage::new(),
             &self.remote,
@@ -151,7 +155,7 @@ impl Fixture {
             &writer(),
             &key(),
             commit,
-            base,
+            base.into(),
         )
         .await
     }
@@ -170,7 +174,7 @@ async fn only_local_commits_the_lock_leaves_out_are_listed() -> Res {
     fixture
         .lock(
             LockEntry {
-                base: BASE.to_string(),
+                base: Some(BASE.to_string()),
                 commits: vec![named],
             },
             &writer(),
@@ -205,7 +209,29 @@ async fn a_commit_a_deleted_lock_held_is_reattached_on_the_named_base() -> Res {
     assert_eq!(
         lock.packages.get(&key()),
         Some(&LockEntry {
-            base: BASE.to_string(),
+            base: Some(BASE.to_string()),
+            commits: vec![commit],
+        })
+    );
+    assert_eq!(fixture.unattached().await?, []);
+    Ok(())
+}
+
+/// A commit of a package never published is reattached with no base, which
+/// its first publish establishes.
+#[test(tokio::test)]
+async fn a_commit_of_a_package_never_published_is_reattached_with_no_base() -> Res {
+    let fixture = Fixture::new("sync")?;
+    let commit = fixture.commit("mine", b"m").await?;
+
+    assert_eq!(fixture.unattached().await?.len(), 1);
+    fixture.reattach(&commit, None).await?;
+
+    let lock = fixture.read_lock().await?.expect("a lock");
+    assert_eq!(
+        lock.packages.get(&key()),
+        Some(&LockEntry {
+            base: None,
             commits: vec![commit],
         })
     );
@@ -221,20 +247,12 @@ async fn an_entry_with_no_commits_takes_the_named_base() -> Res {
     let commit = fixture.commit("mine", b"m").await?;
     fixture.publish(BASE).await?;
     let older = "2222222222222222222222222222222222222222222222222222222222222222";
-    fixture
-        .lock(
-            LockEntry {
-                base: older.to_string(),
-                commits: Vec::new(),
-            },
-            &writer(),
-        )
-        .await?;
+    fixture.lock(LockEntry::at(older), &writer()).await?;
 
     fixture.reattach(&commit, BASE).await?;
 
     let lock = fixture.read_lock().await?.expect("a lock");
-    assert_eq!(lock.packages[&key()].base, BASE);
+    assert_eq!(lock.packages[&key()].base.as_deref(), Some(BASE));
     Ok(())
 }
 
@@ -246,7 +264,7 @@ async fn a_lock_naming_commits_is_not_reattached_to() -> Res {
     let held = fixture.commit("held", b"h").await?;
     let orphan = fixture.commit("orphaned", b"o").await?;
     let entry = LockEntry {
-        base: BASE.to_string(),
+        base: Some(BASE.to_string()),
         commits: vec![held],
     };
     fixture.lock(entry.clone(), &writer()).await?;
@@ -374,15 +392,7 @@ async fn a_lock_written_elsewhere_is_refused() -> Res {
         host: "elsewhere".to_string(),
         ..writer()
     };
-    fixture
-        .lock(
-            LockEntry {
-                base: BASE.to_string(),
-                commits: Vec::new(),
-            },
-            &elsewhere,
-        )
-        .await?;
+    fixture.lock(LockEntry::at(BASE), &elsewhere).await?;
 
     let listed = fixture.unattached().await;
 

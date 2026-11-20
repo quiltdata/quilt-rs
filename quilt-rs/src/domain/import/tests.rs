@@ -398,7 +398,7 @@ async fn a_package_with_unpushed_commits_is_imported_whole() -> Res {
         BTreeMap::from([(
             key,
             LockEntry {
-                base: hashes[0].clone(),
+                base: Some(hashes[0].clone()),
                 commits: hashes[1..].to_vec(),
             }
         )])
@@ -473,7 +473,7 @@ async fn a_package_with_no_remote_goes_to_the_local_registry() -> Res {
     assert_eq!(
         lock.packages[&key],
         LockEntry {
-            base: oldest,
+            base: Some(oldest),
             commits: vec![commit.hash],
         }
     );
@@ -539,11 +539,11 @@ async fn what_a_package_keeps_becomes_its_paths() -> Res {
     Ok(())
 }
 
-/// A package with a remote that was never published has no base, so the
-/// lock can't hold its commits: it is declared, and its commits are kept in
-/// its bucket's store, where a later reattach finds them.
+/// A package with a remote that was never published has no base: it is
+/// declared, the lock holds its commits with no base, and they are kept in
+/// its bucket's store.
 #[test(tokio::test)]
-async fn a_package_never_published_is_declared_and_its_commits_kept() -> Res {
+async fn a_package_never_published_is_locked_with_its_commits_and_no_base() -> Res {
     let old = Old::new()?;
     let namespace = Namespace::from(("acme", "new"));
     let mut lineage = old
@@ -566,7 +566,13 @@ async fn a_package_never_published_is_declared_and_its_commits_kept() -> Res {
     );
     let (contract, lock) = old.dataspace().await?;
     assert_eq!(entry_of(&contract, &namespace).access, Access::Sync);
-    assert!(!lock.packages.contains_key(&key));
+    assert_eq!(
+        lock.packages.get(&key),
+        Some(&LockEntry {
+            base: None,
+            commits: vec![commit.hash.clone()],
+        })
+    );
     let store = old.domain().registry("bucket")?;
     assert!(store.installed_manifest(&namespace, &commit.hash).is_file());
     Ok(())
@@ -736,7 +742,7 @@ async fn an_interrupted_import_finishes_when_run_again() -> Res {
         assert_eq!(
             lock.packages[&key(Registry::S3("bucket".to_string()), &first)],
             LockEntry {
-                base: first_hashes[0].clone(),
+                base: Some(first_hashes[0].clone()),
                 commits: first_hashes[1..].to_vec(),
             },
             "{point} {passes}"

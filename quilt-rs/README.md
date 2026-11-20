@@ -127,11 +127,11 @@ folder:
   working folder's changes, deletions included and without what the ignore
   rules leave out of a commit, into the Domain's store for the bucket, and
   pushes the lock's last commit against the base, writing the lock after each
-  step. A push `latest` moved past, or that the bucket's workflow refuses, is
-  still stored, and kept in the Domain's queue so that it is not uploaded
-  again. A working folder that
-  is missing or empty is read back at the lock's revision, and nothing is
-  published from it.
+  step. A package never published is locked with its commits and no base, and
+  its first push expects no `latest`. A push `latest` moved past, or that the
+  bucket's workflow refuses, is still stored, and kept in the Domain's queue
+  so that it is not uploaded again. A working folder that is missing or empty
+  is read back at the lock's revision, and nothing is published from it.
 - `dataspace::publish::publish` publishes a `data.toml` entry under `write`
   or `replace` from its working folder, against the `latest` read just before.
   `write` lays the files under the entry's paths over `latest` and keeps its
@@ -152,7 +152,8 @@ folder:
   `RegistryStore` that the bucket does not hold and `data.lock.toml` does not
   name, as after the lock was deleted. `dataspace::reattach::reattach`
   attaches one to the lock on a base the caller names, which the next publish
-  expects `latest` to be.
+  expects `latest` to be, or with no base for a package never published,
+  whose next publish expects no `latest`.
 - `dataspace::hooks` runs the one script `data.toml` declares for each of
   `pre-read`, `post-read`, `pre-write` and `post-write`, as `command`, `args`
   and `env`, from `read_all`, `publish_all` and `sync`. `post-read` follows a

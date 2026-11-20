@@ -22,8 +22,9 @@ use crate::cli::text::printable_line;
 pub struct Input {
     pub dataspace: PathBuf,
     pub package: PackageKey,
-    /// The commit to attach and the base it goes on; `None` lists.
-    pub attach: Option<(String, String)>,
+    /// The commit to attach and the base it goes on, `None` for a package
+    /// never published; `None` lists.
+    pub attach: Option<(String, Option<String>)>,
 }
 
 pub struct Output {
@@ -33,7 +34,10 @@ pub struct Output {
 
 enum Done {
     Listed(Vec<Unattached>),
-    Attached { commit: String, base: String },
+    Attached {
+        commit: String,
+        base: Option<String>,
+    },
 }
 
 impl std::fmt::Display for Output {
@@ -42,10 +46,11 @@ impl std::fmt::Display for Output {
         let listed = match &self.done {
             Done::Listed(listed) => listed,
             Done::Attached { commit, base } => {
-                return write!(
-                    f,
-                    "{package}: attached {commit} to {LOCK_FILE}, on base {base}"
-                );
+                write!(f, "{package}: attached {commit} to {LOCK_FILE}, ")?;
+                return match base {
+                    Some(base) => write!(f, "on base {base}"),
+                    None => f.write_str("before the package's first publication"),
+                };
             }
         };
         if listed.is_empty() {
@@ -77,7 +82,7 @@ impl Render for Output {
                     .collect();
                 (Some(listed), None, None)
             }
-            Done::Attached { commit, base } => (None, Some(commit), Some(base)),
+            Done::Attached { commit, base } => (None, Some(commit), base.as_ref()),
         };
         serde_json::json!({
             "package": self.package.to_string(),
@@ -110,7 +115,14 @@ async fn reattach_with(
         }
         Some((commit, base)) => {
             reattach(
-                &storage, remote, domain, &dataspace, &writer, &package, &commit, &base,
+                &storage,
+                remote,
+                domain,
+                &dataspace,
+                &writer,
+                &package,
+                &commit,
+                base.as_deref(),
             )
             .await?;
             Done::Attached { commit, base }
@@ -186,11 +198,14 @@ mod tests {
         Ok((dir, domain, hash))
     }
 
-    fn input(dir: &tempfile::TempDir, attach: Option<(&str, &str)>) -> Result<Input, Error> {
+    fn input(
+        dir: &tempfile::TempDir,
+        attach: Option<(&str, Option<&str>)>,
+    ) -> Result<Input, Error> {
         Ok(Input {
             dataspace: dir.path().to_path_buf(),
             package: "quilt+s3://b#package=team/raw".parse()?,
-            attach: attach.map(|(commit, base)| (commit.to_string(), base.to_string())),
+            attach: attach.map(|(commit, base)| (commit.to_string(), base.map(str::to_string))),
         })
     }
 
@@ -239,7 +254,7 @@ mod tests {
     async fn an_attached_commit_is_reported_with_its_base() -> Result<(), Error> {
         let (dir, domain, hash) = orphaned().await?;
 
-        let std = run(&domain, input(&dir, Some((&hash, BASE)))?).await?;
+        let std = run(&domain, input(&dir, Some((&hash, Some(BASE))))?).await?;
 
         let Std::Out(output) = std else {
             panic!("expected a success, got {std:?}");
@@ -261,6 +276,28 @@ mod tests {
         );
         let lock = std::fs::read_to_string(dir.path().join("data.lock.toml"))?;
         assert!(lock.contains(&hash) && lock.contains(BASE), "{lock}");
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn a_commit_attached_unpublished_is_reported_with_no_base() -> Result<(), Error> {
+        let (dir, domain, hash) = orphaned().await?;
+
+        let std = run(&domain, input(&dir, Some((&hash, None)))?).await?;
+
+        let Std::Out(output) = std else {
+            panic!("expected a success, got {std:?}");
+        };
+        assert_eq!(output.to_json()["base"], serde_json::Value::Null);
+        assert_eq!(output.to_json()["attached"], serde_json::json!(hash));
+        assert_eq!(
+            output.to_string(),
+            format!(
+                "quilt+s3://b#package=team/raw: attached {hash} to data.lock.toml, before the package's first publication"
+            )
+        );
+        let lock = std::fs::read_to_string(dir.path().join("data.lock.toml"))?;
+        assert!(lock.contains(&hash) && !lock.contains("base ="), "{lock}");
         Ok(())
     }
 

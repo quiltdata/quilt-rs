@@ -163,7 +163,7 @@ pub(crate) async fn read_some(
         } else if let Err(err) = hooks::run(&contract, HookPoint::PreRead, entry, None).await {
             EntryRead::Failed(err.into())
         } else {
-            let base = locked.map(|locked| locked.base.as_str());
+            let base = locked.and_then(|locked| locked.base.as_deref());
             let read = read_entry(storage, remote, contract.dataspace(), entry, base).await;
             if let Some(revision) = hooks::newer(base, read.lock_base()) {
                 newer.push((entry, revision.to_string()));
@@ -171,11 +171,7 @@ pub(crate) async fn read_some(
             read
         };
         if let Some(base) = outcome.lock_base() {
-            let entry = LockEntry {
-                base: base.to_string(),
-                commits: Vec::new(),
-            };
-            lock.packages.insert(entry_key, entry);
+            lock.packages.insert(entry_key, LockEntry::at(base));
         }
         entries.push((entry.clone(), outcome));
     }

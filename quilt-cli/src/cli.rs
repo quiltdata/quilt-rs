@@ -692,7 +692,10 @@ enum Commands {
     /// name, or attach one to the lock again
     ///
     /// The recovery for a deleted `data.lock.toml`. A commit is attached on
-    /// the base you name, which its next publish expects `latest` to be.
+    /// the base you name, which its next publish expects `latest` to be, or
+    /// with `--unpublished` as a commit of a package never published, whose
+    /// next publish expects no `latest`.
+    #[command(group(clap::ArgGroup::new("on").args(["base", "unpublished"])))]
     Reattach {
         /// The dataspace: the folder holding `data.toml`
         #[arg(value_name = "DATASPACE")]
@@ -702,11 +705,15 @@ enum Commands {
         #[arg(value_name = "PACKAGE")]
         package: PackageKey,
         /// The commit to attach, one the listing shows; omit to list
-        #[arg(value_name = "COMMIT", requires = "base")]
+        #[arg(value_name = "COMMIT", requires = "on")]
         commit: Option<String>,
         /// The revision the commit was made on, as a whole top hash
         #[arg(long, value_name = "HASH", requires = "commit")]
         base: Option<String>,
+        /// The commit was made before the package's first publication, so
+        /// it has no base
+        #[arg(long, requires = "commit")]
+        unpublished: bool,
     },
     /// Remove old revisions of a package, and the stored files only they use
     ///
@@ -872,12 +879,14 @@ pub async fn init(args: Args) -> Result<Std, Error> {
         package,
         commit,
         base,
+        unpublished: _,
     } = args.command
     {
+        // clap gives a commit `--base` or `--unpublished`, never both.
         let input = reattach::Input {
             dataspace,
             package,
-            attach: commit.zip(base),
+            attach: commit.map(|commit| (commit, base)),
         };
         let domain = DomainRoot::new(dataspace_domain_dir()?);
         return Ok(reattach::command(root_dir, domain, input).await);
@@ -1558,8 +1567,9 @@ mod tests {
         assert_eq!(set.as_deref(), Some("ReadOnly"));
     }
 
-    /// A commit is never attached without a base to check its publish
-    /// against, and a base names nothing without a commit.
+    /// A commit is never attached without its base, or `--unpublished` for
+    /// none, to check its publish against, and neither names anything
+    /// without a commit.
     #[test]
     fn reattach_takes_a_commit_and_its_base_together() {
         let package = "quilt+s3://b#package=team/raw";
@@ -1568,8 +1578,20 @@ mod tests {
         };
         assert!(parse(&[]).is_ok());
         assert!(parse(&["abc", "--base", "def"]).is_ok());
+        let unpublished = parse(&["abc", "--unpublished"]).unwrap();
+        assert!(matches!(
+            unpublished.command,
+            Commands::Reattach {
+                commit: Some(_),
+                base: None,
+                unpublished: true,
+                ..
+            }
+        ));
         assert!(parse(&["abc"]).is_err());
         assert!(parse(&["--base", "def"]).is_err());
+        assert!(parse(&["--unpublished"]).is_err());
+        assert!(parse(&["abc", "--base", "def", "--unpublished"]).is_err());
     }
 
     /// `--host` is optional on `login` and `role`: left out, they use the

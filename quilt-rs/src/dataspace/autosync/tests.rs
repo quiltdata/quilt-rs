@@ -185,7 +185,7 @@ impl World {
             return Ok(None);
         };
         let entry = contract.entries().first().ok_or("no entry")?;
-        Ok(lock.packages.get(&entry.key()).map(|l| l.base.clone()))
+        Ok(lock.packages.get(&entry.key()).and_then(|l| l.base.clone()))
     }
 
     fn write(&self, key: &str, body: &str) -> std::io::Result<()> {
@@ -510,6 +510,127 @@ async fn an_edit_made_before_the_dataspace_is_filled_is_published_once_it_is() -
     let synced = world.tick().await?;
     advanced(only(&synced));
     assert_eq!(world.jobs().await?, 0);
+    Ok(())
+}
+
+/// Runs the sync tick outside the runner's jobs, as a tick another entry's
+/// job ran, or one run by hand, would.
+async fn sync_outside(world: &World) -> Got<crate::dataspace::sync::DataspaceSync> {
+    let runner = world.runner().await?;
+    let settings = Settings {
+        domain: DomainRoot::new(world.dir.path().join("domain")),
+        writer: Writer {
+            host: "here".to_string(),
+            user: "me".to_string(),
+            local_registry: String::new(),
+        },
+        user_rules: world.dir.path().join("user.quiltignore"),
+        message: "autosync".to_string(),
+    };
+    Ok(Box::pin(sync(
+        &world.storage,
+        &world.remote,
+        &settings.domain,
+        runner.queue(),
+        &world.dataspace(),
+        &settings.writer,
+        &settings.message,
+        &settings.user_rules,
+    ))
+    .await?)
+}
+
+/// A first push stopped once the lock holds its commit leaves no job behind;
+/// the next tick queues the entry for the commit alone, with `latest`
+/// unmoved and the folder unchanged, and publishes it.
+#[test(tokio::test)]
+async fn a_push_stopped_after_the_lock_holds_its_commit_is_published_on_the_next_tick() -> Res {
+    let world = World::new("sync = [\"team/raw\"]").await?;
+    world.write("a.txt", "first")?;
+    assert!(sync_outside(&world).await?.read_only);
+    assert!(world.filled().await?);
+    let stopped = crate::failpoint::stopping_at("push.object", 0, sync_outside(&world)).await?;
+    assert!(
+        matches!(&stopped.entries[..], [(_, EntrySync::Failed(_))]),
+        "{stopped:?}"
+    );
+    assert_eq!(world.latest().await?, None);
+    assert_eq!(world.base().await?, None);
+    assert_eq!(world.jobs().await?, 0);
+
+    let tick = world.tick().await?;
+
+    let revision = advanced(only(&tick));
+    assert_eq!(world.latest().await?.as_deref(), Some(revision.as_str()));
+    assert_eq!(world.base().await?.as_deref(), Some(revision.as_str()));
+    assert_eq!(world.text("a.txt").as_deref(), Some("first"));
+    assert_eq!(world.jobs().await?, 0);
+    Ok(())
+}
+
+/// A commit the bucket's workflow refused stays in the lock, and is not
+/// queued again for it while its kept revision holds.
+#[test(tokio::test)]
+async fn a_commit_the_workflow_refused_is_not_queued_again_for_its_commits() -> Res {
+    let world = World::new("sync = [\"team/raw\"]").await?;
+    world.publish(FIRST, &[("a.txt", b"v1")]).await?;
+    world.tick().await?;
+    let config = "version: \"1\"\ndefault_workflow: gate\nworkflows:\n  gate:\n    name: Gate\n    metadata_schema: meta\nschemas:\n  meta:\n    url: s3://b/schemas/meta.json\n";
+    world
+        .put("s3://b/.quilt/workflows/config.yml", config.into())
+        .await?;
+    let schema = r#"{"type": "object", "required": ["owner"]}"#;
+    world.put("s3://b/schemas/meta.json", schema.into()).await?;
+    world.write("a.txt", "v2")?;
+    world.changed("a.txt").await?;
+    let blocked = world.tick().await?;
+    assert!(
+        matches!(
+            only(&blocked),
+            EntryTick::Synced(EntrySync::Ran {
+                published: Some(Published::WorkflowBlocked { .. }),
+                ..
+            })
+        ),
+        "{blocked:?}"
+    );
+    assert!(world.kept().await?.is_some());
+    assert_eq!(world.jobs().await?, 0);
+
+    let tick = world.tick().await?;
+
+    assert!(matches!(only(&tick), EntryTick::Idle), "{tick:?}");
+    assert_eq!(world.jobs().await?, 0);
+    Ok(())
+}
+
+/// The refusal holds for the commit it was made on, not for one made after.
+#[test(tokio::test)]
+async fn a_commit_made_after_a_refused_one_is_queued_again() -> Res {
+    let world = World::new("sync = [\"team/raw\"]").await?;
+    world.publish(FIRST, &[("a.txt", b"v1")]).await?;
+    world.tick().await?;
+    let config = "version: \"1\"\ndefault_workflow: gate\nworkflows:\n  gate:\n    name: Gate\n    metadata_schema: meta\nschemas:\n  meta:\n    url: s3://b/schemas/meta.json\n";
+    world
+        .put("s3://b/.quilt/workflows/config.yml", config.into())
+        .await?;
+    let schema = r#"{"type": "object", "required": ["owner"]}"#;
+    world.put("s3://b/schemas/meta.json", schema.into()).await?;
+    world.write("a.txt", "v2")?;
+    world.changed("a.txt").await?;
+    world.tick().await?;
+    assert!(world.kept().await?.is_some());
+    world.write("a.txt", "v3")?;
+    let stopped = crate::failpoint::stopping_at("push.object", 0, sync_outside(&world)).await?;
+    assert!(
+        matches!(&stopped.entries[..], [(_, EntrySync::Failed(_))]),
+        "{stopped:?}"
+    );
+    assert_eq!(world.jobs().await?, 0);
+
+    let tick = world.tick().await?;
+
+    assert!(!matches!(only(&tick), EntryTick::Idle), "{tick:?}");
     Ok(())
 }
 

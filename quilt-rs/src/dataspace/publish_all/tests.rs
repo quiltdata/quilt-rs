@@ -145,7 +145,11 @@ async fn base(
 ) -> Result<Option<String>, Box<dyn std::error::Error>> {
     let contract = Contract::read(storage, root, None).await?;
     let lock = Lock::read(storage, &contract).await?;
-    Ok(lock.and_then(|lock| lock.packages.get(&key(package)).map(|e| e.base.clone())))
+    Ok(lock.and_then(|lock| {
+        lock.packages
+            .get(&key(package))
+            .and_then(|e| e.base.clone())
+    }))
 }
 
 async fn publish_all_here(
@@ -399,7 +403,7 @@ async fn a_package_with_unpushed_commits_is_not_published() -> Res {
     lock.packages.insert(
         key("team/raw"),
         LockEntry {
-            base: FIRST.to_string(),
+            base: Some(FIRST.to_string()),
             commits: vec![SECOND.to_string()],
         },
     );

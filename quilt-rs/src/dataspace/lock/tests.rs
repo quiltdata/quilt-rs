@@ -54,21 +54,23 @@ async fn dataspace(
 fn filled_lock(contract: &Contract) -> Lock {
     let mut lock = Lock::new(contract, &writer());
     lock.header.filled = Some(time("2026-11-18T07:45:00Z"));
-    lock.packages.insert(
-        key("team/raw"),
-        LockEntry {
-            base: BASE.to_string(),
-            commits: Vec::new(),
-        },
-    );
+    lock.packages.insert(key("team/raw"), LockEntry::at(BASE));
     lock.packages.insert(
         key("team/project"),
         LockEntry {
-            base: PROJECT_BASE.to_string(),
+            base: Some(PROJECT_BASE.to_string()),
             commits: vec![OLDER.to_string(), NEWER.to_string()],
         },
     );
     lock
+}
+
+/// A package with local commits, never published.
+fn unpublished() -> LockEntry {
+    LockEntry {
+        base: None,
+        commits: vec![NEWER.to_string()],
+    }
 }
 
 #[test(tokio::test)]
@@ -76,6 +78,7 @@ async fn the_lock_file_has_the_header_then_one_entry_per_package() -> Res {
     let storage = MockStorage::default();
     let contract = dataspace(&storage, "rnaseq", CONTRACT).await?;
     let mut lock = filled_lock(&contract);
+    lock.packages.insert(key("team/new"), unpublished());
     lock.write(&storage, &contract, &writer()).await?;
 
     let written: toml::Table = toml::from_str(&std::fs::read_to_string(
@@ -99,6 +102,9 @@ local_registry = "ernest-mbp"
 [packages."quilt+s3://quilt-dev#package=team/project"]
 base = "{PROJECT_BASE}"
 commits = ["{OLDER}", "{NEWER}"]
+
+[packages."quilt+s3://quilt-dev#package=team/new"]
+commits = ["{NEWER}"]
 "#,
         modified = to_toml_time(lock.header.modified, "modified")?,
         dataspace = contract.dataspace().display().to_string(),
@@ -114,6 +120,7 @@ async fn a_written_lock_reads_back_as_written() -> Res {
     assert_eq!(Lock::read(&storage, &contract).await?, None);
 
     let mut lock = filled_lock(&contract);
+    lock.packages.insert(key("team/new"), unpublished());
     // The file keeps whole seconds, and so does the lock it was written from.
     lock.header.filled = Some(time("2026-11-18T07:45:00.250Z"));
     lock.write(&storage, &contract, &writer()).await?;
@@ -289,21 +296,20 @@ async fn a_lock_the_reader_would_refuse_is_not_written() -> Res {
     let written = Lock::read(&storage, &contract).await?;
 
     let mut short = lock.clone();
-    short.packages.get_mut(&key("team/raw")).unwrap().base = "abc123".to_string();
+    short.packages.get_mut(&key("team/raw")).unwrap().base = Some("abc123".to_string());
     let mut unaddressable = lock.clone();
-    unaddressable.packages.insert(
-        key("team/raw@abc123"),
-        LockEntry {
-            base: BASE.to_string(),
-            commits: Vec::new(),
-        },
-    );
-    for (mut bad, expected) in [(short, "Hash"), (unaddressable, "Key")] {
+    unaddressable
+        .packages
+        .insert(key("team/raw@abc123"), LockEntry::at(BASE));
+    let mut empty = lock.clone();
+    empty.packages.get_mut(&key("team/raw")).unwrap().base = None;
+    for (mut bad, expected) in [(short, "Hash"), (unaddressable, "Key"), (empty, "Empty")] {
         let result = bad.write(&storage, &contract, &writer()).await;
         let refused = match &result {
             Err(LockError::Hash { .. }) => "Hash",
             Err(LockError::Key { .. }) => "Key",
-            _ => "neither",
+            Err(LockError::Empty(_)) => "Empty",
+            _ => "none",
         };
         assert_eq!(refused, expected, "{result:?}");
         assert_eq!(Lock::read(&storage, &contract).await?, written);
@@ -377,6 +383,47 @@ commits = ["abc123"]"#
             "{entry}: {result:?}"
         );
     }
+}
+
+/// An entry with commits may have no base, and the lock's two older shapes,
+/// a base alone and a base with commits, read as before; an entry with
+/// neither a base nor a commit is refused.
+#[test(tokio::test)]
+async fn an_entry_holds_a_base_or_commits_or_both() -> Res {
+    let read = read_text(&lock_text(
+        1,
+        &format!(
+            r#""quilt+s3://quilt-dev#package=team/raw" = "{BASE}"
+
+[packages."quilt+s3://quilt-dev#package=team/project"]
+base = "{PROJECT_BASE}"
+commits = ["{OLDER}", "{NEWER}"]
+
+[packages."quilt+s3://quilt-dev#package=team/new"]
+commits = ["{NEWER}"]"#
+        ),
+    ))
+    .await?
+    .unwrap();
+    assert_eq!(read.packages[&key("team/raw")], LockEntry::at(BASE));
+    assert_eq!(
+        read.packages[&key("team/project")].base.as_deref(),
+        Some(PROJECT_BASE)
+    );
+    assert_eq!(read.packages[&key("team/new")], unpublished());
+
+    let result = read_text(&lock_text(
+        1,
+        r#"[packages."quilt+s3://quilt-dev#package=team/new"]
+commits = []"#,
+    ))
+    .await;
+    assert!(
+        matches!(&result, Err(LockError::Empty(package))
+            if package == "quilt+s3://quilt-dev#package=team/new"),
+        "{result:?}"
+    );
+    Ok(())
 }
 
 #[cfg(unix)]
