@@ -198,9 +198,6 @@ impl Opened {
         writer: &Writer,
         package: &PackageKey,
     ) -> Result<Self, ReattachError> {
-        let Registry::S3(bucket) = &package.registry else {
-            return Err(ReattachError::LocalRegistry);
-        };
         let contract = Contract::read(storage, dataspace, writer.local_registry_name()).await?;
         let catalog = contract
             .entries()
@@ -209,6 +206,9 @@ impl Opened {
             .ok_or(ReattachError::Undeclared)?
             .catalog
             .clone();
+        let Registry::S3(bucket) = &package.registry else {
+            return Err(ReattachError::LocalRegistry);
+        };
         let (lock, writer) = match Lock::read(storage, &contract).await? {
             Some(lock) => {
                 let writer = Writer {

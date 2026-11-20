@@ -314,6 +314,10 @@ async fn a_package_only_read_is_refused() -> Res {
 #[test(tokio::test)]
 async fn a_local_registrys_package_is_refused() -> Res {
     let fixture = Fixture::new("sync")?;
+    std::fs::write(
+        fixture.dataspace.join("data.toml"),
+        "[packages]\nsync = [\"quilt+local://lab-mac#package=team/raw\"]\n",
+    )?;
     let local = PackageKey {
         registry: Registry::Local("lab-mac".to_string()),
         ..key()
