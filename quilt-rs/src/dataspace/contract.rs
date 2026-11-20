@@ -1094,7 +1094,8 @@ fn parse_registry(text: &str, local_registry: Option<&str>) -> Result<Registry, 
     }
 }
 
-fn parse_revision(text: &str) -> Result<RevisionPointer, EntryProblem> {
+/// A `revision` field's text: a hash, a prefix of one, or a tag after `:`.
+pub(crate) fn parse_revision(text: &str) -> Result<RevisionPointer, EntryProblem> {
     let invalid = || EntryProblem::Revision(text.to_string());
     let revision = if let Some(tag) = text.strip_prefix(':') {
         RevisionPointer::Tag(tag.parse().map_err(|_| invalid())?)

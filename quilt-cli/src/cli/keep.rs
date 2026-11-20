@@ -9,6 +9,8 @@ use crate::cli::output::Render;
 use crate::cli::output::Std;
 use crate::cli::text::printable_line;
 
+pub mod dataspace;
+
 #[derive(Debug)]
 pub struct Input {
     pub namespace: Namespace,

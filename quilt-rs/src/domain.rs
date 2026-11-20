@@ -211,6 +211,32 @@ async fn namespaces_under(storage: &(impl Storage + Sync), dir: &Path) -> Res<Ve
     Ok(namespaces)
 }
 
+/// Whether a clearing of a store deletes what it finds or only counts it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Clear {
+    Delete,
+    Count,
+}
+
+impl DomainRoot {
+    /// Every bucket's Package Store the Domain holds, by bucket, the local
+    /// registry left out. A folder under `registries/` that names no store,
+    /// as `@local` does not, is passed over.
+    pub async fn registries(&self, storage: &(impl Storage + Sync)) -> Res<Vec<RegistryStore>> {
+        let mut stores = Vec::new();
+        for dir in list_dirs(storage, &self.root.join(REGISTRIES_DIR)).await? {
+            let Some(name) = dir.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            if let Ok(store) = self.registry(name) {
+                stores.push(store);
+            }
+        }
+        stores.sort_by(|one, other| one.bucket.cmp(&other.bucket));
+        Ok(stores)
+    }
+}
+
 /// Whether Windows takes a file named `name` for a device: `con`, `prn`,
 /// `aux`, `nul`, `com0` to `com9` or `lpt0` to `lpt9`, alone or before a
 /// `.`, in any case.
@@ -366,7 +392,20 @@ impl RegistryStore {
         remote: &impl Remote,
         host: Option<&Host>,
     ) -> Res<GcReport> {
-        self.clear(storage, remote, host, None).await
+        self.clear(storage, remote, host, None, Clear::Delete).await
+    }
+
+    /// What [`clear_published`](Self::clear_published) would clear now,
+    /// clearing nothing: the same walk and the same questions to the bucket,
+    /// counted. It takes no package lock, so it never waits on or refuses
+    /// for a busy package, and a writer meanwhile can change the answer.
+    pub async fn estimate_published(
+        &self,
+        storage: &(impl Storage + Sync),
+        remote: &impl Remote,
+        host: Option<&Host>,
+    ) -> Res<GcReport> {
+        self.clear(storage, remote, host, None, Clear::Count).await
     }
 
     /// [`clear_published`](Self::clear_published) for one package: clears
@@ -383,20 +422,27 @@ impl RegistryStore {
         host: Option<&Host>,
         namespace: &Namespace,
     ) -> Res<GcReport> {
-        self.clear(storage, remote, host, Some(namespace)).await
+        self.clear(storage, remote, host, Some(namespace), Clear::Delete)
+            .await
     }
 
-    /// Clears what the bucket has, of every package or of `only`.
+    /// Clears what the bucket has, of every package or of `only`, or with
+    /// [`Clear::Count`] counts what would be cleared.
     async fn clear(
         &self,
         storage: &(impl Storage + Sync),
         remote: &impl Remote,
         host: Option<&Host>,
         only: Option<&Namespace>,
+        mode: Clear,
     ) -> Res<GcReport> {
-        let _held = self
-            .lock_every_package(storage, &self.installed_packages(storage).await?)
-            .await?;
+        let _held = match mode {
+            Clear::Delete => {
+                self.lock_every_package(storage, &self.installed_packages(storage).await?)
+                    .await?
+            }
+            Clear::Count => Vec::new(),
+        };
         // Before the manifests: an object filed after them is no candidate.
         let mut unused: BTreeMap<String, (PathBuf, u64)> = list_files(storage, &self.objects_dir())
             .await?
@@ -465,12 +511,16 @@ impl RegistryStore {
 
         let mut report = GcReport::default();
         for (_, path, len) in cleared {
-            storage.remove_file(&path).await?;
+            if mode == Clear::Delete {
+                storage.remove_file(&path).await?;
+            }
             report.cached_manifests += 1;
             report.bytes += len;
         }
         for (path, len) in unused.into_values() {
-            storage.remove_file(&path).await?;
+            if mode == Clear::Delete {
+                storage.remove_file(&path).await?;
+            }
             report.objects += 1;
             report.bytes += len;
         }

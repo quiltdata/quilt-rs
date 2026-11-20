@@ -16,13 +16,17 @@ use quilt_rs::dataspace::commit::CommitError;
 use quilt_rs::dataspace::contract::Access;
 use quilt_rs::dataspace::contract::ContractError;
 use quilt_rs::dataspace::contract::PackageKey;
+use quilt_rs::dataspace::create::CreateError;
 use quilt_rs::dataspace::history::HistoryError;
+use quilt_rs::dataspace::home::HomeError;
 use quilt_rs::dataspace::install::InstallError;
+use quilt_rs::dataspace::keep::KeepError;
 use quilt_rs::dataspace::lock::LockError;
 use quilt_rs::dataspace::publish_all::PublishAllError;
 use quilt_rs::dataspace::read_all::ReadAllError;
 use quilt_rs::dataspace::reattach::ReattachError;
 use quilt_rs::dataspace::remove_revisions::RemoveError;
+use quilt_rs::dataspace::rename::RenameError;
 use quilt_rs::dataspace::reset_to_latest::ResetError;
 use quilt_rs::dataspace::status::StatusError;
 use quilt_rs::dataspace::undo_commit::UndoError;
@@ -32,6 +36,7 @@ use quilt_rs::domain::DomainRoot;
 use quilt_rs::flow::UserMeta;
 use quilt_rs::io::remote::WorkflowIntent;
 use quilt_rs::logging::InvalidLogFilter;
+use quilt_rs::queue::QueueError;
 use quilt_uri::Host;
 use quilt_uri::Namespace;
 
@@ -48,6 +53,7 @@ mod install;
 mod keep;
 mod lineage;
 mod list;
+mod local_registry;
 mod login;
 mod model;
 mod output;
@@ -60,6 +66,7 @@ mod remove_revisions;
 mod reset;
 mod role;
 mod status;
+mod storage;
 mod text;
 mod undo_commit;
 mod uninstall;
@@ -496,11 +503,38 @@ enum Commands {
         action: Option<CatalogAction>,
     },
     /// Create a new local package
+    ///
+    /// With `--dataspace`, declares the package, with no revision, in that
+    /// dataspace's `data.toml` under `--access`, `sync` by default, and
+    /// commits what its folder holds as its first commit, with no base. The
+    /// next sync publishes it, expecting no `latest`. `--source` names an
+    /// existing folder to package where it is, inside the dataspace or not;
+    /// nothing is copied. Its metadata comes from the folder's
+    /// `metadata.toml`.
     Create {
         /// Namespace for the package, e.g. foo/bar
-        #[arg(short, long)]
-        namespace: String,
-        /// Optional source directory to populate the package from
+        #[arg(short, long, required_unless_present = "dataspace")]
+        namespace: Option<String>,
+        /// With --dataspace, the package to create, in a bucket or this
+        /// machine's local registry.
+        /// Ex. `quilt+s3://bucket#package=foo/bar` or
+        /// `quilt+local://#package=foo/bar`
+        #[arg(
+            value_name = "PACKAGE",
+            requires = "dataspace",
+            conflicts_with = "namespace"
+        )]
+        package: Option<String>,
+        /// Create in this dataspace, the folder holding `data.toml`, rather
+        /// than the home. One with no `data.toml` gets one
+        #[arg(long, value_name = "DIR", requires = "package")]
+        dataspace: Option<PathBuf>,
+        /// With --dataspace, the list the package goes in: sync (the
+        /// default), write or replace
+        #[arg(long, requires = "dataspace")]
+        access: Option<Access>,
+        /// Optional source directory to populate the package from; with
+        /// --dataspace, the package's working folder
         #[arg(short, long)]
         source: Option<PathBuf>,
         /// Commit message for the initial revision
@@ -513,7 +547,8 @@ enum Commands {
             short = 'u',
             long = "meta",
             visible_alias = "user-meta",
-            value_name = "JSON"
+            value_name = "JSON",
+            conflicts_with = "dataspace"
         )]
         user_meta: Option<String>,
     },
@@ -593,7 +628,22 @@ enum Commands {
     /// uninstall left, the cache of remote manifests, and files left mid-write
     /// by an interrupted command. Stops without deleting anything if another
     /// quilt process, such as `QuiltSync`, is changing a package.
-    Gc,
+    ///
+    /// With `--dataspace`, clears the dataspace Domain, `bio.quilt.dataspace`,
+    /// instead: in each bucket's store, the manifests the bucket holds and the
+    /// objects only they use. Commits not pushed and their objects are kept,
+    /// the local registry is never touched, and a store whose bucket cannot
+    /// be asked, as offline, or that another process is changing, is left as
+    /// it is; then this exits 1. Each bucket is asked through the default
+    /// catalog, or this machine's AWS credentials where none is set.
+    Gc {
+        /// Clear the dataspace Domain rather than the home's `.quilt`
+        #[arg(long)]
+        dataspace: bool,
+        /// With --dataspace, print what would be freed, deleting nothing
+        #[arg(long, requires = "dataspace")]
+        dry_run: bool,
+    },
     /// Print the home, or set it with `quilt home <dir>`
     ///
     /// The home is the folder where installed packages keep their files, one
@@ -603,10 +653,18 @@ enum Commands {
     ///
     /// Changing the home is refused while any package is installed, since
     /// their folders live under the current one.
+    ///
+    /// With `--dataspace`, prints or chooses the default dataspace, which
+    /// replaces the home: `<dir>` is made a dataspace, with an empty
+    /// `data.toml`, where it is not one, and nothing moves. The choice is kept
+    /// with this application's settings, in `default_dataspace.json`.
     Home {
         /// Folder to use as the home
         #[arg(value_name = "DIR")]
         dir: Option<PathBuf>,
+        /// Print or choose the default dataspace rather than the home
+        #[arg(long, conflicts_with = "overwrite")]
+        dataspace: bool,
         /// Change the home even while packages are installed.
         ///
         /// Their files are not moved: each installed package then points at an
@@ -676,10 +734,33 @@ enum Commands {
     /// With no flag, prints the current setting. A setting then downloads the
     /// files it covers that are not here yet; `--no-download` only saves it.
     /// Every `quilt pull` follows the setting, as `QuiltSync`'s pulls do.
+    ///
+    /// With `--dataspace`, changes the package's entry in that dataspace's
+    /// `data.toml`: the paths it covers (`--all`, `--folder`, `--path`), its
+    /// pin (`--pin`, `--unpin`), or its list (`--access`). Files a `read` or
+    /// `sync` entry newly covers are read at the revision `data.lock.toml`
+    /// names before anything can count them deleted; files it no longer
+    /// covers stay in the folder. A pin takes effect at the next read. With
+    /// no change, prints the entry. Exits 1 when the newly covered files
+    /// were not read.
     #[command(group(clap::ArgGroup::new("scope").args(["files", "all", "folder"])))]
     Keep {
         #[command(flatten)]
         pkg: PackageRef,
+        /// The package, by its URI, in `--dataspace`; or name it with
+        /// `--namespace`.
+        /// Ex. `quilt+s3://bucket#package=foo/bar`
+        #[arg(
+            value_name = "PACKAGE",
+            value_parser = package_uri,
+            requires = "dataspace",
+            conflicts_with = "namespace"
+        )]
+        package: Option<String>,
+        /// Change what this dataspace, the folder holding `data.toml`, keeps,
+        /// rather than the home's copy
+        #[arg(long, value_name = "DIR", conflicts_with_all = ["files", "no_download"])]
+        dataspace: Option<PathBuf>,
         /// Keep only the files you picked, as `install --path` does
         #[arg(long)]
         files: bool,
@@ -691,9 +772,44 @@ enum Commands {
         /// more folders
         #[arg(long, value_name = "DIR")]
         folder: Vec<String>,
+        /// With --dataspace, keep this logical key, or folder of them ending
+        /// in `/`. Repeat for more
+        #[arg(
+            long,
+            value_name = "PATH",
+            requires = "dataspace",
+            conflicts_with = "all"
+        )]
+        path: Vec<String>,
+        /// With --dataspace, pin a `read` entry to this revision: a top hash,
+        /// a prefix of one, or a tag after `:`
+        #[arg(long, value_name = "REVISION", requires = "dataspace")]
+        pin: Option<String>,
+        /// With --dataspace, read `latest` again rather than a pinned revision
+        #[arg(long, requires = "dataspace", conflicts_with = "pin")]
+        unpin: bool,
+        /// With --dataspace, move the entry to this list: read, write,
+        /// replace or sync
+        #[arg(long, requires = "dataspace")]
+        access: Option<Access>,
+        /// With --dataspace, the list whose entry changes, where the package
+        /// is in two
+        #[arg(long, value_name = "ACCESS", requires = "dataspace")]
+        from: Option<Access>,
         /// Save the setting without downloading anything
         #[arg(long, requires = "scope")]
         no_download: bool,
+    },
+    /// Print the name of this machine's local registry, or rename it
+    ///
+    /// The registry is a dataspace Domain's (`bio.quilt.dataspace`). A rename
+    /// keeps the old name as an alias, so a `quilt+local://` URI or lock
+    /// written with it still names the registry, and moves the autosync work
+    /// queued under the old name to the new one.
+    LocalRegistry {
+        /// The new name: letters, digits, `-` and `.`
+        #[arg(value_name = "NAME")]
+        name: Option<String>,
     },
     /// Authenticate against a Quilt stack
     Login {
@@ -939,6 +1055,12 @@ enum Commands {
         #[arg(long, value_name = "DIR", conflicts_with_all = ["namespace", "ignored"])]
         dataspace: Option<PathBuf>,
     },
+    /// Print how much the dataspace Domain, `bio.quilt.dataspace`, holds:
+    /// each bucket's store, the local registry, and in all
+    ///
+    /// Reads no bucket. `quilt gc --dataspace --dry-run` says how much of it
+    /// gc would free.
+    Storage,
     /// Undo the newest commit, restoring the revision before it
     ///
     /// Available while the package's commit chain still reaches back, which in
@@ -1265,6 +1387,80 @@ pub async fn init(args: Args) -> Result<Std, Error> {
         let removing = remove_revisions::dataspace::command(root_dir, existing_domain(), input);
         return Ok(Box::pin(removing).await);
     }
+    if let Commands::Keep {
+        dataspace: Some(dataspace),
+        package,
+        pkg,
+        all,
+        folder,
+        path,
+        pin,
+        unpin,
+        access,
+        from,
+        ..
+    } = args.command
+    {
+        let input = keep::dataspace::Input {
+            dataspace,
+            package: dataspace::Package::uri(package, pkg.namespace)?,
+            from,
+            paths: keep::dataspace::scope_from(all, folder, path),
+            revision: keep::dataspace::pin_from(pin, unpin),
+            access,
+        };
+        log::debug!("Keeping in a dataspace {input:?}");
+        let keeping = keep::dataspace::command(root_dir, existing_domain(), input);
+        return Ok(Box::pin(keeping).await);
+    }
+    if let Commands::Create {
+        dataspace: Some(dataspace),
+        package: Some(uri),
+        access,
+        source,
+        message,
+        ..
+    } = args.command
+    {
+        let input = create::dataspace::Input {
+            dataspace,
+            uri,
+            access: access.unwrap_or(Access::Sync),
+            folder: source,
+            message,
+        };
+        log::debug!("Creating in a dataspace {input:?}");
+        let domain = DomainRoot::new(dataspace_domain_dir()?);
+        let creating = create::dataspace::command(root_dir, domain, input);
+        return Ok(Box::pin(creating).await);
+    }
+    if let Commands::Gc {
+        dataspace: true,
+        dry_run,
+    } = args.command
+    {
+        let input = gc::dataspace::Input { dry_run };
+        log::debug!("Clearing the dataspace Domain {input:?}");
+        let clearing = gc::dataspace::command(root_dir, existing_domain(), input);
+        return Ok(Box::pin(clearing).await);
+    }
+    if let Commands::Storage = args.command {
+        return Ok(Box::pin(storage::command(existing_domain())).await);
+    }
+    if let Commands::LocalRegistry { name } = args.command {
+        let input = local_registry::Input { name };
+        let domain = DomainRoot::new(dataspace_domain_dir()?);
+        return Ok(Box::pin(local_registry::command(domain, input)).await);
+    }
+    if let Commands::Home {
+        dir,
+        dataspace: true,
+        ..
+    } = args.command
+    {
+        let input = home::dataspace::Input { dir };
+        return Ok(Box::pin(home::dataspace::command(root_dir, input)).await);
+    }
     let m = Model::from(root_dir);
     // Every other command refuses a rollback that was interrupted, so this
     // one runs before anything reads the lineage.
@@ -1310,9 +1506,10 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             source,
             message,
             user_meta,
+            ..
         } => {
             let args = create::Input {
-                namespace: namespace.try_into()?,
+                namespace: namespace.ok_or(Error::NamespaceRequired)?.try_into()?,
                 source,
                 message,
                 user_meta: parse_meta_flag(user_meta.as_deref(), UserMeta::Clear)?,
@@ -1343,11 +1540,11 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             log::debug!("Committing {args:?}");
             Ok(commit::command(m, args).await)
         }
-        Commands::Gc => {
+        Commands::Gc { .. } => {
             log::debug!("Collecting garbage");
             Ok(gc::command(m).await)
         }
-        Commands::Home { dir, overwrite } => {
+        Commands::Home { dir, overwrite, .. } => {
             let args = home::Input { dir, overwrite };
 
             log::debug!("Home {args:?}");
@@ -1379,6 +1576,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             all,
             folder,
             no_download,
+            ..
         } => {
             let namespace = pkg.resolve(&m).await?;
             let args = keep::Input {
@@ -1499,7 +1697,9 @@ pub async fn init(args: Args) -> Result<Std, Error> {
         | Commands::Publish { .. }
         | Commands::Reattach { .. }
         | Commands::Reset { .. }
-        | Commands::Certify { .. } => {
+        | Commands::Certify { .. }
+        | Commands::Storage
+        | Commands::LocalRegistry { .. } => {
             unreachable!("handled before the domain is opened")
         }
         Commands::Lineage { .. } => unreachable!("handled before the lineage is read"),
@@ -1585,6 +1785,27 @@ Then run:
     #[error(transparent)]
     Remove(#[from] RemoveError),
 
+    #[error(transparent)]
+    Keep(#[from] KeepError),
+
+    #[error(transparent)]
+    Create(#[from] CreateError),
+
+    #[error(transparent)]
+    DataspaceHome(#[from] HomeError),
+
+    #[error(transparent)]
+    Rename(#[from] RenameError),
+
+    #[error("Can't open the Domain's queue: {0}")]
+    Queue(#[from] QueueError),
+
+    #[error("There is no dataspace Domain here yet, so no local registry to name")]
+    NoDomain,
+
+    #[error("No default dataspace is chosen. Run \"quilt home --dataspace <dir>\" to choose one")]
+    NoDefaultDataspace,
+
     #[error("Name the package in the dataspace: its URI, or --namespace")]
     PackageRequired,
 
@@ -1665,6 +1886,7 @@ impl Error {
     /// the variants a caller can act on. Everything else is `quilt_error`: a new library variant lands in
     /// the catch-all rather than breaking the build, and earns its own kind only
     /// when something needs to branch on it.
+    #[allow(clippy::too_many_lines, reason = "one table of every error's kind")]
     pub fn kind(&self) -> &'static str {
         match self {
             Error::Domain => "domain",
@@ -1736,6 +1958,13 @@ impl Error {
             | Error::Reset(_)
             | Error::Certify(_)
             | Error::Remove(_) => self.revision_kind(),
+            Error::Keep(_)
+            | Error::Create(_)
+            | Error::DataspaceHome(_)
+            | Error::Rename(_)
+            | Error::Queue(_)
+            | Error::NoDomain
+            | Error::NoDefaultDataspace => self.keep_kind(),
             Error::PackageRequired => "package_required",
             Error::AmbiguousPackage(_) => "ambiguous_package",
             Error::Status(err) => match err {
@@ -1823,6 +2052,48 @@ impl Error {
                 RemoveError::Busy(_) => "package_busy",
                 _ => "dataspace",
             },
+            _ => "dataspace",
+        }
+    }
+
+    /// [`Error::kind`] of a dataspace command that changes what is kept:
+    /// keep, create, the default dataspace, gc and the local registry's name.
+    fn keep_kind(&self) -> &'static str {
+        match self {
+            Error::Keep(err) => match err {
+                KeepError::Contract(_) => "contract",
+                KeepError::Lock(_) => "lock",
+                KeepError::Mismatch(_) => "lock_mismatch",
+                KeepError::NotDeclared(_) => "not_declared",
+                KeepError::NotUnder { .. } => "not_under_access",
+                KeepError::Ambiguous { .. } => "ambiguous_access",
+                KeepError::Path { .. } | KeepError::Paths => "invalid_path",
+                KeepError::Revision(_) => "invalid_revision",
+                _ => "dataspace",
+            },
+            Error::Create(err) => match err {
+                CreateError::Contract(_) => "contract",
+                CreateError::Lock(_) => "lock",
+                CreateError::Mismatch(_) => "lock_mismatch",
+                CreateError::Uri { .. } => "invalid_uri",
+                CreateError::Named { .. } => "invalid_name",
+                CreateError::Read => "access_not_created",
+                CreateError::Declared(_) => "already_declared",
+                CreateError::Exists(_) => "already_exists",
+                CreateError::LocalRegistry => "local_registry",
+                CreateError::HoldsDomain(_) => "folder_holds_domain",
+                CreateError::Busy(_) => "package_busy",
+                _ => "dataspace",
+            },
+            Error::DataspaceHome(HomeError::Contract(_)) => "contract",
+            Error::Rename(err) => match err {
+                RenameError::Name(_) => "invalid_name",
+                RenameError::Queue(_) => "queue",
+                _ => "dataspace",
+            },
+            Error::Queue(_) => "queue",
+            Error::NoDomain => "no_domain",
+            Error::NoDefaultDataspace => "no_default_dataspace",
             _ => "dataspace",
         }
     }
@@ -2569,6 +2840,151 @@ mod tests {
         assert!(parse(&["log", uri]).is_err());
         assert!(parse(&["log", "--dataspace", "ds"]).is_err());
         assert!(parse(&["log", "--dataspace", "ds", uri, "-n", "a/b"]).is_err());
+    }
+
+    /// `keep --dataspace` takes paths, a pin and a list, none of which the
+    /// home's keep takes, and none of the home's `--files` or
+    /// `--no-download`.
+    #[test]
+    fn keep_in_a_dataspace_takes_paths_a_pin_and_a_list() {
+        let parse = |args: &[&str]| Args::try_parse_from([&["quilt", "keep"], args].concat());
+        assert!(matches!(
+            parse(&[
+                "--dataspace",
+                "ds",
+                "quilt+s3://b#package=a/b",
+                "--folder",
+                "data",
+                "--path",
+                "a.txt",
+                "--pin",
+                "abcdef1234",
+                "--access",
+                "read",
+                "--from",
+                "write",
+            ])
+            .expect("parses")
+            .command,
+            Commands::Keep {
+                dataspace: Some(_),
+                package: Some(_),
+                pin: Some(_),
+                unpin: false,
+                access: Some(Access::Read),
+                from: Some(Access::Write),
+                ..
+            }
+        ));
+        assert!(parse(&["--dataspace", "ds", "-n", "a/b", "--unpin"]).is_ok());
+        assert!(parse(&["--dataspace", "ds", "-n", "a/b", "--all", "--path", "x"]).is_err());
+        assert!(parse(&["--dataspace", "ds", "-n", "a/b", "--pin", "a", "--unpin"]).is_err());
+        assert!(parse(&["--dataspace", "ds", "-n", "a/b", "--files"]).is_err());
+        assert!(parse(&["--dataspace", "ds", "-n", "a/b", "--all", "--no-download"]).is_err());
+        assert!(parse(&["--dataspace", "ds", "quilt+s3://b#package=a/b@abc"]).is_err());
+        assert!(parse(&["-n", "a/b", "--pin", "abc"]).is_err());
+        assert!(parse(&["-n", "a/b", "--path", "x"]).is_err());
+        assert!(parse(&["quilt+s3://b#package=a/b"]).is_err());
+    }
+
+    /// `create --dataspace` takes the package's URI and an access, and no
+    /// `--meta`; without it, `-n` is still required.
+    #[test]
+    fn create_in_a_dataspace_takes_a_uri_and_an_access() {
+        let parse = |args: &[&str]| Args::try_parse_from([&["quilt", "create"], args].concat());
+        assert!(matches!(
+            parse(&[
+                "--dataspace",
+                "ds",
+                "quilt+local://#package=me/analysis",
+                "--access",
+                "write",
+                "--source",
+                "/tmp/analysis",
+            ])
+            .expect("parses")
+            .command,
+            Commands::Create {
+                dataspace: Some(_),
+                package: Some(_),
+                access: Some(Access::Write),
+                source: Some(_),
+                namespace: None,
+                ..
+            }
+        ));
+        assert!(parse(&["--dataspace", "ds"]).is_err());
+        assert!(parse(&["quilt+s3://b#package=a/b"]).is_err());
+        assert!(
+            parse(&[
+                "--dataspace",
+                "ds",
+                "quilt+s3://b#package=a/b",
+                "--meta",
+                "{}"
+            ])
+            .is_err()
+        );
+        assert!(parse(&["-n", "a/b", "--access", "sync"]).is_err());
+        assert!(parse(&[]).is_err());
+        assert!(matches!(
+            parse(&["-n", "a/b"]).expect("parses").command,
+            Commands::Create {
+                namespace: Some(_),
+                dataspace: None,
+                ..
+            }
+        ));
+    }
+
+    /// `gc --dataspace` takes `--dry-run`, which needs it; `home --dataspace`
+    /// takes a folder and no `--overwrite`; `storage` and `local-registry`
+    /// are verbs of their own.
+    #[test]
+    fn the_domain_verbs_parse() {
+        let parse = |args: &[&str]| Args::try_parse_from([&["quilt"], args].concat());
+        assert!(matches!(
+            parse(&["gc", "--dataspace", "--dry-run"])
+                .expect("parses")
+                .command,
+            Commands::Gc {
+                dataspace: true,
+                dry_run: true
+            }
+        ));
+        assert!(parse(&["gc", "--dry-run"]).is_err());
+        assert!(matches!(
+            parse(&["gc"]).expect("parses").command,
+            Commands::Gc {
+                dataspace: false,
+                ..
+            }
+        ));
+        assert!(matches!(
+            parse(&["home", "--dataspace", "ds"])
+                .expect("parses")
+                .command,
+            Commands::Home {
+                dir: Some(_),
+                dataspace: true,
+                overwrite: false
+            }
+        ));
+        assert!(parse(&["home", "--dataspace", "ds", "--overwrite"]).is_err());
+        assert!(matches!(
+            parse(&["storage"]).expect("parses").command,
+            Commands::Storage
+        ));
+        assert!(matches!(
+            parse(&["local-registry", "lab-mac"])
+                .expect("parses")
+                .command,
+            Commands::LocalRegistry { name: Some(_) }
+        ));
+        assert!(matches!(
+            parse(&["local-registry"]).expect("parses").command,
+            Commands::LocalRegistry { name: None }
+        ));
     }
 
     #[test]
@@ -4416,7 +4832,10 @@ mod tests {
             (
                 "create",
                 Commands::Create {
-                    namespace: "test/pkg".to_string(),
+                    namespace: Some("test/pkg".to_string()),
+                    package: None,
+                    dataspace: None,
+                    access: None,
                     source: Some(source.clone()),
                     message: Some("first".to_string()),
                     user_meta: None,

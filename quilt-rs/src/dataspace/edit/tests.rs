@@ -91,3 +91,68 @@ async fn a_removed_declaration_leaves_the_list_as_written() -> Res {
     );
     Ok(())
 }
+
+/// Declarations put in place of others take the first one's place in its
+/// list, on lines of their own where the list is written one a line, and
+/// the comments stay.
+#[test(tokio::test)]
+async fn redeclared_packages_keep_their_place() -> Res {
+    let storage = MockStorage::default();
+    let text = "registry = \"s3://b\"\n[packages]\nsync = [\n  \"team/first\", # ours\n  \"team/raw\",\n  \"team/last\",\n]\n";
+    let mut edit = open(&storage, text).await?;
+    let mut one = package("team/raw");
+    one.insert("path", "a/".into());
+    let mut two = package("team/raw");
+    two.insert("path", "b/".into());
+
+    edit.redeclare(&[(Access::Sync, 1)], Access::Sync, vec![one, two]);
+
+    assert_eq!(
+        edit.text(),
+        "registry = \"s3://b\"\n[packages]\nsync = [\n  \"team/first\", # ours\n  { package = \"team/raw\", path = \"a/\" },\n  { package = \"team/raw\", path = \"b/\" },\n  \"team/last\",\n]\n"
+    );
+    Ok(())
+}
+
+/// Declarations moved to another list go at its end, a list written on one
+/// line staying on one line, and in an array of tables they go in as
+/// tables where the old ones were.
+#[test(tokio::test)]
+async fn redeclared_packages_move_between_lists() -> Res {
+    let storage = MockStorage::default();
+    let text = "registry = \"s3://b\"\n[packages]\nread = [\"team/a\", \"team/raw\"]\nsync = [\"team/b\"]\n";
+    let mut edit = open(&storage, text).await?;
+
+    edit.redeclare(
+        &[(Access::Read, 1)],
+        Access::Sync,
+        vec![package("team/raw")],
+    );
+
+    assert_eq!(
+        edit.text(),
+        "registry = \"s3://b\"\n[packages]\nread = [\"team/a\"]\nsync = [\"team/b\", { package = \"team/raw\" }]\n"
+    );
+
+    let text = "registry = \"s3://b\"\n\n[[packages.read]]\npackage = \"team/a\"\n\n[[packages.read]]\npackage = \"team/raw\"\n\n[[packages.read]]\npackage = \"team/z\"\n";
+    let mut edit = open(&storage, text).await?;
+    let mut pinned = package("team/raw");
+    pinned.insert("revision", "abcdef1234".into());
+
+    edit.redeclare(&[(Access::Read, 1)], Access::Read, vec![pinned]);
+
+    let packages: Vec<String> = edit
+        .edited(None)?
+        .entries()
+        .iter()
+        .map(|entry| format!("{} {:?}", entry.package, entry.revision))
+        .collect();
+    assert_eq!(packages.len(), 3);
+    assert!(
+        edit.text()
+            .contains("[[packages.read]]\npackage = \"team/raw\"\nrevision = \"abcdef1234\"\n\n[[packages.read]]\npackage = \"team/z\""),
+        "{}",
+        edit.text()
+    );
+    Ok(())
+}

@@ -7,21 +7,28 @@
 //! `publish`, `sync` and their `_all` forms, `autosync`), and the commands a
 //! user gives a dataspace (`install`, `uninstall`, `prune`, `reattach`,
 //! `commit`, `undo_commit`, `reset_to_latest`, `certify_latest`,
-//! `remove_revisions`). A command that changes `data.toml` does so through
-//! `edit`, the one writer of the contract, and writes the lock last.
+//! `remove_revisions`, `keep`, `create`). A command that changes `data.toml`
+//! does so through `edit`, the one writer of the contract, and writes the
+//! lock last. The commands on the Domain itself and the application's choice
+//! of a default dataspace are here too (`gc`, `measure`, `rename`, `home`).
 
 pub mod autosync;
 pub mod certify_latest;
 pub mod commit;
 pub mod conflict;
 pub mod contract;
+pub mod create;
 mod edit;
+pub mod gc;
 pub mod history;
+pub mod home;
 pub mod hooks;
 pub mod ignore;
 pub mod install;
+pub mod keep;
 pub mod list;
 pub mod lock;
+pub mod measure;
 mod metadata;
 pub mod prune;
 pub mod publish;
@@ -30,6 +37,7 @@ pub mod read;
 pub mod read_all;
 pub mod reattach;
 pub mod remove_revisions;
+pub mod rename;
 mod replace;
 pub mod reset_to_latest;
 pub mod status;

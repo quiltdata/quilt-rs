@@ -19,6 +19,7 @@ use thiserror::Error;
 use tracing::warn;
 
 use crate::dataspace::contract::Access;
+use crate::dataspace::contract::LOCAL_SUFFIX;
 use crate::sqlite::Connection;
 use crate::sqlite::ConnectionError;
 use crate::state_store::FolderKey;
@@ -493,6 +494,41 @@ impl Queue {
                 rusqlite::params![registry, namespace, folder],
             )?;
             Ok(())
+        })
+        .await
+    }
+
+    /// Moves every job, failure and kept revision of this machine's local
+    /// registry kept under one of `old`, names it had, to `name`, the one it
+    /// keeps now, in one transaction, and returns how many rows moved. A row
+    /// already under `name` for the same folder, package and access wins,
+    /// as a lock key under the current name wins (25l item 4), and the old
+    /// one is dropped.
+    pub async fn rename_local(&self, old: &[String], name: &str) -> Result<usize, QueueError> {
+        let column = |name: &str| format!("{name}{LOCAL_SUFFIX}");
+        let to = column(name);
+        let from: Vec<String> = old
+            .iter()
+            .filter(|old| *old != name)
+            .map(|old| column(old))
+            .collect();
+        self.run(move |db, _| {
+            let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let mut moved = 0;
+            for from in &from {
+                for table in ["job", "failure", "kept"] {
+                    moved += tx.execute(
+                        &format!("UPDATE OR IGNORE {table} SET registry = ?2 WHERE registry = ?1"),
+                        rusqlite::params![from, to],
+                    )?;
+                    tx.execute(
+                        &format!("DELETE FROM {table} WHERE registry = ?1"),
+                        rusqlite::params![from],
+                    )?;
+                }
+            }
+            tx.commit()?;
+            Ok(moved)
         })
         .await
     }

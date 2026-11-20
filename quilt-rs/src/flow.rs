@@ -64,6 +64,7 @@ pub use gc::measure_storage;
 pub(crate) use gc::package_objects;
 pub(crate) use gc::prune;
 pub(crate) use gc::row_objects;
+pub(crate) use gc::tree_bytes;
 pub use install_package::install_package;
 pub use install_paths::InstallPathsReport;
 pub(crate) use install_paths::OnMismatch;
