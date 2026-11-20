@@ -1065,6 +1065,108 @@ mod tests {
         }
     }
 
+    /// The secret rules' pattern and source for `path`, a new file, under `rules`.
+    fn secret(rules: &Rules, path: &str) -> Option<(String, RuleSource)> {
+        rules
+            .file_ignored_by(Path::new(path), false)
+            .map(|by| (by.pattern, by.source))
+    }
+
+    /// [`extending`] with `standard_patterns` set to `standard`.
+    fn extending_with(standard: bool, lines: &[&str]) -> Policy {
+        Policy {
+            standard_patterns: standard,
+            ..extending(lines)
+        }
+    }
+
+    /// Entry 27b: a `!` line in `extend_patterns` brings back the one
+    /// secret it names, with `standard_patterns` off as well as on, and
+    /// leaves the other secrets out.
+    #[test]
+    fn an_extend_pattern_brings_back_only_the_secret_it_names() {
+        for standard in [false, true] {
+            let policy = extending_with(standard, &["!certs/public.pem"]);
+            let (_dir, rules) = rules_with(None, None, &policy);
+            assert_eq!(secret(&rules, "certs/public.pem"), None, "{standard}");
+            assert_eq!(
+                secret(&rules, "certs/private.pem"),
+                Some(("*.pem".to_string(), RuleSource::Default)),
+                "{standard}"
+            );
+            assert_eq!(
+                secret(&rules, ".env"),
+                Some((".env".to_string(), RuleSource::Default)),
+                "{standard}"
+            );
+            // New files only: the line has nothing to say about a tracked one.
+            assert_eq!(
+                rules.file_ignored_by(Path::new("certs/private.pem"), true),
+                None,
+                "{standard}"
+            );
+        }
+    }
+
+    /// Entry 27b: a file in a hidden folder comes back only once the folder
+    /// is brought back first, with `standard_patterns` off as well as on.
+    #[test]
+    fn a_hidden_folder_is_brought_back_before_a_file_in_it() {
+        for standard in [false, true] {
+            let alone = extending_with(standard, &["!.certs/public.pem"]);
+            let (_dir, rules) = rules_with(None, None, &alone);
+            assert_eq!(
+                secret(&rules, ".certs/public.pem"),
+                Some((".*/".to_string(), RuleSource::Default)),
+                "{standard}"
+            );
+            let folder_first = extending_with(standard, &["!.certs/", "!.certs/public.pem"]);
+            let (_dir, rules) = rules_with(None, None, &folder_first);
+            assert_eq!(rules.dir_ignored_by(Path::new(".certs"), false), None);
+            assert_eq!(secret(&rules, ".certs/public.pem"), None, "{standard}");
+            assert_eq!(
+                secret(&rules, ".certs/private.pem"),
+                Some(("*.pem".to_string(), RuleSource::Default)),
+                "{standard}"
+            );
+            assert_eq!(
+                secret(&rules, ".other/public.pem"),
+                Some((".*/".to_string(), RuleSource::Default)),
+                "{standard}"
+            );
+        }
+    }
+
+    /// Entry 27b: the package's `.quiltignore` decides for a file the
+    /// package already has as well as for a new one, so its `!` line brings
+    /// back a tracked secret its own rule leaves out.
+    #[test]
+    fn a_package_quiltignore_line_brings_back_a_tracked_secret() {
+        for standard in [false, true] {
+            let policy = extending_with(standard, &[]);
+            let (_dir, rules) = rules_with(Some("*.pem\n!certs/public.pem\n"), None, &policy);
+            for tracked in [false, true] {
+                assert_eq!(
+                    rules.file_ignored_by(Path::new("certs/public.pem"), tracked),
+                    None,
+                    "{standard} {tracked}"
+                );
+                let by = rules
+                    .file_ignored_by(Path::new("certs/private.pem"), tracked)
+                    .unwrap();
+                assert_eq!(
+                    (by.pattern.as_str(), by.source),
+                    ("*.pem", RuleSource::Package { line: 1 }),
+                    "{standard} {tracked}"
+                );
+            }
+            // A package `!` line beats an `extend_patterns` line too.
+            let policy = extending_with(standard, &["certs/"]);
+            let (_dir, rules) = rules_with(Some("!certs/\n!certs/public.pem\n"), None, &policy);
+            assert_eq!(secret(&rules, "certs/public.pem"), None, "{standard}");
+        }
+    }
+
     #[test]
     fn what_the_dataspace_leaves_out_is_compared_as_its_file_system_compares() {
         let left_out = vec![PathBuf::from("Raw/Team")];
