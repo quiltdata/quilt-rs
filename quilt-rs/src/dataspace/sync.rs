@@ -14,6 +14,7 @@ use tracing::warn;
 
 use crate::LogicalKey;
 use crate::Res;
+use crate::WorkflowValidationError;
 use crate::dataspace::EntryError;
 use crate::dataspace::METADATA_FILE;
 use crate::dataspace::contract::Access;
@@ -35,6 +36,7 @@ use crate::dataspace::publish::walk;
 use crate::dataspace::read::OnDisk;
 use crate::dataspace::read::ReadOutcome;
 use crate::dataspace::read::ReadReport;
+use crate::dataspace::read::STAGING_PREFIX;
 use crate::dataspace::read::bytes_at;
 use crate::dataspace::read::gone;
 use crate::dataspace::read::read;
@@ -697,8 +699,8 @@ async fn push_head(
     head: &str,
     base: Option<&str>,
 ) -> Result<Published, EntryError> {
-    let manifest =
-        Manifest::from_path(storage, &store.installed_manifest(&entry.package, head)).await?;
+    let head_only = [head.to_string()];
+    let manifest = manifest_at(storage, remote, store, entry, head, &head_only).await?;
     let target = PushTarget {
         handle: handle(entry)?,
         origin: entry.catalog.clone(),
@@ -714,11 +716,13 @@ async fn push_head(
         };
         queue.keep(&folder, revision)
     };
-    // A config that cannot be read fails the push before anything is
-    // uploaded; only the workflow's own refusal is stored and kept.
+    // A config that cannot be read or applied fails the push before anything
+    // is uploaded; only the workflow's refusal is stored and kept.
     let refused = match check_workflow(remote, &target, &manifest).await {
         Ok(()) => None,
-        Err(crate::Error::WorkflowValidation(err)) => Some(err.to_string()),
+        Err(crate::Error::WorkflowValidation(err @ WorkflowValidationError::Rejected(_))) => {
+            Some(err.to_string())
+        }
         Err(err) => return Err(err.into()),
     };
     let uri = revision(entry, head)?;
@@ -774,7 +778,9 @@ fn revision(entry: &Entry, hash: &str) -> Result<ManifestUri, EntryError> {
 }
 
 /// The manifest of `hash`, the lock's current revision of `entry`: the last
-/// of `commits`, from `store`, or else the base.
+/// of `commits`, from `store`, or else the base. A commit the store cleared
+/// once the bucket held it, as one stored without becoming `latest`, is read
+/// from the bucket.
 async fn manifest_at(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
@@ -783,8 +789,9 @@ async fn manifest_at(
     hash: &str,
     commits: &[String],
 ) -> Result<Manifest, EntryError> {
-    if commits.last().is_some_and(|head| head == hash) {
-        Ok(Manifest::from_path(storage, &store.installed_manifest(&entry.package, hash)).await?)
+    let installed = store.installed_manifest(&entry.package, hash);
+    if commits.last().is_some_and(|head| head == hash) && storage.exists(&installed).await {
+        Ok(Manifest::from_path(storage, &installed).await?)
     } else {
         base_manifest(storage, remote, store, entry, hash).await
     }
@@ -793,7 +800,9 @@ async fn manifest_at(
 /// Puts every file of `current`, the revision `hash`, under `entry`'s paths
 /// back into its working folder, which is missing or empty, and writes the
 /// metadata file where there is none. A file a local commit changed is
-/// copied from `store`, the rest fetched from the bucket.
+/// copied from `store`, the rest fetched from the bucket. Nothing is placed
+/// unless every file can be: a folder left partly filled would publish the
+/// rest as deleted.
 async fn read_back(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
@@ -803,54 +812,59 @@ async fn read_back(
     current: &Manifest,
 ) -> Result<ReadReport, EntryError> {
     let folder = &entry.folder;
-    let (fetched, copied): (Vec<&ManifestRow>, Vec<&ManifestRow>) = current
+    let rows: Vec<&ManifestRow> = current
         .rows
         .iter()
         .filter(|row| entry.paths.covers(&row.logical_key))
+        .collect();
+    let (fetched, copied): (Vec<&ManifestRow>, Vec<&ManifestRow>) = rows
+        .iter()
         .partition(|row| row.physical_key.starts_with("s3://"));
-    let installed = install_to(
-        storage,
-        remote,
-        entry.catalog.as_ref(),
-        &Manifest {
-            rows: fetched.into_iter().cloned().collect(),
-            ..Manifest::default()
-        },
-        folder,
-        None,
-    )
-    .await?;
-    let mut report = ReadReport {
-        revision: hash.to_string(),
-        placed: installed.placed,
-        skipped: installed.skipped,
-        hash_mismatch: installed.hash_mismatch,
-        ..ReadReport::default()
-    };
-    for row in copied {
-        let key = &row.logical_key;
-        let path = key.join_to(folder);
-        refuse_linked_ancestors(storage, folder, std::iter::once(key)).await?;
-        if storage.exists(&path).await {
-            return Err(EntryError::Changed(key.to_path_buf()));
+    let staging = folder.join(format!("{STAGING_PREFIX}{}", uuid::Uuid::new_v4()));
+    let read = async {
+        let installed = install_to(
+            storage,
+            remote,
+            entry.catalog.as_ref(),
+            &Manifest {
+                rows: fetched.into_iter().cloned().collect(),
+                ..Manifest::default()
+            },
+            &staging,
+            None,
+        )
+        .await?;
+        let mut report = ReadReport {
+            revision: hash.to_string(),
+            skipped: installed.skipped,
+            hash_mismatch: installed.hash_mismatch,
+            ..ReadReport::default()
+        };
+        if !report.skipped.is_empty() || !report.hash_mismatch.is_empty() {
+            return Ok(report);
         }
-        if let Some(parent) = path.parent() {
-            storage.create_dir_all(parent).await?;
-        }
-        // Renamed into place, so a copy cut short is never taken for a file.
-        let staged = folder.join(format!(".tmp-{}", uuid::Uuid::new_v4()));
-        let placed = async {
+        for row in copied {
+            let staged = row.logical_key.join_to(&staging);
+            if let Some(parent) = staged.parent() {
+                storage.create_dir_all(parent).await?;
+            }
             storage.copy(store.object_path(&row.hash), &staged).await?;
-            storage.rename(&staged, &path).await
         }
-        .await;
-        if placed.is_err() {
-            let _ = storage.remove_file(&staged).await;
+        let keys = || rows.iter().map(|row| &row.logical_key);
+        refuse_linked_ancestors(storage, folder, keys()).await?;
+        for key in keys() {
+            if storage.exists(&key.join_to(folder)).await {
+                return Err(EntryError::Changed(key.to_path_buf()));
+            }
         }
-        placed?;
-        report.placed.push(key.to_path_buf());
-    }
-    if report.skipped.is_empty() && report.hash_mismatch.is_empty() {
+        for key in keys() {
+            let path = key.join_to(folder);
+            if let Some(parent) = path.parent() {
+                storage.create_dir_all(parent).await?;
+            }
+            storage.rename(key.join_to(&staging), &path).await?;
+            report.placed.push(key.to_path_buf());
+        }
         let text = render(current, &entry.paths).map_err(EntryError::MetadataUnwritable)?;
         match bytes_at(storage, &folder.join(METADATA_FILE)).await? {
             None => {
@@ -862,8 +876,11 @@ async fn read_back(
             }
             Some(_) => {}
         }
+        Ok::<_, EntryError>(report)
     }
-    Ok(report)
+    .await;
+    let _ = storage.remove_dir_all(&staging).await;
+    read
 }
 
 /// The manifest of `hash`, a revision of `entry`'s package in its bucket,

@@ -1108,21 +1108,7 @@ async fn a_package_with_no_revision_and_no_folder_publishes_nothing() -> Res {
 #[test(tokio::test)]
 async fn a_change_the_buckets_workflow_refuses_is_stored_kept_and_not_uploaded_again() -> Res {
     let world = World::filled(&[("a.txt", b"v1")]).await?;
-    for (key, body) in [
-        (
-            "s3://b/.quilt/workflows/config.yml",
-            "version: \"1\"\ndefault_workflow: gate\nworkflows:\n  gate:\n    name: Gate\n    metadata_schema: meta\nschemas:\n  meta:\n    url: s3://b/schemas/meta.json\n",
-        ),
-        (
-            "s3://b/schemas/meta.json",
-            r#"{"type": "object", "required": ["owner"]}"#,
-        ),
-    ] {
-        world
-            .remote
-            .put_object(None, &S3Uri::try_from(key)?, body.as_bytes().to_vec())
-            .await?;
-    }
+    gate(&world, r#"{"type": "object", "required": ["owner"]}"#).await?;
     world.write("a.txt", "v2")?;
 
     let outcome = world.tick().await?;
@@ -1224,20 +1210,15 @@ async fn a_kept_revision_the_bucket_no_longer_holds_is_stored_again() -> Res {
 }
 
 #[test(tokio::test)]
-async fn a_workflow_that_cannot_be_read_fails_the_push_before_anything_is_uploaded() -> Res {
+async fn a_workflow_that_cannot_be_checked_fails_the_push_before_anything_is_uploaded() -> Res {
     let world = World::filled(&[("a.txt", b"v1")]).await?;
+    gate(&world, r#"{"type": "object"}"#).await?;
     world.write("a.txt", "v2")?;
     stopping_at("push.object", 0, world.tick()).await?;
     let commits = world.locked().await?.ok_or("no lock entry")?.commits;
     assert_eq!(commits.len(), 1);
-    world
-        .remote
-        .put_object(
-            None,
-            &S3Uri::try_from("s3://b/.quilt/workflows/config.yml")?,
-            b"not: [yaml".to_vec(),
-        )
-        .await?;
+    // A schema the validator does not support, not a refusal of the revision.
+    gate(&world, r##"{"$ref": "#/definitions/meta"}"##).await?;
 
     let outcome = world.tick().await?;
 
@@ -1245,6 +1226,81 @@ async fn a_workflow_that_cannot_be_read_fails_the_push_before_anything_is_upload
     let stored = format!("b/.quilt/packages/{}", commits[0]);
     assert!(world.remote.current(&stored).await?.is_none());
     assert_eq!(world.kept().await?, None);
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_blocked_commit_the_store_cleared_is_read_from_the_bucket() -> Res {
+    let world = World::filled(&[("a.txt", b"v1")]).await?;
+    gate(&world, r#"{"type": "object", "required": ["owner"]}"#).await?;
+    world.write("a.txt", "v2")?;
+    world.tick().await?;
+    // The bucket holds the blocked revision, so the store counts it published.
+    world
+        .domain()
+        .registry("b")?
+        .clear_published(&world.storage, &world.remote, None)
+        .await?;
+
+    let outcome = world.tick().await?;
+
+    assert!(
+        matches!(
+            &outcome,
+            EntrySync::Ran {
+                published: Some(Published::WorkflowBlocked { .. }),
+                ..
+            }
+        ),
+        "{outcome:?}"
+    );
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_folder_that_cannot_be_read_back_whole_is_left_empty_and_nothing_published() -> Res {
+    let world = World::filled(&[("a.txt", b"v1"), ("b.txt", b"v1")]).await?;
+    std::fs::remove_dir_all(world.folder())?;
+    // b.txt's bytes in the bucket no longer match its row.
+    world
+        .remote
+        .put_object(
+            None,
+            &S3Uri::try_from(
+                format!("s3://b/team/raw/b.txt?versionId={}", hex::encode(b"v1")).as_str(),
+            )?,
+            b"corrupt".to_vec(),
+        )
+        .await?;
+
+    let first = world.tick().await?;
+    let second = world.tick().await?;
+
+    for outcome in [first, second] {
+        assert!(
+            matches!(&outcome, EntrySync::ReadBack(read)
+                if read.placed.is_empty() && read.hash_mismatch == [PathBuf::from("b.txt")]),
+            "{outcome:?}"
+        );
+    }
+    assert_eq!(world.text("a.txt"), None);
+    assert_eq!(world.latest().await?, FIRST);
+    Ok(())
+}
+
+/// Makes the bucket's default workflow `gate`, whose metadata schema is
+/// `schema`.
+async fn gate(world: &World, schema: &str) -> Res {
+    let config = "version: \"1\"\ndefault_workflow: gate\nworkflows:\n  gate:\n    name: Gate\n    metadata_schema: meta\nschemas:\n  meta:\n    url: s3://b/schemas/meta.json\n";
+    for (key, body) in [
+        ("s3://b/.quilt/workflows/config.yml", config),
+        ("s3://b/schemas/meta.json", schema),
+    ] {
+        world
+            .remote
+            .put_object(None, &S3Uri::try_from(key)?, body.as_bytes().to_vec())
+            .await?;
+    }
     Ok(())
 }
 
