@@ -506,3 +506,18 @@ async fn a_read_that_cannot_place_every_file_sets_no_key() -> Res {
     assert_eq!(text(&storage, "a.txt").await.as_deref(), Some("mine a"));
     Ok(())
 }
+
+/// The error for a key does not repeat it, so a user and password written in
+/// it stay out of the message.
+#[test(tokio::test)]
+async fn a_key_error_does_not_repeat_the_key() -> Res {
+    let storage = MockStorage::default();
+    let body = r#"{"quilt+s3://KEY:secret@b#package=team/raw": {}}"#;
+    write(&storage, &dataspace().join(CONFLICT_FILE), body.as_bytes()).await?;
+    let Err(err) = map(&storage).await else {
+        panic!("the key should be refused");
+    };
+    let text = err.to_string();
+    assert!(!text.contains("secret") && !text.contains("KEY"), "{text}");
+    Ok(())
+}

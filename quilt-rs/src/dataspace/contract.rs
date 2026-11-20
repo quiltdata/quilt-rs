@@ -480,8 +480,8 @@ pub enum EntryProblem {
     #[error("a local package has no catalog")]
     LocalCatalog,
 
-    #[error("a registry is `s3://<bucket>` or `quilt+local://<name>`; got {0:?}")]
-    Registry(String),
+    #[error("a registry is `s3://<bucket>` or `quilt+local://<name>`")]
+    Registry,
 
     #[error(transparent)]
     Uri(UriError),
@@ -794,7 +794,7 @@ fn local(name: Option<String>, local_registry: Option<&str>) -> Result<Registry,
         .ok_or(EntryProblem::NoLocalRegistry)?;
     match crate::domain::check_name(&name) {
         Ok(()) => Ok(Registry::Local(name)),
-        Err(_) => Err(EntryProblem::Registry(format!("quilt+local://{name}"))),
+        Err(_) => Err(EntryProblem::Registry),
     }
 }
 
@@ -856,7 +856,7 @@ fn parse_registry(text: &str, local_registry: Option<&str>) -> Result<Registry, 
     match text.strip_prefix("quilt+local://") {
         Some("") => local(None, local_registry),
         Some(name) => local(Some(name.to_string()), local_registry),
-        None => Err(EntryProblem::Registry(text.to_string())),
+        None => Err(EntryProblem::Registry),
     }
 }
 

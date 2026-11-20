@@ -644,7 +644,7 @@ fn a_registry_field_that_is_neither_spelling_is_refused() {
     ] {
         let problem = entry_problem(&with_defaults(list));
         assert!(
-            matches!(problem, EntryProblem::Registry(_) | EntryProblem::Uri(_)),
+            matches!(problem, EntryProblem::Registry | EntryProblem::Uri(_)),
             "{list}: {problem}"
         );
     }
@@ -660,7 +660,7 @@ fn a_registry_field_that_is_neither_spelling_is_refused() {
         matches!(
             read,
             Err(ContractError::Entry {
-                problem: EntryProblem::Registry(_),
+                problem: EntryProblem::Registry,
                 ..
             })
         ),
@@ -723,4 +723,21 @@ fn a_package_key_is_its_canonical_uri() -> Res {
         "quilt+s3://quilt-dev#package=team/raw"
     );
     Ok(())
+}
+
+/// The error for a registry does not repeat it, so a user and password
+/// written in it stay out of the message.
+#[test]
+fn a_registry_error_does_not_repeat_it() {
+    for list in [
+        r#"read = [{ registry = "s3://KEY:secret@bucket", package = "me/analysis" }]"#,
+        r#"read = [{ registry = "quilt+local://KEY:secret@lab-mac", package = "me/analysis" }]"#,
+    ] {
+        let Err(err) = parse(&with_defaults(list)) else {
+            panic!("{list} should be refused");
+        };
+        for text in [err.to_string(), format!("{err:?}")] {
+            assert!(!text.contains("secret") && !text.contains("KEY"), "{text}");
+        }
+    }
 }

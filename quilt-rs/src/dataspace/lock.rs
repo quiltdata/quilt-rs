@@ -270,10 +270,7 @@ fn raw(
 /// The key `text` names, where it is a canonical package URI and the entry
 /// holds whole top hashes.
 fn checked(text: &str, entry: &LockEntry) -> Result<PackageKey, LockError> {
-    let key = text.parse().map_err(|source| LockError::Key {
-        key: text.to_string(),
-        source,
-    })?;
+    let key = text.parse().map_err(LockError::Key)?;
     if let Some(hash) = std::iter::once(&entry.base)
         .chain(&entry.commits)
         .find(|hash| !is_top_hash(hash))
@@ -310,12 +307,8 @@ pub enum LockError {
     #[error("{LOCK_FILE} is not a valid lock: {0}")]
     Syntax(#[from] toml::de::Error),
 
-    #[error("{LOCK_FILE} names {key:?}, which is not a package's canonical URI: {source}")]
-    Key {
-        key: String,
-        #[source]
-        source: quilt_uri::UriError,
-    },
+    #[error("{LOCK_FILE} names a key that is not a package's canonical URI: {0}")]
+    Key(#[source] quilt_uri::UriError),
 
     #[error("{LOCK_FILE} holds {hash:?} for {package}, which is not a whole top hash")]
     Hash { package: String, hash: String },

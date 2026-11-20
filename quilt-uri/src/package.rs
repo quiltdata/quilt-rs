@@ -155,22 +155,22 @@ impl TryFrom<&str> for Namespace {
 
     fn try_from(input: &str) -> Result<Self, Self::Error> {
         let (prefix, name) = input.split_once('/').ok_or_else(|| {
-            UriError::Namespace(format!("namespace must be `<prefix>/<name>`; got: {input}"))
+            UriError::Namespace("namespace must be `<prefix>/<name>`".to_string())
         })?;
         if prefix.is_empty() || name.is_empty() {
-            return Err(UriError::Namespace(format!(
-                "namespace prefix and name must be non-empty; got: {input}"
-            )));
+            return Err(UriError::Namespace(
+                "namespace prefix and name must be non-empty".to_string(),
+            ));
         }
         if name.contains('/') {
-            return Err(UriError::Namespace(format!(
-                "namespace must contain exactly one `/`; got: {input}"
-            )));
+            return Err(UriError::Namespace(
+                "namespace must contain exactly one `/`".to_string(),
+            ));
         }
         if !is_plain_half(prefix) || !is_plain_half(name) {
-            return Err(UriError::Namespace(format!(
-                "namespace prefix and name must not be `.` or `..` or hold `\\`, `:` or control characters; got: {input:?}"
-            )));
+            return Err(UriError::Namespace(
+                "namespace prefix and name must not be `.` or `..` or hold `\\`, `:` or control characters".to_string(),
+            ));
         }
         Ok(Namespace {
             prefix: prefix.to_string(),
@@ -403,12 +403,12 @@ pub(crate) fn parse_after_authority(
     }
     if !parsed_url.path().is_empty() || parsed_url.query().is_some() {
         return Err(UriError::Package(format!(
-            "a path or query is not allowed after {authority}: {input}"
+            "a path or query is not allowed after {authority} {host:?}"
         )));
     }
 
     let fragment = parsed_url.fragment().ok_or(UriError::Package(format!(
-        "{kind} package URI must contain a fragment: {input}"
+        "{kind} package URI must contain a fragment `#package=…`"
     )))?;
     let mut params = HashMap::new();
     for (key, value) in parse_fragment(fragment)? {
@@ -468,9 +468,10 @@ pub(crate) fn parse_after_authority(
     };
 
     if !params.is_empty() {
-        return Err(UriError::Package(format!(
-            "unexpected parameters in fragment: {params:?}"
-        )));
+        return Err(UriError::Package(
+            "unexpected parameters in fragment; only package, path and catalog are allowed"
+                .to_string(),
+        ));
     }
 
     Ok(PackageFragment {
@@ -836,8 +837,7 @@ mod tests {
         let uri = S3PackageUri::try_from("quilt+s3://bucket");
         assert_eq!(
             uri.unwrap_err().to_string(),
-            "Invalid package URI: S3 package URI must contain a fragment: quilt+s3://bucket"
-                .to_string(),
+            "Invalid package URI: S3 package URI must contain a fragment `#package=…`".to_string(),
         );
     }
 
@@ -855,7 +855,7 @@ mod tests {
         let uri = S3PackageUri::try_from("quilt+s3://bucket#package=a/b&foo=bar");
         assert_eq!(
             uri.unwrap_err().to_string(),
-            r#"Invalid package URI: unexpected parameters in fragment: {"foo": "bar"}"#.to_string(),
+            "Invalid package URI: unexpected parameters in fragment; only package, path and catalog are allowed".to_string(),
         );
     }
 
@@ -894,6 +894,35 @@ mod tests {
             assert!(err.contains("bucket"), "{err}");
             assert!(!err.contains("secret"), "{err}");
             assert!(!err.contains("KEY") && !err.contains("user:"), "{err}");
+        }
+    }
+
+    /// No error repeats the input, so a user and password written anywhere
+    /// in it stay out of the message.
+    #[test]
+    fn no_error_repeats_a_user_or_password() {
+        for input in [
+            "s3://KEY:secret@bucket/k",
+            "quilt+s3://bucket/KEY:secret@x#package=a/b",
+            "quilt+s3://bucket?KEY:secret@x#package=a/b",
+            "quilt+s3://bucket#package=a/b&KEY:secret@x=1",
+            "quilt+s3://bucket#package=a/b&x=KEY:secret@y",
+            "quilt+s3://bucket#package=quilt+s3://KEY:secret@b",
+        ] {
+            let err = S3PackageUri::try_from(input).expect_err(input).to_string();
+            assert!(!err.contains("secret"), "{err}");
+            assert!(!err.contains("KEY"), "{err}");
+        }
+        for input in [
+            "quilt+s3://KEY:secret@bucket",
+            "KEY:secret@bucket",
+            "/KEY:secret@bucket",
+            "a/b/KEY:secret@bucket",
+            "a/KEY:secret@bucket",
+        ] {
+            let err = Namespace::try_from(input).expect_err(input).to_string();
+            assert!(!err.contains("secret"), "{err}");
+            assert!(!err.contains("KEY"), "{err}");
         }
     }
 
@@ -1538,7 +1567,7 @@ mod tests {
         let err = Namespace::try_from("foo").unwrap_err();
         assert_eq!(
             err.to_string(),
-            "Invalid namespace: namespace must be `<prefix>/<name>`; got: foo"
+            "Invalid namespace: namespace must be `<prefix>/<name>`"
         );
     }
 
@@ -1547,7 +1576,7 @@ mod tests {
         let err = Namespace::try_from("/").unwrap_err();
         assert_eq!(
             err.to_string(),
-            "Invalid namespace: namespace prefix and name must be non-empty; got: /"
+            "Invalid namespace: namespace prefix and name must be non-empty"
         );
     }
 
@@ -1556,7 +1585,7 @@ mod tests {
         let err = Namespace::try_from("/bar").unwrap_err();
         assert_eq!(
             err.to_string(),
-            "Invalid namespace: namespace prefix and name must be non-empty; got: /bar"
+            "Invalid namespace: namespace prefix and name must be non-empty"
         );
     }
 
@@ -1565,7 +1594,7 @@ mod tests {
         let err = Namespace::try_from("foo/").unwrap_err();
         assert_eq!(
             err.to_string(),
-            "Invalid namespace: namespace prefix and name must be non-empty; got: foo/"
+            "Invalid namespace: namespace prefix and name must be non-empty"
         );
     }
 
@@ -1574,7 +1603,7 @@ mod tests {
         let err = Namespace::try_from("foo/bar/baz").unwrap_err();
         assert_eq!(
             err.to_string(),
-            "Invalid namespace: namespace must contain exactly one `/`; got: foo/bar/baz"
+            "Invalid namespace: namespace must contain exactly one `/`"
         );
     }
 

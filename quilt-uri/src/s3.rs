@@ -63,7 +63,8 @@ impl TryFrom<&str> for S3Uri {
         let parsed_url = Url::parse(input)?;
         if parsed_url.scheme() != "s3" {
             return Err(UriError::Scheme(format!(
-                "Expected s3:// scheme in {input}"
+                "Expected s3:// scheme, got {}://",
+                parsed_url.scheme()
             )));
         }
         let bucket = parsed_url.host_str().unwrap_or_default();
@@ -78,36 +79,38 @@ impl TryFrom<&str> for S3Uri {
             )));
         }
         if parsed_url.fragment().is_some() {
-            return Err(UriError::S3(format!(
-                "A fragment is not allowed in {input}; write `#` in a key as `%23`"
-            )));
+            return Err(UriError::S3(
+                "A fragment is not allowed; write `#` in a key as `%23`".to_string(),
+            ));
         }
         let bucket = parsed_url
             .host_str()
-            .ok_or(UriError::S3(format!("Missing bucket in {input}")))?;
+            .ok_or(UriError::S3("Missing bucket".to_string()))?;
         check_bucket(bucket)?;
 
         let path = parsed_url
             .path()
             .strip_prefix('/')
             .filter(|rest| !rest.is_empty())
-            .ok_or_else(|| UriError::S3(format!("Missing object key in {input}")))?;
+            .ok_or_else(|| {
+                UriError::S3(format!("Missing object key after the bucket {bucket:?}"))
+            })?;
 
         let key = percent_encoding::percent_decode_str(path).decode_utf8()?;
         let queries = parsed_url.query_pairs().into_owned().collect::<Vec<_>>();
         if queries.len() > 1 {
-            return Err(UriError::S3(format!(
-                "Too many query parameters in {input}. Only single versionId is allowed"
-            )));
+            return Err(UriError::S3(
+                "Too many query parameters; only a single versionId is allowed".to_string(),
+            ));
         }
 
         let version = match queries.into_iter().next() {
             None => None,
             Some((key, value)) if key == "versionId" => Some(value),
             Some(_) => {
-                return Err(UriError::S3(format!(
-                    "Unknown query parameter in {input}. Only single versionId is allowed"
-                )));
+                return Err(UriError::S3(
+                    "Unknown query parameter; only a single versionId is allowed".to_string(),
+                ));
             }
         };
 
@@ -163,7 +166,7 @@ mod tests {
         let uri = S3Uri::try_from("https://bucket/foo/bar");
         assert_eq!(
             uri.unwrap_err().to_string(),
-            "Invalid URI scheme: Expected s3:// scheme in https://bucket/foo/bar".to_string(),
+            "Invalid URI scheme: Expected s3:// scheme, got https://".to_string(),
         );
     }
 
@@ -172,7 +175,7 @@ mod tests {
         let uri = S3Uri::try_from("s3://");
         assert_eq!(
             uri.unwrap_err().to_string(),
-            "Invalid S3 URI: Missing bucket in s3://".to_string(),
+            "Invalid S3 URI: Missing bucket".to_string(),
         );
     }
 
@@ -181,7 +184,7 @@ mod tests {
         let uri = S3Uri::try_from("s3://bucket");
         assert_eq!(
             uri.unwrap_err().to_string(),
-            "Invalid S3 URI: Missing object key in s3://bucket".to_string(),
+            "Invalid S3 URI: Missing object key after the bucket \"bucket\"".to_string(),
         );
     }
 
@@ -190,7 +193,7 @@ mod tests {
         let uri = S3Uri::try_from("s3://bucket/");
         assert_eq!(
             uri.unwrap_err().to_string(),
-            "Invalid S3 URI: Missing object key in s3://bucket/".to_string(),
+            "Invalid S3 URI: Missing object key after the bucket \"bucket\"".to_string(),
         );
     }
 
@@ -227,7 +230,8 @@ mod tests {
         let uri = S3Uri::try_from("s3://bucket/foo/bar?another=query");
         assert_eq!(
             uri.unwrap_err().to_string(),
-            "Invalid S3 URI: Unknown query parameter in s3://bucket/foo/bar?another=query. Only single versionId is allowed".to_string(),
+            "Invalid S3 URI: Unknown query parameter; only a single versionId is allowed"
+                .to_string(),
         );
     }
 
@@ -250,7 +254,7 @@ mod tests {
         let uri = S3Uri::try_from("s3://bucket/foo  bar?versionId=query&versionId=another");
         assert_eq!(
             uri.unwrap_err().to_string(),
-            "Invalid S3 URI: Too many query parameters in s3://bucket/foo  bar?versionId=query&versionId=another. Only single versionId is allowed"
+            "Invalid S3 URI: Too many query parameters; only a single versionId is allowed"
                 .to_string(),
         );
     }
@@ -408,6 +412,24 @@ mod tests {
             assert!(err.contains("bucket"), "{err}");
             assert!(!err.contains("secret"), "{err}");
             assert!(!err.contains("KEY") && !err.contains("user:"), "{err}");
+        }
+    }
+
+    /// No error repeats the input, so a user and password written anywhere
+    /// in it stay out of the message.
+    #[test]
+    fn no_error_repeats_a_user_or_password() {
+        for input in [
+            "quilt+s3://KEY:secret@bucket#package=a/b",
+            "s3://bucket/k#KEY:secret@x",
+            "s3:KEY:secret@bucket/k",
+            "s3://bucket?KEY:secret@x",
+            "s3://bucket/k?versionId=1&KEY:secret@x",
+            "s3://bucket/k?KEY:secret@x",
+        ] {
+            let err = S3Uri::try_from(input).expect_err(input).to_string();
+            assert!(!err.contains("secret"), "{err}");
+            assert!(!err.contains("KEY"), "{err}");
         }
     }
 

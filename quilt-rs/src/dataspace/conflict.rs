@@ -89,9 +89,9 @@ impl ConflictMap {
             serde_json::from_slice(&bytes).map_err(invalid)?;
         let mut packages = BTreeMap::new();
         for (text, rows) in raw {
-            let key: PackageKey = text.parse().map_err(|err| {
-                invalid(format!("{text:?} is not a package's canonical URI: {err}"))
-            })?;
+            let key: PackageKey = text
+                .parse()
+                .map_err(|err| invalid(format!("a key is not a package's canonical URI: {err}")))?;
             packages.insert(key, rows);
         }
         Ok(Self { packages })
