@@ -500,6 +500,11 @@ async fn publish(
     if current_hash.is_some() && gone(storage, folder, &current, &entry.paths).await? {
         return Err(EntryError::FolderGone(folder.clone()).into());
     }
+    // A package not yet published whose folder is not there has nothing to
+    // publish.
+    if current_hash.is_none() && !storage.exists(folder).await {
+        return Ok(None);
+    }
     let files: Vec<(LogicalKey, PathBuf)> = walk(storage, folder)
         .await?
         .into_iter()
@@ -537,7 +542,8 @@ async fn publish(
             store,
             storage,
             remote,
-            WorkflowCheck::Warn {
+            // The push would refuse it, and the lock would hold it meanwhile.
+            WorkflowCheck::Gate {
                 host: entry.catalog.as_ref(),
             },
             &entry.package,
@@ -554,16 +560,9 @@ async fn publish(
                 locked.commits.push(hash.to_string());
                 lock_file.save(lock).await?;
             }
-            // The folder holds the commit now, its message included, so a
-            // later read does not take the metadata file for a local change.
-            let committed =
-                Manifest::from_path(storage, &store.installed_manifest(&entry.package, hash))
-                    .await?;
-            let rewritten = match render(&committed, &entry.paths) {
-                Ok(text) => write_metadata(storage, folder, text, metadata_text.as_deref()).await,
-                Err(reason) => Err(EntryError::MetadataUnwritable(reason)),
-            };
-            if let Err(err) = rewritten {
+            if let Err(err) =
+                rewrite_metadata(storage, store, entry, hash, metadata_text.as_deref()).await
+            {
                 warn!("{METADATA_FILE} was left as it is: {err}");
             }
             head = Some(hash.to_string());
@@ -588,6 +587,23 @@ async fn publish(
         set_base(lock, lock_file, &key, revision.clone()).await?;
     }
     Ok(Some(published))
+}
+
+/// Writes the metadata file of the commit `hash` into `entry`'s folder,
+/// where it still holds `planned_on`: the folder holds the commit now, its
+/// message included, so a later read does not take the file for a local
+/// change.
+async fn rewrite_metadata(
+    storage: &(impl Storage + Sync),
+    store: &RegistryStore,
+    entry: &Entry,
+    hash: &str,
+    planned_on: Option<&[u8]>,
+) -> Result<(), EntryError> {
+    let committed =
+        Manifest::from_path(storage, &store.installed_manifest(&entry.package, hash)).await?;
+    let text = render(&committed, &entry.paths).map_err(EntryError::MetadataUnwritable)?;
+    write_metadata(storage, &entry.folder, text, planned_on).await
 }
 
 /// Pushes the local commit `head` against `base`, squashing the commits

@@ -840,6 +840,55 @@ async fn a_package_with_no_revision_is_published_once_the_dataspace_is_filled() 
 }
 
 #[test(tokio::test)]
+async fn a_package_with_no_revision_and_no_folder_publishes_nothing() -> Res {
+    let world = World::synced()?;
+    world.sync().await?;
+
+    let outcome = world.tick().await?;
+
+    assert!(
+        matches!(
+            &outcome,
+            EntrySync::Ran {
+                read: None,
+                published: None
+            }
+        ),
+        "{outcome:?}"
+    );
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_change_the_buckets_workflow_refuses_is_not_committed() -> Res {
+    let world = World::filled(&[("a.txt", b"v1")]).await?;
+    for (key, body) in [
+        (
+            "s3://b/.quilt/workflows/config.yml",
+            "version: \"1\"\ndefault_workflow: gate\nworkflows:\n  gate:\n    name: Gate\n    metadata_schema: meta\nschemas:\n  meta:\n    url: s3://b/schemas/meta.json\n",
+        ),
+        (
+            "s3://b/schemas/meta.json",
+            r#"{"type": "object", "required": ["owner"]}"#,
+        ),
+    ] {
+        world
+            .remote
+            .put_object(None, &S3Uri::try_from(key)?, body.as_bytes().to_vec())
+            .await?;
+    }
+    world.write("a.txt", "v2")?;
+
+    let outcome = world.tick().await?;
+
+    assert!(matches!(&outcome, EntrySync::Failed(_)), "{outcome:?}");
+    assert_eq!(world.latest().await?, FIRST);
+    let locked = world.locked().await?.ok_or("no lock entry")?;
+    assert_eq!(locked.commits, Vec::<String>::new());
+    Ok(())
+}
+
+#[test(tokio::test)]
 async fn a_package_another_process_holds_is_left_for_the_next_tick() -> Res {
     let world = World::filled(&[("a.txt", b"v1")]).await?;
     world.write("a.txt", "v2")?;
