@@ -779,6 +779,29 @@ async fn under_sync_a_folder_left_with_what_the_os_writes_is_refused() -> Res {
     Ok(())
 }
 
+#[test(tokio::test)]
+async fn under_sync_a_package_file_named_like_os_litter_keeps_its_folder() -> Res {
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    let entry = sync();
+    publish(&remote, FIRST, &[(".gitignore", b"*.tmp")]).await?;
+    read(&storage, &remote, &entry, None).await?;
+    publish(
+        &remote,
+        SECOND,
+        &[(".gitignore", b"*.tmp"), ("b.txt", b"new")],
+    )
+    .await?;
+
+    let outcome = read(&storage, &remote, &entry, Some(FIRST)).await;
+
+    assert!(
+        matches!(&outcome, Ok(outcome) if outcome.lock_base() == Some(SECOND)),
+        "{outcome:?}"
+    );
+    Ok(())
+}
+
 /// A folder outside the entry's paths is none of its business.
 #[cfg(unix)]
 #[test(tokio::test)]

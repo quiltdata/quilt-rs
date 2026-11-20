@@ -472,7 +472,8 @@ async fn gone(
     base: &Manifest,
     paths: &Paths,
 ) -> Res<bool> {
-    if covered(base, paths).is_empty() {
+    let had = covered(base, paths);
+    if had.is_empty() {
         return Ok(false);
     }
     let mut queue = VecDeque::from([(folder.to_path_buf(), PathBuf::new())]);
@@ -497,11 +498,11 @@ async fn gone(
                 continue;
             }
             // What an OS leaves in a folder it shows, as `.DS_Store`, is no
-            // file of the user's.
-            if crate::junk::check(&relative).is_none()
-                && LogicalKey::new(crate::paths::logical_key(&relative))
-                    .is_ok_and(|key| paths.covers(&key))
-            {
+            // file of the user's, unless the package holds it.
+            if LogicalKey::new(crate::paths::logical_key(&relative)).is_ok_and(|key| {
+                paths.covers(&key)
+                    && (had.contains_key(&key) || crate::junk::check(&relative).is_none())
+            }) {
                 return Ok(false);
             }
         }
