@@ -28,6 +28,15 @@ mod object;
 mod s3;
 mod workflow;
 
+/// What a remote that does not do `what` answers.
+fn unsupported(what: &str) -> Error {
+    std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        format!("this remote cannot {what}"),
+    )
+    .into()
+}
+
 /// Render an S3 SDK error into a short, diagnosable string.
 ///
 /// Three tiers, in order of preference:
@@ -292,6 +301,33 @@ pub trait Remote {
         host: Option<&Host>,
         bucket: &str,
     ) -> impl Future<Output = Res<Vec<(Namespace, String)>>> + Send;
+
+    /// Each tag of `namespace` in `bucket`'s registry, the objects under
+    /// `.quilt/named_packages/<namespace>/`, `latest` among them, by name,
+    /// with the hash it holds. Listed in S3 on `host`'s credentials, or this
+    /// computer's AWS ones with no host. Empty for a package never pushed;
+    /// an error if the listing or a read fails partway, never a short list.
+    /// A remote that cannot list them says so.
+    fn package_tags(
+        &self,
+        host: Option<&Host>,
+        bucket: &str,
+        namespace: &Namespace,
+    ) -> impl Future<Output = Res<Vec<(String, String)>>> + Send {
+        let _ = (host, bucket, namespace);
+        std::future::ready(Err(unsupported("list a package's tags")))
+    }
+
+    /// Deletes the object `s3_uri`; one already gone is no error. A remote
+    /// that cannot delete says so.
+    fn delete_object(
+        &self,
+        host: Option<&Host>,
+        s3_uri: &S3Uri,
+    ) -> impl Future<Output = Res> + Send {
+        let _ = (host, s3_uri);
+        std::future::ready(Err(unsupported("delete an object")))
+    }
 
     /// Drop any cached clients (and their in-memory credentials) for the
     /// given `host`, or for all hosts when `None`. Lets callers invalidate

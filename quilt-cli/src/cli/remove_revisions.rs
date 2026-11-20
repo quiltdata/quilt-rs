@@ -14,6 +14,8 @@ use quilt_rs::io::storage::Storage;
 use quilt_rs::lineage::PackageLineage;
 use quilt_uri::Namespace;
 
+pub mod dataspace;
+
 #[derive(Debug)]
 pub struct Input {
     pub namespace: Namespace,

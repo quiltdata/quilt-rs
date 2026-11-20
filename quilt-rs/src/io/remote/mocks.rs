@@ -463,6 +463,47 @@ impl Remote for MockRemote {
         }
         Ok(latest)
     }
+
+    /// Each file `put_object` stored under
+    /// `<bucket>/.quilt/named_packages/<namespace>/`, by name, with what it
+    /// holds.
+    async fn package_tags(
+        &self,
+        _host: Option<&Host>,
+        bucket: &str,
+        namespace: &Namespace,
+    ) -> Res<Vec<(String, String)>> {
+        let dir = format!("s3://{bucket}/{}", tag_key(namespace, ""));
+        log::debug!("Mocking {dir} tag listing");
+        if !self.storage.exists(storage_path(&dir)).await {
+            return Ok(Vec::new());
+        }
+        let mut entries = self.storage.read_dir(storage_path(&dir)).await?;
+        let mut tags = Vec::new();
+        while let Some(entry) = entries.next_entry().await? {
+            if !entry.file_type().await?.is_file() {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let Some(bytes) = self.current(&format!("{dir}{name}")).await? else {
+                continue;
+            };
+            tags.push((name, String::from_utf8_lossy(&bytes).trim().to_string()));
+        }
+        Ok(tags)
+    }
+
+    async fn delete_object(&self, _host: Option<&Host>, s3_uri: &S3Uri) -> Res {
+        let key = s3_uri.to_string();
+        log::debug!("Mocking {key} delete request");
+        if let Some(err) = self.denied(&key) {
+            return Err(err);
+        }
+        match self.storage.remove_file(storage_path(&key)).await {
+            Err(err) if err.kind() != std::io::ErrorKind::NotFound => Err(err.into()),
+            _ => Ok(()),
+        }
+    }
 }
 
 #[cfg(test)]

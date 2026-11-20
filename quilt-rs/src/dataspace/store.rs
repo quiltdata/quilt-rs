@@ -8,6 +8,7 @@ use crate::dataspace::EntryError;
 use crate::dataspace::contract::Contract;
 use crate::dataspace::contract::ContractError;
 use crate::dataspace::contract::Entry;
+use crate::dataspace::contract::PackageKey;
 use crate::dataspace::contract::Registry;
 use crate::dataspace::lock::Lock;
 use crate::dataspace::lock::Writer;
@@ -63,6 +64,25 @@ pub(crate) async fn name_local(
         writer.local_registry.clone_from(&names.name);
     }
     Ok(())
+}
+
+/// `package` under the local registry's current name, where `local`
+/// answers to the name it gives.
+pub(crate) async fn current_key(
+    storage: &(impl Storage + Sync),
+    local: Option<&LocalRegistry>,
+    package: &PackageKey,
+) -> crate::Res<PackageKey> {
+    if let (Registry::Local(name), Some(local)) = (&package.registry, local) {
+        let names = local.names(storage).await?;
+        if names.answers_to(name) {
+            return Ok(PackageKey {
+                registry: Registry::Local(names.name),
+                package: package.package.clone(),
+            });
+        }
+    }
+    Ok(package.clone())
 }
 
 /// The names of `local`, where `contract` or `lock` names a local registry

@@ -735,6 +735,112 @@ impl LocalRegistry {
         Ok(LocalPublish::Advanced)
     }
 
+    /// Moves `namespace`'s `latest` to `hash` whatever it names, storing the
+    /// revision first where the registry lacks it, by a caller that holds
+    /// the package's lock. Returns what `latest` named before.
+    pub(crate) async fn force_latest_held(
+        &self,
+        storage: &(impl Storage + Sync),
+        namespace: &Namespace,
+        hash: &str,
+    ) -> Res<Option<String>> {
+        if !is_top_hash(hash) {
+            return Err(UriError::Package(format!("not a top hash: {hash:?}")).into());
+        }
+        let latest = self.read_latest(storage, namespace).await?;
+        if latest.as_deref() == Some(hash) {
+            return Ok(latest);
+        }
+        if !storage.exists(self.revision(hash)).await {
+            // From the `latest` just read, the publish stores the revision
+            // and moves the tag; the lock held keeps it from moving meanwhile.
+            self.publish_held(storage, namespace, latest.as_deref(), hash)
+                .await?;
+            return Ok(latest);
+        }
+        write_tag(storage, &self.dir, &self.latest(namespace), hash).await?;
+        self.sync_up_from(storage, &self.dir.join(LATEST_DIR)).await;
+        Ok(latest)
+    }
+
+    /// The revisions of `namespace` the registry holds: each manifest
+    /// committed for it here whose revision was published, by hash, with
+    /// when it was published.
+    pub(crate) async fn revisions(
+        &self,
+        storage: &(impl Storage + Sync),
+        namespace: &Namespace,
+    ) -> Res<Vec<(String, jiff::Timestamp)>> {
+        let mut revisions = Vec::new();
+        let installed = self.installed_manifests_dir(namespace);
+        for (hash, _, _) in list_files(storage, &installed).await? {
+            if !is_top_hash(&hash) {
+                continue;
+            }
+            match storage.modified_timestamp(self.revision(&hash)).await {
+                Ok(published) => revisions.push((hash, published)),
+                Err(err) if err.is_not_found() => {}
+                Err(err) => return Err(err),
+            }
+        }
+        Ok(revisions)
+    }
+
+    /// Points `namespace`'s `latest` at `hash`, or removes it with `None`,
+    /// by a caller that holds the package's lock.
+    pub(crate) async fn set_latest_held(
+        &self,
+        storage: &(impl Storage + Sync),
+        namespace: &Namespace,
+        hash: Option<&str>,
+    ) -> Res {
+        let path = self.latest(namespace);
+        match hash {
+            Some(hash) => write_tag(storage, &self.dir, &path, hash).await?,
+            None => match storage.remove_file(&path).await {
+                Err(err) if err.kind() != std::io::ErrorKind::NotFound => return Err(err.into()),
+                _ => {}
+            },
+        }
+        self.sync_up_from(storage, &self.dir.join(LATEST_DIR)).await;
+        Ok(())
+    }
+
+    /// Removes the revision `hash` from `namespace`, by a caller that holds
+    /// the package's lock: its manifest committed for the package, and the
+    /// registry's own unless another package holds a manifest of that hash
+    /// too, since revisions are kept by hash alone. Objects are left.
+    pub(crate) async fn remove_revision_held(
+        &self,
+        storage: &(impl Storage + Sync),
+        namespace: &Namespace,
+        hash: &str,
+    ) -> Res {
+        if !is_top_hash(hash) {
+            return Err(UriError::Package(format!("not a top hash: {hash:?}")).into());
+        }
+        let mut shared = false;
+        for owner in list_dirs(storage, &self.dir.join(INSTALLED_DIR)).await? {
+            for package in list_dirs(storage, &owner).await? {
+                if namespace_of(&package).as_ref() != Some(namespace)
+                    && storage.exists(package.join(hash)).await
+                {
+                    shared = true;
+                }
+            }
+        }
+        let mine = self.installed_manifest(namespace, hash);
+        let theirs = (!shared).then(|| self.revision(hash));
+        for path in std::iter::once(mine).chain(theirs) {
+            match storage.remove_file(&path).await {
+                Err(err) if err.kind() != std::io::ErrorKind::NotFound => return Err(err.into()),
+                _ => {}
+            }
+        }
+        self.sync_up_from(storage, &self.revisions_dir()).await;
+        Ok(())
+    }
+
     /// Syncs the objects the revision `hash` names in `objects/`, which a
     /// commit files without syncing, before `latest` names them.
     async fn sync_objects(&self, storage: &(impl Storage + Sync), hash: &str) -> Res {

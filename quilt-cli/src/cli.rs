@@ -11,7 +11,10 @@ use clap::Subcommand;
 use clap::builder::TypedValueParser as _;
 use tracing::log;
 
+use quilt_rs::dataspace::certify_latest::CertifyError;
+use quilt_rs::dataspace::commit::CommitError;
 use quilt_rs::dataspace::contract::Access;
+use quilt_rs::dataspace::contract::ContractError;
 use quilt_rs::dataspace::contract::PackageKey;
 use quilt_rs::dataspace::history::HistoryError;
 use quilt_rs::dataspace::install::InstallError;
@@ -19,7 +22,10 @@ use quilt_rs::dataspace::lock::LockError;
 use quilt_rs::dataspace::publish_all::PublishAllError;
 use quilt_rs::dataspace::read_all::ReadAllError;
 use quilt_rs::dataspace::reattach::ReattachError;
+use quilt_rs::dataspace::remove_revisions::RemoveError;
+use quilt_rs::dataspace::reset_to_latest::ResetError;
 use quilt_rs::dataspace::status::StatusError;
+use quilt_rs::dataspace::undo_commit::UndoError;
 use quilt_rs::dataspace::uninstall::UninstallError;
 use quilt_rs::domain::DOMAIN_DIR_NAME;
 use quilt_rs::domain::DomainRoot;
@@ -31,6 +37,7 @@ use quilt_uri::Namespace;
 
 mod browse;
 mod catalog;
+mod certify;
 mod commit;
 mod create;
 mod dataspace;
@@ -50,6 +57,7 @@ mod push;
 mod read;
 mod reattach;
 mod remove_revisions;
+mod reset;
 mod role;
 mod status;
 mod text;
@@ -127,6 +135,14 @@ fn commit_workflow_intent(
     } else {
         Ok(WorkflowIntent::from_optional_id(workflow))
     }
+}
+
+/// A package's URI, checked as clap reads it but kept as typed: a
+/// `PackageKey` in every command that takes one would grow [`Commands`], and
+/// with it the future of [`init`], past the stack budget on Windows. The
+/// command parses it again with [`dataspace::Package::uri`].
+fn package_uri(text: &str) -> Result<String, quilt_uri::UriError> {
+    text.parse::<PackageKey>().map(|_| text.to_string())
 }
 
 fn parse_optional_namespace(namespace: Option<String>) -> Result<Option<Namespace>, Error> {
@@ -502,6 +518,12 @@ enum Commands {
         user_meta: Option<String>,
     },
     /// Commit new package revision
+    ///
+    /// With `--dataspace`, commits a `sync` entry's working folder as a local
+    /// commit in the Domain, as a sync would, and appends it to
+    /// `data.lock.toml` for the next sync to push. Its metadata comes from the
+    /// folder's `metadata.toml`, and its workflow is the bucket's default,
+    /// checked when it is pushed.
     Commit {
         /// Commit message
         #[arg(short, long)]
@@ -514,19 +536,56 @@ enum Commands {
             short = 'u',
             long = "meta",
             visible_alias = "user-meta",
-            value_name = "JSON"
+            value_name = "JSON",
+            conflicts_with = "dataspace"
         )]
         user_meta: Option<String>,
         #[command(flatten)]
         pkg: PackageRef,
+        /// The package, by its URI, to commit in `--dataspace`; or name it
+        /// with `--namespace`.
+        /// Ex. `quilt+s3://bucket#package=foo/bar`
+        #[arg(
+            value_name = "PACKAGE",
+            value_parser = package_uri,
+            requires = "dataspace",
+            conflicts_with = "namespace"
+        )]
+        package: Option<String>,
+        /// Commit in this dataspace, the folder holding `data.toml`, rather
+        /// than the home
+        #[arg(long, value_name = "DIR")]
+        dataspace: Option<PathBuf>,
         /// Workflow ID
         /// Ex. `"my_workflow"`
         /// Omit to use the bucket's default workflow.
-        #[arg(short, long)]
+        #[arg(short, long, conflicts_with = "dataspace")]
         workflow: Option<String>,
         /// Commit with no workflow (explicit opt-out)
-        #[arg(long, conflicts_with = "workflow")]
+        #[arg(long, conflicts_with_all = ["workflow", "dataspace"])]
         no_workflow: bool,
+    },
+    /// Make a dataspace package's current revision its `latest`, whatever
+    /// `latest` names
+    ///
+    /// Pushes the package's last local commit, then writes `latest` over
+    /// any other writer's, as Promote does. A revision the bucket's workflow
+    /// refused is certified all the same, which releases it. Only a `sync`
+    /// entry is certified.
+    Certify {
+        #[command(flatten)]
+        pkg: PackageRef,
+        /// The package, by its URI; or name it with `--namespace`.
+        /// Ex. `quilt+s3://bucket#package=foo/bar`
+        #[arg(
+            value_name = "PACKAGE",
+            value_parser = package_uri,
+            conflicts_with = "namespace"
+        )]
+        package: Option<String>,
+        /// The dataspace: the folder holding `data.toml`
+        #[arg(long, value_name = "DIR")]
+        dataspace: PathBuf,
     },
     /// Delete what the local store holds for nothing, and print what was freed
     ///
@@ -787,12 +846,63 @@ enum Commands {
     /// files are at it, while it is the remote's latest or the merge base,
     /// while it is committed but not pushed, and while the registry does not
     /// list it, so this copy is the only place it is.
+    ///
+    /// With `--dataspace`, removes each `--revision` from the package's
+    /// registry instead, as quilt3's `delete_package` with a registry does:
+    /// its tags, never its data. Where `latest` names one, it moves to the
+    /// newest revision left. No revision is protected, and `data.lock.toml`
+    /// is left as it is.
     RemoveRevisions {
         #[command(flatten)]
         pkg: PackageRef,
         /// Remove only the N oldest removable revisions; all of them if omitted
-        #[arg(short, long, value_name = "N", value_parser = remove_revisions::parse_count)]
+        #[arg(
+            short,
+            long,
+            value_name = "N",
+            value_parser = remove_revisions::parse_count,
+            conflicts_with = "dataspace"
+        )]
         count: Option<std::num::NonZeroUsize>,
+        /// The package, by its URI, in `--dataspace`; or name it with
+        /// `--namespace`.
+        /// Ex. `quilt+s3://bucket#package=foo/bar`
+        #[arg(
+            value_name = "PACKAGE",
+            value_parser = package_uri,
+            requires = "dataspace",
+            conflicts_with = "namespace"
+        )]
+        package: Option<String>,
+        /// Remove from the registry the package has in this dataspace, the
+        /// folder holding `data.toml`
+        #[arg(long, value_name = "DIR", requires = "revision")]
+        dataspace: Option<PathBuf>,
+        /// With --dataspace, a revision to remove: its top hash, or a prefix
+        /// of only one. Repeat for more
+        #[arg(long, value_name = "HASH", requires = "dataspace")]
+        revision: Vec<String>,
+    },
+    /// Discard a dataspace package's local commits and changes, and read
+    /// `latest` whole in their place
+    ///
+    /// Files the package's revisions hold are replaced or removed; a file no
+    /// revision holds is left. The commits stay in the Domain, where
+    /// `quilt reattach` lists them.
+    Reset {
+        #[command(flatten)]
+        pkg: PackageRef,
+        /// The package, by its URI; or name it with `--namespace`.
+        /// Ex. `quilt+s3://bucket#package=foo/bar`
+        #[arg(
+            value_name = "PACKAGE",
+            value_parser = package_uri,
+            conflicts_with = "namespace"
+        )]
+        package: Option<String>,
+        /// The dataspace: the folder holding `data.toml`
+        #[arg(long, value_name = "DIR")]
+        dataspace: PathBuf,
     },
     /// Show or switch your active role on a Quilt stack
     ///
@@ -834,9 +944,29 @@ enum Commands {
     /// Available while the package's commit chain still reaches back, which in
     /// practice means before its first push. Refuses if any tracked file has
     /// uncommitted changes.
+    ///
+    /// With `--dataspace`, drops the package's last local commit from
+    /// `data.lock.toml` and restores the working folder to the revision
+    /// before it, refusing if a file it would touch has changes not
+    /// committed. The commit stays in the Domain, for `quilt reattach`. A
+    /// pushed commit cannot be undone.
     UndoCommit {
         #[command(flatten)]
         pkg: PackageRef,
+        /// The package, by its URI, in `--dataspace`; or name it with
+        /// `--namespace`.
+        /// Ex. `quilt+s3://bucket#package=foo/bar`
+        #[arg(
+            value_name = "PACKAGE",
+            value_parser = package_uri,
+            requires = "dataspace",
+            conflicts_with = "namespace"
+        )]
+        package: Option<String>,
+        /// Undo in this dataspace, the folder holding `data.toml`, rather
+        /// than the home
+        #[arg(long, value_name = "DIR")]
+        dataspace: Option<PathBuf>,
     },
     /// Uninstall package from local domain
     ///
@@ -998,16 +1128,9 @@ pub async fn init(args: Args) -> Result<Std, Error> {
         prune,
     } = args.command
     {
-        let package = match (package, pkg.namespace) {
-            (Some(key), _) => uninstall::dataspace::Package::Key(key),
-            (None, Some(namespace)) => {
-                uninstall::dataspace::Package::Namespace(namespace.try_into()?)
-            }
-            (None, None) => return Err(Error::PackageRequired),
-        };
         let input = uninstall::dataspace::Input {
             dataspace,
-            package,
+            package: dataspace::Package::named(package, pkg.namespace)?,
             prune,
         };
         log::debug!("Uninstalling from a dataspace {input:?}");
@@ -1063,6 +1186,84 @@ pub async fn init(args: Args) -> Result<Std, Error> {
         log::debug!("Log of a dataspace's package {input:?}");
         let reading = history::dataspace::command(root_dir, existing_domain(), input);
         return Ok(Box::pin(reading).await);
+    }
+    if let Commands::Commit {
+        dataspace: Some(dataspace),
+        package,
+        pkg,
+        message,
+        ..
+    } = args.command
+    {
+        let input = commit::dataspace::Input {
+            dataspace,
+            package: dataspace::Package::uri(package, pkg.namespace)?,
+            message,
+        };
+        log::debug!("Committing in a dataspace {input:?}");
+        let domain = DomainRoot::new(dataspace_domain_dir()?);
+        let committing = commit::dataspace::command(root_dir, domain, input);
+        return Ok(Box::pin(committing).await);
+    }
+    if let Commands::UndoCommit {
+        dataspace: Some(dataspace),
+        package,
+        pkg,
+    } = args.command
+    {
+        let input = undo_commit::dataspace::Input {
+            dataspace,
+            package: dataspace::Package::uri(package, pkg.namespace)?,
+        };
+        log::debug!("Undoing a commit in a dataspace {input:?}");
+        let domain = DomainRoot::new(dataspace_domain_dir()?);
+        let undoing = undo_commit::dataspace::command(root_dir, domain, input);
+        return Ok(Box::pin(undoing).await);
+    }
+    if let Commands::Reset {
+        dataspace,
+        package,
+        pkg,
+    } = args.command
+    {
+        let input = reset::Input {
+            dataspace,
+            package: dataspace::Package::uri(package, pkg.namespace)?,
+        };
+        log::debug!("Resetting in a dataspace {input:?}");
+        let domain = DomainRoot::new(dataspace_domain_dir()?);
+        return Ok(Box::pin(reset::command(root_dir, domain, input)).await);
+    }
+    if let Commands::Certify {
+        dataspace,
+        package,
+        pkg,
+    } = args.command
+    {
+        let input = certify::Input {
+            dataspace,
+            package: dataspace::Package::uri(package, pkg.namespace)?,
+        };
+        log::debug!("Certifying in a dataspace {input:?}");
+        let domain = DomainRoot::new(dataspace_domain_dir()?);
+        return Ok(Box::pin(certify::command(root_dir, domain, input)).await);
+    }
+    if let Commands::RemoveRevisions {
+        dataspace: Some(dataspace),
+        package,
+        pkg,
+        revision,
+        ..
+    } = args.command
+    {
+        let input = remove_revisions::dataspace::Input {
+            dataspace,
+            package: dataspace::Package::uri(package, pkg.namespace)?,
+            revisions: revision,
+        };
+        log::debug!("Removing revisions from a registry {input:?}");
+        let removing = remove_revisions::dataspace::command(root_dir, existing_domain(), input);
+        return Ok(Box::pin(removing).await);
     }
     let m = Model::from(root_dir);
     // Every other command refuses a rollback that was interrupted, so this
@@ -1126,6 +1327,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             user_meta,
             workflow,
             no_workflow,
+            ..
         } => {
             let namespace = pkg.resolve(&m).await?;
             let user_meta = parse_meta_flag(user_meta.as_deref(), UserMeta::Keep)?;
@@ -1252,7 +1454,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             log::debug!("Pushing {args:?}");
             Ok(push::command(m, args).await)
         }
-        Commands::RemoveRevisions { pkg, count } => {
+        Commands::RemoveRevisions { pkg, count, .. } => {
             let namespace = pkg.resolve(&m).await?;
             let args = remove_revisions::Input { namespace, count };
 
@@ -1277,7 +1479,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             log::debug!("Status {args:?}");
             Ok(status::command(m, args).await)
         }
-        Commands::UndoCommit { pkg } => {
+        Commands::UndoCommit { pkg, .. } => {
             let namespace = pkg.resolve(&m).await?;
             let args = undo_commit::Input { namespace };
 
@@ -1295,7 +1497,9 @@ pub async fn init(args: Args) -> Result<Std, Error> {
         Commands::Version { .. }
         | Commands::Read { .. }
         | Commands::Publish { .. }
-        | Commands::Reattach { .. } => {
+        | Commands::Reattach { .. }
+        | Commands::Reset { .. }
+        | Commands::Certify { .. } => {
             unreachable!("handled before the domain is opened")
         }
         Commands::Lineage { .. } => unreachable!("handled before the lineage is read"),
@@ -1363,10 +1567,28 @@ Then run:
     #[error(transparent)]
     Lock(#[from] LockError),
 
-    #[error("Name the package to uninstall from the dataspace: its URI, or --namespace")]
+    #[error(transparent)]
+    Contract(#[from] ContractError),
+
+    #[error(transparent)]
+    Commit(#[from] CommitError),
+
+    #[error(transparent)]
+    Undo(#[from] UndoError),
+
+    #[error(transparent)]
+    Reset(#[from] ResetError),
+
+    #[error(transparent)]
+    Certify(#[from] CertifyError),
+
+    #[error(transparent)]
+    Remove(#[from] RemoveError),
+
+    #[error("Name the package in the dataspace: its URI, or --namespace")]
     PackageRequired,
 
-    #[error("{0} is in more than one registry in data.toml; name the one to uninstall by its URI")]
+    #[error("{0} is in more than one registry in data.toml; name the one you mean by its URI")]
     AmbiguousPackage(Namespace),
 
     #[error("--no-download downloads nothing, so it cannot install --path or a &path= in the URI")]
@@ -1507,6 +1729,13 @@ impl Error {
                 UninstallError::NotInstalled(_) => "not_installed",
                 _ => "dataspace",
             },
+            Error::Lock(_) => "lock",
+            Error::Contract(_) => "contract",
+            Error::Commit(_)
+            | Error::Undo(_)
+            | Error::Reset(_)
+            | Error::Certify(_)
+            | Error::Remove(_) => self.revision_kind(),
             Error::PackageRequired => "package_required",
             Error::AmbiguousPackage(_) => "ambiguous_package",
             Error::Status(err) => match err {
@@ -1519,7 +1748,6 @@ impl Error {
                 HistoryError::Lock(_) => "lock",
                 _ => "dataspace",
             },
-            Error::Lock(_) => "lock",
             Error::NoDownloadWithPath => "no_download_with_path",
             Error::NamespaceRequired => "namespace_required",
             Error::CommitMetaInvalid(_) => "commit_meta_invalid",
@@ -1533,6 +1761,69 @@ impl Error {
             #[cfg(test)]
             Error::Test(_) => "internal",
             Error::Io(_) => "io",
+        }
+    }
+
+    /// [`Error::kind`] of a dataspace command that moves a package's
+    /// revisions: commit, undo, reset, certify and remove.
+    fn revision_kind(&self) -> &'static str {
+        match self {
+            Error::Commit(err) => match err {
+                CommitError::Contract(_) => "contract",
+                CommitError::Lock(_) => "lock",
+                CommitError::Mismatch(_) => "lock_mismatch",
+                CommitError::NotDeclared(_) => "not_declared",
+                CommitError::Access(_) => "access_declared",
+                CommitError::Edited => "contract_edited",
+                CommitError::NoFolder(_) => "no_folder",
+                CommitError::Busy(_) => "package_busy",
+                _ => "dataspace",
+            },
+            Error::Undo(err) => match err {
+                UndoError::Contract(_) => "contract",
+                UndoError::Lock(_) => "lock",
+                UndoError::Mismatch(_) => "lock_mismatch",
+                UndoError::NotDeclared(_) => "not_declared",
+                UndoError::NothingToUndo(_) => "nothing_to_undo",
+                UndoError::Uncommitted(_) => "uncommitted_changes",
+                UndoError::Unfetched(_) => "unfetched",
+                UndoError::Busy(_) => "package_busy",
+                _ => "dataspace",
+            },
+            Error::Reset(err) => match err {
+                ResetError::Contract(_) => "contract",
+                ResetError::Lock(_) => "lock",
+                ResetError::Mismatch(_) => "lock_mismatch",
+                ResetError::NotDeclared(_) => "not_declared",
+                ResetError::Access(_) => "access_declared",
+                ResetError::Pinned(_) => "pinned",
+                ResetError::NoLatest => "no_latest",
+                ResetError::Unfetched(_) => "unfetched",
+                ResetError::Busy(_) => "package_busy",
+                _ => "dataspace",
+            },
+            Error::Certify(err) => match err {
+                CertifyError::Contract(_) => "contract",
+                CertifyError::Lock(_) => "lock",
+                CertifyError::Mismatch(_) => "lock_mismatch",
+                CertifyError::NotDeclared(_) => "not_declared",
+                CertifyError::Access(_) => "access_declared",
+                CertifyError::NothingToCertify(_) => "nothing_to_certify",
+                CertifyError::Busy(_) => "package_busy",
+                _ => "dataspace",
+            },
+            Error::Remove(err) => match err {
+                RemoveError::Contract(_) => "contract",
+                RemoveError::Lock(_) => "lock",
+                RemoveError::Mismatch(_) => "lock_mismatch",
+                RemoveError::NotDeclared(_) => "not_declared",
+                RemoveError::NoneNamed => "revision_required",
+                RemoveError::NotFound(_) => "revision_not_found",
+                RemoveError::Ambiguous(_) => "ambiguous_revision",
+                RemoveError::Busy(_) => "package_busy",
+                _ => "dataspace",
+            },
+            _ => "dataspace",
         }
     }
 }
@@ -2042,6 +2333,86 @@ mod tests {
                     .is_err_and(|err| err.contains("for '--log <FILTER>'")),
                 "{value:?}: {result:?}"
             );
+        }
+    }
+
+    /// `quilt` with the arguments `line` holds, split at whitespace.
+    fn parse(line: &str) -> Result<Args, clap::Error> {
+        Args::try_parse_from(std::iter::once("quilt").chain(line.split_whitespace()))
+    }
+
+    /// `commit`, `undo-commit` and `remove-revisions` take `--dataspace` and a
+    /// package URI.
+    #[test]
+    fn the_dataspace_flags_of_commit_undo_and_remove() {
+        let uri = "quilt+s3://b#package=a/b";
+
+        let committing = parse(&format!("commit -m x --dataspace ds {uri}"));
+        assert!(
+            matches!(
+                committing.as_ref().map(|args| &args.command),
+                Ok(Commands::Commit {
+                    dataspace: Some(_),
+                    package: Some(_),
+                    ..
+                })
+            ),
+            "{committing:?}"
+        );
+        assert!(parse("commit -m x --dataspace ds -n a/b").is_ok());
+        let undoing = parse(&format!("undo-commit --dataspace ds {uri}"));
+        assert!(
+            matches!(
+                undoing.as_ref().map(|args| &args.command),
+                Ok(Commands::UndoCommit {
+                    dataspace: Some(_),
+                    package: Some(_),
+                    ..
+                })
+            ),
+            "{undoing:?}"
+        );
+        assert!(parse("undo-commit -n a/b").is_ok(), "the ref path");
+        let removing = parse(&format!(
+            "remove-revisions --dataspace ds --revision abc --revision def {uri}"
+        ));
+        let Ok(Commands::RemoveRevisions { revision, .. }) = removing.map(|args| args.command)
+        else {
+            panic!("remove-revisions --dataspace did not parse");
+        };
+        assert_eq!(revision, ["abc", "def"]);
+    }
+
+    /// A package URI needs `--dataspace`, and the ref path's own flags refuse
+    /// it.
+    #[test]
+    fn the_dataspace_flags_refuse_what_the_ref_path_takes() {
+        let uri = "quilt+s3://b#package=a/b";
+        for refused in [
+            format!("commit -m x {uri}"),
+            "commit -m x --dataspace ds not-a-package-uri".to_string(),
+            format!("commit -m x --dataspace ds --meta {{}} {uri}"),
+            format!("commit -m x --dataspace ds --no-workflow {uri}"),
+            format!("commit -m x --dataspace ds -n a/b {uri}"),
+            format!("undo-commit {uri}"),
+            format!("remove-revisions --dataspace ds {uri}"),
+            "remove-revisions --revision abc -n a/b".to_string(),
+            format!("remove-revisions --dataspace ds --revision abc --count 1 {uri}"),
+        ] {
+            assert!(parse(&refused).is_err(), "{refused:?}");
+        }
+    }
+
+    /// `reset` and `certify` act on a dataspace only.
+    #[test]
+    fn reset_and_certify_need_a_dataspace() {
+        for verb in ["reset", "certify"] {
+            let named = parse(&format!("{verb} --dataspace ds -n a/b"));
+            assert!(named.is_ok(), "{verb}: {named:?}");
+            let keyed = parse(&format!("{verb} --dataspace ds quilt+s3://b#package=a/b"));
+            assert!(keyed.is_ok(), "{verb}: {keyed:?}");
+            let alone = parse(&format!("{verb} -n a/b"));
+            assert!(alone.is_err(), "{verb}: {alone:?}");
         }
     }
 
@@ -2960,6 +3331,8 @@ mod tests {
                 pkg: PackageRef {
                     namespace: Some(pkg::NAMESPACE_STR.to_string()),
                 },
+                package: None,
+                dataspace: None,
                 user_meta: None,
                 workflow: None,
                 no_workflow: true,
@@ -2994,6 +3367,8 @@ mod tests {
                 pkg: PackageRef {
                     namespace: Some("in/valid".to_string()),
                 },
+                package: None,
+                dataspace: None,
                 user_meta: None,
                 workflow: None,
                 no_workflow: true,
@@ -4014,9 +4389,8 @@ mod tests {
     ///
     /// Covers the commands reachable without a remote; `browse`, `install`,
     /// `login`, `pull`, `push` and `role` all need one.
-    // Most of its length is the table of commands, one per row.
-    #[allow(clippy::too_many_lines)]
     #[test(tokio::test)]
+    #[allow(clippy::too_many_lines, reason = "one table of every local command")]
     async fn json_mode_emits_one_parseable_object_per_local_command() -> Result<(), Error> {
         let (_, temp_dir) = create_model_in_temp_dir().await?;
         let dir = temp_dir.path().to_path_buf();
@@ -4069,6 +4443,8 @@ mod tests {
                     message: "second".to_string(),
                     user_meta: None,
                     pkg: pkg(),
+                    package: None,
+                    dataspace: None,
                     workflow: None,
                     no_workflow: true,
                 },
@@ -4081,12 +4457,22 @@ mod tests {
                     dataspace: None,
                 },
             ),
-            ("undo-commit", Commands::UndoCommit { pkg: pkg() }),
+            (
+                "undo-commit",
+                Commands::UndoCommit {
+                    pkg: pkg(),
+                    package: None,
+                    dataspace: None,
+                },
+            ),
             (
                 "remove-revisions",
                 Commands::RemoveRevisions {
                     pkg: pkg(),
                     count: None,
+                    package: None,
+                    dataspace: None,
+                    revision: Vec::new(),
                 },
             ),
             (

@@ -1,0 +1,346 @@
+use super::*;
+
+use test_log::test;
+
+use crate::dataspace::hooks::HookPoint::PreWrite;
+use crate::dataspace::hooks::tests::METADATA_VAR;
+use crate::dataspace::hooks::tests::call;
+use crate::dataspace::hooks::tests::calls;
+use crate::dataspace::hooks::tests::table;
+use crate::dataspace::reattach::unattached;
+use crate::dataspace::store::tests::publish_local;
+use crate::dataspace::sync::tests::FIRST;
+use crate::dataspace::sync::tests::World;
+use crate::dataspace::sync::tests::advanced;
+use crate::dataspace::sync::tests::files;
+use crate::dataspace::sync::tests::hooked;
+use crate::dataspace::sync::tests::key;
+use crate::dataspace::sync::tests::out_key;
+use crate::dataspace::sync::tests::package;
+use crate::dataspace::sync::tests::read_text;
+use crate::dataspace::sync::tests::record;
+use crate::dataspace::sync::tests::writer;
+use quilt_uri::Namespace;
+
+type Res = Result<(), Box<dyn std::error::Error>>;
+
+impl World {
+    /// Commits `package` with `message`, as `quilt commit --dataspace` does.
+    pub(crate) async fn commit_as(
+        &self,
+        package: &PackageKey,
+        message: &str,
+    ) -> Result<Committed, CommitError> {
+        commit(
+            &self.storage,
+            &self.remote,
+            &self.domain(),
+            &self.dataspace(),
+            &writer(),
+            package,
+            message,
+            &self.user_rules(),
+        )
+        .await
+    }
+
+    /// [`World::commit_as`] for `team/raw`, which must record a commit.
+    pub(crate) async fn commit(&self, message: &str) -> Result<String, Box<dyn std::error::Error>> {
+        let committed = self.commit_as(&key(), message).await?;
+        Ok(committed.commit.ok_or("nothing committed")?)
+    }
+
+    /// The commit `hash` of `team/raw` in the bucket's store.
+    pub(crate) async fn committed(
+        &self,
+        hash: &str,
+    ) -> Result<Manifest, Box<dyn std::error::Error>> {
+        let store = self.domain().registry("b")?;
+        Ok(Manifest::from_path(&self.storage, &store.installed_manifest(&package(), hash)).await?)
+    }
+}
+
+/// Two commits are appended to the lock, oldest first, each with its own
+/// message, and nothing is pushed until the tick pushes the last.
+#[test(tokio::test)]
+async fn a_commit_is_appended_to_the_lock_and_pushed_by_the_next_tick() -> Res {
+    let world = World::filled(&[("a.txt", b"v1")]).await?;
+    world.write("a.txt", "v2")?;
+
+    let first = world.commit("first edit").await?;
+
+    assert_eq!(
+        world.locked().await?,
+        Some(LockEntry {
+            base: Some(FIRST.to_string()),
+            commits: vec![first.clone()],
+        })
+    );
+    assert_eq!(world.latest().await?, FIRST, "a commit pushes nothing");
+    assert_eq!(
+        world.committed(&first).await?.header.message(),
+        Some("first edit")
+    );
+    world.write("b.txt", "new")?;
+
+    let second = world.commit("second edit").await?;
+
+    assert_eq!(
+        world.locked().await?.map(|locked| locked.commits),
+        Some(vec![first, second.clone()])
+    );
+    let pushed = advanced(&world.tick().await?);
+    assert_eq!(pushed, second, "the push squashes onto the last commit");
+    assert_eq!(world.latest().await?, second);
+    assert_eq!(
+        world.revision(&second).await?,
+        files(&[("a.txt", "v2"), ("b.txt", "new")])
+    );
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_folder_with_nothing_new_commits_nothing_and_leaves_the_lock() -> Res {
+    let world = World::filled(&[("a.txt", b"v1")]).await?;
+    let before = world.lock().await?;
+
+    let committed = world.commit_as(&key(), "nothing").await?;
+
+    assert_eq!(committed.commit, None);
+    assert_eq!(world.lock().await?, before);
+    Ok(())
+}
+
+/// The contract's `pre-write` hook runs before the commit, as in the tick,
+/// and the commit takes what it wrote; `post-write` waits for the push.
+#[test(tokio::test)]
+async fn a_commit_runs_pre_write_first_and_takes_what_it_wrote() -> Res {
+    let stamp = "[metadata.package]\nstamped = true\n";
+    let world = hooked(|record| table(PreWrite, record, &[(METADATA_VAR, stamp)])).await?;
+    world.write("a.txt", "v2")?;
+
+    let commit = world.commit("stamped").await?;
+
+    let header = world.committed(&commit).await?.header;
+    assert_eq!(header.user_meta, Some(serde_json::json!({"stamped": true})));
+    assert_eq!(header.message(), Some("stamped"));
+    assert_eq!(calls(&record(&world)), [call(PreWrite, None)]);
+    Ok(())
+}
+
+/// A package never published is committed with no base (25m), and its first
+/// push bases the entry at the commit.
+#[test(tokio::test)]
+async fn a_package_never_published_is_committed_with_no_base() -> Res {
+    let world = World::synced()?;
+    world.write("a.txt", "first")?;
+
+    let commit = world.commit("start").await?;
+
+    assert_eq!(
+        world.locked().await?,
+        Some(LockEntry {
+            base: None,
+            commits: vec![commit.clone()],
+        })
+    );
+    let synced = world.sync().await?;
+    let [(_, pushed)] = synced.entries.as_slice() else {
+        panic!("{synced:?}");
+    };
+    assert_eq!(advanced(pushed), commit);
+    assert_eq!(world.locked().await?, Some(LockEntry::at(commit)));
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_package_with_no_revision_and_no_folder_is_refused() -> Res {
+    let world = World::synced()?;
+
+    let refused = world.commit_as(&key(), "start").await;
+
+    assert!(
+        matches!(refused, Err(CommitError::NoFolder(_))),
+        "{refused:?}"
+    );
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_folder_gone_while_the_lock_names_a_revision_is_refused() -> Res {
+    let world = World::filled(&[("a.txt", b"v1")]).await?;
+    world.remove("a.txt")?;
+
+    let refused = world.commit_as(&key(), "deleted").await;
+
+    assert!(
+        matches!(refused, Err(CommitError::Entry(EntryError::FolderGone(_)))),
+        "{refused:?}"
+    );
+    assert_eq!(world.locked().await?, Some(LockEntry::at(FIRST)));
+    Ok(())
+}
+
+/// Where the tick would only read, absence cannot count as a deletion yet.
+#[test(tokio::test)]
+async fn a_commit_after_data_toml_is_edited_is_refused_until_a_sync_reads_it() -> Res {
+    let world = World::filled(&[("a.txt", b"v1"), ("b.txt", b"v1")]).await?;
+    world.contract("# edited\nsync = [\"team/raw\"]")?;
+    world.remove("b.txt")?;
+
+    let refused = world.commit_as(&key(), "edited").await;
+
+    assert!(matches!(refused, Err(CommitError::Edited)), "{refused:?}");
+    world.sync().await?;
+    assert_eq!(world.text("b.txt").as_deref(), Some("v1"), "read whole");
+    world.write("a.txt", "v2")?;
+    assert!(world.commit_as(&key(), "edited").await?.commit.is_some());
+    Ok(())
+}
+
+/// An install reads its folder whole before the lock takes the revision, so
+/// a commit needs no fill of the whole dataspace after it.
+#[test(tokio::test)]
+async fn a_commit_after_an_install_needs_no_fill() -> Res {
+    let world = World::new("")?;
+    world
+        .publish(FIRST, &[("a.txt", b"v1"), ("b.txt", b"v1")])
+        .await?;
+    let request = crate::dataspace::install::Install::new("quilt+s3://b#package=team/raw");
+    crate::dataspace::install::install(
+        &world.storage,
+        &world.remote,
+        None,
+        &world.dataspace(),
+        &writer(),
+        &request,
+    )
+    .await?;
+    assert_eq!(world.lock().await?.header.filled, None);
+    world.remove("b.txt")?;
+
+    let commit = world.commit("deleted b").await?;
+
+    assert_eq!(world.committed(&commit).await?.rows.len(), 1);
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn only_a_sync_entry_takes_a_commit() -> Res {
+    for (access, list) in [
+        (Access::Write, "write"),
+        (Access::Replace, "replace"),
+        (Access::Read, "read"),
+    ] {
+        let world = World::new(&format!("{list} = [\"team/raw\"]"))?;
+        world.write("a.txt", "v1")?;
+
+        let refused = world.commit_as(&key(), "no").await;
+
+        assert!(
+            matches!(&refused, Err(CommitError::Access(refused)) if *refused == access),
+            "{refused:?}"
+        );
+    }
+    let world = World::synced()?;
+    let other = "quilt+s3://b#package=team/other".parse()?;
+    let refused = world.commit_as(&other, "no").await;
+    assert!(
+        matches!(refused, Err(CommitError::NotDeclared(_))),
+        "{refused:?}"
+    );
+    Ok(())
+}
+
+/// A commit undone or lost from the lock stays in the store, where reattach
+/// finds it.
+#[test(tokio::test)]
+async fn a_commit_is_kept_in_the_store_for_reattach() -> Res {
+    let world = World::filled(&[("a.txt", b"v1")]).await?;
+    world.write("a.txt", "v2")?;
+    let commit = world.commit("kept").await?;
+    std::fs::remove_file(world.dataspace().join(LOCK_FILE))?;
+
+    let listed = unattached(
+        &world.storage,
+        &world.remote,
+        &world.domain(),
+        &world.dataspace(),
+        &writer(),
+        &key(),
+    )
+    .await?;
+
+    assert_eq!(
+        listed.iter().map(|commit| &commit.hash).collect::<Vec<_>>(),
+        [&commit]
+    );
+    Ok(())
+}
+
+/// A package of the local registry is committed into it, under the name it
+/// keeps, and the tick publishes the commit there.
+#[test(tokio::test)]
+async fn a_local_registry_entry_is_committed_into_the_registry() -> Res {
+    let world = World::new("sync = [\"quilt+local://lab-mac#package=me/out\"]")?;
+    let local = world.local_named("lab-mac").await?;
+    let namespace = Namespace::try_from("me/out")?;
+    let first = publish_local(&world.storage, &local, "me/out", &[("o.txt", b"o1")]).await?;
+    world.sync().await?;
+    let folder = world.local_folder().await?;
+    std::fs::write(folder.join("o.txt"), "o2")?;
+
+    let committed = world.commit_as(&out_key("lab-mac"), "local edit").await?;
+
+    let commit = committed.commit.ok_or("nothing committed")?;
+    assert_eq!(
+        committed.locked,
+        Some(LockEntry {
+            base: Some(first.clone()),
+            commits: vec![commit.clone()],
+        })
+    );
+    assert_eq!(
+        local.read_latest(&world.storage, &namespace).await?,
+        Some(first)
+    );
+    let manifest = Manifest::from_path(
+        &world.storage,
+        &local.installed_manifest(&namespace, &commit),
+    )
+    .await?;
+    assert_eq!(manifest.header.message(), Some("local edit"));
+    assert_eq!(manifest.header.workflow, None);
+    let pushed = advanced(&world.tick().await?);
+    assert_eq!(pushed, commit);
+    assert_eq!(read_text(&folder, "o.txt").as_deref(), Some("o2"));
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_lock_written_elsewhere_with_files_here_is_refused() -> Res {
+    let world = World::filled(&[("a.txt", b"v1")]).await?;
+    world.write("a.txt", "v2")?;
+    let elsewhere = Writer {
+        host: "there".to_string(),
+        ..writer()
+    };
+
+    let refused = commit(
+        &world.storage,
+        &world.remote,
+        &world.domain(),
+        &world.dataspace(),
+        &elsewhere,
+        &key(),
+        "no",
+        &world.user_rules(),
+    )
+    .await;
+
+    assert!(
+        matches!(&refused, Err(CommitError::Mismatch(found)) if found == &[Mismatch::Host]),
+        "{refused:?}"
+    );
+    Ok(())
+}

@@ -48,6 +48,8 @@ cargo install quilt-cli
 | `read`      | Read a dataspace's `read` entries, with no Domain but its local registry |
 | `publish`   | Publish a dataspace's `write` and `replace` entries, with no Domain but its local registry |
 | `reattach`  | List or reattach local commits a dataspace's lock lost |
+| `reset`     | Discard a dataspace package's local commits and changes for `latest` |
+| `certify`   | Make a dataspace package's current revision its `latest` |
 | `list`      | List installed packages and their commit status  |
 | `log`       | List the revisions this copy has, and why each is kept |
 | `uninstall` | Remove a package; `--prune` also deletes its stored files no other package uses |
@@ -195,7 +197,7 @@ package read at a newer revision, and `post-write` for each revision stored.
 `reattach <DATASPACE> <PACKAGE>` lists the package's local commits that
 `data.lock.toml` does not name, as after the lock was deleted: those its bucket
 lacks, kept in `bio.quilt.dataspace` in the OS's local data folder. Commits
-made with `quilt commit` are not among them.
+made with `quilt commit` without `--dataspace` are not among them.
 `reattach ... <COMMIT> --base <HASH>` attaches one as the package's unpushed
 commit on that base, which its next publish expects `latest` to be.
 `reattach ... <COMMIT> --unpublished` attaches a commit of a package never
@@ -254,6 +256,61 @@ pushed yet, marked `(local, not pushed)`. Under `--json`, `status` prints
 `latest`, `remote`, `latest_source`, `unpushed`, `changes`, `conflicts`,
 `kept` and `problems`; `log` prints `revisions`, each with `hash`, `message`,
 `time`, `parent` and `local`.
+
+`commit -m <MESSAGE> --dataspace <DIR> <PACKAGE>`, or `-n owner/name`,
+commits the working folder of a `sync` entry as a local commit, as a sync
+would: what the ignore rules leave out is left out, a file missing from the
+folder is deleted, and `metadata.toml` sets the metadata, `-m` the message.
+The commit is kept in `bio.quilt.dataspace` in the OS's local data folder, or
+in its local registry for a `quilt+local://` package, and appended to the
+package's commits in `data.lock.toml`; the next sync pushes the last one. The
+`pre-write` hook runs first. `--meta` and `--workflow` do not apply: the
+commit takes the bucket's default workflow, checked when it is pushed. A
+`read`, `write` or `replace` entry is refused, and so is a package whose
+folder is missing or empty while the lock names a revision, or one with a
+revision after `data.toml` changed, until a sync reads it again. Under
+`--json` it prints `package`, `commit` (`null` with nothing to commit),
+`base` and `commits`.
+
+`undo-commit --dataspace <DIR> <PACKAGE>` drops the package's last local
+commit from `data.lock.toml` and restores the working folder to the revision
+before it, the commit before or else the base, or nothing for a package never
+published, as `undo-commit` restores a package in the home: files the commit
+changed or deleted take back their bytes, files it added are removed, and
+`metadata.toml` is rewritten. It refuses unless every file it would touch
+holds what the commit put there, so nothing not committed is overwritten. The
+commit stays in the Domain, where `reattach` lists it. A pushed commit is no
+longer in the lock, so undo never steps back past a push. Under `--json` it
+prints `package`, `undone`, `current`, `commits`, `restored` and `removed`.
+
+`reset --dataspace <DIR> <PACKAGE>` discards the package's local commits and
+local changes, reads the revision `latest` names whole into its folder, and
+records it as the base in `data.lock.toml`. Each file of the package's
+revisions is replaced or removed; a file neither holds was never committed and
+is left. Every file is fetched before the folder changes, and a reset that
+fails part-way puts the folder back. The discarded commits stay in the
+Domain, for `reattach`. A `read` or `sync` entry is reset; a pinned entry and
+a package with no `latest` are refused. Under `--json` it prints `package`,
+`revision`, `discarded`, `placed` and `removed`.
+
+`certify --dataspace <DIR> <PACKAGE>` makes the package's current revision,
+its last local commit or else its base, the revision `latest` names: a commit
+is pushed first, then `latest` is written whatever it names, over any other
+publisher's, as QuiltSync's Certify latest does. A revision the bucket's
+workflow refused is certified all the same, which releases it, and so is a
+move from the local registry to a bucket the workflow refused. Only a `sync`
+entry is certified. Under `--json` it prints `package`, `revision`,
+`previous`, `pushed` and `workflow_refused`.
+
+`remove-revisions --dataspace <DIR> <PACKAGE> --revision <HASH>` removes each
+named revision, a top hash or a prefix of only one, from the package's
+registry, as quilt3's `delete_package` with a registry does: a bucket's tags
+naming it, or the local registry's manifest of it, never the data. Where
+`latest` names one, it moves to the newest revision left, or is removed with
+none left. No revision is protected, and `data.lock.toml` is left as it is:
+the output says when it names a removed revision, which `reset` reads past.
+Under `--json` it prints `package`, `removed`, `latest` (`kept`, `moved` or
+`removed`) and `locked`.
 
 `push` with no commit to push prints `Nothing to push` and exits 0; under
 `--json` the same shape has `"hash": null`, `"manifest_uri": null` and

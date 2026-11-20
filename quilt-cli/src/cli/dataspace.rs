@@ -3,12 +3,70 @@
 
 use std::path::Path;
 
+use quilt_rs::dataspace::contract::Contract;
+use quilt_rs::dataspace::contract::Entry;
+use quilt_rs::dataspace::contract::PackageKey;
 use quilt_rs::dataspace::lock::Writer;
 use quilt_rs::domain::DomainRoot;
 use quilt_rs::domain::LocalRegistry;
 use quilt_rs::io::storage::LocalStorage;
+use quilt_uri::Namespace;
 
 use crate::cli::Error;
+
+/// How a dataspace command names a package: by its key, or by a name the
+/// contract gives one package.
+#[derive(Debug)]
+pub enum Package {
+    Key(PackageKey),
+    Namespace(Namespace),
+}
+
+impl Package {
+    /// The package a command's positional URI or `--namespace` names.
+    pub(super) fn named(key: Option<PackageKey>, namespace: Option<String>) -> Result<Self, Error> {
+        match (key, namespace) {
+            (Some(key), _) => Ok(Self::Key(key)),
+            (None, Some(namespace)) => Ok(Self::Namespace(namespace.try_into()?)),
+            (None, None) => Err(Error::PackageRequired),
+        }
+    }
+
+    /// [`Package::named`], the URI given as its text.
+    pub(super) fn uri(uri: Option<String>, namespace: Option<String>) -> Result<Self, Error> {
+        let key = uri.map(|uri| uri.parse::<PackageKey>()).transpose()?;
+        Self::named(key, namespace)
+    }
+
+    /// The package's key in `contract`: a key as it is, and a name as the
+    /// one package of the contract that has it.
+    pub(super) fn key_in(self, contract: &Contract) -> Result<PackageKey, Error> {
+        let namespace = match self {
+            Self::Key(key) => return Ok(key),
+            Self::Namespace(namespace) => namespace,
+        };
+        let mut keys: Vec<PackageKey> = contract
+            .entries()
+            .iter()
+            .filter(|entry| entry.package == namespace)
+            .map(Entry::key)
+            .collect();
+        keys.dedup();
+        match keys.as_slice() {
+            [key] => Ok(key.clone()),
+            [] => Err(Error::NamespaceNotFound(namespace)),
+            _ => Err(Error::AmbiguousPackage(namespace)),
+        }
+    }
+
+    /// [`Package::key_in`] the contract of the dataspace in the folder
+    /// `dataspace`, read as `writer` reads it.
+    pub(super) async fn key(self, dataspace: &Path, writer: &Writer) -> Result<PackageKey, Error> {
+        let storage = LocalStorage::new();
+        let contract = Contract::read(&storage, dataspace, writer.local_registry_name()).await?;
+        self.key_in(&contract)
+    }
+}
 
 /// The Domain in `dir`, where one exists there. A dataspace command with no
 /// Domain makes none: it reads and publishes bucket packages only.
