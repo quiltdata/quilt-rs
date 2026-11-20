@@ -300,9 +300,12 @@ mod tests {
         let parts: Vec<&str> = rendered.split(" -> ").collect();
         assert_eq!(parts.len(), 2);
         // Shape only; values depend on clock.
-        let date_time = parts[0];
-        let dt = parts[1];
-        assert_eq!(date_time.len(), "2026-04-21 12:34".len());
-        assert_eq!(dt.len(), "2026-04-21 12:34".len());
+        let shape = |text: &str| -> String {
+            text.chars()
+                .map(|c| if c.is_ascii_digit() { '9' } else { c })
+                .collect()
+        };
+        assert_eq!(shape(parts[0]), "9999-99-99 99:99");
+        assert_eq!(parts[0], parts[1]);
     }
 }

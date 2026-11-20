@@ -615,6 +615,28 @@ mod tests {
         );
     }
 
+    /// `since` goes to the window in RFC 3339 with `Z`, its sub-second
+    /// digits in groups of three.
+    #[test]
+    fn the_wire_form_writes_since_in_the_json_shape() {
+        for (since, text) in [
+            ("2026-11-20T14:05:09Z", "2026-11-20T14:05:09Z"),
+            ("2026-11-20T14:05:09.1Z", "2026-11-20T14:05:09.100Z"),
+            ("2026-11-20T14:05:09.1234Z", "2026-11-20T14:05:09.123400Z"),
+        ] {
+            let entry = Entry {
+                subject: Subject::App,
+                cause: Cause::Credentials,
+                since: since.parse().expect("a time"),
+            };
+            assert_eq!(
+                serde_json::to_value(&entry).unwrap()["since"],
+                text,
+                "{since}"
+            );
+        }
+    }
+
     #[test]
     fn the_wire_form_names_subject_and_cause_by_kind() {
         let entry = Entry {

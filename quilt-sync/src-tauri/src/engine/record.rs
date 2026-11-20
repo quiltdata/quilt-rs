@@ -899,6 +899,33 @@ mod tests {
         assert_eq!(again.entries().await.len(), 1);
     }
 
+    /// `record.jsonl` keeps each entry's `at` in RFC 3339 with `Z`, its
+    /// sub-second digits in groups of three, and reads a numeric offset.
+    #[test]
+    fn an_entry_writes_at_in_the_json_shape() {
+        for (at, text) in [
+            ("2026-11-20T14:05:09Z", "2026-11-20T14:05:09Z"),
+            ("2026-11-20T14:05:09.25Z", "2026-11-20T14:05:09.250Z"),
+            (
+                "2026-11-20T14:05:09.1234567Z",
+                "2026-11-20T14:05:09.123456700Z",
+            ),
+        ] {
+            let entry = entry_at(1, at.parse().expect("a time"));
+            let written = serde_json::to_value(&entry).unwrap();
+            assert_eq!(written["at"], text, "{at}");
+            let back: Entry = serde_json::from_value(written).unwrap();
+            assert_eq!(back, entry);
+        }
+        let mut older = serde_json::to_value(entry_at(1, DateTime::UNIX_EPOCH)).unwrap();
+        older["at"] = "2026-11-20T15:05:09+01:00".into();
+        let read: Entry = serde_json::from_value(older).unwrap();
+        assert_eq!(
+            read.at,
+            "2026-11-20T14:05:09Z".parse::<DateTime<Utc>>().unwrap()
+        );
+    }
+
     fn entry_at(id: u64, at: DateTime<Utc>) -> Entry {
         Entry {
             id,

@@ -271,6 +271,47 @@ mod tests {
         );
     }
 
+    /// The table shows whole seconds in UTC; JSON writes RFC 3339 with
+    /// `+00:00` and sub-second digits in groups of three.
+    #[test]
+    fn obtained_times_keep_their_text() {
+        for (obtained, shown, json) in [
+            (
+                "2026-11-20T14:05:09Z",
+                "2026-11-20 14:05:09",
+                "2026-11-20T14:05:09+00:00",
+            ),
+            (
+                "2026-11-20T15:05:09.1+01:00",
+                "2026-11-20 14:05:09",
+                "2026-11-20T14:05:09.100+00:00",
+            ),
+            (
+                "2026-11-20T14:05:09.9876Z",
+                "2026-11-20 14:05:09",
+                "2026-11-20T14:05:09.987600+00:00",
+            ),
+            (
+                "2026-11-20T14:05:09.123456789Z",
+                "2026-11-20 14:05:09",
+                "2026-11-20T14:05:09.123456789+00:00",
+            ),
+        ] {
+            let output = Output {
+                rows: vec![row("a1b2c3d4e5f6", obtained, "m", &[], None)],
+                judged: false,
+            };
+            assert_eq!(
+                output.to_string(),
+                format!("revision  obtained (UTC)       message\na1b2c3d4  {shown}  m\n"),
+            );
+            assert_eq!(
+                output.to_json()["revisions"][0]["obtained"],
+                serde_json::json!(json),
+            );
+        }
+    }
+
     /// Without the registry listing the log leaves both columns out.
     #[test]
     fn test_display_unjudged() {

@@ -219,6 +219,57 @@ mod tests {
         assert!(error.to_string().contains("Invalid RFC3339 date"));
     }
 
+    /// The registry sends a token's expiry as whole Unix seconds; writing one
+    /// back rounds down to the second.
+    #[test]
+    fn remote_tokens_read_and_write_expiry_as_unix_seconds() {
+        let tokens: RemoteTokens = serde_json::from_str(
+            r#"{"access_token":"a","refresh_token":"r","expires_at":1708444800}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            tokens.expires_at,
+            "2024-02-20T16:00:00Z"
+                .parse::<chrono::DateTime<chrono::Utc>>()
+                .unwrap()
+        );
+        let later = RemoteTokens {
+            expires_at: "2024-02-20T16:00:00.900Z".parse().unwrap(),
+            ..tokens
+        };
+        assert_eq!(
+            serde_json::to_string(&later).unwrap(),
+            r#"{"access_token":"a","refresh_token":"r","expires_at":1708444800}"#
+        );
+    }
+
+    /// Vended credentials carry their expiry in RFC 3339, at any offset.
+    #[test]
+    fn remote_credentials_read_expiry_at_any_offset() {
+        let read = |expiration: &str| {
+            let json = serde_json::json!({
+                "AccessKeyId": "k",
+                "Expiration": expiration,
+                "SecretAccessKey": "s",
+                "SessionToken": "t",
+            });
+            serde_json::from_value::<RemoteCredentials>(json)
+                .unwrap()
+                .expiration
+        };
+        let utc = "2024-02-20T16:00:00Z"
+            .parse::<chrono::DateTime<chrono::Utc>>()
+            .unwrap();
+        assert_eq!(read("2024-02-20T16:00:00Z"), utc);
+        assert_eq!(read("2024-02-20T17:00:00+01:00"), utc);
+        assert_eq!(
+            read("2024-02-20T16:00:00.123Z"),
+            "2024-02-20T16:00:00.123Z"
+                .parse::<chrono::DateTime<chrono::Utc>>()
+                .unwrap()
+        );
+    }
+
     #[test]
     fn remote_tokens_debug_redacts_secrets() {
         let tokens = RemoteTokens {

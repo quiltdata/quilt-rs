@@ -117,6 +117,12 @@ pub fn recheck(
         .map_err(unrunnable)
 }
 
+/// A claim's time as it lands in the manifest: RFC 3339 in whole seconds,
+/// rounded down, with `Z`.
+pub fn claim_time(now: chrono::DateTime<chrono::Utc>) -> String {
+    now.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+}
+
 /// The claim one run writes in every revision it publishes.
 #[derive(Debug)]
 pub struct Claim {
@@ -237,6 +243,17 @@ pub fn unrunnable(user_meta: &Value, reason: &str) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_claim_time_is_whole_seconds_with_z() {
+        for (now, text) in [
+            ("2026-11-20T14:05:09Z", "2026-11-20T14:05:09Z"),
+            ("2026-11-20T14:05:09.987654Z", "2026-11-20T14:05:09Z"),
+            ("2026-11-20T15:05:09.5+01:00", "2026-11-20T14:05:09Z"),
+        ] {
+            assert_eq!(claim_time(now.parse().expect("a time")), text, "{now}");
+        }
+    }
 
     fn agents() -> BTreeMap<String, AgentSettings> {
         BTreeMap::from([(

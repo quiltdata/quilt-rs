@@ -272,6 +272,25 @@ mod tests {
     const COMMIT: &str = "3333333333333333333333333333333333333333333333333333333333333333";
     const TIP: &str = "4444444444444444444444444444444444444444444444444444444444444444";
 
+    /// `checked_at` is in RFC 3339 with `Z`, its sub-second digits in groups
+    /// of three, and reads back from a numeric offset.
+    #[test]
+    fn a_tip_cache_writes_checked_at_in_the_json_shape() {
+        let tip = TipCache {
+            format: TipCache::FORMAT,
+            latest_hash: TIP.to_string(),
+            bucket: "b".to_string(),
+            namespace: ("owner", "name").into(),
+            checked_at: "2026-11-12T20:00:00.25Z".parse().expect("a time"),
+        };
+        let written = serde_json::to_value(&tip).unwrap();
+        assert_eq!(written["checked_at"], json!("2026-11-12T20:00:00.250Z"));
+        let mut older = written;
+        older["checked_at"] = json!("2026-11-12T21:00:00.25+01:00");
+        let read = TipCache::from_slice(&serde_json::to_vec(&older).unwrap()).expect("a tip");
+        assert_eq!(read, tip);
+    }
+
     fn path() -> PathBuf {
         PathBuf::from("/domain/.quilt/refs/owner/name.json")
     }

@@ -745,6 +745,28 @@ mod tests {
         Ok(())
     }
 
+    /// The tag's key is the commit's whole Unix seconds, rounded down, and it
+    /// holds the top hash.
+    #[test(tokio::test)]
+    async fn a_timestamp_tag_is_named_by_whole_seconds() -> Res {
+        let remote = MockRemote::default();
+        let manifest_uri = ManifestUri {
+            bucket: "b".to_string(),
+            namespace: ("foo", "bar").into(),
+            hash: ALPHA.to_string(),
+            origin: None,
+        };
+        let time = "2024-02-20T16:00:00.999Z".parse().expect("a time");
+        tag_timestamp(&remote, &manifest_uri, time).await?;
+        let key = S3Uri::try_from("s3://b/.quilt/named_packages/foo/bar/1708444800")?;
+        assert!(remote.exists(None, &key).await?);
+        let before = "1969-12-31T23:59:59.5Z".parse().expect("a time");
+        tag_timestamp(&remote, &manifest_uri, before).await?;
+        let key = S3Uri::try_from("s3://b/.quilt/named_packages/foo/bar/-1")?;
+        assert!(remote.exists(None, &key).await?);
+        Ok(())
+    }
+
     const ALPHA: &str = "abcdef01aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const BETA: &str = "abcdef01bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 

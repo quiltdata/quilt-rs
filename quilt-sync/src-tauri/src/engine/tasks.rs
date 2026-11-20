@@ -330,7 +330,7 @@ async fn try_check<M: QuiltModel>(
             let hold = tasks.hold(&pkg.namespace);
             let claim = Claim {
                 invocation_id: uuid::Uuid::new_v4().to_string(),
-                claimed_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+                claimed_at: agent_exec::claim_time(chrono::Utc::now()),
             };
             // Before the push, so a crash after it still knows the claim as ours.
             settings::remember_invocation(data_dir, &claim.invocation_id).await?;
