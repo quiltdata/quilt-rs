@@ -393,51 +393,37 @@ impl Rules {
         if let Some(by) = self.left_out_by(relative_path) {
             return Some(by);
         }
-        if let Some(file) = &self.package {
-            match file.gitignore.matched(relative_path, is_dir) {
-                Match::Ignore(glob) => {
-                    return Some(IgnoredBy {
-                        pattern: glob.original().to_string(),
-                        source: RuleSource::Package {
-                            line: file.line_of(glob.original()),
-                        },
-                    });
-                }
-                Match::Whitelist(_) => return None,
-                Match::None => {}
-            }
+        let layer = |file: &RuleFile, source: &dyn Fn(u64) -> RuleSource| match file
+            .gitignore
+            .matched(relative_path, is_dir)
+        {
+            Match::Ignore(glob) => Some(Some(IgnoredBy {
+                pattern: glob.original().to_string(),
+                source: source(file.line_of(glob.original())),
+            })),
+            Match::Whitelist(_) => Some(None),
+            Match::None => None,
+        };
+        if let Some(file) = &self.package
+            && let Some(decided) = layer(file, &|line| RuleSource::Package { line })
+        {
+            return decided;
         }
         if tracked || (!is_dir && relative_path == Path::new(QUILTIGNORE)) {
             return None;
         }
-        if let Some((path, file)) = &self.user {
-            match file.gitignore.matched(relative_path, is_dir) {
-                Match::Ignore(glob) => {
-                    return Some(IgnoredBy {
-                        pattern: glob.original().to_string(),
-                        source: RuleSource::User {
-                            path: path.clone(),
-                            line: file.line_of(glob.original()),
-                        },
-                    });
-                }
-                Match::Whitelist(_) => return None,
-                Match::None => {}
-            }
+        if let Some((path, file)) = &self.user
+            && let Some(decided) = layer(file, &|line| RuleSource::User {
+                path: path.clone(),
+                line,
+            })
+        {
+            return decided;
         }
-        if let Some(file) = &self.extend {
-            match file.gitignore.matched(relative_path, is_dir) {
-                Match::Ignore(glob) => {
-                    return Some(IgnoredBy {
-                        pattern: glob.original().to_string(),
-                        source: RuleSource::Extend {
-                            line: file.line_of(glob.original()),
-                        },
-                    });
-                }
-                Match::Whitelist(_) => return None,
-                Match::None => {}
-            }
+        if let Some(file) = &self.extend
+            && let Some(decided) = layer(file, &|line| RuleSource::Extend { line })
+        {
+            return decided;
         }
         let built_in = if self.standard_patterns {
             defaults()
@@ -470,18 +456,12 @@ impl Rules {
         let wanted = names(relative_path);
         let left_out = self.left_out.iter().find(|path| names(path) == wanted)?;
         Some(IgnoredBy {
-            pattern: names_with_slashes(left_out),
+            pattern: crate::paths::logical_key(left_out)
+                .to_string_lossy()
+                .into_owned(),
             source: RuleSource::Contract,
         })
     }
-}
-
-/// `path`'s names joined by `/`, as a logical key writes them.
-fn names_with_slashes(path: &Path) -> String {
-    path.components()
-        .map(|part| part.as_os_str().to_string_lossy())
-        .collect::<Vec<_>>()
-        .join("/")
 }
 
 /// Where *Stop ignoring* writes its `!` lines.
