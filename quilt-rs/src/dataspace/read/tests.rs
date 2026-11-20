@@ -134,6 +134,24 @@ fn keys(names: &[&str]) -> Vec<PathBuf> {
     names.iter().map(PathBuf::from).collect()
 }
 
+/// Runs `reading` beside `rival`, which is dropped where the read ends first,
+/// so a read that stops short fails its test's assertions rather than
+/// leaving the rival waiting.
+async fn beside<T>(
+    reading: impl Future<Output = T>,
+    rival: impl Future<Output = Result<(), crate::Error>>,
+) -> Result<T, crate::Error> {
+    let mut reading = std::pin::pin!(reading);
+    let mut rival = std::pin::pin!(rival);
+    Ok(tokio::select! {
+        outcome = &mut reading => outcome,
+        rivalled = &mut rival => {
+            rivalled?;
+            reading.await
+        }
+    })
+}
+
 /// Whether the disk `storage` keeps its files on finds a name in any case.
 async fn ignores_case(storage: &MockStorage) -> Result<bool, crate::Error> {
     write(storage, "probe", b"").await?;
@@ -435,7 +453,7 @@ async fn under_sync_a_deleted_file_the_revision_changed_blocks_the_read() -> Res
 }
 
 #[test(tokio::test)]
-async fn under_sync_a_folder_holding_none_of_the_bases_files_is_refused() -> Res {
+async fn under_sync_a_missing_or_emptied_folder_is_refused() -> Res {
     let remote = MockRemote::default();
     let storage = MockStorage::default();
     let entry = sync();
@@ -705,8 +723,7 @@ async fn under_sync_a_file_deleted_while_the_revision_downloads_stays_deleted() 
         Ok::<_, crate::Error>(())
     };
 
-    let (outcome, deleted) = tokio::join!(read(&storage, &remote, &entry, Some(FIRST)), delete);
-    deleted?;
+    let outcome = beside(read(&storage, &remote, &entry, Some(FIRST)), delete).await?;
 
     assert!(
         matches!(&outcome, Err(EntryError::Changed(key)) if key == Path::new("edit.txt")),
@@ -717,8 +734,31 @@ async fn under_sync_a_file_deleted_while_the_revision_downloads_stays_deleted() 
     Ok(())
 }
 
+#[test(tokio::test)]
+async fn under_sync_files_moved_to_new_keys_are_not_a_folder_gone() -> Res {
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    let entry = sync();
+    publish(&remote, FIRST, &[("a.txt", b"v1")]).await?;
+    read(&storage, &remote, &entry, None).await?;
+    storage
+        .rename(folder().join("a.txt"), folder().join("moved.txt"))
+        .await?;
+    publish(&remote, SECOND, &[("a.txt", b"v1"), ("b.txt", b"new")]).await?;
+
+    let outcome = read(&storage, &remote, &entry, Some(FIRST)).await;
+
+    assert!(
+        matches!(&outcome, Ok(outcome) if outcome.lock_base() == Some(SECOND)),
+        "{outcome:?}"
+    );
+    assert_eq!(text(&storage, "a.txt").await, None);
+    assert_eq!(text(&storage, "moved.txt").await.as_deref(), Some("v1"));
+    Ok(())
+}
+
 /// The download puts the folder back around its staging folder, so what is
-/// asked is whether the base's files are still there.
+/// asked is whether it holds anything else.
 #[test(tokio::test)]
 async fn under_sync_a_folder_deleted_while_the_revision_downloads_stays_gone() -> Res {
     let remote = MockRemote::default();
@@ -736,8 +776,7 @@ async fn under_sync_a_folder_deleted_while_the_revision_downloads_stays_gone() -
         Ok::<_, crate::Error>(())
     };
 
-    let (outcome, deleted) = tokio::join!(read(&storage, &remote, &entry, Some(FIRST)), delete);
-    deleted?;
+    let outcome = beside(read(&storage, &remote, &entry, Some(FIRST)), delete).await?;
 
     assert!(
         matches!(&outcome, Err(EntryError::FolderGone(gone)) if *gone == folder()),

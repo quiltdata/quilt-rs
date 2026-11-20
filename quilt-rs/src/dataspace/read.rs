@@ -18,6 +18,7 @@ use crate::dataspace::contract::Access;
 use crate::dataspace::contract::Entry;
 use crate::dataspace::contract::Paths;
 use crate::dataspace::contract::Registry;
+use crate::dataspace::metadata::at_metadata_file;
 use crate::dataspace::metadata::holds_metadata_file;
 use crate::dataspace::metadata::render;
 use crate::flow::blocks_a_folder;
@@ -170,9 +171,9 @@ impl OnDisk {
 /// `base`, any file that differs collides. A missing file is filled under
 /// `read`, which never publishes. Under `sync` a file `base` has and the
 /// folder lacks is a local deletion, a change like any other, and only a file
-/// `base` lacks is filled. So a `sync` folder that is missing, or holds none
-/// of `base`'s files, is refused rather than read as every file deleted, and
-/// so is a `base` the bucket no longer holds.
+/// `base` lacks is filled. So a `sync` folder that is missing, or empty but
+/// for what Quilt writes there, is refused rather than read as every file
+/// deleted, and so is a `base` the bucket no longer holds.
 ///
 /// A failure after the first rename leaves the files already placed; the
 /// lock, which moves only on [`ReadOutcome::lock_base`], still names `base`.
@@ -460,31 +461,31 @@ async fn not_found(storage: &(impl Storage + Sync), path: &Path) -> Res<bool> {
     }
 }
 
-/// Whether `base` covers a key under `paths` and nothing, not even a dangling
-/// link, is at any of them in `folder`. A folder that is there and cannot be
-/// listed is an error, not a folder gone.
+/// Whether `base` covers a key under `paths` and `folder` is missing or
+/// empty, holding nothing but what Quilt writes there. A folder that is there
+/// and cannot be listed is an error, not a folder gone.
 async fn gone(
     storage: &(impl Storage + Sync),
     folder: &Path,
     base: &Manifest,
     paths: &Paths,
 ) -> Res<bool> {
-    let had = covered(base, paths);
-    match storage.read_dir(folder).await {
-        Ok(_) => {}
-        Err(err) if err.is_not_found() => return Ok(!had.is_empty()),
-        Err(err) => return Err(err),
+    if covered(base, paths).is_empty() {
+        return Ok(false);
     }
-    for key in had.keys() {
-        let path = key.join_to(folder);
-        if storage.is_symlink(&path).await
-            || storage.exists(&path).await
-            || !not_found(storage, &path).await?
-        {
+    let mut listing = match storage.read_dir(folder).await {
+        Ok(listing) => listing,
+        Err(err) if err.is_not_found() => return Ok(true),
+        Err(err) => return Err(err),
+    };
+    while let Some(entry) = listing.next_entry().await? {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !at_metadata_file(&name) && !left_by_read(&name) {
             return Ok(false);
         }
     }
-    Ok(!had.is_empty())
+    Ok(true)
 }
 
 /// Whether a file, or anything that is not a folder, stands between `folder`
