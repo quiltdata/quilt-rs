@@ -340,6 +340,22 @@ async fn a_local_registrys_package_is_refused() -> Res {
     Ok(())
 }
 
+/// `quilt+local://` with no name stands for the Domain's own local registry,
+/// so a contract that holds one still lists a bucket package's commits.
+#[test(tokio::test)]
+async fn a_contract_naming_this_machines_registry_still_lists() -> Res {
+    let fixture = Fixture::new("sync")?;
+    std::fs::write(
+        fixture.dataspace.join("data.toml"),
+        "registry = \"s3://b\"\n[packages]\nsync = [\"team/raw\", \"quilt+local://#package=me/x\"]\n",
+    )?;
+
+    let listed = fixture.unattached().await;
+
+    assert!(listed.is_ok(), "{listed:?}");
+    Ok(())
+}
+
 /// A lock written by another host is not used.
 #[test(tokio::test)]
 async fn a_lock_written_elsewhere_is_refused() -> Res {

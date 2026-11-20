@@ -104,7 +104,7 @@ pub async fn unattached(
     writer: &Writer,
     package: &PackageKey,
 ) -> Result<Vec<Unattached>, ReattachError> {
-    let opened = Opened::open(storage, dataspace, writer, package).await?;
+    let opened = Opened::open(storage, domain, dataspace, writer, package).await?;
     let store = opened.store(domain)?;
     let mut found = Vec::new();
     for (hash, path, _) in
@@ -137,7 +137,7 @@ pub async fn reattach(
     if !is_top_hash(base) {
         return Err(ReattachError::Base(base.to_string()));
     }
-    let mut opened = Opened::open(storage, dataspace, writer, package).await?;
+    let mut opened = Opened::open(storage, domain, dataspace, writer, package).await?;
     if opened
         .lock
         .packages
@@ -194,11 +194,21 @@ impl Opened {
     /// `data.toml` is used, as `read_all` does: the contract was edited here.
     async fn open(
         storage: &(impl Storage + Sync),
+        domain: &DomainRoot,
         dataspace: &Path,
         writer: &Writer,
         package: &PackageKey,
     ) -> Result<Self, ReattachError> {
-        let contract = Contract::read(storage, dataspace, writer.local_registry_name()).await?;
+        // The Domain names this machine's local registry, which a contract's
+        // `quilt+local://` with no name stands for.
+        let local = domain
+            .local()
+            .names(storage)
+            .await
+            .ok()
+            .map(|names| names.name);
+        let local = local.as_deref().or(writer.local_registry_name());
+        let contract = Contract::read(storage, dataspace, local).await?;
         let catalog = contract
             .entries()
             .iter()
