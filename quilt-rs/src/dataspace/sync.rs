@@ -1214,6 +1214,13 @@ async fn read_back(
                 storage.create_dir_all(parent).await?;
             }
             storage.copy(store.object_path(&row.hash), &staged).await?;
+            if !OnDisk::read(storage, &staged, row.hash.algorithm())
+                .await?
+                .holds(row)
+            {
+                report.hash_mismatch.push(row.logical_key.to_path_buf());
+                return Ok(report);
+            }
         }
         let text = render(current, &entry.paths).map_err(EntryError::MetadataUnwritable)?;
         let keys = || rows.iter().map(|row| &row.logical_key);

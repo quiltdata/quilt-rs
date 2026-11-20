@@ -1156,6 +1156,60 @@ async fn a_local_package_never_published_is_published_first_with_no_base() -> Re
     Ok(())
 }
 
+/// A commit of a local package that the lock names is read back from the
+/// registry's objects, each checked against its row: a damaged object is not
+/// placed.
+#[test(tokio::test)]
+async fn a_damaged_local_object_is_not_read_back_into_the_folder() -> Res {
+    let world = World::new("sync = [\"quilt+local://lab-mac#package=me/out\"]")?;
+    let local = world.local_named("lab-mac").await?;
+    let first = publish_local(&world.storage, &local, "me/out", &[("o.txt", b"o1")]).await?;
+    world.sync().await?;
+    let folder = world.local_folder().await?;
+    std::fs::write(folder.join("o.txt"), "o2")?;
+    stopping_at("sync.recorded", 0, world.tick()).await?;
+    let dataspace = world.dataspace();
+    let (domain, storage) = (world.domain(), &world.storage);
+    let package = out_key("lab-mac");
+    let listed = crate::dataspace::reattach::unattached(
+        storage,
+        &world.remote,
+        &domain,
+        &dataspace,
+        &writer(),
+        &package,
+    )
+    .await?;
+    assert_eq!(listed.len(), 1, "{listed:?}");
+    crate::dataspace::reattach::reattach(
+        storage,
+        &world.remote,
+        &domain,
+        &dataspace,
+        &writer(),
+        &package,
+        &listed[0].hash,
+        Some(&first),
+    )
+    .await?;
+    std::fs::remove_dir_all(&folder)?;
+    for object in std::fs::read_dir(local.objects_dir())? {
+        let path = object?.path();
+        if std::fs::read(&path)? == b"o2" {
+            std::fs::write(&path, "xx")?;
+        }
+    }
+
+    let outcome = world.tick().await?;
+
+    assert!(
+        matches!(&outcome, EntrySync::ReadBack(read) if !read.hash_mismatch.is_empty()),
+        "{outcome:?}"
+    );
+    assert!(!folder.join("o.txt").exists());
+    Ok(())
+}
+
 /// A local registry renamed keeps its old name as an alias: an entry, and a
 /// lock key, naming it by the old name still reach it, and the lock is
 /// written under its current name.
