@@ -30,6 +30,11 @@ fn whole() -> Entry {
     entry("read = [\"team/raw\"]")
 }
 
+/// The whole package under `sync`, in its default folder.
+fn sync() -> Entry {
+    entry("sync = [\"team/raw\"]")
+}
+
 fn folder() -> PathBuf {
     Path::new(DATASPACE).join("team/raw")
 }
@@ -127,6 +132,24 @@ fn report(outcome: ReadOutcome) -> ReadReport {
 
 fn keys(names: &[&str]) -> Vec<PathBuf> {
     names.iter().map(PathBuf::from).collect()
+}
+
+/// Runs `reading` beside `rival`, which is dropped where the read ends first,
+/// so a read that stops short fails its test's assertions rather than
+/// leaving the rival waiting.
+async fn beside<T>(
+    reading: impl Future<Output = T>,
+    rival: impl Future<Output = Result<(), crate::Error>>,
+) -> Result<T, crate::Error> {
+    let mut reading = std::pin::pin!(reading);
+    let mut rival = std::pin::pin!(rival);
+    Ok(tokio::select! {
+        outcome = &mut reading => outcome,
+        rivalled = &mut rival => {
+            rivalled?;
+            reading.await
+        }
+    })
 }
 
 /// Whether the disk `storage` keeps its files on finds a name in any case.
@@ -386,6 +409,207 @@ async fn a_file_missing_from_the_folder_is_filled_again() -> Res {
 }
 
 #[test(tokio::test)]
+async fn under_sync_a_file_deleted_from_the_folder_stays_deleted() -> Res {
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    let entry = sync();
+    publish(&remote, FIRST, &[("a.txt", b"alpha"), ("b.txt", b"v1")]).await?;
+    read(&storage, &remote, &entry, None).await?;
+    storage.remove_file(folder().join("a.txt")).await?;
+    publish(&remote, SECOND, &[("a.txt", b"alpha"), ("b.txt", b"v2")]).await?;
+
+    let outcome = read(&storage, &remote, &entry, Some(FIRST)).await?;
+
+    assert_eq!(outcome.lock_base(), Some(SECOND));
+    let report = report(outcome);
+    assert_eq!(report.placed, keys(&["b.txt"]));
+    assert_eq!(report.kept, keys(&["a.txt"]));
+    assert_eq!(text(&storage, "a.txt").await, None);
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn under_sync_a_deleted_file_the_revision_changed_blocks_the_read() -> Res {
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    let entry = sync();
+    publish(&remote, FIRST, &[("a.txt", b"v1"), ("b.txt", b"v1")]).await?;
+    read(&storage, &remote, &entry, None).await?;
+    storage.remove_file(folder().join("a.txt")).await?;
+    publish(&remote, SECOND, &[("a.txt", b"v2"), ("b.txt", b"v2")]).await?;
+
+    let outcome = read(&storage, &remote, &entry, Some(FIRST)).await?;
+
+    assert_eq!(
+        outcome,
+        ReadOutcome::Blocked {
+            revision: SECOND.to_string(),
+            conflicts: keys(&["a.txt"]),
+        }
+    );
+    assert_eq!(text(&storage, "a.txt").await, None);
+    assert_eq!(text(&storage, "b.txt").await.as_deref(), Some("v1"));
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn under_sync_a_missing_or_emptied_folder_is_refused() -> Res {
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    let entry = sync();
+    publish(&remote, FIRST, &[("a.txt", b"v1"), ("b.txt", b"v1")]).await?;
+    read(&storage, &remote, &entry, None).await?;
+    storage.remove_file(folder().join("a.txt")).await?;
+    storage.remove_file(folder().join("b.txt")).await?;
+    publish(&remote, SECOND, &[("a.txt", b"v1"), ("b.txt", b"v2")]).await?;
+
+    let emptied = read(&storage, &remote, &entry, Some(FIRST)).await;
+    storage.remove_dir_all(folder()).await?;
+    let missing = read(&storage, &remote, &entry, Some(FIRST)).await;
+
+    for outcome in [emptied, missing] {
+        assert!(
+            matches!(&outcome, Err(EntryError::FolderGone(gone)) if *gone == folder()),
+            "{outcome:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn under_sync_a_base_the_registry_no_longer_holds_is_refused() -> Res {
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    publish(&remote, SECOND, &[("a.txt", b"alpha"), ("b.txt", b"beta")]).await?;
+    write(&storage, "b.txt", b"beta").await?;
+
+    let outcome = read(&storage, &remote, &sync(), Some(FIRST)).await;
+
+    assert!(
+        matches!(&outcome, Err(EntryError::Failed(err)) if err.is_not_found()),
+        "{outcome:?}"
+    );
+    assert_eq!(text(&storage, "a.txt").await, None);
+    Ok(())
+}
+
+/// A file the user may not look at is not one they deleted.
+#[cfg(unix)]
+#[test(tokio::test)]
+async fn under_sync_a_file_in_a_folder_that_cannot_be_read_is_not_a_deletion() -> Res {
+    use std::os::unix::fs::PermissionsExt;
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    let entry = sync();
+    publish(&remote, FIRST, &[("sub/a.txt", b"v1"), ("b.txt", b"v1")]).await?;
+    read(&storage, &remote, &entry, None).await?;
+    publish(&remote, SECOND, &[("sub/a.txt", b"v1"), ("b.txt", b"v2")]).await?;
+    let sub = storage.temp_dir.path().join("work/rnaseq/team/raw/sub");
+    std::fs::set_permissions(&sub, std::fs::Permissions::from_mode(0o000))?;
+    let readable = std::fs::read_dir(&sub).is_ok();
+
+    let outcome = read(&storage, &remote, &entry, Some(FIRST)).await;
+
+    std::fs::set_permissions(&sub, std::fs::Permissions::from_mode(0o755))?;
+    // Root reads it anyway.
+    if readable {
+        return Ok(());
+    }
+    assert!(
+        !matches!(&outcome, Ok(outcome) if outcome.lock_base().is_some()),
+        "{outcome:?}"
+    );
+    assert_eq!(text(&storage, "b.txt").await.as_deref(), Some("v1"));
+    Ok(())
+}
+
+/// A folder that may be listed but not searched hides its files' state.
+#[cfg(unix)]
+#[test(tokio::test)]
+async fn under_sync_a_file_in_a_folder_that_cannot_be_searched_is_not_a_deletion() -> Res {
+    use std::os::unix::fs::PermissionsExt;
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    let entry = sync();
+    publish(&remote, FIRST, &[("sub/a.txt", b"v1"), ("b.txt", b"v1")]).await?;
+    read(&storage, &remote, &entry, None).await?;
+    publish(&remote, SECOND, &[("sub/a.txt", b"v1"), ("b.txt", b"v2")]).await?;
+    let sub = storage.temp_dir.path().join("work/rnaseq/team/raw/sub");
+    std::fs::set_permissions(&sub, std::fs::Permissions::from_mode(0o444))?;
+    let searchable = std::fs::metadata(sub.join("a.txt")).is_ok();
+
+    let outcome = read(&storage, &remote, &entry, Some(FIRST)).await;
+
+    std::fs::set_permissions(&sub, std::fs::Permissions::from_mode(0o755))?;
+    // Root searches it anyway.
+    if !searchable {
+        assert!(matches!(outcome, Err(EntryError::Failed(_))), "{outcome:?}");
+        assert_eq!(text(&storage, "b.txt").await.as_deref(), Some("v1"));
+    }
+    Ok(())
+}
+
+/// The folder is there, so it is not refused as gone.
+#[cfg(unix)]
+#[test(tokio::test)]
+async fn under_sync_a_working_folder_that_cannot_be_listed_is_not_gone() -> Res {
+    use std::os::unix::fs::PermissionsExt;
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    publish(&remote, FIRST, &[("a.txt", b"v1")]).await?;
+    read(&storage, &remote, &sync(), None).await?;
+    let raw = storage.temp_dir.path().join("work/rnaseq/team/raw");
+    std::fs::set_permissions(&raw, std::fs::Permissions::from_mode(0o000))?;
+    let readable = std::fs::read_dir(&raw).is_ok();
+
+    let outcome = read(&storage, &remote, &sync(), Some(FIRST)).await;
+
+    std::fs::set_permissions(&raw, std::fs::Permissions::from_mode(0o755))?;
+    // Root reads it anyway.
+    if !readable {
+        assert!(matches!(outcome, Err(EntryError::Failed(_))), "{outcome:?}");
+    }
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn under_sync_a_file_where_a_deleted_files_folder_was_collides() -> Res {
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    publish(&remote, FIRST, &[("sub/a.txt", b"v1"), ("b.txt", b"v1")]).await?;
+    read(&storage, &remote, &sync(), None).await?;
+    storage.remove_dir_all(folder().join("sub")).await?;
+    write(&storage, "sub", b"a file").await?;
+
+    let outcome = read(&storage, &remote, &sync(), Some(FIRST)).await?;
+
+    assert_eq!(
+        outcome,
+        ReadOutcome::Blocked {
+            revision: FIRST.to_string(),
+            conflicts: keys(&["sub/a.txt"]),
+        }
+    );
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn under_sync_a_first_read_fills_every_file() -> Res {
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    publish(&remote, FIRST, &[("a.txt", b"alpha")]).await?;
+
+    let outcome = read(&storage, &remote, &sync(), None).await;
+
+    assert!(
+        matches!(&outcome, Ok(outcome) if outcome.lock_base() == Some(FIRST)),
+        "{outcome:?}"
+    );
+    assert_eq!(text(&storage, "a.txt").await.as_deref(), Some("alpha"));
+    Ok(())
+}
+
+#[test(tokio::test)]
 async fn the_metadata_file_is_compared_like_any_other_file() -> Res {
     let remote = MockRemote::default();
     let storage = MockStorage::default();
@@ -480,6 +704,209 @@ async fn a_file_edited_while_the_revision_downloads_stops_the_read_before_any_ch
     );
     assert_eq!(text(&storage, "edit.txt").await.as_deref(), Some("mine"));
     assert_eq!(text(&storage, "a.txt").await.as_deref(), Some("v1"));
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn under_sync_a_file_deleted_while_the_revision_downloads_stays_deleted() -> Res {
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    let entry = sync();
+    publish(&remote, FIRST, &[("a.txt", b"v1"), ("edit.txt", b"v1")]).await?;
+    read(&storage, &remote, &entry, None).await?;
+    publish(&remote, SECOND, &[("a.txt", b"v2"), ("edit.txt", b"v2")]).await?;
+    let download = remote.park(&row("edit.txt", b"v2").physical_key);
+    let delete = async {
+        download.arrived().await;
+        storage.remove_file(folder().join("edit.txt")).await?;
+        download.release();
+        Ok::<_, crate::Error>(())
+    };
+
+    let outcome = beside(read(&storage, &remote, &entry, Some(FIRST)), delete).await?;
+
+    assert!(
+        matches!(&outcome, Err(EntryError::Changed(key)) if key == Path::new("edit.txt")),
+        "{outcome:?}"
+    );
+    assert_eq!(text(&storage, "edit.txt").await, None);
+    assert_eq!(text(&storage, "a.txt").await.as_deref(), Some("v1"));
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn under_sync_a_folder_left_with_empty_folders_and_files_outside_the_paths_is_refused() -> Res
+{
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    let entry = entry("sync = [{ package = \"team/raw\", path = \"data/\" }]");
+    publish(&remote, FIRST, &[("data/a.txt", b"v1")]).await?;
+    read(&storage, &remote, &entry, None).await?;
+    storage.remove_file(folder().join("data/a.txt")).await?;
+    write(&storage, "notes.txt", b"not the entry's").await?;
+    publish(
+        &remote,
+        SECOND,
+        &[("data/a.txt", b"v1"), ("data/b.txt", b"new")],
+    )
+    .await?;
+
+    let outcome = read(&storage, &remote, &entry, Some(FIRST)).await;
+
+    assert!(
+        matches!(&outcome, Err(EntryError::FolderGone(gone)) if *gone == folder()),
+        "{outcome:?}"
+    );
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn under_sync_a_folder_left_with_what_the_os_writes_is_refused() -> Res {
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    let entry = sync();
+    publish(&remote, FIRST, &[("a.txt", b"v1")]).await?;
+    read(&storage, &remote, &entry, None).await?;
+    storage.remove_file(folder().join("a.txt")).await?;
+    write(&storage, ".DS_Store", b"finder").await?;
+
+    let outcome = read(&storage, &remote, &entry, Some(FIRST)).await;
+
+    assert!(
+        matches!(&outcome, Err(EntryError::FolderGone(gone)) if *gone == folder()),
+        "{outcome:?}"
+    );
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn under_sync_a_package_file_named_like_os_litter_keeps_its_folder() -> Res {
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    let entry = sync();
+    publish(&remote, FIRST, &[(".gitignore", b"*.tmp")]).await?;
+    read(&storage, &remote, &entry, None).await?;
+    publish(
+        &remote,
+        SECOND,
+        &[(".gitignore", b"*.tmp"), ("b.txt", b"new")],
+    )
+    .await?;
+
+    let outcome = read(&storage, &remote, &entry, Some(FIRST)).await;
+
+    assert!(
+        matches!(&outcome, Ok(outcome) if outcome.lock_base() == Some(SECOND)),
+        "{outcome:?}"
+    );
+    Ok(())
+}
+
+/// A folder outside the entry's paths is none of its business.
+#[cfg(unix)]
+#[test(tokio::test)]
+async fn under_sync_a_folder_that_cannot_be_listed_outside_the_paths_is_passed_over() -> Res {
+    use std::os::unix::fs::PermissionsExt;
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    let entry = entry("sync = [{ package = \"team/raw\", path = \"data/\" }]");
+    publish(&remote, FIRST, &[("data/a.txt", b"v1")]).await?;
+    read(&storage, &remote, &entry, None).await?;
+    storage.remove_file(folder().join("data/a.txt")).await?;
+    // Deeper than the folder that cannot be listed, so that one is asked first.
+    write(&storage, "data/deep/b.txt", b"mine").await?;
+    write(&storage, "private/x.txt", b"x").await?;
+    let private = storage.temp_dir.path().join("work/rnaseq/team/raw/private");
+    std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o000))?;
+    publish(&remote, SECOND, &[("data/a.txt", b"v1"), ("c.txt", b"c")]).await?;
+
+    let outcome = read(&storage, &remote, &entry, Some(FIRST)).await;
+
+    std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o755))?;
+    assert!(
+        matches!(&outcome, Ok(outcome) if outcome.lock_base() == Some(SECOND)),
+        "{outcome:?}"
+    );
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn under_sync_files_moved_to_new_keys_are_not_a_folder_gone() -> Res {
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    let entry = sync();
+    publish(&remote, FIRST, &[("a.txt", b"v1")]).await?;
+    read(&storage, &remote, &entry, None).await?;
+    storage
+        .rename(folder().join("a.txt"), folder().join("moved.txt"))
+        .await?;
+    publish(&remote, SECOND, &[("a.txt", b"v1"), ("b.txt", b"new")]).await?;
+
+    let outcome = read(&storage, &remote, &entry, Some(FIRST)).await;
+
+    assert!(
+        matches!(&outcome, Ok(outcome) if outcome.lock_base() == Some(SECOND)),
+        "{outcome:?}"
+    );
+    assert_eq!(text(&storage, "a.txt").await, None);
+    assert_eq!(text(&storage, "moved.txt").await.as_deref(), Some("v1"));
+    Ok(())
+}
+
+/// The download puts the folder back around its staging folder, so what is
+/// asked is whether it holds anything else.
+#[test(tokio::test)]
+async fn under_sync_a_folder_deleted_while_the_revision_downloads_stays_gone() -> Res {
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    let entry = sync();
+    publish(&remote, FIRST, &[("a.txt", b"v1")]).await?;
+    read(&storage, &remote, &entry, None).await?;
+    publish(&remote, SECOND, &[("a.txt", b"v1"), ("b.txt", b"new")]).await?;
+    let download = remote.park(&row("b.txt", b"new").physical_key);
+    let delete = async {
+        download.arrived().await;
+        storage.remove_file(folder().join("a.txt")).await?;
+        storage.remove_file(folder().join(METADATA_FILE)).await?;
+        download.release();
+        Ok::<_, crate::Error>(())
+    };
+
+    let outcome = beside(read(&storage, &remote, &entry, Some(FIRST)), delete).await?;
+
+    assert!(
+        matches!(&outcome, Err(EntryError::FolderGone(gone)) if *gone == folder()),
+        "{outcome:?}"
+    );
+    assert_eq!(text(&storage, "b.txt").await, None);
+    Ok(())
+}
+
+/// Whether the files are there cannot be told, so the folder is not gone.
+#[cfg(unix)]
+#[test(tokio::test)]
+async fn under_sync_a_folder_whose_files_cannot_be_searched_is_not_gone() -> Res {
+    use std::os::unix::fs::PermissionsExt;
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    publish(
+        &remote,
+        FIRST,
+        &[("sub/a.txt", b"v1"), ("sub/b.txt", b"v1")],
+    )
+    .await?;
+    read(&storage, &remote, &sync(), None).await?;
+    let sub = storage.temp_dir.path().join("work/rnaseq/team/raw/sub");
+    std::fs::set_permissions(&sub, std::fs::Permissions::from_mode(0o444))?;
+    let searchable = std::fs::metadata(sub.join("a.txt")).is_ok();
+
+    let outcome = read(&storage, &remote, &sync(), Some(FIRST)).await;
+
+    std::fs::set_permissions(&sub, std::fs::Permissions::from_mode(0o755))?;
+    // Root searches it anyway.
+    if !searchable {
+        assert!(matches!(outcome, Err(EntryError::Failed(_))), "{outcome:?}");
+    }
     Ok(())
 }
 
@@ -697,6 +1124,32 @@ async fn a_link_where_a_file_goes_collides() -> Res {
         "{outcome:?}"
     );
     assert!(storage.is_symlink(folder().join("a.txt")).await);
+    Ok(())
+}
+
+/// A dangling link where the base's only file was is something in the
+/// folder, not a folder gone.
+#[cfg(unix)]
+#[test(tokio::test)]
+async fn under_sync_a_dangling_link_at_the_bases_file_collides() -> Res {
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    publish(&remote, FIRST, &[("a.txt", b"v1")]).await?;
+    read(&storage, &remote, &sync(), None).await?;
+    let link = storage.temp_dir.path().join("work/rnaseq/team/raw/a.txt");
+    std::fs::remove_file(&link)?;
+    std::os::unix::fs::symlink(storage.temp_dir.path().join("nowhere"), &link)?;
+    publish(&remote, SECOND, &[("a.txt", b"v2")]).await?;
+
+    let outcome = read(&storage, &remote, &sync(), Some(FIRST)).await;
+
+    assert!(
+        matches!(
+            &outcome,
+            Ok(ReadOutcome::Blocked { conflicts, .. }) if *conflicts == keys(&["a.txt"])
+        ),
+        "{outcome:?}"
+    );
     Ok(())
 }
 

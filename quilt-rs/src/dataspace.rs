@@ -37,6 +37,12 @@ pub enum EntryError {
     FolderUnavailable(PathBuf),
 
     #[error(
+        "the working folder {} is missing or empty, so it was not read as the deletion of the package's files",
+        .0.display()
+    )]
+    FolderGone(PathBuf),
+
+    #[error(
         "the working folder {} holds no files, and `replace` would remove every file of the package",
         .0.display()
     )]

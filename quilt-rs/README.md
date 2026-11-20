@@ -108,11 +108,14 @@ folder:
   between the destination and a target. Fetching is all-or-nothing, but the
   renames into place are not: a failure partway leaves the files already
   placed.
-- `dataspace::read::read` reads a `data.toml` entry under `read` into its
-  working folder: the revision's files under the entry's paths, and all that
-  is not a file as `metadata.toml`. A file unchanged since the
-  base the lock names takes the revision's version, and a local change to a
-  file the revision also changed blocks the read before anything is written.
+- `dataspace::read::read` reads a `data.toml` entry under `read` or `sync`
+  into its working folder: the revision's files under the entry's paths, and
+  all that is not a file as `metadata.toml`. A file unchanged since the base
+  the lock names takes the revision's version, and a local change to a file
+  the revision also changed blocks the read before anything is written. Under
+  `sync` a file deleted from the folder is a local change like any other, kept
+  or colliding, and a missing or empty folder, or a base the bucket no longer
+  holds, is refused.
 - `dataspace::read_all::read_all` reads every `read` entry of a dataspace,
   then writes `data.lock.toml`, moving a package's base only where its read
   completed. A missing or empty working folder is filled at the revision the
