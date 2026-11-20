@@ -581,8 +581,11 @@ async fn move_to_bucket(
         Some(_) => return Ok(ControlFlow::Break(EntrySync::Diverged { latest })),
         None => {
             let manifest = local_commit(storage, &domain.local(), entry, &head).await?;
-            let (pushed, _) =
+            let (pushed, wrote) =
                 push_manifest(storage, remote, queue, entry, &head, manifest, None).await?;
+            if wrote {
+                after_write(lock_file.contract, entry, &pushed).await;
+            }
             let Published::Advanced { revision, .. } = &pushed else {
                 return Ok(ControlFlow::Break(EntrySync::Ran {
                     read: None,

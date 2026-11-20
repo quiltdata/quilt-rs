@@ -1286,6 +1286,22 @@ async fn a_move_the_workflow_refuses_leaves_the_folder_to_be_read_whole_once_it_
 }
 
 #[test(tokio::test)]
+async fn post_write_follows_a_move_to_a_bucket_once() -> Res {
+    let (world, _, head) = moving().await?;
+    let hooks = table(PostWrite, &record(&world), &[]);
+    world.contract(&format!("sync = [\"team/raw\"]\n{hooks}"))?;
+
+    world.sync().await?;
+    world.tick().await?;
+
+    assert_eq!(
+        calls(&record(&world)),
+        [call(PostWrite, Some(head.as_str()))]
+    );
+    Ok(())
+}
+
+#[test(tokio::test)]
 async fn a_package_the_contract_still_names_in_the_local_registry_is_not_moved() -> Res {
     let (world, _, _) = moving().await?;
     world.contract("sync = [\"team/raw\", \"quilt+local://lab-mac#package=team/raw\"]")?;
