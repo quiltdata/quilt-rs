@@ -42,16 +42,27 @@ pub enum UriError {
 
 /// `input` with any user and password before its host masked, for an error
 /// to repeat: `quilt+s3://KEY:secret@b#package=a/b` becomes
-/// `quilt+s3://***@b#package=a/b`. It reads the text as written, so an
-/// address the URL parser refuses, such as `s3:KEY:secret@b/k`, is masked too.
+/// `quilt+s3://***@b#package=a/b`.
+///
+/// Tabs and line breaks are dropped first, as the URL parser drops them.
+/// Without a `://`, everything up to the last `@` before any `?` or `#` is
+/// masked, so an address the parser refuses, such as `s3:KEY:secret@b/k`,
+/// is masked too.
 #[must_use]
 pub fn mask_user(input: &str) -> String {
-    let start = input.find("://").map_or(0, |i| i + 3);
+    let input: String = input
+        .chars()
+        .filter(|c| !matches!(c, '\t' | '\n' | '\r'))
+        .collect();
+    let (start, ends) = match input.find("://") {
+        Some(i) => (i + 3, &['/', '?', '#'][..]),
+        None => (0, &['?', '#'][..]),
+    };
     let rest = &input[start..];
-    let host_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let host_end = rest.find(ends).unwrap_or(rest.len());
     match rest[..host_end].rfind('@') {
         Some(at) => format!("{}***{}", &input[..start], &rest[at..]),
-        None => input.to_string(),
+        None => input,
     }
 }
 
@@ -73,6 +84,13 @@ mod tests {
             ("s3://KEY:secret@b@c/k", "s3://***@c/k"),
             ("s3:KEY:secret@b/k", "***@b/k"),
             ("KEY:secret@b", "***@b"),
+            (
+                "quilt+local:\t//KEY:secret@b#package=a/b",
+                "quilt+local://***@b#package=a/b",
+            ),
+            ("s3://KEY:se\ncret@b/k", "s3://***@b/k"),
+            ("quilt+local:/KEY:secret@b#package=a/b", "***@b#package=a/b"),
+            ("a/KEY:secret@b", "***@b"),
             ("s3://b/k@v", "s3://b/k@v"),
             (
                 "quilt+s3://b#package=a/b@abcdef",
