@@ -211,6 +211,8 @@ async fn publish_on_base(
 ) -> (Option<EntryRead>, EntryPublish) {
     match publish(storage, remote, entry, None, Base::Locked(base), user_rules).await {
         Ok(Published::Behind { .. }) => {}
+        // A package never read has no folder until its read makes one.
+        Err(EntryError::FolderUnavailable(_)) if base.is_none() => {}
         published => return (None, ran(published)),
     }
     let read = match read(storage, remote, reads, base).await {
