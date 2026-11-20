@@ -130,6 +130,13 @@ pub struct ReadReport {
 }
 
 impl ReadReport {
+    /// Whether every file was placed: none skipped and none that did not
+    /// hash to its row.
+    #[must_use]
+    pub fn complete(&self) -> bool {
+        self.skipped.is_empty() && self.hash_mismatch.is_empty()
+    }
+
     /// Lists a decided key only as `resolved`.
     fn keep_resolved_apart(&mut self) {
         let resolved = &self.resolved;

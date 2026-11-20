@@ -28,15 +28,15 @@ use quilt_uri::Namespace;
 
 type Res = Result<(), Box<dyn std::error::Error>>;
 
-const LATEST: &str = "s3://b/.quilt/named_packages/team/raw/latest";
-const FIRST: &str = "1111111111111111111111111111111111111111111111111111111111111111";
-const SECOND: &str = "2222222222222222222222222222222222222222222222222222222222222222";
+pub(crate) const LATEST: &str = "s3://b/.quilt/named_packages/team/raw/latest";
+pub(crate) const FIRST: &str = "1111111111111111111111111111111111111111111111111111111111111111";
+pub(crate) const SECOND: &str = "2222222222222222222222222222222222222222222222222222222222222222";
 // A bucket stores a manifest by its hash alone, so each package has its own.
 const THIRD: &str = "3333333333333333333333333333333333333333333333333333333333333333";
 const FOURTH: &str = "4444444444444444444444444444444444444444444444444444444444444444";
-const MESSAGE: &str = "autosync";
+pub(crate) const MESSAGE: &str = "autosync";
 
-fn writer() -> Writer {
+pub(crate) fn writer() -> Writer {
     Writer {
         host: "here".to_string(),
         user: "me".to_string(),
@@ -46,15 +46,15 @@ fn writer() -> Writer {
 
 /// A dataspace with `team/raw` in bucket `b`, its Domain beside it, and the
 /// bucket on a mock remote.
-struct World {
-    dir: TempDir,
-    remote: MockRemote,
-    storage: LocalStorage,
+pub(crate) struct World {
+    pub(crate) dir: TempDir,
+    pub(crate) remote: MockRemote,
+    pub(crate) storage: LocalStorage,
 }
 
 impl World {
     /// A dataspace whose `[packages]` table is `packages`.
-    fn new(packages: &str) -> std::io::Result<Self> {
+    pub(crate) fn new(packages: &str) -> std::io::Result<Self> {
         let world = Self {
             dir: TempDir::new()?,
             remote: MockRemote::default(),
@@ -65,11 +65,11 @@ impl World {
     }
 
     /// The whole package under `sync`.
-    fn synced() -> std::io::Result<Self> {
+    pub(crate) fn synced() -> std::io::Result<Self> {
         Self::new("sync = [\"team/raw\"]")
     }
 
-    fn contract(&self, packages: &str) -> std::io::Result<()> {
+    pub(crate) fn contract(&self, packages: &str) -> std::io::Result<()> {
         std::fs::create_dir_all(self.dataspace())?;
         std::fs::write(
             self.dataspace().join("data.toml"),
@@ -77,29 +77,29 @@ impl World {
         )
     }
 
-    fn dataspace(&self) -> PathBuf {
+    pub(crate) fn dataspace(&self) -> PathBuf {
         self.dir.path().join("rnaseq")
     }
 
-    fn folder(&self) -> PathBuf {
+    pub(crate) fn folder(&self) -> PathBuf {
         self.dataspace().join("team/raw")
     }
 
-    fn domain(&self) -> DomainRoot {
+    pub(crate) fn domain(&self) -> DomainRoot {
         DomainRoot::new(self.dir.path().join("domain"))
     }
 
     /// The user-wide ignore rules file, which need not exist.
-    fn user_rules(&self) -> PathBuf {
+    pub(crate) fn user_rules(&self) -> PathBuf {
         self.dir.path().join("user.quiltignore")
     }
 
     /// The Domain's queue, opened again by each tick as a new process would.
-    async fn queue(&self) -> Result<Queue, Box<dyn std::error::Error>> {
+    pub(crate) async fn queue(&self) -> Result<Queue, Box<dyn std::error::Error>> {
         Ok(Queue::open(&self.dir.path().join("queue.db")).await?)
     }
 
-    async fn sync(&self) -> Result<DataspaceSync, Box<dyn std::error::Error>> {
+    pub(crate) async fn sync(&self) -> Result<DataspaceSync, Box<dyn std::error::Error>> {
         let dataspace = self.dataspace();
         Ok(Box::pin(sync(
             &self.storage,
@@ -114,7 +114,7 @@ impl World {
         .await?)
     }
 
-    async fn kept(&self) -> Result<Option<KeptRevision>, Box<dyn std::error::Error>> {
+    pub(crate) async fn kept(&self) -> Result<Option<KeptRevision>, Box<dyn std::error::Error>> {
         // The contract's spelling of the folder, which on Windows is not
         // `folder()`'s.
         let contract = Contract::read(&self.storage, &self.dataspace(), None).await?;
@@ -127,7 +127,7 @@ impl World {
         Ok(self.queue().await?.kept(&folder).await?)
     }
 
-    async fn read_all(&self) -> Result<(), Box<dyn std::error::Error>> {
+    pub(crate) async fn read_all(&self) -> Result<(), Box<dyn std::error::Error>> {
         let dataspace = self.dataspace();
         let local = self.domain().local();
         crate::dataspace::read_all::read_all(
@@ -142,19 +142,24 @@ impl World {
     }
 
     /// The tick's one entry.
-    async fn tick(&self) -> Result<EntrySync, Box<dyn std::error::Error>> {
+    pub(crate) async fn tick(&self) -> Result<EntrySync, Box<dyn std::error::Error>> {
         let mut synced = self.sync().await?;
         assert_eq!(synced.entries.len(), 1, "{synced:?}");
         Ok(synced.entries.remove(0).1)
     }
 
     /// Stores `files` as revision `hash` and tags it `latest`.
-    async fn publish(&self, hash: &str, files: &[(&str, &[u8])]) -> Res {
+    pub(crate) async fn publish(&self, hash: &str, files: &[(&str, &[u8])]) -> Res {
         self.publish_to("team/raw", hash, files).await
     }
 
     /// [`World::publish`] for `package`.
-    async fn publish_to(&self, package: &str, hash: &str, files: &[(&str, &[u8])]) -> Res {
+    pub(crate) async fn publish_to(
+        &self,
+        package: &str,
+        hash: &str,
+        files: &[(&str, &[u8])],
+    ) -> Res {
         let header = ManifestHeader::default();
         self.publish_with(package, hash, files, header, Vec::new())
             .await
@@ -214,13 +219,13 @@ impl World {
         Ok(())
     }
 
-    async fn latest(&self) -> Result<String, Box<dyn std::error::Error>> {
+    pub(crate) async fn latest(&self) -> Result<String, Box<dyn std::error::Error>> {
         let bytes = self.remote.current(LATEST).await?.ok_or("no latest")?;
         Ok(String::from_utf8(bytes)?)
     }
 
     /// The files of the revision `hash` names, by key, with their bytes.
-    async fn revision(
+    pub(crate) async fn revision(
         &self,
         hash: &str,
     ) -> Result<Vec<(String, String)>, Box<dyn std::error::Error>> {
@@ -245,43 +250,45 @@ impl World {
         Ok(files)
     }
 
-    async fn lock(&self) -> Result<Lock, Box<dyn std::error::Error>> {
+    pub(crate) async fn lock(&self) -> Result<Lock, Box<dyn std::error::Error>> {
         let contract = Contract::read(&self.storage, &self.dataspace(), None).await?;
         Ok(Lock::read(&self.storage, &contract)
             .await?
             .ok_or("no lock")?)
     }
 
-    async fn locked(&self) -> Result<Option<LockEntry>, Box<dyn std::error::Error>> {
+    pub(crate) async fn locked(&self) -> Result<Option<LockEntry>, Box<dyn std::error::Error>> {
         Ok(self.lock().await?.packages.get(&key()).cloned())
     }
 
     /// The lock's base for the package, `None` where it has none.
-    async fn base(&self) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    pub(crate) async fn base(&self) -> Result<Option<String>, Box<dyn std::error::Error>> {
         Ok(self.locked().await?.and_then(|locked| locked.base))
     }
 
-    fn write(&self, key: &str, body: &str) -> std::io::Result<()> {
+    pub(crate) fn write(&self, key: &str, body: &str) -> std::io::Result<()> {
         let path = self.folder().join(key);
         std::fs::create_dir_all(path.parent().expect("a folder"))?;
         std::fs::write(path, body)
     }
 
-    fn text(&self, key: &str) -> Option<String> {
+    pub(crate) fn text(&self, key: &str) -> Option<String> {
         std::fs::read_to_string(self.folder().join(key)).ok()
     }
 
-    fn remove(&self, key: &str) -> std::io::Result<()> {
+    pub(crate) fn remove(&self, key: &str) -> std::io::Result<()> {
         std::fs::remove_file(self.folder().join(key))
     }
 
     /// A dataspace filled at [`FIRST`], holding `files`.
-    async fn filled(files: &[(&str, &[u8])]) -> Result<Self, Box<dyn std::error::Error>> {
+    pub(crate) async fn filled(
+        files: &[(&str, &[u8])],
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         Self::filled_in(Self::synced()?, files).await
     }
 
     /// [`World::filled`], for `world`'s contract.
-    async fn filled_in(
+    pub(crate) async fn filled_in(
         world: Self,
         files: &[(&str, &[u8])],
     ) -> Result<Self, Box<dyn std::error::Error>> {
@@ -293,25 +300,25 @@ impl World {
     }
 }
 
-fn package() -> Namespace {
+pub(crate) fn package() -> Namespace {
     ("team", "raw").into()
 }
 
-fn key() -> PackageKey {
+pub(crate) fn key() -> PackageKey {
     PackageKey {
         registry: Registry::S3("b".to_string()),
         package: package(),
     }
 }
 
-fn files(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+pub(crate) fn files(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
     pairs
         .iter()
         .map(|(key, body)| ((*key).to_string(), (*body).to_string()))
         .collect()
 }
 
-fn advanced(outcome: &EntrySync) -> String {
+pub(crate) fn advanced(outcome: &EntrySync) -> String {
     match outcome {
         EntrySync::Ran {
             published: Some(Published::Advanced { revision, .. }),
@@ -998,14 +1005,17 @@ const WITH_LOCAL: &str = "sync = [\"team/raw\", \"quilt+local://lab-mac#package=
 
 impl World {
     /// The Domain's local registry, named `name`.
-    async fn local_named(&self, name: &str) -> Result<LocalRegistry, Box<dyn std::error::Error>> {
+    pub(crate) async fn local_named(
+        &self,
+        name: &str,
+    ) -> Result<LocalRegistry, Box<dyn std::error::Error>> {
         let local = self.domain().local();
         local.rename(&self.storage, name).await?;
         Ok(local)
     }
 
     /// The working folder of the contract's local registry entry.
-    async fn local_folder(&self) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    pub(crate) async fn local_folder(&self) -> Result<PathBuf, Box<dyn std::error::Error>> {
         let contract = Contract::read(&self.storage, &self.dataspace(), None).await?;
         let entry = contract
             .entries()
@@ -1017,12 +1027,12 @@ impl World {
 }
 
 /// The text of `key` in `folder`, `None` where it is not there.
-fn read_text(folder: &Path, key: &str) -> Option<String> {
+pub(crate) fn read_text(folder: &Path, key: &str) -> Option<String> {
     std::fs::read_to_string(folder.join(key)).ok()
 }
 
 /// The lock's key for `me/out` in the local registry `name`.
-fn out_key(name: &str) -> PackageKey {
+pub(crate) fn out_key(name: &str) -> PackageKey {
     PackageKey {
         registry: Registry::Local(name.to_string()),
         package: Namespace::try_from("me/out").expect("package"),
@@ -1321,7 +1331,7 @@ async fn a_filled_tick_refuses_another_local_registrys_entry_and_publishes_the_r
 }
 
 /// The lock's key for `team/raw` in the local registry `lab-mac`.
-fn local_key() -> PackageKey {
+pub(crate) fn local_key() -> PackageKey {
     PackageKey {
         registry: Registry::Local("lab-mac".to_string()),
         package: package(),
@@ -1332,7 +1342,7 @@ fn local_key() -> PackageKey {
 /// `lab-mac`, as an import leaves it: a revision published there and a local
 /// commit on it. Then `data.toml` is edited to name bucket `b` for it. The
 /// revision and the commit, by hash.
-async fn moving() -> Result<(World, String, String), Box<dyn std::error::Error>> {
+pub(crate) async fn moving() -> Result<(World, String, String), Box<dyn std::error::Error>> {
     let world = World::new("sync = [\"quilt+local://lab-mac#package=team/raw\"]")?;
     let first = world
         .commit_locally(None, &[("a.txt", b"v1"), ("b.txt", b"v1")])
@@ -1741,7 +1751,7 @@ async fn a_package_with_no_revision_and_no_folder_publishes_nothing() -> Res {
 
 /// A filled dataspace whose package has no revision, its folder holding a
 /// file to publish first.
-async fn unpublished() -> Result<World, Box<dyn std::error::Error>> {
+pub(crate) async fn unpublished() -> Result<World, Box<dyn std::error::Error>> {
     let world = World::synced()?;
     world.write("a.txt", "first")?;
     assert!(world.sync().await?.read_only);
@@ -2138,7 +2148,7 @@ async fn a_folder_that_cannot_be_read_back_whole_is_left_empty_and_nothing_publi
 
 /// Makes the bucket's default workflow `gate`, whose metadata schema is
 /// `schema`.
-async fn gate(world: &World, schema: &str) -> Res {
+pub(crate) async fn gate(world: &World, schema: &str) -> Res {
     let config = "version: \"1\"\ndefault_workflow: gate\nworkflows:\n  gate:\n    name: Gate\n    metadata_schema: meta\nschemas:\n  meta:\n    url: s3://b/schemas/meta.json\n";
     for (key, body) in [
         ("s3://b/.quilt/workflows/config.yml", config),
@@ -2235,13 +2245,15 @@ async fn a_tick_stopped_at_any_file_manifest_or_lock_step_ends_as_one_that_was_n
 }
 
 /// Where a test's hooks record their calls.
-fn record(world: &World) -> PathBuf {
+pub(crate) fn record(world: &World) -> PathBuf {
     world.dir.path().join("calls")
 }
 
 /// A dataspace with `team/raw` under `sync` and the hooks `hooks` declares
 /// to record in [`record`], filled at [`FIRST`] holding `a.txt`.
-async fn hooked(hooks: impl Fn(&Path) -> String) -> Result<World, Box<dyn std::error::Error>> {
+pub(crate) async fn hooked(
+    hooks: impl Fn(&Path) -> String,
+) -> Result<World, Box<dyn std::error::Error>> {
     let world = World::synced()?;
     let hooks = hooks(&record(&world));
     world.contract(&format!("sync = [\"team/raw\"]\n{hooks}"))?;

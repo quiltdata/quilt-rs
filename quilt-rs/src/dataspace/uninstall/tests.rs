@@ -6,6 +6,7 @@ use bytes::Bytes;
 use test_log::test;
 
 use crate::LogicalKey;
+use crate::dataspace::contract::Registry;
 use crate::dataspace::install::Install;
 use crate::dataspace::install::install;
 use crate::dataspace::lock::Lock;

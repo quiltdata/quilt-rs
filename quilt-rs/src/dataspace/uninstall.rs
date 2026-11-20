@@ -14,7 +14,6 @@ use crate::dataspace::contract::Contract;
 use crate::dataspace::contract::ContractError;
 use crate::dataspace::contract::Entry;
 use crate::dataspace::contract::PackageKey;
-use crate::dataspace::contract::Registry;
 use crate::dataspace::edit::ContractEdit;
 use crate::dataspace::install::write_lock;
 use crate::dataspace::lock::LOCK_FILE;
@@ -23,6 +22,7 @@ use crate::dataspace::lock::LockError;
 use crate::dataspace::lock::Mismatch;
 use crate::dataspace::lock::Writer;
 use crate::dataspace::read_all::usable_lock;
+use crate::dataspace::store::current_key;
 use crate::dataspace::store::name_local;
 use crate::domain::LocalRegistry;
 use crate::io::storage::Storage;
@@ -132,7 +132,7 @@ pub async fn uninstall(
         .map_err(UninstallError::Mismatch)?;
     let matched = lock.header.data_toml_hash == contract.data_toml_hash();
     name_local(storage, local, &mut contract, &mut lock, &mut writer).await?;
-    let key = current(storage, local, package).await?;
+    let key = current_key(storage, local, package).await?;
 
     let places: Vec<(Access, usize)> = contract
         .declared()
@@ -198,25 +198,6 @@ async fn inside(storage: &(impl Storage + Sync), dataspace: &Path, folder: &Path
         }
     }
     true
-}
-
-/// `package` under the local registry's current name, where `local`
-/// answers to the name it gives.
-async fn current(
-    storage: &(impl Storage + Sync),
-    local: Option<&LocalRegistry>,
-    package: &PackageKey,
-) -> Result<PackageKey, UninstallError> {
-    if let (Registry::Local(name), Some(local)) = (&package.registry, local) {
-        let names = local.names(storage).await?;
-        if names.answers_to(name) {
-            return Ok(PackageKey {
-                registry: Registry::Local(names.name),
-                package: package.package.clone(),
-            });
-        }
-    }
-    Ok(package.clone())
 }
 
 #[cfg(test)]

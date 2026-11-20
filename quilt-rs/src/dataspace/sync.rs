@@ -313,9 +313,7 @@ pub async fn sync(
                 read,
                 published:
                     None | Some(Published::Advanced { .. } | Published::WorkflowBlocked { .. }),
-            } => read
-                .as_ref()
-                .is_none_or(|read| read.skipped.is_empty() && read.hash_mismatch.is_empty()),
+            } => read.as_ref().is_none_or(ReadReport::complete),
             _ => false,
         });
         // A `read` entry that cannot be asked about keeps the dataspace
@@ -540,7 +538,7 @@ pub(crate) async fn latest(
 }
 
 /// [`latest`], read from the local registry `local` for an entry of it.
-async fn latest_in(
+pub(crate) async fn latest_in(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
     local: Option<&LocalRegistry>,
@@ -577,14 +575,16 @@ fn bucket(entry: &Entry) -> Result<&str, EntryError> {
 
 /// Where `data.toml` was edited to move `entry`'s package from this
 /// machine's local registry to its bucket: the lock holds the package under
-/// the local registry's key and not under the bucket's, and no entry names
-/// the local one. The local key, with the package's last local commit.
-fn moved_from(
+/// the local registry's key and not under the bucket's, and no entry of
+/// `contract` names the local one. The local key, with the package's last
+/// local commit. `writer` names the local registry.
+pub(crate) fn moved_from(
     lock: &Lock,
-    lock_file: &LockFile<'_, impl Storage + Sync>,
+    contract: &Contract,
+    writer: &Writer,
     entry: &Entry,
 ) -> Option<(PackageKey, String)> {
-    let name = lock_file.writer.local_registry_name()?;
+    let name = writer.local_registry_name()?;
     if !matches!(entry.registry, Registry::S3(_)) || lock.packages.contains_key(&entry.key()) {
         return None;
     }
@@ -592,12 +592,7 @@ fn moved_from(
         registry: Registry::Local(name.to_string()),
         package: entry.package.clone(),
     };
-    if lock_file
-        .contract
-        .entries()
-        .iter()
-        .any(|other| other.key() == local)
-    {
+    if contract.entries().iter().any(|other| other.key() == local) {
         return None;
     }
     let locked = lock.packages.get(&local)?;
@@ -621,7 +616,7 @@ async fn move_to_bucket(
     lock: &mut Lock,
     lock_file: &LockFile<'_, impl Storage + Sync>,
 ) -> Result<ControlFlow<EntrySync, Option<Published>>, Stop> {
-    let Some((local, head)) = moved_from(lock, lock_file, entry) else {
+    let Some((local, head)) = moved_from(lock, lock_file.contract, lock_file.writer, entry) else {
         return Ok(ControlFlow::Continue(None));
     };
     let latest = latest(remote, entry).await?;
@@ -652,7 +647,7 @@ async fn move_to_bucket(
 
 /// The manifest of `hash`, a commit of `entry`'s package in `local`, or a
 /// revision published there.
-async fn local_commit(
+pub(crate) async fn local_commit(
     storage: &(impl Storage + Sync),
     local: &LocalRegistry,
     entry: &Entry,
@@ -807,7 +802,7 @@ async fn commit_workflow(
     remote: &impl Remote,
     store: &Store,
     entry: &Entry,
-) -> Result<Option<Workflow>, Stop> {
+) -> Result<Option<Workflow>, EntryError> {
     match store {
         Store::Bucket(_) => {
             let workflows = S3Uri {
@@ -866,57 +861,34 @@ async fn publish(
         return Ok(None);
     }
     let contract = lock_file.contract;
-    let on = current_hash.map(|_| &current);
-    let (taken, changed) = take_changed(storage, contract, entry, user_rules, &current, on).await?;
-    let Taken {
-        mut manifest,
-        content,
-        metadata_text,
-    } = taken;
-
     let mut head = current_hash.cloned();
-    if changed {
-        manifest.header.message = HeaderMessage::Text(message.to_string());
-        manifest.header.workflow = commit_workflow(remote, store, entry).await?;
-        let lineage = PackageLineage {
-            base_hash: current_hash.cloned().unwrap_or_default(),
-            ..PackageLineage::default()
-        };
-        let (_, recorded) = record(
-            store,
-            storage,
-            remote,
-            // The lineage names no bucket, so nothing is checked here: the
-            // push checks the revision, and stores one the workflow refuses.
-            WorkflowCheck::Warn {
-                host: entry.catalog.as_ref(),
-            },
-            &entry.package,
-            lineage,
-            manifest,
-            &content,
-        )
-        .await?;
-        if let Some(hash) = recorded.hash() {
-            crate::failpoint::stop("sync.recorded")?;
-            // A package not yet published gets an entry with no base: its
-            // first push, which expects no `latest`, establishes one.
-            lock.packages
-                .entry(key.clone())
-                .or_insert(LockEntry {
-                    base: None,
-                    commits: Vec::new(),
-                })
-                .commits
-                .push(hash.to_string());
-            lock_file.save(lock).await?;
-            if let Err(err) =
-                rewrite_metadata(storage, store, entry, hash, metadata_text.as_deref()).await
-            {
-                warn!("{METADATA_FILE} was left as it is: {err}");
-            }
-            head = Some(hash.to_string());
+    let committed = commit_folder(
+        storage,
+        remote,
+        store,
+        contract,
+        entry,
+        user_rules,
+        (current_hash.map(String::as_str), &current),
+        message,
+    )
+    .await?;
+    if let Some(FolderCommit {
+        hash,
+        metadata_text,
+    }) = committed
+    {
+        crate::failpoint::stop("sync.recorded")?;
+        // A package not yet published gets an entry with no base: its
+        // first push, which expects no `latest`, establishes one.
+        append_commit(lock, &key, &hash);
+        lock_file.save(lock).await?;
+        if let Err(err) =
+            rewrite_metadata(storage, store, entry, &hash, metadata_text.as_deref()).await
+        {
+            warn!("{METADATA_FILE} was left as it is: {err}");
         }
+        head = Some(hash);
     }
 
     let Some(head) = head.filter(|head| Some(head) != base.as_ref()) else {
@@ -943,6 +915,80 @@ async fn publish(
     Ok(Some(published))
 }
 
+/// A commit of a working folder, recorded in its store.
+pub(crate) struct FolderCommit {
+    pub(crate) hash: String,
+    /// `metadata.toml` as the commit took it, if there is one.
+    pub(crate) metadata_text: Option<Vec<u8>>,
+}
+
+/// Records what `entry`'s working folder changed from `current`, the lock's
+/// current revision and its hash, `None` for a package never published, as
+/// a commit on it in `store`, with `message` and the bucket's default
+/// workflow. Where the folder changed, the contract's `pre-write` hook runs
+/// first, as [`take_changed`] says. `None` where nothing changed, or the
+/// commit is the current revision again.
+#[allow(clippy::too_many_arguments, reason = "each is a distinct input")]
+pub(crate) async fn commit_folder(
+    storage: &(impl Storage + Sync),
+    remote: &impl Remote,
+    store: &Store,
+    contract: &Contract,
+    entry: &Entry,
+    user_rules: &Path,
+    (current_hash, current): (Option<&str>, &Manifest),
+    message: &str,
+) -> Result<Option<FolderCommit>, EntryError> {
+    let on = current_hash.map(|_| current);
+    let (taken, changed) = take_changed(storage, contract, entry, user_rules, current, on).await?;
+    if !changed {
+        return Ok(None);
+    }
+    let Taken {
+        mut manifest,
+        content,
+        metadata_text,
+    } = taken;
+    manifest.header.message = HeaderMessage::Text(message.to_string());
+    manifest.header.workflow = commit_workflow(remote, store, entry).await?;
+    let lineage = PackageLineage {
+        base_hash: current_hash.unwrap_or_default().to_string(),
+        ..PackageLineage::default()
+    };
+    let (_, recorded) = record(
+        store,
+        storage,
+        remote,
+        // The lineage names no bucket, so nothing is checked here: the push
+        // checks the revision, and stores one the workflow refuses.
+        WorkflowCheck::Warn {
+            host: entry.catalog.as_ref(),
+        },
+        &entry.package,
+        lineage,
+        manifest,
+        &content,
+    )
+    .await?;
+    Ok(recorded.hash().map(|hash| FolderCommit {
+        hash: hash.to_string(),
+        metadata_text,
+    }))
+}
+
+/// Appends `hash` to `key`'s commits in `lock`; a package not yet published
+/// gets an entry with no base.
+pub(crate) fn append_commit(lock: &mut Lock, key: &PackageKey, hash: &str) {
+    lock.packages
+        .entry(key.clone())
+        .or_insert(LockEntry {
+            base: None,
+            commits: Vec::new(),
+        })
+        .commits
+        .push(hash.to_string());
+}
+
 /// What a commit would take from a working folder.
 pub(crate) struct Taken {
     /// `current` as the folder has it.
@@ -965,7 +1011,7 @@ async fn take_changed(
     user_rules: &Path,
     current: &Manifest,
     on: Option<&Manifest>,
-) -> Result<(Taken, bool), Stop> {
+) -> Result<(Taken, bool), EntryError> {
     let policy = contract.ignore_policy(&entry.folder);
     let rules = Rules::load_with(&entry.folder, user_rules, &policy)?;
     let taken = take(storage, entry, &rules, current).await?;
@@ -979,7 +1025,7 @@ async fn take_changed(
         .await
         .map_err(EntryError::from)?;
     if on.is_some() && gone(storage, &entry.folder, current, &entry.paths).await? {
-        return Err(EntryError::FolderGone(entry.folder.clone()).into());
+        return Err(EntryError::FolderGone(entry.folder.clone()));
     }
     let rules = Rules::load_with(&entry.folder, user_rules, &policy)?;
     let taken = take(storage, entry, &rules, current).await?;
@@ -1013,7 +1059,7 @@ pub(crate) async fn take(
 /// where it still holds `planned_on`: the folder holds the commit now, its
 /// message included, so a later read does not take the file for a local
 /// change.
-async fn rewrite_metadata(
+pub(crate) async fn rewrite_metadata(
     storage: &(impl Storage + Sync),
     store: &Store,
     entry: &Entry,
@@ -1050,7 +1096,7 @@ async fn push_head(
 }
 
 /// [`push_head`], of `manifest`, the revision `head`.
-async fn push_manifest(
+pub(crate) async fn push_manifest(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
     queue: &Queue,
@@ -1166,7 +1212,7 @@ pub(crate) fn folder_key(entry: &Entry) -> FolderKey {
     }
 }
 
-fn revision(entry: &Entry, hash: &str) -> Result<ManifestUri, EntryError> {
+pub(crate) fn revision(entry: &Entry, hash: &str) -> Result<ManifestUri, EntryError> {
     Ok(ManifestUri {
         origin: entry.catalog.clone(),
         bucket: bucket(entry)?.to_string(),
@@ -1179,7 +1225,7 @@ fn revision(entry: &Entry, hash: &str) -> Result<ManifestUri, EntryError> {
 /// of `commits`, from `store`, or else the base. A commit the store cleared
 /// once the bucket held it, as one stored without becoming `latest`, is read
 /// from the bucket.
-async fn manifest_at(
+pub(crate) async fn manifest_at(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
     store: &Store,
@@ -1210,50 +1256,12 @@ async fn read_back(
     current: &Manifest,
 ) -> Result<ReadReport, EntryError> {
     let folder = &entry.folder;
-    let rows: Vec<&ManifestRow> = current
-        .rows
-        .iter()
-        .filter(|row| entry.paths.covers(&row.logical_key))
-        .collect();
-    let (fetched, copied): (Vec<&ManifestRow>, Vec<&ManifestRow>) = rows
-        .iter()
-        .partition(|row| row.physical_key.starts_with("s3://"));
+    let rows = covered_rows(entry, current);
     let staging = folder.join(format!("{STAGING_PREFIX}{}", uuid::Uuid::new_v4()));
     let read = async {
-        let installed = install_to(
-            storage,
-            remote,
-            entry.catalog.as_ref(),
-            &Manifest {
-                rows: fetched.into_iter().cloned().collect(),
-                ..Manifest::default()
-            },
-            &staging,
-            None,
-        )
-        .await?;
-        let mut report = ReadReport {
-            revision: hash.to_string(),
-            skipped: installed.skipped,
-            hash_mismatch: installed.hash_mismatch,
-            ..ReadReport::default()
-        };
-        if !report.skipped.is_empty() || !report.hash_mismatch.is_empty() {
+        let mut report = stage(storage, remote, store, entry, hash, current, &staging).await?;
+        if !report.complete() {
             return Ok(report);
-        }
-        for row in copied {
-            let staged = row.logical_key.join_to(&staging);
-            if let Some(parent) = staged.parent() {
-                storage.create_dir_all(parent).await?;
-            }
-            storage.copy(store.object_path(&row.hash), &staged).await?;
-            if !OnDisk::read(storage, &staged, row.hash.algorithm())
-                .await?
-                .holds(row)
-            {
-                report.hash_mismatch.push(row.logical_key.to_path_buf());
-                return Ok(report);
-            }
         }
         let text = render(current).map_err(EntryError::MetadataUnwritable)?;
         let keys = || rows.iter().map(|row| &row.logical_key);
@@ -1299,9 +1307,73 @@ async fn read_back(
     read
 }
 
+/// The rows of `manifest` under `entry`'s paths.
+pub(crate) fn covered_rows<'a>(entry: &Entry, manifest: &'a Manifest) -> Vec<&'a ManifestRow> {
+    manifest
+        .rows
+        .iter()
+        .filter(|row| entry.paths.covers(&row.logical_key))
+        .collect()
+}
+
+/// Puts every file of `manifest`, the revision `hash`, under `entry`'s paths
+/// into `staging`, each at its logical key: a file a local commit changed is
+/// copied from `store` and checked against its row, the rest fetched from
+/// the bucket. The report names what could not be staged, and stops at a
+/// copy that does not hold its row.
+pub(crate) async fn stage(
+    storage: &(impl Storage + Sync),
+    remote: &impl Remote,
+    store: &Store,
+    entry: &Entry,
+    hash: &str,
+    manifest: &Manifest,
+    staging: &Path,
+) -> Result<ReadReport, EntryError> {
+    let (fetched, copied): (Vec<&ManifestRow>, Vec<&ManifestRow>) = covered_rows(entry, manifest)
+        .into_iter()
+        .partition(|row| row.physical_key.starts_with("s3://"));
+    let installed = install_to(
+        storage,
+        remote,
+        entry.catalog.as_ref(),
+        &Manifest {
+            rows: fetched.into_iter().cloned().collect(),
+            ..Manifest::default()
+        },
+        staging,
+        None,
+    )
+    .await?;
+    let mut report = ReadReport {
+        revision: hash.to_string(),
+        skipped: installed.skipped,
+        hash_mismatch: installed.hash_mismatch,
+        ..ReadReport::default()
+    };
+    if !report.complete() {
+        return Ok(report);
+    }
+    for row in copied {
+        let staged = row.logical_key.join_to(staging);
+        if let Some(parent) = staged.parent() {
+            storage.create_dir_all(parent).await?;
+        }
+        storage.copy(store.object_path(&row.hash), &staged).await?;
+        if !OnDisk::read(storage, &staged, row.hash.algorithm())
+            .await?
+            .holds(row)
+        {
+            report.hash_mismatch.push(row.logical_key.to_path_buf());
+            return Ok(report);
+        }
+    }
+    Ok(report)
+}
+
 /// The manifest of `hash`, a revision of `entry`'s package in its bucket,
 /// kept in `store` after its first fetch; or one the local registry holds.
-async fn base_manifest(
+pub(crate) async fn base_manifest(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
     store: &Store,
@@ -1418,4 +1490,4 @@ fn changed(logical_key: LogicalKey, was: Option<&ManifestRow>) -> ManifestRow {
 mod merge;
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

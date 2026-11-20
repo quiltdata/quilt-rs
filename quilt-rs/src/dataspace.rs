@@ -5,11 +5,14 @@
 //! Each operation is a module of its own, named for its verb, with its
 //! tests in `<verb>/tests.rs`: the flows a contract runs (`read`,
 //! `publish`, `sync` and their `_all` forms, `autosync`), and the commands a
-//! user gives a dataspace (`install`, `uninstall`, `prune`, `reattach`). A
-//! command that changes `data.toml` does so through `edit`, the one writer
-//! of the contract, and writes the lock last.
+//! user gives a dataspace (`install`, `uninstall`, `prune`, `reattach`,
+//! `commit`, `undo_commit`, `reset_to_latest`, `certify_latest`,
+//! `remove_revisions`). A command that changes `data.toml` does so through
+//! `edit`, the one writer of the contract, and writes the lock last.
 
 pub mod autosync;
+pub mod certify_latest;
+pub mod commit;
 pub mod conflict;
 pub mod contract;
 mod edit;
@@ -26,9 +29,13 @@ pub mod publish_all;
 pub mod read;
 pub mod read_all;
 pub mod reattach;
+pub mod remove_revisions;
+mod replace;
+pub mod reset_to_latest;
 pub mod status;
 mod store;
 pub mod sync;
+pub mod undo_commit;
 pub mod uninstall;
 
 use std::path::PathBuf;
@@ -38,6 +45,28 @@ use thiserror::Error;
 use conflict::CONFLICT_FILE;
 use contract::Access;
 pub use metadata::METADATA_FILE;
+
+/// `key`'s entry under `access` in `contract`; `Err` with the access it is
+/// declared under instead, the first, or with `None` where `contract` does
+/// not declare it.
+pub(crate) fn entry_under(
+    contract: &contract::Contract,
+    key: &contract::PackageKey,
+    access: Access,
+) -> Result<contract::Entry, Option<Access>> {
+    let mut other = None;
+    for entry in contract
+        .entries()
+        .iter()
+        .filter(|entry| entry.key() == *key)
+    {
+        if entry.access == access {
+            return Ok(entry.clone());
+        }
+        other.get_or_insert(entry.access);
+    }
+    Err(other)
+}
 
 /// Why an operation on one entry of a contract was refused or failed.
 #[derive(Debug, Error)]

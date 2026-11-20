@@ -729,6 +729,56 @@ impl RemoteS3 {
         Ok(revisions)
     }
 
+    /// [`Remote::package_tags`]: each object right under the package's tag
+    /// folder, listed page by page, then read.
+    async fn package_tags_listed(
+        &self,
+        host: Option<&Host>,
+        bucket: &str,
+        namespace: &Namespace,
+    ) -> Res<Vec<(String, String)>> {
+        let client = self.get_client_for_bucket(host, bucket).await?;
+        let prefix = tag_key(namespace, "");
+        let mut pages = client
+            .list_objects_v2()
+            .bucket(bucket)
+            .prefix(&prefix)
+            .delimiter("/")
+            .into_paginator()
+            .send();
+        let mut names = Vec::new();
+        while let Some(page) = pages.next().await {
+            let page =
+                page.map_err(|err| s3_error_or_session_loss(err, host, S3ErrorKind::ListObjects))?;
+            names.extend(
+                page.contents()
+                    .iter()
+                    .filter_map(|object| object.key()?.strip_prefix(&prefix))
+                    .filter(|name| !name.is_empty())
+                    .map(str::to_string),
+            );
+        }
+
+        let mut tags = Vec::new();
+        for name in names {
+            let tag = S3Uri {
+                bucket: bucket.to_string(),
+                key: format!("{prefix}{name}"),
+                version: None,
+            };
+            match get_object_stream(&client, &tag, host).await {
+                Ok(stream) => {
+                    let hash = bytestream_to_string(stream.body).await?;
+                    tags.push((name, hash.trim().to_string()));
+                }
+                // Deleted since it was listed.
+                Err(e) if e.is_not_found() => {}
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(tags)
+    }
+
     /// [`Remote::manifest_hashes_with_prefix`]: the keys under
     /// `.quilt/packages/` that start with `prefix`, listed page by page.
     async fn manifest_hashes_listed(
@@ -1095,6 +1145,36 @@ impl Remote for RemoteS3 {
         self.latest_hashes_listed(host, bucket)
             .await
             .map_err(|e| self.forget_ambient_clients_on(e))
+    }
+
+    async fn package_tags(
+        &self,
+        host: Option<&Host>,
+        bucket: &str,
+        namespace: &Namespace,
+    ) -> Res<Vec<(String, String)>> {
+        self.package_tags_listed(host, bucket, namespace)
+            .await
+            .map_err(|e| self.forget_ambient_clients_on(e))
+    }
+
+    async fn delete_object(&self, host: Option<&Host>, s3_uri: &S3Uri) -> Res {
+        // S3 answers a delete of a missing key with success.
+        self.get_client_for_bucket(host, &s3_uri.bucket)
+            .await?
+            .delete_object()
+            .bucket(&s3_uri.bucket)
+            .key(&s3_uri.key)
+            .send()
+            .await
+            .map_err(|err| {
+                self.forget_ambient_clients_on(s3_error_or_session_loss(
+                    err,
+                    host,
+                    S3ErrorKind::Raw,
+                ))
+            })?;
+        Ok(())
     }
 
     fn clear_client_cache(&self, host: Option<&Host>) {

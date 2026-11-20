@@ -6,7 +6,6 @@ use std::path::PathBuf;
 
 use quilt_rs::dataspace::contract::CONTRACT_FILE;
 use quilt_rs::dataspace::contract::Contract;
-use quilt_rs::dataspace::contract::Entry;
 use quilt_rs::dataspace::contract::PackageKey;
 use quilt_rs::dataspace::lock::LOCK_FILE;
 use quilt_rs::dataspace::prune::Pruned;
@@ -19,10 +18,10 @@ use quilt_rs::io::remote::Remote;
 use quilt_rs::io::remote::RemoteS3;
 use quilt_rs::io::storage::LocalStorage;
 use quilt_rs::paths::DomainPaths;
-use quilt_uri::Namespace;
 
 use crate::cli::Error;
 use crate::cli::dataspace;
+pub use crate::cli::dataspace::Package;
 use crate::cli::output::Render;
 use crate::cli::output::Std;
 use crate::cli::text::printable_line;
@@ -36,13 +35,6 @@ pub struct Input {
     /// Also clear what the Domain's store holds of the package that its
     /// bucket holds too.
     pub prune: bool,
-}
-
-/// How the command names the package.
-#[derive(Debug)]
-pub enum Package {
-    Key(PackageKey),
-    Namespace(Namespace),
 }
 
 pub struct Output {
@@ -128,23 +120,7 @@ async fn uninstall_with(
     let contract = Contract::read(&storage, &dataspace, writer.local_registry_name())
         .await
         .map_err(UninstallError::from)?;
-    let package = match package {
-        Package::Key(key) => key,
-        Package::Namespace(namespace) => {
-            let mut keys: Vec<PackageKey> = contract
-                .entries()
-                .iter()
-                .filter(|entry| entry.package == namespace)
-                .map(Entry::key)
-                .collect();
-            keys.dedup();
-            match keys.as_slice() {
-                [key] => key.clone(),
-                [] => return Err(Error::NamespaceNotFound(namespace)),
-                _ => return Err(Error::AmbiguousPackage(namespace)),
-            }
-        }
-    };
+    let package = package.key_in(&contract)?;
     // The catalog signs the bucket's answers to the prune.
     let catalog = contract
         .entries()
@@ -170,6 +146,7 @@ mod tests {
     use test_log::test;
 
     use quilt_rs::io::remote::mocks::MockRemote;
+    use quilt_uri::Namespace;
 
     fn key() -> PackageKey {
         "quilt+s3://b#package=team/raw".parse().expect("a key")
