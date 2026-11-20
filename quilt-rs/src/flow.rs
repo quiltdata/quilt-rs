@@ -13,6 +13,8 @@ mod install_package;
 mod install_paths;
 mod install_to;
 mod list_revisions;
+#[cfg(test)]
+mod manifest_timing;
 mod merge_onto;
 #[cfg(test)]
 mod older_revision_tests;

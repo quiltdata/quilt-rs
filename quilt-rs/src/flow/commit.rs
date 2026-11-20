@@ -216,6 +216,7 @@ pub async fn commit_package(
     let mut modified_keys = BTreeMap::new();
     let mut removed_keys = HashSet::new();
     let mut new_files = Vec::new();
+    let rows = manifest.rows_by_key();
     for (logical_key, state) in status.changes {
         debug!(
             "Processing change type {:?} for: {}",
@@ -228,7 +229,7 @@ pub async fn commit_package(
                 removed_keys.insert(row.logical_key.to_path_buf());
             }
             Change::Added(current) => {
-                if manifest.contains_record(&current.logical_key) {
+                if rows.contains_key(current.logical_key.as_path()) {
                     return Err(Error::PackageOp(PackageOpError::Commit(format!(
                         "Trying to add a file that is already in the manifest: \"{}\"",
                         current.logical_key.display()
