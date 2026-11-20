@@ -72,8 +72,10 @@ fn locate_from(
 ) -> Option<PathBuf> {
     let named = explicit
         .map(Path::to_path_buf)
-        .or(env.map(PathBuf::from))
-        .filter(|named| !named.as_os_str().is_empty());
+        .filter(|named| !named.as_os_str().is_empty())
+        .or(env
+            .map(PathBuf::from)
+            .filter(|named| !named.as_os_str().is_empty()));
     match named {
         Some(named) => Some(std::path::absolute(&named).unwrap_or(named)),
         None => data_local_dir.map(|dir| dir.join(DOMAIN_DIR_NAME)),
@@ -1165,6 +1167,14 @@ mod tests {
         );
         assert_eq!(
             locate_from(None, Some(variable.clone().into()), data.clone()),
+            Some(variable.clone())
+        );
+        assert_eq!(
+            locate_from(
+                Some(Path::new("")),
+                Some(variable.clone().into()),
+                data.clone()
+            ),
             Some(variable)
         );
         assert_eq!(locate_from(None, None, data.clone()), from_os);

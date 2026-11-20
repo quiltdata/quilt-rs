@@ -589,6 +589,28 @@ async fn an_interrupted_import_finishes_when_run_again() -> Res {
     Ok(())
 }
 
+/// A home changed after the import stopped is a different dataspace than the
+/// one it began, so finishing would write the new one's files.
+#[test(tokio::test)]
+async fn an_interrupted_import_is_refused_once_the_home_has_changed() -> Res {
+    let old = Old::new()?;
+    pushed_with_commits(&old, &("acme", "demo").into(), "bucket").await?;
+    let stopped = crate::failpoint::stopping_at("import.package", 0, old.import()).await;
+    assert!(stopped.is_err());
+    let other = old.dir.path().join("other");
+    let config = serde_json::json!({"format": 1, "home": other, "migration": "done"});
+    std::fs::write(old.paths.domain_config(), serde_json::to_vec(&config)?)?;
+
+    let refused = old.import().await;
+
+    assert!(
+        matches!(&refused, Err(ImportError::HomeChanged { was, now })
+            if *was == old.home() && *now == other),
+        "{refused:?}"
+    );
+    Ok(())
+}
+
 /// A finished import is not run again, so a second cannot overwrite what was
 /// done in the Domain since.
 #[test(tokio::test)]

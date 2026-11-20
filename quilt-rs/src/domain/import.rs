@@ -156,6 +156,12 @@ pub enum ImportError {
     )]
     Dataspace(PathBuf),
 
+    #[error(
+        "the home was {} when this import stopped and is {} now; set it back and import again",
+        .was.display(), .now.display()
+    )]
+    HomeChanged { was: PathBuf, now: PathBuf },
+
     #[error("{0} kept changing while it was copied; quit what is using it and import again")]
     Changing(Box<Namespace>),
 
@@ -242,7 +248,8 @@ pub async fn import(
     storage.create_dir_all(domain.root()).await?;
     let _held = storage.lock_exclusive(domain.domain_lock()).await?;
 
-    let resuming = resuming(storage, domain, &from).await?;
+    let resumed = resuming(storage, domain, &from).await?;
+    let resuming = resumed.is_some();
     let namespaces = match refs.namespaces(storage).await {
         Ok(namespaces) => namespaces,
         Err(Error::Lineage(LineageError::Missing)) if !storage.exists(paths.lineage()).await => {
@@ -257,6 +264,14 @@ pub async fn import(
     };
     let home = refs.home(storage).await?;
     let dataspace = dataspace_path(home.as_ref())?;
+    if let Some(was) = resumed.and_then(|record| record.default_dataspace)
+        && was != dataspace
+    {
+        return Err(ImportError::HomeChanged {
+            was,
+            now: dataspace,
+        });
+    }
     if !resuming {
         for file in [CONTRACT_FILE, LOCK_FILE] {
             if storage.exists(dataspace.join(file)).await {
@@ -318,29 +333,26 @@ pub async fn import(
     })
 }
 
-/// Whether this import finishes one that stopped part way. Refused where
-/// one finished, one from another folder has not, or the Domain is in use.
+/// The record of the import this one finishes, where one stopped part way.
+/// Refused where one finished, one from another folder has not, or the
+/// Domain is in use.
 async fn resuming(
     storage: &(impl Storage + Sync),
     domain: &DomainRoot,
     from: &Path,
-) -> Result<bool, ImportError> {
+) -> Result<Option<DomainFile>, ImportError> {
     match domain.read_file(storage).await? {
-        Some(DomainFile {
-            import: Some(ImportRecord { from: was, done }),
-            ..
-        }) => {
-            if done {
-                Err(ImportError::Done(was))
-            } else if was == from {
-                Ok(true)
-            } else {
-                Err(ImportError::Unfinished(was))
-            }
-        }
-        Some(_) => Err(ImportError::InUse),
+        Some(file) => match &file.import {
+            Some(ImportRecord {
+                from: was,
+                done: true,
+            }) => Err(ImportError::Done(was.clone())),
+            Some(ImportRecord { from: was, .. }) if was == from => Ok(Some(file)),
+            Some(ImportRecord { from: was, .. }) => Err(ImportError::Unfinished(was.clone())),
+            None => Err(ImportError::InUse),
+        },
         None if storage.exists(domain.queue_db()).await => Err(ImportError::InUse),
-        None => Ok(false),
+        None => Ok(None),
     }
 }
 
