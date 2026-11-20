@@ -15,6 +15,7 @@ use crate::dataspace::EntryError;
 use crate::dataspace::METADATA_FILE;
 use crate::dataspace::contract::Access;
 use crate::dataspace::contract::CONTRACT_FILE;
+use crate::dataspace::contract::Contract;
 use crate::dataspace::contract::ContractError;
 use crate::dataspace::contract::Entry;
 use crate::dataspace::contract::EntryProblem;
@@ -26,6 +27,7 @@ use crate::dataspace::edit::ContractEdit;
 use crate::dataspace::install::spelled;
 use crate::dataspace::install::write_lock;
 use crate::dataspace::lock::LOCK_FILE;
+use crate::dataspace::lock::Lock;
 use crate::dataspace::lock::LockError;
 use crate::dataspace::lock::Mismatch;
 use crate::dataspace::lock::Writer;
@@ -244,49 +246,85 @@ pub async fn create(
         .find(|entry| entry.key() == key)
         .cloned()
         .ok_or_else(|| ContractError::Edit(format!("{key} was not declared")))?;
-    if resolved(domain.root()).starts_with(resolved(&entry.folder)) {
+    let (held, folder) = (resolved(domain.root()), resolved(&entry.folder));
+    if held.starts_with(&folder) || folder.starts_with(&held) {
         return Err(CreateError::HoldsDomain(entry.folder));
     }
     edit.write(storage).await?;
 
-    let mut commit = None;
-    if entry.access == Access::Sync && storage.exists(&entry.folder).await {
-        let store = Store::of(storage, domain, &entry).await?;
-        let Some(_held) = storage
-            .try_lock_exclusive(store.package_lock(&entry.package))
-            .await?
-        else {
-            return Err(CreateError::Busy(Box::new(key)));
-        };
-        let message = request.message.as_deref().unwrap_or(DEFAULT_MESSAGE);
-        let committed = commit_folder(
-            storage,
-            remote,
-            &store,
-            &edited,
-            &entry,
-            user_rules,
-            (None, &Manifest::default()),
-            message,
-        )
-        .await?;
-        if let Some(FolderCommit {
-            hash,
-            metadata_text,
-        }) = committed
-        {
-            append_commit(&mut lock, &key, &hash);
-            if let Err(err) =
-                rewrite_metadata(storage, &store, &entry, &hash, metadata_text.as_deref()).await
-            {
-                warn!("{METADATA_FILE} was left as it is: {err}");
+    let message = request.message.as_deref().unwrap_or(DEFAULT_MESSAGE);
+    let first = first_commit(
+        storage, remote, domain, &edited, &entry, &mut lock, user_rules, message,
+    )
+    .await;
+    let commit = match first {
+        Ok(commit) => commit,
+        Err(err) => {
+            // The package is not made, so it is not left declared.
+            if let Err(undo) = edit.restore(storage).await {
+                warn!("{CONTRACT_FILE} was left edited: {undo}");
             }
-            commit = Some(hash);
+            return Err(err);
         }
-    }
+    };
     write_lock(storage, &mut lock, &edited, &writer, matched).await?;
-    info!("✔️ Created {key} in {}", edited.dataspace().display());
+    info!(
+        "✔️ Created {} in {}",
+        entry.key(),
+        edited.dataspace().display()
+    );
     Ok(Created { entry, commit })
+}
+
+/// The first commit of a `sync` entry's folder, with no base, added to
+/// `lock`; `None` where the entry is not `sync` or the folder holds nothing.
+#[allow(clippy::too_many_arguments, reason = "each is a distinct input")]
+async fn first_commit(
+    storage: &(impl Storage + Sync),
+    remote: &impl Remote,
+    domain: &DomainRoot,
+    contract: &Contract,
+    entry: &Entry,
+    lock: &mut Lock,
+    user_rules: &Path,
+    message: &str,
+) -> Result<Option<String>, CreateError> {
+    if entry.access != Access::Sync || !storage.exists(&entry.folder).await {
+        return Ok(None);
+    }
+    let key = entry.key();
+    let store = Store::of(storage, domain, entry).await?;
+    let Some(_held) = storage
+        .try_lock_exclusive(store.package_lock(&entry.package))
+        .await?
+    else {
+        return Err(CreateError::Busy(Box::new(key)));
+    };
+    let committed = commit_folder(
+        storage,
+        remote,
+        &store,
+        contract,
+        entry,
+        user_rules,
+        (None, &Manifest::default()),
+        message,
+    )
+    .await?;
+    let Some(FolderCommit {
+        hash,
+        metadata_text,
+    }) = committed
+    else {
+        return Ok(None);
+    };
+    append_commit(lock, &key, &hash);
+    if let Err(err) =
+        rewrite_metadata(storage, &store, entry, &hash, metadata_text.as_deref()).await
+    {
+        warn!("{METADATA_FILE} was left as it is: {err}");
+    }
+    Ok(Some(hash))
 }
 
 /// `path` with its symlinks followed as far as it exists, so a link to the

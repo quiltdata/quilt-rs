@@ -220,6 +220,33 @@ async fn nothing_to_commit_declares_the_package_only() -> Res {
     Ok(())
 }
 
+/// A first commit that fails leaves `data.toml` as it was, so the same
+/// create can be run again.
+#[cfg(unix)]
+#[test(tokio::test)]
+async fn a_failed_first_commit_leaves_the_contract_as_it_was() -> Res {
+    use std::os::unix::fs::PermissionsExt;
+    let world = World::new()?;
+    let folder = world.dataspace().join("team/new");
+    std::fs::create_dir_all(&folder)?;
+    let file = folder.join("a.txt");
+    std::fs::write(&file, b"alpha")?;
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0))?;
+    let before = std::fs::read(world.dataspace().join(CONTRACT_FILE))?;
+
+    let refused = world
+        .create(&Create::new("quilt+s3://b#package=team/new"))
+        .await;
+
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644))?;
+    assert!(refused.is_err(), "{refused:?}");
+    assert_eq!(
+        std::fs::read(world.dataspace().join(CONTRACT_FILE))?,
+        before
+    );
+    Ok(())
+}
+
 /// A folder that is a link to the Domain holds it as much as the Domain's own
 /// path does.
 #[cfg(unix)]
@@ -230,12 +257,18 @@ async fn a_link_to_the_domain_is_refused() -> Res {
     let link = world.dir.path().join("link");
     std::os::unix::fs::symlink(world.domain().root(), &link)?;
     let mut request = Create::new("quilt+s3://b#package=team/home");
-    request.folder = Some(link);
-    let refused = world.create(&request).await;
-    assert!(
-        matches!(refused, Err(CreateError::HoldsDomain(_))),
-        "{refused:?}"
-    );
+    request.folder = Some(link.clone());
+    let inside = world.domain().root().join("registries");
+    std::fs::create_dir_all(&inside)?;
+    let mut within = Create::new("quilt+s3://b#package=team/store");
+    within.folder = Some(link.join("registries"));
+    for request in [request, within] {
+        let refused = world.create(&request).await;
+        assert!(
+            matches!(refused, Err(CreateError::HoldsDomain(_))),
+            "{refused:?}"
+        );
+    }
     Ok(())
 }
 

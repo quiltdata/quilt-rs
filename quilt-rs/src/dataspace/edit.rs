@@ -283,15 +283,37 @@ impl ContractEdit {
     /// Writes the edited file over `data.toml` by renaming a temporary file
     /// over it.
     pub(crate) async fn write(&self, storage: &(impl Storage + Sync)) -> Result<(), ContractError> {
+        self.write_bytes(storage, self.text().into_bytes()).await
+    }
+
+    /// Puts the file back as it was when opened, or removes it where there
+    /// was none: undoes [`Self::write`].
+    pub(crate) async fn restore(
+        &self,
+        storage: &(impl Storage + Sync),
+    ) -> Result<(), ContractError> {
+        if self.found {
+            return self.write_bytes(storage, self.original.clone()).await;
+        }
+        let path = self.dataspace.join(CONTRACT_FILE);
+        storage
+            .remove_file(&path)
+            .await
+            .map_err(|source| ContractError::Write {
+                path,
+                source: Box::new(crate::Error::from(source)),
+            })
+    }
+
+    async fn write_bytes(
+        &self,
+        storage: &(impl Storage + Sync),
+        bytes: Vec<u8>,
+    ) -> Result<(), ContractError> {
         let path = self.dataspace.join(CONTRACT_FILE);
         let temp = format!("{CONTRACT_FILE}.tmp-{}", uuid::Uuid::new_v4());
         storage
-            .write_byte_stream_via(
-                &path,
-                temp,
-                ByteStream::from(self.text().into_bytes()),
-                None,
-            )
+            .write_byte_stream_via(&path, temp, ByteStream::from(bytes), None)
             .await
             .map_err(|source| ContractError::Write {
                 path,
