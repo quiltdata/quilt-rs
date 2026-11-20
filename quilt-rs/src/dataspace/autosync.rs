@@ -286,7 +286,7 @@ impl Runner {
         let unpushed = |entry: &Entry| {
             lock.as_ref()
                 .and_then(|lock| lock.packages.get(&entry.key()))
-                .is_some_and(|locked| !locked.commits.is_empty())
+                .and_then(|locked| locked.commits.last().cloned())
         };
 
         for entry in contract.entries() {
@@ -337,16 +337,16 @@ impl Runner {
 
     /// Looks up the revision `entry` follows, releases the revision kept for
     /// its folder where that is done with, and queues its job where the
-    /// revision is not `base`. A `sync` entry whose lock holds `unpushed`
-    /// commits is queued too, so that a push that was lost or interrupted is
-    /// tried again, unless the revision kept for it is one the workflow
-    /// refused, which waits for its release.
+    /// revision is not `base`. A `sync` entry whose lock holds commits, the
+    /// last being `unpushed`, is queued too, so that a push that was lost or
+    /// interrupted is tried again, unless the workflow refused that last
+    /// commit, which waits for its release.
     async fn observe(
         &self,
         remote: &impl Remote,
         entry: &Entry,
         base: Option<String>,
-        unpushed: bool,
+        unpushed: Option<String>,
         tick: &mut DataspaceTick,
     ) -> Result<Result<(), EntryError>, QueueError> {
         let followed = match follows(remote, entry).await {
@@ -364,14 +364,15 @@ impl Runner {
                 tick.released.push((entry.clone(), kept));
             } else {
                 held = true;
-                refused = kept.reason == KeptReason::WorkflowBlocked;
+                refused = kept.reason == KeptReason::WorkflowBlocked
+                    && unpushed.as_ref() == Some(&kept.hash);
             }
         }
         // A publish keeps its stored revision rather than publishing it again
         // over the `latest` that outran it; a `sync` job still reads that
         // `latest`.
         let republish = held && matches!(entry.access, Access::Write | Access::Replace);
-        let retry = unpushed && entry.access == Access::Sync && !refused;
+        let retry = unpushed.is_some() && entry.access == Access::Sync && !refused;
         if (followed != base || retry) && !republish {
             self.queue.enqueue(&job_key(entry)).await?;
         }

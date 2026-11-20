@@ -604,6 +604,36 @@ async fn a_commit_the_workflow_refused_is_not_queued_again_for_its_commits() -> 
     Ok(())
 }
 
+/// The refusal holds for the commit it was made on, not for one made after.
+#[test(tokio::test)]
+async fn a_commit_made_after_a_refused_one_is_queued_again() -> Res {
+    let world = World::new("sync = [\"team/raw\"]").await?;
+    world.publish(FIRST, &[("a.txt", b"v1")]).await?;
+    world.tick().await?;
+    let config = "version: \"1\"\ndefault_workflow: gate\nworkflows:\n  gate:\n    name: Gate\n    metadata_schema: meta\nschemas:\n  meta:\n    url: s3://b/schemas/meta.json\n";
+    world
+        .put("s3://b/.quilt/workflows/config.yml", config.into())
+        .await?;
+    let schema = r#"{"type": "object", "required": ["owner"]}"#;
+    world.put("s3://b/schemas/meta.json", schema.into()).await?;
+    world.write("a.txt", "v2")?;
+    world.changed("a.txt").await?;
+    world.tick().await?;
+    assert!(world.kept().await?.is_some());
+    world.write("a.txt", "v3")?;
+    let stopped = crate::failpoint::stopping_at("push.object", 0, sync_outside(&world)).await?;
+    assert!(
+        matches!(&stopped.entries[..], [(_, EntrySync::Failed(_))]),
+        "{stopped:?}"
+    );
+    assert_eq!(world.jobs().await?, 0);
+
+    let tick = world.tick().await?;
+
+    assert!(!matches!(only(&tick), EntryTick::Idle), "{tick:?}");
+    Ok(())
+}
+
 #[test(tokio::test)]
 async fn a_folder_that_cannot_be_read_back_is_retried() -> Res {
     let world = World::new("sync = [\"team/raw\"]").await?;
