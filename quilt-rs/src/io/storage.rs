@@ -7,8 +7,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 pub use aws_sdk_s3::primitives::ByteStream;
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use tokio::fs::File;
 use tokio::fs::ReadDir;
 use tokio::io::AsyncReadExt;
@@ -57,10 +56,7 @@ pub trait Storage {
     fn is_file(&self, path: impl AsRef<Path>) -> impl Future<Output = bool>;
 
     /// Get the timestamp of the last modification of a file.
-    fn modified_timestamp(
-        &self,
-        path: impl AsRef<Path>,
-    ) -> impl Future<Output = Res<DateTime<Utc>>>;
+    fn modified_timestamp(&self, path: impl AsRef<Path>) -> impl Future<Output = Res<Timestamp>>;
 
     /// Opens file (doesn't read contents)
     fn open_file(&self, path: impl AsRef<Path> + Send) -> impl Future<Output = Res<File>> + Send;
@@ -230,7 +226,7 @@ impl<S: Storage + Send + Sync> Storage for Arc<S> {
         (**self).is_file(path).await
     }
 
-    async fn modified_timestamp(&self, path: impl AsRef<Path>) -> Res<DateTime<Utc>> {
+    async fn modified_timestamp(&self, path: impl AsRef<Path>) -> Res<Timestamp> {
         (**self).modified_timestamp(path).await
     }
 

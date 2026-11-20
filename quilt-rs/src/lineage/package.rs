@@ -44,7 +44,8 @@ fn str_to_multihash<'de, D: de::Deserializer<'de>>(
 pub struct PathState {
     /// Last "modified" date.
     /// Last time it was installed or commited.
-    pub timestamp: chrono::DateTime<chrono::Utc>,
+    #[serde(with = "crate::time::json")]
+    pub timestamp: jiff::Timestamp,
     /// Last tracked hash.
     /// We don't track files modifications in real time.
     /// We calculate hash when we commit or install file.
@@ -88,7 +89,8 @@ pub type LineagePaths = BTreeMap<PathBuf, PathState>;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct CommitState {
     /// When the last commit was done
-    pub timestamp: chrono::DateTime<chrono::Utc>,
+    #[serde(with = "crate::time::json")]
+    pub timestamp: jiff::Timestamp,
     /// What is the hash of the latest commit
     pub hash: String,
     /// What are the previous commit hashes
@@ -234,7 +236,7 @@ pub struct PackageLineage {
     /// Latest tracked hash. In other words, what was the remote hash when we last checked.
     /// It can be different from the `remote.hash`, because we can install not the latest package.
     ///
-    /// TODO: pair with `checked_at: DateTime<Utc>`. The classifier treats
+    /// TODO: pair with `checked_at: Timestamp`. The classifier treats
     /// this as authoritative for `Behind`/`Diverged` with no notion of
     /// staleness.
     pub latest_hash: String,

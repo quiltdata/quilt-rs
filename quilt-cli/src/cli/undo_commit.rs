@@ -703,7 +703,7 @@ mod tests {
     fn json_carries_the_restored_hash() {
         let output = Output {
             commit: CommitState {
-                timestamp: std::time::SystemTime::UNIX_EPOCH.into(),
+                timestamp: jiff::Timestamp::UNIX_EPOCH,
                 hash: "abc123".to_string(),
                 prev_hashes: vec!["older".to_string()],
             },

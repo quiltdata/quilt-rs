@@ -1,7 +1,5 @@
 use std::path::PathBuf;
 
-use chrono::Local;
-
 use crate::engine::quilt::lineage::{Change, ChangeSet};
 use quilt_uri::Namespace;
 
@@ -122,9 +120,9 @@ pub fn render_publish_message(template: &str, ctx: &PublishMessageContext<'_>) -
     if trimmed.is_empty() {
         return ctx.changes_summary.clone();
     }
-    let now = Local::now();
-    let date = now.format("%Y-%m-%d").to_string();
-    let time = now.format("%H:%M").to_string();
+    let now = jiff::ZonedDateTime::now();
+    let date = now.strftime("%Y-%m-%d").to_string();
+    let time = now.strftime("%H:%M").to_string();
     let datetime = format!("{date} {time}");
     let namespace = ctx.namespace.to_string();
     apply_placeholders(
@@ -300,9 +298,12 @@ mod tests {
         let parts: Vec<&str> = rendered.split(" -> ").collect();
         assert_eq!(parts.len(), 2);
         // Shape only; values depend on clock.
-        let date_time = parts[0];
-        let dt = parts[1];
-        assert_eq!(date_time.len(), "2026-04-21 12:34".len());
-        assert_eq!(dt.len(), "2026-04-21 12:34".len());
+        let shape = |text: &str| -> String {
+            text.chars()
+                .map(|c| if c.is_ascii_digit() { '9' } else { c })
+                .collect()
+        };
+        assert_eq!(shape(parts[0]), "9999-99-99 99:99");
+        assert_eq!(parts[0], parts[1]);
     }
 }

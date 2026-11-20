@@ -503,7 +503,7 @@ mod tests {
         HistoryEntry {
             revision: Revision {
                 hash: hash.to_string(),
-                obtained: chrono::DateTime::UNIX_EPOCH,
+                obtained: jiff::Timestamp::UNIX_EPOCH,
                 message: None,
                 meta: None,
                 workflow: None,

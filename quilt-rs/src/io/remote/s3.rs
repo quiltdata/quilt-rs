@@ -367,7 +367,7 @@ where
                 c.access_key,
                 c.secret_key,
                 Some(c.token),
-                Some(c.expires_at.into()),
+                std::time::SystemTime::try_from(c.expires_at).ok(),
                 "quilt-registry",
             ))
         })
@@ -1220,7 +1220,7 @@ mod tests {
         let remote = RemoteS3::new(DomainPaths::default(), LocalStorage::new());
         let key = format!(
             "test_quilt_rs/conditional-put/{}",
-            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+            jiff::Timestamp::now().as_nanosecond()
         );
         let s3_uri = S3Uri::try_from(format!("s3://data-yaml-spec-tests/{key}").as_str())?;
 
@@ -2179,7 +2179,7 @@ mod tests {
             access_key: "AKIAEXAMPLE".to_string(),
             secret_key: "secret".to_string(),
             token: "session-token".to_string(),
-            expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+            expires_at: jiff::Timestamp::now() + jiff::SignedDuration::from_hours(1),
         };
         let auth_io = AuthIo::new(Arc::clone(&storage), paths.auth_host(&host));
         auth_io.write_credentials(&stored).await?;
@@ -2223,8 +2223,8 @@ mod tests {
                     "AccessKeyId": self.refreshed_access_key,
                     "SecretAccessKey": "refreshed-secret",
                     "SessionToken": "refreshed-session",
-                    "Expiration": (chrono::Utc::now() + chrono::Duration::hours(1))
-                        .to_rfc3339(),
+                    "Expiration": (jiff::Timestamp::now() + jiff::SignedDuration::from_hours(1))
+                        .to_string(),
                 });
                 return Ok(serde_json::from_value(body)?);
             }
@@ -2284,7 +2284,7 @@ mod tests {
                 access_key: "STALE".to_string(),
                 secret_key: "stale-secret".to_string(),
                 token: "stale-session".to_string(),
-                expires_at: chrono::Utc::now() - chrono::Duration::hours(1),
+                expires_at: jiff::Timestamp::now() - jiff::SignedDuration::from_hours(1),
             })
             .await?;
         // Fresh access token — skip the OAuth refresh leg.
@@ -2292,7 +2292,7 @@ mod tests {
             .write_tokens(&Tokens {
                 access_token: "fresh-access-token".to_string(),
                 refresh_token: "refresh-token".to_string(),
-                expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+                expires_at: jiff::Timestamp::now() + jiff::SignedDuration::from_hours(1),
             })
             .await?;
 

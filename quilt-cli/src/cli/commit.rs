@@ -629,7 +629,7 @@ mod tests {
     fn json_carries_the_hash_and_no_timestamp() {
         let output = Output {
             commit: Some(CommitState {
-                timestamp: std::time::SystemTime::UNIX_EPOCH.into(),
+                timestamp: jiff::Timestamp::UNIX_EPOCH,
                 hash: "abc123".to_string(),
                 prev_hashes: vec!["older".to_string()],
             }),

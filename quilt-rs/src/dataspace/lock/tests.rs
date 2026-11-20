@@ -36,10 +36,8 @@ fn key(package: &str) -> PackageKey {
     }
 }
 
-fn time(text: &str) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(text)
-        .unwrap()
-        .with_timezone(&Utc)
+fn time(text: &str) -> Timestamp {
+    text.parse().unwrap()
 }
 
 async fn dataspace(
@@ -133,9 +131,9 @@ async fn a_write_stamps_the_header_and_keeps_filled() -> Res {
     lock.header.data_toml_hash = "stale".to_string();
     lock.header.modified = time("2000-01-01T00:00:00Z");
 
-    let before = Utc::now().trunc_subsecs(0);
+    let before = crate::time::to_second(Timestamp::now());
     lock.write(&storage, &contract, &writer()).await?;
-    let after = Utc::now();
+    let after = Timestamp::now();
 
     let header = Lock::read(&storage, &contract).await?.unwrap().header;
     assert_eq!(header.writer, writer());
@@ -269,7 +267,7 @@ async fn a_time_toml_cannot_hold_is_an_error_and_the_header_is_kept() -> Res {
     let storage = MockStorage::default();
     let contract = dataspace(&storage, "rnaseq", CONTRACT).await?;
     let mut lock = filled_lock(&contract);
-    let far = time("9999-12-31T23:59:59Z") + chrono::Duration::days(1);
+    let far = jiff::Timestamp::MIN;
     lock.header.filled = Some(far);
     lock.header.modified = time("2000-01-01T00:00:00Z");
     let header = lock.header.clone();

@@ -316,7 +316,7 @@ mod tests {
         let hash = fixtures::top_hash::EMPTY_NULL_TOP_HASH.to_string();
         let lineage = PackageLineage {
             commit: Some(CommitState {
-                timestamp: chrono::Utc::now(),
+                timestamp: jiff::Timestamp::now(),
                 hash: hash.clone(),
                 prev_hashes: Vec::new(),
             }),

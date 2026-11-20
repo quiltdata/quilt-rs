@@ -8,8 +8,6 @@ use std::ops::ControlFlow;
 use std::path::Path;
 use std::path::PathBuf;
 
-use chrono::SubsecRound;
-use chrono::Utc;
 use thiserror::Error;
 use tracing::warn;
 
@@ -303,7 +301,7 @@ pub async fn sync(
                 .await
                 .unwrap_or(false)
         {
-            lock.header.filled = Some(Utc::now().trunc_subsecs(0));
+            lock.header.filled = Some(crate::time::to_second(jiff::Timestamp::now()));
         }
         if whole {
             lock.write_for(storage, &contract, &writer, contract.data_toml_hash())

@@ -16,8 +16,7 @@
 //! own history under `.quilt/named_packages/` is read back only as hashes
 //! ([`Remote::published_revisions`](crate::io::remote::Remote::published_revisions)).
 
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 
 use quilt_uri::Namespace;
 
@@ -35,7 +34,7 @@ pub struct Revision {
     /// When *this copy* obtained the revision. See the module docs: this is not
     /// when the revision was made, and for a pulled revision it is the fetch
     /// time.
-    pub obtained: DateTime<Utc>,
+    pub obtained: Timestamp,
     /// The revision's commit message, absent if it was committed without one.
     pub message: Option<String>,
     /// The revision's user metadata; `None` when it has none, `null` and `{}`
@@ -66,7 +65,7 @@ pub(crate) fn written_user_meta(header: &ManifestHeader) -> Option<String> {
 impl Revision {
     /// The facts `header` records about the revision at `hash`.
     #[must_use]
-    pub fn from_header(hash: String, obtained: DateTime<Utc>, header: ManifestHeader) -> Self {
+    pub fn from_header(hash: String, obtained: Timestamp, header: ManifestHeader) -> Self {
         let message = header.message().map(str::to_owned);
         let meta = header.user_meta.filter(holds_user_meta);
         Self {
@@ -111,7 +110,7 @@ pub async fn list_revisions(
 
         revisions.push(Revision::from_header(
             entry.file_name().to_string_lossy().into_owned(),
-            entry.metadata().await?.modified()?.into(),
+            crate::time::from_system(entry.metadata().await?.modified()?)?,
             manifest.header,
         ));
     }
@@ -201,7 +200,7 @@ mod tests {
     }
 
     fn meta_of(header: ManifestHeader) -> Option<serde_json::Value> {
-        Revision::from_header("h".to_string(), DateTime::UNIX_EPOCH, header).meta
+        Revision::from_header("h".to_string(), Timestamp::UNIX_EPOCH, header).meta
     }
 
     #[test]
@@ -224,7 +223,7 @@ mod tests {
             }
         });
         let stamped: ManifestHeader = serde_json::from_value(json).unwrap();
-        let revision = Revision::from_header("h".to_string(), DateTime::UNIX_EPOCH, stamped);
+        let revision = Revision::from_header("h".to_string(), Timestamp::UNIX_EPOCH, stamped);
         assert_eq!(revision.meta, Some(serde_json::json!({"plate": 7})));
         assert_eq!(revision.workflow.as_deref(), Some("alpha"));
         assert_eq!(

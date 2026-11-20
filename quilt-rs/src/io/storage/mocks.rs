@@ -1,8 +1,6 @@
 use std::path::Path;
 
 use aws_sdk_s3::primitives::ByteStream;
-use chrono::DateTime;
-use chrono::Utc;
 use tempfile::TempDir;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
@@ -146,14 +144,11 @@ impl Storage for MockStorage {
     }
 
     /// Return the current time as the modified timestamp.
-    async fn modified_timestamp(
-        &self,
-        path: impl AsRef<Path>,
-    ) -> Res<chrono::DateTime<chrono::Utc>> {
+    async fn modified_timestamp(&self, path: impl AsRef<Path>) -> Res<jiff::Timestamp> {
         let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
         create_parent(&rel_path).await?;
         let modified = fs::metadata(rel_path).await.map(|m| m.modified())??;
-        Ok(DateTime::<Utc>::from(modified))
+        Ok(crate::time::from_system(modified)?)
     }
 
     async fn open_file(&self, path: impl AsRef<Path>) -> Res<fs::File> {

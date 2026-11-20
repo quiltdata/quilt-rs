@@ -262,7 +262,7 @@ pub async fn record(
     }
     let commit = CommitState {
         hash: new_top_hash,
-        timestamp: chrono::Utc::now(),
+        timestamp: jiff::Timestamp::now(),
         prev_hashes,
     };
     lineage.commit = Some(commit.clone());

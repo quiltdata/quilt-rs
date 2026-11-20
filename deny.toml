@@ -37,11 +37,6 @@ ignore = [
     { id = "RUSTSEC-2026-0370", reason = "zvariant unmaintained, via zbus 5 from opener / tauri-plugin-single-instance" },
     { id = "RUSTSEC-2026-0371", reason = "zbus_names unmaintained, via zbus 5 from opener / tauri-plugin-single-instance" },
     { id = "RUSTSEC-2026-0372", reason = "zvariant_derive unmaintained, via zbus 5 from opener / tauri-plugin-single-instance" },
-
-    # --- chrono ---
-    # A direct dependency of quilt-rs and quilt-sync. A move to jiff is
-    # planned; drop this when it lands.
-    { id = "RUSTSEC-2026-0543", reason = "chrono unmaintained, a direct dependency of quilt-rs and quilt-sync; move to jiff planned" },
 ]
 
 [licenses]

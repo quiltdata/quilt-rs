@@ -67,7 +67,7 @@ mod tests {
             revision: None,
             files: Vec::new(),
             outcome: None,
-            at: chrono::DateTime::UNIX_EPOCH,
+            at: jiff::Timestamp::UNIX_EPOCH,
             read: false,
         }
     }

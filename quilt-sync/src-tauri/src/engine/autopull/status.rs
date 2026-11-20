@@ -3,8 +3,7 @@ use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use quilt_uri::Host;
 use quilt_uri::Namespace;
 use serde::Deserialize;
@@ -20,7 +19,8 @@ use crate::engine::autopull::activity::AutopullActivity;
 #[serde(rename_all = "camelCase")]
 pub struct SyncTrayStatus {
     pub mode: TrayMode,
-    pub last_sync: Option<DateTime<Utc>>,
+    #[serde(with = "quilt_rs::time::json::option")]
+    pub last_sync: Option<Timestamp>,
     /// Count of namespaces with `has_changes = true` after the most
     /// recent observation. Cheaper than counting files; the tray
     /// surfaces it as "N package(s) with changes" in the tooltip.
@@ -144,7 +144,7 @@ struct AggregatorState {
     /// Kept to tell the pass that starts the episode from the ones that
     /// continue it, so each transition is logged once.
     unavailable: BTreeMap<Namespace, std::path::PathBuf>,
-    last_sync: Option<DateTime<Utc>>,
+    last_sync: Option<Timestamp>,
     next_seq: u64,
 }
 
@@ -244,7 +244,7 @@ impl SyncTrayAggregator {
         self.tick_in_progress.store(false, Ordering::SeqCst);
         {
             let mut state = self.state.lock().expect("aggregator lock");
-            state.last_sync = Some(Utc::now());
+            state.last_sync = Some(Timestamp::now());
         }
         self.publish();
     }

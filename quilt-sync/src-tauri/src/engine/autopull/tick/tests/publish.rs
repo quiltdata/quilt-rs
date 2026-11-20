@@ -396,9 +396,9 @@ async fn run_once_skips_publish_while_the_wait_runs() -> Result<(), Error> {
     let card = crate::engine::autopull::next_publish_at(&inner, Duration::from_secs(300))
         .await
         .expect("waiting");
-    let expected = chrono::DateTime::<chrono::Utc>::from(changed_at + Duration::from_secs(300));
+    let expected = jiff::Timestamp::try_from(changed_at + Duration::from_secs(300)).unwrap();
     assert!(
-        (card - expected).abs() < chrono::Duration::seconds(2),
+        (card - expected).abs() < jiff::SignedDuration::from_secs(2),
         "the last change plus the wait, got {card}, expected {expected}"
     );
 

@@ -17,8 +17,7 @@
 use std::collections::VecDeque;
 use std::path::PathBuf;
 
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use quilt_rs::flow::PullReport;
 use quilt_rs::lineage::Change;
 use quilt_rs::lineage::ChangeSet;
@@ -42,7 +41,7 @@ pub use outside::Outside;
 pub const RECORD_EVENT: &str = "record-changed";
 
 /// How long an entry is kept, read or not.
-const KEEP_FOR: chrono::TimeDelta = chrono::TimeDelta::days(90);
+const KEEP_FOR: jiff::SignedDuration = jiff::SignedDuration::from_hours(90 * 24);
 
 /// How many entries are kept, dropping the oldest.
 const MAX_ENTRIES: usize = 1_000;
@@ -128,7 +127,8 @@ pub struct Entry {
     /// What the event reports beyond its files, as a sentence: space freed,
     /// files kept for a busy package, a prune that failed.
     pub outcome: Option<String>,
-    pub at: DateTime<Utc>,
+    #[serde(with = "quilt_rs::time::json")]
+    pub at: Timestamp,
     pub read: bool,
 }
 
@@ -423,7 +423,7 @@ impl State {
     }
 
     /// Drop what is past the bounds, oldest first.
-    fn trim(&mut self, now: DateTime<Utc>) {
+    fn trim(&mut self, now: Timestamp) {
         let oldest = now - KEEP_FOR;
         while self
             .entries
@@ -451,7 +451,7 @@ pub struct Record {
 /// milliseconds, so a record emptied by age does not hand out ids a window
 /// still holds.
 fn first_id(last: Option<u64>) -> u64 {
-    let now = u64::try_from(Utc::now().timestamp_millis()).unwrap_or(0);
+    let now = u64::try_from(Timestamp::now().as_millisecond()).unwrap_or(0);
     last.map_or(now, |id| (id + 1).max(now))
 }
 
@@ -489,7 +489,7 @@ impl Record {
                 false
             }
         };
-        state.trim(Utc::now());
+        state.trim(Timestamp::now());
         let next_id = first_id(state.entries.back().map(|e| e.id));
         let record = Self {
             path: read.then_some(path),
@@ -521,7 +521,7 @@ impl Record {
     pub async fn entries(&self) -> Vec<Entry> {
         let mut state = self.state.lock().await;
         // A running app may add nothing for days; age still counts.
-        state.trim(Utc::now());
+        state.trim(Timestamp::now());
         state.entries.iter().cloned().collect()
     }
 
@@ -551,7 +551,7 @@ impl Record {
             revision,
             files,
             outcome,
-            at: Utc::now(),
+            at: Timestamp::now(),
             read: false,
         }
     }
@@ -586,7 +586,7 @@ impl Record {
         );
         let mut state = self.state.lock().await;
         state.insert(entry.clone());
-        state.trim(Utc::now());
+        state.trim(Timestamp::now());
         self.append(&mut state, &Line::Add(entry)).await;
         drop(state);
         self.events.emit(RECORD_EVENT, ());
@@ -839,7 +839,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let record = Record::open(dir.path(), EventSink::new()).await;
         let mut old = record.number(Draft::uninstalled(&ns(), None));
-        old.at = Utc::now() - KEEP_FOR - chrono::TimeDelta::hours(1);
+        old.at = Timestamp::now() - KEEP_FOR - jiff::SignedDuration::from_hours(1);
         let old_id = old.id;
         record.insert(old).await;
         drop(record);
@@ -899,7 +899,34 @@ mod tests {
         assert_eq!(again.entries().await.len(), 1);
     }
 
-    fn entry_at(id: u64, at: DateTime<Utc>) -> Entry {
+    /// `record.jsonl` keeps each entry's `at` in RFC 3339 with `Z`, its
+    /// sub-second digits in groups of three, and reads a numeric offset.
+    #[test]
+    fn an_entry_writes_at_in_the_json_shape() {
+        for (at, text) in [
+            ("2026-11-20T14:05:09Z", "2026-11-20T14:05:09Z"),
+            ("2026-11-20T14:05:09.25Z", "2026-11-20T14:05:09.250Z"),
+            (
+                "2026-11-20T14:05:09.1234567Z",
+                "2026-11-20T14:05:09.123456700Z",
+            ),
+        ] {
+            let entry = entry_at(1, at.parse().expect("a time"));
+            let written = serde_json::to_value(&entry).unwrap();
+            assert_eq!(written["at"], text, "{at}");
+            let back: Entry = serde_json::from_value(written).unwrap();
+            assert_eq!(back, entry);
+        }
+        let mut older = serde_json::to_value(entry_at(1, Timestamp::UNIX_EPOCH)).unwrap();
+        older["at"] = "2026-11-20T15:05:09+01:00".into();
+        let read: Entry = serde_json::from_value(older).unwrap();
+        assert_eq!(
+            read.at,
+            "2026-11-20T14:05:09Z".parse::<Timestamp>().unwrap()
+        );
+    }
+
+    fn entry_at(id: u64, at: Timestamp) -> Entry {
         Entry {
             id,
             kind: Kind::Uninstalled,
@@ -917,21 +944,21 @@ mod tests {
     async fn reading_drops_what_has_aged_out() {
         let record = Record::in_memory(EventSink::new());
         let mut old = record.number(Draft::uninstalled(&ns(), None));
-        old.at = Utc::now() - KEEP_FOR - chrono::TimeDelta::hours(1);
+        old.at = Timestamp::now() - KEEP_FOR - jiff::SignedDuration::from_hours(1);
         record.insert(old).await;
         assert_eq!(record.entries().await, []);
     }
 
     #[test]
     fn the_oldest_go_first_past_either_bound() {
-        let now = Utc::now();
+        let now = Timestamp::now();
         let mut state = State {
             entries: VecDeque::new(),
             lines: 0,
         };
         state.apply(Line::Add(entry_at(
             1,
-            now - KEEP_FOR - chrono::Duration::hours(1),
+            now - KEEP_FOR - jiff::SignedDuration::from_hours(1),
         )));
         for id in 2..=(MAX_ENTRIES as u64 + 2) {
             state.apply(Line::Add(entry_at(id, now)));
@@ -944,7 +971,7 @@ mod tests {
     /// The window matches on these names; a rename here breaks it silently.
     #[test]
     fn an_entry_reads_as_the_window_expects() {
-        let mut entry = entry_at(7, DateTime::UNIX_EPOCH);
+        let mut entry = entry_at(7, Timestamp::UNIX_EPOCH);
         entry.kind = Kind::RemovedRevisions { count: 2 };
         entry.files = vec![FileGroup {
             change: FileChange::NewNotDownloaded,

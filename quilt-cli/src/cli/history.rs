@@ -86,7 +86,7 @@ impl std::fmt::Display for Output {
             write!(
                 f,
                 "{short_hash}  {}  ",
-                revision.obtained.format("%Y-%m-%d %H:%M:%S"),
+                revision.obtained.strftime("%Y-%m-%d %H:%M:%S"),
             )?;
             if self.judged {
                 write!(
@@ -113,7 +113,7 @@ impl Render for Output {
                     .then(|| row.kept.iter().map(ToString::to_string).collect::<Vec<_>>());
                 serde_json::json!({
                     "hash": &row.revision.hash,
-                    "obtained": row.revision.obtained.to_rfc3339(),
+                    "obtained": row.revision.obtained.to_string(),
                     "message": row.revision.message.as_deref(),
                     "kept": kept,
                     "frees": row.frees,
@@ -269,6 +269,47 @@ mod tests {
              e5f6a7b8  2026-09-28 14:03:11  latest \u{b7} base                   v3\n\
              0c9d8e7f  2026-09-20 10:40:52                        210.4 kB  v2\n"
         );
+    }
+
+    /// The table shows whole seconds in UTC; JSON writes RFC 3339 in UTC
+    /// with `Z` and only the sub-second digits it needs.
+    #[test]
+    fn obtained_times_keep_their_text() {
+        for (obtained, shown, json) in [
+            (
+                "2026-11-20T14:05:09Z",
+                "2026-11-20 14:05:09",
+                "2026-11-20T14:05:09Z",
+            ),
+            (
+                "2026-11-20T15:05:09.1+01:00",
+                "2026-11-20 14:05:09",
+                "2026-11-20T14:05:09.1Z",
+            ),
+            (
+                "2026-11-20T14:05:09.9876Z",
+                "2026-11-20 14:05:09",
+                "2026-11-20T14:05:09.9876Z",
+            ),
+            (
+                "2026-11-20T14:05:09.123456789Z",
+                "2026-11-20 14:05:09",
+                "2026-11-20T14:05:09.123456789Z",
+            ),
+        ] {
+            let output = Output {
+                rows: vec![row("a1b2c3d4e5f6", obtained, "m", &[], None)],
+                judged: false,
+            };
+            assert_eq!(
+                output.to_string(),
+                format!("revision  obtained (UTC)       message\na1b2c3d4  {shown}  m\n"),
+            );
+            assert_eq!(
+                output.to_json()["revisions"][0]["obtained"],
+                serde_json::json!(json),
+            );
+        }
     }
 
     /// Without the registry listing the log leaves both columns out.
@@ -501,7 +542,7 @@ mod tests {
         Row {
             revision: Revision {
                 hash: hash.to_string(),
-                obtained: std::time::SystemTime::UNIX_EPOCH.into(),
+                obtained: jiff::Timestamp::UNIX_EPOCH,
                 message: message.map(str::to_string),
                 meta: None,
                 workflow: None,
@@ -538,7 +579,7 @@ mod tests {
 
         assert_eq!(
             output.to_json().to_string(),
-            r#"{"revisions":[{"hash":"0123456789abcdef","obtained":"1970-01-01T00:00:00+00:00","message":"first","kept":[],"frees":null},{"hash":"fedcba9876543210","obtained":"1970-01-01T00:00:00+00:00","message":null,"kept":["current","not pushed"],"frees":null}]}"#
+            r#"{"revisions":[{"hash":"0123456789abcdef","obtained":"1970-01-01T00:00:00Z","message":"first","kept":[],"frees":null},{"hash":"fedcba9876543210","obtained":"1970-01-01T00:00:00Z","message":null,"kept":["current","not pushed"],"frees":null}]}"#
         );
     }
 

@@ -120,7 +120,7 @@ pub async fn upload_manifest(
 pub async fn tag_timestamp(
     remote: &impl Remote,
     manifest_uri: &ManifestUri,
-    timestamp: chrono::DateTime<chrono::Utc>,
+    timestamp: jiff::Timestamp,
 ) -> Res {
     // Tag the new commit.
     // If {self.commit.tag} does not already exist at
@@ -133,7 +133,8 @@ pub async fn tag_timestamp(
     // pushed hours apart. `upload_tag` overwrites, so the second push silently
     // takes over the tag and the *first* revision is left with a manifest but no
     // history entry.
-    let tag_timestamp = TagUri::timestamp(manifest_uri, Seconds(timestamp.timestamp()));
+    let tag_timestamp =
+        TagUri::timestamp(manifest_uri, Seconds(crate::time::whole_seconds(timestamp)));
     upload_tag(remote, manifest_uri, tag_timestamp).await
 }
 
@@ -742,6 +743,28 @@ mod tests {
             top_hash,
             "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
         );
+        Ok(())
+    }
+
+    /// The tag's key is the commit's whole Unix seconds, rounded down, and it
+    /// holds the top hash.
+    #[test(tokio::test)]
+    async fn a_timestamp_tag_is_named_by_whole_seconds() -> Res {
+        let remote = MockRemote::default();
+        let manifest_uri = ManifestUri {
+            bucket: "b".to_string(),
+            namespace: ("foo", "bar").into(),
+            hash: ALPHA.to_string(),
+            origin: None,
+        };
+        let time = "2024-02-20T16:00:00.999Z".parse().expect("a time");
+        tag_timestamp(&remote, &manifest_uri, time).await?;
+        let key = S3Uri::try_from("s3://b/.quilt/named_packages/foo/bar/1708444800")?;
+        assert!(remote.exists(None, &key).await?);
+        let before = "1969-12-31T23:59:59.5Z".parse().expect("a time");
+        tag_timestamp(&remote, &manifest_uri, before).await?;
+        let key = S3Uri::try_from("s3://b/.quilt/named_packages/foo/bar/-1")?;
+        assert!(remote.exists(None, &key).await?);
         Ok(())
     }
 

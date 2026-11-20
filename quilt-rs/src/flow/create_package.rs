@@ -243,7 +243,7 @@ pub async fn create_package(
     // Create initial commit
     let commit = CommitState {
         hash: top_hash,
-        timestamp: chrono::Utc::now(),
+        timestamp: jiff::Timestamp::now(),
         prev_hashes: Vec::new(),
     };
 

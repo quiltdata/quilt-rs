@@ -1,5 +1,4 @@
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use tempfile::TempDir;
 use test_log::test;
 
@@ -16,11 +15,12 @@ async fn current_revision_reads_only_the_selected_installed_manifest() -> Res {
 
     let namespace: Namespace = ("demo", "sales").into();
     // The revision time is the manifest file's modified time. Some Linux
-    // filesystems stamp files from a clock that lags `Utc::now()` by a few
+    // filesystems stamp files from a clock that lags `Timestamp::now()` by a few
     // milliseconds, so the lower bound is a file written just before.
     let marker = temp_dir.path().join("before");
     tokio::fs::write(&marker, b"").await?;
-    let before: DateTime<Utc> = tokio::fs::metadata(&marker).await?.modified()?.into();
+    let before: Timestamp =
+        crate::time::from_system(tokio::fs::metadata(&marker).await?.modified()?)?;
     let (package, _) = domain
         .create_package(
             namespace.clone(),
@@ -60,7 +60,7 @@ async fn current_revision_reads_only_the_selected_installed_manifest() -> Res {
         .current_revision(&snapshot)
         .await?
         .expect("a created package has a current revision");
-    let after = Utc::now();
+    let after = Timestamp::now();
 
     assert_eq!(revision.hash, expected_hash);
     assert_eq!(revision.message.as_deref(), Some("initial import"));

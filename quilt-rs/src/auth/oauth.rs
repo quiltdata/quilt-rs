@@ -233,7 +233,7 @@ pub(super) async fn exchange_oauth_code(
     form_data.insert("client_id".to_string(), params.client_id.clone());
 
     let response: OAuthTokenResponse = http_client.post(&token_url, &form_data).await?;
-    let expires_at = chrono::Utc::now() + chrono::Duration::seconds(response.expires_in);
+    let expires_at = jiff::Timestamp::now() + jiff::SignedDuration::from_secs(response.expires_in);
     Ok(Tokens {
         access_token: response.access_token,
         refresh_token: response.refresh_token.ok_or_else(|| {
@@ -261,7 +261,7 @@ pub(super) async fn refresh_oauth_tokens(
     form_data.insert("client_id".to_string(), client_id.to_string());
 
     let response: OAuthTokenResponse = http_client.post(&token_url, &form_data).await?;
-    let expires_at = chrono::Utc::now() + chrono::Duration::seconds(response.expires_in);
+    let expires_at = jiff::Timestamp::now() + jiff::SignedDuration::from_secs(response.expires_in);
     Ok(Tokens {
         access_token: response.access_token,
         // RFC 6749 §6: server MAY omit the refresh token — retain the previous one if so.

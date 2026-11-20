@@ -4,9 +4,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::time::SystemTime;
 
-use chrono::DateTime;
-use chrono::Utc;
 use futures_util::StreamExt;
+use jiff::Timestamp;
 use quilt_uri::Host;
 use quilt_uri::Namespace;
 use tokio::sync::RwLock;
@@ -117,7 +116,7 @@ pub(crate) struct Clocks {
     /// failing ticks would push the derived deadline further and further into
     /// the past; and it is `None` until the first tick *completes*, so an
     /// enabled toggle would read idle for the first cadence of every session.
-    pub next_pull_at: RwLock<Option<DateTime<Utc>>>,
+    pub next_pull_at: RwLock<Option<Timestamp>>,
     /// The packages counting down to a publish. Their deadlines are not kept
     /// here: each is the stored last-change time plus the wait as it is when
     /// read, so a new wait applies at once.
@@ -181,14 +180,14 @@ impl WatcherInner {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PackageAutosync {
     Waiting {
-        publish_at: DateTime<Utc>,
+        publish_at: Timestamp,
         /// The restart check proved it changed while the app was closed.
         changed_while_closed: bool,
     },
     Publishing,
     Retrying {
         error: String,
-        next_try_at: DateTime<Utc>,
+        next_try_at: Timestamp,
     },
     Paused(PausedReason),
     /// It has changes and publishing is off.
@@ -209,7 +208,7 @@ pub struct WatcherFacts {
     pub paused: Vec<(Namespace, PausedReason)>,
     /// Each package's last-change time, the one autopublish waits from.
     pub last_changes: BTreeMap<Namespace, SystemTime>,
-    pub next_pull_at: Option<DateTime<Utc>>,
+    pub next_pull_at: Option<Timestamp>,
     /// Each package with something to show, by namespace.
     pub packages: Vec<(Namespace, PackageAutosync)>,
     /// The cadence the loop is actually sleeping: the one check interval.
@@ -687,7 +686,7 @@ impl Watcher {
 /// loop never returns and cannot be driven from a test, and an untested
 /// rule is a rule that survives only as prose.
 pub(crate) async fn arm_next_pull(inner: &WatcherInner, cadence: Duration) {
-    *inner.clocks.next_pull_at.write().await = Some(Utc::now() + cadence);
+    *inner.clocks.next_pull_at.write().await = Some(Timestamp::now() + cadence);
 }
 
 async fn last_change_times(inner: &WatcherInner) -> BTreeMap<Namespace, SystemTime> {
@@ -727,7 +726,7 @@ pub(crate) async fn package_states(
     namespaces.extend(backoff.keys().cloned());
     namespaces.extend(publishing.clone());
 
-    let (now, wall) = (std::time::Instant::now(), Utc::now());
+    let (now, wall) = (std::time::Instant::now(), Timestamp::now());
     let mut states = Vec::new();
     for namespace in namespaces {
         let last_change = last_changes.get(&namespace).copied();
@@ -746,10 +745,11 @@ pub(crate) async fn package_states(
                 next_try_at: wall + failed.next_attempt.saturating_duration_since(now),
             }
         } else if waiting.contains(&namespace)
-            && let Some(at) = publish_deadline(last_change, wait)
+            && let Some(at) =
+                publish_deadline(last_change, wait).and_then(|at| Timestamp::try_from(at).ok())
         {
             PackageAutosync::Waiting {
-                publish_at: at.into(),
+                publish_at: at,
                 changed_while_closed: inner.last_change.changed_while_closed(&namespace),
             }
         } else {
@@ -762,7 +762,7 @@ pub(crate) async fn package_states(
 
 /// The earliest deadline among the waiting packages, as the card would show it.
 #[cfg(test)]
-pub(crate) async fn next_publish_at(inner: &WatcherInner, wait: Duration) -> Option<DateTime<Utc>> {
+pub(crate) async fn next_publish_at(inner: &WatcherInner, wait: Duration) -> Option<Timestamp> {
     let paused = inner.paused.read().await.clone();
     let push_enabled = inner.settings.read().await.push.enabled;
     let last_changes = last_change_times(inner).await;
@@ -1534,7 +1534,7 @@ mod tests {
             settings.pull.closed_secs = 33;
             settings.push.idle_timeout_secs = 44;
         }
-        let pull_at = Utc::now() + Duration::from_mins(15);
+        let pull_at = Timestamp::now() + Duration::from_mins(15);
         *watcher.inner_for_test().clocks.next_pull_at.write().await = Some(pull_at);
         // Two namespaces waiting, changed at different moments, each with its
         // own deadline: the last change plus the wait of 44 s.
@@ -1567,7 +1567,7 @@ mod tests {
             .await
             .extend([early.clone(), late.clone()]);
         let deadline = |after: u64| PackageAutosync::Waiting {
-            publish_at: DateTime::<Utc>::from(early_change + Duration::from_secs(after)),
+            publish_at: Timestamp::try_from(early_change + Duration::from_secs(after)).unwrap(),
             changed_while_closed: false,
         };
 
@@ -1626,7 +1626,7 @@ mod tests {
             settings.push.enabled = true;
             settings.push.idle_timeout_secs = 600;
         }
-        let before = DateTime::<Utc>::from(last_change::now());
+        let before = Timestamp::try_from(last_change::now()).unwrap();
 
         watcher
             .note_committed(&ns, last_change::PendingCommit::At(SystemTime::now()))
@@ -1682,14 +1682,14 @@ mod tests {
             .await;
         let unseen: Namespace = ("acme", "unseen").into();
         inner.aggregator.note_status(&unseen, true);
-        let before = DateTime::<Utc>::from(last_change::now());
+        let before = Timestamp::try_from(last_change::now()).unwrap();
 
         watcher.note_publishing_on().await;
 
         for namespace in [&ns, &unseen] {
             let at = inner.last_change.get(namespace).await.expect("moved");
             assert!(
-                DateTime::<Utc>::from(at) >= before,
+                Timestamp::try_from(at).unwrap() >= before,
                 "{namespace} moved to now"
             );
         }
@@ -1753,7 +1753,7 @@ mod tests {
         assert_eq!(
             state_of(&watcher, &ns).await,
             Some(PackageAutosync::Waiting {
-                publish_at: DateTime::<Utc>::from(at + Duration::from_secs(600)),
+                publish_at: Timestamp::try_from(at + Duration::from_secs(600)).unwrap(),
                 changed_while_closed: false,
             })
         );
@@ -1822,14 +1822,14 @@ mod tests {
                 error: "Could not reach S3".to_string(),
             },
         );
-        let before = Utc::now();
+        let before = Timestamp::now();
         let Some(PackageAutosync::Retrying { error, next_try_at }) = state_of(&watcher, &ns).await
         else {
             panic!("expected retrying");
         };
         assert_eq!(error, "Could not reach S3");
         assert!(next_try_at > before + Duration::from_secs(25));
-        assert!(next_try_at <= Utc::now() + Duration::from_secs(30));
+        assert!(next_try_at <= Timestamp::now() + Duration::from_secs(30));
     }
 
     #[tokio::test]

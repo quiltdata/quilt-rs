@@ -206,7 +206,7 @@ pub(crate) async fn tag_stored(
             reason: err.to_string(),
         })
     };
-    tag_timestamp(remote, &manifest_uri, chrono::Utc::now())
+    tag_timestamp(remote, &manifest_uri, jiff::Timestamp::now())
         .await
         .map_err(tag_failed)?;
 

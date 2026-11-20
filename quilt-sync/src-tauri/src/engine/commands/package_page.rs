@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -471,8 +471,8 @@ async fn role_remedy(
     clippy::cast_precision_loss,
     reason = "epoch millis fit f64 exactly for any date this program can see"
 )]
-fn epoch_millis(at: DateTime<Utc>) -> f64 {
-    at.timestamp_millis() as f64
+fn epoch_millis(at: Timestamp) -> f64 {
+    at.as_millisecond() as f64
 }
 
 /// A listed path is outstanding when this copy neither tracks it nor has a
@@ -1198,7 +1198,7 @@ mod tests {
                 );
                 Ok(Some(quilt::flow::Revision {
                     hash: "abcdef".to_string(),
-                    obtained: DateTime::from_timestamp_millis(1_758_500_000_000).unwrap(),
+                    obtained: Timestamp::from_millisecond(1_758_500_000_000).unwrap(),
                     message: Some("Initial upload".to_string()),
                     meta: None,
                     workflow: None,
@@ -1296,7 +1296,7 @@ mod tests {
         let mut lineage = quilt::lineage::PackageLineage::from_remote(uri, "l".to_string());
         lineage.base_hash = "b".to_string();
         lineage.commit = Some(quilt::lineage::CommitState {
-            timestamp: DateTime::from_timestamp_millis(1_758_500_000_000).unwrap(),
+            timestamp: Timestamp::from_millisecond(1_758_500_000_000).unwrap(),
             hash: "c".to_string(),
             prev_hashes: Vec::new(),
         });
@@ -1497,7 +1497,7 @@ mod tests {
     fn revision(message: &str) -> quilt::flow::Revision {
         quilt::flow::Revision {
             hash: "pending-hash".to_string(),
-            obtained: DateTime::from_timestamp_millis(1_758_500_000_000).unwrap(),
+            obtained: Timestamp::from_millisecond(1_758_500_000_000).unwrap(),
             message: Some(message.to_string()),
             meta: None,
             workflow: None,
@@ -2500,7 +2500,7 @@ mod tests {
         quilt::flow::HistoryEntry {
             revision: quilt::flow::Revision {
                 hash: hash.to_string(),
-                obtained: DateTime::from_timestamp_millis(at_millis).unwrap(),
+                obtained: Timestamp::from_millisecond(at_millis).unwrap(),
                 message: message.map(ToString::to_string),
                 meta: None,
                 workflow: None,

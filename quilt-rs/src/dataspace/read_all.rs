@@ -3,8 +3,6 @@
 
 use std::path::Path;
 
-use chrono::SubsecRound;
-use chrono::Utc;
 use thiserror::Error;
 use tracing::warn;
 
@@ -193,7 +191,7 @@ pub(crate) async fn read_some(
         // `sync` entries and local packages need a Domain, so a domainless
         // read never fills them.
         if lock.header.filled.is_none() && read.completed() && !unfilled {
-            lock.header.filled = Some(Utc::now().trunc_subsecs(0));
+            lock.header.filled = Some(crate::time::to_second(jiff::Timestamp::now()));
         }
         lock.write(storage, &contract, &writer).await?;
     }
