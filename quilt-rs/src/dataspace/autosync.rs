@@ -341,14 +341,22 @@ impl Runner {
             Err(err) => return Ok(Err(err)),
         };
         let folder = folder_key(entry);
+        let mut held = false;
         if entry.access != Access::Read
             && let Some(kept) = self.queue.kept(&folder).await?
-            && (followed.as_ref() == Some(&kept.hash) || base != kept.base)
         {
-            self.queue.release(&folder).await?;
-            tick.released.push((entry.clone(), kept));
+            if followed.as_ref() == Some(&kept.hash) || base != kept.base {
+                self.queue.release(&folder).await?;
+                tick.released.push((entry.clone(), kept));
+            } else {
+                held = true;
+            }
         }
-        if followed != base {
+        // A publish keeps its stored revision rather than publishing it again
+        // over the `latest` that outran it; a `sync` job still reads that
+        // `latest`.
+        let republish = held && matches!(entry.access, Access::Write | Access::Replace);
+        if followed != base && !republish {
             self.queue.enqueue(&job_key(entry)).await?;
         }
         Ok(Ok(()))
@@ -474,7 +482,13 @@ impl Runner {
             Ok(synced) => {
                 for (entry, outcome) in synced.entries {
                     if due.contains(&entry) {
-                        self.end(&entry, sync_ended(&outcome), now).await?;
+                        let ended = match sync_ended(&outcome) {
+                            // A read-only tick publishes nothing, so the
+                            // edit that queued the job waits for the next.
+                            Ended::Done if synced.read_only => Ended::Again,
+                            ended => ended,
+                        };
+                        self.end(&entry, ended, now).await?;
                     }
                     set(tick, &entry, EntryTick::Synced(outcome));
                 }
@@ -625,7 +639,12 @@ fn sync_ended(synced: &EntrySync) -> Ended {
     Ended::Failed(match synced {
         EntrySync::Ran {
             read: Some(read), ..
-        } if !read.skipped.is_empty() || !read.hash_mismatch.is_empty() => unread(),
+        }
+        | EntrySync::ReadBack(read)
+            if !read.skipped.is_empty() || !read.hash_mismatch.is_empty() =>
+        {
+            unread()
+        }
         EntrySync::Ran { .. } | EntrySync::ReadBack(_) => return Ended::Done,
         EntrySync::Busy => return Ended::Again,
         EntrySync::Blocked {

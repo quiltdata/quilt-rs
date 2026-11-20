@@ -480,5 +480,60 @@ async fn a_publish_latest_moved_past_is_kept_and_its_job_done() -> Res {
     );
     assert_eq!(world.jobs().await?, 0);
     assert_eq!(world.failure(Access::Replace).await?, None);
+
+    let again = world.tick().await?;
+    assert!(matches!(only(&again), EntryTick::Idle), "{again:?}");
+    assert_eq!(world.jobs().await?, 0);
+    assert!(world.kept().await?.is_some());
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn an_edit_made_before_the_dataspace_is_filled_is_published_once_it_is() -> Res {
+    let world = World::new("sync = [\"team/raw\"]").await?;
+    world.write("b.txt", "mine")?;
+    world.changed("b.txt").await?;
+
+    let filling = world.tick().await?;
+    assert!(
+        matches!(
+            only(&filling),
+            EntryTick::Synced(EntrySync::Ran {
+                published: None,
+                ..
+            })
+        ),
+        "{filling:?}"
+    );
+    assert_eq!(world.jobs().await?, 1);
+
+    let synced = world.tick().await?;
+    advanced(only(&synced));
+    assert_eq!(world.jobs().await?, 0);
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_folder_that_cannot_be_read_back_is_retried() -> Res {
+    let world = World::new("sync = [\"team/raw\"]").await?;
+    world.publish(FIRST, &[("a.txt", b"v1")]).await?;
+    world.tick().await?;
+    std::fs::remove_dir_all(world.folder())?;
+    // The bucket's object no longer matches the manifest's hash.
+    world
+        .put(
+            &format!("s3://b/team/raw/a.txt?versionId={}", hex::encode(b"v1")),
+            b"zz".to_vec(),
+        )
+        .await?;
+    world.changed("a.txt").await?;
+
+    let tick = world.tick().await?;
+    assert!(
+        matches!(only(&tick), EntryTick::Synced(EntrySync::ReadBack(_))),
+        "{tick:?}"
+    );
+    assert!(world.failure(Access::Sync).await?.is_some());
+    assert_eq!(world.jobs().await?, 1);
     Ok(())
 }
