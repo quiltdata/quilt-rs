@@ -1243,7 +1243,8 @@ async fn a_move_the_buckets_workflow_refuses_keeps_the_local_key_until_it_is_acc
         .await?;
     let synced = world.sync().await?;
 
-    assert!(!synced.read_only, "{synced:?}");
+    // The refusal left the dataspace unfilled, so this tick still fills it.
+    assert!(synced.read_only, "{synced:?}");
     let [(_, moved)] = synced.entries.as_slice() else {
         panic!("{synced:?}");
     };
@@ -1253,6 +1254,34 @@ async fn a_move_the_buckets_workflow_refuses_keeps_the_local_key_until_it_is_acc
         world.locked().await?.map(|locked| locked.base).as_deref(),
         Some(head.as_str())
     );
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_move_the_workflow_refuses_leaves_the_folder_to_be_read_whole_once_it_goes_through() -> Res
+{
+    let (world, _, head) = moving().await?;
+    gate(&world, r#"{"type": "object"}"#).await?;
+
+    let refused = world.sync().await?;
+
+    assert!(refused.read_only, "{refused:?}");
+    assert_eq!(world.text("b.txt"), None);
+    let optional =
+        "version: '1'\nis_workflow_required: false\nworkflows:\n  gate:\n    name: Gate\n";
+    world
+        .remote
+        .put_object(
+            None,
+            &S3Uri::try_from("s3://b/.quilt/workflows/config.yml")?,
+            optional.as_bytes().to_vec(),
+        )
+        .await?;
+    let moved = world.sync().await?;
+
+    assert!(moved.read_only, "{moved:?}");
+    assert_eq!(world.latest().await?, head);
+    assert_eq!(world.text("b.txt").as_deref(), Some("v1"));
     Ok(())
 }
 

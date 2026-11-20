@@ -281,6 +281,12 @@ pub async fn sync(
             entries.push((entry.clone(), outcome));
         }
         let whole = entries.iter().all(|(_, outcome)| match outcome {
+            // A move the workflow refused read nothing: the folder is still
+            // to be read whole once it goes through.
+            EntrySync::Ran {
+                read: None,
+                published: Some(Published::WorkflowBlocked { .. }),
+            } => false,
             EntrySync::Ran {
                 read,
                 published:
