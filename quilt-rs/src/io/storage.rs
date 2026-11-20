@@ -159,6 +159,14 @@ pub trait Storage {
         async {}
     }
 
+    /// Makes the bytes of the file at `path`, written by something other than
+    /// [`Self::write_byte_stream`] such as [`Self::copy`], survive a power
+    /// loss. A storage that does not override this does nothing.
+    fn sync_file(&self, path: impl AsRef<Path> + Send) -> impl Future<Output = Res> + Send {
+        let _ = path;
+        async { Ok(()) }
+    }
+
     /// Creates the directory `path` and any missing parent. On Unix `path` is
     /// created 0700, and one that already existed is set to 0700 where the
     /// file system allows. On Windows it is [`Self::create_dir_all`].
@@ -280,6 +288,10 @@ impl<S: Storage + Send + Sync> Storage for Arc<S> {
 
     async fn sync_dir(&self, path: impl AsRef<Path> + Send) {
         (**self).sync_dir(path).await;
+    }
+
+    async fn sync_file(&self, path: impl AsRef<Path> + Send) -> Res {
+        (**self).sync_file(path).await
     }
 
     async fn create_private_dir(&self, path: impl AsRef<Path> + Send) -> Res {

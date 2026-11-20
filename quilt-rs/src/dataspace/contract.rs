@@ -1088,6 +1088,28 @@ async fn same_file(one: &Path, other: &Path) -> bool {
     .unwrap_or(false)
 }
 
+/// How the file system holding the folder `dataspace` compares names, as
+/// [`Contract::read`] will find it once `data.toml` is there: told by a probe
+/// file written in the folder and removed. Makes the folder if it is missing.
+pub(crate) async fn folder_case(
+    storage: &(impl Storage + Sync),
+    dataspace: &Path,
+) -> crate::Res<FolderCase> {
+    storage.create_dir_all(dataspace).await?;
+    let name = crate::io::storage::temp_name();
+    let probe = dataspace.join(&name);
+    storage
+        .write_byte_stream(&probe, crate::io::storage::ByteStream::from_static(b""))
+        .await?;
+    let case = if same_file(&probe, &dataspace.join(name.to_uppercase())).await {
+        FolderCase::Insensitive
+    } else {
+        FolderCase::Sensitive
+    };
+    storage.remove_file(&probe).await?;
+    Ok(case)
+}
+
 /// The dataspace at `dataspace` as [`Contract::dataspace`] names it.
 pub(crate) fn dataspace_path(dataspace: &Path) -> std::io::Result<PathBuf> {
     std::path::absolute(dataspace).map(|root| normalize(&root))
