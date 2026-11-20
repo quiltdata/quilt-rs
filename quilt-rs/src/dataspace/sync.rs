@@ -724,8 +724,8 @@ async fn tick(
     {
         // The push landed and the lock was not written after it.
         set_base(lock, lock_file, &key, pushed.clone()).await?;
-    } else if let (false, Some(theirs), Some((_, manifest))) =
-        (commits.is_empty(), &latest, &current)
+    } else if !commits.is_empty()
+        && let (Some(theirs), Some((_, manifest))) = (&latest, &current)
     {
         // Commits on a base `latest` moved from, or on none where `latest`
         // now names a revision: merged onto it.

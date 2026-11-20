@@ -121,7 +121,7 @@ pub(super) async fn onto_latest(
     };
     let message = settled.changed.then_some(message);
     let target = merge
-        .record(settled.merged.clone(), &settled.taken.content, message)
+        .record(settled.merged, &settled.taken.content, message)
         .await?;
     let to = target
         .as_ref()
@@ -255,7 +255,9 @@ impl<S: Storage + Sync, R: Remote> Merge<'_, S, R> {
         if matches!(outcome, ReadOutcome::Blocked { .. }) {
             let mut decisions = self.saved.clone();
             for (key, row) in &rows {
-                if let (true, Other::Incoming(incoming)) = (decided.contains_key(key), &row.other) {
+                if decided.contains_key(key)
+                    && let Other::Incoming(incoming) = &row.other
+                {
                     let resolved = incoming.as_ref().and_then(|side| side.physical_key.clone());
                     let resolved = Some(resolved.unwrap_or_default());
                     let row = Row {
