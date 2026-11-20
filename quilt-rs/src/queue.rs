@@ -509,39 +509,56 @@ fn migrate(db: &mut rusqlite::Connection) -> Result<(), QueueError> {
 pub(crate) async fn copy_queue(from: &Path, to: &Path) -> Result<Vec<PathBuf>, QueueError> {
     let (from, copy) = (from.to_owned(), to.to_owned());
     let autosync = tokio::task::spawn_blocking(move || {
-        let source = rusqlite::Connection::open_with_flags(
-            &from,
-            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-        )?;
-        source.busy_timeout(BUSY_TIMEOUT)?;
-        let target = copy.to_str().ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                format!("{} is no UTF-8 path", copy.display()),
-            )
-        })?;
-        // One snapshot of the source; the list is read from it, not from a
-        // source another process may have written since.
-        source.execute("VACUUM INTO ?1", [target])?;
-        source.close().map_err(|(_, err)| err)?;
-        let copied = rusqlite::Connection::open(&copy)?;
-        let version: i64 = copied.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-        let autosync = match version {
-            1 => read_autosync_v1(&copied),
-            0 | SCHEMA_VERSION => Ok(Vec::new()),
-            other => Err(QueueError::Version(other)),
-        };
-        drop(copied);
-        if autosync.is_err() {
-            let _ = std::fs::remove_file(&copy);
+        let copied_to = copy.clone();
+        // Set once `VACUUM INTO` has made the file, so a copy already there
+        // is never removed.
+        let made = std::cell::Cell::new(false);
+        let result = (|| -> Result<Vec<PathBuf>, QueueError> {
+            let source = rusqlite::Connection::open_with_flags(
+                &from,
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
+                    | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+            )?;
+            source.busy_timeout(BUSY_TIMEOUT)?;
+            let target = copy.to_str().ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("{} is no UTF-8 path", copy.display()),
+                )
+            })?;
+            // One snapshot of the source; the list is read from it, not from a
+            // source another process may have written since.
+            source.execute("VACUUM INTO ?1", [target])?;
+            made.set(true);
+            source.close().map_err(|(_, err)| err)?;
+            let copied = rusqlite::Connection::open(&copy)?;
+            let version: i64 = copied.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+            let autosync = match version {
+                1 => read_autosync_v1(&copied),
+                0 | SCHEMA_VERSION => Ok(Vec::new()),
+                other => Err(QueueError::Version(other)),
+            };
+            drop(copied);
+            autosync
+        })();
+        if result.is_err() && made.get() {
+            let _ = std::fs::remove_file(&copied_to);
         }
-        autosync
+        result
     })
     .await
     .map_err(|_| QueueError::Closed)??;
     // Opened once, so the copy is at this build's version before it is used.
-    let queue = Queue::open(to).await?;
-    queue.db.close().await?;
+    let opened = async {
+        let queue = Queue::open(to).await?;
+        queue.db.close().await?;
+        Ok::<(), QueueError>(())
+    }
+    .await;
+    if opened.is_err() {
+        let _ = tokio::fs::remove_file(to).await;
+    }
+    opened?;
     Ok(autosync)
 }
 
