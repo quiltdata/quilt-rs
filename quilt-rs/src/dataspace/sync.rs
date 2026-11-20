@@ -437,7 +437,10 @@ fn ran(outcome: ReadOutcome, published: Option<Published>) -> EntrySync {
 }
 
 /// The hash `latest` names for `entry`'s package, `None` where it has none.
-async fn latest(remote: &impl Remote, entry: &Entry) -> Result<Option<String>, EntryError> {
+pub(crate) async fn latest(
+    remote: &impl Remote,
+    entry: &Entry,
+) -> Result<Option<String>, EntryError> {
     match read_latest(remote, entry.catalog.as_ref(), handle(entry)?).await? {
         LatestSeen::Tagged { uri, .. } => Ok(Some(uri.hash)),
         LatestSeen::Absent => Ok(None),
@@ -782,7 +785,7 @@ async fn push_head(
 }
 
 /// The key `queue.db` keeps `entry`'s working folder under.
-fn folder_key(entry: &Entry) -> FolderKey {
+pub(crate) fn folder_key(entry: &Entry) -> FolderKey {
     FolderKey {
         registry: Some(entry.registry.clone()),
         package: entry.package.clone(),

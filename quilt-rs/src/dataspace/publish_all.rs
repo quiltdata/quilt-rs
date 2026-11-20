@@ -126,6 +126,19 @@ pub async fn publish_all(
     writer: &Writer,
     user_rules: &Path,
 ) -> Result<DataspacePublish, PublishAllError> {
+    publish_some(storage, remote, dataspace, writer, user_rules, |_| true).await
+}
+
+/// [`publish_all`], publishing only the `write` and `replace` entries
+/// `select` picks.
+pub(crate) async fn publish_some(
+    storage: &(impl Storage + Sync),
+    remote: &impl Remote,
+    dataspace: &Path,
+    writer: &Writer,
+    user_rules: &Path,
+    select: impl Fn(&Entry) -> bool,
+) -> Result<DataspacePublish, PublishAllError> {
     let contract = Contract::read(storage, dataspace, writer.local_registry_name()).await?;
     let (mut lock, writer) = match Lock::read(storage, &contract).await? {
         Some(lock) => {
@@ -149,7 +162,7 @@ pub async fn publish_all(
     let mut moved = false;
     let mut entries = Vec::new();
     for entry in contract.entries() {
-        if !matches!(entry.access, Access::Write | Access::Replace) {
+        if !matches!(entry.access, Access::Write | Access::Replace) || !select(entry) {
             continue;
         }
         let key = entry.key();
