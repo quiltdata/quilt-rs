@@ -259,6 +259,53 @@ async fn narrowing_leaves_the_files_and_reads_nothing() -> Res {
     Ok(())
 }
 
+/// Unpushed commits stop only a read: narrowing needs none, so it does not
+/// report one that did not happen.
+#[test(tokio::test)]
+async fn unpushed_commits_stop_a_widening_but_not_a_narrowing() -> Res {
+    let (storage, remote) = (MockStorage::default(), MockRemote::default());
+    publish(
+        &remote,
+        FIRST,
+        &[("data/a.txt", b"a"), ("docs/b.txt", b"b")],
+    )
+    .await?;
+    let root = empty(&storage)?;
+    installed(&storage, &remote, &root, Access::Sync, &[]).await?;
+    let contract = contract(&storage, &root).await?;
+    let mut locked = lock(&storage, &root).await?.packages[&raw()].clone();
+    locked.commits.push(SECOND.to_string());
+    let mut entry = contract.entries()[0].clone();
+    let only = Paths::Only(vec![PackagePath::Folder("data".parse()?)]);
+
+    entry.paths = only.clone();
+    let narrowing = read_added(
+        &storage,
+        &remote,
+        None,
+        &contract,
+        &entry,
+        Some(Paths::Whole),
+        Some(&locked),
+    )
+    .await;
+    entry.paths = Paths::Whole;
+    let widening = read_added(
+        &storage,
+        &remote,
+        None,
+        &contract,
+        &entry,
+        Some(only),
+        Some(&locked),
+    )
+    .await;
+
+    assert!(matches!(narrowing, KeepRead::Nothing), "{narrowing:?}");
+    assert!(matches!(widening, KeepRead::Unpushed), "{widening:?}");
+    Ok(())
+}
+
 /// A `read` entry is pinned, then unpinned, in `data.toml`; the lock keeps
 /// its base, which the next read moves.
 #[test(tokio::test)]

@@ -244,7 +244,7 @@ pub async fn create(
         .find(|entry| entry.key() == key)
         .cloned()
         .ok_or_else(|| ContractError::Edit(format!("{key} was not declared")))?;
-    if normalize(domain.root()).starts_with(&entry.folder) {
+    if resolved(domain.root()).starts_with(resolved(&entry.folder)) {
         return Err(CreateError::HoldsDomain(entry.folder));
     }
     edit.write(storage).await?;
@@ -287,6 +287,26 @@ pub async fn create(
     write_lock(storage, &mut lock, &edited, &writer, matched).await?;
     info!("✔️ Created {key} in {}", edited.dataspace().display());
     Ok(Created { entry, commit })
+}
+
+/// `path` with its symlinks followed as far as it exists, so a link to the
+/// Domain is not taken for another folder.
+fn resolved(path: &Path) -> PathBuf {
+    let path = normalize(path);
+    let mut rest = PathBuf::new();
+    let mut head = path.as_path();
+    loop {
+        if let Ok(real) = std::fs::canonicalize(head) {
+            return real.join(rest);
+        }
+        match (head.parent(), head.file_name()) {
+            (Some(parent), Some(name)) => {
+                rest = Path::new(name).join(&rest);
+                head = parent;
+            }
+            _ => return path,
+        }
+    }
 }
 
 /// The package `uri` names, under the local registry's current name, and its

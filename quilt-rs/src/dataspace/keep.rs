@@ -406,17 +406,19 @@ async fn read_added(
     let Some(locked) = locked else {
         return KeepRead::Nothing;
     };
+    if before
+        .as_ref()
+        .is_some_and(|before| covers_all(before, &entry.paths))
+    {
+        return KeepRead::Nothing;
+    }
     if !locked.commits.is_empty() {
         return KeepRead::Unpushed;
     }
     let Some(base) = locked.base.as_deref() else {
         return KeepRead::Nothing;
     };
-    if before
-        .as_ref()
-        .is_some_and(|before| covers_all(before, &entry.paths))
-        || !holds_files(storage, &entry.folder).await
-    {
+    if !holds_files(storage, &entry.folder).await {
         return KeepRead::Nothing;
     }
     let mut at_base = entry.clone();

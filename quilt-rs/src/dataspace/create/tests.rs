@@ -220,6 +220,25 @@ async fn nothing_to_commit_declares_the_package_only() -> Res {
     Ok(())
 }
 
+/// A folder that is a link to the Domain holds it as much as the Domain's own
+/// path does.
+#[cfg(unix)]
+#[test(tokio::test)]
+async fn a_link_to_the_domain_is_refused() -> Res {
+    let world = World::new()?;
+    std::fs::create_dir_all(world.domain().root())?;
+    let link = world.dir.path().join("link");
+    std::os::unix::fs::symlink(world.domain().root(), &link)?;
+    let mut request = Create::new("quilt+s3://b#package=team/home");
+    request.folder = Some(link);
+    let refused = world.create(&request).await;
+    assert!(
+        matches!(refused, Err(CreateError::HoldsDomain(_))),
+        "{refused:?}"
+    );
+    Ok(())
+}
+
 /// What cannot be a new package is refused before `data.toml` changes: one
 /// the contract declares, one whose registry has a `latest`, a name outside
 /// quilt3's rule, a revision, `read`, and a folder that holds the Domain.
