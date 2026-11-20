@@ -2,6 +2,7 @@
 //! that says what should happen to the packages they hold, and the lock,
 //! `data.lock.toml`, that records which revisions were used.
 
+pub mod conflict;
 pub mod contract;
 pub mod lock;
 mod metadata;
@@ -16,6 +17,7 @@ use std::path::PathBuf;
 
 use thiserror::Error;
 
+use conflict::CONFLICT_FILE;
 use contract::Access;
 pub use metadata::METADATA_FILE;
 
@@ -60,6 +62,9 @@ pub enum EntryError {
 
     #[error("`latest` cannot be read, so there is no revision to build on")]
     LatestUnreadable,
+
+    #[error("{CONFLICT_FILE}: {0}")]
+    ConflictMap(String),
 
     #[error(transparent)]
     Queue(#[from] Box<crate::queue::QueueError>),

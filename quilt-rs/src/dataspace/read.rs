@@ -1,6 +1,7 @@
 //! `read`: a `read` or `sync` entry's files and metadata, put in its working
 //! folder with no Domain.
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
 use std::path::Path;
@@ -15,10 +16,13 @@ use crate::Res;
 use crate::checksum::hash_file;
 use crate::dataspace::EntryError;
 use crate::dataspace::METADATA_FILE;
+use crate::dataspace::conflict::Row;
+use crate::dataspace::conflict::Side;
 use crate::dataspace::contract::Access;
 use crate::dataspace::contract::Entry;
 use crate::dataspace::contract::Paths;
 use crate::dataspace::contract::Registry;
+use crate::dataspace::metadata::MetadataFile;
 use crate::dataspace::metadata::at_metadata_file;
 use crate::dataspace::metadata::holds_metadata_file;
 use crate::dataspace::metadata::render;
@@ -27,15 +31,20 @@ use crate::flow::edited;
 use crate::flow::install_to;
 use crate::flow::refuse_linked_ancestors;
 use crate::io::manifest::fetch_jsonl;
+use crate::io::manifest::hash_bytes;
 use crate::io::manifest::resolve_manifest_uri;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::io::storage::StorageExt;
 use crate::manifest::Manifest;
 use crate::manifest::ManifestRow;
+use crate::manifest::RawNumbers;
+use crate::object_hash::MULTIHASH_SHA256;
 use crate::object_hash::ObjectHash;
+use crate::paths::file_url;
 use quilt_uri::ManifestUri;
 use quilt_uri::S3PackageUri;
+use quilt_uri::S3Uri;
 
 /// The prefix of the folder a read stages its downloads in, inside the
 /// working folder so that each file is renamed into place.
@@ -102,21 +111,47 @@ pub struct ReadReport {
     pub skipped: Vec<PathBuf>,
     /// Rows whose bytes do not hash to the row, not placed.
     pub hash_mismatch: Vec<PathBuf>,
+    /// Colliding keys set as `conflict.json` decided.
+    pub resolved: Vec<PathBuf>,
 }
 
-/// One file to change: placed from `want`, or removed where there is no
-/// `want`, only while the folder still holds `had`, or nothing where there is
-/// no `had`.
-struct Step<'a> {
-    want: Option<&'a ManifestRow>,
-    had: Option<&'a ManifestRow>,
-}
-
-impl Step<'_> {
-    fn key(&self) -> &LogicalKey {
-        let row = self.want.or(self.had).expect("a step has a row");
-        &row.logical_key
+impl ReadReport {
+    /// Lists a decided key only as `resolved`.
+    fn keep_resolved_apart(&mut self) {
+        let resolved = &self.resolved;
+        self.placed.retain(|key| !resolved.contains(key));
+        self.removed.retain(|key| !resolved.contains(key));
     }
+}
+
+/// One file to change: placed from `source`, or removed where there is none,
+/// only while the folder still holds `had`, or nothing where there is no
+/// `had`.
+struct Step<'a> {
+    key: &'a LogicalKey,
+    source: Option<Source<'a>>,
+    had: Option<Cow<'a, ManifestRow>>,
+}
+
+impl<'a> Step<'a> {
+    fn new(
+        key: &'a LogicalKey,
+        want: Option<&'a ManifestRow>,
+        had: Option<&'a ManifestRow>,
+    ) -> Self {
+        Self {
+            key,
+            source: want.map(Source::Revision),
+            had: had.map(Cow::Borrowed),
+        }
+    }
+}
+
+/// Where a file to place comes from.
+enum Source<'a> {
+    Revision(&'a ManifestRow),
+    File(PathBuf),
+    Object(S3Uri),
 }
 
 #[derive(Default)]
@@ -124,6 +159,9 @@ struct Plan<'a> {
     steps: Vec<Step<'a>>,
     kept: Vec<PathBuf>,
     conflicts: Vec<PathBuf>,
+    resolved: Vec<PathBuf>,
+    /// Every colliding key, decided or not.
+    rows: BTreeMap<LogicalKey, Row>,
     /// The metadata file's new text, where it is to be written, and the bytes
     /// it replaces, `None` where there was no file.
     metadata: Option<(String, Option<Vec<u8>>)>,
@@ -160,6 +198,20 @@ impl OnDisk {
     pub(crate) fn holds(&self, row: &ManifestRow) -> bool {
         matches!(self, Self::File(file) if file.0 == row.hash && file.1 == row.size)
     }
+
+    /// What is at `path`, as a row of `conflict.json` describes it.
+    fn side(&self, path: &Path) -> Res<Option<Side>> {
+        let (hash, size) = match self {
+            Self::Nothing => return Ok(None),
+            Self::NotAFile => (None, None),
+            Self::File(file) => (Some(file.0.clone()), Some(file.1)),
+        };
+        Ok(Some(Side {
+            physical_key: Some(file_url(path)?),
+            hash,
+            size,
+        }))
+    }
 }
 
 /// Puts `entry`'s revision, under its paths, in its working folder, and
@@ -190,6 +242,28 @@ pub async fn read(
     entry: &Entry,
     base: Option<&str>,
 ) -> Result<ReadOutcome, EntryError> {
+    let (outcome, _) = Box::pin(read_deciding(
+        storage,
+        remote,
+        entry,
+        base,
+        &BTreeMap::new(),
+    ))
+    .await?;
+    Ok(outcome)
+}
+
+/// [`read`], setting each colliding key whose row in `decided` still
+/// describes it as the row decides; see
+/// [`read_resolving`](crate::dataspace::conflict::read_resolving). Returns
+/// with the outcome a row for every colliding key, decided or not.
+pub(crate) async fn read_deciding(
+    storage: &(impl Storage + Sync),
+    remote: &impl Remote,
+    entry: &Entry,
+    base: Option<&str>,
+    decided: &BTreeMap<LogicalKey, Row>,
+) -> Result<(ReadOutcome, BTreeMap<LogicalKey, Row>), EntryError> {
     if !matches!(entry.access, Access::Read | Access::Sync) {
         return Err(EntryError::Access(entry.access));
     }
@@ -234,6 +308,7 @@ pub async fn read(
         base,
         metadata,
         deletes,
+        decided,
     )
     .await?;
     if !plan.conflicts.is_empty() {
@@ -243,15 +318,17 @@ pub async fn read(
             folder.display(),
             plan.conflicts.len()
         );
-        return Ok(ReadOutcome::Blocked {
+        let blocked = ReadOutcome::Blocked {
             revision: revision.hash,
             conflicts: plan.conflicts,
-        });
+        };
+        return Ok((blocked, plan.rows));
     }
 
     let mut report = ReadReport {
         revision: revision.hash.clone(),
         kept: plan.kept,
+        resolved: plan.resolved,
         ..ReadReport::default()
     };
     let staging = folder.join(format!("{STAGING_PREFIX}{}", uuid::Uuid::new_v4()));
@@ -277,6 +354,7 @@ pub async fn read(
         write_metadata(storage, folder, text, planned_on.as_deref()).await?;
         report.placed.push(PathBuf::from(METADATA_FILE));
     }
+    report.keep_resolved_apart();
     info!(
         "✔️ Read {} into {}: {} placed, {} removed, {} kept",
         revision.display(),
@@ -285,7 +363,7 @@ pub async fn read(
         report.removed.len(),
         report.kept.len()
     );
-    Ok(ReadOutcome::Read(report))
+    Ok((ReadOutcome::Read(report), plan.rows))
 }
 
 /// The base `hash`, a revision other than `revision` of its package, or
@@ -318,7 +396,10 @@ async fn other_base(
 
 /// Compares each file `paths` cover in `folder` against `target` and `base`,
 /// and the metadata file against `wanted_text` and `base`'s; see [`read`].
-/// Where `deletes`, a file `base` has and the folder lacks was deleted.
+/// Where `deletes`, a file `base` has and the folder lacks was deleted. A
+/// colliding key is set as its row in `decided` says, where that row still
+/// describes it.
+#[allow(clippy::too_many_arguments)]
 async fn plan<'a>(
     storage: &(impl Storage + Sync),
     folder: &Path,
@@ -327,7 +408,8 @@ async fn plan<'a>(
     base: Option<&'a Manifest>,
     wanted_text: String,
     deletes: bool,
-) -> Res<Plan<'a>> {
+    decided: &BTreeMap<LogicalKey, Row>,
+) -> Result<Plan<'a>, EntryError> {
     let mut plan = Plan::default();
     let wanted = covered(target, paths);
     let had = base.map_or_else(BTreeMap::new, |base| covered(base, paths));
@@ -364,12 +446,10 @@ async fn plan<'a>(
         // listed is not a deletion, and collides first.
         let missing = matches!(disk, OnDisk::Nothing);
         if missing && folder_blocked(storage, folder, &path).await {
-            plan.conflicts.push(key.to_path_buf());
+            plan.collide(storage, key, Some(want), &path, &OnDisk::NotAFile, decided)
+                .await?;
         } else if missing && !(deletes && had.is_some() && not_found(storage, &path).await?) {
-            plan.steps.push(Step {
-                want: Some(want),
-                had: None,
-            });
+            plan.steps.push(Step::new(key, Some(want), None));
         } else if disk.holds(want) {
         } else if let Some(had) = had
             && had.hash == want.hash
@@ -385,12 +465,10 @@ async fn plan<'a>(
                     .holds(had)
             })
         {
-            plan.steps.push(Step {
-                want: Some(want),
-                had: Some(had),
-            });
+            plan.steps.push(Step::new(key, Some(want), Some(had)));
         } else {
-            plan.conflicts.push(key.to_path_buf());
+            plan.collide(storage, key, Some(want), &path, &disk, decided)
+                .await?;
         }
     }
     // Two keys can name one local path, as `a\b` and `a/b` do on Windows.
@@ -410,47 +488,235 @@ async fn plan<'a>(
         let path = key.join_to(folder);
         match OnDisk::read(storage, &path, had.hash.algorithm()).await? {
             OnDisk::Nothing => {}
-            disk if disk.holds(had) => plan.steps.push(Step {
-                want: None,
-                had: Some(had),
-            }),
-            _ => plan.conflicts.push(key.to_path_buf()),
+            disk if disk.holds(had) => plan.steps.push(Step::new(key, None, Some(had))),
+            disk => {
+                plan.collide(storage, key, None, &path, &disk, decided)
+                    .await?;
+            }
         }
     }
-    plan_metadata(storage, folder, paths, wanted_text, base, &mut plan).await?;
+    plan_metadata(
+        storage,
+        folder,
+        paths,
+        wanted_text,
+        base,
+        decided,
+        &mut plan,
+    )
+    .await?;
     Ok(plan)
 }
 
+impl<'a> Plan<'a> {
+    /// Records `row` for the colliding `key`, taking the decision of its row
+    /// in `decided` where that row still describes both sides, and returns
+    /// the decision.
+    fn record(
+        &mut self,
+        key: &LogicalKey,
+        mut row: Row,
+        decided: &BTreeMap<LogicalKey, Row>,
+    ) -> Option<String> {
+        let here = |side: &Option<Side>| side.as_ref().and_then(|side| side.physical_key.clone());
+        row.resolved = decided
+            .get(key)
+            .filter(|earlier| earlier.same_collision(&row))
+            .and_then(|earlier| match &earlier.resolved {
+                // The folder's own file, wherever its path was spelled then.
+                Some(resolved) if Some(resolved) == here(&earlier.current).as_ref() => {
+                    here(&row.current)
+                }
+                resolved => resolved.clone(),
+            });
+        let resolved = row.resolved.clone();
+        match resolved {
+            Some(_) => self.resolved.push(key.to_path_buf()),
+            None => self.conflicts.push(key.to_path_buf()),
+        }
+        self.rows.insert(key.clone(), row);
+        resolved
+    }
+
+    /// Records that `key` collides, `want` being the revision's row and
+    /// `disk` what is at `path`, and plans the step its decision takes.
+    async fn collide(
+        &mut self,
+        storage: &(impl Storage + Sync),
+        key: &'a LogicalKey,
+        want: Option<&'a ManifestRow>,
+        path: &Path,
+        disk: &OnDisk,
+        decided: &BTreeMap<LogicalKey, Row>,
+    ) -> Result<(), EntryError> {
+        let row = Row {
+            incoming: want.map(|want| Side {
+                physical_key: Some(want.physical_key.clone()),
+                hash: Some(want.hash.clone()),
+                size: Some(want.size),
+            }),
+            current: disk.side(path)?,
+            resolved: None,
+        };
+        let here = row
+            .current
+            .as_ref()
+            .and_then(|side| side.physical_key.clone());
+        let Some(resolved) = self.record(key, row, decided) else {
+            return Ok(());
+        };
+        let had = match disk {
+            // The folder's own file, kept as it is.
+            OnDisk::File(_) if here.as_ref() == Some(&resolved) => return Ok(()),
+            OnDisk::File(file) => Some(Cow::Owned(ManifestRow {
+                logical_key: key.clone(),
+                physical_key: String::new(),
+                hash: file.0.clone(),
+                size: file.1,
+                meta: None,
+                meta_numbers: RawNumbers::default(),
+            })),
+            OnDisk::Nothing => None,
+            OnDisk::NotAFile => return Err(refused(key, NOT_A_FILE)),
+        };
+        let source = source(storage, &resolved, want)
+            .await
+            .map_err(|why| refused(key, why))?;
+        if source.is_some() || had.is_some() {
+            self.steps.push(Step { key, source, had });
+        }
+        Ok(())
+    }
+}
+
+const NOT_A_FILE: &str = "the working folder holds something other than a file there";
+
+fn refused(key: &LogicalKey, why: impl std::fmt::Display) -> EntryError {
+    EntryError::ConflictMap(format!("{key} cannot be set: {why}"))
+}
+
+/// Where `resolved` takes a file from: `None` for `""`, which deletes it,
+/// the revision's own object `want`, a local file, or an S3 object at an
+/// exact version.
+async fn source<'a>(
+    storage: &(impl Storage + Sync),
+    resolved: &str,
+    want: Option<&'a ManifestRow>,
+) -> Result<Option<Source<'a>>, String> {
+    if resolved.is_empty() {
+        return Ok(None);
+    }
+    if let Some(want) = want.filter(|want| want.physical_key == resolved) {
+        return Ok(Some(Source::Revision(want)));
+    }
+    if resolved.starts_with("s3://") {
+        let uri = S3Uri::try_from(resolved).map_err(|err| err.to_string())?;
+        // Without a version, the key could name other bytes by the time it is read.
+        return match uri.version.as_deref() {
+            Some(version) if version != "null" => Ok(Some(Source::Object(uri))),
+            _ => Err(format!("{resolved} names no versionId")),
+        };
+    }
+    let path = local_file(resolved)?;
+    if storage.is_symlink(&path).await || !storage.is_file(&path).await {
+        return Err(format!("{resolved} is not a file"));
+    }
+    Ok(Some(Source::File(path)))
+}
+
+fn local_file(resolved: &str) -> Result<PathBuf, String> {
+    url::Url::parse(resolved)
+        .ok()
+        .filter(|url| url.scheme() == "file")
+        .and_then(|url| url.to_file_path().ok())
+        .ok_or_else(|| format!("{resolved:?} is not \"\", a file:// URL or an s3:// object"))
+}
+
 /// Compares the metadata file against `wanted_text` and `base`'s; see
-/// [`read`].
+/// [`read`]. Decided, `""` takes the revision's file, since a read fills a
+/// missing one, and a `file://` URL that file's text.
 async fn plan_metadata(
     storage: &(impl Storage + Sync),
     folder: &Path,
     paths: &Paths,
     wanted_text: String,
     base: Option<&Manifest>,
+    decided: &BTreeMap<LogicalKey, Row>,
     plan: &mut Plan<'_>,
-) -> Res {
+) -> Result<(), EntryError> {
     let metadata_path = folder.join(METADATA_FILE);
     // A base TOML cannot hold was never written, so no file holds it.
     let had_text = base.and_then(|base| render(base, paths).ok());
-    if !metadata_place_free(storage, &metadata_path).await {
-        plan.conflicts.push(PathBuf::from(METADATA_FILE));
-        return Ok(());
-    }
-    let on_disk = bytes_at(storage, &metadata_path).await?;
-    match &on_disk {
-        Some(text) if text == wanted_text.as_bytes() => {}
-        Some(_) if had_text.as_ref() == Some(&wanted_text) => {
+    // `None` where something other than a file is there.
+    let place = if metadata_place_free(storage, &metadata_path).await {
+        Some(bytes_at(storage, &metadata_path).await?)
+    } else {
+        None
+    };
+    match &place {
+        Some(Some(text)) if text == wanted_text.as_bytes() => return Ok(()),
+        Some(Some(_)) if had_text.as_ref() == Some(&wanted_text) => {
             plan.kept.push(PathBuf::from(METADATA_FILE));
+            return Ok(());
         }
-        None => plan.metadata = Some((wanted_text, on_disk)),
-        Some(text) if had_text.as_ref().map(String::as_bytes) == Some(text.as_slice()) => {
-            plan.metadata = Some((wanted_text, on_disk));
+        Some(None) => {
+            plan.metadata = Some((wanted_text, None));
+            return Ok(());
         }
-        Some(_) => plan.conflicts.push(PathBuf::from(METADATA_FILE)),
+        Some(Some(text)) if had_text.as_ref().map(String::as_bytes) == Some(text.as_slice()) => {
+            plan.metadata = Some((wanted_text, Some(text.clone())));
+            return Ok(());
+        }
+        _ => {}
     }
+
+    let key = LogicalKey::new(METADATA_FILE).expect("a logical key");
+    let physical_key = Some(file_url(&metadata_path)?);
+    let current = match &place {
+        Some(Some(text)) => text_side(text, physical_key).await?,
+        _ => Side {
+            physical_key,
+            hash: None,
+            size: None,
+        },
+    };
+    let row = Row {
+        incoming: Some(text_side(wanted_text.as_bytes(), None).await?),
+        current: Some(current),
+        resolved: None,
+    };
+    let Some(resolved) = plan.record(&key, row, decided) else {
+        return Ok(());
+    };
+    let Some(Some(on_disk)) = place else {
+        return Err(refused(&key, NOT_A_FILE));
+    };
+    let text = match source(storage, &resolved, None)
+        .await
+        .map_err(|why| refused(&key, why))?
+    {
+        None => wanted_text,
+        Some(Source::File(path)) => {
+            let bytes = storage
+                .read_bytes(&path)
+                .await
+                .map_err(|err| refused(&key, err))?;
+            let text = String::from_utf8(bytes).map_err(|err| refused(&key, err))?;
+            MetadataFile::parse(Some(&text)).map_err(|why| refused(&key, why))?;
+            text
+        }
+        Some(_) => return Err(refused(&key, "it takes \"\" or a file:// URL")),
+    };
+    plan.metadata = Some((text, Some(on_disk)));
     Ok(())
+}
+
+async fn text_side(text: &[u8], physical_key: Option<String>) -> Res<Side> {
+    Ok(Side {
+        physical_key,
+        hash: Some(hash_bytes(text, MULTIHASH_SHA256).await?),
+        size: Some(text.len() as u64),
+    })
 }
 
 /// Whether nothing is at `path`. An error that cannot say, such as a folder
@@ -567,14 +833,14 @@ async fn as_planned(
     step: &Step<'_>,
     deletes: bool,
 ) -> Res<bool> {
-    let path = step.key().join_to(folder);
+    let path = step.key.join_to(folder);
     if storage.is_symlink(&path).await {
         return Ok(false);
     }
-    if deletes && step.want.is_some() && step.had.is_some() && !storage.exists(&path).await {
+    if deletes && step.source.is_some() && step.had.is_some() && !storage.exists(&path).await {
         return Ok(false);
     }
-    Ok(match step.had {
+    Ok(match &step.had {
         Some(had) => !edited(storage, &path, had).await?,
         None => !storage.exists(&path).await,
     })
@@ -659,8 +925,14 @@ async fn apply(
     let deletes = sync_base.is_some();
     // A linked folder would put a write or a deletion outside the folder. Asked
     // before the fetch, and again after it.
-    refuse_linked_ancestors(storage, folder, steps.iter().map(Step::key)).await?;
-    let fetch: Vec<ManifestRow> = steps.iter().filter_map(|step| step.want.cloned()).collect();
+    refuse_linked_ancestors(storage, folder, steps.iter().map(|step| step.key)).await?;
+    let fetch: Vec<ManifestRow> = steps
+        .iter()
+        .filter_map(|step| match step.source {
+            Some(Source::Revision(row)) => Some(row.clone()),
+            _ => None,
+        })
+        .collect();
     if !fetch.is_empty() {
         let fetched = install_to(
             storage,
@@ -680,9 +952,35 @@ async fn apply(
     // A revision some of whose bytes are gone cannot be read whole, and a
     // folder holding part of it under the old base would read as local work.
     if !report.skipped.is_empty() || !report.hash_mismatch.is_empty() {
+        report.resolved.clear();
         return Ok(false);
     }
-    refuse_linked_ancestors(storage, folder, steps.iter().map(Step::key)).await?;
+    for step in steps {
+        let staged = step.key.join_to(staging);
+        match &step.source {
+            Some(Source::File(path)) => {
+                storage
+                    .create_dir_all(staged.parent().unwrap_or(staging))
+                    .await?;
+                storage.copy(path, &staged).await?;
+            }
+            // S3 refuses a version it does not hold, so these are its bytes.
+            Some(Source::Object(uri)) => {
+                let object = remote
+                    .get_object_stream(revision.origin.as_ref(), uri)
+                    .await
+                    .map_err(|err| refused(step.key, err))?;
+                storage
+                    .create_dir_all(staged.parent().unwrap_or(staging))
+                    .await?;
+                storage
+                    .write_staged_byte_stream(&staged, object.body)
+                    .await?;
+            }
+            Some(Source::Revision(_)) | None => {}
+        }
+    }
+    refuse_linked_ancestors(storage, folder, steps.iter().map(|step| step.key)).await?;
     if let Some((base, paths)) = sync_base
         && gone(storage, folder, base, paths).await?
     {
@@ -692,7 +990,7 @@ async fn apply(
     // whole, then each again right before its own change.
     for step in steps {
         if !as_planned(storage, folder, step, deletes).await? {
-            return Err(EntryError::Changed(step.key().to_path_buf()));
+            return Err(EntryError::Changed(step.key.to_path_buf()));
         }
     }
     if let Some((_, planned_on)) = metadata
@@ -701,13 +999,13 @@ async fn apply(
         return Err(EntryError::Changed(PathBuf::from(METADATA_FILE)));
     }
     for step in steps {
-        let key = step.key();
+        let key = step.key;
         let path = key.join_to(folder);
         if !as_planned(storage, folder, step, deletes).await? {
             return Err(EntryError::Changed(key.to_path_buf()));
         }
         refuse_linked_ancestors(storage, folder, std::iter::once(key)).await?;
-        if step.want.is_some() {
+        if step.source.is_some() {
             if let Some(parent) = path.parent() {
                 storage.create_dir_all(parent).await?;
             }

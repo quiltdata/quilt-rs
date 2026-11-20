@@ -141,7 +141,13 @@ its message, workflow and metadata, with `"$NULL"` for JSON `null`. A revision
 holding an integer beyond TOML's 64 bits is refused. It uses no Domain; the
 domain folder supplies only a catalog's login. A file changed
 here is kept, unless the revision changed it too: then that package is blocked,
-nothing of it changes, and the colliding files are listed. Each package read
+nothing of it changes, and the colliding files are listed and written to the
+dataspace's `conflict.json`, under the package, with what the revision
+(`incoming`) and the folder (`current`) hold. Set a file's `resolved` there to
+`""` to delete it, or to the `file://` URL or versioned `s3://` URL of the file
+to put there, and the next `read` takes it while the row still describes both
+sides; a file so deleted is filled again by a later `read`, as any missing file
+is. Each package read
 whole has its revision recorded in `data.lock.toml`, and `latest` is never
 moved. A working folder that is missing or empty is filled at the revision the
 lock names, unless `data.toml` names one or that revision can no longer be read
@@ -154,8 +160,8 @@ It exits 1 when any package was not read whole. Under `--json` it prints
 `dataspace`, `completed` and `entries`, each with `package`, `folder`,
 `outcome` (`read`, `refilled`, `incomplete`, `blocked`, `unpushed` or
 `failed`),
-`completed`, `revision`, the `placed`, `removed`, `kept`, `skipped`,
-`hash_mismatch` and `conflicts` lists, and `error`.
+`completed`, `revision`, the `placed`, `removed`, `kept`, `resolved`,
+`skipped`, `hash_mismatch` and `conflicts` lists, and `error`.
 
 `publish <DATASPACE>` publishes each package the folder's `data.toml` lists
 under `write` or `replace` from its working folder, with no Domain: `write`
