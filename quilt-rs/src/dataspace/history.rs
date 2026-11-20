@@ -113,8 +113,8 @@ pub async fn history(
             .find(|(key, _)| current(key) == wanted)
             .map(|(_, locked)| locked)
     });
-    if let (Registry::Local(name), Some(names)) = (&package.registry, &names)
-        && !names.answers_to(name)
+    if let Registry::Local(name) = &package.registry
+        && !names.as_ref().is_some_and(|names| names.answers_to(name))
     {
         return Err(EntryError::LocalRegistry.into());
     }

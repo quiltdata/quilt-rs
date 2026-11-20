@@ -155,6 +155,22 @@ async fn a_local_registry_history_marks_the_unpublished_commit_local() -> Res {
     Ok(())
 }
 
+/// A local registry the Domain has never named, or names otherwise, has no
+/// history under that name.
+#[test(tokio::test)]
+async fn a_local_registry_not_named_so_has_no_history() -> Res {
+    let world = World::new("sync = [\"quilt+local://lab-mac#package=me/out\"]")?;
+    let package = PackageKey {
+        registry: Registry::Local("lab-mac".to_string()),
+        package: Namespace::try_from("me/out")?,
+    };
+
+    assert!(world.history(&package).await.is_err());
+    world.local_named("other").await?;
+    assert!(world.history(&package).await.is_err());
+    Ok(())
+}
+
 /// Commits only the lock names have no time, and are still the newest, the
 /// last of them first.
 #[test(tokio::test)]
