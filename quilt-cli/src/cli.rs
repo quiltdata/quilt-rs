@@ -12,6 +12,7 @@ use clap::builder::TypedValueParser as _;
 use tracing::log;
 
 use quilt_rs::dataspace::contract::PackageKey;
+use quilt_rs::dataspace::publish_all::PublishAllError;
 use quilt_rs::dataspace::read_all::ReadAllError;
 use quilt_rs::dataspace::reattach::ReattachError;
 use quilt_rs::domain::DOMAIN_DIR_NAME;
@@ -36,6 +37,7 @@ mod list;
 mod login;
 mod model;
 mod output;
+mod publish;
 mod pull;
 mod push;
 mod read;
@@ -663,6 +665,18 @@ enum Commands {
         #[arg(long, conflicts_with = "workflow")]
         no_workflow: bool,
     },
+    /// Publish a dataspace's `write` and `replace` entries from their working
+    /// folders, with no Domain
+    ///
+    /// Leaves out what the ignore rules leave out of a commit. A package also
+    /// under `read` publishes only on its base, and is read first where
+    /// `latest` has moved. Records each revision that became `latest` in
+    /// `data.lock.toml`. Exits 1 unless `latest` holds every package's folder.
+    Publish {
+        /// The dataspace: the folder holding `data.toml`
+        #[arg(value_name = "DATASPACE")]
+        dataspace: PathBuf,
+    },
     /// Read a dataspace's `read` entries into their working folders, with no
     /// Domain
     ///
@@ -849,6 +863,9 @@ pub async fn init(args: Args) -> Result<Std, Error> {
     // It uses no Domain, so it runs before anything touches one.
     if let Commands::Read { dataspace } = args.command {
         return Ok(read::command(root_dir, read::Input { dataspace }).await);
+    }
+    if let Commands::Publish { dataspace } = args.command {
+        return Ok(publish::command(root_dir, publish::Input { dataspace }).await);
     }
     if let Commands::Reattach {
         dataspace,
@@ -1092,7 +1109,10 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             Ok(uninstall::command(m, args).await)
         }
         Commands::Upgrade => Ok(upgrade::command()),
-        Commands::Version { .. } | Commands::Read { .. } | Commands::Reattach { .. } => {
+        Commands::Version { .. }
+        | Commands::Read { .. }
+        | Commands::Publish { .. }
+        | Commands::Reattach { .. } => {
             unreachable!("handled before the domain is opened")
         }
         Commands::Lineage { .. } => unreachable!("handled before the lineage is read"),
@@ -1138,6 +1158,9 @@ Then run:
 
     #[error(transparent)]
     Dataspace(#[from] ReadAllError),
+
+    #[error(transparent)]
+    Publish(#[from] PublishAllError),
 
     #[error(transparent)]
     Reattach(#[from] ReattachError),
@@ -1242,6 +1265,12 @@ impl Error {
                 ReadAllError::Contract(_) => "contract",
                 ReadAllError::Lock(_) => "lock",
                 ReadAllError::Mismatch(_) => "lock_mismatch",
+                _ => "dataspace",
+            },
+            Error::Publish(err) => match err {
+                PublishAllError::Contract(_) => "contract",
+                PublishAllError::Lock(_) => "lock",
+                PublishAllError::Mismatch(_) => "lock_mismatch",
                 _ => "dataspace",
             },
             Error::Reattach(err) => match err {
@@ -1439,6 +1468,13 @@ mod tests {
         for (err, expected) in cases {
             assert_eq!(err.kind(), expected, "kind for {err:?}");
         }
+    }
+
+    /// [`error_kinds_are_stable`] for `publish`'s refusal of another's lock.
+    #[test]
+    fn publish_error_kinds_are_stable() {
+        let mismatch = PublishAllError::Mismatch(vec![quilt_rs::dataspace::lock::Mismatch::Host]);
+        assert_eq!(Error::from(mismatch).kind(), "lock_mismatch");
     }
 
     /// [`error_kinds_are_stable`] for `reattach`'s own refusals.

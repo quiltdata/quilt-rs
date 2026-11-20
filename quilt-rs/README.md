@@ -125,9 +125,16 @@ folder:
   other keys, composing again on a `latest` that moves meanwhile; `replace`
   publishes the folder as the whole package. `metadata.toml` sets the message
   and the metadata whole, under the entry's paths for its files and folders,
-  and with no such file the metadata is kept. A revision that does
-  not become `latest` is still stored, and `Published::Stored` carries its
-  hash.
+  and with no such file the metadata is kept. What the ignore rules leave out
+  of a commit is not published. On `Base::Locked` it publishes only while
+  `latest` is that base, and `Published::Behind` says when it is not. A
+  revision that does not become `latest` is still stored, and
+  `Published::Stored` carries its hash.
+- `dataspace::publish_all::publish_all` publishes every `write` and `replace`
+  entry of a dataspace, then writes `data.lock.toml`, moving a package's base
+  only where its revision became `latest`. A package also under `read`
+  publishes only on its base, read first where `latest` has moved past it.
+  A lock written for another folder, host or user is refused.
 - `dataspace::reattach::unattached` lists a package's commits in its bucket's
   `RegistryStore` that the bucket does not hold and `data.lock.toml` does not
   name, as after the lock was deleted. `dataspace::reattach::reattach`

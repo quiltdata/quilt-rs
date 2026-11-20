@@ -6,6 +6,7 @@ pub mod contract;
 pub mod lock;
 mod metadata;
 pub mod publish;
+pub mod publish_all;
 pub mod read;
 pub mod read_all;
 pub mod reattach;

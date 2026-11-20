@@ -20,11 +20,36 @@ const FIRST: &str = "11111111111111111111111111111111111111111111111111111111111
 const SECOND: &str = "2222222222222222222222222222222222222222222222222222222222222222";
 const THIRD: &str = "3333333333333333333333333333333333333333333333333333333333333333";
 const FOURTH: &str = "4444444444444444444444444444444444444444444444444444444444444444";
+const NO_USER_RULES: &str = "/no-user-rules/.quiltignore";
+
+/// [`super::publish`] on the `latest` read just before, with no user-wide
+/// ignore rules.
+async fn publish(
+    storage: &(impl Storage + Sync),
+    remote: &impl Remote,
+    entry: &Entry,
+    message: Option<&str>,
+) -> Result<Published, EntryError> {
+    Box::pin(super::publish(
+        storage,
+        remote,
+        entry,
+        message,
+        Base::Latest,
+        Path::new(NO_USER_RULES),
+    ))
+    .await
+}
 
 fn entry(packages: &str) -> Entry {
+    entry_in(Path::new(DATASPACE), packages)
+}
+
+/// The first entry of a contract in `dataspace`.
+fn entry_in(dataspace: &Path, packages: &str) -> Entry {
     let text = format!("registry = \"s3://b\"\n[packages]\n{packages}");
-    let contract = Contract::parse(text.as_bytes(), Path::new(DATASPACE), FolderCase::Sensitive)
-        .expect("contract");
+    let contract =
+        Contract::parse(text.as_bytes(), dataspace, FolderCase::Sensitive).expect("contract");
     contract.entries()[0].clone()
 }
 
@@ -1386,5 +1411,204 @@ async fn a_publish_takes_the_buckets_default_workflow() -> Res {
         workflow.and_then(|workflow| workflow.id).map(|id| id.id),
         Some("gate".to_string())
     );
+    Ok(())
+}
+
+/// Writes each of `files` in `folder`, on the disk the storage keeps.
+fn write_on_disk(folder: &Path, files: &[(&str, &str)]) -> std::io::Result<()> {
+    for (key, body) in files {
+        let path = folder.join(key);
+        std::fs::create_dir_all(path.parent().expect("a folder"))?;
+        std::fs::write(path, body)?;
+    }
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn files_the_ignore_rules_leave_out_of_a_commit_are_not_published() -> Res {
+    let remote = MockRemote::default();
+    let storage = &remote.storage;
+    seed(
+        &remote,
+        FIRST,
+        &[("a.txt", b"a")],
+        ManifestHeader::default(),
+    )
+    .await?;
+    let entry = entry_in(
+        &storage.temp_dir.path().join("rnaseq"),
+        "write = [\"team/raw\"]",
+    );
+    let user_rules = storage.temp_dir.path().join("user.quiltignore");
+    std::fs::write(&user_rules, "*.tmp\n")?;
+    write_on_disk(
+        &entry.folder,
+        &[
+            (".quiltignore", "*.log\n"),
+            ("new.txt", "n"),
+            ("run.log", "l"),
+            ("scratch.tmp", "t"),
+            (".env", "SECRET=1"),
+            ("cache/.DS_Store", "d"),
+            ("node_modules/x.js", "x"),
+        ],
+    )?;
+
+    let outcome = Box::pin(super::publish(
+        storage,
+        &remote,
+        &entry,
+        None,
+        Base::Latest,
+        &user_rules,
+    ))
+    .await?;
+
+    let published = revision(&remote, advanced(&outcome)).await?;
+    assert_eq!(keys(&published), [".quiltignore", "a.txt", "new.txt"]);
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_key_latest_has_is_left_out_only_by_the_folders_own_rules() -> Res {
+    let remote = MockRemote::default();
+    let storage = &remote.storage;
+    seed(
+        &remote,
+        FIRST,
+        &[(".env", b"old"), ("old.csv", b"o"), ("a.txt", b"a")],
+        ManifestHeader::default(),
+    )
+    .await?;
+    let entry = entry_in(
+        &storage.temp_dir.path().join("rnaseq"),
+        "replace = [\"team/raw\"]",
+    );
+    write_on_disk(
+        &entry.folder,
+        &[
+            (".quiltignore", "old.csv\n"),
+            (".env", "new"),
+            ("old.csv", "o"),
+            ("a.txt", "a"),
+        ],
+    )?;
+
+    let outcome = publish(storage, &remote, &entry, None).await?;
+
+    let published = revision(&remote, advanced(&outcome)).await?;
+    assert_eq!(keys(&published), [".env", ".quiltignore", "a.txt"]);
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_publish_on_a_base_latest_has_moved_past_publishes_nothing() -> Res {
+    let remote = MockRemote::default();
+    let storage = &remote.storage;
+    seed(
+        &remote,
+        SECOND,
+        &[("a.txt", b"A")],
+        ManifestHeader::default(),
+    )
+    .await?;
+    write(storage, "mine.txt", b"m").await?;
+
+    let outcome = Box::pin(super::publish(
+        storage,
+        &remote,
+        &entry("write = [\"team/raw\"]"),
+        None,
+        Base::Locked(Some(FIRST)),
+        Path::new(NO_USER_RULES),
+    ))
+    .await?;
+
+    assert_eq!(
+        outcome,
+        Published::Behind {
+            latest: Some(SECOND.to_string())
+        }
+    );
+    assert_eq!(outcome.lock_base(), None);
+    assert_eq!(latest_hash(&remote).await?, SECOND);
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_publish_on_a_base_is_not_composed_again_on_a_latest_that_moved() -> Res {
+    let remote = MockRemote::default();
+    let storage = &remote.storage;
+    seed(
+        &remote,
+        FIRST,
+        &[("a.txt", b"a")],
+        ManifestHeader::default(),
+    )
+    .await?;
+    write(storage, "mine.txt", b"m").await?;
+    let entry = entry("write = [\"team/raw\"]");
+
+    let outcome = race(
+        &remote,
+        &[SECOND],
+        &[("theirs.txt", b"t")],
+        Box::pin(super::publish(
+            storage,
+            &remote,
+            &entry,
+            None,
+            Base::Locked(Some(FIRST)),
+            Path::new(NO_USER_RULES),
+        )),
+    )
+    .await?;
+
+    let Published::Stored {
+        revision: stored,
+        latest,
+    } = &outcome
+    else {
+        panic!("expected a stored revision, got {outcome:?}");
+    };
+    assert_eq!(latest.as_deref(), Some(SECOND));
+    assert_eq!(latest_hash(&remote).await?, SECOND);
+    assert_eq!(
+        keys(&revision(&remote, stored).await?),
+        ["a.txt", "mine.txt"],
+        "built on the base"
+    );
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_publish_on_a_base_that_cannot_read_latest_is_refused() -> Res {
+    let remote = MockRemote::default();
+    let storage = &remote.storage;
+    seed(
+        &remote,
+        FIRST,
+        &[("a.txt", b"a")],
+        ManifestHeader::default(),
+    )
+    .await?;
+    remote.deny_reads(LATEST);
+    write(storage, "b.txt", b"b").await?;
+
+    let outcome = Box::pin(super::publish(
+        storage,
+        &remote,
+        &entry("replace = [\"team/raw\"]"),
+        None,
+        Base::Locked(Some(FIRST)),
+        Path::new(NO_USER_RULES),
+    ))
+    .await;
+
+    assert!(
+        matches!(outcome, Err(EntryError::LatestUnreadable)),
+        "{outcome:?}"
+    );
+    assert_eq!(latest_hash(&remote).await?, FIRST);
     Ok(())
 }
