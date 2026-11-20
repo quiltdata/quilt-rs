@@ -190,6 +190,10 @@ pub async fn publish_all(
         if let Some(base) = published_base.or(read.as_ref().and_then(EntryRead::lock_base)) {
             lock.packages.insert(key, based_on(base));
             moved = true;
+        } else if edited && matches!(published, EntryPublish::NotRead) {
+            // The lock is written for this `data.toml`, so it would vouch for
+            // a base the new read paths were never read from.
+            moved |= lock.packages.remove(&key).is_some();
         }
         entries.push(PackagePublish {
             entry: entry.clone(),

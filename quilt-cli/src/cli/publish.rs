@@ -69,11 +69,15 @@ impl std::fmt::Display for Output {
                         write!(f, "; `latest` was moved without checking its base")?;
                     }
                 }
-                EntryPublish::Ran(Published::Stored { revision, latest }) => write!(
-                    f,
-                    "{package}: stored {revision}, which `latest` does not name; it names {}",
-                    latest.as_deref().unwrap_or("another revision")
-                )?,
+                EntryPublish::Ran(Published::Stored { revision, latest }) => {
+                    write!(
+                        f,
+                        "{package}: stored {revision}, which `latest` does not name"
+                    )?;
+                    if let Some(latest) = latest {
+                        write!(f, "; it names {latest}")?;
+                    }
+                }
                 EntryPublish::Ran(Published::Unchanged { .. }) => {
                     write!(f, "{package}: nothing to publish from {folder}")?;
                 }
