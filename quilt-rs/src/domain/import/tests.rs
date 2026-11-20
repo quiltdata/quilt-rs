@@ -189,6 +189,166 @@ async fn pushed_with_commits(old: &Old, namespace: &Namespace, bucket: &str) -> 
     ])
 }
 
+/// One step a [`Recording`] storage saw, by the path it named.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Step {
+    Write(PathBuf),
+    SyncFile(PathBuf),
+    SyncDir(PathBuf),
+    Rename { from: PathBuf, to: PathBuf },
+}
+
+/// [`LocalStorage`] that records the writes, syncs and renames it is asked
+/// for, in order, and that adds a byte to the file `changing`, if any, each
+/// time it is opened: a ref another process rewrites under the import.
+#[derive(Default)]
+struct Recording {
+    inner: LocalStorage,
+    steps: std::sync::Mutex<Vec<Step>>,
+    changing: Option<PathBuf>,
+}
+
+impl Recording {
+    fn record(&self, step: Step) {
+        self.steps.lock().expect("not poisoned").push(step);
+    }
+
+    fn steps(&self) -> Vec<Step> {
+        self.steps.lock().expect("not poisoned").clone()
+    }
+}
+
+impl Storage for Recording {
+    async fn copy(
+        &self,
+        from: impl AsRef<Path> + Send,
+        to: impl AsRef<Path> + Send,
+    ) -> crate::Res<u64> {
+        self.inner.copy(from, to).await
+    }
+    async fn create_dir_all(&self, path: impl AsRef<Path> + Send) -> crate::Res {
+        self.inner.create_dir_all(path).await
+    }
+    async fn create_file(&self, path: impl AsRef<Path>) -> crate::Res<tokio::fs::File> {
+        self.inner.create_file(path).await
+    }
+    async fn exists(&self, path: impl AsRef<Path>) -> bool {
+        self.inner.exists(path).await
+    }
+    async fn is_file(&self, path: impl AsRef<Path>) -> bool {
+        self.inner.is_file(path).await
+    }
+    async fn modified_timestamp(
+        &self,
+        path: impl AsRef<Path>,
+    ) -> crate::Res<chrono::DateTime<chrono::Utc>> {
+        self.inner.modified_timestamp(path).await
+    }
+    async fn open_file(&self, path: impl AsRef<Path> + Send) -> crate::Res<tokio::fs::File> {
+        if self.changing.as_deref() == Some(path.as_ref()) {
+            let mut bytes = std::fs::read(path.as_ref())?;
+            bytes.push(b' ');
+            std::fs::write(path.as_ref(), bytes)?;
+        }
+        self.inner.open_file(path).await
+    }
+    async fn read_byte_stream(
+        &self,
+        path: impl AsRef<Path> + Send + Sync,
+    ) -> crate::Res<ByteStream> {
+        self.inner.read_byte_stream(path).await
+    }
+    async fn read_dir(
+        &self,
+        path: impl AsRef<Path> + Send + Sync,
+    ) -> crate::Res<tokio::fs::ReadDir> {
+        self.inner.read_dir(path).await
+    }
+    async fn remove_dir(&self, path: impl AsRef<Path> + Send) -> crate::Res {
+        self.inner.remove_dir(path).await
+    }
+    async fn remove_dir_all(&self, path: impl AsRef<Path> + Send) -> crate::Res {
+        self.inner.remove_dir_all(path).await
+    }
+    async fn remove_file(&self, path: impl AsRef<Path> + Send) -> std::io::Result<()> {
+        self.inner.remove_file(path).await
+    }
+    async fn rename(
+        &self,
+        from: impl AsRef<Path> + Send,
+        to: impl AsRef<Path> + Send,
+    ) -> crate::Res {
+        self.record(Step::Rename {
+            from: from.as_ref().to_path_buf(),
+            to: to.as_ref().to_path_buf(),
+        });
+        self.inner.rename(from, to).await
+    }
+    async fn write_byte_stream(
+        &self,
+        path: impl AsRef<Path> + Send + Sync,
+        body: ByteStream,
+    ) -> crate::Res {
+        self.record(Step::Write(path.as_ref().to_path_buf()));
+        self.inner.write_byte_stream(path, body).await
+    }
+    async fn write_byte_stream_via(
+        &self,
+        path: impl AsRef<Path> + Send + Sync,
+        temp_name: impl AsRef<Path> + Send + Sync,
+        body: ByteStream,
+        tag: Option<&'static str>,
+    ) -> crate::Res {
+        self.record(Step::Write(path.as_ref().to_path_buf()));
+        self.inner
+            .write_byte_stream_via(path, temp_name, body, tag)
+            .await
+    }
+    async fn sync_dir(&self, path: impl AsRef<Path> + Send) {
+        self.record(Step::SyncDir(path.as_ref().to_path_buf()));
+        self.inner.sync_dir(path).await;
+    }
+    async fn sync_file(&self, path: impl AsRef<Path> + Send) -> crate::Res {
+        self.record(Step::SyncFile(path.as_ref().to_path_buf()));
+        self.inner.sync_file(path).await
+    }
+    async fn create_private_dir(&self, path: impl AsRef<Path> + Send) -> crate::Res {
+        self.inner.create_private_dir(path).await
+    }
+    async fn write_private_byte_stream(
+        &self,
+        path: impl AsRef<Path> + Send + Sync,
+        body: ByteStream,
+    ) -> crate::Res {
+        self.record(Step::Write(path.as_ref().to_path_buf()));
+        self.inner.write_private_byte_stream(path, body).await
+    }
+    async fn lock_exclusive(
+        &self,
+        path: impl AsRef<Path> + Send,
+    ) -> crate::Res<crate::io::storage::LockGuard> {
+        self.inner.lock_exclusive(path).await
+    }
+    async fn try_lock_exclusive(
+        &self,
+        path: impl AsRef<Path> + Send,
+    ) -> crate::Res<Option<crate::io::storage::LockGuard>> {
+        self.inner.try_lock_exclusive(path).await
+    }
+}
+
+/// Whether the file system holding `dir` keeps two names differing only in
+/// case apart, counted by listing a folder rather than by asking for a name.
+fn keeps_case(dir: &Path) -> std::io::Result<bool> {
+    let probe = dir.join("probe");
+    std::fs::create_dir(&probe)?;
+    std::fs::write(probe.join("a"), "")?;
+    std::fs::write(probe.join("A"), "")?;
+    let kept = std::fs::read_dir(&probe)?.count() == 2;
+    std::fs::remove_dir_all(&probe)?;
+    Ok(kept)
+}
+
 fn key(registry: Registry, namespace: &Namespace) -> PackageKey {
     PackageKey {
         registry,
@@ -702,5 +862,242 @@ async fn the_autosync_list_moves_from_the_queue_to_domain_json() -> Res {
     let queue = crate::queue::Queue::open(&old.domain().queue_db()).await?;
     assert_eq!(queue.jobs().await?, Vec::new());
     assert_eq!(old.snapshot()?, before);
+    Ok(())
+}
+
+/// Each object is synced before it takes its name, and the folders the
+/// copies made before the import records itself done, so a power loss after
+/// `done` loses nothing the lock names.
+#[test(tokio::test)]
+async fn the_copies_are_durable_before_the_import_is_done() -> Res {
+    let old = Old::new()?;
+    let namespace = Namespace::from(("acme", "demo"));
+    pushed_with_commits(&old, &namespace, "bucket").await?;
+    // A bucket named for a store's own folder is still a store to sync.
+    pushed_with_commits(&old, &Namespace::from(("acme", "other")), "packages").await?;
+    let storage = Recording::default();
+
+    import(&storage, &old.app(), &old.domain()).await?;
+
+    let steps = storage.steps();
+    let done = steps
+        .iter()
+        .rposition(|step| *step == Step::Write(old.domain().domain_file()))
+        .expect("the import recorded done");
+    let store = old.domain().registry("bucket")?;
+    let objects = std::fs::read_dir(store.objects_dir())?
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<Result<Vec<_>, _>>()?;
+    assert_ne!(objects, Vec::<PathBuf>::new());
+    for object in &objects {
+        let renamed = steps
+            .iter()
+            .position(|step| matches!(step, Step::Rename { to, .. } if to == object))
+            .expect("copied by way of a temp");
+        let Step::Rename { from: temp, .. } = &steps[renamed] else {
+            unreachable!("found as a rename");
+        };
+        assert!(
+            steps[..renamed].contains(&Step::SyncFile(temp.clone())),
+            "{object:?} is synced before it takes its name"
+        );
+    }
+    let manifest = steps
+        .iter()
+        .position(|step| matches!(step, Step::Write(path) if path.parent() == Some(&store.installed_manifests_dir(&namespace))))
+        .expect("the manifest was written");
+    assert!(
+        steps[..manifest].contains(&Step::SyncDir(store.objects_dir())),
+        "the objects folder is synced before a manifest naming its objects is written"
+    );
+    for folder in [
+        store.objects_dir(),
+        store.installed_manifests_dir(&namespace),
+        store.dir().to_path_buf(),
+        old.domain().registry("packages")?.objects_dir(),
+        old.domain().root().to_path_buf(),
+    ] {
+        assert!(
+            steps[..done].contains(&Step::SyncDir(folder.clone())),
+            "{folder:?} is synced before the import is done"
+        );
+    }
+    Ok(())
+}
+
+/// The queue copied beside `state.db` is synced before the import is done.
+#[test(tokio::test)]
+async fn the_copied_queue_is_synced_before_the_import_is_done() -> Res {
+    let old = Old::new()?;
+    rusqlite::Connection::open(old.paths.queue_db())?.execute_batch(
+        "CREATE TABLE autosync (dataspace BLOB NOT NULL UNIQUE); PRAGMA user_version = 1;",
+    )?;
+    let storage = Recording::default();
+
+    import(&storage, &old.app(), &old.domain()).await?;
+
+    let steps = storage.steps();
+    let done = steps
+        .iter()
+        .rposition(|step| *step == Step::Write(old.domain().domain_file()))
+        .expect("the import recorded done");
+    assert!(
+        steps[..done].contains(&Step::SyncFile(old.domain().queue_db())),
+        "the queue is synced before the import is done"
+    );
+    Ok(())
+}
+
+/// Two packages whose names differ only in case are one folder on a drive
+/// that ignores case, so the import refuses them, saying so, before it
+/// copies or records anything. Where case is kept, both are imported.
+#[test(tokio::test)]
+async fn names_differing_only_in_case_are_refused_where_case_is_ignored() -> Res {
+    let old = Old::new()?;
+    // Where case is ignored, the old domain can't hold both refs either.
+    if !keeps_case(old.dir.path())? {
+        return Ok(());
+    }
+    pushed_with_commits(&old, &("acme", "Demo").into(), "bucket").await?;
+    pushed_with_commits(&old, &("acme", "demo").into(), "bucket").await?;
+
+    let refused = import_comparing(
+        &old.storage,
+        &old.app(),
+        &old.domain(),
+        Some(FolderCase::Insensitive),
+    )
+    .await;
+
+    assert!(
+        matches!(&refused, Err(ImportError::Contract(err))
+            if matches!(**err, ContractError::FoldersOverlap { .. })),
+        "{refused:?}"
+    );
+    assert!(!old.domain().domain_file().exists());
+    assert!(!old.domain().root().join("registries/bucket").exists());
+    assert!(!old.home().join(CONTRACT_FILE).exists());
+
+    let imported = old.import().await?;
+    assert_eq!(imported.packages.len(), 2);
+    Ok(())
+}
+
+/// A package whose ref keeps changing while it is copied stops the import,
+/// naming the package, and leaves it to be run again.
+#[test(tokio::test)]
+async fn a_package_that_keeps_changing_stops_the_import() -> Res {
+    let old = Old::new()?;
+    let namespace = Namespace::from(("acme", "demo"));
+    pushed_with_commits(&old, &namespace, "bucket").await?;
+    let storage = Recording {
+        changing: Some(old.paths.package_ref(&namespace)),
+        ..Recording::default()
+    };
+
+    let stopped = import(&storage, &old.app(), &old.domain()).await;
+
+    assert!(
+        matches!(&stopped, Err(ImportError::Changing(name)) if **name == namespace),
+        "{stopped:?}"
+    );
+    let record = old.domain().read_file(&old.storage).await?;
+    assert_eq!(
+        record
+            .and_then(|file| file.import)
+            .map(|record| record.done),
+        Some(false)
+    );
+    Ok(())
+}
+
+/// A package with no revision, published or committed, is left out, with a
+/// bucket or without; one whose entry the contract refuses on its own is left
+/// out with the reason, and costs no other package.
+#[test(tokio::test)]
+async fn a_package_with_no_revision_or_no_entry_is_left_out() -> Res {
+    let old = Old::new()?;
+    let bucketed = Namespace::from(("acme", "empty"));
+    let local = Namespace::from(("me", "empty"));
+    let colliding = Namespace::from(("acme", "colliding"));
+    let kept = Namespace::from(("acme", "kept"));
+    old.install(
+        &bucketed,
+        &PackageLineage {
+            remote_uri: Some(remote("bucket", &bucketed, "")),
+            sync_scope: SyncScope::EntirePackage,
+            ..PackageLineage::default()
+        },
+    )
+    .await?;
+    old.install(
+        &local,
+        &PackageLineage {
+            sync_scope: SyncScope::EntirePackage,
+            ..PackageLineage::default()
+        },
+    )
+    .await?;
+    let base = old
+        .commit(&colliding, PackageLineage::default(), &[("a.txt", b"a")])
+        .await?
+        .commit
+        .expect("a commit")
+        .hash;
+    // `a.txt` as a file and as a folder.
+    old.install(
+        &colliding,
+        &PackageLineage {
+            remote_uri: Some(remote("bucket", &colliding, &base)),
+            base_hash: base.clone(),
+            latest_hash: base,
+            paths: tracked(&["a.txt", "a.txt/b.txt"]),
+            sync_scope: SyncScope::IndividualFiles,
+            ..PackageLineage::default()
+        },
+    )
+    .await?;
+    pushed_with_commits(&old, &kept, "bucket").await?;
+
+    let imported = old.import().await?;
+
+    assert_eq!(imported.packages[&bucketed], PackageImport::NoRevision);
+    assert_eq!(imported.packages[&local], PackageImport::NoRevision);
+    assert!(
+        matches!(
+            &imported.packages[&colliding],
+            PackageImport::Undeclarable { key, reason }
+                if key.package == colliding && reason.contains("both a file and a folder")
+        ),
+        "{:?}",
+        imported.packages[&colliding]
+    );
+    assert!(matches!(
+        imported.packages[&kept],
+        PackageImport::Locked { .. }
+    ));
+    let (contract, _) = old.dataspace().await?;
+    let declared: Vec<&Namespace> = contract.entries().iter().map(|e| &e.package).collect();
+    assert_eq!(declared, [&kept]);
+    Ok(())
+}
+
+/// An import stopped part way is finished from the folder it began with:
+/// one from another folder is refused, naming the first.
+#[test(tokio::test)]
+async fn an_unfinished_import_refuses_one_from_another_folder() -> Res {
+    let old = Old::new()?;
+    pushed_with_commits(&old, &("acme", "demo").into(), "bucket").await?;
+    let stopped = crate::failpoint::stopping_at("import.package", 0, old.import()).await;
+    assert!(stopped.is_err());
+    let other = Old::new()?;
+    pushed_with_commits(&other, &("acme", "other").into(), "bucket").await?;
+
+    let refused = import(&other.storage, &other.app(), &old.domain()).await;
+
+    assert!(
+        matches!(&refused, Err(ImportError::Unfinished(from)) if *from == old.app()),
+        "{refused:?}"
+    );
     Ok(())
 }

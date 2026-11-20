@@ -39,6 +39,7 @@ use crate::dataspace::contract::FolderCase;
 use crate::dataspace::contract::PackageKey;
 use crate::dataspace::contract::Registry;
 use crate::dataspace::contract::dataspace_path;
+use crate::dataspace::contract::folder_case;
 use crate::dataspace::lock::LOCK_FILE;
 use crate::dataspace::lock::Lock;
 use crate::dataspace::lock::LockEntry;
@@ -237,10 +238,25 @@ impl Package {
 /// Imports the domain kept in `from`, the folder holding `.quilt/`, into
 /// `domain`, leaving `from` as it is. The old home becomes the default
 /// dataspace. The whole import holds `domain.lock`.
+///
+/// Refused before anything is copied where the packages' folders can't all be
+/// declared together, as for names differing only in case on a drive that
+/// ignores case. What is copied is synced before the import records itself done.
 pub async fn import(
     storage: &(impl Storage + Sync),
     from: &Path,
     domain: &DomainRoot,
+) -> Result<Imported, ImportError> {
+    import_comparing(storage, from, domain, None).await
+}
+
+/// [`import`], comparing folder names as `case` says, or where it is `None`
+/// as the drive holding the old home does.
+async fn import_comparing(
+    storage: &(impl Storage + Sync),
+    from: &Path,
+    domain: &DomainRoot,
+    case: Option<FolderCase>,
 ) -> Result<Imported, ImportError> {
     let from = std::path::absolute(from)?;
     let paths = DomainPaths::new(from.clone());
@@ -280,6 +296,18 @@ pub async fn import(
         }
     }
 
+    let local_name = domain.local().names(storage).await?.name;
+    let target = Target {
+        domain,
+        dataspace: &dataspace,
+        local_name: &local_name,
+    };
+    let case = match case {
+        Some(case) => case,
+        None => folder_case(storage, &dataspace).await?,
+    };
+    check_together(storage, &refs, &target, &namespaces, case).await?;
+
     let mut record = DomainFile {
         default_dataspace: Some(dataspace.clone()),
         autosync: Vec::new(),
@@ -291,17 +319,11 @@ pub async fn import(
     if !resuming {
         domain.write_file(storage, &record).await?;
     }
-    let local_name = domain.local().names(storage).await?.name;
 
     let mut packages = BTreeMap::new();
     let mut declarations = Vec::new();
     let mut entries = BTreeMap::new();
     let mut buckets = BTreeSet::new();
-    let target = Target {
-        domain,
-        dataspace: &dataspace,
-        local_name: &local_name,
-    };
     for namespace in namespaces {
         let package = import_package(storage, &paths, &refs, &target, &namespace).await?;
         if let Some(declaration) = package.declaration {
@@ -321,6 +343,7 @@ pub async fn import(
         copy_cached_manifests(storage, &paths, domain, bucket).await?;
     }
     let autosync = move_queue(storage, &paths, domain).await?;
+    sync_folders(storage, domain).await?;
     write_dataspace(storage, &target, &declarations, entries).await?;
 
     record.autosync.clone_from(&autosync);
@@ -356,6 +379,73 @@ async fn resuming(
     }
 }
 
+/// Refuses the import, before anything is copied, where the entries it would
+/// write can't be read back together under `case`: two packages whose names
+/// differ only in case are one folder on a drive that ignores it. A package
+/// the import would leave out for a reason known before copying is not
+/// counted; one left out only on copying, as [`PackageImport::LocalTaken`], is.
+async fn check_together(
+    storage: &(impl Storage + Sync),
+    refs: &RefStore,
+    target: &Target<'_>,
+    namespaces: &BTreeSet<Namespace>,
+    case: FolderCase,
+) -> Result<(), ImportError> {
+    let mut declarations = Vec::new();
+    for namespace in namespaces {
+        let Ok(lineage) = refs.read(storage, namespace).await else {
+            continue;
+        };
+        let Ok((key, catalog)) = target.key(namespace, &lineage) else {
+            continue;
+        };
+        if lineage.base_hash.is_empty() && commits_since_base(&lineage).is_empty() {
+            continue;
+        }
+        if let Ok(declaration) = target.declared(declare(&key, catalog, &lineage), key) {
+            declarations.push(declaration);
+        }
+    }
+    let text = contract_text(&declarations).map_err(std::io::Error::other)?;
+    Contract::parse(
+        text.as_bytes(),
+        target.dataspace,
+        case,
+        Some(target.local_name),
+    )?;
+    Ok(())
+}
+
+/// Syncs each folder under the Domain's `registries/`, and the root, so the
+/// folders the copies made survive a power loss as the copies do: this run's
+/// and those of a run that stopped part way. A store's own `objects/` and
+/// `packages/` hold only files, so they are synced and not listed.
+async fn sync_folders(storage: &(impl Storage + Sync), domain: &DomainRoot) -> Res {
+    // Each folder with its depth below `registries/`: a store is at 1.
+    let mut folders = vec![(domain.root().join(super::REGISTRIES_DIR), 0)];
+    while let Some((folder, depth)) = folders.pop() {
+        let mut entries = match storage.read_dir(&folder).await {
+            Ok(entries) => entries,
+            Err(err) if err.is_not_found() => continue,
+            Err(err) => return Err(err),
+        };
+        storage.sync_dir(&folder).await;
+        while let Some(entry) = entries.next_entry().await? {
+            if !entry.file_type().await?.is_dir() {
+                continue;
+            }
+            let name = entry.file_name();
+            if depth == 1 && (name == OBJECTS_DIR || name == super::PACKAGES_DIR) {
+                storage.sync_dir(entry.path()).await;
+            } else {
+                folders.push((entry.path(), depth + 1));
+            }
+        }
+    }
+    storage.sync_dir(domain.root()).await;
+    Ok(())
+}
+
 /// Copies the old `queue.db` beside the new `state.db`, and returns the
 /// dataspaces it held on autosync.
 async fn move_queue(
@@ -372,7 +462,12 @@ async fn move_queue(
     if storage.exists(&new_queue).await {
         storage.remove_file(&new_queue).await?;
     }
-    Ok(copy_queue(&old_queue, &new_queue).await?)
+    let autosync = copy_queue(&old_queue, &new_queue).await?;
+    // A queue this build can't read is skipped, and no copy is made.
+    if storage.is_file(&new_queue).await {
+        storage.sync_file(&new_queue).await?;
+    }
+    Ok(autosync)
 }
 
 /// Writes the default dataspace's contract, then its lock.
@@ -413,6 +508,34 @@ struct Target<'a> {
 }
 
 impl Target<'_> {
+    /// The key the package of `lineage` is imported under, and its catalog:
+    /// its bucket's, or the local registry's where it has no remote. Where
+    /// its bucket has no Package Store, what then becomes of it.
+    fn key(
+        &self,
+        namespace: &Namespace,
+        lineage: &PackageLineage,
+    ) -> Result<(PackageKey, Option<Host>), Box<PackageImport>> {
+        let Some(remote) = &lineage.remote_uri else {
+            let key = PackageKey {
+                registry: Registry::Local(self.local_name.to_string()),
+                package: namespace.clone(),
+            };
+            return Ok((key, None));
+        };
+        if let Err(err) = self.domain.registry(&remote.bucket) {
+            return Err(Box::new(PackageImport::NoStore {
+                bucket: remote.bucket.clone(),
+                reason: err.to_string(),
+            }));
+        }
+        let key = PackageKey {
+            registry: Registry::S3(remote.bucket.clone()),
+            package: namespace.clone(),
+        };
+        Ok((key, remote.origin.clone()))
+    }
+
     /// `declaration`, unless the contract can't name it, or `None` where
     /// there is none: what then becomes of the package.
     fn declared(
@@ -483,11 +606,11 @@ async fn copy_package(
     };
     let since_base = commits_since_base(&lineage);
     let base = lineage.base_hash.clone();
-    let Some(remote) = &lineage.remote_uri else {
-        let key = PackageKey {
-            registry: Registry::Local(target.local_name.to_string()),
-            package: namespace.clone(),
-        };
+    let (key, catalog) = match target.key(namespace, &lineage) {
+        Ok(key) => key,
+        Err(left_out) => return Ok(Package::left_out(*left_out)),
+    };
+    let Registry::S3(bucket) = &key.registry else {
         let local = target.domain.local();
         copy_manifests(storage, paths, &local, namespace).await?;
         let declaration = match target.declared(declare(&key, None, &lineage), key.clone()) {
@@ -525,21 +648,9 @@ async fn copy_package(
         );
     };
 
-    let store = match target.domain.registry(&remote.bucket) {
-        Ok(store) => store,
-        Err(err) => {
-            return Ok(Package::left_out(PackageImport::NoStore {
-                bucket: remote.bucket.clone(),
-                reason: err.to_string(),
-            }));
-        }
-    };
+    let store = target.domain.registry(bucket)?;
     copy_manifests(storage, paths, &store, namespace).await?;
-    let key = PackageKey {
-        registry: Registry::S3(remote.bucket.clone()),
-        package: namespace.clone(),
-    };
-    let declared = declare(&key, remote.origin.clone(), &lineage);
+    let declared = declare(&key, catalog, &lineage);
     let declaration = match target.declared(declared, key.clone()) {
         Ok(declaration) => declaration,
         Err(left_out) => return Ok(Package::left_out(*left_out)),
@@ -701,6 +812,9 @@ async fn copy_manifests(
                 moved = true;
             }
         }
+        // A manifest that survives a power loss must not outlive the names of
+        // the objects it points at: a run that stopped there skips it.
+        storage.sync_dir(&objects).await;
         let bytes = if moved && top_hash(&manifest)? == hash {
             manifest.try_to_jsonlines()?.into_bytes()
         } else {
@@ -748,7 +862,8 @@ fn top_hash(manifest: &Manifest) -> Res<String> {
 }
 
 /// Copies `from` to `to`, by way of a hidden name beside it, unless `to` is
-/// there already.
+/// there already. The copy is synced before it takes its name; its folder is
+/// synced by [`copy_manifests`] before a manifest naming it is written.
 async fn copy_object(storage: &(impl Storage + Sync), from: &Path, to: &Path) -> Res {
     if storage.is_file(to).await {
         return Ok(());
@@ -758,6 +873,7 @@ async fn copy_object(storage: &(impl Storage + Sync), from: &Path, to: &Path) ->
     let temp = folder.join(temp_name());
     let copied = async {
         storage.copy(from, &temp).await?;
+        storage.sync_file(&temp).await?;
         storage.rename(&temp, to).await
     }
     .await;

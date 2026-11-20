@@ -87,7 +87,10 @@ for a package with no remote, and each ref becomes a `sync` entry in the old
 home's `data.toml` and `data.lock.toml`. The home becomes the default
 dataspace. Going back is using `$DATA_DIR` again; nothing done in the Domain
 since is carried back. An import that stopped part way runs again to the
-end; one that finished does not run again.
+end; one that finished does not run again. What it copies is synced to disk
+before it records itself done. It refuses, before copying anything, packages
+whose folders would be one folder on the home's drive, such as two names that
+differ only in case where the drive ignores case.
 
 ## Auth (`$DATA_DIR/.auth/`)
 
