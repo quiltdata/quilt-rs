@@ -676,6 +676,51 @@ async fn a_folder_turned_into_a_file_loses_the_folders_metadata() -> Res {
 }
 
 #[test(tokio::test)]
+async fn metadata_of_a_folder_that_held_no_files_is_no_change() -> Res {
+    let world = World::synced()?;
+    let folder = crate::manifest::DirMeta::new(
+        LogicalKey::new("empty")?,
+        serde_json::json!({"user_meta": {"units": "m"}}),
+    );
+    world
+        .publish_with_folders("team/raw", FIRST, &[("a.txt", b"v1")], vec![folder])
+        .await?;
+    world.sync().await?;
+
+    let outcome = world.tick().await?;
+
+    assert!(
+        matches!(
+            &outcome,
+            EntrySync::Ran {
+                read: None,
+                published: None
+            }
+        ),
+        "{outcome:?}"
+    );
+    assert_eq!(world.latest().await?, FIRST);
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_package_another_process_holds_is_not_filled() -> Res {
+    let world = World::synced()?;
+    world.publish(FIRST, &[("a.txt", b"v1")]).await?;
+    let store = world.domain().registry("b")?;
+    let _held = world
+        .storage
+        .lock_exclusive(store.package_lock(&package()))
+        .await?;
+
+    let outcome = world.tick().await?;
+
+    assert!(matches!(outcome, EntrySync::Busy), "{outcome:?}");
+    assert_eq!(world.text("a.txt"), None);
+    Ok(())
+}
+
+#[test(tokio::test)]
 async fn a_fill_that_does_not_read_every_entry_whole_leaves_the_dataspace_unfilled() -> Res {
     let world = World::filled(&[("a.txt", b"v1")]).await?;
     // As a lock carried from another checkout is taken up.

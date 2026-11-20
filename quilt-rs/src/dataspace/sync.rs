@@ -291,6 +291,14 @@ async fn fill(
     lock: &mut Lock,
     lock_file: &LockFile<'_, impl Storage + Sync>,
 ) -> Result<EntrySync, Stop> {
+    let Registry::S3(bucket) = &entry.registry;
+    let store = domain.registry(bucket)?;
+    let Some(_held) = storage
+        .try_lock_exclusive(store.package_lock(&entry.package))
+        .await?
+    else {
+        return Ok(EntrySync::Busy);
+    };
     let key = entry.key();
     let mut latest = latest(remote, entry).await?;
     let mut published = None;
@@ -303,14 +311,6 @@ async fn fill(
         } else if latest.as_ref() != Some(&locked.base) {
             return Ok(EntrySync::Diverged { latest });
         } else {
-            let Registry::S3(bucket) = &entry.registry;
-            let store = domain.registry(bucket)?;
-            let Some(_held) = storage
-                .try_lock_exclusive(store.package_lock(&entry.package))
-                .await?
-            else {
-                return Ok(EntrySync::Busy);
-            };
             let pushed =
                 push_head(storage, remote, &store, entry, head, Some(&locked.base)).await?;
             let Published::Advanced { revision, .. } = &pushed else {
@@ -647,18 +647,23 @@ async fn compose(
         content.insert(key.clone(), RowContent::Path(path.clone()));
     }
     rows.sort_by(|a, b| a.logical_key.cmp(&b.logical_key));
-    // A folder keeps its metadata only while it holds a file: one deleted,
-    // or turned into a file, has none.
-    let folders: BTreeSet<&str> = rows
-        .iter()
-        .filter_map(|row| row.logical_key.to_str())
-        .flat_map(|key| key.match_indices('/').map(move |(at, _)| &key[..at]))
-        .collect();
+    // A folder whose files were all deleted, or that turned into a file,
+    // loses its metadata; one that held none keeps it.
+    let folders = |rows: &[ManifestRow]| -> BTreeSet<String> {
+        rows.iter()
+            .filter_map(|row| row.logical_key.to_str())
+            .flat_map(|key| {
+                key.match_indices('/')
+                    .map(move |(at, _)| key[..at].to_string())
+            })
+            .collect()
+    };
+    let (before, after) = (folders(&current.rows), folders(&rows));
     let mut dir_meta = current.dir_meta.clone();
     dir_meta.retain(|dir| {
         dir.logical_key
             .to_str()
-            .is_some_and(|key| folders.contains(key))
+            .is_none_or(|key| !before.contains(key) || after.contains(key))
     });
     let manifest = Manifest {
         header: current.header.clone(),
