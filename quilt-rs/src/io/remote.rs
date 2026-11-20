@@ -154,6 +154,28 @@ pub trait ObjectsStream: Stream<Item = StreamItem> {}
 
 impl<T: Stream<Item = StreamItem>> ObjectsStream for T {}
 
+/// One revision a registry lists for a package.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PublishedRevision {
+    /// Top hash of the revision's manifest.
+    pub hash: String,
+    /// When its pointer under `.quilt/named_packages/` says it was made,
+    /// where the listing says.
+    pub modified: Option<jiff::Timestamp>,
+    /// Its commit message, where the listing gives it.
+    pub message: Option<String>,
+}
+
+impl From<String> for PublishedRevision {
+    fn from(hash: String) -> Self {
+        Self {
+            hash,
+            modified: None,
+            message: None,
+        }
+    }
+}
+
 /// This trait encapsulates the S3 operations that Quilt needs to perform.
 pub trait Remote {
     /// Checks if object exists
@@ -225,6 +247,25 @@ pub trait Remote {
         bucket: &str,
         namespace: &Namespace,
     ) -> impl Future<Output = Res<Vec<String>>> + Send;
+
+    /// [`Remote::published_revisions`], with each revision's time and
+    /// message where the listing gives them: a timestamped pointer names its
+    /// time, and `host`'s registry answers both. By default, the hashes
+    /// alone.
+    fn published_revision_history(
+        &self,
+        host: Option<&Host>,
+        bucket: &str,
+        namespace: &Namespace,
+    ) -> impl Future<Output = Res<Vec<PublishedRevision>>> + Send
+    where
+        Self: Sync,
+    {
+        async move {
+            let hashes = self.published_revisions(host, bucket, namespace).await?;
+            Ok(hashes.into_iter().map(PublishedRevision::from).collect())
+        }
+    }
 
     /// The hashes of the manifests in `bucket`'s registry whose names start
     /// with `prefix`: the objects `.quilt/packages/<prefix>*`, whatever

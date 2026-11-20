@@ -1,5 +1,5 @@
 //! What the dataspace commands share: the Domain, where one exists, whose
-//! local registry they reach, and the writer they write the lock as.
+//! local registry they reach, and who they write or read the lock as.
 
 use std::path::Path;
 
@@ -21,6 +21,21 @@ pub(super) fn existing(dir: &Path) -> Option<DomainRoot> {
 pub(super) async fn writer(local: Option<&LocalRegistry>) -> Result<Writer, Error> {
     let name = match local {
         Some(local) => local.names(&LocalStorage::new()).await?.name,
+        None => String::new(),
+    };
+    Ok(Writer::here(name)?)
+}
+
+/// Who a command that writes nothing compares the lock's header with: this
+/// machine's host and user, and the name `domain`'s local registry keeps,
+/// read but never given, so a registry not named yet stays unnamed.
+pub(super) async fn reader(domain: Option<&DomainRoot>) -> Result<Writer, Error> {
+    let name = match domain {
+        Some(domain) => domain
+            .local()
+            .read_names(&LocalStorage::new())
+            .await?
+            .map_or_else(String::new, |names| names.name),
         None => String::new(),
     };
     Ok(Writer::here(name)?)
@@ -52,6 +67,25 @@ mod tests {
 
         assert_eq!(writer(Some(&local)).await?.local_registry, "lab-mac");
         assert_eq!(writer(None).await?.local_registry_name(), None);
+        Ok(())
+    }
+
+    /// The reader names the local registry by the name it keeps, and does
+    /// not name one never named.
+    #[test(tokio::test)]
+    async fn the_reader_reads_the_local_registry_name_and_gives_none() -> Result<(), Error> {
+        let dir = tempfile::TempDir::new()?;
+        let domain = DomainRoot::new(dir.path());
+
+        assert_eq!(reader(Some(&domain)).await?.local_registry_name(), None);
+        assert!(!dir.path().join("registries").exists());
+
+        domain
+            .local()
+            .rename(&LocalStorage::new(), "lab-mac")
+            .await?;
+        assert_eq!(reader(Some(&domain)).await?.local_registry, "lab-mac");
+        assert_eq!(reader(None).await?.local_registry_name(), None);
         Ok(())
     }
 }

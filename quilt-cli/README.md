@@ -236,6 +236,25 @@ of the package that its bucket holds too, never its unpushed commits or the
 local registry, and nothing while the bucket cannot be asked. Under `--json`
 it prints `package`, `removed`, `kept`, `unpushed` and `pruned`.
 
+`status --dataspace <DIR>`, `list --dataspace <DIR>` and
+`log --dataspace <DIR> <PACKAGE>` read a dataspace and write nothing, not even
+the Domain's caches. `status` shows each entry of `data.toml`: its base and
+current revision from `data.lock.toml`, the registry's `latest`, asked now, and
+whether it is up to date, behind, ahead or diverged; its working folder's
+changes as a commit would take them, under the dataspace's `[ignore]` table;
+its keys in `conflict.json`; a revision autosync stored without making it
+`latest`; and its local commits not pushed. It also says whether the dataspace
+was filled and what in the lock's header is not this machine's. `list` shows
+each entry's state in a table, against the `latest` last known unless
+`--fetch` asks each registry now. `log` lists the package's revisions in its
+registry, newest first by when each was published, and the local commits not
+pushed yet, marked `(local, not pushed)`. Under `--json`, `status` prints
+`locked`, `filled`, `mismatches`, `problems` and `entries`, each with
+`package`, `access`, `folder`, `state`, `upstream_state`, `base`, `current`,
+`latest`, `remote`, `latest_source`, `unpushed`, `changes`, `conflicts`,
+`kept` and `problems`; `log` prints `revisions`, each with `hash`, `message`,
+`time`, `parent` and `local`.
+
 `push` with no commit to push prints `Nothing to push` and exits 0; under
 `--json` the same shape has `"hash": null`, `"manifest_uri": null` and
 `"certified_latest": null`.

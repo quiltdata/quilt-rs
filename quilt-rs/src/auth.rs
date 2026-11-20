@@ -53,6 +53,7 @@ use graphql::mutate_switch_role;
 use graphql::query_buckets;
 use graphql::query_latest_hashes;
 use graphql::query_me;
+use graphql::query_package_revision_history;
 use graphql::query_package_revisions;
 use oauth::exchange_oauth_code;
 use oauth::refresh_oauth_tokens;
@@ -846,6 +847,39 @@ impl<S: Storage + Send + Sync> Auth<S> {
                         &retry_token,
                     )
                     .await,
+                    is_role_auth_error,
+                    ROLE_ENDPOINT,
+                    host,
+                )
+            }
+        }
+    }
+
+    /// [`Auth::package_revisions`], with the time each revision's pointer
+    /// is named for. Locks and retries as it does.
+    pub async fn package_revision_history<T: HttpClient>(
+        &self,
+        http_client: &T,
+        host: &Host,
+        bucket: &str,
+        namespace: &Namespace,
+    ) -> Res<Vec<crate::io::remote::PublishedRevision>> {
+        let _guard = self.lock(host).await?;
+
+        let (registry, access_token) = self.role_call_context(http_client, host).await?;
+        let query = |token: String| {
+            let registry = registry.clone();
+            async move {
+                query_package_revision_history(http_client, &registry, bucket, namespace, &token)
+                    .await
+            }
+        };
+        match query(access_token).await {
+            Ok(revisions) => Ok(revisions),
+            Err(first_err) => {
+                let retry_token = self.role_retry_token(http_client, host, first_err).await?;
+                classify_retry_outcome(
+                    query(retry_token).await,
                     is_role_auth_error,
                     ROLE_ENDPOINT,
                     host,

@@ -1,3 +1,5 @@
+pub mod dataspace;
+
 use quilt_rs::io::remote::HostConfig;
 use quilt_rs::lineage::Change;
 use quilt_rs::lineage::InstalledPackageStatus;

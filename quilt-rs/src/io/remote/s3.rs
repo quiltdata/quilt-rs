@@ -33,6 +33,7 @@ use crate::error::S3ErrorKind;
 use crate::io::remote::HostChecksums;
 use crate::io::remote::HostConfig;
 use crate::io::remote::HttpClient;
+use crate::io::remote::PublishedRevision;
 use crate::io::remote::Remote;
 use crate::io::remote::describe_sdk_error;
 use crate::io::remote::host::fetch_host_config;
@@ -93,6 +94,14 @@ async fn folders_under(
 fn is_revision_pointer(key: &str, prefix: &str) -> bool {
     key.strip_prefix(prefix)
         .is_some_and(|name| matches!(name.parse(), Ok(Tag::Timestamp(_))))
+}
+
+/// The time a revision pointer under `prefix` is named for.
+pub(crate) fn pointer_time(key: &str, prefix: &str) -> Option<jiff::Timestamp> {
+    match key.strip_prefix(prefix)?.parse() {
+        Ok(Tag::Timestamp(seconds)) => jiff::Timestamp::from_second(seconds.0).ok(),
+        _ => None,
+    }
 }
 
 /// S3's HEAD-bucket endpoint returns `x-amz-bucket-region` for any bucket
@@ -668,6 +677,17 @@ impl RemoteS3 {
     /// page on this computer's AWS credentials, then each one read. A pointer
     /// gone before it is read is no longer a revision.
     async fn bucket_revisions(&self, bucket: &str, namespace: &Namespace) -> Res<Vec<String>> {
+        let listed = self.bucket_revision_history(bucket, namespace).await?;
+        Ok(listed.into_iter().map(|revision| revision.hash).collect())
+    }
+
+    /// [`RemoteS3::bucket_revisions`], each with the time its pointer is
+    /// named for.
+    async fn bucket_revision_history(
+        &self,
+        bucket: &str,
+        namespace: &Namespace,
+    ) -> Res<Vec<PublishedRevision>> {
         let client = self.get_client_for_bucket(None, bucket).await?;
         let prefix = tag_key(namespace, "");
         let mut pages = client
@@ -694,15 +714,19 @@ impl RemoteS3 {
             );
         }
 
-        let mut hashes = Vec::new();
+        let mut revisions = Vec::new();
         for pointer in pointers {
             match get_object_stream(&client, &pointer, None).await {
-                Ok(stream) => hashes.push(bytestream_to_string(stream.body).await?),
+                Ok(stream) => revisions.push(PublishedRevision {
+                    hash: bytestream_to_string(stream.body).await?,
+                    modified: pointer_time(&pointer.key, &prefix),
+                    message: None,
+                }),
                 Err(e) if e.is_not_found() => {}
                 Err(e) => return Err(e),
             }
         }
-        Ok(hashes)
+        Ok(revisions)
     }
 
     /// [`Remote::manifest_hashes_with_prefix`]: the keys under
@@ -1021,6 +1045,25 @@ impl Remote for RemoteS3 {
         }
     }
 
+    async fn published_revision_history(
+        &self,
+        host: Option<&Host>,
+        bucket: &str,
+        namespace: &Namespace,
+    ) -> Res<Vec<PublishedRevision>> {
+        match host {
+            Some(host) => {
+                self.auth
+                    .package_revision_history(&self.http, host, bucket, namespace)
+                    .await
+            }
+            None => self
+                .bucket_revision_history(bucket, namespace)
+                .await
+                .map_err(|e| self.forget_ambient_clients_on(e)),
+        }
+    }
+
     async fn manifest_hashes_with_prefix(
         &self,
         host: Option<&Host>,
@@ -1197,6 +1240,10 @@ mod tests {
             ".quilt/named_packages/team/data/1758500000",
             prefix
         ));
+        // A pointer named past what a time can hold is still a revision.
+        let far = ".quilt/named_packages/team/data/99999999999999";
+        assert!(is_revision_pointer(far, prefix));
+        assert_eq!(pointer_time(far, prefix), None);
         assert!(!is_revision_pointer(
             ".quilt/named_packages/team/data/latest",
             prefix

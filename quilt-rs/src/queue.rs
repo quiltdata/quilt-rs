@@ -202,6 +202,35 @@ impl Queue {
         Self::ready(Connection::open(path).await?).await
     }
 
+    /// Open the existing queue at `path` to read it: nothing is created or
+    /// migrated, so only [`Queue::kept`] and [`Queue::jobs`] are for it, and
+    /// only at version 1 or this build's.
+    pub async fn open_read_only(path: &Path) -> Result<Self, QueueError> {
+        let db = Connection::open_read_only(path).await?;
+        let version = db
+            .call(|db| {
+                db.busy_timeout(BUSY_TIMEOUT)?;
+                Ok::<_, QueueError>(
+                    db.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))?,
+                )
+            })
+            .await;
+        match version {
+            Ok(1 | SCHEMA_VERSION) => Ok(Self {
+                db,
+                session: uuid::Uuid::new_v4().to_string().into(),
+            }),
+            Ok(other) => {
+                let _ = db.close().await;
+                Err(QueueError::Version(other))
+            }
+            Err(err) => {
+                let _ = db.close().await;
+                Err(err)
+            }
+        }
+    }
+
     /// A queue that keeps nothing past the process.
     pub async fn in_memory() -> Result<Self, QueueError> {
         Self::ready(Connection::open_in_memory().await?).await
