@@ -1038,6 +1038,298 @@ async fn a_filled_tick_refuses_a_local_registrys_entry_and_publishes_the_rest() 
     Ok(())
 }
 
+/// The lock's key for `team/raw` in the local registry `lab-mac`.
+fn local_key() -> PackageKey {
+    PackageKey {
+        registry: Registry::Local("lab-mac".to_string()),
+        package: package(),
+    }
+}
+
+/// A dataspace whose `team/raw` the lock holds in the local registry
+/// `lab-mac`, as an import leaves it: a revision published there and a local
+/// commit on it. Then `data.toml` is edited to name bucket `b` for it. The
+/// revision and the commit, by hash.
+async fn moving() -> Result<(World, String, String), Box<dyn std::error::Error>> {
+    let world = World::new("sync = [\"quilt+local://lab-mac#package=team/raw\"]")?;
+    let first = world
+        .commit_locally(None, &[("a.txt", b"v1"), ("b.txt", b"v1")])
+        .await?;
+    let local = world.domain().local();
+    let published = local
+        .publish(&world.storage, &package(), None, &first)
+        .await?;
+    assert_eq!(published, crate::domain::LocalPublish::Advanced);
+    let head = world
+        .commit_locally(Some(&first), &[("a.txt", b"v2"), ("b.txt", b"v1")])
+        .await?;
+    let here = Writer {
+        local_registry: "lab-mac".to_string(),
+        ..writer()
+    };
+    let contract = Contract::read(&world.storage, &world.dataspace(), None).await?;
+    let mut lock = Lock::new(&contract, &here);
+    lock.packages.insert(
+        local_key(),
+        LockEntry {
+            base: first.clone(),
+            commits: vec![head.clone()],
+        },
+    );
+    lock.write(&world.storage, &contract, &here).await?;
+    world.contract("sync = [\"team/raw\"]")?;
+    Ok((world, first, head))
+}
+
+impl World {
+    /// Records `files` in the local registry as a commit of `team/raw` on
+    /// `base`, and returns its hash.
+    async fn commit_locally(
+        &self,
+        base: Option<&str>,
+        files: &[(&'static str, &'static [u8])],
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        let mut rows = Vec::new();
+        let mut content = BTreeMap::new();
+        for (key, body) in files {
+            let key = LogicalKey::new(*key)?;
+            rows.push(changed(key.clone(), None));
+            content.insert(key, RowContent::Bytes(bytes::Bytes::from_static(body)));
+        }
+        let lineage = PackageLineage {
+            base_hash: base.unwrap_or_default().to_string(),
+            ..PackageLineage::default()
+        };
+        let manifest = Manifest {
+            rows,
+            ..Manifest::default()
+        };
+        let (_, recorded) = crate::flow::record(
+            &self.domain().local(),
+            &self.storage,
+            &self.remote,
+            WorkflowCheck::Warn { host: None },
+            &package(),
+            lineage,
+            manifest,
+            &content,
+        )
+        .await?;
+        Ok(recorded.hash().ok_or("nothing recorded")?.to_string())
+    }
+}
+
+#[test(tokio::test)]
+async fn a_local_package_moved_to_a_bucket_starts_there_at_its_last_local_commit() -> Res {
+    let (world, first, head) = moving().await?;
+
+    let synced = world.sync().await?;
+
+    let [(_, outcome)] = synced.entries.as_slice() else {
+        panic!("{synced:?}");
+    };
+    assert_eq!(advanced(outcome), head);
+    assert_eq!(world.latest().await?, head);
+    assert_eq!(
+        world.revision(&head).await?,
+        files(&[("a.txt", "v2"), ("b.txt", "v1")])
+    );
+    // Squashed: the bucket holds no revision before it.
+    let before = format!("s3://b/.quilt/packages/{first}");
+    assert_eq!(world.remote.current(&before).await?, None);
+    let lock = world.lock().await?;
+    assert_eq!(lock.packages.get(&local_key()), None);
+    assert_eq!(
+        lock.packages.get(&key()),
+        Some(&LockEntry {
+            base: head.clone(),
+            commits: Vec::new(),
+        })
+    );
+    assert_eq!(world.text("a.txt").as_deref(), Some("v2"));
+    // The local registry keeps the package.
+    let local = world.domain().local();
+    assert_eq!(
+        local.read_latest(&world.storage, &package()).await?,
+        Some(first)
+    );
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_move_to_a_bucket_that_has_the_package_is_diverged_and_keeps_the_local_key() -> Res {
+    let (world, first, head) = moving().await?;
+    world.publish(FIRST, &[("a.txt", b"theirs")]).await?;
+
+    let outcome = world.tick().await?;
+
+    assert!(
+        matches!(&outcome, EntrySync::Diverged { latest: Some(latest) } if latest == FIRST),
+        "{outcome:?}"
+    );
+    assert_eq!(world.latest().await?, FIRST);
+    let lock = world.lock().await?;
+    assert_eq!(lock.packages.get(&key()), None);
+    assert_eq!(
+        lock.packages.get(&local_key()),
+        Some(&LockEntry {
+            base: first,
+            commits: vec![head],
+        })
+    );
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_move_whose_push_landed_before_the_lock_was_written_is_not_pushed_again() -> Res {
+    let (world, _, head) = moving().await?;
+    let path = world.dataspace().join(crate::dataspace::lock::LOCK_FILE);
+    let before = std::fs::read(&path)?;
+    world.sync().await?;
+    // As if the tick stopped after the push.
+    std::fs::write(&path, before)?;
+
+    let outcome = world.tick().await?;
+
+    assert!(
+        matches!(
+            &outcome,
+            EntrySync::Ran {
+                published: None,
+                ..
+            }
+        ),
+        "{outcome:?}"
+    );
+    assert_eq!(world.latest().await?, head);
+    let lock = world.lock().await?;
+    assert_eq!(lock.packages.get(&local_key()), None);
+    assert_eq!(
+        lock.packages.get(&key()).map(|locked| locked.base.as_str()),
+        Some(head.as_str())
+    );
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_move_the_buckets_workflow_refuses_keeps_the_local_key_until_it_is_accepted() -> Res {
+    let (world, _, head) = moving().await?;
+    // The commit is pushed as it was committed, with no workflow, which the
+    // gate requires.
+    gate(&world, r#"{"type": "object"}"#).await?;
+
+    let refused = world.tick().await?;
+
+    assert!(
+        matches!(&refused, EntrySync::Ran {
+            published: Some(Published::WorkflowBlocked { revision, .. }),
+            ..
+        } if *revision == head),
+        "{refused:?}"
+    );
+    let lock = world.lock().await?;
+    assert_eq!(lock.packages.get(&key()), None);
+    assert!(lock.packages.contains_key(&local_key()), "{lock:?}");
+
+    let optional =
+        "version: '1'\nis_workflow_required: false\nworkflows:\n  gate:\n    name: Gate\n";
+    world
+        .remote
+        .put_object(
+            None,
+            &S3Uri::try_from("s3://b/.quilt/workflows/config.yml")?,
+            optional.as_bytes().to_vec(),
+        )
+        .await?;
+    let synced = world.sync().await?;
+
+    // The refusal left the dataspace unfilled, so this tick still fills it.
+    assert!(synced.read_only, "{synced:?}");
+    let [(_, moved)] = synced.entries.as_slice() else {
+        panic!("{synced:?}");
+    };
+    assert_eq!(advanced(moved), head);
+    assert_eq!(world.latest().await?, head);
+    assert_eq!(
+        world.locked().await?.map(|locked| locked.base).as_deref(),
+        Some(head.as_str())
+    );
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_move_the_workflow_refuses_leaves_the_folder_to_be_read_whole_once_it_goes_through() -> Res
+{
+    let (world, _, head) = moving().await?;
+    gate(&world, r#"{"type": "object"}"#).await?;
+
+    let refused = world.sync().await?;
+
+    assert!(refused.read_only, "{refused:?}");
+    assert_eq!(world.text("b.txt"), None);
+    let optional =
+        "version: '1'\nis_workflow_required: false\nworkflows:\n  gate:\n    name: Gate\n";
+    world
+        .remote
+        .put_object(
+            None,
+            &S3Uri::try_from("s3://b/.quilt/workflows/config.yml")?,
+            optional.as_bytes().to_vec(),
+        )
+        .await?;
+    let moved = world.sync().await?;
+
+    assert!(moved.read_only, "{moved:?}");
+    assert_eq!(world.latest().await?, head);
+    assert_eq!(world.text("b.txt").as_deref(), Some("v1"));
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn post_write_follows_a_move_to_a_bucket_once() -> Res {
+    let (world, _, head) = moving().await?;
+    let hooks = table(PostWrite, &record(&world), &[]);
+    world.contract(&format!("sync = [\"team/raw\"]\n{hooks}"))?;
+
+    world.sync().await?;
+    world.tick().await?;
+
+    assert_eq!(
+        calls(&record(&world)),
+        [call(PostWrite, Some(head.as_str()))]
+    );
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_package_the_contract_still_names_in_the_local_registry_is_not_moved() -> Res {
+    let (world, _, _) = moving().await?;
+    world.contract("sync = [\"team/raw\", \"quilt+local://lab-mac#package=team/raw\"]")?;
+
+    let synced = world.sync().await?;
+
+    let [(_, raw), (_, local)] = synced.entries.as_slice() else {
+        panic!("{synced:?}");
+    };
+    assert!(
+        matches!(
+            raw,
+            EntrySync::Ran {
+                read: None,
+                published: None
+            }
+        ),
+        "{raw:?}"
+    );
+    assert!(
+        matches!(local, EntrySync::Failed(EntryError::LocalRegistry)),
+        "{local:?}"
+    );
+    assert!(world.remote.current(LATEST).await?.is_none());
+    assert!(world.lock().await?.packages.contains_key(&local_key()));
+    Ok(())
+}
+
 #[test(tokio::test)]
 async fn a_file_named_as_a_folder_that_held_none_takes_its_place() -> Res {
     let world = World::synced()?;
