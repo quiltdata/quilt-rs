@@ -18,6 +18,7 @@ use serde::Serialize;
 use thiserror::Error;
 use toml::value::Datetime;
 
+use crate::dataspace::contract::Access;
 use crate::dataspace::contract::CONTRACT_FILE;
 use crate::dataspace::contract::Contract;
 use crate::dataspace::contract::PackageKey;
@@ -171,13 +172,26 @@ impl Lock {
     /// Writes the lock beside `contract`, its header made `contract`'s and
     /// `writer`'s and `filled` kept. That hides any mismatch, so a caller
     /// deals with [`Lock::mismatches`] first.
+    ///
+    /// Where the contract has `sync` entries, the lock goes on naming the
+    /// `data.toml` it was written for: an edit is the sync tick's to take,
+    /// once it has read them again.
     pub async fn write(
         &mut self,
         storage: &(impl Storage + Sync),
         contract: &Contract,
         writer: &Writer,
     ) -> Result<(), LockError> {
-        self.write_for(storage, contract, writer, contract.data_toml_hash())
+        let synced = contract
+            .entries()
+            .iter()
+            .any(|entry| entry.access == Access::Sync);
+        let written_for = if synced {
+            self.header.data_toml_hash.clone()
+        } else {
+            contract.data_toml_hash().to_string()
+        };
+        self.write_for(storage, contract, writer, &written_for)
             .await
     }
 

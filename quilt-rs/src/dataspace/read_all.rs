@@ -116,9 +116,9 @@ impl From<LockError> for ReadAllError {
 /// be read has been.
 ///
 /// A lock written for another `data.toml` is used: the contract was edited
-/// here. Where the contract has `sync` entries, the lock keeps naming the
-/// `data.toml` it was written for, so the sync tick still sees the edit. One written for another folder, host or user is used only while no
-/// entry's working folder holds files and it names no unpushed commits;
+/// here, though [`Lock::write`] leaves an edit under `sync` entries for the
+/// sync tick to take. One written for another folder, host or user is used
+/// only while no entry's working folder holds files and it names no unpushed commits;
 /// otherwise nothing is read or written. A read has no Domain, so the local
 /// registry a lock names is not compared, and is kept unless the lock is
 /// another's.
@@ -166,15 +166,7 @@ pub async fn read_all(
         if lock.header.filled.is_none() && read.completed() && !synced {
             lock.header.filled = Some(Utc::now().trunc_subsecs(0));
         }
-        // An edit to `data.toml` is the sync tick's to take, once it has read
-        // its entries again.
-        let written_for = if synced {
-            lock.header.data_toml_hash.clone()
-        } else {
-            contract.data_toml_hash().to_string()
-        };
-        lock.write_for(storage, &contract, &writer, &written_for)
-            .await?;
+        lock.write(storage, &contract, &writer).await?;
     }
     Ok(read)
 }

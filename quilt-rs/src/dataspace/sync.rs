@@ -253,7 +253,8 @@ pub async fn sync(
             lock.header.filled = Some(Utc::now().trunc_subsecs(0));
         }
         if whole {
-            lock.write(storage, &contract, &writer).await?;
+            lock.write_for(storage, &contract, &writer, contract.data_toml_hash())
+                .await?;
         } else if let Err(Stop::Lock(err)) = lock_file.save(&mut lock).await {
             return Err(err.into());
         }

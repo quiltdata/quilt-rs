@@ -10,6 +10,9 @@ type Res = Result<(), Box<dyn std::error::Error>>;
 
 const CONTRACT: &str = "registry = \"s3://quilt-dev\"\n\n[packages]\nread = [\"team/raw\"]\nsync = [{ package = \"team/project\", path = \"src/\" }]\n";
 
+/// A contract with no `sync` entries.
+const READ_ONLY: &str = "registry = \"s3://quilt-dev\"\n\n[packages]\nread = [\"team/raw\"]\n";
+
 /// `shasum -a 256` of `CONTRACT`.
 const CONTRACT_SHA256: &str = "f6ad0180c93d38ec5189f5c2b6e33c7f4abd9a8dbb5c07caefd093640de017ff";
 
@@ -124,7 +127,7 @@ async fn a_written_lock_reads_back_as_written() -> Res {
 #[test(tokio::test)]
 async fn a_write_stamps_the_header_and_keeps_filled() -> Res {
     let storage = MockStorage::default();
-    let contract = dataspace(&storage, "rnaseq", CONTRACT).await?;
+    let contract = dataspace(&storage, "rnaseq", READ_ONLY).await?;
     let mut lock = filled_lock(&contract);
     lock.header.writer.host = "elsewhere".to_string();
     lock.header.data_toml_hash = "stale".to_string();
@@ -136,12 +139,26 @@ async fn a_write_stamps_the_header_and_keeps_filled() -> Res {
 
     let header = Lock::read(&storage, &contract).await?.unwrap().header;
     assert_eq!(header.writer, writer());
-    assert_eq!(header.data_toml_hash, CONTRACT_SHA256);
+    assert_eq!(header.data_toml_hash, contract.data_toml_hash());
     assert_eq!(header.filled, Some(time("2026-11-18T07:45:00Z")));
     assert!(
         before <= header.modified && header.modified <= after,
         "{header:?}"
     );
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_write_under_sync_entries_keeps_the_data_toml_it_was_written_for() -> Res {
+    let storage = MockStorage::default();
+    let contract = dataspace(&storage, "rnaseq", CONTRACT).await?;
+    let mut lock = filled_lock(&contract);
+    lock.header.data_toml_hash = "stale".to_string();
+
+    lock.write(&storage, &contract, &writer()).await?;
+
+    let header = Lock::read(&storage, &contract).await?.unwrap().header;
+    assert_eq!(header.data_toml_hash, "stale");
     Ok(())
 }
 

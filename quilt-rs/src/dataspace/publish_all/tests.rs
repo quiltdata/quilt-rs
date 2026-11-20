@@ -399,3 +399,26 @@ async fn a_lock_from_another_host_is_refused_and_nothing_published() -> Res {
     assert_eq!(latest(&remote, "team/raw").await?, FIRST);
     Ok(())
 }
+
+#[test(tokio::test)]
+async fn an_edit_to_data_toml_under_sync_entries_is_left_for_the_sync_tick() -> Res {
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    let packages = "write = [\"team/out\"]\nsync = [\"team/raw\"]\n";
+    let root = dataspace(&storage, packages)?;
+    write(&root, "team/out", "a.txt", b"a")?;
+    publish_all_here(&storage, &remote, &root, &writer()).await?;
+    let before = Contract::read(&storage, &root).await?;
+    let written_for = before.data_toml_hash().to_string();
+
+    dataspace(&storage, &format!("{packages}# edited\n"))?;
+    write(&root, "team/out", "b.txt", b"b")?;
+    let published = publish_all_here(&storage, &remote, &root, &writer()).await?;
+
+    advanced(&published.entries[0]);
+    let contract = Contract::read(&storage, &root).await?;
+    assert_ne!(contract.data_toml_hash(), written_for);
+    let lock = Lock::read(&storage, &contract).await?.ok_or("no lock")?;
+    assert_eq!(lock.header.data_toml_hash, written_for);
+    Ok(())
+}
