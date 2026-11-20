@@ -502,6 +502,32 @@ async fn under_sync_a_file_in_a_folder_that_cannot_be_read_is_not_a_deletion() -
     Ok(())
 }
 
+/// A folder that may be listed but not searched hides its files' state.
+#[cfg(unix)]
+#[test(tokio::test)]
+async fn under_sync_a_file_in_a_folder_that_cannot_be_searched_is_not_a_deletion() -> Res {
+    use std::os::unix::fs::PermissionsExt;
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    let entry = sync();
+    publish(&remote, FIRST, &[("sub/a.txt", b"v1"), ("b.txt", b"v1")]).await?;
+    read(&storage, &remote, &entry, None).await?;
+    publish(&remote, SECOND, &[("sub/a.txt", b"v1"), ("b.txt", b"v2")]).await?;
+    let sub = storage.temp_dir.path().join("work/rnaseq/team/raw/sub");
+    std::fs::set_permissions(&sub, std::fs::Permissions::from_mode(0o444))?;
+    let searchable = std::fs::metadata(sub.join("a.txt")).is_ok();
+
+    let outcome = read(&storage, &remote, &entry, Some(FIRST)).await;
+
+    std::fs::set_permissions(&sub, std::fs::Permissions::from_mode(0o755))?;
+    // Root searches it anyway.
+    if !searchable {
+        assert!(matches!(outcome, Err(EntryError::Failed(_))), "{outcome:?}");
+        assert_eq!(text(&storage, "b.txt").await.as_deref(), Some("v1"));
+    }
+    Ok(())
+}
+
 /// The folder is there, so it is not refused as gone.
 #[cfg(unix)]
 #[test(tokio::test)]

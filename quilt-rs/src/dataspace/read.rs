@@ -360,7 +360,7 @@ async fn plan<'a>(
         let missing = matches!(disk, OnDisk::Nothing);
         if missing && folder_blocked(storage, folder, &path).await {
             plan.conflicts.push(key.to_path_buf());
-        } else if missing && !(deletes && had.is_some()) {
+        } else if missing && !(deletes && had.is_some() && not_found(storage, &path).await?) {
             plan.steps.push(Step {
                 want: Some(want),
                 had: None,
@@ -446,6 +446,17 @@ async fn plan_metadata(
         Some(_) => plan.conflicts.push(PathBuf::from(METADATA_FILE)),
     }
     Ok(())
+}
+
+/// Whether nothing is at `path`. An error that cannot say, such as a folder
+/// above it that may be listed but not searched, is returned rather than
+/// taken for a deletion.
+async fn not_found(storage: &(impl Storage + Sync), path: &Path) -> Res<bool> {
+    match storage.open_file(path).await {
+        Ok(_) => Ok(false),
+        Err(err) if err.is_not_found() => Ok(true),
+        Err(err) => Err(err),
+    }
 }
 
 /// Whether `base` covers a key under `paths` and nothing, not even a dangling
