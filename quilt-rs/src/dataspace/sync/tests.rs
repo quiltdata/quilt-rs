@@ -918,6 +918,25 @@ async fn a_link_where_a_file_was_is_no_deletion() -> Res {
     Ok(())
 }
 
+#[cfg(unix)]
+#[test(tokio::test)]
+async fn a_link_where_a_folder_was_deletes_none_of_its_files() -> Res {
+    let world = World::filled(&[("data/a.txt", b"v1"), ("b.txt", b"v1")]).await?;
+    let elsewhere = world.dir.path().join("elsewhere");
+    std::fs::rename(world.folder().join("data"), &elsewhere)?;
+    std::os::unix::fs::symlink(&elsewhere, world.folder().join("data"))?;
+    world.write("b.txt", "v2")?;
+
+    let outcome = world.tick().await?;
+
+    let revision = advanced(&outcome);
+    assert_eq!(
+        world.revision(&revision).await?,
+        files(&[("b.txt", "v2"), ("data/a.txt", "v1")])
+    );
+    Ok(())
+}
+
 #[test(tokio::test)]
 async fn a_package_with_no_revision_and_no_folder_publishes_nothing() -> Res {
     let world = World::synced()?;

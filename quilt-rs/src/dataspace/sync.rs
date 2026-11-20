@@ -693,11 +693,9 @@ async fn compose(
             continue;
         }
         let Some(path) = on_disk.remove(&row.logical_key) else {
-            // A link where the file was is not its deletion: the row stays.
-            if storage
-                .is_symlink(row.logical_key.join_to(&entry.folder))
-                .await
-            {
+            // A link where the file, or a folder above it, was is not its
+            // deletion: the row stays.
+            if linked(storage, &entry.folder, &row.logical_key).await {
                 rows.push(row.clone());
             }
             continue;
@@ -745,6 +743,20 @@ async fn compose(
         dir_meta,
     };
     Ok((manifest, content))
+}
+
+/// Whether a link stands at `key` in `folder`, or at a folder between them.
+async fn linked(storage: &(impl Storage + Sync), folder: &Path, key: &LogicalKey) -> bool {
+    let path = key.join_to(folder);
+    for place in path
+        .ancestors()
+        .take_while(|place| place.starts_with(folder) && *place != folder)
+    {
+        if storage.is_symlink(place).await {
+            return true;
+        }
+    }
+    false
 }
 
 /// A row not yet hashed, keeping `was`'s metadata.
