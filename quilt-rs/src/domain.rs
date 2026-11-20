@@ -1,5 +1,6 @@
 //! The Domain's storage: an ordinary folder, `bio.quilt.dataspace/`, holding
-//! a Package Store for each remote registry under `registries/<bucket>/`.
+//! a Package Store for each remote registry under `registries/<bucket>/`, and
+//! the local registry under `registries/@local/`.
 //!
 //! A [`LocalDomain`](crate::LocalDomain) still keeps its packages in
 //! `.quilt/` ([`DomainPaths`](crate::paths::DomainPaths)); nothing moves here
@@ -43,6 +44,10 @@ const PACKAGES_DIR: &str = "packages";
 const INSTALLED_DIR: &str = "installed";
 const OBJECTS_DIR: &str = "objects";
 const LOCKS_DIR: &str = "locks";
+/// No bucket name holds `@`, so no bucket's store can take this folder.
+const LOCAL_DIR: &str = "@local";
+const NAME_FILE: &str = "registry.json";
+const NAME_LOCK: &str = "registry.lock";
 
 /// The Domain's storage folder, holding a store per registry.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -80,6 +85,14 @@ impl DomainRoot {
             bucket: bucket.to_string(),
             dir: self.root.join(REGISTRIES_DIR).join(bucket),
         })
+    }
+
+    /// This machine's local registry, under `registries/@local/`.
+    #[must_use]
+    pub fn local(&self) -> LocalRegistry {
+        LocalRegistry {
+            dir: self.root.join(REGISTRIES_DIR).join(LOCAL_DIR),
+        }
     }
 }
 
@@ -155,13 +168,8 @@ impl RegistryStore {
         storage: &(impl Storage + Sync),
         namespace: &Namespace,
     ) -> Res<Option<String>> {
-        let bytes = match storage.read_bytes(self.latest(namespace)).await {
-            Ok(bytes) => bytes,
-            Err(err) if err.is_not_found() => return Ok(None),
-            Err(err) => return Err(err),
-        };
-        let hash = String::from_utf8_lossy(&bytes).trim().to_string();
-        Ok(is_top_hash(&hash).then_some(hash))
+        let hash = read_tag(storage, &self.latest(namespace)).await?;
+        Ok(hash.filter(|hash| is_top_hash(hash)))
     }
 
     /// Records in the latest index that `latest` names `hash` for
@@ -172,17 +180,7 @@ impl RegistryStore {
         namespace: &Namespace,
         hash: &str,
     ) -> Res {
-        let path = self.latest(namespace);
-        let owner = path.parent().unwrap_or(&self.dir);
-        storage.create_dir_all(owner).await?;
-        // Staged outside `latest/`, where every file is a package's.
-        let staged = self.dir.join(temp_name());
-        storage
-            .write_staged_byte_stream(&staged, ByteStream::from(hash.as_bytes().to_vec()))
-            .await?;
-        storage.rename(&staged, &path).await?;
-        storage.sync_dir(owner).await;
-        Ok(())
+        write_tag(storage, &self.dir, &self.latest(namespace), hash).await
     }
 
     /// Every package the latest index holds a hash for.
@@ -353,6 +351,297 @@ impl RegistryStore {
     }
 }
 
+/// The registry on this machine for packages with no bucket, laid out as a
+/// bucket's store is, but a registry in its own right: `latest/` holds its
+/// tags and `packages/` its revisions. Nothing in it is cleared on its own.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LocalRegistry {
+    dir: PathBuf,
+}
+
+/// The name a local registry keeps, and the names it had before, which
+/// still name it.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+pub struct LocalNames {
+    pub name: String,
+    pub aliases: Vec<String>,
+}
+
+impl LocalNames {
+    /// Whether `name` is the registry's name or one of its aliases.
+    #[must_use]
+    pub fn answers_to(&self, name: &str) -> bool {
+        self.name == name || self.aliases.iter().any(|alias| alias == name)
+    }
+}
+
+/// What a publish to the local registry did with `latest`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LocalPublish {
+    /// `latest` names the revision: it was the base, or already the
+    /// revision.
+    Advanced,
+    /// `latest` had moved from the base, to the hash held here, or `None`
+    /// where the package has no `latest`. The revision is kept and the tag
+    /// left.
+    Diverged(Option<String>),
+}
+
+impl LocalRegistry {
+    #[must_use]
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+
+    /// The file holding the hash `namespace`'s `latest` names.
+    #[must_use]
+    pub fn latest(&self, namespace: &Namespace) -> PathBuf {
+        package_path(&self.dir.join(LATEST_DIR), namespace, "")
+    }
+
+    /// A revision published to the registry.
+    #[must_use]
+    pub fn revision(&self, hash: &str) -> PathBuf {
+        self.dir.join(PACKAGES_DIR).join(hash)
+    }
+
+    /// Where `namespace`'s manifests installed or committed here go,
+    /// unpublished commits included.
+    #[must_use]
+    pub fn installed_manifests_dir(&self, namespace: &Namespace) -> PathBuf {
+        package_path(&self.dir.join(INSTALLED_DIR), namespace, "")
+    }
+
+    #[must_use]
+    pub fn installed_manifest(&self, namespace: &Namespace, hash: &str) -> PathBuf {
+        self.installed_manifests_dir(namespace).join(hash)
+    }
+
+    #[must_use]
+    pub fn package_lock(&self, namespace: &Namespace) -> PathBuf {
+        package_path(&self.dir.join(LOCKS_DIR), namespace, ".lock")
+    }
+
+    /// The hash `namespace`'s `latest` names, or `None` where it has none.
+    /// Unlike a bucket's cached index, a tag holding no top hash is an
+    /// error: it is the registry's own, and nothing else can replace it.
+    pub async fn read_latest(
+        &self,
+        storage: &(impl Storage + Sync),
+        namespace: &Namespace,
+    ) -> Res<Option<String>> {
+        let path = self.latest(namespace);
+        match read_tag(storage, &path).await? {
+            Some(hash) if !is_top_hash(&hash) => Err(UriError::Package(format!(
+                "{} holds no top hash: {hash:?}",
+                path.display()
+            ))
+            .into()),
+            tag => Ok(tag),
+        }
+    }
+
+    /// The registry's names. The first call names it from this machine's
+    /// host name, its other characters made `-`, and that name is kept.
+    pub async fn names(&self, storage: &(impl Storage + Sync)) -> Res<LocalNames> {
+        if let Some(names) = self.read_names(storage).await? {
+            return Ok(names);
+        }
+        let _held = self.lock_names(storage).await?;
+        self.names_held(storage).await
+    }
+
+    /// Renames the registry to `name`, keeping its old name as an alias. A
+    /// registry not yet named takes `name` as its first.
+    pub async fn rename(&self, storage: &(impl Storage + Sync), name: &str) -> Res<LocalNames> {
+        check_name(name)?;
+        let _held = self.lock_names(storage).await?;
+        let Some(mut names) = self.read_names(storage).await? else {
+            let names = LocalNames {
+                name: name.to_string(),
+                aliases: Vec::new(),
+            };
+            self.write_names(storage, &names).await?;
+            return Ok(names);
+        };
+        if names.name != name {
+            let old = std::mem::replace(&mut names.name, name.to_string());
+            names.aliases.retain(|alias| alias != name);
+            names.aliases.push(old);
+            self.write_names(storage, &names).await?;
+        }
+        Ok(names)
+    }
+
+    /// [`names`](Self::names), with the names' lock held.
+    async fn names_held(&self, storage: &(impl Storage + Sync)) -> Res<LocalNames> {
+        if let Some(names) = self.read_names(storage).await? {
+            return Ok(names);
+        }
+        let host = hostname::get()
+            .ok()
+            .and_then(|host| host.into_string().ok())
+            .unwrap_or_default();
+        let name = name_from_host(&host).ok_or_else(|| {
+            std::io::Error::other(format!(
+                "can't name the local registry after this machine's host name {host:?}; give it a name with a rename"
+            ))
+        })?;
+        let names = LocalNames {
+            name,
+            aliases: Vec::new(),
+        };
+        self.write_names(storage, &names).await?;
+        Ok(names)
+    }
+
+    /// Stores the revision `hash`, committed here for `namespace`, and moves
+    /// `latest` to it only if `latest` still names `base`, `None` being no
+    /// `latest` at all, or names `hash` already. All of it is done holding
+    /// the package's lock, so the caller must not hold it.
+    pub async fn publish(
+        &self,
+        storage: &(impl Storage + Sync),
+        namespace: &Namespace,
+        base: Option<&str>,
+        hash: &str,
+    ) -> Res<LocalPublish> {
+        if let Some(hash) = std::iter::once(hash).chain(base).find(|h| !is_top_hash(h)) {
+            return Err(UriError::Package(format!("not a top hash: {hash:?}")).into());
+        }
+        let _held = storage.lock_exclusive(self.package_lock(namespace)).await?;
+        let latest = self.read_latest(storage, namespace).await?;
+        let from_base = latest.as_deref() == base;
+        // A publish from the base writes even over a revision of the same
+        // hash, which leaves out folder metadata, so the one published is
+        // the one committed; any other only keeps a revision not yet stored.
+        if from_base || !storage.exists(self.revision(hash)).await {
+            let manifest = storage
+                .read_bytes(self.installed_manifest(namespace, hash))
+                .await?;
+            storage
+                .write_byte_stream(self.revision(hash), ByteStream::from(manifest))
+                .await?;
+        }
+
+        // `hash` already being `latest` is a publish that landed before.
+        if !from_base && latest.as_deref() != Some(hash) {
+            self.sync_up_from(storage, &self.dir).await;
+            return Ok(LocalPublish::Diverged(latest));
+        }
+        if from_base {
+            // The revision this publish wrote, and the folders holding it,
+            // are durable before `latest` names it.
+            self.sync_objects(storage, hash).await?;
+            self.sync_up_from(storage, &self.dir).await;
+        }
+        if latest.as_deref() != Some(hash) {
+            write_tag(storage, &self.dir, &self.latest(namespace), hash).await?;
+        }
+        self.sync_up_from(storage, &self.dir.join(LATEST_DIR)).await;
+        Ok(LocalPublish::Advanced)
+    }
+
+    /// Syncs the objects the revision `hash` names in `objects/`, which a
+    /// commit files without syncing, before `latest` names them.
+    async fn sync_objects(&self, storage: &(impl Storage + Sync), hash: &str) -> Res {
+        // Windows syncs only a file opened for writing, and its folders not
+        // at all, as `Storage::sync_dir` does not.
+        if !cfg!(unix) {
+            return Ok(());
+        }
+        let objects = self.objects_dir();
+        let names: BTreeSet<String> = Manifest::from_path(storage, &self.revision(hash))
+            .await?
+            .rows
+            .iter()
+            .flat_map(|row| row_objects(&row.hash, &row.physical_key))
+            .collect();
+        for name in names {
+            let object = objects.join(name);
+            if storage.exists(&object).await {
+                storage.open_file(&object).await?.sync_all().await?;
+            }
+        }
+        storage.sync_dir(&objects).await;
+        Ok(())
+    }
+
+    /// Syncs `folder` and each folder above it up to the Domain's root: the
+    /// registry holds the only copy, so folders any write may have made,
+    /// this one or another's, must survive a crash too.
+    async fn sync_up_from(&self, storage: &(impl Storage + Sync), folder: &Path) {
+        let root = self.dir.ancestors().nth(2).unwrap_or(&self.dir);
+        for folder in folder
+            .ancestors()
+            .take_while(|folder| folder.starts_with(root))
+        {
+            storage.sync_dir(folder).await;
+        }
+    }
+
+    async fn lock_names(&self, storage: &(impl Storage + Sync)) -> Res<LockGuard> {
+        storage.lock_exclusive(self.dir.join(NAME_LOCK)).await
+    }
+
+    async fn read_names(&self, storage: &(impl Storage + Sync)) -> Res<Option<LocalNames>> {
+        match storage.read_bytes(self.dir.join(NAME_FILE)).await {
+            Ok(bytes) => Ok(Some(serde_json::from_slice(&bytes)?)),
+            Err(err) if err.is_not_found() => Ok(None),
+            Err(err) => Err(err),
+        }
+    }
+
+    async fn write_names(&self, storage: &(impl Storage + Sync), names: &LocalNames) -> Res {
+        let body = ByteStream::from(serde_json::to_vec(names)?);
+        storage
+            .write_byte_stream(self.dir.join(NAME_FILE), body)
+            .await?;
+        self.sync_up_from(storage, &self.dir).await;
+        Ok(())
+    }
+}
+
+impl PackageStore for LocalRegistry {
+    fn objects_dir(&self) -> PathBuf {
+        self.dir.join(OBJECTS_DIR)
+    }
+
+    fn manifests_dir(&self, namespace: &Namespace) -> PathBuf {
+        self.installed_manifests_dir(namespace)
+    }
+}
+
+/// `host` held to a local registry name's characters, each other one made
+/// `-`; `None` where that is no name or holds no letter or digit, as for an
+/// empty host name or one written in another script.
+fn name_from_host(host: &str) -> Option<String> {
+    let name: String = host
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '.' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    check_name(&name).is_ok().then_some(name)
+}
+
+/// A name a local registry may keep: a valid name in a URI, holding at
+/// least one letter or digit.
+fn check_name(name: &str) -> Res {
+    quilt_uri::check_local_registry_name(name)?;
+    if !name.bytes().any(|b| b.is_ascii_alphanumeric()) {
+        return Err(UriError::Package(format!(
+            "a local registry's name holds a letter or digit; got {name:?}"
+        ))
+        .into());
+    }
+    Ok(())
+}
+
 /// The namespace `<owner>/<name>` that the last two parts of `path` name, or
 /// `None` where they name none.
 fn namespace_of(path: &Path) -> Option<Namespace> {
@@ -379,6 +668,34 @@ impl PackageStore for RegistryStore {
 fn package_path(dir: &Path, namespace: &Namespace, suffix: &str) -> PathBuf {
     dir.join(namespace.prefix())
         .join(format!("{}{suffix}", namespace.name()))
+}
+
+/// What the tag file at `path` holds, trimmed, or `None` where it is missing.
+async fn read_tag(storage: &(impl Storage + Sync), path: &Path) -> Res<Option<String>> {
+    match storage.read_bytes(path).await {
+        Ok(bytes) => Ok(Some(String::from_utf8_lossy(&bytes).trim().to_string())),
+        Err(err) if err.is_not_found() => Ok(None),
+        Err(err) => Err(err),
+    }
+}
+
+/// Points the tag file at `path` at `hash`, staged in `store_dir`, outside
+/// the tag's folder, where every file is a package's.
+async fn write_tag(
+    storage: &(impl Storage + Sync),
+    store_dir: &Path,
+    path: &Path,
+    hash: &str,
+) -> Res {
+    let owner = path.parent().unwrap_or(store_dir);
+    storage.create_dir_all(owner).await?;
+    let staged = store_dir.join(temp_name());
+    storage
+        .write_staged_byte_stream(&staged, ByteStream::from(hash.as_bytes().to_vec()))
+        .await?;
+    storage.rename(&staged, path).await?;
+    storage.sync_dir(owner).await;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -487,7 +804,7 @@ mod tests {
     /// Records `files` as a revision of `namespace` in `store`; returns its
     /// top hash and its rows' object paths, in key order.
     async fn commit(
-        store: &RegistryStore,
+        store: &impl PackageStore,
         namespace: &Namespace,
         files: &[(&str, &'static [u8])],
     ) -> Res<(String, Vec<PathBuf>)> {
@@ -519,7 +836,7 @@ mod tests {
         .await?;
         let hash = recorded.hash().expect("a revision").to_string();
         let written =
-            Manifest::from_path(&storage, &store.installed_manifest(namespace, &hash)).await?;
+            Manifest::from_path(&storage, &store.manifests_dir(namespace).join(&hash)).await?;
         let objects = written
             .rows
             .iter()
@@ -773,6 +1090,247 @@ mod tests {
         let root = DomainRoot::new(r"C:\data");
         assert!(root.registry("con").is_err());
         assert!(root.registry("console").is_ok());
+    }
+
+    /// The layout the local registry is given beside the buckets' stores,
+    /// structural because other clients and the import read it.
+    #[test]
+    fn the_local_registry_is_laid_out_under_at_local() {
+        let local = DomainRoot::new("/data/bio.quilt.dataspace").local();
+        let namespace = Namespace::from(("me", "analysis"));
+        let dir = Path::new("/data/bio.quilt.dataspace/registries/@local");
+
+        assert_eq!(local.dir(), dir);
+        assert_eq!(local.latest(&namespace), dir.join("latest/me/analysis"));
+        assert_eq!(local.revision("deadbeef"), dir.join("packages/deadbeef"));
+        assert_eq!(
+            local.installed_manifest(&namespace, "deadbeef"),
+            dir.join("installed/me/analysis/deadbeef")
+        );
+        assert_eq!(local.objects_dir(), dir.join("objects"));
+        assert_eq!(
+            local.package_lock(&namespace),
+            dir.join("locks/me/analysis.lock")
+        );
+    }
+
+    /// A host name's characters outside a registry name's become `-`.
+    #[test]
+    fn a_host_name_is_held_to_registry_name_characters() {
+        assert_eq!(
+            name_from_host("Lab's MacBook_Pro.local"),
+            Some("Lab-s-MacBook-Pro.local".to_string())
+        );
+        assert_eq!(name_from_host(""), None);
+        assert_eq!(name_from_host(".."), None);
+        assert_eq!(name_from_host("日本"), None);
+    }
+
+    /// The registry's first name comes from the host name, and is stored.
+    #[test(tokio::test)]
+    async fn the_local_registry_is_first_named_after_the_host() -> Res {
+        let dir = tempfile::tempdir()?;
+        let storage = LocalStorage::new();
+        let host = hostname::get()?.into_string().expect("a UTF-8 host name");
+
+        let first = DomainRoot::new(dir.path()).local().names(&storage).await?;
+        assert_eq!(
+            first,
+            LocalNames {
+                name: name_from_host(&host).expect("a host name"),
+                aliases: Vec::new(),
+            }
+        );
+        assert!(dir.path().join("registries/@local/registry.json").exists());
+        Ok(())
+    }
+
+    /// A first rename names the registry, with no alias. A later one keeps
+    /// the old name as an alias; renaming back to an alias makes it the name
+    /// again and the one before it an alias.
+    #[test(tokio::test)]
+    async fn a_renamed_registry_still_answers_to_its_old_name() -> Res {
+        let dir = tempfile::tempdir()?;
+        let storage = LocalStorage::new();
+        let local = DomainRoot::new(dir.path()).local();
+        assert_eq!(
+            local.rename(&storage, "first").await?,
+            LocalNames {
+                name: "first".to_string(),
+                aliases: Vec::new(),
+            }
+        );
+
+        let names = local.rename(&storage, "second").await?;
+        assert_eq!(names.name, "second");
+        assert!(names.answers_to("first") && names.answers_to("second"));
+        assert!(!names.answers_to("third"));
+
+        let names = local.rename(&storage, "first").await?;
+        assert_eq!(names.name, "first");
+        assert!(names.answers_to("second"));
+        assert!(!names.aliases.contains(&"first".to_string()));
+        assert_eq!(local.names(&storage).await?, names);
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn a_name_outside_host_name_characters_is_refused() -> Res {
+        let dir = tempfile::tempdir()?;
+        let storage = LocalStorage::new();
+        let local = DomainRoot::new(dir.path()).local();
+        assert!(local.rename(&storage, "my registry").await.is_err());
+        assert!(local.rename(&storage, "--").await.is_err());
+        Ok(())
+    }
+
+    /// A publish advances `latest` only from the revision it names: the
+    /// second publish from no `latest` finds it moved, keeps its revision and
+    /// leaves the tag; one from the new `latest` advances it.
+    #[test(tokio::test)]
+    async fn a_local_publish_advances_latest_only_from_its_base() -> Res {
+        let dir = tempfile::tempdir()?;
+        let storage = LocalStorage::new();
+        let local = DomainRoot::new(dir.path()).local();
+        let namespace = Namespace::from(("me", "analysis"));
+        let (one, _) = commit(&local, &namespace, &[("a.txt", b"one")]).await?;
+        let (two, _) = commit(&local, &namespace, &[("a.txt", b"two")]).await?;
+        let (three, _) = commit(&local, &namespace, &[("a.txt", b"three")]).await?;
+
+        assert_eq!(
+            local.publish(&storage, &namespace, None, &one).await?,
+            LocalPublish::Advanced
+        );
+        assert_eq!(
+            local.publish(&storage, &namespace, None, &two).await?,
+            LocalPublish::Diverged(Some(one.clone()))
+        );
+        assert_eq!(
+            local.read_latest(&storage, &namespace).await?,
+            Some(one.clone())
+        );
+        assert!(
+            local.revision(&two).exists(),
+            "the diverged revision is kept"
+        );
+        assert_eq!(
+            local.publish(&storage, &namespace, None, &one).await?,
+            LocalPublish::Advanced,
+            "a publish retried after it landed"
+        );
+        assert!(
+            local
+                .publish(&storage, &namespace, Some("abc123"), &three)
+                .await
+                .is_err(),
+            "a hash prefix is not a base"
+        );
+
+        assert_eq!(
+            local
+                .publish(&storage, &namespace, Some(&one), &three)
+                .await?,
+            LocalPublish::Advanced
+        );
+        assert_eq!(
+            local.read_latest(&storage, &namespace).await?,
+            Some(three.clone())
+        );
+        assert!(local.revision(&one).exists() && local.revision(&three).exists());
+        Ok(())
+    }
+
+    /// A local tag holding no top hash is damaged, not absent: a publish
+    /// from no `latest` fails and leaves it.
+    #[test(tokio::test)]
+    async fn a_damaged_local_tag_is_not_taken_for_none() -> Res {
+        let dir = tempfile::tempdir()?;
+        let storage = LocalStorage::new();
+        let local = DomainRoot::new(dir.path()).local();
+        let namespace = Namespace::from(("me", "analysis"));
+        let (hash, _) = commit(&local, &namespace, &[("a.txt", b"one")]).await?;
+        let tag = local.latest(&namespace);
+        std::fs::create_dir_all(tag.parent().unwrap())?;
+        std::fs::write(&tag, "not a hash")?;
+
+        assert!(
+            local
+                .publish(&storage, &namespace, None, &hash)
+                .await
+                .is_err()
+        );
+        assert_eq!(std::fs::read_to_string(&tag)?, "not a hash");
+        Ok(())
+    }
+
+    /// A revision published again from the base is written again: its hash
+    /// leaves out folder metadata, so the copy committed last is the one
+    /// kept.
+    #[test(tokio::test)]
+    async fn a_revision_published_again_is_rewritten() -> Res {
+        let dir = tempfile::tempdir()?;
+        let storage = LocalStorage::new();
+        let local = DomainRoot::new(dir.path()).local();
+        let namespace = Namespace::from(("me", "analysis"));
+        let (hash, _) = commit(&local, &namespace, &[("data/a.txt", b"one")]).await?;
+        local.publish(&storage, &namespace, None, &hash).await?;
+        let recommitted = local.installed_manifest(&namespace, &hash);
+        // A copy that differs where the top hash does not look.
+        let mut other = Manifest::from_path(&storage, &recommitted).await?;
+        other.dir_meta = vec![crate::manifest::DirMeta::new(
+            LogicalKey::new("data")?,
+            serde_json::json!({ "copy": "other" }),
+        )];
+        let mut hasher = crate::manifest::TopHasher::new();
+        hasher.append_header(&other.header)?;
+        for row in &other.rows {
+            hasher.append(row)?;
+        }
+        assert_eq!(hasher.finalize(), hash, "folder metadata is not hashed");
+        let other = other.try_to_jsonlines()?;
+        std::fs::write(&recommitted, &other)?;
+
+        local
+            .publish(&storage, &namespace, Some(&hash), &hash)
+            .await?;
+
+        assert_eq!(std::fs::read_to_string(local.revision(&hash))?, other);
+
+        // One not from the base leaves a stored revision as it is.
+        std::fs::write(&recommitted, b"from a stale base")?;
+        local.publish(&storage, &namespace, None, &hash).await?;
+        assert_eq!(std::fs::read_to_string(local.revision(&hash))?, other);
+        Ok(())
+    }
+
+    /// A publish stores its revision, and checks and moves `latest`, only
+    /// once it holds the package's lock, so two publishers from one base
+    /// cannot both advance it.
+    #[test(tokio::test)]
+    async fn a_local_publish_waits_for_the_package_lock() -> Res {
+        let dir = tempfile::tempdir()?;
+        let storage = LocalStorage::new();
+        let local = DomainRoot::new(dir.path()).local();
+        let namespace = Namespace::from(("me", "analysis"));
+        let (hash, _) = commit(&local, &namespace, &[("a.txt", b"one")]).await?;
+        let held = storage
+            .lock_exclusive(local.package_lock(&namespace))
+            .await?;
+
+        let publish = local.publish(&storage, &namespace, None, &hash);
+        tokio::pin!(publish);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(200), &mut publish)
+                .await
+                .is_err(),
+            "the publish finished while another holder had the lock"
+        );
+        assert_eq!(local.read_latest(&storage, &namespace).await?, None);
+        assert!(!local.revision(&hash).exists(), "the revision waits too");
+
+        drop(held);
+        assert_eq!(publish.await?, LocalPublish::Advanced);
+        Ok(())
     }
 
     /// One package recorded into two buckets' stores: each store holds its
