@@ -92,7 +92,8 @@ async fn folders_under(
 /// A key under `prefix` names a revision when it is a timestamp: not
 /// `latest`, which only names one of them, as the registry lists them.
 fn is_revision_pointer(key: &str, prefix: &str) -> bool {
-    pointer_time(key, prefix).is_some()
+    key.strip_prefix(prefix)
+        .is_some_and(|name| matches!(name.parse(), Ok(Tag::Timestamp(_))))
 }
 
 /// The time a revision pointer under `prefix` is named for.
@@ -1239,6 +1240,10 @@ mod tests {
             ".quilt/named_packages/team/data/1758500000",
             prefix
         ));
+        // A pointer named past what a time can hold is still a revision.
+        let far = ".quilt/named_packages/team/data/99999999999999";
+        assert!(is_revision_pointer(far, prefix));
+        assert_eq!(pointer_time(far, prefix), None);
         assert!(!is_revision_pointer(
             ".quilt/named_packages/team/data/latest",
             prefix
