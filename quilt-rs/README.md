@@ -133,8 +133,9 @@ folder:
 - `dataspace::publish_all::publish_all` publishes every `write` and `replace`
   entry of a dataspace, then writes `data.lock.toml`, moving a package's base
   only where its revision became `latest`. A package also under `read`
-  publishes only on its base, read first where `latest` has moved past it.
-  A lock written for another folder, host or user is refused.
+  publishes only on its base, read first where `latest` has moved past it or
+  `data.toml` changed since the lock was written. A lock written for another
+  folder, host or user is refused.
 - `dataspace::reattach::unattached` lists a package's commits in its bucket's
   `RegistryStore` that the bucket does not hold and `data.lock.toml` does not
   name, as after the lock was deleted. `dataspace::reattach::reattach`

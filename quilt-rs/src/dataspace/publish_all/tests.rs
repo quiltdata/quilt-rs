@@ -275,6 +275,33 @@ async fn a_package_under_read_and_write_never_read_is_read_first() -> Res {
 }
 
 #[test(tokio::test)]
+async fn read_paths_added_to_a_written_package_are_read_before_it_publishes() -> Res {
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    seed(&remote, FIRST, &[("in/a.txt", b"a")]).await?;
+    let root = dataspace(
+        &storage,
+        "write = [{ package = \"team/raw\", path = \"out/\" }]\n",
+    )?;
+    write(&root, "team/raw", "out/b.txt", b"b")?;
+    publish_all_here(&storage, &remote, &root, &writer()).await?;
+    dataspace(&storage, READ_AND_WRITE)?;
+    write(&root, "team/raw", "out/b.txt", b"B")?;
+
+    let published = publish_all_here(&storage, &remote, &root, &writer()).await?;
+
+    let entry = &published.entries[0];
+    assert!(entry.read.is_some(), "{entry:?}");
+    assert_eq!(std::fs::read(root.join("team/raw/in/a.txt"))?, b"a");
+    let new = advanced(entry);
+    assert_eq!(
+        base(&storage, &root, "team/raw").await?.as_deref(),
+        Some(new)
+    );
+    Ok(())
+}
+
+#[test(tokio::test)]
 async fn a_package_under_read_and_write_with_no_revision_yet_gets_its_first() -> Res {
     let remote = MockRemote::default();
     let storage = MockStorage::default();
