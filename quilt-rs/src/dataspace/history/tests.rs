@@ -165,9 +165,22 @@ async fn a_local_registry_not_named_so_has_no_history() -> Res {
         package: Namespace::try_from("me/out")?,
     };
 
+    let direct = || async {
+        revisions(
+            &world.storage,
+            &world.remote,
+            Some(&world.domain()),
+            &package,
+            None,
+            None,
+        )
+        .await
+    };
     assert!(world.history(&package).await.is_err());
+    assert!(direct().await.is_err());
     world.local_named("other").await?;
     assert!(world.history(&package).await.is_err());
+    assert!(direct().await.is_err());
     Ok(())
 }
 

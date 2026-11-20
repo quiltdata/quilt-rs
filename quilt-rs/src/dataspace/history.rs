@@ -113,11 +113,6 @@ pub async fn history(
             .find(|(key, _)| current(key) == wanted)
             .map(|(_, locked)| locked)
     });
-    if let Registry::Local(name) = &package.registry
-        && !names.as_ref().is_some_and(|names| names.answers_to(name))
-    {
-        return Err(EntryError::LocalRegistry.into());
-    }
     Ok(revisions(storage, remote, domain, package, catalog.as_ref(), locked).await?)
 }
 
@@ -175,8 +170,12 @@ pub async fn revisions(
             }
         }
         (Registry::Local(_), None) => return Err(EntryError::LocalRegistry),
-        (Registry::Local(_), Some(domain)) => {
+        (Registry::Local(name), Some(domain)) => {
             let local = domain.local();
+            let names = local.read_names(storage).await.ok().flatten();
+            if !names.is_some_and(|names| names.answers_to(name)) {
+                return Err(EntryError::LocalRegistry);
+            }
             let dir = local.installed_manifests_dir(namespace);
             for (hash, path) in manifests_in(storage, &dir).await? {
                 let revision = local.revision(&hash);
