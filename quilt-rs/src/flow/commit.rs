@@ -54,25 +54,30 @@ async fn collect_local_with_changes(
     // Process and add existing rows from the manifest
     let mut stream = local_manifest.records_stream().await;
     while let Some(chunk_result) = stream.next().await {
-        if let Ok(chunk) = chunk_result {
-            for row_res in chunk {
-                match row_res {
-                    Ok(row) => {
-                        // Skip removed rows
-                        if removed.contains(row.logical_key.as_path()) {
-                            continue;
-                        }
+        let chunk = match chunk_result {
+            Ok(chunk) => chunk,
+            Err(err) => {
+                all_rows.push(Err(err));
+                continue;
+            }
+        };
+        for row_res in chunk {
+            match row_res {
+                Ok(row) => {
+                    // Skip removed rows
+                    if removed.contains(row.logical_key.as_path()) {
+                        continue;
+                    }
 
-                        // Use modified version if available, otherwise use original
-                        if let Some(modified_row) = modified.get(row.logical_key.as_path()) {
-                            all_rows.push(Ok(modified_row.clone()));
-                        } else {
-                            all_rows.push(Ok(row));
-                        }
+                    // Use modified version if available, otherwise use original
+                    if let Some(modified_row) = modified.get(row.logical_key.as_path()) {
+                        all_rows.push(Ok(modified_row.clone()));
+                    } else {
+                        all_rows.push(Ok(row));
                     }
-                    Err(err) => {
-                        all_rows.push(Err(Error::Manifest(ManifestError::Table(err.to_string()))));
-                    }
+                }
+                Err(err) => {
+                    all_rows.push(Err(Error::Manifest(ManifestError::Table(err.to_string()))));
                 }
             }
         }

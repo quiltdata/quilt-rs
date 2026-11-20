@@ -1146,6 +1146,66 @@ mod tests {
         Ok(())
     }
 
+    /// A push whose upload fails ends with that error, and writes no manifest
+    /// from the files uploaded before it, neither locally nor on the bucket.
+    #[test(tokio::test)]
+    async fn test_push_fails_when_an_upload_fails() -> Res {
+        let paths = paths::DomainPaths::new(std::path::absolute("/foo")?);
+        let storage = MockStorage::default();
+        let remote = MockRemote::default();
+
+        let file_content = b"bytes\n";
+        remote
+            .storage
+            .write_byte_stream(
+                std::path::absolute("/b/a/ra")?,
+                ByteStream::from_static(file_content),
+            )
+            .await?;
+
+        // `a.txt` uploads; `b.txt` names a file that is not there.
+        let mut manifest = header_none_manifest();
+        for (name, path) in [("a.txt", "/b/a/ra"), ("b.txt", "/b/a/missing")] {
+            manifest
+                .insert_record(ManifestRow {
+                    logical_key: crate::LogicalKey::new(name)?,
+                    physical_key: local_file_url(path),
+                    size: file_content.len() as u64,
+                    ..ManifestRow::default()
+                })
+                .await?;
+        }
+
+        let err = push_package(
+            first_push_governed_lineage(),
+            manifest,
+            &paths,
+            &storage,
+            &remote,
+            None,
+            HostConfig::default(),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            !matches!(
+                &err,
+                Error::PackageOp(PackageOpError::Push(msg))
+                    if msg.contains("not equal to pushed manifest commit")
+            ),
+            "the failed upload must end the push, got: {err:?}"
+        );
+        assert!(!storage.exists(&paths.cached_manifests_dir("b")).await);
+        assert_eq!(
+            remote
+                .current("s3://b/.quilt/named_packages/foo/bar/latest")
+                .await?,
+            None
+        );
+        Ok(())
+    }
+
     #[test(tokio::test)]
     async fn test_push_virtual_manifest() -> Res {
         let manifest_uri = ManifestUri {

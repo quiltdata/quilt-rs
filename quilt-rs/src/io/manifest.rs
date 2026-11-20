@@ -624,8 +624,8 @@ pub async fn build_manifest_from_rows_stream(
 
     top_hasher.append_header(&header)?;
 
-    while let Some(Ok(chunk)) = stream.next().await {
-        for row_result in &chunk {
+    while let Some(chunk) = stream.next().await {
+        for row_result in &chunk? {
             match row_result {
                 Ok(row) => {
                     top_hasher.append(row)?;
@@ -873,6 +873,42 @@ mod tests {
 
         assert_eq!(calculated_hash, fixtures::manifest::TOP_HASH);
 
+        Ok(())
+    }
+
+    /// A chunk that fails ends the build with its error, and no manifest is
+    /// written from the rows read before it.
+    #[test(tokio::test)]
+    async fn test_build_fails_on_a_failed_chunk() -> Res {
+        let storage = MockStorage::default();
+        let dest_dir = storage.temp_dir.path().join("manifests");
+
+        let row = ManifestRow {
+            logical_key: crate::LogicalKey::new("a.txt")?,
+            ..ManifestRow::default()
+        };
+        let rows_stream = tokio_stream::iter(vec![
+            Ok(vec![Ok(row)]),
+            Err(Error::PackageOp(PackageOpError::Push(
+                "upload failed".to_string(),
+            ))),
+        ]);
+
+        let err = build_manifest_from_rows_stream(
+            &storage,
+            dest_dir.clone(),
+            ManifestHeader::default(),
+            Vec::new(),
+            rows_stream,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            matches!(&err, Error::PackageOp(PackageOpError::Push(msg)) if msg == "upload failed"),
+            "got: {err:?}"
+        );
+        assert!(!storage.exists(&dest_dir).await);
         Ok(())
     }
 
