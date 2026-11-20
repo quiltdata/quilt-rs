@@ -261,7 +261,8 @@ pub async fn sync(
         let whole = entries.iter().all(|(_, outcome)| match outcome {
             EntrySync::Ran {
                 read,
-                published: None | Some(Published::Advanced { .. }),
+                published:
+                    None | Some(Published::Advanced { .. } | Published::WorkflowBlocked { .. }),
             } => read
                 .as_ref()
                 .is_none_or(|read| read.skipped.is_empty() && read.hash_mismatch.is_empty()),
@@ -334,8 +335,8 @@ async fn filled(
 /// Reads `entry` in full at `latest`, filling what is missing, and moves its
 /// base where the read completes. Commits the lock names were made against
 /// the contract they were committed under, so they are pushed first, with no
-/// new commit, where `latest` is still their base; one that does not become
-/// `latest` leaves the entry unread.
+/// new commit, where `latest` is still their base; one the workflow refuses
+/// is read at instead, and one `latest` moved past leaves the entry unread.
 async fn fill(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
@@ -374,15 +375,27 @@ async fn fill(
                 Some(&locked.base),
             )
             .await?;
-            let Published::Advanced { revision, .. } = &pushed else {
-                return Ok(EntrySync::Ran {
-                    read: None,
-                    published: Some(pushed),
-                });
-            };
-            set_base(lock, lock_file, &key, revision.clone()).await?;
-            latest = Some(revision.clone());
-            published = Some(pushed);
+            match &pushed {
+                Published::Advanced { revision, .. } => {
+                    set_base(lock, lock_file, &key, revision.clone()).await?;
+                    latest = Some(revision.clone());
+                    published = Some(pushed);
+                }
+                // The bucket holds the refused commit, so the folder is read
+                // whole at it, and the lock keeps it for a fix to build on.
+                Published::WorkflowBlocked { revision, .. } => {
+                    let mut whole = at(entry, revision);
+                    whole.access = Access::Read;
+                    let outcome = read(storage, remote, &whole, Some(revision)).await?;
+                    return Ok(ran(outcome, Some(pushed)));
+                }
+                _ => {
+                    return Ok(EntrySync::Ran {
+                        read: None,
+                        published: Some(pushed),
+                    });
+                }
+            }
         }
     }
     let base = lock.packages.get(&key).map(|locked| locked.base.clone());
@@ -401,7 +414,11 @@ async fn fill(
     if let Some(revision) = outcome.lock_base() {
         set_base(lock, lock_file, &key, revision.to_string()).await?;
     }
-    Ok(match outcome {
+    Ok(ran(outcome, published))
+}
+
+fn ran(outcome: ReadOutcome, published: Option<Published>) -> EntrySync {
+    match outcome {
         ReadOutcome::Read(report) => EntrySync::Ran {
             read: Some(report),
             published,
@@ -413,7 +430,7 @@ async fn fill(
             revision,
             conflicts,
         },
-    })
+    }
 }
 
 /// The hash `latest` names for `entry`'s package, `None` where it has none.
@@ -857,13 +874,25 @@ async fn read_back(
                 return Err(EntryError::Changed(key.to_path_buf()));
             }
         }
-        for key in keys() {
-            let path = key.join_to(folder);
-            if let Some(parent) = path.parent() {
-                storage.create_dir_all(parent).await?;
+        let placed = async {
+            for key in keys() {
+                let path = key.join_to(folder);
+                if let Some(parent) = path.parent() {
+                    storage.create_dir_all(parent).await?;
+                }
+                storage.rename(key.join_to(&staging), &path).await?;
+                report.placed.push(key.to_path_buf());
+                crate::failpoint::stop("sync.read_back")?;
             }
-            storage.rename(key.join_to(&staging), &path).await?;
-            report.placed.push(key.to_path_buf());
+            Ok::<_, crate::Error>(())
+        }
+        .await;
+        if let Err(err) = placed {
+            // Back to empty, so the next tick reads it back again.
+            for done in &report.placed {
+                let _ = storage.remove_file(folder.join(done)).await;
+            }
+            return Err(err.into());
         }
         let text = render(current, &entry.paths).map_err(EntryError::MetadataUnwritable)?;
         match bytes_at(storage, &folder.join(METADATA_FILE)).await? {

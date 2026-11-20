@@ -1258,6 +1258,48 @@ async fn a_blocked_commit_the_store_cleared_is_read_from_the_bucket() -> Res {
 }
 
 #[test(tokio::test)]
+async fn a_read_back_stopped_partway_leaves_the_folder_empty_for_the_next_tick() -> Res {
+    let world = World::filled(&[("a.txt", b"v1"), ("b.txt", b"v1")]).await?;
+    std::fs::remove_dir_all(world.folder())?;
+
+    let stopped = stopping_at("sync.read_back", 0, world.tick()).await?;
+
+    assert!(matches!(stopped, EntrySync::Failed(_)), "{stopped:?}");
+    assert_eq!(world.text("a.txt"), None);
+    assert_eq!(world.text("b.txt"), None);
+    let outcome = world.tick().await?;
+    assert!(matches!(&outcome, EntrySync::ReadBack(_)), "{outcome:?}");
+    assert_eq!(world.text("b.txt").as_deref(), Some("v1"));
+    assert_eq!(world.latest().await?, FIRST);
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn after_data_toml_is_edited_a_blocked_commit_is_read_whole_and_kept() -> Res {
+    let world = World::filled(&[("a.txt", b"v1"), ("b.txt", b"v1")]).await?;
+    gate(&world, r#"{"type": "object", "required": ["owner"]}"#).await?;
+    world.write("a.txt", "v2")?;
+    world.tick().await?;
+    let commits = world.locked().await?.ok_or("no lock entry")?.commits;
+    assert_eq!(commits.len(), 1);
+    world.remove("b.txt")?;
+    world.contract("# edited\nsync = [\"team/raw\"]")?;
+
+    let synced = world.sync().await?;
+
+    assert!(synced.read_only, "{synced:?}");
+    assert_eq!(world.text("a.txt").as_deref(), Some("v2"));
+    assert_eq!(world.text("b.txt").as_deref(), Some("v1"));
+    let lock = world.lock().await?;
+    let contract = Contract::read(&world.storage, &world.dataspace(), None).await?;
+    assert_eq!(lock.header.data_toml_hash, contract.data_toml_hash());
+    let locked = lock.packages.get(&key()).ok_or("no lock entry")?;
+    assert_eq!(locked.base, FIRST);
+    assert_eq!(locked.commits, commits);
+    Ok(())
+}
+
+#[test(tokio::test)]
 async fn a_folder_that_cannot_be_read_back_whole_is_left_empty_and_nothing_published() -> Res {
     let world = World::filled(&[("a.txt", b"v1"), ("b.txt", b"v1")]).await?;
     std::fs::remove_dir_all(world.folder())?;
