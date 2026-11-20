@@ -25,6 +25,7 @@ use crate::dataspace::contract::PackageKey;
 use crate::io::storage::Storage;
 use crate::io::storage::StorageExt;
 use quilt_uri::is_top_hash;
+use quilt_uri::mask_user;
 
 /// The lock's file name, beside the contract.
 pub const LOCK_FILE: &str = "data.lock.toml";
@@ -271,7 +272,7 @@ fn raw(
 /// holds whole top hashes.
 fn checked(text: &str, entry: &LockEntry) -> Result<PackageKey, LockError> {
     let key = text.parse().map_err(|source| LockError::Key {
-        key: text.to_string(),
+        key: mask_user(text),
         source,
     })?;
     if let Some(hash) = std::iter::once(&entry.base)

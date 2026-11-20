@@ -394,3 +394,17 @@ fn a_writer_here_is_this_host_and_user() -> Res {
     assert_eq!(here.local_registry, "ernest-mbp");
     Ok(())
 }
+
+/// The error for a key masks a user and password in it.
+#[test(tokio::test)]
+async fn a_key_error_masks_a_user_and_password() {
+    let key = "quilt+s3://KEY:secret@quilt-dev#package=team/raw";
+    let result = read_text(&lock_text(1, &format!(r#""{key}" = "{BASE}""#))).await;
+    let Err(err) = result else {
+        panic!("{key} should be refused");
+    };
+    for text in [err.to_string(), format!("{err:?}")] {
+        assert!(!text.contains("secret") && !text.contains("KEY"), "{text}");
+        assert!(text.contains("***@quilt-dev"), "{text}");
+    }
+}

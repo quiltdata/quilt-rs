@@ -36,6 +36,7 @@ use quilt_uri::Tag;
 use quilt_uri::UriError;
 use quilt_uri::check_bucket;
 use quilt_uri::is_top_hash;
+use quilt_uri::mask_user;
 
 /// The contract's file name, in the dataspace's folder.
 pub const CONTRACT_FILE: &str = "data.toml";
@@ -155,10 +156,11 @@ impl FromStr for PackageKey {
     fn from_str(text: &str) -> Result<Self, UriError> {
         let uri = parse_uri(text, None).map_err(|problem| match problem {
             EntryProblem::Uri(err) => err,
-            EntryProblem::NoLocalRegistry => {
-                UriError::Package(format!("a package's key names its registry: {text:?}"))
-            }
-            other => UriError::Package(format!("{other}: {text:?}")),
+            EntryProblem::NoLocalRegistry => UriError::Package(format!(
+                "a package's key names its registry: {:?}",
+                mask_user(text)
+            )),
+            other => UriError::Package(format!("{other}: {:?}", mask_user(text))),
         })?;
         let key = Self {
             registry: uri.registry,
@@ -168,7 +170,8 @@ impl FromStr for PackageKey {
             Ok(key)
         } else {
             Err(UriError::Package(format!(
-                "not a package's canonical URI: {text:?}"
+                "not a package's canonical URI: {:?}",
+                mask_user(text)
             )))
         }
     }
@@ -794,7 +797,9 @@ fn local(name: Option<String>, local_registry: Option<&str>) -> Result<Registry,
         .ok_or(EntryProblem::NoLocalRegistry)?;
     match crate::domain::check_name(&name) {
         Ok(()) => Ok(Registry::Local(name)),
-        Err(_) => Err(EntryProblem::Registry(format!("quilt+local://{name}"))),
+        Err(_) => Err(EntryProblem::Registry(mask_user(&format!(
+            "quilt+local://{name}"
+        )))),
     }
 }
 
@@ -856,7 +861,7 @@ fn parse_registry(text: &str, local_registry: Option<&str>) -> Result<Registry, 
     match text.strip_prefix("quilt+local://") {
         Some("") => local(None, local_registry),
         Some(name) => local(Some(name.to_string()), local_registry),
-        None => Err(EntryProblem::Registry(text.to_string())),
+        None => Err(EntryProblem::Registry(mask_user(text))),
     }
 }
 
