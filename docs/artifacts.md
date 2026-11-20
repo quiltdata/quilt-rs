@@ -61,6 +61,34 @@ library.
 | Installed manifests | `$DATA_DIR/.quilt/installed/<ns>/<hash>` | Namespace from the package, hash from the manifest |
 | Object store | `$DATA_DIR/.quilt/objects/<sha256hex>` | Hash derived from file content |
 
+## Dataspace Domain (`bio.quilt.dataspace/`)
+
+*quilt-rs.* The Domain that dataspaces use, beside `$DATA_DIR`, not in it.
+`quilt_rs::domain::locate` places it: a `--domain` value, else
+`QUILT_DOMAIN`, else `bio.quilt.dataspace/` in the OS's local data folder
+(`~/Library/Application Support/` on macOS, `~/.local/share/` on Linux,
+`%LOCALAPPDATA%` on Windows). No client selects it that way yet: QuiltSync
+and quilt-cli still name `$DATA_DIR` with `--domain` and `QUILT_DOMAIN`.
+
+| Artifact | Path |
+|----------|------|
+| Default dataspace, dataspaces on autosync, import state (format 2) | `domain.json` |
+| Autosync's queue | `queue.db` |
+| Rebuildable state | `state.db` |
+| Staged writes | `staging/` |
+| Domain lock, held by a writer of `domain.json` and by an import | `domain.lock` |
+| A bucket's Package Store | `registries/<bucket>/{latest,packages,installed,objects,locks}/` |
+| The local registry | `registries/@local/` |
+
+`quilt_rs::domain::import::import` fills it from a domain on refs in
+`$DATA_DIR/.quilt/`, which it only reads: each package's installed manifests
+and the objects they name go to its bucket's store, or the local registry's
+for a package with no remote, and each ref becomes a `sync` entry in the old
+home's `data.toml` and `data.lock.toml`. The home becomes the default
+dataspace. Going back is using `$DATA_DIR` again; nothing done in the Domain
+since is carried back. An import that stopped part way runs again to the
+end; one that finished does not run again.
+
 ## Auth (`$DATA_DIR/.auth/`)
 
 *All components.* Managed by quilt-rs; CLI and QuiltSync use it through the
