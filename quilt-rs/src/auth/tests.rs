@@ -1271,6 +1271,24 @@ async fn package_revisions_maps_a_persistent_401_to_login_required() -> Res {
     Ok(())
 }
 
+/// The bucket's latest hashes ride the same retry as the revision listing.
+#[test(tokio::test)]
+async fn latest_hashes_recovers_from_a_revoked_token_by_forcing_a_refresh() -> Res {
+    let (auth, _storage, _paths, host) = auth_with_cached_credentials().await?;
+    let hash = "a".repeat(64);
+    let client = GraphQlTestHttpClient {
+        latest_pointers: vec![("team/data".to_string(), hash.clone())],
+        graphql_fail_first_n: 1,
+        ..GraphQlTestHttpClient::default()
+    };
+
+    let latest = auth.latest_hashes(&client, &host, "bucket").await;
+
+    assert_eq!(latest.ok(), Some(vec![(("team", "data").into(), hash)]));
+    assert_eq!(client.token_calls.load(Ordering::SeqCst), 1);
+    Ok(())
+}
+
 #[test(tokio::test)]
 async fn expire_credentials_forces_a_revend_without_touching_tokens() -> Res {
     let storage = Arc::new(MockStorage::default());

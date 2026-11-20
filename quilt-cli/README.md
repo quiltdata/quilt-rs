@@ -46,6 +46,7 @@ cargo install quilt-cli
 | `push`      | Upload a local revision to the remote            |
 | `pull`      | Fetch the latest remote revision                 |
 | `read`      | Read a dataspace's `read` entries, with no Domain |
+| `publish`   | Publish a dataspace's `write` and `replace` entries, with no Domain |
 | `reattach`  | List or reattach local commits a dataspace's lock lost |
 | `list`      | List installed packages and their commit status  |
 | `log`       | List the revisions this copy has, and why each is kept |
@@ -155,6 +156,23 @@ It exits 1 when any package was not read whole. Under `--json` it prints
 `failed`),
 `completed`, `revision`, the `placed`, `removed`, `kept`, `skipped`,
 `hash_mismatch` and `conflicts` lists, and `error`.
+
+`publish <DATASPACE>` publishes each package the folder's `data.toml` lists
+under `write` or `replace` from its working folder, with no Domain: `write`
+lays the files under the entry's paths over `latest`, and `replace` publishes
+the folder as the whole package, with `metadata.toml` setting the message and
+metadata. What a commit leaves out is left out: files the folder's
+`.quiltignore`, the domain folder's user-wide one or the built-in rules ignore.
+A package also listed under `read` publishes only on its base, the revision the
+lock names; where `latest` has moved past it, the package is read first, as
+`read` would, and a read that does not complete publishes nothing. Each
+revision that becomes `latest` is recorded in `data.lock.toml`; a lock from
+another host, user or folder is refused. It exits 1 unless `latest` holds
+every package's folder. Under `--json` it prints `dataspace`, `completed`
+and `entries`, each with `package`, `folder`, `access`, `outcome`
+(`published`, `stored`, `unchanged`, `behind`, `not_read`, `unpushed` or
+`failed`), `completed`, `revision`, `latest`, `latest_unchecked`, `read` (the
+read run first, as `read` reports an entry, or `null`) and `error`.
 
 `reattach <DATASPACE> <PACKAGE>` lists the package's local commits that
 `data.lock.toml` does not name, as after the lock was deleted: those its bucket

@@ -40,7 +40,7 @@ const LIST_KEYS: [&str; 6] = [
 
 /// The lists of files an entry's read reports, each with its JSON key and
 /// its heading in the text.
-fn lists(read: &EntryRead) -> Vec<(&'static str, &'static str, &[PathBuf])> {
+pub(super) fn lists(read: &EntryRead) -> Vec<(&'static str, &'static str, &[PathBuf])> {
     match read {
         EntryRead::Ran(ReadOutcome::Read(report)) | EntryRead::Refilled(report) => vec![
             ("placed", "placed", &report.placed),
@@ -65,7 +65,7 @@ fn lists(read: &EntryRead) -> Vec<(&'static str, &'static str, &[PathBuf])> {
 }
 
 /// The revision an entry's read was of, where it got that far.
-fn revision(read: &EntryRead) -> Option<&str> {
+pub(super) fn revision(read: &EntryRead) -> Option<&str> {
     match read {
         EntryRead::Ran(ReadOutcome::Read(report)) | EntryRead::Refilled(report) => {
             Some(&report.revision)
@@ -76,7 +76,11 @@ fn revision(read: &EntryRead) -> Option<&str> {
 }
 
 /// A heading, then its paths one per line, under one package's line.
-fn group(f: &mut std::fmt::Formatter<'_>, heading: &str, paths: &[PathBuf]) -> std::fmt::Result {
+pub(super) fn group(
+    f: &mut std::fmt::Formatter<'_>,
+    heading: &str,
+    paths: &[PathBuf],
+) -> std::fmt::Result {
     if paths.is_empty() {
         return Ok(());
     }
@@ -141,40 +145,59 @@ impl std::fmt::Display for Output {
     }
 }
 
+/// How an entry's read ended, as `--json` names it.
+pub(super) fn outcome(read: &EntryRead) -> &'static str {
+    match read {
+        EntryRead::Ran(ReadOutcome::Read(_)) if read.completed() => "read",
+        EntryRead::Ran(ReadOutcome::Read(_)) => "incomplete",
+        EntryRead::Refilled(_) => "refilled",
+        EntryRead::Ran(ReadOutcome::Blocked { .. }) => "blocked",
+        EntryRead::Unpushed => "unpushed",
+        EntryRead::Failed(_) => "failed",
+        _ => "not_read",
+    }
+}
+
+/// An entry's read under `--json`, but for its package and folder.
+pub(super) fn read_json(read: &EntryRead) -> serde_json::Value {
+    let error = match read {
+        EntryRead::Failed(err) => Some(err.to_string()),
+        _ => None,
+    };
+    let mut json = serde_json::json!({
+        "outcome": outcome(read),
+        "completed": read.completed(),
+        "revision": revision(read),
+        "error": error,
+    });
+    for key in LIST_KEYS {
+        json[key] = serde_json::json!([]);
+    }
+    for (key, _, list) in lists(read) {
+        json[key] = list
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>()
+            .into();
+    }
+    json
+}
+
 impl Render for Output {
     fn to_json(&self) -> serde_json::Value {
-        let paths = |list: &[PathBuf]| {
-            list.iter()
-                .map(|path| path.display().to_string())
-                .collect::<Vec<_>>()
-        };
         let entries: Vec<serde_json::Value> = self
             .read
             .entries
             .iter()
             .map(|(entry, read)| {
-                let (outcome, error) = match read {
-                    EntryRead::Ran(ReadOutcome::Read(_)) if read.completed() => ("read", None),
-                    EntryRead::Ran(ReadOutcome::Read(_)) => ("incomplete", None),
-                    EntryRead::Refilled(_) => ("refilled", None),
-                    EntryRead::Ran(ReadOutcome::Blocked { .. }) => ("blocked", None),
-                    EntryRead::Unpushed => ("unpushed", None),
-                    EntryRead::Failed(err) => ("failed", Some(err.to_string())),
-                    _ => ("not_read", None),
-                };
                 let mut json = serde_json::json!({
                     "package": entry.key().to_string(),
                     "folder": entry.folder.display().to_string(),
-                    "outcome": outcome,
-                    "completed": read.completed(),
-                    "revision": revision(read),
-                    "error": error,
                 });
-                for key in LIST_KEYS {
-                    json[key] = serde_json::json!([]);
-                }
-                for (key, _, list) in lists(read) {
-                    json[key] = paths(list).into();
+                if let (Some(fields), serde_json::Value::Object(read)) =
+                    (json.as_object_mut(), read_json(read))
+                {
+                    fields.extend(read);
                 }
                 json
             })

@@ -240,10 +240,12 @@ pub trait Remote {
     ) -> impl Future<Output = Res<Vec<String>>> + Send;
 
     /// Every package in `bucket`'s registry whose `latest` names a top hash,
-    /// with that hash: the folders under `.quilt/named_packages/`, listed on
-    /// `host`'s credentials or, with no host, this computer's AWS ones, and
-    /// each one's `latest` read. Unsorted; an error if a listing or a read
-    /// fails, never a short list.
+    /// with that hash. Asks `host`'s registry, in one paged query of its
+    /// search index. With no host, or where that search fails or cannot
+    /// list the bucket whole, lists the folders under `.quilt/named_packages/`, on
+    /// `host`'s credentials or this computer's AWS ones, and reads each
+    /// one's `latest`. Unsorted; an error if a listing or a read fails,
+    /// never a short list.
     fn latest_hashes(
         &self,
         host: Option<&Host>,

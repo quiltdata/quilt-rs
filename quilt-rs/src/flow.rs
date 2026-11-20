@@ -125,6 +125,7 @@ pub use resolve_hash::TOP_HASH_LEN;
 pub use resolve_hash::resolve_hash;
 pub use resolve_local_hash::resolve_local_hash;
 
+pub(crate) use status::Tracked;
 pub use status::create_status as status;
 pub use status::create_status_cached as status_cached;
 pub use status::refresh_latest_hash;

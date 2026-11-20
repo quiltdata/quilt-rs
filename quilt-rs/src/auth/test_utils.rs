@@ -55,6 +55,15 @@ pub(super) struct GraphQlTestHttpClient {
     pub(super) package_gone_from_page: Option<u64>,
     /// Every `package` query's variables, in order.
     pub(super) package_queries_seen: StdMutex<Vec<serde_json::Value>>,
+    /// The bucket's `latest` pointers in the registry's search index, as
+    /// (name, hash).
+    pub(super) latest_pointers: Vec<(String, String)>,
+    /// How many pointers the search pages through before its cursor stops,
+    /// standing in for the search index's result window.
+    pub(super) search_window: usize,
+    pub(super) search_fault: Option<SearchFault>,
+    /// Every search query's variables, in order.
+    pub(super) search_queries_seen: StdMutex<Vec<serde_json::Value>>,
     /// How many leading `/graphql` calls answer HTTP 401 before the endpoint
     /// starts working. Stands in for a session revoked server-side while the
     /// access token is still unexpired locally, so nothing on the client
@@ -65,6 +74,16 @@ pub(super) struct GraphQlTestHttpClient {
     pub(super) tokens_seen: StdMutex<Vec<String>>,
     /// Calls to the Connect token endpoint, i.e. forced token refreshes.
     pub(super) token_calls: AtomicUsize,
+}
+
+#[derive(PartialEq)]
+pub(super) enum SearchFault {
+    /// `total` as a registry with secure search reports it: -1.
+    HiddenTotal,
+    /// Every page's cursor asks for that same page again.
+    StuckCursor,
+    /// The search answers `OperationError`, as on a timeout.
+    Refused,
 }
 
 impl Default for GraphQlTestHttpClient {
@@ -82,6 +101,10 @@ impl Default for GraphQlTestHttpClient {
             package_revisions: None,
             package_gone_from_page: None,
             package_queries_seen: StdMutex::new(Vec::new()),
+            latest_pointers: Vec::new(),
+            search_window: usize::MAX,
+            search_fault: None,
+            search_queries_seen: StdMutex::new(Vec::new()),
             graphql_fail_first_n: 0,
             tokens_seen: StdMutex::new(Vec::new()),
             token_calls: AtomicUsize::new(0),
@@ -126,6 +149,69 @@ impl GraphQlTestHttpClient {
             .map(|hash| serde_json::json!({"hash": hash}))
             .collect::<Vec<_>>();
         serde_json::json!({"revisions": {"total": slots.len(), "page": page}})
+    }
+
+    /// The pointers from `from` on, `size` of them, with the offset of the
+    /// next page as the cursor while the window allows one.
+    fn latest_page(&self, from: usize, size: usize) -> serde_json::Value {
+        let pointers = &self.latest_pointers;
+        let stuck = self.search_fault == Some(SearchFault::StuckCursor);
+        // A stuck cursor gives out past any window, so a client that keeps
+        // following it ends rather than hangs.
+        let asked = self
+            .search_queries_seen
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .len();
+        if stuck && asked > 200 {
+            return serde_json::json!({
+                "__typename": "PackagesSearchResultSetPage",
+                "cursor": null,
+                "hits": [],
+            });
+        }
+        let next = if stuck { from } else { from + size };
+        let hits = pointers
+            .iter()
+            .skip(from)
+            .take(size)
+            .map(|(name, hash)| serde_json::json!({"name": name, "hash": hash}))
+            .collect::<Vec<_>>();
+        let cursor = (next < pointers.len().min(self.search_window)).then(|| next.to_string());
+        serde_json::json!({
+            "__typename": "PackagesSearchResultSetPage",
+            "cursor": cursor,
+            "hits": hits,
+        })
+    }
+
+    fn search_payload(&self, query: &str, variables: &serde_json::Value) -> serde_json::Value {
+        self.search_queries_seen
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(variables.clone());
+        let size = usize::try_from(variables["size"].as_u64().expect("size")).unwrap();
+        if query.contains("searchMorePackages") {
+            let from = variables["after"].as_str().expect("after").parse().unwrap();
+            return serde_json::json!({"searchMorePackages": self.latest_page(from, size)});
+        }
+        let total = self.latest_pointers.len();
+        let search = if self.search_fault == Some(SearchFault::Refused) {
+            serde_json::json!({
+                "__typename": "OperationError",
+                "message": "Search operation timed out",
+                "name": "Timeout",
+            })
+        } else if total == 0 {
+            serde_json::json!({"__typename": "EmptySearchResultSet"})
+        } else {
+            serde_json::json!({
+                "__typename": "PackagesSearchResultSet",
+                "total": if self.search_fault == Some(SearchFault::HiddenTotal) { -1 } else { i64::try_from(total).unwrap() },
+                "firstPage": self.latest_page(0, size),
+            })
+        };
+        serde_json::json!({"searchPackages": search})
     }
 }
 
@@ -209,7 +295,9 @@ impl HttpClient for GraphQlTestHttpClient {
         let body = serde_json::to_value(body)?;
         let query = body["query"].as_str().expect("query field").to_string();
 
-        let data = if query.contains("package(") {
+        let data = if query.contains("searchPackages") || query.contains("searchMorePackages") {
+            self.search_payload(&query, &body["variables"])
+        } else if query.contains("package(") {
             serde_json::json!({"package": self.package_payload(&body["variables"])})
         } else if query.contains("switchRole") {
             serde_json::json!({"switchRole": self.switch_result})
