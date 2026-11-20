@@ -19,6 +19,8 @@ use crate::dataspace::hooks::tests::table;
 use crate::dataspace::hooks::tests::tables;
 use crate::dataspace::read::ReadOutcome;
 use crate::dataspace::read_all::read_all;
+use crate::dataspace::store::tests::publish_local;
+use crate::domain::DomainRoot;
 use crate::io::manifest::fetch_jsonl;
 use crate::io::remote::mocks::MockRemote;
 use crate::io::storage::mocks::MockStorage;
@@ -161,6 +163,7 @@ async fn publish_all_here(
     Box::pin(publish_all(
         storage,
         remote,
+        None,
         root,
         writer,
         Path::new(NO_USER_RULES),
@@ -209,10 +212,11 @@ async fn each_write_and_replace_entry_is_published_and_its_revision_locked() -> 
     Ok(())
 }
 
-/// A local registry is in the Domain, so its packages are refused, read and
-/// written ones alike, and a bucket's beside them still publishes.
+/// A local registry is in the Domain, so with none given its packages are
+/// refused, read and written ones alike, and a bucket's beside them still
+/// publishes.
 #[test(tokio::test)]
-async fn a_local_registrys_packages_are_refused() -> Res {
+async fn a_local_registrys_packages_are_refused_with_none_given() -> Res {
     let remote = MockRemote::default();
     let storage = MockStorage::default();
     seed(&remote, FIRST, &[("a.txt", b"a")]).await?;
@@ -241,13 +245,89 @@ async fn a_local_registrys_packages_are_refused() -> Res {
     Ok(())
 }
 
+/// The local registry given is a registry like a bucket: a `write` entry of
+/// it is published there, under its name or a name it had, beside a
+/// bucket's, and another dataspace reads what this one built.
+#[test(tokio::test)]
+async fn a_local_write_entry_is_published_to_the_local_registry_and_read_elsewhere() -> Res {
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    let local = DomainRoot::new(storage.temp_dir.path().join("domain")).local();
+    local.rename(&storage, "old-mac").await?;
+    local.rename(&storage, "lab-mac").await?;
+    let first = publish_local(&storage, &local, "me/out", &[("kept.txt", b"k")]).await?;
+    seed(&remote, FIRST, &[("a.txt", b"a")]).await?;
+    let root = dataspace(
+        &storage,
+        "write = [\"team/raw\", \"quilt+local://old-mac#package=me/out\"]\n",
+    )?;
+    write(&root, "team/raw", "new.txt", b"n")?;
+    let contract = Contract::read(&storage, &root, None).await?;
+    let folder = contract.entries()[1].folder.clone();
+    std::fs::create_dir_all(&folder)?;
+    std::fs::write(folder.join("built.txt"), b"built")?;
+
+    let published = Box::pin(publish_all(
+        &storage,
+        &remote,
+        Some(&local),
+        &root,
+        &writer(),
+        Path::new(NO_USER_RULES),
+    ))
+    .await?;
+
+    assert!(published.completed(), "{published:?}");
+    advanced(&published.entries[0]);
+    let built = advanced(&published.entries[1]).to_string();
+    let namespace = Namespace::try_from("me/out")?;
+    assert_eq!(
+        local.read_latest(&storage, &namespace).await?.as_deref(),
+        Some(built.as_str())
+    );
+    let manifest = Manifest::from_path(&storage, &local.revision(&built)).await?;
+    let mut keys: Vec<String> = manifest
+        .rows
+        .iter()
+        .map(|row| row.logical_key.to_string())
+        .collect();
+    keys.sort();
+    assert_eq!(keys, ["built.txt", "kept.txt"]);
+    assert_ne!(built, first);
+    let current = PackageKey {
+        registry: Registry::Local("lab-mac".to_string()),
+        package: namespace,
+    };
+    let lock = Lock::read(&storage, &contract).await?.ok_or("no lock")?;
+    assert_eq!(
+        lock.packages
+            .get(&current)
+            .and_then(|locked| locked.base.as_ref()),
+        Some(&built)
+    );
+
+    let elsewhere = storage.temp_dir.path().join("elsewhere");
+    std::fs::create_dir_all(&elsewhere)?;
+    std::fs::write(
+        elsewhere.join("data.toml"),
+        "[packages]\nread = [\"quilt+local://lab-mac#package=me/out\"]\n",
+    )?;
+    let read = read_all(&storage, &remote, Some(&local), &elsewhere, &writer()).await?;
+
+    assert!(read.completed(), "{read:?}");
+    let (entry, _) = &read.entries[0];
+    assert_eq!(std::fs::read(entry.folder.join("built.txt"))?, b"built");
+    assert_eq!(std::fs::read(entry.folder.join("kept.txt"))?, b"k");
+    Ok(())
+}
+
 #[test(tokio::test)]
 async fn a_package_under_read_and_write_publishes_on_its_base_while_that_is_latest() -> Res {
     let remote = MockRemote::default();
     let storage = MockStorage::default();
     seed(&remote, FIRST, &[("in/a.txt", b"a")]).await?;
     let root = dataspace(&storage, READ_AND_WRITE)?;
-    read_all(&storage, &remote, &root, &writer()).await?;
+    read_all(&storage, &remote, None, &root, &writer()).await?;
     write(&root, "team/raw", "out/b.txt", b"b")?;
 
     let published = publish_all_here(&storage, &remote, &root, &writer()).await?;
@@ -272,7 +352,7 @@ async fn a_package_under_read_and_write_reads_first_when_latest_has_moved() -> R
     let storage = MockStorage::default();
     seed(&remote, FIRST, &[("in/a.txt", b"a")]).await?;
     let root = dataspace(&storage, READ_AND_WRITE)?;
-    read_all(&storage, &remote, &root, &writer()).await?;
+    read_all(&storage, &remote, None, &root, &writer()).await?;
     seed(&remote, SECOND, &[("in/a.txt", b"A")]).await?;
     write(&root, "team/raw", "out/b.txt", b"b")?;
 
@@ -371,7 +451,7 @@ async fn a_package_whose_read_first_is_blocked_publishes_nothing() -> Res {
     let storage = MockStorage::default();
     seed(&remote, FIRST, &[("in/a.txt", b"a")]).await?;
     let root = dataspace(&storage, READ_AND_WRITE)?;
-    read_all(&storage, &remote, &root, &writer()).await?;
+    read_all(&storage, &remote, None, &root, &writer()).await?;
     seed(&remote, SECOND, &[("in/a.txt", b"A")]).await?;
     write(&root, "team/raw", "in/a.txt", b"edited")?;
     write(&root, "team/raw", "out/b.txt", b"b")?;
@@ -543,7 +623,7 @@ async fn a_package_read_first_runs_the_read_hooks_between_the_write_hooks() -> R
     seed(&remote, FIRST, &[("in/a.txt", b"a")]).await?;
     let hooks = tables(&[PreRead, PostRead, PreWrite, PostWrite], &record);
     let root = dataspace(&storage, &format!("{READ_AND_WRITE}{hooks}"))?;
-    read_all(&storage, &remote, &root, &writer()).await?;
+    read_all(&storage, &remote, None, &root, &writer()).await?;
     seed(&remote, SECOND, &[("in/a.txt", b"A")]).await?;
     write(&root, "team/raw", "out/b.txt", b"b")?;
 

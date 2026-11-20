@@ -1,5 +1,6 @@
 //! Every `write` and `replace` entry of a dataspace, published with no
-//! Domain, and the lock written after.
+//! Domain but, where one is given, its local registry, and the lock written
+//! after.
 
 use std::path::Path;
 
@@ -23,6 +24,8 @@ use crate::dataspace::publish::Base;
 use crate::dataspace::publish::Published;
 use crate::dataspace::publish::publish;
 use crate::dataspace::read_all::EntryRead;
+use crate::dataspace::store::name_local;
+use crate::domain::LocalRegistry;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 
@@ -127,14 +130,29 @@ impl From<LockError> for PublishAllError {
 /// first; either failing leaves that entry unpublished. Once the lock is
 /// written, `post-read` runs for each package a read moved to a newer
 /// revision, and `post-write` for each revision a publish stored.
+///
+/// An entry of the local registry `local` is read and published there,
+/// under its name or one it had, as a bucket's is in the bucket, and its key
+/// is written under the registry's current name. With no local registry
+/// given, such an entry is refused.
 pub async fn publish_all(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
+    local: Option<&LocalRegistry>,
     dataspace: &Path,
     writer: &Writer,
     user_rules: &Path,
 ) -> Result<DataspacePublish, PublishAllError> {
-    publish_some(storage, remote, dataspace, writer, user_rules, |_| true).await
+    publish_some(
+        storage,
+        remote,
+        local,
+        dataspace,
+        writer,
+        user_rules,
+        |_| true,
+    )
+    .await
 }
 
 /// [`publish_all`], publishing only the `write` and `replace` entries
@@ -142,13 +160,14 @@ pub async fn publish_all(
 pub(crate) async fn publish_some(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
+    local: Option<&LocalRegistry>,
     dataspace: &Path,
     writer: &Writer,
     user_rules: &Path,
     select: impl Fn(&Entry) -> bool,
 ) -> Result<DataspacePublish, PublishAllError> {
-    let contract = Contract::read(storage, dataspace, writer.local_registry_name()).await?;
-    let (mut lock, writer) = match Lock::read(storage, &contract).await? {
+    let mut contract = Contract::read(storage, dataspace, writer.local_registry_name()).await?;
+    let (mut lock, mut writer) = match Lock::read(storage, &contract).await? {
         Some(lock) => {
             let writer = Writer {
                 local_registry: lock.header.writer.local_registry.clone(),
@@ -166,6 +185,7 @@ pub(crate) async fn publish_some(
         }
         None => (Lock::new(&contract, writer), writer.clone()),
     };
+    name_local(storage, local, &mut contract, &mut lock, &mut writer).await?;
 
     let mut moved = false;
     let mut entries = Vec::new();
@@ -189,6 +209,7 @@ pub(crate) async fn publish_some(
             Box::pin(publish_on_base(
                 storage,
                 remote,
+                local,
                 &contract,
                 entry,
                 reads,
@@ -200,6 +221,7 @@ pub(crate) async fn publish_some(
             let published = Box::pin(publish(
                 storage,
                 remote,
+                local,
                 entry,
                 None,
                 Base::Latest,
@@ -244,16 +266,19 @@ pub(crate) async fn publish_some(
 /// Publishes `entry` on `base`, first reading `reads`, the package's `read`
 /// entry, as [`read_resolving`] does in the dataspace, after the contract's
 /// `pre-read` hook, where `latest` is not `base`.
+#[allow(clippy::too_many_arguments, reason = "each is a distinct input")]
 async fn publish_on_base(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
+    local: Option<&LocalRegistry>,
     contract: &Contract,
     entry: &Entry,
     reads: &Entry,
     base: Option<&str>,
     user_rules: &Path,
 ) -> (Option<EntryRead>, EntryPublish) {
-    match publish(storage, remote, entry, None, Base::Locked(base), user_rules).await {
+    let locked = Base::Locked(base);
+    match publish(storage, remote, local, entry, None, locked, user_rules).await {
         Ok(Published::Behind { .. }) => {}
         // A package never read has no folder until its read makes one.
         Err(EntryError::FolderUnavailable(_)) if base.is_none() => {}
@@ -262,7 +287,7 @@ async fn publish_on_base(
     let dataspace = contract.dataspace();
     let read = match hooks::run(contract, HookPoint::PreRead, reads, None).await {
         Err(err) => EntryRead::Failed(err.into()),
-        Ok(()) => match read_resolving(storage, remote, dataspace, reads, base).await {
+        Ok(()) => match read_resolving(storage, remote, local, dataspace, reads, base).await {
             Ok(outcome) => EntryRead::Ran(outcome),
             Err(err) => EntryRead::Failed(err),
         },
@@ -273,6 +298,7 @@ async fn publish_on_base(
     let published = publish(
         storage,
         remote,
+        local,
         entry,
         None,
         Base::Locked(Some(base)),

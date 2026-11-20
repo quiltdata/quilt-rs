@@ -13,6 +13,7 @@ pub mod publish_all;
 pub mod read;
 pub mod read_all;
 pub mod reattach;
+mod store;
 pub mod sync;
 
 use std::path::PathBuf;
@@ -30,7 +31,9 @@ pub enum EntryError {
     #[error("the entry is under `{0}`, which this operation does not take")]
     Access(Access),
 
-    #[error("the entry names a local registry, which this operation does not reach")]
+    /// No local registry was given, or the one given does not answer to the
+    /// name the entry gives, as another machine's does not.
+    #[error("the entry names a local registry that this operation does not reach")]
     LocalRegistry,
 
     #[error(

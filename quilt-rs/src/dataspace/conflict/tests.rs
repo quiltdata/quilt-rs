@@ -15,6 +15,7 @@ use crate::manifest::ManifestHeader;
 use crate::manifest::ManifestRow;
 use crate::manifest::RawNumbers;
 use crate::paths::file_url;
+use quilt_uri::Namespace;
 use quilt_uri::S3Uri;
 
 type Res = Result<(), Box<dyn std::error::Error>>;
@@ -107,7 +108,7 @@ async fn read(
     remote: &MockRemote,
     base: Option<&str>,
 ) -> Result<ReadOutcome, EntryError> {
-    read_resolving(storage, remote, &dataspace(), &entry(), base).await
+    read_resolving(storage, remote, None, &dataspace(), &entry(), base).await
 }
 
 async fn map(storage: &MockStorage) -> Result<ConflictMap, EntryError> {
@@ -519,5 +520,58 @@ async fn a_key_error_masks_a_user_and_password() -> Res {
     let text = err.to_string();
     assert!(!text.contains("secret") && !text.contains("KEY"), "{text}");
     assert!(text.contains("***@b"), "{text}");
+    Ok(())
+}
+
+/// Rows kept under a name the local registry had move to its current name,
+/// and rows already there stay.
+#[test]
+fn rows_under_an_old_name_of_the_local_registry_move_to_its_current_name() -> Res {
+    let key_of = |name: &str| PackageKey {
+        registry: Registry::Local(name.to_string()),
+        package: Namespace::try_from("me/analysis").unwrap(),
+    };
+    let row_of = |resolved: &str| Row {
+        incoming: None,
+        current: None,
+        resolved: Some(resolved.to_string()),
+    };
+    let mut map = ConflictMap::default();
+    map.packages.insert(
+        key_of("old-mac"),
+        BTreeMap::from([(key("a.txt"), row_of("")), (key("b.txt"), row_of("old"))]),
+    );
+    map.packages.insert(
+        key_of("lab-mac"),
+        BTreeMap::from([(key("b.txt"), row_of("new"))]),
+    );
+    let names = LocalNames {
+        name: "lab-mac".to_string(),
+        aliases: vec!["old-mac".to_string()],
+    };
+
+    map.name_local(&names);
+
+    assert_eq!(map.packages.len(), 1, "{map:?}");
+    let rows = &map.packages[&key_of("lab-mac")];
+    assert_eq!(rows[&key("a.txt")].resolved.as_deref(), Some(""));
+    assert_eq!(rows[&key("b.txt")].resolved.as_deref(), Some("new"));
+    Ok(())
+}
+
+/// An entry that names the local registry by an alias has its rows under the
+/// registry's current name.
+#[test]
+fn an_entry_naming_the_local_registry_by_an_alias_is_keyed_by_its_current_name() -> Res {
+    let mut entry = entry();
+    entry.registry = Registry::Local("old-mac".to_string());
+    let names = LocalNames {
+        name: "lab-mac".to_string(),
+        aliases: vec!["old-mac".to_string()],
+    };
+
+    let key = current_key(Some(&names), &entry);
+
+    assert_eq!(key.registry, Registry::Local("lab-mac".to_string()));
     Ok(())
 }

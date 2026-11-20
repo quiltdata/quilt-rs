@@ -230,7 +230,7 @@ pub async fn model(domain: PathBuf, args: Input) -> Result<Output, Error> {
 
 async fn read_with(remote: &impl Remote, Input { dataspace }: Input) -> Result<Output, Error> {
     let writer = Writer::without_domain().map_err(ReadAllError::from)?;
-    let read = read_all(&LocalStorage::new(), remote, &dataspace, &writer).await?;
+    let read = read_all(&LocalStorage::new(), remote, None, &dataspace, &writer).await?;
     Ok(Output { dataspace, read })
 }
 

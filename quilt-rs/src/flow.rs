@@ -71,6 +71,7 @@ pub(crate) use install_paths::Protect;
 pub(crate) use install_paths::edited;
 pub use install_paths::install_paths;
 pub(crate) use install_paths::install_paths_over;
+pub(crate) use install_paths::refuse_clashing_local_paths;
 pub use install_to::InstallToReport;
 pub(crate) use install_to::blocks_a_folder;
 pub use install_to::install_to;

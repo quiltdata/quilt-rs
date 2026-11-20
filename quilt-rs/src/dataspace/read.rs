@@ -26,10 +26,18 @@ use crate::dataspace::metadata::MetadataFile;
 use crate::dataspace::metadata::at_metadata_file;
 use crate::dataspace::metadata::holds_metadata_file;
 use crate::dataspace::metadata::render;
+use crate::dataspace::store::local_registry;
+use crate::domain::LocalRegistry;
+use crate::error::FsError;
+use crate::flow::InstallToReport;
+use crate::flow::PackageStore;
 use crate::flow::blocks_a_folder;
 use crate::flow::edited;
 use crate::flow::install_to;
+use crate::flow::refuse_clashing_local_paths;
 use crate::flow::refuse_linked_ancestors;
+use crate::flow::resolve_local_hash;
+use crate::flow::row_objects;
 use crate::io::manifest::fetch_jsonl;
 use crate::io::manifest::hash_bytes;
 use crate::io::manifest::resolve_manifest_uri;
@@ -42,9 +50,14 @@ use crate::manifest::RawNumbers;
 use crate::object_hash::MULTIHASH_SHA256;
 use crate::object_hash::ObjectHash;
 use crate::paths::file_url;
+use quilt_uri::Host;
 use quilt_uri::ManifestUri;
+use quilt_uri::Namespace;
+use quilt_uri::RevisionPointer;
 use quilt_uri::S3PackageUri;
 use quilt_uri::S3Uri;
+use quilt_uri::Tag;
+use quilt_uri::UriError;
 
 /// The prefix of the folder a read stages its downloads in, inside the
 /// working folder so that each file is renamed into place.
@@ -245,6 +258,7 @@ pub async fn read(
     let (outcome, _) = Box::pin(read_deciding(
         storage,
         remote,
+        None,
         entry,
         base,
         &BTreeMap::new(),
@@ -253,19 +267,102 @@ pub async fn read(
     Ok(outcome)
 }
 
-/// [`read`], setting each colliding key whose row in `decided` still
-/// describes it as the row decides; see
-/// [`read_resolving`](crate::dataspace::conflict::read_resolving). Returns
-/// with the outcome a row for every colliding key, decided or not.
-pub(crate) async fn read_deciding(
+/// The revision a read places, and where its manifests and bytes are: in a
+/// bucket, reached through the remote, or in the local registry.
+enum Revision<'a> {
+    Bucket(ManifestUri),
+    Local {
+        registry: &'a LocalRegistry,
+        package: &'a Namespace,
+        hash: String,
+    },
+}
+
+impl Revision<'_> {
+    fn hash(&self) -> &str {
+        match self {
+            Self::Bucket(uri) => &uri.hash,
+            Self::Local { hash, .. } => hash,
+        }
+    }
+
+    /// The catalog that signs the remote's reads; the local registry has
+    /// none.
+    fn origin(&self) -> Option<&Host> {
+        match self {
+            Self::Bucket(uri) => uri.origin.as_ref(),
+            Self::Local { .. } => None,
+        }
+    }
+
+    fn display(&self) -> String {
+        match self {
+            Self::Bucket(uri) => uri.display(),
+            Self::Local { package, hash, .. } => format!("{package}@{hash} in the local registry"),
+        }
+    }
+
+    /// Puts the bytes of `rows` of the revision in `staging`: fetched from
+    /// the bucket, or copied from the local registry.
+    async fn fetch(
+        &self,
+        storage: &(impl Storage + Sync),
+        remote: &impl Remote,
+        rows: Vec<ManifestRow>,
+        staging: &Path,
+    ) -> Res<InstallToReport> {
+        match self {
+            Self::Bucket(uri) => {
+                let manifest = Manifest {
+                    rows,
+                    ..Manifest::default()
+                };
+                install_to(
+                    storage,
+                    remote,
+                    uri.origin.as_ref(),
+                    &manifest,
+                    staging,
+                    None,
+                )
+                .await
+            }
+            Self::Local { registry, .. } => copy_from(storage, registry, &rows, staging).await,
+        }
+    }
+
+    /// The revision `hash` of the same package.
+    async fn other(
+        &self,
+        storage: &(impl Storage + Sync),
+        remote: &impl Remote,
+        hash: &str,
+    ) -> Res<Manifest> {
+        match self {
+            Self::Bucket(uri) => {
+                let uri = ManifestUri {
+                    hash: hash.to_string(),
+                    ..uri.clone()
+                };
+                fetch_jsonl(remote, &uri).await
+            }
+            Self::Local { registry, .. } => {
+                Manifest::from_path(storage, &registry.revision(hash)).await
+            }
+        }
+    }
+}
+
+/// The revision `entry` names, in its bucket or in the local registry
+/// `local`, and its manifest.
+async fn revision_of<'a>(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
-    entry: &Entry,
-    base: Option<&str>,
-    decided: &BTreeMap<LogicalKey, Row>,
-) -> Result<(ReadOutcome, BTreeMap<LogicalKey, Row>), EntryError> {
-    if !matches!(entry.access, Access::Read | Access::Sync) {
-        return Err(EntryError::Access(entry.access));
+    local: Option<&'a LocalRegistry>,
+    entry: &'a Entry,
+) -> Result<(Revision<'a>, Manifest), EntryError> {
+    if let Some(registry) = local_registry(storage, local, entry).await? {
+        return local_revision(storage, registry, entry).await;
     }
     let Registry::S3(bucket) = &entry.registry else {
         return Err(EntryError::LocalRegistry);
@@ -277,19 +374,90 @@ pub(crate) async fn read_deciding(
         revision: entry.revision.clone(),
         path: None,
     };
-    let revision = resolve_manifest_uri(remote, entry.catalog.as_ref(), &uri).await?;
-    let target = fetch_jsonl(remote, &revision).await?;
+    let uri = resolve_manifest_uri(remote, entry.catalog.as_ref(), &uri).await?;
+    let target = fetch_jsonl(remote, &uri).await?;
+    Ok((Revision::Bucket(uri), target))
+}
+
+/// The revision `entry` names in the local registry `registry`, and its
+/// manifest; see [`local_hash`].
+async fn local_revision<'a>(
+    storage: &(impl Storage + Sync),
+    registry: &'a LocalRegistry,
+    entry: &'a Entry,
+) -> Result<(Revision<'a>, Manifest), EntryError> {
+    let hash = local_hash(storage, registry, entry).await?;
+    let manifest = Manifest::from_path(storage, &registry.revision(&hash)).await?;
+    let revision = Revision::Local {
+        registry,
+        package: &entry.package,
+        hash,
+    };
+    Ok((revision, manifest))
+}
+
+/// The hash of the revision `entry` names in the local registry
+/// `registry`. The registry keeps no tag but `latest`, and a hash prefix
+/// names the one revision of the registry whose hash it starts.
+pub(crate) async fn local_hash(
+    storage: &(impl Storage + Sync),
+    registry: &LocalRegistry,
+    entry: &Entry,
+) -> Result<String, EntryError> {
+    let package = &entry.package;
+    Ok(match &entry.revision {
+        RevisionPointer::Tag(Tag::Latest) => registry
+            .read_latest(storage, package)
+            .await?
+            .ok_or_else(|| {
+                crate::Error::Fs(FsError::NotFound {
+                    path: registry.latest(package),
+                })
+            })?,
+        RevisionPointer::Hash(hash) => hash.clone(),
+        RevisionPointer::HashPrefix(prefix) => {
+            resolve_local_hash(storage, registry.revisions_dir(), prefix).await?
+        }
+        RevisionPointer::Tag(tag) => {
+            return Err(crate::Error::from(UriError::Package(format!(
+                "the local registry keeps no tag but latest, so it has no revision at {tag}"
+            )))
+            .into());
+        }
+    })
+}
+
+/// [`read`], setting each colliding key whose row in `decided` still
+/// describes it as the row decides; see
+/// [`read_resolving`](crate::dataspace::conflict::read_resolving). Returns
+/// with the outcome a row for every colliding key, decided or not. An entry
+/// of the local registry `local` is read from it as a bucket's is read from
+/// the bucket.
+pub(crate) async fn read_deciding(
+    storage: &(impl Storage + Sync),
+    remote: &impl Remote,
+    local: Option<&LocalRegistry>,
+    entry: &Entry,
+    base: Option<&str>,
+    decided: &BTreeMap<LogicalKey, Row>,
+) -> Result<(ReadOutcome, BTreeMap<LogicalKey, Row>), EntryError> {
+    if !matches!(entry.access, Access::Read | Access::Sync) {
+        return Err(EntryError::Access(entry.access));
+    }
+    let (revision, target) = revision_of(storage, remote, local, entry).await?;
     if holds_metadata_file(&target) {
         return Err(EntryError::HoldsMetadataFile);
     }
     let metadata = render(&target, &entry.paths).map_err(EntryError::MetadataUnwritable)?;
     let deletes = entry.access == Access::Sync;
     let other_base = match base {
-        Some(hash) if hash != revision.hash => other_base(remote, &revision, hash, deletes).await?,
+        Some(hash) if hash != revision.hash() => {
+            other_base(storage, remote, &revision, hash, deletes).await?
+        }
         _ => None,
     };
     let base = match base {
-        Some(hash) if hash == revision.hash => Some(&target),
+        Some(hash) if hash == revision.hash() => Some(&target),
         _ => other_base.as_ref(),
     };
 
@@ -319,14 +487,14 @@ pub(crate) async fn read_deciding(
             plan.conflicts.len()
         );
         let blocked = ReadOutcome::Blocked {
-            revision: revision.hash,
+            revision: revision.hash().to_string(),
             conflicts: plan.conflicts,
         };
         return Ok((blocked, plan.rows));
     }
 
     let mut report = ReadReport {
-        revision: revision.hash.clone(),
+        revision: revision.hash().to_string(),
         kept: plan.kept,
         resolved: plan.resolved,
         ..ReadReport::default()
@@ -367,27 +535,21 @@ pub(crate) async fn read_deciding(
 }
 
 /// The base `hash`, a revision other than `revision` of its package, or
-/// `None` where the bucket no longer holds it and a read may compare as on a
-/// first read.
+/// `None` where its registry no longer holds it and a read may compare as on
+/// a first read.
 async fn other_base(
+    storage: &(impl Storage + Sync),
     remote: &impl Remote,
-    revision: &ManifestUri,
+    revision: &Revision<'_>,
     hash: &str,
     deletes: bool,
 ) -> Result<Option<Manifest>, EntryError> {
-    let uri = ManifestUri {
-        hash: hash.to_string(),
-        ..revision.clone()
-    };
-    match fetch_jsonl(remote, &uri).await {
+    match revision.other(storage, remote, hash).await {
         Ok(manifest) => Ok(Some(manifest)),
         // Compared as a first read: any file that differs collides. Under
         // `sync` that would fill what the user deleted.
         Err(err) if err.is_not_found() && !deletes => {
-            warn!(
-                "The base {} is gone; reading as if there were none",
-                uri.display()
-            );
+            warn!("The base {hash} is gone; reading as if there were none");
             Ok(None)
         }
         Err(err) => Err(err.into()),
@@ -914,7 +1076,7 @@ pub(crate) async fn metadata_place_free(storage: &(impl Storage + Sync), path: &
 async fn apply(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
-    revision: &ManifestUri,
+    revision: &Revision<'_>,
     folder: &Path,
     staging: &Path,
     steps: &[Step<'_>],
@@ -934,18 +1096,7 @@ async fn apply(
         })
         .collect();
     if !fetch.is_empty() {
-        let fetched = install_to(
-            storage,
-            remote,
-            revision.origin.as_ref(),
-            &Manifest {
-                rows: fetch,
-                ..Manifest::default()
-            },
-            staging,
-            None,
-        )
-        .await?;
+        let fetched = revision.fetch(storage, remote, fetch, staging).await?;
         report.skipped = fetched.skipped;
         report.hash_mismatch = fetched.hash_mismatch;
     }
@@ -967,7 +1118,7 @@ async fn apply(
             // S3 refuses a version it does not hold, so these are its bytes.
             Some(Source::Object(uri)) => {
                 let object = remote
-                    .get_object_stream(revision.origin.as_ref(), uri)
+                    .get_object_stream(revision.origin(), uri)
                     .await
                     .map_err(|err| refused(step.key, err))?;
                 storage
@@ -1021,6 +1172,52 @@ async fn apply(
         crate::failpoint::stop("read.file")?;
     }
     Ok(true)
+}
+
+/// Copies `rows` from the local registry's objects into `staging`, as
+/// [`install_to`] fetches a bucket's: each copy is checked against its row's
+/// hash, and a row whose object is gone, or whose copy does not hash to it,
+/// is reported and left out. Two keys that name one local file are refused
+/// before the first copy.
+async fn copy_from(
+    storage: &(impl Storage + Sync),
+    registry: &LocalRegistry,
+    rows: &[ManifestRow],
+    staging: &Path,
+) -> Res<InstallToReport> {
+    refuse_clashing_local_paths(rows)?;
+    let objects = registry.objects_dir();
+    let mut report = InstallToReport::default();
+    for row in rows {
+        let key = row.logical_key.to_path_buf();
+        let mut object = None;
+        for name in row_objects(&row.hash, &row.physical_key) {
+            let path = objects.join(name);
+            if storage.is_file(&path).await {
+                object = Some(path);
+                break;
+            }
+        }
+        let Some(object) = object else {
+            report.skipped.push(key);
+            continue;
+        };
+        let staged = row.logical_key.join_to(staging);
+        storage
+            .create_dir_all(staged.parent().unwrap_or(staging))
+            .await?;
+        storage.copy(&object, &staged).await?;
+        if OnDisk::read(storage, &staged, row.hash.algorithm())
+            .await?
+            .holds(row)
+        {
+            report.placed.push(key);
+        } else {
+            storage.remove_file(&staged).await?;
+            report.hash_mismatch.push(key);
+        }
+    }
+    Ok(report)
 }
 
 fn covered<'a>(manifest: &'a Manifest, paths: &Paths) -> BTreeMap<&'a LogicalKey, &'a ManifestRow> {

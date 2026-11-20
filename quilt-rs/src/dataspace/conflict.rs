@@ -16,9 +16,12 @@ use crate::LogicalKey;
 use crate::dataspace::EntryError;
 use crate::dataspace::contract::Entry;
 use crate::dataspace::contract::PackageKey;
+use crate::dataspace::contract::Registry;
 use crate::dataspace::read::ReadOutcome;
 use crate::dataspace::read::bytes_at;
 use crate::dataspace::read::read_deciding;
+use crate::domain::LocalNames;
+use crate::domain::LocalRegistry;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::object_hash::ObjectHash;
@@ -101,6 +104,31 @@ impl ConflictMap {
         Ok(Self { packages })
     }
 
+    /// Re-keys the rows of a package of the local registry that `names`
+    /// describes, kept under a name it had, to its current name; rows already
+    /// under the current name win.
+    pub(crate) fn name_local(&mut self, names: &LocalNames) {
+        let stale: Vec<PackageKey> = self
+            .packages
+            .keys()
+            .filter(|key| matches!(&key.registry, Registry::Local(name) if name != &names.name && names.answers_to(name)))
+            .cloned()
+            .collect();
+        for key in stale {
+            let Some(rows) = self.packages.remove(&key) else {
+                continue;
+            };
+            let current = PackageKey {
+                registry: Registry::Local(names.name.clone()),
+                package: key.package,
+            };
+            let kept = self.packages.entry(current).or_default();
+            for (name, row) in rows {
+                kept.entry(name).or_insert(row);
+            }
+        }
+    }
+
     /// Replaces the map in the folder `dataspace` whole, or removes it where
     /// no package has rows.
     pub async fn write(
@@ -146,26 +174,34 @@ fn invalid(err: impl std::fmt::Display) -> EntryError {
 /// the decisions it could apply; a read that completes removes the package's
 /// rows. The map is read again before it is written, so an edit made to
 /// another package's rows meanwhile is kept.
+///
+/// An entry of the local registry `local` is read from it; with none given,
+/// such an entry is refused.
 pub async fn read_resolving(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
+    local: Option<&LocalRegistry>,
     dataspace: &Path,
     entry: &Entry,
     base: Option<&str>,
 ) -> Result<ReadOutcome, EntryError> {
-    let key = entry.key();
-    let decided = ConflictMap::read(storage, dataspace)
+    let names = match (local, &entry.registry) {
+        (Some(local), Registry::Local(_)) => local.names(storage).await.ok(),
+        _ => None,
+    };
+    let key = current_key(names.as_ref(), entry);
+    let decided = read_named(storage, dataspace, names.as_ref())
         .await?
         .packages
         .remove(&key)
         .unwrap_or_default();
-    let (outcome, rows) = read_deciding(storage, remote, entry, base, &decided).await?;
+    let (outcome, rows) = read_deciding(storage, remote, local, entry, base, &decided).await?;
     let blocked = matches!(outcome, ReadOutcome::Blocked { .. });
     if !blocked && (outcome.lock_base().is_none() || decided.is_empty()) {
         return Ok(outcome);
     }
     let written = async {
-        let mut map = ConflictMap::read(storage, dataspace).await?;
+        let mut map = read_named(storage, dataspace, names.as_ref()).await?;
         let mut rows = blocked.then_some(rows);
         // A decision saved while the read ran, or changed, stays.
         if let (Some(rows), Some(saved)) = (&mut rows, map.packages.get(&key)) {
@@ -195,6 +231,32 @@ pub async fn read_resolving(
         }
         Ok(()) => Ok(outcome),
     }
+}
+
+/// The key `entry`'s package has in the map: its registry by the current name
+/// of the local registry `names` describes, where it is named by an alias.
+fn current_key(names: Option<&LocalNames>, entry: &Entry) -> PackageKey {
+    let mut key = entry.key();
+    if let (Some(names), Registry::Local(name)) = (names, &key.registry)
+        && names.answers_to(name)
+    {
+        key.registry = Registry::Local(names.name.clone());
+    }
+    key
+}
+
+/// The map in `dataspace`, its rows for the local registry `names`
+/// describes kept under the registry's current name.
+async fn read_named(
+    storage: &(impl Storage + Sync),
+    dataspace: &Path,
+    names: Option<&LocalNames>,
+) -> Result<ConflictMap, EntryError> {
+    let mut map = ConflictMap::read(storage, dataspace).await?;
+    if let Some(names) = names {
+        map.name_local(names);
+    }
+    Ok(map)
 }
 
 #[cfg(test)]

@@ -195,6 +195,7 @@ async fn publish_with(
     let published = Box::pin(publish_all(
         &LocalStorage::new(),
         remote,
+        None,
         &dataspace,
         &writer,
         user_rules,
@@ -292,7 +293,7 @@ mod tests {
     async fn read(remote: &MockRemote, dataspace: &Path) -> Result<(), Error> {
         let writer = Writer::without_domain().map_err(PublishAllError::from)?;
         let storage = LocalStorage::new();
-        quilt_rs::dataspace::read_all::read_all(&storage, remote, dataspace, &writer)
+        quilt_rs::dataspace::read_all::read_all(&storage, remote, None, dataspace, &writer)
             .await
             .map_err(|err| Error::Test(err.to_string()))?;
         Ok(())

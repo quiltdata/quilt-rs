@@ -741,3 +741,33 @@ fn a_registry_error_masks_a_user_and_password() {
         }
     }
 }
+
+/// Two names for the local registry leave one package in two folders, which
+/// the contract could not see while they were two registries.
+#[test]
+fn a_package_under_two_names_of_the_local_registry_in_two_folders_is_refused() -> Res {
+    let mut contract = parse(&with_defaults(
+        r#"replace = [
+            { registry = "quilt+local://old-mac", package = "me/analysis" },
+            { registry = "quilt+local://lab-mac", package = "me/analysis" },
+        ]"#,
+    ))?;
+    let names = LocalNames {
+        name: HERE.to_string(),
+        aliases: vec!["old-mac".to_string()],
+    };
+
+    let err = contract.name_local(&names).expect_err("two folders");
+
+    assert!(
+        matches!(
+            err,
+            ContractError::Package {
+                problem: PackageProblem::Folders(..),
+                ..
+            }
+        ),
+        "{err:?}"
+    );
+    Ok(())
+}
