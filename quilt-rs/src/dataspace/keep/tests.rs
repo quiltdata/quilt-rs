@@ -459,6 +459,26 @@ async fn a_package_under_two_lists_takes_the_one_named() -> Res {
     Ok(())
 }
 
+/// What counts as read before a change is what the package's `read` entry
+/// covers, whichever entry the change moves, so moving its `write` entry
+/// into `read` reads only what the `read` entry did not hold.
+#[test(tokio::test)]
+async fn the_paths_read_before_are_those_of_the_read_entry() -> Res {
+    let storage = MockStorage::default();
+    let root = empty(&storage)?;
+    std::fs::write(
+        root.join(CONTRACT_FILE),
+        "registry = \"s3://b\"\n[packages]\nread = [{ package = \"team/raw\", path = \"in/\" }]\nwrite = [{ package = \"team/raw\", path = \"w/\" }]\n",
+    )?;
+    let contract = contract(&storage, &root).await?;
+
+    let before = read_paths(&contract, &raw()).ok_or("no paths")?;
+
+    assert!(before.covers(&LogicalKey::new("in/a")?));
+    assert!(!before.covers(&LogicalKey::new("w/a")?));
+    Ok(())
+}
+
 /// With no change asked, the entry is given as the contract has it, and
 /// neither file is written.
 #[test(tokio::test)]

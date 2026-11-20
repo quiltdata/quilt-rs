@@ -246,7 +246,6 @@ pub async fn keep(
     let key = current_key(storage, local, &request.package).await?;
 
     let entry = chosen(&contract, &key, request.from)?;
-    let before = entry.access.is_read().then(|| entry.paths.clone());
     let wanted = wanted(&entry, request)?;
     if wanted == entry {
         return Ok(Kept {
@@ -291,7 +290,7 @@ pub async fn keep(
         local,
         &edited,
         &entry,
-        before,
+        read_paths(&contract, &key),
         lock.packages.get(&key),
     )
     .await;
@@ -377,6 +376,27 @@ fn wanted(entry: &Entry, request: &Keep) -> Result<Entry, KeepError> {
         wanted.access = access;
     }
     Ok(wanted)
+}
+
+/// The paths `contract` reads of `key`, those of its `read` and `sync`
+/// entries together, or `None` where it has neither.
+fn read_paths(contract: &Contract, key: &PackageKey) -> Option<Paths> {
+    let mut all: Option<Paths> = None;
+    for entry in contract
+        .entries()
+        .iter()
+        .filter(|entry| entry.key() == *key && entry.access.is_read())
+    {
+        all = Some(match (all, &entry.paths) {
+            (None, paths) => paths.clone(),
+            (Some(Paths::Only(mut one)), Paths::Only(other)) => {
+                one.extend(other.iter().cloned());
+                Paths::Only(one)
+            }
+            _ => Paths::Whole,
+        });
+    }
+    all
 }
 
 /// Reads, at `locked`'s base, the files of `entry` that `before`, the paths
