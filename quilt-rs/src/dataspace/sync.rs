@@ -17,6 +17,7 @@ use crate::Res;
 use crate::WorkflowValidationError;
 use crate::dataspace::EntryError;
 use crate::dataspace::METADATA_FILE;
+use crate::dataspace::conflict::read_resolving;
 use crate::dataspace::contract::Access;
 use crate::dataspace::contract::Contract;
 use crate::dataspace::contract::ContractError;
@@ -39,7 +40,6 @@ use crate::dataspace::read::ReadReport;
 use crate::dataspace::read::STAGING_PREFIX;
 use crate::dataspace::read::bytes_at;
 use crate::dataspace::read::gone;
-use crate::dataspace::read::read;
 use crate::dataspace::read::write_metadata;
 use crate::dataspace::read_all::usable_lock;
 use crate::domain::DomainRoot;
@@ -215,8 +215,8 @@ impl<S: Storage + Sync> LockFile<'_, S> {
 /// registry's entry is refused, so it keeps the dataspace unfilled.
 ///
 /// The lock is used as [`read_all`](crate::dataspace::read_all::read_all)
-/// uses it. Each commit's message is `message`, and its workflow the
-/// bucket's default.
+/// uses it, and `conflict.json` as [`read_resolving`] does. Each commit's
+/// message is `message`, and its workflow the bucket's default.
 #[allow(clippy::too_many_arguments)]
 pub async fn sync(
     storage: &(impl Storage + Sync),
@@ -410,7 +410,8 @@ async fn fill(
     };
     let mut whole = at(entry, &latest);
     whole.access = Access::Read;
-    let outcome = read(storage, remote, &whole, base.as_deref()).await?;
+    let dataspace = lock_file.contract.dataspace();
+    let outcome = read_resolving(storage, remote, dataspace, &whole, base.as_deref()).await?;
     if let Some(revision) = outcome.lock_base() {
         set_base(lock, lock_file, &key, revision.to_string()).await?;
     }
@@ -514,7 +515,9 @@ async fn tick(
     } else if base.is_some() && (latest.is_none() || !commits.is_empty()) {
         return Ok(EntrySync::Diverged { latest });
     } else if let Some(hash) = &latest {
-        let outcome = read(storage, remote, &at(entry, hash), base.as_deref()).await?;
+        let dataspace = lock_file.contract.dataspace();
+        let pinned = at(entry, hash);
+        let outcome = read_resolving(storage, remote, dataspace, &pinned, base.as_deref()).await?;
         let completed = outcome.lock_base().map(str::to_string);
         let report = match outcome {
             ReadOutcome::Read(report) => report,

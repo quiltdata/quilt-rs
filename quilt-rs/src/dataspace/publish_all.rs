@@ -6,6 +6,7 @@ use std::path::Path;
 use thiserror::Error;
 
 use crate::dataspace::EntryError;
+use crate::dataspace::conflict::read_resolving;
 use crate::dataspace::contract::Access;
 use crate::dataspace::contract::Contract;
 use crate::dataspace::contract::ContractError;
@@ -19,7 +20,6 @@ use crate::dataspace::lock::Writer;
 use crate::dataspace::publish::Base;
 use crate::dataspace::publish::Published;
 use crate::dataspace::publish::publish;
-use crate::dataspace::read::read;
 use crate::dataspace::read_all::EntryRead;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
@@ -163,7 +163,13 @@ pub async fn publish_all(
         } else if let Some(reads) = reads {
             let base = locked.map(|locked| locked.base.as_str());
             Box::pin(publish_on_base(
-                storage, remote, entry, reads, base, user_rules,
+                storage,
+                remote,
+                contract.dataspace(),
+                entry,
+                reads,
+                base,
+                user_rules,
             ))
             .await
         } else {
@@ -200,10 +206,12 @@ pub async fn publish_all(
 }
 
 /// Publishes `entry` on `base`, first reading `reads`, the package's `read`
-/// entry, where `latest` is not `base`.
+/// entry, as [`read_resolving`] does in `dataspace`, where `latest` is not
+/// `base`.
 async fn publish_on_base(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
+    dataspace: &Path,
     entry: &Entry,
     reads: &Entry,
     base: Option<&str>,
@@ -215,7 +223,7 @@ async fn publish_on_base(
         Err(EntryError::FolderUnavailable(_)) if base.is_none() => {}
         published => return (None, ran(published)),
     }
-    let read = match read(storage, remote, reads, base).await {
+    let read = match read_resolving(storage, remote, dataspace, reads, base).await {
         Ok(outcome) => EntryRead::Ran(outcome),
         Err(err) => EntryRead::Failed(err),
     };

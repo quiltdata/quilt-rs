@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use quilt_rs::dataspace::conflict::CONFLICT_FILE;
 use quilt_rs::dataspace::contract::CONTRACT_FILE;
 use quilt_rs::dataspace::lock::Writer;
 use quilt_rs::dataspace::read::ReadOutcome;
@@ -29,10 +30,11 @@ pub struct Output {
 }
 
 /// The JSON keys of the lists [`lists`] gives, each present on every entry.
-const LIST_KEYS: [&str; 6] = [
+const LIST_KEYS: [&str; 7] = [
     "placed",
     "removed",
     "kept",
+    "resolved",
     "skipped",
     "hash_mismatch",
     "conflicts",
@@ -46,6 +48,7 @@ pub(super) fn lists(read: &EntryRead) -> Vec<(&'static str, &'static str, &[Path
             ("placed", "placed", &report.placed),
             ("removed", "removed", &report.removed),
             ("kept", "changed here and kept", &report.kept),
+            ("resolved", "set as conflict.json decided", &report.resolved),
             (
                 "skipped",
                 "not placed: the bucket no longer holds them",
@@ -126,7 +129,7 @@ impl std::fmt::Display for Output {
                 )?,
                 EntryRead::Ran(ReadOutcome::Blocked { revision, .. }) => write!(
                     f,
-                    "{package}: blocked, so nothing changed; local changes collide with {revision}"
+                    "{package}: blocked, so nothing changed; local changes collide with {revision}. Decide each in {CONFLICT_FILE}, then read again"
                 )?,
                 EntryRead::Unpushed => write!(
                     f,
@@ -403,9 +406,44 @@ mod tests {
         assert_eq!(
             output.to_string(),
             format!(
-                "quilt+s3://b#package=team/raw: blocked, so nothing changed; local changes collide with {SECOND}\n  1 file in both:\n    a.txt"
+                "quilt+s3://b#package=team/raw: blocked, so nothing changed; local changes collide with {SECOND}. Decide each in conflict.json, then read again\n  1 file in both:\n    a.txt"
             )
         );
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn a_collision_decided_in_the_conflict_map_is_read_and_reported() -> Result<(), Error> {
+        let remote = MockRemote::default();
+        publish(&remote, FIRST, &[("a.txt", b"alpha")]).await?;
+        let dataspace = dataspace()?;
+        read(&remote, dataspace.path()).await;
+        std::fs::write(dataspace.path().join("team/raw/a.txt"), b"edited")?;
+        publish(&remote, SECOND, &[("a.txt", b"ALPHA")]).await?;
+        read(&remote, dataspace.path()).await;
+        let map_path = dataspace.path().join("conflict.json");
+        let mut map: serde_json::Value = serde_json::from_slice(&std::fs::read(&map_path)?)?;
+        map["quilt+s3://b#package=team/raw"]["a.txt"]["resolved"] = "".into();
+        std::fs::write(&map_path, map.to_string())?;
+
+        let std = read(&remote, dataspace.path()).await;
+
+        assert!(!std.failed(), "{std:?}");
+        let Std::Out(output) = std else {
+            panic!("expected the report, got {std:?}");
+        };
+        assert_eq!(
+            output.to_json()["entries"][0]["resolved"],
+            serde_json::json!(["a.txt"])
+        );
+        assert!(
+            output
+                .to_string()
+                .ends_with("1 file set as conflict.json decided:\n    a.txt"),
+            "{output}"
+        );
+        assert!(!dataspace.path().join("team/raw/a.txt").exists());
+        assert!(!map_path.exists());
         Ok(())
     }
 

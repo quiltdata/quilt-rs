@@ -410,6 +410,38 @@ async fn a_collision_blocks_the_tick_before_anything_is_applied_or_published() -
 }
 
 #[test(tokio::test)]
+async fn a_collision_kept_as_the_folder_holds_it_is_read_then_published() -> Res {
+    use crate::dataspace::conflict::ConflictMap;
+    let world = World::filled(&[("a.txt", b"v1"), ("b.txt", b"v1")]).await?;
+    world
+        .publish(SECOND, &[("a.txt", b"v2"), ("b.txt", b"v2")])
+        .await?;
+    world.write("a.txt", "mine")?;
+    world.tick().await?;
+    let mut map = ConflictMap::read(&world.storage, &world.dataspace()).await?;
+    let row = map
+        .packages
+        .get_mut(&key())
+        .and_then(|rows| rows.get_mut(&LogicalKey::new("a.txt").ok()?))
+        .ok_or("no row for a.txt")?;
+    row.resolved = row
+        .current
+        .as_ref()
+        .and_then(|side| side.physical_key.clone());
+    map.write(&world.storage, &world.dataspace()).await?;
+
+    let outcome = world.tick().await?;
+
+    let revision = advanced(&outcome);
+    assert_eq!(
+        world.revision(&revision).await?,
+        files(&[("a.txt", "mine"), ("b.txt", "v2")])
+    );
+    assert!(!world.dataspace().join("conflict.json").exists());
+    Ok(())
+}
+
+#[test(tokio::test)]
 async fn only_the_entrys_paths_are_read_and_published() -> Res {
     let world = World::new("sync = [{ package = \"team/raw\", path = \"data/\" }]")?;
     world

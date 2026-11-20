@@ -9,6 +9,7 @@ use thiserror::Error;
 use tracing::warn;
 
 use crate::dataspace::EntryError;
+use crate::dataspace::conflict::read_resolving;
 use crate::dataspace::contract::Access;
 use crate::dataspace::contract::Contract;
 use crate::dataspace::contract::ContractError;
@@ -22,7 +23,6 @@ use crate::dataspace::lock::Mismatch;
 use crate::dataspace::lock::Writer;
 use crate::dataspace::read::ReadOutcome;
 use crate::dataspace::read::ReadReport;
-use crate::dataspace::read::read;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use quilt_uri::RevisionPointer;
@@ -145,7 +145,7 @@ pub async fn read_all(
             EntryRead::Unpushed
         } else {
             let base = locked.map(|locked| locked.base.as_str());
-            read_entry(storage, remote, entry, base).await
+            read_entry(storage, remote, contract.dataspace(), entry, base).await
         };
         if let Some(base) = outcome.lock_base() {
             let entry = LockEntry {
@@ -210,11 +210,13 @@ pub(crate) async fn usable_lock(
     Ok(Ok((lock, writer.clone())))
 }
 
-/// Reads `entry` against `base`; a working folder that is missing or empty
-/// first at `base`, unless the entry names a revision.
+/// Reads `entry` against `base`, as [`read_resolving`] does in `dataspace`; a
+/// working folder that is missing or empty first at `base`, unless the entry
+/// names a revision.
 async fn read_entry(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
+    dataspace: &Path,
     entry: &Entry,
     base: Option<&str>,
 ) -> EntryRead {
@@ -226,7 +228,7 @@ async fn read_entry(
         refill.revision = RevisionPointer::Hash(locked.to_string());
         // A revision that can no longer be read whole gives way to the
         // contract's.
-        let why = match read(storage, remote, &refill, base).await {
+        let why = match read_resolving(storage, remote, dataspace, &refill, base).await {
             Ok(ReadOutcome::Read(report))
                 if report.skipped.is_empty() && report.hash_mismatch.is_empty() =>
             {
@@ -245,7 +247,7 @@ async fn read_entry(
             entry.folder.display()
         );
     }
-    match read(storage, remote, entry, base).await {
+    match read_resolving(storage, remote, dataspace, entry, base).await {
         Ok(outcome) => EntryRead::Ran(outcome),
         Err(err) => EntryRead::Failed(err),
     }

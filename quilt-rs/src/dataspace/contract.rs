@@ -21,6 +21,7 @@ use thiserror::Error;
 
 use crate::LogicalKey;
 use crate::LogicalKeyError;
+use crate::dataspace::conflict::CONFLICT_FILE;
 use crate::dataspace::lock::LOCK_FILE;
 use crate::io::storage::Storage;
 use crate::io::storage::StorageExt;
@@ -509,7 +510,7 @@ pub enum EntryProblem {
     #[error("a plain string whose first segment ends in `@local` names a local registry's folder")]
     LocalFolder,
 
-    #[error("its folder is, holds or sits in the dataspace's contract or lock")]
+    #[error("its folder is, holds or sits in the dataspace's contract, lock or conflict map")]
     DataspaceFolder,
 
     #[error(
@@ -996,7 +997,8 @@ pub(crate) enum FolderCase {
 struct Folders<'a> {
     root: &'a Path,
     case: FolderCase,
-    /// The contract's and the lock's paths, by their names.
+    /// The paths of the contract, the lock and the conflict map, by their
+    /// names.
     own_files: Vec<Vec<String>>,
 }
 
@@ -1007,7 +1009,7 @@ impl<'a> Folders<'a> {
             case,
             own_files: Vec::new(),
         };
-        folders.own_files = [CONTRACT_FILE, LOCK_FILE]
+        folders.own_files = [CONTRACT_FILE, LOCK_FILE, CONFLICT_FILE]
             .iter()
             .map(|file| folders.names(&root.join(file)))
             .collect();
@@ -1031,7 +1033,7 @@ impl<'a> Folders<'a> {
         self.checked(folder)
     }
 
-    /// Refuses a folder that is, holds or sits in the contract or the lock.
+    /// Refuses a folder that is, holds or sits in one of `own_files`.
     fn checked(&self, folder: PathBuf) -> Result<PathBuf, EntryProblem> {
         let names = self.names(&folder);
         if self.own_files.iter().any(|file| overlap(&names, file)) {

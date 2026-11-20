@@ -175,7 +175,7 @@ fn an_entry_naming_no_registry_needs_a_default() -> Res {
 }
 
 #[test]
-fn a_folder_overlapping_the_contract_or_the_lock_is_refused() {
+fn a_folder_overlapping_the_contract_the_lock_or_the_conflict_map_is_refused() {
     for list in [
         r#"read = ["."]"#,
         r#"read = ["./"]"#,
@@ -186,6 +186,8 @@ fn a_folder_overlapping_the_contract_or_the_lock_is_refused() {
         r#"read = [{ package = "data.toml/x" }]"#,
         r#"read = ["data.lock.toml"]"#,
         r#"read = [{ package = "data.lock.toml/x" }]"#,
+        r#"read = ["conflict.json"]"#,
+        r#"read = [{ package = "conflict.json/x" }]"#,
     ] {
         let problem = entry_problem(&with_defaults(list));
         assert!(
