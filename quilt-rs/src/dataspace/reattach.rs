@@ -219,23 +219,28 @@ impl Opened {
         let Registry::S3(bucket) = &package.registry else {
             return Err(ReattachError::LocalRegistry);
         };
-        let (lock, writer) = match Lock::read(storage, &contract).await? {
-            Some(lock) => {
-                let writer = Writer {
-                    local_registry: lock.header.writer.local_registry.clone(),
-                    ..writer.clone()
-                };
-                let foreign: Vec<Mismatch> = lock
-                    .mismatches(&contract, &writer)
-                    .into_iter()
-                    .filter(|mismatch| *mismatch != Mismatch::DataToml)
-                    .collect();
-                if !foreign.is_empty() {
-                    return Err(ReattachError::Mismatch(foreign));
-                }
-                (lock, writer)
+        let read = Lock::read(storage, &contract).await?;
+        // A lock keeps the registry it names; a new one names the registry its
+        // keys were resolved with.
+        let writer = Writer {
+            local_registry: read.as_ref().map_or_else(
+                || local.unwrap_or_default().to_string(),
+                |lock| lock.header.writer.local_registry.clone(),
+            ),
+            ..writer.clone()
+        };
+        let lock = if let Some(lock) = read {
+            let foreign: Vec<Mismatch> = lock
+                .mismatches(&contract, &writer)
+                .into_iter()
+                .filter(|mismatch| *mismatch != Mismatch::DataToml)
+                .collect();
+            if !foreign.is_empty() {
+                return Err(ReattachError::Mismatch(foreign));
             }
-            None => (Lock::new(&contract, writer), writer.clone()),
+            lock
+        } else {
+            Lock::new(&contract, &writer)
         };
         Ok(Self {
             contract,

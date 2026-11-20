@@ -111,7 +111,9 @@ impl Fixture {
     }
 
     async fn contract(&self) -> Res<Contract> {
-        Ok(Contract::read(&LocalStorage::new(), &self.dataspace, None).await?)
+        let storage = LocalStorage::new();
+        let here = self.domain.local().names(&storage).await?.name;
+        Ok(Contract::read(&storage, &self.dataspace, Some(&here)).await?)
     }
 
     /// Writes a lock holding `entry` for `team/raw`, as `writer`.
@@ -350,9 +352,16 @@ async fn a_contract_naming_this_machines_registry_still_lists() -> Res {
         "registry = \"s3://b\"\n[packages]\nsync = [\"team/raw\", \"quilt+local://#package=me/x\"]\n",
     )?;
 
-    let listed = fixture.unattached().await;
+    let commit = fixture.commit("mine", b"m").await?;
+    fixture.publish(BASE).await?;
 
-    assert!(listed.is_ok(), "{listed:?}");
+    assert_eq!(fixture.unattached().await?.len(), 1);
+    fixture.reattach(&commit, BASE).await?;
+
+    // The new lock names the registry its keys were resolved with.
+    let names = fixture.domain.local().names(&LocalStorage::new()).await?;
+    let lock = fixture.read_lock().await?.expect("a lock");
+    assert_eq!(lock.header.writer.local_registry, names.name);
     Ok(())
 }
 
