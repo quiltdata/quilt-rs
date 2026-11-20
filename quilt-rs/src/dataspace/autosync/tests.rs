@@ -6,6 +6,7 @@ use tempfile::TempDir;
 use test_log::test;
 
 use crate::LogicalKey;
+use crate::dataspace::store::tests::publish_local;
 use crate::io::remote::mocks::MockRemote;
 use crate::io::storage::LocalStorage;
 use crate::manifest::Manifest;
@@ -293,6 +294,47 @@ async fn a_write_entry_publishes_what_the_watcher_reports_changed() -> Res {
     let revision = advanced(only(&reported));
     assert_eq!(world.latest().await?.as_deref(), Some(revision.as_str()));
     assert_eq!(world.base().await?, Some(revision));
+    assert_eq!(world.jobs().await?, 0);
+    Ok(())
+}
+
+/// The local registry is a registry like a bucket: a dataspace holding only
+/// a local `sync` entry, named by a name the registry had, is filled by the
+/// runner from the registry's `latest`, and an edit the watcher reports is
+/// published there.
+#[test(tokio::test)]
+async fn a_local_sync_entry_is_run_and_its_edit_published_to_the_local_registry() -> Res {
+    let world = World::new("sync = [\"quilt+local://old-mac#package=me/out\"]").await?;
+    let local = DomainRoot::new(world.dir.path().join("domain")).local();
+    local.rename(&world.storage, "old-mac").await?;
+    local.rename(&world.storage, "lab-mac").await?;
+    publish_local(&world.storage, &local, "me/out", &[("o.txt", b"o1")]).await?;
+    let folder = world.contract_folder().await?;
+    let text = || std::fs::read_to_string(folder.join("o.txt")).ok();
+
+    let filled = world.tick().await?;
+    assert!(
+        matches!(
+            only(&filled),
+            EntryTick::Synced(EntrySync::Ran {
+                read: Some(_),
+                published: None
+            })
+        ),
+        "{filled:?}"
+    );
+    assert_eq!(text().as_deref(), Some("o1"));
+
+    std::fs::write(folder.join("o.txt"), "o2")?;
+    assert_eq!(world.changed("o.txt").await?.len(), 1);
+    let synced = world.tick().await?;
+
+    let revision = advanced(only(&synced));
+    let namespace = quilt_uri::Namespace::try_from("me/out")?;
+    assert_eq!(
+        local.read_latest(&world.storage, &namespace).await?,
+        Some(revision)
+    );
     assert_eq!(world.jobs().await?, 0);
     Ok(())
 }

@@ -5,6 +5,11 @@
 //! that is not waiting out a failure, by its access: `read` reads, `write`
 //! and `replace` publish, and `sync` runs the tick. Jobs, failures and kept
 //! revisions are kept in the [`Queue`], so they outlast the process.
+//!
+//! An entry of the Domain's local registry, by its name or one it had, runs
+//! as a bucket's does, following the registry's `latest`, and its job is
+//! keyed by the registry's current name. One naming another machine's local
+//! registry cannot be looked up, so it is left unobserved.
 
 use std::path::Path;
 use std::path::PathBuf;
@@ -27,15 +32,19 @@ use crate::dataspace::publish_all::EntryPublish;
 use crate::dataspace::publish_all::PublishAllError;
 use crate::dataspace::publish_all::publish_some;
 use crate::dataspace::read::ReadOutcome;
+use crate::dataspace::read::local_hash;
 use crate::dataspace::read_all::EntryRead;
 use crate::dataspace::read_all::ReadAllError;
 use crate::dataspace::read_all::read_some;
+use crate::dataspace::store::local_names;
+use crate::dataspace::store::local_registry;
 use crate::dataspace::sync::EntrySync;
 use crate::dataspace::sync::SyncError;
 use crate::dataspace::sync::folder_key;
 use crate::dataspace::sync::latest;
 use crate::dataspace::sync::sync;
 use crate::domain::DomainRoot;
+use crate::domain::LocalRegistry;
 use crate::io::manifest::resolve_manifest_uri;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
@@ -128,8 +137,6 @@ pub enum EntryTick {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Skip {
-    /// A local registry's package, which no domainless operation reaches yet.
-    LocalRegistry,
     /// A `write` or `replace` entry whose package is also under `read`.
     /// Whose metadata a publish of such a package keeps is not ruled yet, so
     /// it is not published unattended; its `read` entry is still read.
@@ -214,9 +221,16 @@ impl Runner {
         let mut queued = Vec::new();
         for dataspace in self.settings.domain.autosync(storage).await? {
             let local = self.settings.writer.local_registry_name();
-            let Ok(contract) = Contract::read(storage, &dataspace, local).await else {
+            let Ok(mut contract) = Contract::read(storage, &dataspace, local).await else {
                 continue;
             };
+            // Keyed by the local registry's current name, as a tick keys it.
+            let registry = self.settings.domain.local();
+            if let Some(names) = local_names(storage, Some(&registry), &contract, None).await
+                && contract.name_local(&names).is_err()
+            {
+                continue;
+            }
             for entry in contract.entries() {
                 if entry.access != Access::Read
                     && skip(&contract, entry).is_none()
@@ -264,20 +278,31 @@ impl Runner {
             errors: Vec::new(),
         };
         let local = self.settings.writer.local_registry_name();
-        let contract = match Contract::read(storage, dataspace, local).await {
+        let mut contract = match Contract::read(storage, dataspace, local).await {
             Ok(contract) => contract,
             Err(err) => {
                 tick.errors.push(DataspaceError::Contract(Box::new(err)));
                 return Ok(tick);
             }
         };
-        let lock = match Lock::read(storage, &contract).await {
+        let mut lock = match Lock::read(storage, &contract).await {
             Ok(lock) => lock,
             Err(err) => {
                 tick.errors.push(DataspaceError::Lock(Box::new(err)));
                 return Ok(tick);
             }
         };
+        // Keyed by the local registry's current name, as the runs key them.
+        let registry = self.settings.domain.local();
+        if let Some(names) = local_names(storage, Some(&registry), &contract, lock.as_ref()).await {
+            if let Err(err) = contract.name_local(&names) {
+                tick.errors.push(DataspaceError::Contract(Box::new(err)));
+                return Ok(tick);
+            }
+            if let Some(lock) = &mut lock {
+                lock.name_local(&names);
+            }
+        }
         let base = |entry: &Entry| {
             lock.as_ref()
                 .and_then(|lock| lock.packages.get(&entry.key()))
@@ -293,7 +318,14 @@ impl Runner {
             let outcome = match skip(&contract, entry) {
                 Some(skip) => EntryTick::Skipped(skip),
                 None => match self
-                    .observe(remote, entry, base(entry), unpushed(entry), &mut tick)
+                    .observe(
+                        storage,
+                        remote,
+                        entry,
+                        base(entry),
+                        unpushed(entry),
+                        &mut tick,
+                    )
                     .await?
                 {
                     Ok(()) => EntryTick::Idle,
@@ -343,13 +375,15 @@ impl Runner {
     /// commit, which waits for its release.
     async fn observe(
         &self,
+        storage: &(impl Storage + Sync),
         remote: &impl Remote,
         entry: &Entry,
         base: Option<String>,
         unpushed: Option<String>,
         tick: &mut DataspaceTick,
     ) -> Result<Result<(), EntryError>, QueueError> {
-        let followed = match follows(remote, entry).await {
+        let local = self.settings.domain.local();
+        let followed = match follows(storage, remote, &local, entry).await {
             Ok(followed) => followed,
             Err(err) => return Ok(Err(err)),
         };
@@ -393,7 +427,8 @@ impl Runner {
         self.start(due).await?;
         let dataspace = tick.dataspace.clone();
         let writer = &self.settings.writer;
-        let read = read_some(storage, remote, &dataspace, writer, |entry| {
+        let local = self.settings.domain.local();
+        let read = read_some(storage, remote, Some(&local), &dataspace, writer, |entry| {
             due.contains(entry)
         });
         match Box::pin(read).await {
@@ -425,9 +460,11 @@ impl Runner {
         }
         self.start(due).await?;
         let dataspace = tick.dataspace.clone();
+        let local = self.settings.domain.local();
         let published = publish_some(
             storage,
             remote,
+            Some(&local),
             &dataspace,
             &self.settings.writer,
             &self.settings.user_rules,
@@ -571,9 +608,6 @@ impl Runner {
 
 /// Why the runner leaves `entry` alone, if it does.
 fn skip(contract: &Contract, entry: &Entry) -> Option<Skip> {
-    if matches!(entry.registry, Registry::Local(_)) {
-        return Some(Skip::LocalRegistry);
-    }
     let read_too = || {
         contract
             .entries()
@@ -587,8 +621,23 @@ fn skip(contract: &Contract, entry: &Entry) -> Option<Skip> {
 }
 
 /// The revision `entry` follows: `latest`, or the one a pinned `read` entry
-/// names. `None` where `latest` names none.
-async fn follows(remote: &impl Remote, entry: &Entry) -> Result<Option<String>, EntryError> {
+/// names. `None` where `latest` names none. An entry of the local registry
+/// `local`, by its name or one it had, follows the registry's; one naming
+/// another local registry is refused.
+async fn follows(
+    storage: &(impl Storage + Sync),
+    remote: &impl Remote,
+    local: &LocalRegistry,
+    entry: &Entry,
+) -> Result<Option<String>, EntryError> {
+    if let Some(registry) = local_registry(storage, Some(local), entry).await? {
+        return match &entry.revision {
+            RevisionPointer::Tag(Tag::Latest) => {
+                Ok(registry.read_latest(storage, &entry.package).await?)
+            }
+            _ => Ok(Some(local_hash(storage, registry, entry).await?)),
+        };
+    }
     let Registry::S3(bucket) = &entry.registry else {
         return Err(EntryError::LocalRegistry);
     };

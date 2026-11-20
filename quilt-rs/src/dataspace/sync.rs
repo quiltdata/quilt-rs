@@ -44,9 +44,12 @@ use crate::dataspace::read::bytes_at;
 use crate::dataspace::read::gone;
 use crate::dataspace::read::write_metadata;
 use crate::dataspace::read_all::usable_lock;
+use crate::dataspace::store::Store;
+use crate::dataspace::store::local_registry;
+use crate::dataspace::store::name_local;
 use crate::domain::DomainRoot;
+use crate::domain::LocalPublish;
 use crate::domain::LocalRegistry;
-use crate::domain::RegistryStore;
 use crate::flow::PackageStore;
 use crate::flow::PushTarget;
 use crate::flow::WorkflowCheck;
@@ -70,6 +73,7 @@ use crate::manifest::HeaderMessage;
 use crate::manifest::Manifest;
 use crate::manifest::ManifestRow;
 use crate::manifest::RawNumbers;
+use crate::manifest::Workflow;
 use crate::object_hash::ObjectHash;
 use crate::queue::KeptReason;
 use crate::queue::KeptRevision;
@@ -217,8 +221,14 @@ impl<S: Storage + Sync> LockFile<'_, S> {
 /// taken for a deletion, and nothing new is committed; commits the lock
 /// already names are pushed first. `filled` is set once
 /// every `read` and `sync` entry is in the lock, and the lock takes the
-/// edited contract only once every `sync` entry was read whole. A local
-/// registry's entry is refused, so it keeps the dataspace unfilled.
+/// edited contract only once every `sync` entry was read whole.
+///
+/// An entry of `domain`'s local registry, under its name or one it had, is
+/// ticked as a bucket's is, with the registry as both its store and its
+/// registry: its commits are published there against the same base, under
+/// the package's lock and with no network, and its key is written under the
+/// registry's current name. An entry naming another local registry is
+/// refused, and keeps the dataspace unfilled.
 ///
 /// A package `data.toml` was edited to move from this machine's local
 /// registry to a bucket, which the lock still holds under the local
@@ -231,7 +241,8 @@ impl<S: Storage + Sync> LockFile<'_, S> {
 ///
 /// The lock is used as [`read_all`](crate::dataspace::read_all::read_all)
 /// uses it, and `conflict.json` as [`read_resolving`] does. Each commit's
-/// message is `message`, and its workflow the bucket's default.
+/// message is `message`, and its workflow the bucket's default, or none in
+/// the local registry.
 ///
 /// The contract's hooks run around each half: `pre-read` before the tick
 /// reads `latest`, and `post-read` once the lock moved to a newer revision;
@@ -250,10 +261,12 @@ pub async fn sync(
     message: &str,
     user_rules: &Path,
 ) -> Result<DataspaceSync, SyncError> {
-    let contract = Contract::read(storage, dataspace, writer.local_registry_name()).await?;
-    let (mut lock, writer) = usable_lock(storage, &contract, writer)
+    let mut contract = Contract::read(storage, dataspace, writer.local_registry_name()).await?;
+    let (mut lock, mut writer) = usable_lock(storage, &contract, writer)
         .await?
         .map_err(SyncError::Mismatch)?;
+    let local = domain.local();
+    name_local(storage, Some(&local), &mut contract, &mut lock, &mut writer).await?;
     let synced: Vec<&Entry> = contract
         .entries()
         .iter()
@@ -299,7 +312,7 @@ pub async fn sync(
         // A `read` entry that cannot be asked about keeps the dataspace
         // unfilled; the next tick asks again.
         if lock.header.filled.is_none()
-            && filled(remote, &contract, &lock, whole)
+            && filled(storage, remote, &local, &contract, &lock, whole)
                 .await
                 .unwrap_or(false)
         {
@@ -339,7 +352,9 @@ pub async fn sync(
 /// from elsewhere naming packages whose folders this one may not hold, and
 /// every `read` entry is in the lock or has no revision to read.
 async fn filled(
+    storage: &(impl Storage + Sync),
     remote: &impl Remote,
+    local: &LocalRegistry,
     contract: &Contract,
     lock: &Lock,
     whole: bool,
@@ -352,7 +367,9 @@ async fn filled(
         if entry.access == Access::Read
             && !lock.packages.contains_key(&entry.key())
             && (entry.revision != RevisionPointer::Tag(Tag::Latest)
-                || latest(remote, entry).await?.is_some())
+                || latest_in(storage, remote, Some(local), entry)
+                    .await?
+                    .is_some())
         {
             return Ok(false);
         }
@@ -374,7 +391,7 @@ async fn fill(
     lock: &mut Lock,
     lock_file: &LockFile<'_, impl Storage + Sync>,
 ) -> Result<EntrySync, Stop> {
-    let store = domain.registry(bucket(entry)?)?;
+    let store = Store::of(storage, domain, entry).await?;
     let Some(_held) = storage
         .try_lock_exclusive(store.package_lock(&entry.package))
         .await?
@@ -387,7 +404,8 @@ async fn fill(
             ControlFlow::Break(outcome) => return Ok(outcome),
             ControlFlow::Continue(pushed) => pushed,
         };
-    let mut latest = latest(remote, entry).await?;
+    let local = store.local();
+    let mut latest = latest_in(storage, remote, local, entry).await?;
     if let Some(locked) = lock.packages.get(&key).cloned()
         && let Some(head) = locked.commits.last()
     {
@@ -425,7 +443,8 @@ async fn fill(
                     whole.access = Access::Read;
                     let dataspace = lock_file.contract.dataspace();
                     let outcome =
-                        read_resolving(storage, remote, dataspace, &whole, Some(revision)).await?;
+                        read_resolving(storage, remote, local, dataspace, &whole, Some(revision))
+                            .await?;
                     return Ok(ran(outcome, Some(pushed)));
                 }
                 _ => {
@@ -457,7 +476,8 @@ async fn fill(
         .await
         .map_err(EntryError::from)?;
     let dataspace = contract.dataspace();
-    let outcome = read_resolving(storage, remote, dataspace, &whole, base.as_deref()).await?;
+    let outcome =
+        read_resolving(storage, remote, local, dataspace, &whole, base.as_deref()).await?;
     if let Some(revision) = outcome.lock_base() {
         set_base(lock, lock_file, &key, revision.to_string()).await?;
     }
@@ -500,6 +520,19 @@ pub(crate) async fn latest(
         LatestSeen::Tagged { uri, .. } => Ok(Some(uri.hash)),
         LatestSeen::Absent => Ok(None),
         LatestSeen::Unreadable => Err(EntryError::LatestUnreadable),
+    }
+}
+
+/// [`latest`], read from the local registry `local` for an entry of it.
+async fn latest_in(
+    storage: &(impl Storage + Sync),
+    remote: &impl Remote,
+    local: Option<&LocalRegistry>,
+    entry: &Entry,
+) -> Result<Option<String>, EntryError> {
+    match local_registry(storage, local, entry).await? {
+        Some(registry) => Ok(registry.read_latest(storage, &entry.package).await?),
+        None => latest(remote, entry).await,
     }
 }
 
@@ -632,7 +665,7 @@ async fn tick(
     message: &str,
     user_rules: &Path,
 ) -> Result<EntrySync, Stop> {
-    let store = domain.registry(bucket(entry)?)?;
+    let store = Store::of(storage, domain, entry).await?;
     let Some(_held) = storage
         .try_lock_exclusive(store.package_lock(&entry.package))
         .await?
@@ -651,6 +684,7 @@ async fn tick(
         ControlFlow::Continue(None) => {}
     }
     let key = entry.key();
+    let local = store.local();
     let (base, commits) = match lock.packages.get(&key) {
         Some(locked) => (locked.base.clone(), locked.commits.clone()),
         None => (None, Vec::new()),
@@ -664,7 +698,7 @@ async fn tick(
         }
         current = Some((hash.clone(), manifest));
     }
-    let latest = latest(remote, entry).await?;
+    let latest = latest_in(storage, remote, local, entry).await?;
 
     let mut read_report = None;
     if latest == base {
@@ -686,7 +720,8 @@ async fn tick(
             .map_err(EntryError::from)?;
         let dataspace = contract.dataspace();
         let pinned = at(entry, hash);
-        let outcome = read_resolving(storage, remote, dataspace, &pinned, base.as_deref()).await?;
+        let outcome =
+            read_resolving(storage, remote, local, dataspace, &pinned, base.as_deref()).await?;
         let completed = outcome.lock_base().map(str::to_string);
         let report = match outcome {
             ReadOutcome::Read(report) => report,
@@ -735,6 +770,32 @@ async fn set_base(
     lock_file.save(lock).await
 }
 
+/// The workflow a commit records: the bucket's default, and none for the
+/// local registry, which has no workflows.
+async fn commit_workflow(
+    remote: &impl Remote,
+    store: &Store,
+    entry: &Entry,
+) -> Result<Option<Workflow>, Stop> {
+    match store {
+        Store::Bucket(_) => {
+            let workflows = S3Uri {
+                bucket: bucket(entry)?.to_string(),
+                key: WORKFLOWS_CONFIG_KEY.to_string(),
+                version: None,
+            };
+            Ok(resolve_workflow(
+                remote,
+                entry.catalog.as_ref(),
+                WorkflowIntent::BucketDefault,
+                &workflows,
+            )
+            .await?)
+        }
+        Store::Local(_) => Ok(None),
+    }
+}
+
 /// Commits the working folder's changes on the lock's current revision, then
 /// pushes the last commit against the base. `None` where there was nothing
 /// to commit or push. `known` is a revision's manifest already read, by its
@@ -743,7 +804,7 @@ async fn set_base(
 async fn publish(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
-    store: &RegistryStore,
+    store: &Store,
     queue: &Queue,
     entry: &Entry,
     lock: &mut Lock,
@@ -784,19 +845,8 @@ async fn publish(
 
     let mut head = current_hash.cloned();
     if changed {
-        let workflows = S3Uri {
-            bucket: bucket(entry)?.to_string(),
-            key: WORKFLOWS_CONFIG_KEY.to_string(),
-            version: None,
-        };
         manifest.header.message = HeaderMessage::Text(message.to_string());
-        manifest.header.workflow = resolve_workflow(
-            remote,
-            entry.catalog.as_ref(),
-            WorkflowIntent::BucketDefault,
-            &workflows,
-        )
-        .await?;
+        manifest.header.workflow = commit_workflow(remote, store, entry).await?;
         let lineage = PackageLineage {
             base_hash: current_hash.cloned().unwrap_or_default(),
             ..PackageLineage::default()
@@ -933,7 +983,7 @@ async fn take(
 /// change.
 async fn rewrite_metadata(
     storage: &(impl Storage + Sync),
-    store: &RegistryStore,
+    store: &Store,
     entry: &Entry,
     hash: &str,
     planned_on: Option<&[u8]>,
@@ -949,15 +999,19 @@ async fn rewrite_metadata(
 /// one stored without becoming `latest` is kept in `queue`; a later push of
 /// it that the bucket still holds is not uploaded again. Also says whether
 /// the push wrote to the bucket: stored the revision, or moved `latest`.
+/// In the local registry, see [`push_local`].
 async fn push_head(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
-    store: &RegistryStore,
+    store: &Store,
     queue: &Queue,
     entry: &Entry,
     head: &str,
     base: Option<&str>,
 ) -> Result<(Published, bool), EntryError> {
+    if let Store::Local(local) = store {
+        return push_local(storage, local, queue, entry, head, base).await;
+    }
     let head_only = [head.to_string()];
     let manifest = manifest_at(storage, remote, store, entry, head, &head_only).await?;
     push_manifest(storage, remote, queue, entry, head, manifest, base).await
@@ -1033,6 +1087,44 @@ async fn push_manifest(
     Ok((published, wrote))
 }
 
+/// [`push_head`] to the local registry `local`, by a caller holding the
+/// package's lock: the commit `head` is published there against `base`, with
+/// no workflow to check. One stored without becoming `latest` is kept in
+/// `queue`, as a bucket's is.
+async fn push_local(
+    storage: &(impl Storage + Sync),
+    local: &LocalRegistry,
+    queue: &Queue,
+    entry: &Entry,
+    head: &str,
+    base: Option<&str>,
+) -> Result<(Published, bool), EntryError> {
+    let in_registry = storage.exists(local.revision(head)).await;
+    let published = match local
+        .publish_held(storage, &entry.package, base, head)
+        .await?
+    {
+        LocalPublish::Advanced => Published::Advanced {
+            revision: head.to_string(),
+            latest_unchecked: false,
+        },
+        LocalPublish::Diverged(latest) => {
+            let kept = KeptRevision {
+                hash: head.to_string(),
+                base: base.map(str::to_string),
+                reason: KeptReason::LatestMoved,
+            };
+            queue.keep(&folder_key(entry), kept).await?;
+            Published::Stored {
+                revision: head.to_string(),
+                latest,
+            }
+        }
+    };
+    let wrote = !in_registry || matches!(published, Published::Advanced { .. });
+    Ok((published, wrote))
+}
+
 /// The key `queue.db` keeps `entry`'s working folder under.
 pub(crate) fn folder_key(entry: &Entry) -> FolderKey {
     FolderKey {
@@ -1058,7 +1150,7 @@ fn revision(entry: &Entry, hash: &str) -> Result<ManifestUri, EntryError> {
 async fn manifest_at(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
-    store: &RegistryStore,
+    store: &Store,
     entry: &Entry,
     hash: &str,
     commits: &[String],
@@ -1080,7 +1172,7 @@ async fn manifest_at(
 async fn read_back(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
-    store: &RegistryStore,
+    store: &Store,
     entry: &Entry,
     hash: &str,
     current: &Manifest,
@@ -1169,16 +1261,21 @@ async fn read_back(
 }
 
 /// The manifest of `hash`, a revision of `entry`'s package in its bucket,
-/// kept in `store` after its first fetch.
+/// kept in `store` after its first fetch; or one the local registry holds.
 async fn base_manifest(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
-    store: &RegistryStore,
+    store: &Store,
     entry: &Entry,
     hash: &str,
 ) -> Result<Manifest, EntryError> {
-    let uri = revision(entry, hash)?;
-    Ok(cache_manifest_at(storage, remote, &uri, &store.cached_manifest(hash)).await?)
+    match store {
+        Store::Bucket(store) => {
+            let uri = revision(entry, hash)?;
+            Ok(cache_manifest_at(storage, remote, &uri, &store.cached_manifest(hash)).await?)
+        }
+        Store::Local(local) => Ok(Manifest::from_path(storage, &local.revision(hash)).await?),
+    }
 }
 
 /// The manifest the folder holds: `current` with its rows under the entry's

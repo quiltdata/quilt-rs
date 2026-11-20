@@ -26,10 +26,15 @@ use crate::dataspace::read::OnDisk;
 use crate::dataspace::read::bytes_at;
 use crate::dataspace::read::left_by_read;
 use crate::dataspace::read::metadata_place_free;
+use crate::dataspace::store::local_registry;
+use crate::domain::LocalPublish;
+use crate::domain::LocalRegistry;
 use crate::error::PackageOpError;
 use crate::flow::PushTarget;
 use crate::flow::Tracked;
+use crate::flow::WorkflowCheck;
 use crate::flow::push_files;
+use crate::flow::record;
 use crate::installed_package::PushOutcome;
 use crate::io::manifest::LatestSeen;
 use crate::io::manifest::RowContent;
@@ -40,6 +45,7 @@ use crate::io::remote::WORKFLOWS_CONFIG_KEY;
 use crate::io::remote::WorkflowIntent;
 use crate::io::remote::resolve_workflow;
 use crate::io::storage::Storage;
+use crate::lineage::PackageLineage;
 use crate::manifest::HeaderMessage;
 use crate::manifest::Manifest;
 use crate::manifest::ManifestHeader;
@@ -153,9 +159,17 @@ pub enum Base<'a> {
 /// though a metadata file clears the metadata it leaves out under the entry's
 /// paths, theirs too. A `replace` is left stored and not `latest`. Either way
 /// a revision that did not become `latest` is reported with its hash.
+///
+/// An entry of the local registry `local` is published there as to a bucket,
+/// against the same base, but with no workflow and no network: the folder is
+/// committed into the registry and published under the package's lock, so
+/// `latest` cannot move meanwhile. With no local registry given, such an
+/// entry is refused.
+#[allow(clippy::too_many_arguments, reason = "each is a distinct input")]
 pub async fn publish(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
+    local: Option<&LocalRegistry>,
     entry: &Entry,
     message: Option<&str>,
     base: Base<'_>,
@@ -166,8 +180,11 @@ pub async fn publish(
         Access::Replace => true,
         access => return Err(EntryError::Access(access)),
     };
-    let Registry::S3(bucket) = &entry.registry else {
-        return Err(EntryError::LocalRegistry);
+    let registry = local_registry(storage, local, entry).await?;
+    let bucket = match (&entry.registry, registry) {
+        (_, Some(_)) => None,
+        (Registry::S3(bucket), None) => Some(bucket),
+        (Registry::Local(_), None) => return Err(EntryError::LocalRegistry),
     };
     let folder = &entry.folder;
     if storage.read_dir(folder).await.is_err() {
@@ -176,20 +193,7 @@ pub async fn publish(
     let rules = Rules::load(folder, user_rules)?;
     let metadata = metadata_file(storage, folder).await?;
 
-    let mut target = PushTarget {
-        handle: S3PackageHandle {
-            bucket: bucket.clone(),
-            namespace: entry.package.clone(),
-        },
-        origin: entry.catalog.clone(),
-        parent: None,
-    };
-    let workflows = S3Uri {
-        bucket: bucket.clone(),
-        key: WORKFLOWS_CONFIG_KEY.to_string(),
-        version: None,
-    };
-    let header = ManifestHeader {
+    let mut header = ManifestHeader {
         message: match (message, metadata.message()) {
             (Some(text), _) => HeaderMessage::Text(text.to_string()),
             (None, Some(message)) => message.clone(),
@@ -198,30 +202,49 @@ pub async fn publish(
         // Taken from `latest`, or from the metadata file; a default `{}` would
         // make an empty first publish look like a change.
         user_meta: None,
-        workflow: resolve_workflow(
-            remote,
-            target.origin.as_ref(),
-            WorkflowIntent::BucketDefault,
-            &workflows,
-        )
-        .await?,
+        // The local registry has no workflows.
+        workflow: None,
         ..ManifestHeader::default()
     };
+    let mut target = match bucket {
+        Some(bucket) => Some(bucket_target(remote, entry, bucket, &mut header).await?),
+        None => None,
+    };
+    let with_message = message.is_none() && metadata.message().is_some();
     let mut attempt = 1;
     let mut lost = None;
     loop {
-        let outcome = Box::pin(attempt_on_latest(
-            storage,
-            remote,
-            entry,
-            &rules,
-            &metadata,
-            header.clone(),
-            message.is_none() && metadata.message().is_some(),
-            base,
-            &mut target,
-        ))
-        .await;
+        let outcome = match (&mut target, registry) {
+            (Some(target), _) => {
+                Box::pin(attempt_on_latest(
+                    storage,
+                    remote,
+                    entry,
+                    &rules,
+                    &metadata,
+                    header.clone(),
+                    with_message,
+                    base,
+                    target,
+                ))
+                .await
+            }
+            (None, Some(registry)) => {
+                Box::pin(attempt_on_local(
+                    storage,
+                    remote,
+                    registry,
+                    entry,
+                    &rules,
+                    &metadata,
+                    header.clone(),
+                    with_message,
+                    base,
+                ))
+                .await
+            }
+            (None, None) => return Err(EntryError::LocalRegistry),
+        };
         // A revision an earlier attempt stored stands where this one found
         // nothing more to publish or failed, so its hash is not lost.
         if let Some(stored) = lost.take()
@@ -242,6 +265,37 @@ pub async fn publish(
             outcome => return outcome,
         }
     }
+}
+
+/// Where `entry` is pushed in `bucket`, its `header` taking the bucket's
+/// default workflow.
+async fn bucket_target(
+    remote: &impl Remote,
+    entry: &Entry,
+    bucket: &str,
+    header: &mut ManifestHeader,
+) -> Result<PushTarget, EntryError> {
+    let target = PushTarget {
+        handle: S3PackageHandle {
+            bucket: bucket.to_string(),
+            namespace: entry.package.clone(),
+        },
+        origin: entry.catalog.clone(),
+        parent: None,
+    };
+    let workflows = S3Uri {
+        bucket: bucket.to_string(),
+        key: WORKFLOWS_CONFIG_KEY.to_string(),
+        version: None,
+    };
+    header.workflow = resolve_workflow(
+        remote,
+        target.origin.as_ref(),
+        WorkflowIntent::BucketDefault,
+        &workflows,
+    )
+    .await?;
+    Ok(target)
 }
 
 /// One publish of the folder on the `latest` read now, where that is `base`.
@@ -309,6 +363,82 @@ async fn attempt_on_latest(
     }
     let pushed = Box::pin(push_files(storage, remote, target, manifest, &content)).await;
     settle(remote, target, pushed).await
+}
+
+/// [`attempt_on_latest`] in the local registry `registry`: the folder is
+/// committed into the registry on its `latest`, and that commit published
+/// there against it, holding the package's lock throughout, with no network.
+#[allow(clippy::too_many_arguments)]
+async fn attempt_on_local(
+    storage: &(impl Storage + Sync),
+    remote: &impl Remote,
+    registry: &LocalRegistry,
+    entry: &Entry,
+    rules: &Rules,
+    metadata: &MetadataFile,
+    header: ManifestHeader,
+    with_message: bool,
+    base: Base<'_>,
+) -> Result<Published, EntryError> {
+    let whole = entry.access == Access::Replace;
+    let namespace = &entry.package;
+    let _held = storage
+        .lock_exclusive(registry.package_lock(namespace))
+        .await?;
+    let latest = registry.read_latest(storage, namespace).await?;
+    if let Base::Locked(locked) = base
+        && latest.as_deref() != locked
+    {
+        return Ok(Published::Behind { latest });
+    }
+    let on = match &latest {
+        Some(hash) => Some(Manifest::from_path(storage, &registry.revision(hash)).await?),
+        None => None,
+    };
+    if on.as_ref().is_some_and(holds_metadata_file) {
+        return Err(EntryError::HoldsMetadataFile);
+    }
+    let files = walk(storage, &entry.folder, &entry.paths, rules, on.as_ref()).await?;
+    if whole && files.is_empty() {
+        return Err(EntryError::NothingToReplace(entry.folder.clone()));
+    }
+    let (mut manifest, content) = compose(storage, &files, on.as_ref(), whole, header).await?;
+    metadata.apply(&mut manifest, &entry.paths);
+    if same_as(&manifest, on.as_ref(), with_message) {
+        info!("Nothing to publish from {}", entry.folder.display());
+        return Ok(Published::Unchanged { latest });
+    }
+    let lineage = PackageLineage {
+        base_hash: latest.clone().unwrap_or_default(),
+        ..PackageLineage::default()
+    };
+    // The lineage names no bucket, so no workflow is checked.
+    let (_, recorded) = record(
+        registry,
+        storage,
+        remote,
+        WorkflowCheck::Warn { host: None },
+        namespace,
+        lineage,
+        manifest,
+        &content,
+    )
+    .await?;
+    let Some(revision) = recorded.hash().map(str::to_string) else {
+        return Ok(Published::Unchanged { latest });
+    };
+    Ok(
+        match registry
+            .publish_held(storage, namespace, latest.as_deref(), &revision)
+            .await?
+        {
+            LocalPublish::Advanced => Published::Advanced {
+                revision,
+                latest_unchecked: false,
+            },
+            LocalPublish::Diverged(latest) => Published::Stored { revision, latest },
+        },
+    )
 }
 
 /// What a push came to. Where it cannot say whether `latest` moved, `latest`

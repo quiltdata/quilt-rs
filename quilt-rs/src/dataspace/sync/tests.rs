@@ -17,6 +17,8 @@ use crate::dataspace::hooks::tests::call;
 use crate::dataspace::hooks::tests::calls;
 use crate::dataspace::hooks::tests::table;
 use crate::dataspace::hooks::tests::tables;
+use crate::dataspace::store::tests::local_bytes;
+use crate::dataspace::store::tests::publish_local;
 use crate::failpoint::stopping_at;
 use crate::io::manifest::fetch_jsonl;
 use crate::io::remote::mocks::MockRemote;
@@ -127,8 +129,15 @@ impl World {
 
     async fn read_all(&self) -> Result<(), Box<dyn std::error::Error>> {
         let dataspace = self.dataspace();
-        crate::dataspace::read_all::read_all(&self.storage, &self.remote, &dataspace, &writer())
-            .await?;
+        let local = self.domain().local();
+        crate::dataspace::read_all::read_all(
+            &self.storage,
+            &self.remote,
+            Some(&local),
+            &dataspace,
+            &writer(),
+        )
+        .await?;
         Ok(())
     }
 
@@ -970,8 +979,226 @@ async fn a_pinned_read_entry_keeps_the_dataspace_unfilled_until_it_is_read() -> 
 
 const WITH_LOCAL: &str = "sync = [\"team/raw\", \"quilt+local://lab-mac#package=me/out\"]";
 
+impl World {
+    /// The Domain's local registry, named `name`.
+    async fn local_named(&self, name: &str) -> Result<LocalRegistry, Box<dyn std::error::Error>> {
+        let local = self.domain().local();
+        local.rename(&self.storage, name).await?;
+        Ok(local)
+    }
+
+    /// The working folder of the contract's local registry entry.
+    async fn local_folder(&self) -> Result<PathBuf, Box<dyn std::error::Error>> {
+        let contract = Contract::read(&self.storage, &self.dataspace(), None).await?;
+        let entry = contract
+            .entries()
+            .iter()
+            .find(|entry| matches!(entry.registry, Registry::Local(_)))
+            .ok_or("no local entry")?;
+        Ok(entry.folder.clone())
+    }
+}
+
+/// The text of `key` in `folder`, `None` where it is not there.
+fn read_text(folder: &Path, key: &str) -> Option<String> {
+    std::fs::read_to_string(folder.join(key)).ok()
+}
+
+/// The lock's key for `me/out` in the local registry `name`.
+fn out_key(name: &str) -> PackageKey {
+    PackageKey {
+        registry: Registry::Local(name.to_string()),
+        package: Namespace::try_from("me/out").expect("package"),
+    }
+}
+
+/// The local registry is a registry like a bucket, so a dataspace syncing
+/// one of its packages beside a bucket's fills, and then publishes.
 #[test(tokio::test)]
-async fn a_local_registrys_entry_is_refused_and_keeps_the_dataspace_unfilled() -> Res {
+async fn a_local_and_a_bucket_sync_entry_fill_then_the_bucket_edit_is_published() -> Res {
+    let world = World::new(WITH_LOCAL)?;
+    let local = world.local_named("lab-mac").await?;
+    world.publish(FIRST, &[("a.txt", b"v1")]).await?;
+    let out = publish_local(&world.storage, &local, "me/out", &[("o.txt", b"o1")]).await?;
+
+    let filling = world.sync().await?;
+
+    assert!(filling.read_only, "{filling:?}");
+    let [(_, raw), (_, mine)] = filling.entries.as_slice() else {
+        panic!("{filling:?}");
+    };
+    assert!(matches!(raw, EntrySync::Ran { .. }), "{raw:?}");
+    assert!(matches!(mine, EntrySync::Ran { .. }), "{mine:?}");
+    let lock = world.lock().await?;
+    assert!(lock.header.filled.is_some(), "{lock:?}");
+    let locked = lock
+        .packages
+        .get(&out_key("lab-mac"))
+        .ok_or("no lock entry")?;
+    assert_eq!(locked.base.as_ref(), Some(&out));
+    let folder = world.local_folder().await?;
+    assert_eq!(read_text(&folder, "o.txt").as_deref(), Some("o1"));
+
+    world.write("a.txt", "v2")?;
+    let synced = world.sync().await?;
+
+    assert!(!synced.read_only, "{synced:?}");
+    let [(_, raw), (_, mine)] = synced.entries.as_slice() else {
+        panic!("{synced:?}");
+    };
+    let revision = advanced(raw);
+    assert_eq!(world.latest().await?, revision);
+    assert!(
+        matches!(
+            mine,
+            EntrySync::Ran {
+                read: None,
+                published: None
+            }
+        ),
+        "{mine:?}"
+    );
+    Ok(())
+}
+
+/// A local entry reads what another dataspace published to the local
+/// registry, and publishes its own edit there, moving `latest` and the lock.
+#[test(tokio::test)]
+async fn a_local_sync_entry_reads_and_publishes_through_the_local_registry() -> Res {
+    let world = World::new("sync = [\"quilt+local://lab-mac#package=me/out\"]")?;
+    let local = world.local_named("lab-mac").await?;
+    let namespace = Namespace::try_from("me/out")?;
+    let first = publish_local(&world.storage, &local, "me/out", &[("o.txt", b"o1")]).await?;
+    world.sync().await?;
+    let folder = world.local_folder().await?;
+    assert_eq!(read_text(&folder, "o.txt").as_deref(), Some("o1"));
+
+    // Down: another dataspace's publish is read.
+    let second = publish_local(&world.storage, &local, "me/out", &[("o.txt", b"o2")]).await?;
+    assert_ne!(first, second);
+    let outcome = world.tick().await?;
+
+    assert!(
+        matches!(
+            &outcome,
+            EntrySync::Ran {
+                read: Some(_),
+                published: None
+            }
+        ),
+        "{outcome:?}"
+    );
+    assert_eq!(read_text(&folder, "o.txt").as_deref(), Some("o2"));
+    let locked = world
+        .lock()
+        .await?
+        .packages
+        .get(&out_key("lab-mac"))
+        .cloned();
+    assert_eq!(locked.and_then(|locked| locked.base), Some(second.clone()));
+
+    // Up: the folder's edit is published to the local registry.
+    std::fs::write(folder.join("o.txt"), "o3")?;
+    let outcome = world.tick().await?;
+
+    let third = advanced(&outcome);
+    assert_eq!(
+        local.read_latest(&world.storage, &namespace).await?,
+        Some(third.clone())
+    );
+    assert_eq!(
+        local_bytes(&world.storage, &local, &third, "o.txt").await?,
+        b"o3"
+    );
+    let locked = world
+        .lock()
+        .await?
+        .packages
+        .get(&out_key("lab-mac"))
+        .cloned();
+    assert_eq!(
+        locked,
+        Some(LockEntry {
+            base: Some(third),
+            commits: Vec::new()
+        })
+    );
+    Ok(())
+}
+
+/// A package of the local registry that was never published is committed with
+/// no base, and its first publication expects no `latest` and bases the entry
+/// at the commit.
+#[test(tokio::test)]
+async fn a_local_package_never_published_is_published_first_with_no_base() -> Res {
+    let world = World::new("sync = [\"quilt+local://lab-mac#package=me/out\"]")?;
+    let local = world.local_named("lab-mac").await?;
+    assert!(world.sync().await?.read_only);
+    std::fs::create_dir_all(world.local_folder().await?)?;
+    std::fs::write(world.local_folder().await?.join("o.txt"), "first")?;
+
+    let outcome = world.tick().await?;
+
+    let commit = advanced(&outcome);
+    assert_eq!(
+        local
+            .read_latest(&world.storage, &Namespace::try_from("me/out")?)
+            .await?,
+        Some(commit.clone())
+    );
+    let locked = world
+        .lock()
+        .await?
+        .packages
+        .get(&out_key("lab-mac"))
+        .cloned();
+    assert_eq!(locked, Some(LockEntry::at(commit)));
+    Ok(())
+}
+
+/// A local registry renamed keeps its old name as an alias: an entry, and a
+/// lock key, naming it by the old name still reach it, and the lock is
+/// written under its current name.
+#[test(tokio::test)]
+async fn a_local_entry_under_an_old_name_is_synced_and_locked_under_the_current_one() -> Res {
+    let world = World::new("sync = [\"quilt+local://old-mac#package=me/out\"]")?;
+    let local = world.local_named("old-mac").await?;
+    let first = publish_local(&world.storage, &local, "me/out", &[("o.txt", b"o1")]).await?;
+    world.sync().await?;
+    let lock = world.lock().await?;
+    assert_eq!(
+        lock.packages
+            .get(&out_key("old-mac"))
+            .and_then(|locked| locked.base.as_ref()),
+        Some(&first)
+    );
+    world.local_named("new-mac").await?;
+    let second = publish_local(&world.storage, &local, "me/out", &[("o.txt", b"o2")]).await?;
+
+    let outcome = world.tick().await?;
+
+    // Read on the base the old key holds, not as a first read that collides.
+    assert!(
+        matches!(&outcome, EntrySync::Ran { read: Some(_), .. }),
+        "{outcome:?}"
+    );
+    let folder = world.local_folder().await?;
+    assert_eq!(read_text(&folder, "o.txt").as_deref(), Some("o2"));
+    let lock = world.lock().await?;
+    assert_eq!(
+        lock.packages
+            .get(&out_key("new-mac"))
+            .and_then(|locked| locked.base.as_ref()),
+        Some(&second)
+    );
+    assert!(!lock.packages.contains_key(&out_key("old-mac")), "{lock:?}");
+    Ok(())
+}
+
+/// An entry naming another machine's local registry is not this Domain's to
+/// reach.
+#[test(tokio::test)]
+async fn another_local_registrys_entry_is_refused_and_keeps_the_dataspace_unfilled() -> Res {
     let world = World::new(WITH_LOCAL)?;
     world.publish(FIRST, &[("a.txt", b"v1")]).await?;
 
@@ -991,7 +1218,7 @@ async fn a_local_registrys_entry_is_refused_and_keeps_the_dataspace_unfilled() -
 }
 
 #[test(tokio::test)]
-async fn a_filled_tick_refuses_a_local_registrys_entry_and_publishes_the_rest() -> Res {
+async fn a_filled_tick_refuses_another_local_registrys_entry_and_publishes_the_rest() -> Res {
     let world = World::new(WITH_LOCAL)?;
     world.publish(FIRST, &[("a.txt", b"v1")]).await?;
     world.sync().await?;
@@ -1302,6 +1529,34 @@ async fn a_package_the_contract_still_names_in_the_local_registry_is_not_moved()
     );
     assert!(world.remote.current(LATEST).await?.is_none());
     assert!(world.lock().await?.packages.contains_key(&local_key()));
+    Ok(())
+}
+
+/// A lock key naming the local registry by a name it had, `lab-mac`, under
+/// a header naming it by its current one, is still the package moving to
+/// the bucket.
+#[test(tokio::test)]
+async fn a_move_finds_the_local_key_under_a_name_the_registry_had() -> Res {
+    let (world, _, head) = moving().await?;
+    let local = world.local_named("lab-mac").await?;
+    local.rename(&world.storage, "new-mac").await?;
+    let contract = Contract::read(&world.storage, &world.dataspace(), None).await?;
+    let mut lock = world.lock().await?;
+    let renamed = Writer {
+        local_registry: "new-mac".to_string(),
+        ..writer()
+    };
+    lock.write(&world.storage, &contract, &renamed).await?;
+
+    let synced = world.sync().await?;
+
+    let [(_, outcome)] = synced.entries.as_slice() else {
+        panic!("{synced:?}");
+    };
+    assert_eq!(advanced(outcome), head);
+    let lock = world.lock().await?;
+    assert!(!lock.packages.contains_key(&local_key()), "{lock:?}");
+    assert_eq!(lock.header.writer.local_registry, "new-mac");
     Ok(())
 }
 

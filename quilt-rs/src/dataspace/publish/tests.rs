@@ -33,6 +33,7 @@ async fn publish(
     Box::pin(super::publish(
         storage,
         remote,
+        None,
         entry,
         message,
         Base::Latest,
@@ -1461,6 +1462,7 @@ async fn files_the_ignore_rules_leave_out_of_a_commit_are_not_published() -> Res
     let outcome = Box::pin(super::publish(
         storage,
         &remote,
+        None,
         &entry,
         None,
         Base::Latest,
@@ -1521,6 +1523,7 @@ async fn a_publish_on_a_base_latest_has_moved_past_publishes_nothing() -> Res {
     let outcome = Box::pin(super::publish(
         storage,
         &remote,
+        None,
         &entry("write = [\"team/raw\"]"),
         None,
         Base::Locked(Some(FIRST)),
@@ -1560,6 +1563,7 @@ async fn a_publish_on_a_base_is_not_composed_again_on_a_latest_that_moved() -> R
         Box::pin(super::publish(
             storage,
             &remote,
+            None,
             &entry,
             None,
             Base::Locked(Some(FIRST)),
@@ -1602,6 +1606,7 @@ async fn a_publish_on_a_base_that_cannot_read_latest_is_refused() -> Res {
     let outcome = Box::pin(super::publish(
         storage,
         &remote,
+        None,
         &entry("replace = [\"team/raw\"]"),
         None,
         Base::Locked(Some(FIRST)),

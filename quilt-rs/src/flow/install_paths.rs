@@ -585,7 +585,7 @@ pub async fn install_paths(
 /// Sorted by those names, a path that is also a folder comes right before one
 /// of the paths inside it, and a repeated path right before its twin, so
 /// comparing neighbours is enough.
-pub(super) fn refuse_clashing_local_paths(rows: &[ManifestRow]) -> Res {
+pub(crate) fn refuse_clashing_local_paths(rows: &[ManifestRow]) -> Res {
     let mut local: Vec<(Vec<Component>, &LogicalKey)> = rows
         .iter()
         .map(|row| {

@@ -1,5 +1,6 @@
 //! Every `read` entry of a dataspace, read into its working folder with no
-//! Domain, and the lock written after.
+//! Domain but, where one is given, its local registry, and the lock written
+//! after.
 
 use std::path::Path;
 
@@ -23,6 +24,8 @@ use crate::dataspace::lock::Mismatch;
 use crate::dataspace::lock::Writer;
 use crate::dataspace::read::ReadOutcome;
 use crate::dataspace::read::ReadReport;
+use crate::dataspace::store::name_local;
+use crate::domain::LocalRegistry;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use quilt_uri::RevisionPointer;
@@ -120,9 +123,14 @@ impl From<LockError> for ReadAllError {
 /// here, though [`Lock::write`] leaves an edit under `sync` entries for the
 /// sync tick to take. One written for another folder, host or user is used
 /// only while no entry's working folder holds files and it names no unpushed commits;
-/// otherwise nothing is read or written. A read has no Domain, so the local
-/// registry a lock names is not compared, and is kept unless the lock is
-/// another's.
+/// otherwise nothing is read or written. The local registry a lock names is
+/// not compared, and is kept unless the lock is another's.
+///
+/// An entry of the local registry `local` is read from it, under its name or
+/// one it had, as a bucket's entry is from the bucket, and its key is
+/// written under the registry's current name. With no local registry given,
+/// a local registry's entry is left unread, and the dataspace unfilled; one
+/// naming another local registry fails.
 ///
 /// The contract's `pre-read` hook runs before each entry is read, and one
 /// that fails leaves the entry unread. Once the lock is written, `post-read`
@@ -130,10 +138,11 @@ impl From<LockError> for ReadAllError {
 pub async fn read_all(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
+    local: Option<&LocalRegistry>,
     dataspace: &Path,
     writer: &Writer,
 ) -> Result<DataspaceRead, ReadAllError> {
-    read_some(storage, remote, dataspace, writer, |_| true).await
+    read_some(storage, remote, local, dataspace, writer, |_| true).await
 }
 
 /// [`read_all`], reading only the `read` entries `select` picks. `filled` is
@@ -141,19 +150,22 @@ pub async fn read_all(
 pub(crate) async fn read_some(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
+    local: Option<&LocalRegistry>,
     dataspace: &Path,
     writer: &Writer,
     select: impl Fn(&Entry) -> bool,
 ) -> Result<DataspaceRead, ReadAllError> {
-    let contract = Contract::read(storage, dataspace, writer.local_registry_name()).await?;
-    let (mut lock, writer) = usable_lock(storage, &contract, writer)
+    let mut contract = Contract::read(storage, dataspace, writer.local_registry_name()).await?;
+    let (mut lock, mut writer) = usable_lock(storage, &contract, writer)
         .await?
         .map_err(ReadAllError::Mismatch)?;
+    name_local(storage, local, &mut contract, &mut lock, &mut writer).await?;
+    let unreached = |entry: &Entry| local.is_none() && needs_domain(entry);
 
     let mut entries = Vec::new();
     let mut newer = Vec::new();
     for entry in contract.entries() {
-        if entry.access != Access::Read || needs_domain(entry) || !select(entry) {
+        if entry.access != Access::Read || unreached(entry) || !select(entry) {
             continue;
         }
         let entry_key = entry.key();
@@ -164,7 +176,7 @@ pub(crate) async fn read_some(
             EntryRead::Failed(err.into())
         } else {
             let base = locked.and_then(|locked| locked.base.as_deref());
-            let read = read_entry(storage, remote, contract.dataspace(), entry, base).await;
+            let read = read_entry(storage, remote, local, contract.dataspace(), entry, base).await;
             if let Some(revision) = hooks::newer(base, read.lock_base()) {
                 newer.push((entry, revision.to_string()));
             }
@@ -182,10 +194,10 @@ pub(crate) async fn read_some(
         let unfilled = contract.entries().iter().any(|entry| {
             entry.access == Access::Sync
                 || (entry.access == Access::Read
-                    && (needs_domain(entry) || !lock.packages.contains_key(&entry.key())))
+                    && (unreached(entry) || !lock.packages.contains_key(&entry.key())))
         });
-        // `sync` entries and local packages need a Domain, so a domainless
-        // read never fills them.
+        // `sync` entries need a Domain, and local packages their registry,
+        // so a domainless read never fills them.
         if lock.header.filled.is_none() && read.completed() && !unfilled {
             lock.header.filled = Some(crate::time::to_second(jiff::Timestamp::now()));
         }
@@ -241,6 +253,7 @@ pub(crate) async fn usable_lock(
 async fn read_entry(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
+    local: Option<&LocalRegistry>,
     dataspace: &Path,
     entry: &Entry,
     base: Option<&str>,
@@ -253,7 +266,7 @@ async fn read_entry(
         refill.revision = RevisionPointer::Hash(locked.to_string());
         // A revision that can no longer be read whole gives way to the
         // contract's.
-        let why = match read_resolving(storage, remote, dataspace, &refill, base).await {
+        let why = match read_resolving(storage, remote, local, dataspace, &refill, base).await {
             Ok(ReadOutcome::Read(report))
                 if report.skipped.is_empty() && report.hash_mismatch.is_empty() =>
             {
@@ -272,7 +285,7 @@ async fn read_entry(
             entry.folder.display()
         );
     }
-    match read_resolving(storage, remote, dataspace, entry, base).await {
+    match read_resolving(storage, remote, local, dataspace, entry, base).await {
         Ok(outcome) => EntryRead::Ran(outcome),
         Err(err) => EntryRead::Failed(err),
     }

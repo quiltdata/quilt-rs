@@ -17,6 +17,8 @@ use crate::dataspace::hooks::tests::table;
 use crate::dataspace::hooks::tests::tables;
 use crate::dataspace::lock::LOCK_FILE;
 use crate::dataspace::read::ReadReport;
+use crate::dataspace::store::tests::publish_local;
+use crate::domain::DomainRoot;
 use crate::io::remote::mocks::MockRemote;
 use crate::io::storage::mocks::MockStorage;
 use crate::manifest::Manifest;
@@ -142,7 +144,7 @@ async fn a_first_read_fills_each_read_entry_and_records_its_base() -> Res {
         "read = [\"team/raw\", \"team/ref\"]\nwrite = [\"team/out\"]\n",
     )?;
 
-    let read = read_all(&storage, &remote, &root, &writer()).await?;
+    let read = read_all(&storage, &remote, None, &root, &writer()).await?;
 
     assert!(read.completed());
     let packages: Vec<String> = read
@@ -179,7 +181,7 @@ async fn a_later_read_compares_against_the_recorded_base_and_moves_it() -> Res {
     )
     .await?;
     let root = dataspace(&storage, "read = [\"team/raw\"]\n")?;
-    read_all(&storage, &remote, &root, &writer()).await?;
+    read_all(&storage, &remote, None, &root, &writer()).await?;
     // Only a base says this differs because it was edited here; a first read
     // would call it a collision.
     std::fs::write(root.join("team/raw/a.txt"), b"edited")?;
@@ -191,7 +193,7 @@ async fn a_later_read_compares_against_the_recorded_base_and_moves_it() -> Res {
     )
     .await?;
 
-    let read = read_all(&storage, &remote, &root, &writer()).await?;
+    let read = read_all(&storage, &remote, None, &root, &writer()).await?;
 
     let report = report(&read.entries[0].1);
     assert_eq!(report.kept, [PathBuf::from("a.txt")]);
@@ -208,12 +210,12 @@ async fn a_blocked_or_failed_read_leaves_the_packages_base() -> Res {
     publish(&remote, "team/raw", FIRST, &[("a.txt", b"alpha")]).await?;
     publish(&remote, "team/ref", REF_FIRST, &[("b.txt", b"beta")]).await?;
     let root = dataspace(&storage, "read = [\"team/raw\", \"team/ref\"]\n")?;
-    read_all(&storage, &remote, &root, &writer()).await?;
+    read_all(&storage, &remote, None, &root, &writer()).await?;
     std::fs::write(root.join("team/raw/a.txt"), b"edited")?;
     publish(&remote, "team/raw", SECOND, &[("a.txt", b"ALPHA")]).await?;
     publish(&remote, "team/ref", REF_SECOND, &[("metadata.toml", b"")]).await?;
 
-    let read = read_all(&storage, &remote, &root, &writer()).await?;
+    let read = read_all(&storage, &remote, None, &root, &writer()).await?;
 
     assert!(!read.completed());
     assert!(matches!(
@@ -240,7 +242,7 @@ async fn a_dataspace_none_of_whose_reads_completes_gets_no_lock() -> Res {
     std::fs::create_dir_all(root.join("team/raw"))?;
     std::fs::write(root.join("team/raw/a.txt"), b"mine")?;
 
-    let read = read_all(&storage, &remote, &root, &writer()).await?;
+    let read = read_all(&storage, &remote, None, &root, &writer()).await?;
 
     assert!(!read.completed());
     assert!(!root.join(LOCK_FILE).exists());
@@ -262,7 +264,7 @@ async fn a_package_with_unpushed_commits_is_not_read() -> Res {
     lock.packages.insert(key("team/raw"), committed.clone());
     lock.write(&storage, &contract, &writer()).await?;
 
-    let read = read_all(&storage, &remote, &root, &writer()).await?;
+    let read = read_all(&storage, &remote, None, &root, &writer()).await?;
 
     assert!(matches!(read.entries[0].1, EntryRead::Unpushed));
     assert!(!root.join("team/raw/a.txt").exists());
@@ -278,7 +280,7 @@ async fn a_dataspace_with_a_sync_entry_is_not_marked_filled() -> Res {
     publish(&remote, "team/raw", FIRST, &[("a.txt", b"alpha")]).await?;
     let root = dataspace(&storage, "read = [\"team/raw\"]\nsync = [\"team/notes\"]\n")?;
 
-    read_all(&storage, &remote, &root, &writer()).await?;
+    read_all(&storage, &remote, None, &root, &writer()).await?;
 
     let lock = lock(&storage, &root).await?.expect("a lock");
     assert_eq!(base(&lock, "team/raw").as_deref(), Some(FIRST));
@@ -298,12 +300,77 @@ async fn a_local_read_entry_is_left_to_the_domain() -> Res {
         "read = [\"team/raw\", \"quilt+local://lab-mac#package=me/analysis\"]\n",
     )?;
 
-    let read = read_all(&storage, &remote, &root, &writer()).await?;
+    let read = read_all(&storage, &remote, None, &root, &writer()).await?;
 
     assert_eq!(read.entries.len(), 1, "{read:?}");
     let lock = lock(&storage, &root).await?.expect("a lock");
     assert_eq!(base(&lock, "team/raw").as_deref(), Some(FIRST));
     assert_eq!(lock.header.filled, None);
+    Ok(())
+}
+
+/// Given the local registry, a local package is read from it as a bucket's
+/// is from the bucket, its key locked under the registry's current name, and
+/// the dataspace is filled.
+#[test(tokio::test)]
+async fn a_local_read_entry_is_read_from_the_local_registry_given() -> Res {
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    let local = DomainRoot::new(storage.temp_dir.path().join("domain")).local();
+    local.rename(&storage, "old-mac").await?;
+    local.rename(&storage, "lab-mac").await?;
+    let hash = publish_local(&storage, &local, "me/analysis", &[("r.txt", b"result")]).await?;
+    publish(&remote, "team/raw", FIRST, &[("a.txt", b"alpha")]).await?;
+    let root = dataspace(
+        &storage,
+        "read = [\"team/raw\", \"quilt+local://old-mac#package=me/analysis\"]\n",
+    )?;
+
+    let read = read_all(&storage, &remote, Some(&local), &root, &writer()).await?;
+
+    assert!(read.completed(), "{read:?}");
+    assert_eq!(read.entries.len(), 2, "{read:?}");
+    let (entry, outcome) = &read.entries[1];
+    assert_eq!(report(outcome).revision, hash);
+    assert_eq!(std::fs::read(entry.folder.join("r.txt"))?, b"result");
+    let lock = lock(&storage, &root).await?.expect("a lock");
+    let current = PackageKey {
+        registry: Registry::Local("lab-mac".to_string()),
+        package: Namespace::try_from("me/analysis")?,
+    };
+    assert_eq!(
+        lock.packages
+            .get(&current)
+            .and_then(|locked| locked.base.as_ref()),
+        Some(&hash)
+    );
+    assert!(lock.header.filled.is_some());
+    Ok(())
+}
+
+/// A revision a `read` entry pins by a hash prefix is the local registry's
+/// one revision that starts with it.
+#[test(tokio::test)]
+async fn a_local_read_entry_pinned_by_a_hash_prefix_reads_that_revision() -> Res {
+    let remote = MockRemote::default();
+    let storage = MockStorage::default();
+    let local = DomainRoot::new(storage.temp_dir.path().join("domain")).local();
+    local.rename(&storage, "lab-mac").await?;
+    let first = publish_local(&storage, &local, "me/analysis", &[("r.txt", b"one")]).await?;
+    publish_local(&storage, &local, "me/analysis", &[("r.txt", b"two")]).await?;
+    let root = dataspace(
+        &storage,
+        &format!(
+            "read = [{{ registry = \"quilt+local://lab-mac\", package = \"me/analysis\", revision = \"{}\" }}]\n",
+            &first[..12]
+        ),
+    )?;
+
+    let read = read_all(&storage, &remote, Some(&local), &root, &writer()).await?;
+
+    let (entry, outcome) = &read.entries[0];
+    assert_eq!(report(outcome).revision, first);
+    assert_eq!(std::fs::read(entry.folder.join("r.txt"))?, b"one");
     Ok(())
 }
 
@@ -319,7 +386,7 @@ async fn a_local_write_entry_does_not_hold_back_filled() -> Res {
         "read = [\"team/raw\"]\nwrite = [\"quilt+local://lab-mac#package=me/out\"]\n",
     )?;
 
-    read_all(&storage, &remote, &root, &writer()).await?;
+    read_all(&storage, &remote, None, &root, &writer()).await?;
 
     let lock = lock(&storage, &root).await?.expect("a lock");
     assert!(lock.header.filled.is_some());
@@ -339,7 +406,7 @@ async fn a_contract_edited_by_hand_keeps_the_bases_of_the_packages_it_still_name
     .await?;
     publish(&remote, "team/ref", REF_FIRST, &[("c.txt", b"gamma")]).await?;
     let root = dataspace(&storage, "read = [\"team/raw\"]\n")?;
-    read_all(&storage, &remote, &root, &writer()).await?;
+    read_all(&storage, &remote, None, &root, &writer()).await?;
     std::fs::write(root.join("team/raw/a.txt"), b"edited")?;
     publish(
         &remote,
@@ -350,7 +417,7 @@ async fn a_contract_edited_by_hand_keeps_the_bases_of_the_packages_it_still_name
     .await?;
     dataspace(&storage, "read = [\"team/raw\", \"team/ref\"]\n")?;
 
-    let read = read_all(&storage, &remote, &root, &writer()).await?;
+    let read = read_all(&storage, &remote, None, &root, &writer()).await?;
 
     assert!(read.completed());
     assert_eq!(report(&read.entries[0].1).kept, [PathBuf::from("a.txt")]);
@@ -399,7 +466,7 @@ async fn a_lock_from_another_host_is_refused_while_a_working_folder_holds_files(
     std::fs::write(root.join("team/out/result.csv"), b"1,2")?;
     let before = std::fs::read(root.join(LOCK_FILE))?;
 
-    let refused = read_all(&storage, &remote, &root, &writer()).await;
+    let refused = read_all(&storage, &remote, None, &root, &writer()).await;
 
     assert!(
         matches!(&refused, Err(ReadAllError::Mismatch(mismatches)) if mismatches == &[Mismatch::Host]),
@@ -419,7 +486,7 @@ async fn a_lock_from_another_host_fills_a_checkout_that_holds_no_files_at_its_re
     let root = dataspace(&storage, "read = [\"team/raw\"]\n")?;
     lock_from(&storage, &root, &elsewhere(), at(FIRST)).await?;
 
-    let read = read_all(&storage, &remote, &root, &writer()).await;
+    let read = read_all(&storage, &remote, None, &root, &writer()).await;
 
     assert!(read.is_ok_and(|read| read.completed()));
     assert_eq!(std::fs::read(root.join("team/raw/a.txt"))?, b"alpha");
@@ -454,7 +521,7 @@ async fn a_checkout_filled_from_another_hosts_lock_takes_a_revision_the_contract
         &format!("read = [{{ package = \"team/raw\", revision = \"{SECOND}\" }}]\n"),
     )?;
 
-    let read = read_all(&storage, &remote, &root, &writer()).await;
+    let read = read_all(&storage, &remote, None, &root, &writer()).await;
 
     assert!(read.is_ok_and(|read| read.completed()));
     assert_eq!(std::fs::read(root.join("team/raw/a.txt"))?, b"ALPHA");
@@ -475,7 +542,7 @@ async fn a_lock_from_another_host_naming_unpushed_commits_is_refused() -> Res {
     };
     lock_from(&storage, &root, &elsewhere(), committed).await?;
 
-    let refused = read_all(&storage, &remote, &root, &writer()).await;
+    let refused = read_all(&storage, &remote, None, &root, &writer()).await;
 
     assert!(
         matches!(&refused, Err(ReadAllError::Mismatch(mismatches)) if mismatches == &[Mismatch::Host]),
@@ -499,7 +566,7 @@ async fn the_local_registry_a_lock_names_is_kept_and_not_compared() -> Res {
     std::fs::create_dir_all(root.join("team/raw"))?;
     std::fs::write(root.join("team/raw/a.txt"), b"alpha")?;
 
-    let read = read_all(&storage, &remote, &root, &writer()).await;
+    let read = read_all(&storage, &remote, None, &root, &writer()).await;
 
     assert!(read.is_ok_and(|read| read.completed()));
     let lock = lock(&storage, &root).await?.expect("a lock");
@@ -513,13 +580,13 @@ async fn a_working_folder_gone_from_the_dataspace_is_filled_at_the_locks_revisio
     let storage = MockStorage::default();
     publish(&remote, "team/raw", FIRST, &[("a.txt", b"alpha")]).await?;
     let root = dataspace(&storage, "read = [\"team/raw\"]\n")?;
-    read_all(&storage, &remote, &root, &writer()).await?;
+    read_all(&storage, &remote, None, &root, &writer()).await?;
     publish(&remote, "team/raw", SECOND, &[("a.txt", b"ALPHA")]).await?;
     std::fs::remove_dir_all(root.join("team/raw"))?;
 
-    let refilled = read_all(&storage, &remote, &root, &writer()).await?;
+    let refilled = read_all(&storage, &remote, None, &root, &writer()).await?;
     let refilled_with = std::fs::read(root.join("team/raw/a.txt"))?;
-    read_all(&storage, &remote, &root, &writer()).await?;
+    read_all(&storage, &remote, None, &root, &writer()).await?;
 
     assert!(
         matches!(&refilled.entries[0].1, EntryRead::Refilled(report) if report.revision == FIRST),
@@ -538,7 +605,7 @@ async fn a_folder_whose_locked_revision_is_gone_is_filled_at_the_contracts() -> 
     let root = dataspace(&storage, "read = [\"team/raw\"]\n")?;
     lock_from(&storage, &root, &writer(), at(SECOND)).await?;
 
-    let read = read_all(&storage, &remote, &root, &writer()).await?;
+    let read = read_all(&storage, &remote, None, &root, &writer()).await?;
 
     assert!(read.completed());
     assert_eq!(std::fs::read(root.join("team/raw/a.txt"))?, b"alpha");
@@ -558,7 +625,7 @@ async fn a_refill_the_bucket_refuses_fails_rather_than_taking_latest() -> Res {
     let root = dataspace(&storage, "read = [\"team/raw\"]\n")?;
     lock_from(&storage, &root, &writer(), at(FIRST)).await?;
 
-    let read = read_all(&storage, &remote, &root, &writer()).await?;
+    let read = read_all(&storage, &remote, None, &root, &writer()).await?;
 
     assert!(
         matches!(read.entries[0].1, EntryRead::Failed(_)),
@@ -581,7 +648,7 @@ async fn a_lock_from_another_host_is_refused_while_a_working_folder_cannot_be_li
     std::fs::create_dir_all(team.join("raw"))?;
     std::fs::set_permissions(&team, std::fs::Permissions::from_mode(0o000))?;
 
-    let refused = read_all(&storage, &remote, &root, &writer()).await;
+    let refused = read_all(&storage, &remote, None, &root, &writer()).await;
 
     std::fs::set_permissions(&team, std::fs::Permissions::from_mode(0o755))?;
     assert!(
@@ -603,10 +670,10 @@ async fn post_read_follows_a_newer_revision_and_pre_read_every_read() -> Res {
     let hooks = tables(&[PreRead, PostRead], &record);
     let root = dataspace(&storage, &format!("read = [\"team/raw\"]\n{hooks}"))?;
 
-    read_all(&storage, &remote, &root, &writer()).await?;
-    read_all(&storage, &remote, &root, &writer()).await?;
+    read_all(&storage, &remote, None, &root, &writer()).await?;
+    read_all(&storage, &remote, None, &root, &writer()).await?;
     publish(&remote, "team/raw", SECOND, &[("a.txt", b"alpha")]).await?;
-    let read = read_all(&storage, &remote, &root, &writer()).await?;
+    let read = read_all(&storage, &remote, None, &root, &writer()).await?;
 
     assert!(report(&read.entries[0].1).placed.is_empty(), "{read:?}");
     assert_eq!(
@@ -631,7 +698,7 @@ async fn a_pre_read_hook_that_fails_leaves_the_entry_unread() -> Res {
     let hook = table(PreRead, &record, &[(FAIL_VAR, "1")]);
     let root = dataspace(&storage, &format!("read = [\"team/raw\"]\n{hook}"))?;
 
-    let read = read_all(&storage, &remote, &root, &writer()).await?;
+    let read = read_all(&storage, &remote, None, &root, &writer()).await?;
 
     assert!(
         matches!(read.entries[0].1, EntryRead::Failed(EntryError::Hook(_))),

@@ -23,6 +23,7 @@ use crate::LogicalKeyError;
 use crate::dataspace::conflict::CONFLICT_FILE;
 use crate::dataspace::hooks::Hooks;
 use crate::dataspace::lock::LOCK_FILE;
+use crate::domain::LocalNames;
 use crate::io::storage::Storage;
 use crate::io::storage::StorageExt;
 use quilt_uri::Host;
@@ -354,6 +355,43 @@ impl Contract {
     #[must_use]
     pub fn entries(&self) -> &[Entry] {
         &self.entries
+    }
+
+    /// Names the local registry `names` describes by its current name in
+    /// each entry that names it by an alias, so that the entry's key is the
+    /// one a lock writes. Its folder stays as the contract placed it.
+    ///
+    /// # Errors
+    ///
+    /// [`PackageProblem::Folders`] where two names for one registry leave a
+    /// package in two folders, which the contract's own check could not see
+    /// under different names.
+    pub(crate) fn name_local(&mut self, names: &LocalNames) -> Result<(), ContractError> {
+        let mut renamed = false;
+        for entry in &mut self.entries {
+            if let Registry::Local(name) = &entry.registry
+                && name != &names.name
+                && names.answers_to(name)
+            {
+                entry.registry = Registry::Local(names.name.clone());
+                renamed = true;
+            }
+        }
+        if !renamed {
+            return Ok(());
+        }
+        for (i, entry) in self.entries.iter().enumerate() {
+            if let Some(other) = self.entries[..i]
+                .iter()
+                .find(|other| other.key() == entry.key() && other.folder != entry.folder)
+            {
+                return Err(ContractError::Package {
+                    package: Box::new(entry.key()),
+                    problem: PackageProblem::Folders(other.folder.clone(), entry.folder.clone()),
+                });
+            }
+        }
+        Ok(())
     }
 
     /// The scripts declared under `[hooks]`.

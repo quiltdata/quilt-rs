@@ -487,7 +487,13 @@ impl LocalRegistry {
     /// A revision published to the registry.
     #[must_use]
     pub fn revision(&self, hash: &str) -> PathBuf {
-        self.dir.join(PACKAGES_DIR).join(hash)
+        self.revisions_dir().join(hash)
+    }
+
+    /// The folder of every revision published to the registry, flat by
+    /// hash.
+    pub(crate) fn revisions_dir(&self) -> PathBuf {
+        self.dir.join(PACKAGES_DIR)
     }
 
     /// Where `namespace`'s manifests installed or committed here go,
@@ -591,10 +597,22 @@ impl LocalRegistry {
         base: Option<&str>,
         hash: &str,
     ) -> Res<LocalPublish> {
+        let _held = storage.lock_exclusive(self.package_lock(namespace)).await?;
+        self.publish_held(storage, namespace, base, hash).await
+    }
+
+    /// [`publish`](Self::publish), by a caller that holds the package's
+    /// lock already.
+    pub(crate) async fn publish_held(
+        &self,
+        storage: &(impl Storage + Sync),
+        namespace: &Namespace,
+        base: Option<&str>,
+        hash: &str,
+    ) -> Res<LocalPublish> {
         if let Some(hash) = std::iter::once(hash).chain(base).find(|h| !is_top_hash(h)) {
             return Err(UriError::Package(format!("not a top hash: {hash:?}")).into());
         }
-        let _held = storage.lock_exclusive(self.package_lock(namespace)).await?;
         let latest = self.read_latest(storage, namespace).await?;
         let from_base = latest.as_deref() == base;
         // A publish from the base writes even over a revision of the same

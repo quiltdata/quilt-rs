@@ -20,6 +20,8 @@ use crate::dataspace::contract::Access;
 use crate::dataspace::contract::CONTRACT_FILE;
 use crate::dataspace::contract::Contract;
 use crate::dataspace::contract::PackageKey;
+use crate::dataspace::contract::Registry;
+use crate::domain::LocalNames;
 use crate::io::storage::Storage;
 use crate::io::storage::StorageExt;
 use quilt_uri::is_top_hash;
@@ -221,6 +223,32 @@ impl Lock {
         };
         self.write_for(storage, contract, writer, &written_for)
             .await
+    }
+
+    /// Names the local registry `names` describes by its current name in
+    /// each key that names it by an alias, so the lock is written with it.
+    /// Where a key already names the package under the current name, that
+    /// key's entry is kept.
+    pub(crate) fn name_local(&mut self, names: &LocalNames) {
+        let aliased: Vec<PackageKey> = self
+            .packages
+            .keys()
+            .filter(|key| {
+                matches!(&key.registry, Registry::Local(name)
+                    if *name != names.name && names.answers_to(name))
+            })
+            .cloned()
+            .collect();
+        for key in aliased {
+            let Some(entry) = self.packages.remove(&key) else {
+                continue;
+            };
+            let current = PackageKey {
+                registry: Registry::Local(names.name.clone()),
+                package: key.package,
+            };
+            self.packages.entry(current).or_insert(entry);
+        }
     }
 
     /// [`Lock::write`], naming `data_toml_hash` as the contract it was

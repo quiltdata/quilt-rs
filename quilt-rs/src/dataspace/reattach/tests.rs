@@ -7,6 +7,7 @@ use bytes::Bytes;
 use test_log::test;
 
 use crate::LogicalKey;
+use crate::dataspace::store::tests::publish_local;
 use crate::domain::RegistryStore;
 use crate::flow::WorkflowCheck;
 use crate::flow::record;
@@ -329,10 +330,10 @@ async fn a_package_only_read_is_refused() -> Res {
     Ok(())
 }
 
-/// A local registry's package is the Domain's, not a bucket's, so its
+/// Another machine's local registry is not this Domain's, so its package's
 /// commits are not listed here.
 #[test(tokio::test)]
-async fn a_local_registrys_package_is_refused() -> Res {
+async fn another_local_registrys_package_is_refused() -> Res {
     let fixture = Fixture::new("sync")?;
     std::fs::write(
         fixture.dataspace.join("data.toml"),
@@ -357,6 +358,161 @@ async fn a_local_registrys_package_is_refused() -> Res {
         matches!(listed, Err(ReattachError::LocalRegistry)),
         "{listed:?}"
     );
+    Ok(())
+}
+
+/// A commit of a package never published to the local registry is reattached
+/// with no base, as a bucket's is.
+#[test(tokio::test)]
+async fn a_local_commit_of_a_package_never_published_is_reattached_with_no_base() -> Res {
+    let fixture = Fixture::new("sync")?;
+    std::fs::write(
+        fixture.dataspace.join("data.toml"),
+        "[packages]\nsync = [\"quilt+local://lab-mac#package=me/out\"]\n",
+    )?;
+    let storage = LocalStorage::new();
+    let local = fixture.domain.local();
+    local.rename(&storage, "lab-mac").await?;
+    let namespace = Namespace::from(("me", "out"));
+    let logical_key = LogicalKey::new("o.txt")?;
+    let manifest = Manifest {
+        rows: vec![ManifestRow {
+            logical_key: logical_key.clone(),
+            ..ManifestRow::default()
+        }],
+        ..Manifest::default()
+    };
+    let files = BTreeMap::from([(logical_key, RowContent::Bytes(Bytes::from_static(b"o1")))]);
+    let (_, recorded) = record(
+        &local,
+        &storage,
+        &MockRemote::default(),
+        WorkflowCheck::Warn { host: None },
+        &namespace,
+        PackageLineage::default(),
+        manifest,
+        &files,
+    )
+    .await?;
+    let commit = recorded.hash().expect("a revision").to_string();
+    let package = PackageKey {
+        registry: Registry::Local("lab-mac".to_string()),
+        package: namespace,
+    };
+
+    reattach(
+        &storage,
+        &fixture.remote,
+        &fixture.domain,
+        &fixture.dataspace,
+        &writer(),
+        &package,
+        &commit,
+        None,
+    )
+    .await?;
+
+    let contract = Contract::read(&storage, &fixture.dataspace, None).await?;
+    let lock = Lock::read(&storage, &contract).await?.expect("a lock");
+    assert_eq!(
+        lock.packages.get(&package),
+        Some(&LockEntry {
+            base: None,
+            commits: vec![commit],
+        })
+    );
+    Ok(())
+}
+
+/// The Domain's local registry is a registry like a bucket: its package's
+/// commits that it has not published are listed, one is reattached on a
+/// revision it holds, and the lock names it by its current name though the
+/// contract and the caller use a name it had.
+#[test(tokio::test)]
+async fn the_local_registrys_unpublished_commits_are_listed_and_reattached() -> Res {
+    let fixture = Fixture::new("sync")?;
+    std::fs::write(
+        fixture.dataspace.join("data.toml"),
+        "[packages]\nsync = [\"quilt+local://old-mac#package=me/out\"]\n",
+    )?;
+    let storage = LocalStorage::new();
+    let local = fixture.domain.local();
+    local.rename(&storage, "old-mac").await?;
+    local.rename(&storage, "lab-mac").await?;
+    let base = publish_local(&storage, &local, "me/out", &[("o.txt", b"o1")]).await?;
+    let namespace = Namespace::from(("me", "out"));
+    let logical_key = LogicalKey::new("o.txt")?;
+    let manifest = Manifest {
+        header: ManifestHeader {
+            message: HeaderMessage::Text("mine".to_string()),
+            ..ManifestHeader::default()
+        },
+        rows: vec![ManifestRow {
+            logical_key: logical_key.clone(),
+            ..ManifestRow::default()
+        }],
+        ..Manifest::default()
+    };
+    let files = BTreeMap::from([(logical_key, RowContent::Bytes(Bytes::from_static(b"o2")))]);
+    let (_, recorded) = record(
+        &local,
+        &storage,
+        &MockRemote::default(),
+        WorkflowCheck::Warn { host: None },
+        &namespace,
+        PackageLineage::default(),
+        manifest,
+        &files,
+    )
+    .await?;
+    let commit = recorded.hash().expect("a revision").to_string();
+    let old = PackageKey {
+        registry: Registry::Local("old-mac".to_string()),
+        package: namespace.clone(),
+    };
+
+    let listed = unattached(
+        &storage,
+        &fixture.remote,
+        &fixture.domain,
+        &fixture.dataspace,
+        &writer(),
+        &old,
+    )
+    .await?;
+
+    assert_eq!(
+        listed,
+        [Unattached {
+            hash: commit.clone(),
+            message: Some("mine".to_string()),
+        }]
+    );
+    reattach(
+        &storage,
+        &fixture.remote,
+        &fixture.domain,
+        &fixture.dataspace,
+        &writer(),
+        &old,
+        &commit,
+        Some(&base),
+    )
+    .await?;
+    let contract = Contract::read(&storage, &fixture.dataspace, None).await?;
+    let lock = Lock::read(&storage, &contract).await?.expect("a lock");
+    let current = PackageKey {
+        registry: Registry::Local("lab-mac".to_string()),
+        package: namespace,
+    };
+    assert_eq!(
+        lock.packages.get(&current),
+        Some(&LockEntry {
+            base: Some(base),
+            commits: vec![commit],
+        })
+    );
+    assert!(!lock.packages.contains_key(&old), "{lock:?}");
     Ok(())
 }
 
