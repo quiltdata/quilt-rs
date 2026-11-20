@@ -60,6 +60,7 @@
 - `flow::merge_dir_meta` merges two sides' folder metadata onto a third, as `merge_onto` does, for a caller that rebases rows itself, and returns `Result<Vec<DirMeta>, MergeDirMetaError>` (`Paths` or `Invalid`, which implements `std::error::Error`) (<https://github.com/quiltdata/quilt-rs/pull/1387>)
 - `Manifest::try_to_jsonlines` serializes a manifest to JSONL or returns a tree or JSON error; `build_manifest_from_rows_stream` uses it so a file/folder clash is an error, not a panic (<https://github.com/quiltdata/quilt-rs/pull/1387>)
 - `ManifestHeader::same_user_meta`, `ManifestRow::same_meta` and `DirMeta::same_meta` tell whether two headers, rows or folders write the same `user_meta` or `meta`, digits of integers beyond 64 bits and the sign of a zero included. `flow::merge_dir_meta` compares folder metadata that way, and keeps each side's number text (<https://github.com/quiltdata/quilt-rs/pull/1389>, <https://github.com/quiltdata/quilt-rs/pull/1393>)
+- `Manifest::same_content` tells whether two manifests hold the same files, physical keys, `user_meta` and file and folder metadata, in any order; the message and the other header fields do not count (PRLINK)
 - `VERSION` holds the crate's version, and `LocalDomain::stored_home` reads the home without setting one, `None` when the domain has none yet (<https://github.com/quiltdata/quilt-rs/pull/1371>)
 
 ### Changed

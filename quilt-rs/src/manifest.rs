@@ -627,6 +627,49 @@ impl Manifest {
             .any(|row| row.logical_key.as_path() == path)
     }
 
+    /// Whether two manifests describe the same package content, so there is
+    /// nothing to publish from one onto the other.
+    ///
+    /// Content is the header's `user_meta`, each file's logical key, hash,
+    /// size, physical key and `meta`, and each folder's metadata. Metadata
+    /// counts as it is written: integers beyond 64 bits by their digits, and
+    /// `-0.0` apart from `0.0`. The order of rows and of folders does not
+    /// count, nor does a folder whose metadata says nothing (see
+    /// [`DirMeta::holds_meta`]), which quilt3 does not write. The message and
+    /// the other header fields do not count.
+    ///
+    /// Unlike the top hash, the physical key and folder metadata count, and
+    /// the message and workflow do not.
+    #[must_use]
+    pub fn same_content(&self, other: &Self) -> bool {
+        fn sorted_rows(manifest: &Manifest) -> Vec<&ManifestRow> {
+            let mut rows: Vec<_> = manifest.rows.iter().collect();
+            rows.sort_by(|a, b| a.logical_key.cmp(&b.logical_key));
+            rows
+        }
+        fn sorted_dirs(manifest: &Manifest) -> Vec<&DirMeta> {
+            let mut dirs: Vec<_> = manifest
+                .dir_meta
+                .iter()
+                .filter(|dir| dir.holds_meta())
+                .collect();
+            dirs.sort_by(|a, b| a.logical_key.cmp(&b.logical_key));
+            dirs
+        }
+        let (rows, other_rows) = (sorted_rows(self), sorted_rows(other));
+        let (dirs, other_dirs) = (sorted_dirs(self), sorted_dirs(other));
+        self.header.same_user_meta(&other.header)
+            && rows.len() == other_rows.len()
+            && rows.iter().zip(&other_rows).all(|(a, b)| {
+                a.matches_content(b) && a.physical_key == b.physical_key && a.same_meta(b)
+            })
+            && dirs.len() == other_dirs.len()
+            && dirs
+                .iter()
+                .zip(&other_dirs)
+                .all(|(a, b)| a.logical_key == b.logical_key && a.same_meta(b))
+    }
+
     /// Create a stream of rows compatible with Table API
     /// Returns a stream of Row chunks for compatibility with `io::manifest` streaming functions
     /// Sorted by `logical_key` to match `Table`'s `BTreeMap` behavior and uses proper `TryFrom` conversion
@@ -1010,5 +1053,184 @@ mod tests {
                 .same_user_meta(&header(negative, RawNumbers::default()))
         );
         Ok(())
+    }
+
+    mod same_content {
+        use super::*;
+        use test_log::test;
+
+        fn row(key: &str, physical_key: &str, meta: Option<&str>) -> Res<ManifestRow> {
+            let (meta, meta_numbers) = match meta {
+                Some(text) => {
+                    let (meta, numbers) = RawNumbers::parse(text)?;
+                    (Some(meta), numbers)
+                }
+                None => (None, RawNumbers::default()),
+            };
+            Ok(ManifestRow {
+                logical_key: crate::LogicalKey::new(key)?,
+                physical_key: physical_key.to_string(),
+                hash: object_hash::Sha256Hash::try_from("deadbeef")?.into(),
+                size: 1,
+                meta,
+                meta_numbers,
+            })
+        }
+
+        fn dir(key: &str, meta: &str) -> Res<DirMeta> {
+            let (meta, meta_numbers) = RawNumbers::parse(meta)?;
+            let mut dir = DirMeta::new(crate::LogicalKey::new(key)?, meta);
+            dir.meta_numbers = meta_numbers;
+            Ok(dir)
+        }
+
+        fn manifest(rows: Vec<ManifestRow>, dir_meta: Vec<DirMeta>) -> Manifest {
+            Manifest {
+                rows,
+                dir_meta,
+                ..Manifest::default()
+            }
+        }
+
+        fn with_user_meta(text: &str) -> Res<Manifest> {
+            let (meta, numbers) = RawNumbers::parse(text)?;
+            let mut manifest = Manifest::default();
+            manifest.header.user_meta = Some(meta);
+            manifest.header.user_meta_numbers = numbers;
+            Ok(manifest)
+        }
+
+        /// Asserts the answer both ways round.
+        fn same(a: &Manifest, b: &Manifest) -> bool {
+            let answer = a.same_content(b);
+            assert_eq!(answer, b.same_content(a), "same_content is symmetric");
+            answer
+        }
+
+        #[test]
+        fn the_message_and_other_header_fields_do_not_count() -> Res {
+            let a = manifest(vec![row("a", "s3://b/a", None)?], vec![]);
+            let mut b = a.clone();
+            b.header.message = HeaderMessage::Text("another message".to_string());
+            b.header.version = "v1".to_string();
+            assert!(same(&a, &b));
+            Ok(())
+        }
+
+        #[test]
+        fn row_order_does_not_count() -> Res {
+            let a = manifest(
+                vec![row("a", "s3://b/a", None)?, row("b", "s3://b/b", None)?],
+                vec![],
+            );
+            let b = manifest(
+                vec![row("b", "s3://b/b", None)?, row("a", "s3://b/a", None)?],
+                vec![],
+            );
+            assert!(same(&a, &b));
+            Ok(())
+        }
+
+        #[test]
+        fn folder_order_does_not_count() -> Res {
+            let a = manifest(
+                vec![],
+                vec![dir("x", r#"{"k": 1}"#)?, dir("y", r#"{"k": 2}"#)?],
+            );
+            let b = manifest(
+                vec![],
+                vec![dir("y", r#"{"k": 2}"#)?, dir("x", r#"{"k": 1}"#)?],
+            );
+            assert!(same(&a, &b));
+            Ok(())
+        }
+
+        /// quilt3 writes no row for a folder whose metadata says nothing.
+        #[test]
+        fn a_folder_with_no_metadata_on_one_side_does_not_count() -> Res {
+            let a = manifest(vec![row("x/a", "s3://b/x/a", None)?], vec![]);
+            let b = manifest(vec![row("x/a", "s3://b/x/a", None)?], vec![dir("x", "{}")?]);
+            assert!(same(&a, &b));
+            let c = manifest(
+                vec![row("x/a", "s3://b/x/a", None)?],
+                vec![dir("x", "null")?],
+            );
+            assert!(same(&a, &c));
+            let d = manifest(
+                vec![row("x/a", "s3://b/x/a", None)?],
+                vec![dir("x", r#"{"k": 1}"#)?],
+            );
+            assert!(!same(&a, &d));
+            Ok(())
+        }
+
+        #[test]
+        fn a_physical_key_change_counts() -> Res {
+            let a = manifest(vec![row("a", "s3://b/a?versionId=1", None)?], vec![]);
+            let b = manifest(vec![row("a", "s3://b/a?versionId=2", None)?], vec![]);
+            assert!(!same(&a, &b));
+            Ok(())
+        }
+
+        #[test]
+        fn a_row_meta_change_counts() -> Res {
+            let a = manifest(vec![row("a", "s3://b/a", Some(r#"{"k": 1}"#))?], vec![]);
+            let b = manifest(vec![row("a", "s3://b/a", Some(r#"{"k": 2}"#))?], vec![]);
+            assert!(!same(&a, &b));
+            Ok(())
+        }
+
+        #[test]
+        fn a_folder_meta_change_counts() -> Res {
+            let a = manifest(vec![], vec![dir("x", r#"{"k": 1}"#)?]);
+            let b = manifest(vec![], vec![dir("x", r#"{"k": 2}"#)?]);
+            assert!(!same(&a, &b));
+            Ok(())
+        }
+
+        #[test]
+        fn a_content_change_counts() -> Res {
+            let a = manifest(vec![row("a", "s3://b/a", None)?], vec![]);
+            let mut b = a.clone();
+            b.rows[0].size = 2;
+            assert!(!same(&a, &b));
+            let c = manifest(
+                vec![row("a", "s3://b/a", None)?, row("b", "s3://b/b", None)?],
+                vec![],
+            );
+            assert!(!same(&a, &c));
+            Ok(())
+        }
+
+        /// `-0.0` and `0.0` are equal as values, but they write differently.
+        #[test]
+        fn a_signed_zero_changed_in_a_row_s_meta_counts() -> Res {
+            let a = manifest(vec![row("a", "s3://b/a", Some(r#"{"z": -0.0}"#))?], vec![]);
+            let b = manifest(vec![row("a", "s3://b/a", Some(r#"{"z": 0.0}"#))?], vec![]);
+            assert!(!same(&a, &b));
+            assert!(same(&b, &b.clone()));
+            Ok(())
+        }
+
+        /// Both integers are the same float, so only their digits tell them apart.
+        #[test]
+        fn a_big_integer_changed_in_the_user_meta_counts() -> Res {
+            let a = with_user_meta(r#"{"n": 18446744073709551617}"#)?;
+            let b = with_user_meta(r#"{"n": 18446744073709551616}"#)?;
+            assert!(!same(&a, &b));
+            assert!(same(&b, &b.clone()));
+            Ok(())
+        }
+
+        /// `-0.0` and `0.0` are equal as values, but they write differently.
+        #[test]
+        fn a_signed_zero_changed_in_folder_metadata_counts() -> Res {
+            let a = manifest(vec![], vec![dir("data", r#"{"z": -0.0}"#)?]);
+            let b = manifest(vec![], vec![dir("data", r#"{"z": 0.0}"#)?]);
+            assert_eq!(a.dir_meta[0].meta, b.dir_meta[0].meta);
+            assert!(!same(&a, &b));
+            assert!(same(&b, &b.clone()));
+            Ok(())
+        }
     }
 }
