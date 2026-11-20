@@ -65,6 +65,7 @@ use quilt_uri::ManifestUri;
 use quilt_uri::RevisionPointer;
 use quilt_uri::S3PackageHandle;
 use quilt_uri::S3Uri;
+use quilt_uri::Tag;
 
 /// How one `sync` entry's tick ended.
 #[derive(Debug)]
@@ -290,9 +291,11 @@ async fn filled(
         return Ok(false);
     }
     for entry in contract.entries() {
+        // A pinned entry has a revision to read whatever `latest` names.
         if entry.access == Access::Read
             && !lock.packages.contains_key(&entry.key())
-            && latest(remote, entry).await?.is_some()
+            && (entry.revision != RevisionPointer::Tag(Tag::Latest)
+                || latest(remote, entry).await?.is_some())
         {
             return Ok(false);
         }

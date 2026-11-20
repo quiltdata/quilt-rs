@@ -834,6 +834,19 @@ async fn a_read_entry_with_no_revision_does_not_keep_the_dataspace_unfilled() ->
 }
 
 #[test(tokio::test)]
+async fn a_pinned_read_entry_keeps_the_dataspace_unfilled_until_it_is_read() -> Res {
+    let world = World::new(&format!(
+        "read = [{{ package = \"team/ref\", revision = \"{THIRD}\" }}]\nsync = [\"team/raw\"]"
+    ))?;
+    world.publish(FIRST, &[("a.txt", b"v1")]).await?;
+
+    world.sync().await?;
+
+    assert!(world.lock().await?.header.filled.is_none());
+    Ok(())
+}
+
+#[test(tokio::test)]
 async fn a_file_named_as_a_folder_that_held_none_takes_its_place() -> Res {
     let world = World::synced()?;
     let folder = crate::manifest::DirMeta::new(
