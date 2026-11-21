@@ -29,10 +29,10 @@ use quilt_rs::dataspace::remove_revisions::RemoveError;
 use quilt_rs::dataspace::rename::RenameError;
 use quilt_rs::dataspace::reset_to_latest::ResetError;
 use quilt_rs::dataspace::status::StatusError;
+use quilt_rs::dataspace::sync::SyncError;
 use quilt_rs::dataspace::undo_commit::UndoError;
 use quilt_rs::dataspace::uninstall::UninstallError;
 use quilt_rs::domain::DOMAIN_DIR_NAME;
-use quilt_rs::domain::DomainRoot;
 use quilt_rs::flow::UserMeta;
 use quilt_rs::io::remote::WorkflowIntent;
 use quilt_rs::logging::InvalidLogFilter;
@@ -67,6 +67,8 @@ mod reset;
 mod role;
 mod status;
 mod storage;
+pub mod switch;
+mod sync;
 mod text;
 mod undo_commit;
 mod uninstall;
@@ -177,13 +179,6 @@ fn dataspace_domain_dir() -> Result<PathBuf, Error> {
     dirs::data_local_dir()
         .map(|dir| dir.join(DOMAIN_DIR_NAME))
         .ok_or(Error::Domain)
-}
-
-/// The Domain in [`dataspace_domain_dir`], where one exists.
-fn existing_domain() -> Option<DomainRoot> {
-    dataspace_domain_dir()
-        .ok()
-        .and_then(|dir| dataspace::existing(&dir))
 }
 
 fn get_default_home_dir() -> Result<PathBuf, Error> {
@@ -342,6 +337,23 @@ impl Args {
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
+        Self::try_parse_switched(argv, switch::from_env())
+    }
+
+    /// [`Args::try_parse_with_env`] with the switch `on` or off. On, a verb
+    /// with a dataspace form that names no dataspace is read as naming the
+    /// default one.
+    pub fn try_parse_switched<I, T>(argv: I, on: bool) -> Result<Self, clap::Error>
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<std::ffi::OsString> + Clone,
+    {
+        let argv: Vec<std::ffi::OsString> = argv.into_iter().map(Into::into).collect();
+        let argv = if on {
+            switch::with_default_dataspace(argv)
+        } else {
+            argv
+        };
         let mut command = Self::command();
         let mut matches = command.try_get_matches_from_mut(argv)?;
         let domain_source = matches.value_source("domain");
@@ -1061,6 +1073,22 @@ enum Commands {
     /// Reads no bucket. `quilt gc --dataspace --dry-run` says how much of it
     /// gc would free.
     Storage,
+    /// Sync a dataspace's `sync` entries once, as autosync would
+    ///
+    /// Reads each entry's `latest` where it moved, commits what its working
+    /// folder changed as a local commit, and pushes the lock's commits. Until
+    /// the dataspace is filled, and after `data.toml` is edited, it only
+    /// reads, each entry whole: that is what lets `quilt commit --dataspace`
+    /// run again after an edit. Exits 1 unless every entry synced.
+    Sync {
+        /// Sync this dataspace, the folder holding `data.toml`, rather than
+        /// the default one `quilt home --dataspace` chose
+        #[arg(long, value_name = "DIR")]
+        dataspace: Option<PathBuf>,
+        /// The message of each commit the sync makes
+        #[arg(short, long, default_value = sync::DEFAULT_MESSAGE)]
+        message: String,
+    },
     /// Undo the newest commit, restoring the revision before it
     ///
     /// Available while the package's commit chain still reaches back, which in
@@ -1183,12 +1211,61 @@ impl Commands {
                 | Commands::Version { .. }
         )
     }
+
+    /// The folder a dataspace form names as its dataspace, for the default
+    /// dataspace to replace [`switch::DEFAULT_MARK`].
+    fn dataspace_mut(&mut self) -> Option<&mut PathBuf> {
+        match self {
+            Commands::Install {
+                dataspace: Some(dataspace),
+                ..
+            }
+            | Commands::Uninstall {
+                dataspace: Some(dataspace),
+                ..
+            }
+            | Commands::Status {
+                dataspace: Some(dataspace),
+                ..
+            }
+            | Commands::List {
+                dataspace: Some(dataspace),
+                ..
+            }
+            | Commands::Log {
+                dataspace: Some(dataspace),
+                ..
+            }
+            | Commands::Commit {
+                dataspace: Some(dataspace),
+                ..
+            }
+            | Commands::UndoCommit {
+                dataspace: Some(dataspace),
+                ..
+            }
+            | Commands::RemoveRevisions {
+                dataspace: Some(dataspace),
+                ..
+            }
+            | Commands::Keep {
+                dataspace: Some(dataspace),
+                ..
+            }
+            | Commands::Create {
+                dataspace: Some(dataspace),
+                ..
+            }
+            | Commands::Read { dataspace }
+            | Commands::Publish { dataspace }
+            | Commands::Reattach { dataspace, .. }
+            | Commands::Reset { dataspace, .. }
+            | Commands::Certify { dataspace, .. } => Some(dataspace),
+            _ => None,
+        }
+    }
 }
 
-#[allow(
-    clippy::too_many_lines,
-    reason = "cohesive top-level CLI command dispatch"
-)]
 pub async fn init(args: Args) -> Result<Std, Error> {
     // NOTE: every command should have some domain,
     //       because domain stores credentials
@@ -1212,16 +1289,45 @@ pub async fn init(args: Args) -> Result<Std, Error> {
         })
         .await);
     }
-    let root_dir = get_domain_dir(args.domain)?;
+    let on = switch::from_env();
+    let places = switch::Places::new(on, args.domain.clone())?;
+    Box::pin(init_in(args, places, on)).await
+}
+
+/// [`init`] for every command but `version`, with the application's folder
+/// and the Domain where the switch puts them. With the switch `on`, a
+/// dataspace named [`switch::DEFAULT_MARK`] is the default dataspace.
+#[allow(
+    clippy::too_many_lines,
+    reason = "cohesive top-level CLI command dispatch"
+)]
+async fn init_in(mut args: Args, places: switch::Places, on: bool) -> Result<Std, Error> {
+    if let Some(dataspace) = args.command.dataspace_mut()
+        && on
+        && dataspace.as_os_str() == switch::DEFAULT_MARK
+    {
+        *dataspace = places.default_dataspace().await?;
+    }
+    let root_dir = places.app.clone();
     // The dataspace commands use no lineage, so they run before anything
     // touches it; they reach the Domain's local registry where one exists.
+    if let Commands::Sync { dataspace, message } = args.command {
+        let dataspace = match dataspace {
+            Some(dataspace) => dataspace,
+            None => places.default_dataspace().await?,
+        };
+        let input = sync::Input { dataspace, message };
+        log::debug!("Syncing a dataspace {input:?}");
+        let syncing = sync::command(root_dir, places.domain()?, input);
+        return Ok(Box::pin(syncing).await);
+    }
     if let Commands::Read { dataspace } = args.command {
         let input = read::Input { dataspace };
-        return Ok(read::command(root_dir, existing_domain(), input).await);
+        return Ok(read::command(root_dir, places.existing_domain(), input).await);
     }
     if let Commands::Publish { dataspace } = args.command {
         let input = publish::Input { dataspace };
-        return Ok(publish::command(root_dir, existing_domain(), input).await);
+        return Ok(publish::command(root_dir, places.existing_domain(), input).await);
     }
     if let Commands::Install {
         dataspace: Some(dataspace),
@@ -1240,7 +1346,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             folder,
         };
         log::debug!("Installing into a dataspace {input:?}");
-        let installing = install::dataspace::command(root_dir, existing_domain(), input);
+        let installing = install::dataspace::command(root_dir, places.existing_domain(), input);
         return Ok(Box::pin(installing).await);
     }
     if let Commands::Uninstall {
@@ -1256,7 +1362,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             prune,
         };
         log::debug!("Uninstalling from a dataspace {input:?}");
-        let uninstalling = uninstall::dataspace::command(root_dir, existing_domain(), input);
+        let uninstalling = uninstall::dataspace::command(root_dir, places.existing_domain(), input);
         return Ok(Box::pin(uninstalling).await);
     }
     if let Commands::Reattach {
@@ -1273,7 +1379,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             package,
             attach: commit.map(|commit| (commit, base)),
         };
-        let domain = DomainRoot::new(dataspace_domain_dir()?);
+        let domain = places.domain()?;
         return Ok(reattach::command(root_dir, domain, input).await);
     }
     // The dataspace queries write nothing, and reach the Domain's stores
@@ -1285,7 +1391,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
     {
         let input = status::dataspace::Input { dataspace };
         log::debug!("Status of a dataspace {input:?}");
-        let reading = status::dataspace::command(root_dir, existing_domain(), input);
+        let reading = status::dataspace::command(root_dir, places.existing_domain(), input);
         return Ok(Box::pin(reading).await);
     }
     if let Commands::List {
@@ -1295,7 +1401,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
     {
         let input = list::dataspace::Input { dataspace, fetch };
         log::debug!("Listing a dataspace {input:?}");
-        let listing = list::dataspace::command(root_dir, existing_domain(), input);
+        let listing = list::dataspace::command(root_dir, places.existing_domain(), input);
         return Ok(Box::pin(listing).await);
     }
     if let Commands::Log {
@@ -1306,7 +1412,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
     {
         let input = history::dataspace::Input { dataspace, package };
         log::debug!("Log of a dataspace's package {input:?}");
-        let reading = history::dataspace::command(root_dir, existing_domain(), input);
+        let reading = history::dataspace::command(root_dir, places.existing_domain(), input);
         return Ok(Box::pin(reading).await);
     }
     if let Commands::Commit {
@@ -1323,7 +1429,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             message,
         };
         log::debug!("Committing in a dataspace {input:?}");
-        let domain = DomainRoot::new(dataspace_domain_dir()?);
+        let domain = places.domain()?;
         let committing = commit::dataspace::command(root_dir, domain, input);
         return Ok(Box::pin(committing).await);
     }
@@ -1338,7 +1444,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             package: dataspace::Package::uri(package, pkg.namespace)?,
         };
         log::debug!("Undoing a commit in a dataspace {input:?}");
-        let domain = DomainRoot::new(dataspace_domain_dir()?);
+        let domain = places.domain()?;
         let undoing = undo_commit::dataspace::command(root_dir, domain, input);
         return Ok(Box::pin(undoing).await);
     }
@@ -1353,7 +1459,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             package: dataspace::Package::uri(package, pkg.namespace)?,
         };
         log::debug!("Resetting in a dataspace {input:?}");
-        let domain = DomainRoot::new(dataspace_domain_dir()?);
+        let domain = places.domain()?;
         return Ok(Box::pin(reset::command(root_dir, domain, input)).await);
     }
     if let Commands::Certify {
@@ -1367,7 +1473,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             package: dataspace::Package::uri(package, pkg.namespace)?,
         };
         log::debug!("Certifying in a dataspace {input:?}");
-        let domain = DomainRoot::new(dataspace_domain_dir()?);
+        let domain = places.domain()?;
         return Ok(Box::pin(certify::command(root_dir, domain, input)).await);
     }
     if let Commands::RemoveRevisions {
@@ -1384,7 +1490,8 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             revisions: revision,
         };
         log::debug!("Removing revisions from a registry {input:?}");
-        let removing = remove_revisions::dataspace::command(root_dir, existing_domain(), input);
+        let removing =
+            remove_revisions::dataspace::command(root_dir, places.existing_domain(), input);
         return Ok(Box::pin(removing).await);
     }
     if let Commands::Keep {
@@ -1410,7 +1517,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             access,
         };
         log::debug!("Keeping in a dataspace {input:?}");
-        let keeping = keep::dataspace::command(root_dir, existing_domain(), input);
+        let keeping = keep::dataspace::command(root_dir, places.existing_domain(), input);
         return Ok(Box::pin(keeping).await);
     }
     if let Commands::Create {
@@ -1430,7 +1537,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             message,
         };
         log::debug!("Creating in a dataspace {input:?}");
-        let domain = DomainRoot::new(dataspace_domain_dir()?);
+        let domain = places.domain()?;
         let creating = create::dataspace::command(root_dir, domain, input);
         return Ok(Box::pin(creating).await);
     }
@@ -1441,15 +1548,15 @@ pub async fn init(args: Args) -> Result<Std, Error> {
     {
         let input = gc::dataspace::Input { dry_run };
         log::debug!("Clearing the dataspace Domain {input:?}");
-        let clearing = gc::dataspace::command(root_dir, existing_domain(), input);
+        let clearing = gc::dataspace::command(root_dir, places.existing_domain(), input);
         return Ok(Box::pin(clearing).await);
     }
     if let Commands::Storage = args.command {
-        return Ok(Box::pin(storage::command(existing_domain())).await);
+        return Ok(Box::pin(storage::command(places.existing_domain())).await);
     }
     if let Commands::LocalRegistry { name } = args.command {
         let input = local_registry::Input { name };
-        let domain = DomainRoot::new(dataspace_domain_dir()?);
+        let domain = places.domain()?;
         return Ok(Box::pin(local_registry::command(domain, input)).await);
     }
     if let Commands::Home {
@@ -1699,6 +1806,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
         | Commands::Reset { .. }
         | Commands::Certify { .. }
         | Commands::Storage
+        | Commands::Sync { .. }
         | Commands::LocalRegistry { .. } => {
             unreachable!("handled before the domain is opened")
         }
@@ -1796,6 +1904,9 @@ Then run:
 
     #[error(transparent)]
     Rename(#[from] RenameError),
+
+    #[error(transparent)]
+    Sync(#[from] SyncError),
 
     #[error("Can't open the Domain's queue: {0}")]
     Queue(#[from] QueueError),
@@ -1975,6 +2086,12 @@ impl Error {
             Error::History(err) => match err {
                 HistoryError::Contract(_) => "contract",
                 HistoryError::Lock(_) => "lock",
+                _ => "dataspace",
+            },
+            Error::Sync(err) => match err {
+                SyncError::Contract(_) => "contract",
+                SyncError::Lock(_) => "lock",
+                SyncError::Mismatch(_) => "lock_mismatch",
                 _ => "dataspace",
             },
             Error::NoDownloadWithPath => "no_download_with_path",

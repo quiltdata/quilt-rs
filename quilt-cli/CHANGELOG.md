@@ -23,6 +23,8 @@
 
 ### Added
 
+- `QUILT_DATASPACES=1` turns on the dataspace verbs as the default: `install`, `uninstall`, `read`, `publish`, `reattach`, `status`, `list`, `log`, `commit`, `undo-commit`, `reset`, `certify`, `remove-revisions`, `keep`, `create`, `home` and `gc` act on the default dataspace `quilt home --dataspace` chose when no `--dataspace` names one, and `--domain` and `QUILT_DOMAIN` name the dataspace Domain. Off, the default, every verb is as before (<https://github.com/quiltdata/quilt-rs/pull/1491>)
+- `quilt sync [--dataspace <DIR>] [-m <MESSAGE>]` runs one tick of a dataspace's `sync` entries, the default dataspace's where none is named: it reads each entry's `latest`, commits what its folder changed and pushes the lock's commits. After a `data.toml` edit it only reads, which lets `quilt commit --dataspace` run again, and it exits 1 unless every entry synced (<https://github.com/quiltdata/quilt-rs/pull/1491>)
 - `quilt commit --dataspace <DIR> (<PACKAGE> | -n <owner/name>)` commits a `sync` entry's working folder for the next sync to push; `quilt undo-commit --dataspace` drops the last one and restores the folder to the revision before it (<https://github.com/quiltdata/quilt-rs/pull/1487>)
 - `quilt reset --dataspace <DIR> <PACKAGE>` discards a package's local commits and changes and reads `latest` whole, and `quilt certify --dataspace <DIR> <PACKAGE>` pushes its last commit and writes `latest` to it (<https://github.com/quiltdata/quilt-rs/pull/1487>)
 - `quilt remove-revisions --dataspace <DIR> <PACKAGE> --revision <HASH>` removes revisions from the package's registry, tags only, and moves `latest` to the newest left (<https://github.com/quiltdata/quilt-rs/pull/1487>)

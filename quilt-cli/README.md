@@ -55,6 +55,7 @@ cargo install quilt-cli
 | `uninstall` | Remove a package; `--prune` also deletes its stored files no other package uses |
 | `gc`        | Delete stored files no installed package uses    |
 | `storage`   | Print how much the dataspace Domain holds         |
+| `sync`      | Sync a dataspace's `sync` entries once             |
 | `local-registry` | Print or rename this machine's local registry |
 | `remove-revisions` | Remove old revisions this copy no longer needs |
 | `catalog`   | Show, set or clear the default Quilt stack       |
@@ -366,6 +367,28 @@ names it had; `local-registry <NAME>` renames it. The old name stays an alias,
 so a `quilt+local://` URI, `data.toml` or `data.lock.toml` written with it
 still names the registry, and the autosync work queued under it moves to the
 new name. Under `--json` it prints `name`, `aliases` and `moved`.
+
+`sync [--dataspace <DIR>]` runs one tick of the dataspace's `sync` entries, as
+autosync would, on the default dataspace where `--dataspace` names none: it
+reads each entry's `latest` where it moved, commits what its working folder
+changed, with `-m` as the message, and pushes the lock's commits. Until the
+dataspace is filled, and after `data.toml` is edited, it only reads, each entry
+whole; that is what lets `commit --dataspace` run again after an edit. It
+exits 1 unless every entry synced. Under `--json` it prints `dataspace`,
+`read_only`, `completed` and `entries`, each with `package`, `folder`,
+`outcome` and `message`.
+
+`QUILT_DATASPACES=1` makes the dataspace form the default for every verb that
+has one: `install`, `uninstall`, `read`, `publish`, `reattach`, `status`,
+`list`, `log`, `commit`, `undo-commit`, `reset`, `certify`, `remove-revisions`,
+`keep`, `create`, `home` and `gc` act on the default dataspace, the one
+`home --dataspace` chose, when no `--dataspace` names one, and refuse the
+flags only the home's form takes. `--domain` and `QUILT_DOMAIN` then name the
+dataspace Domain, which is otherwise `bio.quilt.dataspace` in the OS's local
+data folder, and the credentials and the default dataspace's choice are kept
+in the application's folder there. `browse`, `catalog`, `login`, `role`,
+`pull`, `push`, `lineage`, `upgrade` and `version` have no dataspace form and
+are unchanged. Unset, or any value but `1`, every verb is as it was.
 
 `push` with no commit to push prints `Nothing to push` and exits 0; under
 `--json` the same shape has `"hash": null`, `"manifest_uri": null` and
