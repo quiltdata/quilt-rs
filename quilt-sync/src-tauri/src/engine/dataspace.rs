@@ -80,6 +80,9 @@ pub struct Dataspace<R: Remote = RemoteS3> {
     writer: Writer,
     user_rules: PathBuf,
     runner: Runner,
+    /// Held across a read and write of `conflict.json`, so two decisions
+    /// made at once both stand.
+    conflict_edits: tokio::sync::Mutex<()>,
 }
 
 impl<R: Remote + Sync> Dataspace<R> {
@@ -129,6 +132,7 @@ impl<R: Remote + Sync> Dataspace<R> {
             writer,
             user_rules,
             runner,
+            conflict_edits: tokio::sync::Mutex::new(()),
         })
     }
 
@@ -460,9 +464,17 @@ impl<R: Remote + Sync> Dataspace<R> {
         let home = quilt_rs::dataspace::home::set_home(&self.storage, &self.app_dir, folder)
             .await
             .map_err(fail)?;
+        let old = self.dataspace();
         match self.home.write() {
             Ok(mut held) => held.clone_from(&home.dataspace),
             Err(poisoned) => poisoned.into_inner().clone_from(&home.dataspace),
+        }
+        // The runner ticks what is on autosync: the new home is put on it
+        // by `Services::rewatch_dataspace`, the old one leaves it.
+        if old != home.dataspace
+            && let Err(err) = self.domain.set_autosync(&self.storage, &old, false).await
+        {
+            tracing::warn!("The old dataspace could not leave autosync: {err}");
         }
         Ok(home)
     }
@@ -571,6 +583,11 @@ impl<R: Remote + Sync> Dataspace<R> {
         )
         .await
         .map_err(fail)
+    }
+
+    /// Holds the edit of `conflict.json` against another one.
+    pub async fn lock_conflict_edits(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.conflict_edits.lock().await
     }
 
     /// The default dataspace's `conflict.json`.

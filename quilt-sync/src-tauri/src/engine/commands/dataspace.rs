@@ -17,6 +17,7 @@ use quilt_rs::dataspace::create::Create;
 use quilt_rs::dataspace::install::Install;
 use quilt_rs::dataspace::keep::Keep;
 use quilt_rs::dataspace::keep::Scope;
+use quilt_rs::dataspace::publish::Published;
 use quilt_rs::dataspace::sync::EntrySync;
 use quilt_rs::io::remote::Remote;
 use quilt_uri::Namespace;
@@ -67,6 +68,20 @@ fn settled(entry: &Entry, outcome: &EntrySync) -> Result<(), Error> {
             entry.package
         ))),
         EntrySync::Failed(err) => Err(Error::Dataspace(err.to_string())),
+        EntrySync::Ran {
+            published: Some(Published::WorkflowBlocked { reason, .. }),
+            ..
+        } => Err(Error::Dataspace(format!(
+            "{}: the bucket's workflow refused the revision: {reason}",
+            entry.package
+        ))),
+        EntrySync::Ran {
+            published: Some(Published::Stored { .. } | Published::Behind { .. }),
+            ..
+        } => Err(Error::Dataspace(format!(
+            "{} was stored, but latest names another revision; pull, then publish again",
+            entry.package
+        ))),
         // It ran, or read the folder back.
         _ => Ok(()),
     }

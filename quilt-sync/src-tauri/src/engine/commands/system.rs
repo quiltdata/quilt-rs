@@ -429,7 +429,11 @@ pub async fn setup(s: &Services, directory: String) -> Result<String, String> {
         ));
     }
     if let Some(ds) = &s.dataspace {
-        return super::dataspace::setup(ds, &directory).await;
+        let result = super::dataspace::setup(ds, &directory).await;
+        if result.is_ok() {
+            s.rewatch_dataspace().await;
+        }
+        return result;
     }
     let m = &*s.model;
     let tracing = &*s.telemetry;

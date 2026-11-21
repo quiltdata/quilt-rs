@@ -40,6 +40,7 @@ pub(crate) fn commit_words(commit: &UnattachedCommit) -> String {
 
 /// The two cards, read again after each decision and on `reload`.
 #[component]
+#[allow(clippy::too_many_lines)]
 pub fn Decisions(reload: Trigger) -> impl IntoView {
     let decided = Trigger::new();
     let conflicts = LocalResource::new(move || {
@@ -68,7 +69,15 @@ pub fn Decisions(reload: Trigger) -> impl IntoView {
         });
     };
     view! {
-        {move || failure.get().map(|detail| view! { <p role="alert">{detail}</p> })}
+        {move || {
+            failure
+                .get()
+                .into_iter()
+                .chain(conflicts.get().and_then(Result::err))
+                .chain(commits.get().and_then(Result::err))
+                .map(|detail| view! { <p role="alert">{detail}</p> })
+                .collect_view()
+        }}
         {move || {
             let rows = conflicts.get().and_then(Result::ok).unwrap_or_default();
             (!rows.is_empty())

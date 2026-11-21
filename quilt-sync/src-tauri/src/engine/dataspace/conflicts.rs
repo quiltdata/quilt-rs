@@ -136,6 +136,7 @@ pub async fn decide<R: Remote + Sync>(
         .parse()
         .map_err(|err| Error::Dataspace(format!("{package}: {err}")))?;
     let key = LogicalKey::new(key).map_err(|err| Error::Dataspace(err.to_string()))?;
+    let _edit = ds.lock_conflict_edits().await;
     let mut map = ds.conflicts().await?;
     let row = map
         .packages

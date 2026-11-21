@@ -49,7 +49,7 @@ pub struct Services {
     /// it opened; `None` runs every command on the ref API, as before.
     pub dataspace: Option<Arc<Dataspace>>,
     /// The dataspace engine's folder watch, held for as long as the app runs.
-    _dataspace_watch: std::sync::Mutex<Option<DataspaceWatch>>,
+    dataspace_watch: std::sync::Mutex<Option<DataspaceWatch>>,
     pub workflow_rules: WorkflowRulesCache,
     pub roles: Arc<RoleCache>,
     pub app: App,
@@ -177,7 +177,7 @@ impl Services {
             data_dir,
             model,
             dataspace,
-            _dataspace_watch: std::sync::Mutex::new(dataspace_watch),
+            dataspace_watch: std::sync::Mutex::new(dataspace_watch),
             workflow_rules: WorkflowRulesCache::default(),
             roles,
             app: App::new(version, logging),
@@ -196,6 +196,20 @@ impl Services {
             updates: Updates::new(app_version),
             tray_status,
         }))
+    }
+
+    /// Moves the dataspace engine's autosync and folder watch to the default
+    /// dataspace, after a setup changed it.
+    pub async fn rewatch_dataspace(&self) {
+        let Some(ds) = &self.dataspace else {
+            return;
+        };
+        let next = watch_dataspace(ds, &self.fswatcher_settings).await;
+        let mut held = self
+            .dataspace_watch
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *held = next;
     }
 }
 
