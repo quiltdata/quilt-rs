@@ -8,6 +8,8 @@ use crate::cli::model::Commands;
 use crate::cli::output::Render;
 use crate::cli::output::Std;
 
+pub mod dataspace;
+
 #[derive(Debug)]
 pub struct Input {
     /// `None` prints the current home.
@@ -152,7 +154,11 @@ mod tests {
             log: None,
             format: None,
             json: false,
-            command: Commands::Home { dir, overwrite },
+            command: Commands::Home {
+                dir,
+                dataspace: false,
+                overwrite,
+            },
         }
     }
 
@@ -405,7 +411,8 @@ mod tests {
             args.command,
             Commands::Home {
                 dir: Some(_),
-                overwrite: true
+                overwrite: true,
+                ..
             }
         ));
     }
