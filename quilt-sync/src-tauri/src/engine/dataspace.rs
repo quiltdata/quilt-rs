@@ -1,11 +1,14 @@
-//! The app's engine on quilt-rs's dataspace API, behind the switch.
+//! The app's engine on quilt-rs's dataspace API, on by default since the
+//! cutover.
 //!
-//! The switch is the `dataspace` key of `experimental_settings.json`, read
-//! once when the app starts ([`crate::engine::services::Services::init`]).
-//! It defaults to off: the engine then runs on the ref API (`LocalDomain`)
-//! as it always has, and nothing here is built. With it on, the app opens
-//! the Domain [`quilt_rs::domain::locate`] names and its default dataspace, and the
+//! The switch is read once when the app starts
+//! ([`crate::engine::services::Services::init`]). On, the app imports what
+//! the ref engine kept, once, then opens the Domain
+//! [`quilt_rs::domain::locate`] names and its default dataspace, and the
 //! commands that have a dataspace counterpart route through [`Dataspace`].
+//! `"dataspace_opt_out": true` in `experimental_settings.json`, or an import
+//! that falls back, leaves it off: the engine then runs on the ref API
+//! (`LocalDomain`) as before, and nothing here is built.
 //!
 //! A command names a package by its namespace, as the pages do; here that
 //! is the first entry of the default dataspace's `data.toml` that declares
@@ -84,6 +87,10 @@ pub struct Dataspace<R: Remote = RemoteS3> {
     /// Held across a read and write of `conflict.json`, so two decisions
     /// made at once both stand.
     conflict_edits: tokio::sync::Mutex<()>,
+    /// Held by a sync, the autosync tick, and a task's commit and sync, so
+    /// a commit never lands while a tick holds the lock in memory to write
+    /// it whole.
+    writes: tokio::sync::Mutex<()>,
 }
 
 impl<R: Remote + Sync> Dataspace<R> {
@@ -134,7 +141,14 @@ impl<R: Remote + Sync> Dataspace<R> {
             user_rules,
             runner,
             conflict_edits: tokio::sync::Mutex::new(()),
+            writes: tokio::sync::Mutex::new(()),
         })
+    }
+
+    /// Waits for a sync or tick under way to end, and keeps another from
+    /// starting until the guard drops.
+    pub async fn hold_writes(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.writes.lock().await
     }
 
     /// The default dataspace's folder.
@@ -502,6 +516,33 @@ impl<R: Remote + Sync> Dataspace<R> {
     /// Syncs the default dataspace, as the sync tick does: reads what
     /// `latest` moved, and commits and pushes `sync` entries.
     pub async fn sync(&self, message: &str) -> Result<DataspaceSync, Error> {
+        let _writes = self.hold_writes().await;
+        Box::pin(self.sync_held(message)).await
+    }
+
+    /// Writes `user_meta` as the package's metadata in `folder`, commits it
+    /// with `message`, then syncs, with no tick between: a task's claim or
+    /// outcome. The commit's failure, as with nothing to commit, is logged
+    /// and the sync still runs.
+    pub async fn commit_and_sync(
+        &self,
+        namespace: &Namespace,
+        folder: &std::path::Path,
+        user_meta: &serde_json::Value,
+        message: &str,
+    ) -> Result<DataspaceSync, Error> {
+        let _writes = self.hold_writes().await;
+        quilt_rs::dataspace::set_package_metadata(&self.storage, folder, user_meta)
+            .await
+            .map_err(fail)?;
+        if let Err(err) = self.commit(namespace, message).await {
+            debug!("{namespace}: nothing committed before the sync: {err}");
+        }
+        Box::pin(self.sync_held(AUTOSYNC_MESSAGE)).await
+    }
+
+    /// [`Self::sync`], for a caller holding [`Self::hold_writes`].
+    async fn sync_held(&self, message: &str) -> Result<DataspaceSync, Error> {
         quilt_rs::dataspace::sync::sync(
             &self.storage,
             &*self.remote,

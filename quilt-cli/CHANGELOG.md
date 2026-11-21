@@ -23,7 +23,6 @@
 
 ### Added
 
-- `QUILT_DATASPACES=1` turns on the dataspace verbs as the default: `install`, `uninstall`, `read`, `publish`, `reattach`, `status`, `list`, `log`, `commit`, `undo-commit`, `reset`, `certify`, `remove-revisions`, `keep`, `create`, `home` and `gc` act on the default dataspace `quilt home --dataspace` chose when no `--dataspace` names one, and `--domain` and `QUILT_DOMAIN` name the dataspace Domain. Off, the default, every verb is as before (<https://github.com/quiltdata/quilt-rs/pull/1491>)
 - `quilt sync [--dataspace <DIR>] [-m <MESSAGE>]` runs one tick of a dataspace's `sync` entries, the default dataspace's where none is named: it reads each entry's `latest`, commits what its folder changed and pushes the lock's commits. After a `data.toml` edit it only reads, which lets `quilt commit --dataspace` run again, and it exits 1 unless every entry synced (<https://github.com/quiltdata/quilt-rs/pull/1491>)
 - `quilt commit --dataspace <DIR> (<PACKAGE> | -n <owner/name>)` commits a `sync` entry's working folder for the next sync to push; `quilt undo-commit --dataspace` drops the last one and restores the folder to the revision before it (<https://github.com/quiltdata/quilt-rs/pull/1487>)
 - `quilt reset --dataspace <DIR> <PACKAGE>` discards a package's local commits and changes and reads `latest` whole, and `quilt certify --dataspace <DIR> <PACKAGE>` pushes its last commit and writes `latest` to it (<https://github.com/quiltdata/quilt-rs/pull/1487>)
@@ -47,6 +46,8 @@
 
 ### Changed
 
+- **Behaviour change:** the dataspace verbs are the default. `install`, `uninstall`, `read`, `publish`, `reattach`, `status`, `list`, `log`, `commit`, `undo-commit`, `reset`, `certify`, `remove-revisions`, `keep`, `create`, `home`, `gc`, `sync` and `local-registry` act on the default dataspace `quilt home --dataspace` chose when no `--dataspace` names one, and `--domain` and `QUILT_DOMAIN` name the dataspace Domain. The first of them imports the packages the ref path kept, once, and prints what it did; an import that fails prints why and runs the command on the ref path. `QUILT_DATASPACES=0` keeps every verb as before, for one release ([#1497](https://github.com/quiltdata/quilt-rs/pull/1497))
+- `quilt login` and `quilt role` keep to the application's folder and open no domain ([#1497](https://github.com/quiltdata/quilt-rs/pull/1497))
 - `quilt read` and `quilt publish` reach the local registry of the Domain where one exists, so a `quilt+local://` entry is read and published there, and the lock they write names that registry (<https://github.com/quiltdata/quilt-rs/pull/1485>)
 - `quilt log --json` writes `obtained` in UTC with `Z` and only the sub-second digits it needs (`2026-11-20T14:05:09.1Z`), where it wrote `+00:00` and three, six or nine digits (<https://github.com/quiltdata/quilt-rs/pull/1478>)
 - `quilt push` no longer overwrites a `latest` another publisher moved while it ran: it keeps the revision and warns that `latest` was not updated. A role that cannot read `latest` still updates it, with a warning that it was not checked; `--json` has `latest_unchecked` (<https://github.com/quiltdata/quilt-rs/pull/1444>)

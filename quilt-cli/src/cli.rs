@@ -161,6 +161,15 @@ fn parse_optional_namespace(namespace: Option<String>) -> Result<Option<Namespac
     })
 }
 
+/// The remote that signs in with the credentials the application's folder
+/// `app` keeps.
+fn app_remote(app: &std::path::Path) -> quilt_rs::io::remote::RemoteS3 {
+    quilt_rs::io::remote::RemoteS3::new(
+        quilt_rs::paths::DomainPaths::new(app.to_path_buf()),
+        quilt_rs::io::storage::LocalStorage::new(),
+    )
+}
+
 fn get_domain_dir(dir_arg: Option<PathBuf>) -> Result<PathBuf, Error> {
     match dir_arg {
         Some(user_specified_dir) => Ok(user_specified_dir),
@@ -1289,7 +1298,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
         })
         .await);
     }
-    let on = switch::from_env();
+    let on = switch::settled();
     let places = switch::Places::new(on, args.domain.clone())?;
     Box::pin(init_in(args, places, on)).await
 }
@@ -1568,6 +1577,9 @@ async fn init_in(mut args: Args, places: switch::Places, on: bool) -> Result<Std
         let input = home::dataspace::Input { dir };
         return Ok(Box::pin(home::dataspace::command(root_dir, input)).await);
     }
+    // Signing in and roles keep to the application's folder: they use its
+    // remote, not the domain's.
+    let remote = app_remote(&root_dir);
     let m = Model::from(root_dir);
     // Every other command refuses a rollback that was interrupted, so this
     // one runs before anything reads the lineage.
@@ -1701,7 +1713,7 @@ async fn init_in(mut args: Args, places: switch::Places, on: bool) -> Result<Std
                 let args = login::Input { code, host };
 
                 log::debug!("Logging in {args:?}");
-                Ok(login::command(m, args).await)
+                Ok(login::command(&remote, args).await)
             } else {
                 // TODO: Check the lineage, if there are some `package.remote.catalog`
                 Ok(Std::Err(Error::LoginRequired(host)))
@@ -1771,7 +1783,7 @@ async fn init_in(mut args: Args, places: switch::Places, on: bool) -> Result<Std
             let args = role::Input { host, set };
 
             log::debug!("Role {args:?}");
-            Ok(role::command(m, args).await)
+            Ok(role::command(&remote, args).await)
         }
         Commands::Status { pkg, ignored, .. } => {
             let namespace = pkg.resolve(&m).await?;
@@ -3206,7 +3218,9 @@ mod tests {
         let mut child = std::process::Command::new(std::env::current_exe().unwrap());
         child
             .args(["cli::tests::env_child", "--exact", "--nocapture"])
-            .env(ENV_CHILD_ARGV, argv.join("\u{1f}"));
+            .env(ENV_CHILD_ARGV, argv.join("\u{1f}"))
+            // The ref path's parsing, which the switch off keeps.
+            .env(switch::SWITCH_ENV, "0");
         for env in [DOMAIN_ENV, FORMAT_ENV] {
             match vars.iter().find(|(name, _)| *name == env) {
                 Some((_, Some(value))) => child.env(env, value),

@@ -16,6 +16,58 @@ fn mark() -> PathBuf {
     PathBuf::from(DEFAULT_MARK)
 }
 
+/// Since the cutover the switch is on unless `QUILT_DATASPACES` opts out.
+#[test]
+fn the_switch_is_on_unless_it_opts_out() {
+    use std::ffi::OsStr;
+    for on in [None, Some(""), Some("1"), Some("yes")] {
+        assert!(on_for(on.map(OsStr::new)), "{on:?}");
+    }
+    for off in ["0", "false", "OFF", " off "] {
+        assert!(!on_for(Some(OsStr::new(off))), "{off:?}");
+    }
+}
+
+/// A cutover that fell back says why, and how to keep the ref path; one
+/// that found nothing to do says nothing.
+#[test]
+fn a_fallback_is_reported_with_the_opt_out() {
+    use quilt_rs::domain::import::Cutover;
+    use quilt_rs::domain::import::ImportError;
+
+    let mut fell_back = Vec::new();
+    report(&Cutover::FellBack(ImportError::InUse), &mut fell_back);
+    let mut done = Vec::new();
+    report(&Cutover::Done, &mut done);
+
+    let fell_back = String::from_utf8(fell_back).expect("text");
+    assert!(fell_back.contains("ref path"), "{fell_back}");
+    assert!(fell_back.contains("QUILT_DATASPACES=0"), "{fell_back}");
+    assert_eq!(String::from_utf8(done).expect("text"), "");
+}
+
+/// A run that falls back is the ref path's, as the switch off is: `--domain`
+/// names the application's folder again.
+#[test]
+fn a_run_that_falls_back_is_parsed_with_the_switch_off() -> Result<(), clap::Error> {
+    let off = parse(&["--domain", "/old", "list"], false)?;
+    assert!(matches!(
+        off.command,
+        Commands::List {
+            dataspace: None,
+            ..
+        }
+    ));
+    assert_eq!(
+        Places::new(false, off.domain.clone())
+            .ok()
+            .map(|places| places.app),
+        Some(PathBuf::from("/old"))
+    );
+    assert!(!settled(), "a test never settles the switch on");
+    Ok(())
+}
+
 /// Each verb with a dataspace form reads as naming the default dataspace,
 /// in whichever shape its form takes the dataspace, and its dataspace-only
 /// flags parse with none named.

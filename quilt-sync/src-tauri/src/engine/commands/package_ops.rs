@@ -2323,6 +2323,10 @@ mod tests {
             &self.domain
         }
 
+        fn remote(&self) -> std::sync::Arc<quilt::io::remote::RemoteS3> {
+            crate::engine::model::mocks::nowhere().remote_handle()
+        }
+
         async fn resolve_workflow(
             &self,
             _: &quilt::InstalledPackage,

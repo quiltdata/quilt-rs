@@ -190,23 +190,23 @@ pub async fn measure_storage(s: &Services) -> Result<StorageSize, String> {
 
 async fn collect_diagnostic_logs_command(
     data_dir: &std::path::Path,
-    m: &model::Model,
+    home_dir: Option<&std::path::Path>,
     app: &app::App,
     tracing: &crate::engine::telemetry::Telemetry,
 ) -> Result<PathBuf, Error> {
-    let info = diagnostics::collect(data_dir, m, app, tracing.install_id()).await?;
+    let info = diagnostics::collect(data_dir, home_dir, app, tracing.install_id());
     tokio::task::spawn_blocking(move || diagnostics::save_diagnostic_zip(&info))
         .await
         .map_err(|e| e.to_string())?
 }
 
 pub async fn collect_diagnostic_logs(s: &Services) -> Result<String, String> {
-    let m = &*s.model;
     let app = &s.app;
     let tracing = &*s.telemetry;
     let app: &app::App = app;
+    let home_dir = s.home_dir().await;
 
-    match collect_diagnostic_logs_command(&s.data_dir, m, app, tracing).await {
+    match collect_diagnostic_logs_command(&s.data_dir, home_dir.as_deref(), app, tracing).await {
         Ok(zip_path) => {
             // Reported here rather than through `Notify::on_success`, because this
             // command returns the archive's path and so does not route its outcome

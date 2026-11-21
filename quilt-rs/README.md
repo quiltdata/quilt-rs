@@ -190,6 +190,18 @@ folder:
   newest first, from its bucket or the local registry, with local commits
   not pushed yet marked.
 
+## Upgrading: the dataspace cutover
+
+`quilt` and `QuiltSync` now run on dataspaces by default, and the ref API
+(`LocalDomain`) stays for one release behind their opt-outs:
+`QUILT_DATASPACES=0` and `"dataspace_opt_out": true`. An application moves
+its users with `domain::import::cutover`, which imports the domain an older
+build kept in the application's folder into the Domain once, makes the old
+home the default dataspace, and falls back without writing the old folder
+where the import is refused or stops. `dataspace::hooks::register` gives an
+application its own in-process hook at a point, as `QuiltSync` dispatches
+`agent_exec` from `post-read`.
+
 ## Hash Algorithms
 
 Supports multiple algorithms via `checksum::ObjectHash`:

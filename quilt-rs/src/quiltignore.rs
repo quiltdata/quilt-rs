@@ -737,6 +737,20 @@ pub fn default_rules(user_file: &Path) -> Res<Vec<DefaultRule>> {
         .collect())
 }
 
+/// [`set_default_rules`] on the user-wide file of the application folder
+/// `paths` names, holding its lock so *Stop ignoring* for all packages never
+/// writes between the read and the write.
+pub async fn set_user_default_rules(
+    storage: &(impl crate::io::storage::Storage + Sync),
+    paths: &crate::paths::DomainPaths,
+    off: &[&str],
+) -> Res {
+    let _held = storage
+        .lock_exclusive(paths.user_quiltignore_lock())
+        .await?;
+    set_default_rules(&paths.user_quiltignore(), off)
+}
+
 /// Make the user-wide file at `user_file` turn off exactly the built-in
 /// rules in `off`: the `!rule` lines of the others come out, and the
 /// missing ones go at the end. The file is replaced once, so a failure

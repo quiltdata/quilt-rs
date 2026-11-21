@@ -124,7 +124,7 @@ pub fn claim_time(now: jiff::Timestamp) -> String {
 }
 
 /// The claim one run writes in every revision it publishes.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Claim {
     pub invocation_id: String,
     pub claimed_at: String,

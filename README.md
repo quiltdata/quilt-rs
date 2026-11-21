@@ -142,6 +142,19 @@ under `QuiltSync/v*`. The Windows installers are Authenticode-signed, and the ma
 app is signed and notarized. QuiltSync and the CLI operate on the same
 packages and revisions, so you can move between them freely.
 
+## Upgrading: the dataspace cutover
+
+`quilt` and QuiltSync now run on dataspaces by default. On first use each
+imports, once, the packages an older version kept into the dataspace Domain,
+making the old home the default dataspace, and says what it imported. The old
+folder is only read; an import that is refused or stops is reported and
+leaves the old behaviour in place until a later start finishes it.
+
+To keep the old behaviour for one more release, set `QUILT_DATASPACES=0` for
+`quilt`, or put `"dataspace_opt_out": true` in QuiltSync's
+`experimental_settings.json`. See the [CLI](quilt-cli/README.md) and
+[QuiltSync](quilt-sync/README.md) READMEs.
+
 ## Why this exists
 
 We build AI learning loops for biotech, and the unit of agentic execution

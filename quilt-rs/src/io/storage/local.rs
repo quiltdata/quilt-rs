@@ -4,9 +4,7 @@ use aws_sdk_s3::primitives::ByteStream;
 use jiff::Timestamp;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
-#[cfg(unix)]
 use tracing::debug;
-#[cfg(unix)]
 use tracing::warn;
 use uuid::Uuid;
 
@@ -341,22 +339,8 @@ impl Storage for LocalStorage {
     }
 
     async fn sync_file(&self, path: impl AsRef<Path> + Send) -> Res {
-        let path = path.as_ref();
         // Windows flushes only a file opened for writing; Unix syncs any.
-        let synced = async {
-            let file = if cfg!(windows) {
-                fs::OpenOptions::new().write(true).open(path).await?
-            } else {
-                fs::File::open(path).await?
-            };
-            file.sync_all().await
-        };
-        synced.await.map_err(|source| {
-            Error::Fs(FsError::Write {
-                path: path.to_path_buf(),
-                source,
-            })
-        })
+        sync_file(path.as_ref(), cfg!(windows)).await
     }
 
     async fn create_private_dir(&self, path: impl AsRef<Path> + Send) -> Res {
@@ -381,6 +365,42 @@ impl Storage for LocalStorage {
     ) -> Res<Option<super::LockGuard>> {
         super::lock::try_lock_exclusive(path.as_ref()).await
     }
+}
+
+/// Flushes the file at `path` to its drive, through a handle opened for
+/// writing where `write_first`, as Windows needs, else for reading.
+///
+/// The flush is best effort for a file that can't be opened for writing,
+/// such as one marked read-only: it is flushed through a handle opened for
+/// reading, or, where that fails too, left with a warning. A file that can't
+/// be opened at all is an error.
+async fn sync_file(path: &Path, write_first: bool) -> Res {
+    let failed = |source| {
+        Error::Fs(FsError::Write {
+            path: path.to_path_buf(),
+            source,
+        })
+    };
+    if write_first {
+        match fs::OpenOptions::new().write(true).open(path).await {
+            Ok(file) => return file.sync_all().await.map_err(failed),
+            Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => {
+                debug!(
+                    "{} can't be opened for writing, so it is flushed through a read handle: {err}",
+                    path.display()
+                );
+            }
+            Err(err) => return Err(failed(err)),
+        }
+    }
+    let file = fs::File::open(path).await.map_err(failed)?;
+    if let Err(err) = file.sync_all().await {
+        if !write_first {
+            return Err(failed(err));
+        }
+        warn!("{} was not flushed to its drive: {err}", path.display());
+    }
+    Ok(())
 }
 
 impl Default for LocalStorage {
@@ -411,6 +431,41 @@ pub(crate) mod tests {
 
     use crate::io::storage::LockGuard;
     use crate::io::storage::StorageExt;
+
+    /// A read-only file, as a copy of one can be, can't be opened for
+    /// writing: the flush Windows needs a write handle for falls back to a
+    /// read handle, and the file is left as it was (25k follow-up).
+    #[test(tokio::test)]
+    async fn a_read_only_file_is_flushed_on_a_best_effort_basis() -> Res {
+        let temp_dir = tempdir()?;
+        let path = temp_dir.path().join("read-only");
+        std::fs::write(&path, b"kept")?;
+        let writable = std::fs::metadata(&path)?.permissions();
+        let mut read_only = writable.clone();
+        read_only.set_readonly(true);
+        std::fs::set_permissions(&path, read_only)?;
+        // Root opens any file for writing, so there is no refusal to test.
+        let refused = std::fs::OpenOptions::new().write(true).open(&path).is_err();
+
+        let synced = sync_file(&path, true).await;
+
+        std::fs::set_permissions(&path, writable)?;
+        if !refused {
+            return Ok(());
+        }
+        assert!(synced.is_ok(), "{synced:?}");
+        assert_eq!(std::fs::read(&path)?, b"kept");
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn a_missing_file_is_not_flushed() {
+        let temp_dir = tempdir().expect("a temporary folder");
+        let path = temp_dir.path().join("missing");
+        for write_first in [true, false] {
+            assert!(sync_file(&path, write_first).await.is_err());
+        }
+    }
 
     #[test(tokio::test)]
     #[ignore = "doesn't work in CI: in CI the file has a `now` modification date"]

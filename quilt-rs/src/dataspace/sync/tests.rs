@@ -2305,6 +2305,40 @@ async fn hooks_run_around_a_read_of_a_newer_latest_and_a_publish_and_not_on_an_i
     Ok(())
 }
 
+/// An application's `post-read` hook is called as the script is: once the
+/// lock moved to a newer revision, not on an idle tick, and not once its
+/// registration is dropped.
+#[test(tokio::test)]
+async fn a_registered_post_read_hook_follows_each_newer_revision_read() -> Res {
+    let world = World::synced()?;
+    world.publish(FIRST, &[("a.txt", b"v1")]).await?;
+    let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen = std::sync::Arc::clone(&calls);
+    let registration = crate::dataspace::hooks::register(
+        &world.dataspace(),
+        PostRead,
+        std::sync::Arc::new(move |call: &crate::dataspace::hooks::HookCall| {
+            seen.lock()
+                .expect("calls")
+                .push((call.entry.key().to_string(), call.revision.clone()));
+        }),
+    );
+    world.sync().await?;
+    world.tick().await?;
+    world.publish(SECOND, &[("a.txt", b"v2")]).await?;
+    world.tick().await?;
+    drop(registration);
+    world.publish(THIRD, &[("a.txt", b"v3")]).await?;
+    world.tick().await?;
+
+    let key = "quilt+s3://b#package=team/raw".to_string();
+    assert_eq!(
+        *calls.lock().expect("calls"),
+        [(key.clone(), FIRST.to_string()), (key, SECOND.to_string())]
+    );
+    Ok(())
+}
+
 #[test(tokio::test)]
 async fn a_pre_write_hook_rewrites_metadata_toml_before_the_commit() -> Res {
     let stamp = "[metadata.package]\nstamped = true\n";

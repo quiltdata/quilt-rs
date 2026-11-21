@@ -25,6 +25,8 @@ const DEADLINE: Duration = Duration::from_secs(20);
 /// Runs `quilt` on `domain` to the end and returns its output if it succeeded.
 fn quilt(domain: &Path, args: &[&str]) -> Output {
     let output = Command::new(env!("CARGO_BIN_EXE_quilt"))
+        // The ref path's commands, which the switch off keeps.
+        .env("QUILT_DATASPACES", "0")
         .arg("--domain")
         .arg(domain)
         .args(args)
@@ -49,6 +51,7 @@ struct Running {
 impl Running {
     fn spawn(domain: &Path, args: &[&str]) -> Self {
         let mut child = Command::new(env!("CARGO_BIN_EXE_quilt"))
+            .env("QUILT_DATASPACES", "0")
             .arg("--domain")
             .arg(domain)
             .args(args)

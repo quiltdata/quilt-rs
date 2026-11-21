@@ -43,7 +43,15 @@ fn main() {
 
 #[tokio::main]
 async fn run() {
-    let args = Args::try_parse_with_env(std::env::args_os()).unwrap_or_else(|err| err.exit());
+    let command_line: Vec<std::ffi::OsString> = std::env::args_os().collect();
+    let mut args = Args::try_parse_with_env(command_line.clone()).unwrap_or_else(|err| err.exit());
+    // Parsed first, so `--help` and a usage error import nothing. A run whose
+    // import falls back is parsed again with the switch off.
+    let on = Box::pin(cli::switch::cutover(&command_line, &mut io::stderr())).await;
+    if !on && cli::switch::from_env() {
+        args = Args::try_parse_switched(command_line, false).unwrap_or_else(|err| err.exit());
+    }
+    cli::switch::settle(on);
     let logging = init_logging(
         std::env::var(LOG_ENV).ok().as_deref(),
         args.log_directives(),

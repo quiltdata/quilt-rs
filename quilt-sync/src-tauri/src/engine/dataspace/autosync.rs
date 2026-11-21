@@ -37,6 +37,7 @@ pub async fn tick<R: Remote + Sync>(
     if !pull && !push {
         return Ok(None);
     }
+    let _writes = ds.hold_writes().await;
     ds.runner()
         .tick(ds.storage(), ds.remote(), SystemTime::now())
         .await

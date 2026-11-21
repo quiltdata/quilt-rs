@@ -110,6 +110,60 @@ pub(crate) fn render(manifest: &Manifest) -> Result<String, String> {
     toml::to_string(&document).map_err(|err| err.to_string())
 }
 
+/// Replaces the package's metadata in the metadata file of the working folder
+/// `folder` with `package`, keeping all else the file says; a folder with no
+/// file gets one holding only the format version and the package's metadata.
+/// The next commit of the folder publishes it, as an edit by hand would be:
+/// `QuiltSync`'s task runner writes a claim and an outcome this way.
+///
+/// # Errors
+///
+/// Where the file can't be read, isn't TOML, or can't be written, or where
+/// `package` holds an integer beyond TOML's 64 bits.
+pub async fn set_package_metadata(
+    storage: &(impl crate::io::storage::Storage + Sync),
+    folder: &std::path::Path,
+    package: &Value,
+) -> crate::Res {
+    use crate::io::storage::StorageExt;
+
+    let invalid = |why: String| {
+        crate::Error::from(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("{}: {why}", folder.join(METADATA_FILE).display()),
+        ))
+    };
+    let path = folder.join(METADATA_FILE);
+    let mut document = match storage.read_bytes(&path).await {
+        Ok(bytes) => {
+            let text = String::from_utf8(bytes).map_err(|err| invalid(err.to_string()))?;
+            text.parse::<Table>()
+                .map_err(|err| invalid(err.to_string()))?
+        }
+        Err(err) if err.is_not_found() => {
+            let mut document = Table::new();
+            document.insert("version".to_string(), VERSION.into());
+            document
+        }
+        Err(err) => return Err(err),
+    };
+    let value = checked_toml(package, &RawNumbers::default(), "the package").map_err(invalid)?;
+    let metadata = document
+        .entry("metadata")
+        .or_insert_with(|| toml::Value::Table(Table::new()));
+    let Some(metadata) = metadata.as_table_mut() else {
+        return Err(invalid("`metadata` is not a table".to_string()));
+    };
+    metadata.insert("package".to_string(), value);
+    let text = toml::to_string(&document).map_err(|err| invalid(err.to_string()))?;
+    storage
+        .write_byte_stream(
+            &path,
+            aws_sdk_s3::primitives::ByteStream::from(text.into_bytes()),
+        )
+        .await
+}
+
 /// `value` as TOML, refused where it holds an integer beyond TOML's signed 64
 /// bits: one kept in `numbers`, or one above `i64::MAX`.
 fn checked_toml(value: &Value, numbers: &RawNumbers, owner: &str) -> Result<toml::Value, String> {

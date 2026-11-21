@@ -378,17 +378,19 @@ exits 1 unless every entry synced. Under `--json` it prints `dataspace`,
 `read_only`, `completed` and `entries`, each with `package`, `folder`,
 `outcome` and `message`.
 
-`QUILT_DATASPACES=1` makes the dataspace form the default for every verb that
-has one: `install`, `uninstall`, `read`, `publish`, `reattach`, `status`,
-`list`, `log`, `commit`, `undo-commit`, `reset`, `certify`, `remove-revisions`,
-`keep`, `create`, `home` and `gc` act on the default dataspace, the one
+The dataspace form is the default for every verb that has one: `install`,
+`uninstall`, `read`, `publish`, `reattach`, `status`, `list`, `log`,
+`commit`, `undo-commit`, `reset`, `certify`, `remove-revisions`, `keep`,
+`create`, `home` and `gc` act on the default dataspace, the one
 `home --dataspace` chose, when no `--dataspace` names one, and refuse the
 flags only the home's form takes. `--domain` and `QUILT_DOMAIN` then name the
 dataspace Domain, which is otherwise `bio.quilt.dataspace` in the OS's local
 data folder, and the credentials and the default dataspace's choice are kept
 in the application's folder there. `browse`, `catalog`, `login`, `role`,
 `pull`, `push`, `lineage`, `upgrade` and `version` have no dataspace form and
-are unchanged. Unset, or any value but `1`, every verb is as it was.
+are unchanged. With `QUILT_DATASPACES=0` (or `false`, or `off`) every verb is
+as it was before the cutover; see
+[Upgrading](#upgrading-the-dataspace-cutover).
 
 `push` with no commit to push prints `Nothing to push` and exits 0; under
 `--json` the same shape has `"hash": null`, `"manifest_uri": null` and
@@ -451,6 +453,22 @@ check. Under `--json` the same fields are `version`, `quilt_rs`, `quilt_uri`,
 when not set).
 
 Run `quilt <command> --help` for arguments.
+
+## Upgrading: the dataspace cutover
+
+The dataspace verbs are now the default. A verb with a dataspace form acts on
+the default dataspace when no `--dataspace` names one, and `--domain` and
+`QUILT_DOMAIN` name the dataspace Domain, `bio.quilt.dataspace` in the OS's
+local data folder by default.
+
+The first such verb imports, once, the packages an older `quilt` kept in
+`.quilt/`: each becomes a `sync` entry of the old home, now the default
+dataspace, with its local commits in `data.lock.toml`. It prints what it did.
+The old folder is only read, so nothing is lost. An import that is refused or
+stops prints why and runs the command as before; the next run tries again and
+finishes one that stopped part way.
+
+To keep the old behaviour for one more release, set `QUILT_DATASPACES=0`.
 
 ## Global flags
 

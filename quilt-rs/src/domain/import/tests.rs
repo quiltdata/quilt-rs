@@ -1104,3 +1104,126 @@ async fn an_unfinished_import_refuses_one_from_another_folder() -> Res {
     );
     Ok(())
 }
+
+/// The cutover imports the old domain on its first start, makes the old home
+/// the application's default dataspace, and imports nothing on the next.
+#[test(tokio::test)]
+async fn the_cutover_imports_once_then_not_again() -> Res {
+    let old = Old::new()?;
+    pushed_with_commits(&old, &("acme", "demo").into(), "bucket").await?;
+    let before = old.snapshot()?;
+
+    let first = cutover(&old.storage, &old.app(), &old.domain()).await;
+    let second = cutover(&old.storage, &old.app(), &old.domain()).await;
+
+    let Cutover::Imported(imported) = &first else {
+        panic!("{first:?}");
+    };
+    assert_eq!(imported.packages.len(), 1);
+    assert!(
+        first
+            .report()
+            .is_some_and(|report| report.contains("acme/demo: synced as"))
+    );
+    assert!(matches!(second, Cutover::Done), "{second:?}");
+    assert!(second.on() && second.report().is_none());
+    let chosen = crate::dataspace::home::default_dataspace(&old.storage, &old.app()).await?;
+    assert_eq!(chosen, Some(dataspace_path(&old.home())?));
+    // Only the application's choice of dataspace was added beside `.quilt/`.
+    let mut after = old.snapshot()?;
+    after.remove(
+        &old.app()
+            .join(crate::dataspace::home::DEFAULT_DATASPACE_FILE),
+    );
+    assert_eq!(after, before);
+    Ok(())
+}
+
+/// An application folder with no older domain has nothing to import.
+#[test(tokio::test)]
+async fn the_cutover_with_no_old_domain_imports_nothing() -> Res {
+    let dir = TempDir::new()?;
+    let domain = DomainRoot::new(dir.path().join("domain"));
+
+    let found = cutover(&LocalStorage::new(), &dir.path().join("app"), &domain).await;
+
+    assert!(matches!(found, Cutover::Nothing), "{found:?}");
+    assert!(found.on());
+    assert!(!dir.path().join("domain").exists());
+    Ok(())
+}
+
+/// A refused import falls back to the ref path, leaving the old folder as
+/// it was, and says why.
+#[test(tokio::test)]
+async fn a_refused_cutover_falls_back() -> Res {
+    let old = Old::new()?;
+    pushed_with_commits(&old, &("acme", "demo").into(), "bucket").await?;
+    old.domain()
+        .set_autosync(&old.storage, &old.dir.path().join("elsewhere"), true)
+        .await?;
+    let before = old.snapshot()?;
+
+    let found = cutover(&old.storage, &old.app(), &old.domain()).await;
+
+    assert!(
+        matches!(found, Cutover::FellBack(ImportError::InUse)),
+        "{found:?}"
+    );
+    assert!(!found.on());
+    assert!(
+        found
+            .report()
+            .is_some_and(|report| report.contains("ref path"))
+    );
+    assert_eq!(old.snapshot()?, before);
+    Ok(())
+}
+
+/// A cutover stopped part way falls back, and the next start finishes it.
+#[test(tokio::test)]
+async fn an_interrupted_cutover_resumes_on_the_next_start() -> Res {
+    let old = Old::new()?;
+    pushed_with_commits(&old, &("acme", "first").into(), "bucket").await?;
+    pushed_with_commits(&old, &("acme", "second").into(), "bucket").await?;
+
+    let stopped = crate::failpoint::stopping_at(
+        "import.package",
+        0,
+        cutover(&old.storage, &old.app(), &old.domain()),
+    )
+    .await;
+    let resumed = cutover(&old.storage, &old.app(), &old.domain()).await;
+
+    assert!(matches!(&stopped, Cutover::FellBack(_)), "{stopped:?}");
+    let Cutover::Imported(imported) = resumed else {
+        panic!("{resumed:?}");
+    };
+    assert_eq!(imported.packages.len(), 2);
+    Ok(())
+}
+
+/// A Domain inside the old `.quilt/`, or in a folder holding another older
+/// domain, is refused before anything is written.
+#[test(tokio::test)]
+async fn a_domain_in_an_old_folder_is_refused() -> Res {
+    let old = Old::new()?;
+    pushed_with_commits(&old, &("acme", "demo").into(), "bucket").await?;
+    let other = Old::new()?;
+    for domain in [
+        DomainRoot::new(old.paths.dot_quilt_dir().join("domain")),
+        DomainRoot::new(other.app()),
+    ] {
+        let before = old.snapshot()?;
+
+        let found = cutover(&old.storage, &old.app(), &domain).await;
+
+        assert!(
+            matches!(&found, Cutover::FellBack(ImportError::OldFolder(_))),
+            "{found:?}"
+        );
+        assert_eq!(old.snapshot()?, before);
+        assert!(!other.app().join(crate::domain::DOMAIN_FILE).exists());
+    }
+    Ok(())
+}

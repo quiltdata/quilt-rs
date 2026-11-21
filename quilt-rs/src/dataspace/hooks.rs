@@ -7,8 +7,14 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::path::Path;
+use std::path::PathBuf;
 use std::process::ExitStatus;
 use std::process::Stdio;
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
 
 use serde::Deserialize;
 use thiserror::Error;
@@ -156,10 +162,90 @@ pub(crate) async fn run(
 }
 
 /// [`run`] for a point after a read or write, which is done whatever the
-/// script does: its failure is logged.
+/// script does: its failure is logged. Then each application hook
+/// [`register`]ed for the dataspace at `point` is called.
 pub(crate) async fn after(contract: &Contract, point: HookPoint, entry: &Entry, revision: &str) {
     if let Err(err) = run(contract, point, entry, Some(revision)).await {
         warn!("{}: {err}", entry.key());
+    }
+    call_registered(&HookCall {
+        point,
+        dataspace: contract.dataspace().to_path_buf(),
+        entry: entry.clone(),
+        revision: revision.to_string(),
+    });
+}
+
+/// What an application hook is called with: the point, the dataspace, the
+/// entry and the revision just read or stored.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HookCall {
+    pub point: HookPoint,
+    pub dataspace: PathBuf,
+    pub entry: Entry,
+    pub revision: String,
+}
+
+/// An application's own hook, called in its process at a point after a read
+/// or a write, as the dataspace's script is: 25.13's application-wide hook,
+/// an application preference rather than a line of `data.toml`.
+///
+/// It is called on the flow's task and must return at once, handing any
+/// work to a task of its own. It can't stop what it follows.
+pub type AppHook = Arc<dyn Fn(&HookCall) + Send + Sync>;
+
+struct Registered {
+    id: u64,
+    dataspace: PathBuf,
+    point: HookPoint,
+    hook: AppHook,
+}
+
+static REGISTERED: Mutex<Vec<Registered>> = Mutex::new(Vec::new());
+static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+
+fn registered() -> std::sync::MutexGuard<'static, Vec<Registered>> {
+    REGISTERED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Calls `hook` at `point` in the dataspace at `dataspace`, in this process,
+/// until the returned guard is dropped.
+#[must_use = "the hook is removed when the guard drops"]
+pub fn register(dataspace: &Path, point: HookPoint, hook: AppHook) -> Registration {
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    registered().push(Registered {
+        id,
+        dataspace: std::path::absolute(dataspace).unwrap_or_else(|_| dataspace.to_path_buf()),
+        point,
+        hook,
+    });
+    Registration { id }
+}
+
+/// Removes its hook when dropped.
+#[derive(Debug)]
+pub struct Registration {
+    id: u64,
+}
+
+impl Drop for Registration {
+    fn drop(&mut self) {
+        registered().retain(|registered| registered.id != self.id);
+    }
+}
+
+fn call_registered(call: &HookCall) {
+    let dataspace = std::path::absolute(&call.dataspace).unwrap_or_else(|_| call.dataspace.clone());
+    // Called outside the lock, so a hook may register or drop one.
+    let hooks: Vec<AppHook> = registered()
+        .iter()
+        .filter(|registered| registered.point == call.point && registered.dataspace == dataspace)
+        .map(|registered| Arc::clone(&registered.hook))
+        .collect();
+    for hook in hooks {
+        hook(call);
     }
 }
 

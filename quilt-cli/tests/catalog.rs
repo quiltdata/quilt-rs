@@ -17,6 +17,8 @@ fn quilt(home: &Path, args: &[&str]) -> (bool, serde_json::Value) {
         .env("HOME", home)
         .env("XDG_DATA_HOME", home.join("xdg"))
         .env("QUILT_AUTH_DIR", home.join("auth"))
+        // `--domain` names the application's folder, as the switch off has it.
+        .env("QUILT_DATASPACES", "0")
         .output()
         .unwrap();
     let stream = if output.status.success() {

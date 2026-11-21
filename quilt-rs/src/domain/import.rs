@@ -152,6 +152,12 @@ pub enum ImportError {
     InUse,
 
     #[error(
+        "{} is, or is inside, a folder an older Quilt keeps its packages in, so it can't be the Domain",
+        .0.display()
+    )]
+    OldFolder(PathBuf),
+
+    #[error(
         "{} is a dataspace already, holding {CONTRACT_FILE} or {LOCK_FILE}, so it can't become the default one",
         .0.display()
     )]
@@ -261,6 +267,7 @@ async fn import_comparing(
     let from = std::path::absolute(from)?;
     let paths = DomainPaths::new(from.clone());
     let refs = RefStore::new(paths.clone());
+    refuse_old_folder(storage, &paths, domain).await?;
     storage.create_dir_all(domain.root()).await?;
     let _held = storage.lock_exclusive(domain.domain_lock()).await?;
 
@@ -354,6 +361,184 @@ async fn import_comparing(
         packages,
         autosync,
     })
+}
+
+/// Whether the folder `paths` names holds a domain an older build keeps.
+async fn holds_old_domain(storage: &(impl Storage + Sync), paths: &DomainPaths) -> bool {
+    storage.exists(paths.lineage()).await || storage.exists(paths.domain_config()).await
+}
+
+/// [`ImportError::OldFolder`] where `domain` would put its files in an older
+/// build's folder, as [`import`] refuses it, for the application whose folder
+/// is `app`. A caller that imports nothing checks with it that the Domain
+/// is not a folder the ref path still names.
+pub async fn check_domain(
+    storage: &(impl Storage + Sync),
+    app: &Path,
+    domain: &DomainRoot,
+) -> Result<(), ImportError> {
+    let app = std::path::absolute(app)?;
+    refuse_old_folder(storage, &DomainPaths::new(app), domain).await
+}
+
+/// Refuses a Domain whose files would land in an older build's folder:
+/// inside the `.quilt/` imported from, or in a folder holding another one.
+/// The folder imported from may itself be the Domain's, as for a
+/// `QUILT_DOMAIN` that names both: the Domain's files sit beside `.quilt/`.
+async fn refuse_old_folder(
+    storage: &(impl Storage + Sync),
+    paths: &DomainPaths,
+    domain: &DomainRoot,
+) -> Result<(), ImportError> {
+    let root = std::path::absolute(domain.root())?;
+    let inside = root.starts_with(paths.dot_quilt_dir());
+    let other = DomainPaths::new(root.clone());
+    if inside
+        || (other.dot_quilt_dir() != paths.dot_quilt_dir()
+            && holds_old_domain(storage, &other).await)
+    {
+        return Err(ImportError::OldFolder(root));
+    }
+    Ok(())
+}
+
+/// How a start with the dataspace switch on found the Domain: see [`cutover`].
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum Cutover {
+    /// The application's folder holds no older domain: nothing to import.
+    Nothing,
+    /// The import ran on this start.
+    Imported(Imported),
+    /// The import finished on an earlier start.
+    Done,
+    /// The import was refused, or stopped: the caller runs on the ref path,
+    /// and the next start tries again, finishing an import that stopped part
+    /// way. The old folder was only read.
+    FellBack(ImportError),
+}
+
+impl Cutover {
+    /// Whether the caller runs on the Domain: everything but
+    /// [`Cutover::FellBack`].
+    #[must_use]
+    pub fn on(&self) -> bool {
+        !matches!(self, Self::FellBack(_))
+    }
+
+    /// What to show the user: the import's result, or why it fell back.
+    /// `None` where nothing happened.
+    #[must_use]
+    pub fn report(&self) -> Option<String> {
+        match self {
+            Self::Nothing | Self::Done => None,
+            Self::Imported(imported) => {
+                let mut lines = vec![format!(
+                    "Imported the packages an older Quilt kept into the dataspace {}:",
+                    imported.dataspace.display()
+                )];
+                lines.extend(
+                    imported
+                        .packages
+                        .iter()
+                        .map(|(namespace, outcome)| format!("  {namespace}: {outcome}")),
+                );
+                if imported.packages.is_empty() {
+                    lines.push("  (no packages)".to_string());
+                }
+                Some(lines.join("\n"))
+            }
+            Self::FellBack(err) => Some(format!(
+                "The packages an older Quilt kept were not imported, so the ref path runs: {err}. The old folder was not changed."
+            )),
+        }
+    }
+}
+
+impl std::fmt::Display for PackageImport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Locked { key, commits, .. } | Self::Unpublished { key, commits } => {
+                write!(f, "synced as {key}")?;
+                match commits.len() {
+                    0 => Ok(()),
+                    1 => write!(f, ", with 1 commit not pushed"),
+                    count => write!(f, ", with {count} commits not pushed"),
+                }
+            }
+            Self::NothingTracked { key } => write!(f, "left out, as {key} tracks no file"),
+            Self::LocalTaken { key, .. } => {
+                write!(f, "left out, as {key} names another revision already")
+            }
+            Self::NoStore { bucket, reason } => {
+                write!(f, "left out, as bucket {bucket} has no store: {reason}")
+            }
+            Self::Undeclarable { key, reason } => write!(f, "left out, as {key} {reason}"),
+            Self::NoRevision => write!(f, "left out, as it has no revision"),
+            Self::Unreadable { reason } => {
+                write!(f, "left out, as its ref can't be read: {reason}")
+            }
+        }
+    }
+}
+
+/// The cutover on a start with the dataspace switch on: imports the domain
+/// an older build keeps in `app`, the application's folder, into `domain`
+/// once, as [`import`] does.
+///
+/// It imports nothing where `app` holds no older domain, or the import
+/// finished before. It falls back where the import is refused or stops,
+/// leaving `app` as it was. Once the Domain is in use, the application's
+/// default dataspace is the imported one, where it chose none.
+pub async fn cutover(storage: &(impl Storage + Sync), app: &Path, domain: &DomainRoot) -> Cutover {
+    let file = match domain.read_file(storage).await {
+        Ok(file) => file,
+        Err(err) => return Cutover::FellBack(err.into()),
+    };
+    let outcome = match file {
+        Some(DomainFile {
+            import: Some(ImportRecord { done: true, .. }),
+            default_dataspace,
+            ..
+        }) => {
+            if let Some(dataspace) = default_dataspace {
+                choose_default(storage, app, &dataspace).await;
+            }
+            return Cutover::Done;
+        }
+        _ if !holds_old_domain(storage, &DomainPaths::new(app.to_path_buf())).await => {
+            return Cutover::Nothing;
+        }
+        // Boxed: the import's state machine is past `large_futures`' budget
+        // on Windows, and would grow every caller's.
+        _ => Box::pin(import(storage, app, domain)).await,
+    };
+    match outcome {
+        Ok(imported) => {
+            choose_default(storage, app, &imported.dataspace).await;
+            Cutover::Imported(imported)
+        }
+        Err(ImportError::Done(_)) => Cutover::Done,
+        Err(ImportError::NoDomain(_)) => Cutover::Nothing,
+        Err(err) => Cutover::FellBack(err),
+    }
+}
+
+/// Makes `dataspace` the application's default dataspace, where it chose
+/// none; a failure is only logged, as the choice can be made by hand.
+async fn choose_default(storage: &(impl Storage + Sync), app: &Path, dataspace: &Path) {
+    match crate::dataspace::home::default_dataspace(storage, app).await {
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            if let Err(err) = crate::dataspace::home::set_home(storage, app, dataspace).await {
+                warn!(
+                    "{} was not made the default dataspace: {err}",
+                    dataspace.display()
+                );
+            }
+        }
+        Err(err) => warn!("The default dataspace could not be read: {err}"),
+    }
 }
 
 /// The record of the import this one finishes, where one stopped part way.

@@ -346,13 +346,7 @@ pub async fn login(
     host: &quilt_uri::Host,
     code: String,
 ) -> Result<(), Error> {
-    model
-        .get_quilt()
-        .lock()
-        .await
-        .get_remote()
-        .login(host, code)
-        .await?;
+    model.remote().login(host, code).await?;
     Ok(())
 }
 
@@ -361,13 +355,7 @@ pub async fn login_oauth(
     host: &quilt_uri::Host,
     params: quilt::auth::OAuthParams,
 ) -> Result<(), Error> {
-    model
-        .get_quilt()
-        .lock()
-        .await
-        .get_remote()
-        .login_oauth(host, params)
-        .await?;
+    model.remote().login_oauth(host, params).await?;
     Ok(())
 }
 
@@ -382,7 +370,7 @@ pub async fn revision_message(
     model: &impl QuiltModel,
     manifest_uri: ManifestUri,
 ) -> Result<Option<String>, Error> {
-    let manifest = model.browse_remote_manifest(&manifest_uri).await?;
+    let manifest = model.fetch_remote_manifest(&manifest_uri).await?;
     Ok(manifest.header.message().map(str::to_owned))
 }
 
@@ -392,10 +380,7 @@ pub async fn get_or_register_client(
     redirect_uri: &str,
 ) -> Result<String, Error> {
     let client = model
-        .get_quilt()
-        .lock()
-        .await
-        .get_remote()
+        .remote()
         .get_or_register_client(host, redirect_uri)
         .await?;
     Ok(client.client_id)
@@ -444,7 +429,7 @@ mod tests {
         // origin, and hash — not reconstructed from any installed lineage.
         let expected = requested.clone();
         model
-            .expect_browse_remote_manifest()
+            .expect_fetch_remote_manifest()
             .times(1)
             .withf(move |uri| *uri == expected)
             .returning(|_| {
