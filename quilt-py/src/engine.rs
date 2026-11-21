@@ -325,10 +325,10 @@ pub async fn commit(
 
 /// Opens `package` in `dataspace` at the revision its lock holds, the last
 /// local commit, else the base (quilt-specs#297's browse-revision), as
-/// `{"package", "registry", "name", "hash", "manifest"}`, the manifest as
-/// its JSON Lines text, which quilt3 loads as a `Package`. `package` is a
-/// URI, or a name the contract gives one package. Nothing in the dataspace
-/// is written.
+/// `{"package", "registry", "name", "hash", "base", "manifest"}`, the
+/// manifest as its JSON Lines text, which quilt3 loads as a `Package`, and
+/// `base` the lock's registry revision, or `None`. `package` is a URI, or a
+/// name the contract gives one package. Nothing in the dataspace is written.
 pub async fn browse(
     remote: &impl Remote,
     domain: &DomainRoot,
@@ -347,6 +347,7 @@ pub async fn browse(
         "registry": key.registry.spelled(),
         "name": key.package.to_string(),
         "hash": browsed.hash,
+        "base": browsed.base,
         "manifest": browsed.manifest.to_jsonlines(),
     }))
 }

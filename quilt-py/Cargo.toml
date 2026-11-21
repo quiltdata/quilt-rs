@@ -4,7 +4,7 @@ description = "The Python binding of quilt-rs, published to PyPI as `quilt`: the
 readme = "README.md"
 # The wheels go to PyPI as `quilt` (quilt-specs#297, entry 27e); nothing goes
 # to crates.io. maturin turns this version into the wheel's.
-version = "3.0.0-dev"
+version = "3.0.0-rc.1"
 publish = false
 
 # Inherit from workspace
