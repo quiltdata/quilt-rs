@@ -185,20 +185,66 @@ fn entries(
     to_python(py, &Value::Array(declared))
 }
 
+/// `object` as JSON: dicts with string keys, lists and tuples, strings,
+/// booleans, `None`, floats, and integers within TOML's signed 64 bits. A
+/// larger integer is refused rather than rounded to a float, as reading it
+/// through `json.dumps` would round it; so are a float that is not finite
+/// and any other type.
+fn to_json(object: &Bound<'_, PyAny>) -> PyResult<Value> {
+    use pyo3::types::PyBool;
+    use pyo3::types::PyDict;
+    use pyo3::types::PyFloat;
+    use pyo3::types::PyInt;
+    use pyo3::types::PyList;
+    use pyo3::types::PyString;
+    use pyo3::types::PyTuple;
+
+    if object.is_none() {
+        Ok(Value::Null)
+    } else if let Ok(flag) = object.cast::<PyBool>() {
+        Ok(Value::Bool(flag.is_true()))
+    } else if let Ok(int) = object.cast::<PyInt>() {
+        int.extract::<i64>().map(Value::from).map_err(|_| {
+            QuiltError::new_err(format!(
+                "metadata integer {int} is beyond TOML's signed 64 bits"
+            ))
+        })
+    } else if let Ok(float) = object.cast::<PyFloat>() {
+        serde_json::Number::from_f64(float.value())
+            .map(Value::Number)
+            .ok_or_else(|| QuiltError::new_err(format!("metadata float {float} is not finite")))
+    } else if let Ok(text) = object.cast::<PyString>() {
+        Ok(Value::String(text.to_str()?.to_string()))
+    } else if let Ok(dict) = object.cast::<PyDict>() {
+        let mut map = serde_json::Map::new();
+        for (key, value) in dict.iter() {
+            let key = key
+                .cast::<PyString>()
+                .map_err(|_| QuiltError::new_err(format!("metadata key {key} is not a string")))?;
+            map.insert(key.to_str()?.to_string(), to_json(&value)?);
+        }
+        Ok(Value::Object(map))
+    } else if let Ok(list) = object.cast::<PyList>() {
+        list.iter().map(|item| to_json(&item)).collect()
+    } else if let Ok(tuple) = object.cast::<PyTuple>() {
+        tuple.iter().map(|item| to_json(&item)).collect()
+    } else {
+        Err(QuiltError::new_err(format!(
+            "metadata of type {} is not JSON",
+            object.get_type().name()?
+        )))
+    }
+}
+
 /// Replaces the package metadata in a working folder's `metadata.toml`, for
-/// its next commit to publish. `metadata` is anything `json.dumps` takes.
+/// its next commit to publish. `metadata` is JSON as [`to_json`] takes it.
 #[pyfunction]
 fn set_package_metadata(
     py: Python<'_>,
     folder: PathBuf,
     metadata: &Bound<'_, PyAny>,
 ) -> PyResult<()> {
-    let text: String = py
-        .import("json")?
-        .call_method1("dumps", (metadata,))?
-        .extract()?;
-    let metadata: Value =
-        serde_json::from_str(&text).map_err(|err| QuiltError::new_err(err.to_string()))?;
+    let metadata = to_json(metadata)?;
     block_on(py, async move {
         engine::set_package_metadata(&folder, &metadata).await
     })

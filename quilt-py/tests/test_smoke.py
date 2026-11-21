@@ -139,3 +139,26 @@ def test_package_metadata_is_written_to_the_metadata_file(tmp_path):
     folder.mkdir()
     quilt.set_package_metadata(folder, {"assay": "rna"})
     assert 'assay = "rna"' in (folder / "metadata.toml").read_text()
+
+
+def test_a_metadata_integer_beyond_64_bits_raises_and_writes_nothing(tmp_path):
+    folder = tmp_path / "raw"
+    folder.mkdir()
+    with pytest.raises(quilt.QuiltError, match="beyond TOML's signed 64 bits"):
+        quilt.set_package_metadata(folder, {"id": 2**64 + 1})
+    with pytest.raises(quilt.QuiltError, match="not JSON"):
+        quilt.set_package_metadata(folder, {"when": object()})
+    assert not (folder / "metadata.toml").exists()
+
+
+def test_metadata_keeps_its_types(tmp_path):
+    folder = tmp_path / "raw"
+    folder.mkdir()
+    quilt.set_package_metadata(
+        folder, {"n": 2**63 - 1, "x": 0.5, "ok": True, "tags": ("a", "b")}
+    )
+    text = (folder / "metadata.toml").read_text()
+    assert "n = 9223372036854775807" in text
+    assert "x = 0.5" in text
+    assert "ok = true" in text
+    assert 'tags = ["a", "b"]' in text
