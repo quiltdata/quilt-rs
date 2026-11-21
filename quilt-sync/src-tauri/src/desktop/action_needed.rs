@@ -87,11 +87,7 @@ pub fn post_cutover(app: &AppHandle, services: &Services) {
     let Some(body) = services.cutover_notice.as_deref() else {
         return;
     };
-    let title = if services.dataspace.is_some() {
-        "Your packages moved to the dataspace engine"
-    } else {
-        "Your packages stay on the ref engine"
-    };
+    let title = "Dataspace engine";
     if let Err(err) = app.notification().builder().title(title).body(body).show() {
         warn!("could not post a notification: {err}");
     }

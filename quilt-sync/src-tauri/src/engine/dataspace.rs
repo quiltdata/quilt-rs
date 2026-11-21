@@ -520,15 +520,21 @@ impl<R: Remote + Sync> Dataspace<R> {
         Box::pin(self.sync_held(message)).await
     }
 
-    /// Commits `namespace`'s folder with `message`, then syncs, with no
-    /// tick between: a task's claim or outcome. The commit's failure, as
-    /// with nothing to commit, is logged and the sync still runs.
+    /// Writes `user_meta` as the package's metadata in `folder`, commits it
+    /// with `message`, then syncs, with no tick between: a task's claim or
+    /// outcome. The commit's failure, as with nothing to commit, is logged
+    /// and the sync still runs.
     pub async fn commit_and_sync(
         &self,
         namespace: &Namespace,
+        folder: &std::path::Path,
+        user_meta: &serde_json::Value,
         message: &str,
     ) -> Result<DataspaceSync, Error> {
         let _writes = self.hold_writes().await;
+        quilt_rs::dataspace::set_package_metadata(&self.storage, folder, user_meta)
+            .await
+            .map_err(fail)?;
         if let Err(err) = self.commit(namespace, message).await {
             debug!("{namespace}: nothing committed before the sync: {err}");
         }

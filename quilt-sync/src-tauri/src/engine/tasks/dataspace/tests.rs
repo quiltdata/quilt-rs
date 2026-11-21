@@ -207,3 +207,21 @@ async fn an_interrupted_task_is_recovered_on_the_next_start() -> Res {
     );
     Ok(())
 }
+
+/// Two checks of one package never both take its hold, so never both claim.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_package_is_held_by_one_check_at_a_time() -> Res {
+    let task = Task::new().await?;
+    let tasks = DataspaceTasks::new(Arc::clone(&task.theirs), task.data_dir(), no_agent());
+    let key = PackageKey {
+        registry: Registry::S3("b".to_string()),
+        package: raw(),
+    };
+
+    let first = tasks.try_hold(key.clone());
+    assert!(first.is_some());
+    assert!(tasks.try_hold(key.clone()).is_none());
+    drop(first);
+    assert!(tasks.try_hold(key).is_some());
+    Ok(())
+}

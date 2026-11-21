@@ -274,12 +274,12 @@ impl<R: Spawn> DataspaceTasks<R> {
         locked(&self.in_flight).contains(key)
     }
 
-    fn hold(&self, key: PackageKey) -> Hold {
-        locked(&self.in_flight).insert(key.clone());
-        Hold {
+    /// Takes the package's hold unless another check has it.
+    fn try_hold(&self, key: PackageKey) -> Option<Hold> {
+        locked(&self.in_flight).insert(key.clone()).then(|| Hold {
             key,
             in_flight: Arc::clone(&self.in_flight),
-        }
+        })
     }
 
     /// Acts on what `revision`, just read into `entry`, asks of this desktop.
@@ -377,10 +377,11 @@ impl<R: Spawn> DataspaceTasks<R> {
     /// Writes `user_meta` to the folder's metadata file, and commits and
     /// syncs it as `message`.
     async fn publish(&self, entry: &Entry, user_meta: &Value, message: &str) -> Result<(), Error> {
-        quilt_rs::dataspace::set_package_metadata(self.ds.storage(), &entry.folder, user_meta)
-            .await
-            .map_err(fail)?;
-        Box::pin(self.ds.commit_and_sync(&entry.package, message)).await?;
+        Box::pin(
+            self.ds
+                .commit_and_sync(&entry.package, &entry.folder, user_meta, message),
+        )
+        .await?;
         Ok(())
     }
 
@@ -426,6 +427,9 @@ impl<R: Spawn> DataspaceTasks<R> {
         document: String,
         (agent_id, agent): (String, AgentSettings),
     ) -> Result<(), Error> {
+        let Some(hold) = self.try_hold(entry.key()) else {
+            return Ok(());
+        };
         if self.clean_at(entry, revision).await?.is_none() {
             return Ok(());
         }
@@ -438,7 +442,6 @@ impl<R: Spawn> DataspaceTasks<R> {
             );
             return Ok(());
         }
-        let hold = self.hold(entry.key());
         let claim = Claim {
             invocation_id: uuid::Uuid::new_v4().to_string(),
             claimed_at: agent_exec::claim_time(jiff::Timestamp::now()),

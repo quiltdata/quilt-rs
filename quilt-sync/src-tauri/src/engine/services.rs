@@ -221,14 +221,18 @@ impl Services {
         let Some(ds) = &self.dataspace else {
             return;
         };
-        let next = watch_dataspace(ds, &self.data_dir, &self.fswatcher_settings).await;
-        let mut held = self
+        // The old dispatch goes first, so it never runs beside the new one.
+        let old = self
             .dataspace_watch
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        // The old dispatch goes first, so it never runs beside the new one.
-        *held = None;
-        *held = Some(next);
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        drop(old);
+        let next = watch_dataspace(ds, &self.data_dir, &self.fswatcher_settings).await;
+        *self
+            .dataspace_watch
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(next);
     }
 
     /// The home folder the Settings page and the diagnostics show: the
