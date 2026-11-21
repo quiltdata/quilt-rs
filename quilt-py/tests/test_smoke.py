@@ -79,3 +79,22 @@ def test_a_package_is_not_created_under_read(tmp_path):
             domain=tmp_path / "domain",
             home=tmp_path / "home",
         )
+
+
+def test_an_install_whose_read_fails_raises(tmp_path):
+    """A failed read after declare must raise QuiltError for try/except."""
+    space = tmp_path / "space"
+    space.mkdir()
+    (space / "data.toml").write_text(
+        'registry = "s3://b"\n\n[hooks.pre-read]\ncommand = "false"\n'
+    )
+    # No remote package: the hook fails first when a package exists; without
+    # one the install fails earlier. Either path must raise QuiltError, never
+    # return a dict with outcome "failed".
+    with pytest.raises(quilt.QuiltError):
+        quilt.install(
+            "quilt+s3://b#package=team/raw",
+            dataspace=space,
+            domain=tmp_path / "domain",
+            home=tmp_path / "home",
+        )

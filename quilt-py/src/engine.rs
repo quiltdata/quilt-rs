@@ -12,6 +12,7 @@ use serde_json::Value;
 use serde_json::json;
 use thiserror::Error;
 
+use quilt_rs::dataspace::EntryError;
 use quilt_rs::dataspace::commit::CommitError;
 use quilt_rs::dataspace::commit::commit as commit_package;
 use quilt_rs::dataspace::contract::Access;
@@ -78,6 +79,12 @@ pub enum Error {
 
     #[error(transparent)]
     Install(#[from] InstallError),
+
+    /// The entry was declared, but the read that followed failed: a
+    /// `pre-read` hook, or the remote. Raised so quilt3's `try`/`except`
+    /// sees it, rather than a dict with `"outcome": "failed"`.
+    #[error(transparent)]
+    FailedRead(#[from] EntryError),
 
     #[error(transparent)]
     Commit(#[from] CommitError),
@@ -202,16 +209,18 @@ pub async fn install(
         &install,
     )
     .await?;
-    let read = &installed.read;
+    // A failed read leaves the entry in `data.toml` (the engine's rule) but
+    // must surface as an error for quilt3's `try`/`except`, not as a dict
+    // with `"outcome": "failed"` (quilt-specs#297's writers).
+    let read = match installed.read {
+        InstallRead::Failed(err) => return Err(Error::FailedRead(err)),
+        read => read,
+    };
     let mut value = entry_json(&installed.entry);
     value["declared"] = installed.declared.into();
-    value["outcome"] = outcome(read).into();
+    value["outcome"] = outcome(&read).into();
     value["completed"] = read.completed().into();
     value["revision"] = read.lock_base().into();
-    value["error"] = match read {
-        InstallRead::Failed(err) => err.to_string().into(),
-        _ => Value::Null,
-    };
     Ok(value)
 }
 

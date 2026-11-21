@@ -8,11 +8,14 @@ rules. It replaces the legacy Quilt 2 library on PyPI (2.9.15), so
 `pip install -U quilt` on a Quilt 2 install gets this one.
 
 ```python
+from pathlib import Path
+
 import quilt
 
-quilt.install("quilt+s3://bucket#package=team/raw", dataspace="~/data")
-quilt.create("quilt+s3://bucket#package=team/new", dataspace="~/data")
-quilt.commit("team/raw", "first", dataspace="~/data")
+data = Path("~/data").expanduser()
+quilt.install("quilt+s3://bucket#package=team/raw", dataspace=data)
+quilt.create("quilt+s3://bucket#package=team/new", dataspace=data)
+quilt.commit("team/raw", "first", dataspace=data)
 quilt.list_registries()
 ```
 

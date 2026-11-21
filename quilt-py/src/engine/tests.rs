@@ -294,3 +294,23 @@ async fn a_package_is_not_created_under_read() -> Test {
     );
     Ok(())
 }
+
+#[test(tokio::test)]
+async fn an_install_whose_read_fails_is_an_error() -> Test {
+    let remote = MockRemote::default();
+    publish(&remote).await?;
+    let dir = tempfile::TempDir::new()?;
+    // A `pre-read` hook that exits 1 leaves the entry declared and the
+    // read failed, as the engine does; the binding must raise, not return
+    // a dict with `"outcome": "failed"`.
+    let space = space(dir.path(), "\n[hooks.pre-read]\ncommand = \"false\"\n")?;
+    let domain = DomainRoot::new(dir.path().join("domain"));
+
+    let result = install(&remote, &domain, &space, request("sync")).await;
+
+    assert!(matches!(result, Err(Error::FailedRead(_))), "{result:?}");
+    let contract = std::fs::read_to_string(space.join("data.toml"))?;
+    assert!(contract.contains("sync"), "{contract}");
+    assert!(!space.join("team/raw/a.txt").exists());
+    Ok(())
+}
