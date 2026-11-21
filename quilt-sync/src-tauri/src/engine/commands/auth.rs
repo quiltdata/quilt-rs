@@ -398,7 +398,7 @@ async fn login_command(
     host: &str,
     code: String,
 ) -> Result<(), Error> {
-    let host = quilt_uri::Host::from_str(host)?;
+    let host = quilt_uri::Host::from_user_input(host)?;
     model::login(m, &host, code).await?;
 
     tracing.track(MixpanelEvent::UserLoggedIn(LoginEvent {
@@ -445,7 +445,7 @@ pub async fn login_oauth(
     // `host` is this command's IPC argument name, so it stays a `String` in the
     // signature; the parsed form takes the name from here down.
     let host_str = host;
-    let host = Host::from_str(&host_str).map_err(|e| e.to_string())?;
+    let host = Host::from_user_input(&host_str).map_err(|e| e.to_string())?;
 
     let redirect_uri = crate::engine::oauth::redirect_uri(&host);
     let client_id = model::get_or_register_client(m, &host, &redirect_uri)

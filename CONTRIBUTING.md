@@ -5,6 +5,8 @@ This repository contains multiple projects in a unified workspace:
 - **[quilt-rs](quilt-rs/)** - Rust library for accessing Quilt data packages
   (built on [aws-sdk-rust](https://github.com/awslabs/aws-sdk-rust) and
   [Tokio](https://tokio.rs/))
+- **[quilt-auth](quilt-auth/)** - Transport-free auth helpers shared with
+  [quiltx](https://github.com/quiltdata/quiltx): catalog host normalization
 - **[quilt-uri](quilt-uri/)** - Parser and types for Quilt+ URIs
 - **[quilt-cli](quilt-cli/)** - Command-line interface for Quilt data packages
   (built with [clap](https://github.com/clap-rs/clap))
@@ -17,7 +19,7 @@ This repository contains multiple projects in a unified workspace:
 For detailed contributing information, see the project-specific guides:
 
 - **[quilt-rs Contributing Guide](quilt-rs/CONTRIBUTING.md)** - Releasing the
-  crates.io crates (`quilt-uri`, `quilt-rs`, `quilt-cli`)
+  crates.io crates (`quilt-auth`, `quilt-uri`, `quilt-rs`, `quilt-cli`)
 - **[QuiltSync Contributing Guide](quilt-sync/CONTRIBUTING.md)** - Desktop
   application development
 
@@ -213,8 +215,8 @@ if you have not.
 
 Each project has different release approaches:
 
-- **quilt-uri**, **quilt-rs**: Libraries published to crates.io, plus a
-  GitHub Release, by `release-crate.yaml`
+- **quilt-auth**, **quilt-uri**, **quilt-rs**: Libraries published to
+  crates.io, plus a GitHub Release, by `release-crate.yaml`
 - **quilt-cli**: Published to crates.io by `release-crate.yaml`, which also
   attaches prebuilt binaries for macOS (x86_64, aarch64) and Linux
   (x86_64-gnu) to its GitHub Release; install via `cargo binstall quilt-cli`
@@ -233,7 +235,7 @@ Every released crate has its own version in its own `Cargo.toml` and its own
 in `quilt-sync/src-tauri/Cargo.toml`; `quilt-sync-ui` is not released.
 `quilt-rs` and `quilt-cli` name the upstream crates' versions in their
 path-dependency `version =` specifiers, so the crates are released as a
-cascade, `quilt-uri` → `quilt-rs` → `quilt-cli`.
+cascade, `quilt-auth` → `quilt-uri` → `quilt-rs` → `quilt-cli`.
 
 ### Unreleased Versions
 

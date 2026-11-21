@@ -96,13 +96,14 @@ jobs:
             sync:
               - "**"
               - "!**/*.md"
-            # The UI, its path dependencies (`cargo metadata`: quilt-ui-kit and
-            # quilt-uri), the workspace files, and the recipes and CI files it
+            # The UI, its path dependencies (`cargo metadata`: quilt-ui-kit,
+            # quilt-uri and quilt-uri's quilt-auth), the workspace files, and the recipes and CI files it
             # runs with.
             ui:
               - quilt-sync/ui/**
               - quilt-ui-kit/**
               - quilt-uri/**
+              - quilt-auth/**
               - Cargo.toml
               - Cargo.lock
               - rust-toolchain.toml
@@ -171,7 +172,7 @@ jobs:
 
   crates:
     name: crates
-    # The crates published to crates.io: quilt-rs, quilt-uri and quilt-cli.
+    # The crates published to crates.io: quilt-auth, quilt-uri, quilt-rs and quilt-cli.
     # The QuiltSync crates and the UI kit are `publish = false`. This runner has
     # no Tauri system libraries, so it cannot build `quilt-sync`; `quilt-sync-ui`
     # and `quilt-ui-kit` are tested in the `frontend` jobs.

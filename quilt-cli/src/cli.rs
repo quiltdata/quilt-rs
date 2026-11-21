@@ -839,7 +839,7 @@ enum Commands {
         code: Option<String>,
         /// Quilt stack to log in to. Omit to use the default catalog.
         /// Ex. open.quiltdata.com
-        #[arg(long)]
+        #[arg(long, value_parser = Host::from_user_input)]
         host: Option<Host>,
     },
     /// List installed packages

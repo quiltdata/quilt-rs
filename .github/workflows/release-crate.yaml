@@ -10,6 +10,7 @@ on:
         options:
           - quilt-rs
           - quilt-uri
+          - quilt-auth
           - quilt-cli
 
 jobs:

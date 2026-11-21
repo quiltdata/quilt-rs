@@ -6,13 +6,14 @@ the workspace is split this way, see
 
 ## Workspace layout
 
-One Cargo workspace, six `Cargo.toml` files (root + five members).
-QuiltSync contributes two of the five members.
+One Cargo workspace, seven `Cargo.toml` files (root + six members).
+QuiltSync contributes two of the six members.
 
 | `Cargo.toml` | Crate | Released to |
 | --- | --- | --- |
 | root | — | (workspace manifest) |
 | `quilt-rs/` | `quilt-rs` | crates.io + GitHub Release |
+| `quilt-auth/` | `quilt-auth` | crates.io + GitHub Release |
 | `quilt-uri/` | `quilt-uri` | crates.io + GitHub Release |
 | `quilt-cli/` | `quilt-cli` | crates.io + GitHub Release with prebuilt binaries |
 | `quilt-sync/src-tauri/` | `quilt-sync` | GitHub Release + HubSpot mirror |
@@ -24,6 +25,7 @@ not repeated here.
 
 Path-dep version specifiers are kept in sync manually:
 
+- `quilt-uri/Cargo.toml`: `quilt-auth = { path = "...", version = "..." }`.
 - `quilt-rs/Cargo.toml`: `quilt-uri = { path = "...", version = "..." }`.
 - `quilt-cli/Cargo.toml`: `quilt-rs = { ... }` and `quilt-uri = { ... }`.
 - `quilt-sync/*` use path-only deps (no `version =`), so internal bumps
@@ -59,7 +61,7 @@ or schedule.
 
 | Workflow | Inputs | Output |
 | --- | --- | --- |
-| `release-crate.yaml` | `crate` ∈ {`quilt-rs`, `quilt-uri`, `quilt-cli`} | crates.io publish + GitHub draft release |
+| `release-crate.yaml` | `crate` ∈ {`quilt-rs`, `quilt-uri`, `quilt-auth`, `quilt-cli`} | crates.io publish + GitHub draft release |
 | `release-quilt-sync.yaml` | `environment` (GitHub Environment) | GitHub draft release with cross-platform installers; gated `promote` job flips draft → public + dispatches `upload-to-hubspot.yaml` |
 | `upload-to-hubspot.yaml` | `release_tag`, `hubspot_folder` (default `/quiltsync/`) | Mirrors a published QuiltSync release to HubSpot Files + writes a HubDB row. Triggered automatically by the QuiltSync `promote` job; can also be re-run manually if HubSpot upload flakes. |
 
@@ -235,7 +237,8 @@ For any release:
 
 - Drop `-dev` from `version` in the relevant `Cargo.toml` and update
   path-dep specifiers. The released crates are dependent on each other and
-  must be released as a cascade: `quilt-uri` → `quilt-rs` → `quilt-cli`.
+  must be released as a cascade: `quilt-auth` → `quilt-uri` → `quilt-rs` →
+  `quilt-cli`.
   Bumping an upstream crate requires bumping every downstream crate
   that depends on it (and updating that downstream `Cargo.toml`'s
   `version =` specifier for the path dep).
