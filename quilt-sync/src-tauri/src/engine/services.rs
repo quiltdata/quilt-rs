@@ -343,8 +343,16 @@ type FolderWatch = notify_debouncer_full::Debouncer<
 struct DataspaceWatch {
     /// `None` where watching is off or could not start.
     _folders: Option<FolderWatch>,
-    /// `agent_exec`'s dispatch from the `post-read` hook.
-    _tasks: quilt::dataspace::hooks::Registration,
+    /// `agent_exec`'s check from the `post-read` hook.
+    _hook: quilt::dataspace::hooks::Registration,
+    /// The task runner, whose runs stop when this is dropped.
+    tasks: Arc<crate::engine::tasks::dataspace::DataspaceTasks>,
+}
+
+impl Drop for DataspaceWatch {
+    fn drop(&mut self) {
+        self.tasks.shutdown();
+    }
 }
 
 /// Starts watching folders: the dataspace engine's dataspace for its
@@ -382,11 +390,15 @@ async fn watch_dataspace(
     if let Err(err) = ds.autosync_on().await {
         error!("The default dataspace could not be put on autosync: {err}");
     }
-    let tasks = crate::engine::tasks::dataspace::register(
-        ds,
+    let tasks = crate::engine::tasks::dataspace::DataspaceTasks::new(
+        Arc::clone(ds),
         data_dir.to_path_buf(),
-        Arc::new(crate::engine::tasks::dataspace::log_task),
+        crate::engine::tasks::dataspace::acp_agent(),
     );
+    let hook = tasks.register();
+    // A run the last exit cut short is recovered, once the app is up.
+    let scanning = Arc::clone(&tasks);
+    tokio::spawn(async move { Box::pin(scanning.scan()).await });
     let (enabled, debounce_ms) = {
         let settings = settings.read().await;
         (settings.enabled, settings.debounce_ms)
@@ -401,7 +413,8 @@ async fn watch_dataspace(
     };
     DataspaceWatch {
         _folders: folders,
-        _tasks: tasks,
+        _hook: hook,
+        tasks,
     }
 }
 

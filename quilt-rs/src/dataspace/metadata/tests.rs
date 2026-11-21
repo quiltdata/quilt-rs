@@ -239,3 +239,38 @@ fn the_workflow_stamp_is_shown_and_not_taken() -> Res {
     assert_eq!(manifest.header.workflow, original.header.workflow);
     Ok(())
 }
+
+/// The package's metadata is replaced and everything else the file says is
+/// kept; a folder with no file gets one.
+#[test(tokio::test)]
+async fn set_package_metadata_replaces_only_the_packages() -> Res {
+    let storage = crate::io::storage::LocalStorage::new();
+    let dir = tempfile::TempDir::new()?;
+    std::fs::write(
+        dir.path().join(METADATA_FILE),
+        "message = \"m\"\nversion = \"v0\"\n\n[metadata.package]\nold = 1\n\n[metadata.entries.\"a.txt\"]\nkept = true\n",
+    )?;
+
+    set_package_metadata(&storage, dir.path(), &json!({"new": {"deep": null}})).await?;
+    let empty = tempfile::TempDir::new()?;
+    set_package_metadata(&storage, empty.path(), &json!({"only": "this"})).await?;
+
+    let text = std::fs::read_to_string(dir.path().join(METADATA_FILE))?;
+    let MetadataFile::Supplied {
+        message,
+        package,
+        entries,
+    } = MetadataFile::parse(Some(&text))?
+    else {
+        panic!("{text}");
+    };
+    assert_eq!(message, HeaderMessage::Text("m".to_string()));
+    assert_eq!(package, Some(json!({"new": {"deep": null}})));
+    assert_eq!(entries.get("a.txt"), Some(&json!({"kept": true})));
+    let text = std::fs::read_to_string(empty.path().join(METADATA_FILE))?;
+    let MetadataFile::Supplied { package, .. } = MetadataFile::parse(Some(&text))? else {
+        panic!("{text}");
+    };
+    assert_eq!(package, Some(json!({"only": "this"})));
+    Ok(())
+}

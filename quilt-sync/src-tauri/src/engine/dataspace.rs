@@ -87,6 +87,10 @@ pub struct Dataspace<R: Remote = RemoteS3> {
     /// Held across a read and write of `conflict.json`, so two decisions
     /// made at once both stand.
     conflict_edits: tokio::sync::Mutex<()>,
+    /// Held by a sync, the autosync tick, and a task's commit and sync, so
+    /// a commit never lands while a tick holds the lock in memory to write
+    /// it whole.
+    writes: tokio::sync::Mutex<()>,
 }
 
 impl<R: Remote + Sync> Dataspace<R> {
@@ -137,7 +141,14 @@ impl<R: Remote + Sync> Dataspace<R> {
             user_rules,
             runner,
             conflict_edits: tokio::sync::Mutex::new(()),
+            writes: tokio::sync::Mutex::new(()),
         })
+    }
+
+    /// Waits for a sync or tick under way to end, and keeps another from
+    /// starting until the guard drops.
+    pub async fn hold_writes(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.writes.lock().await
     }
 
     /// The default dataspace's folder.
@@ -505,6 +516,27 @@ impl<R: Remote + Sync> Dataspace<R> {
     /// Syncs the default dataspace, as the sync tick does: reads what
     /// `latest` moved, and commits and pushes `sync` entries.
     pub async fn sync(&self, message: &str) -> Result<DataspaceSync, Error> {
+        let _writes = self.hold_writes().await;
+        Box::pin(self.sync_held(message)).await
+    }
+
+    /// Commits `namespace`'s folder with `message`, then syncs, with no
+    /// tick between: a task's claim or outcome. The commit's failure, as
+    /// with nothing to commit, is logged and the sync still runs.
+    pub async fn commit_and_sync(
+        &self,
+        namespace: &Namespace,
+        message: &str,
+    ) -> Result<DataspaceSync, Error> {
+        let _writes = self.hold_writes().await;
+        if let Err(err) = self.commit(namespace, message).await {
+            debug!("{namespace}: nothing committed before the sync: {err}");
+        }
+        Box::pin(self.sync_held(AUTOSYNC_MESSAGE)).await
+    }
+
+    /// [`Self::sync`], for a caller holding [`Self::hold_writes`].
+    async fn sync_held(&self, message: &str) -> Result<DataspaceSync, Error> {
         quilt_rs::dataspace::sync::sync(
             &self.storage,
             &*self.remote,

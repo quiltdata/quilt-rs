@@ -53,6 +53,7 @@ use thiserror::Error;
 use conflict::CONFLICT_FILE;
 use contract::Access;
 pub use metadata::METADATA_FILE;
+pub use metadata::set_package_metadata;
 
 /// `key`'s entry under `access` in `contract`; `Err` with the access it is
 /// declared under instead, the first, or with `None` where `contract` does
