@@ -38,7 +38,9 @@ use crate::dataspace::store::name_local;
 use crate::dataspace::sync::base_manifest;
 use crate::dataspace::sync::covered_rows;
 use crate::dataspace::sync::latest_in;
+use crate::dataspace::sync::local_commit;
 use crate::dataspace::sync::manifest_at;
+use crate::dataspace::sync::moved_from;
 use crate::domain::DomainRoot;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
@@ -139,6 +141,10 @@ impl From<crate::Error> for ResetError {
 /// where [`reattach`](crate::dataspace::reattach) lists them. The package's
 /// rows in `conflict.json` are removed. A current revision that can no
 /// longer be found, as one removed from its registry, is taken as empty.
+/// A package `data.toml` moved from this machine's local registry to its
+/// bucket, whose move has not landed, is reset to the bucket's `latest`:
+/// the move is dropped with its local commits, which stay in the local
+/// registry.
 ///
 /// A `read` or `sync` entry is reset, one pinned to a revision is refused,
 /// and so is a package with no `latest`. The contract's `pre-read` hook runs
@@ -195,6 +201,18 @@ pub async fn reset_to_latest(
             Err(err) => return Err(err.into()),
         },
     };
+    // A move to the bucket that has not landed is dropped with its local
+    // commits, which stay in the local registry for reattach.
+    let moved = moved_from(&lock, &contract, &writer, &entry);
+    let (current, discarded) = match &moved {
+        Some((local_key, head)) => (
+            local_commit(storage, &local, &entry, head).await?,
+            lock.packages
+                .get(local_key)
+                .map_or_else(Vec::new, |locked| locked.commits.clone()),
+        ),
+        None => (current, discarded),
+    };
 
     hooks::run(&contract, HookPoint::PreRead, &entry, None)
         .await
@@ -208,6 +226,9 @@ pub async fn reset_to_latest(
     let rows = PackageRows::of(storage, store.local(), contract.dataspace(), &entry).await;
     if let Err(err) = rows.write(storage, None).await {
         warn!("The package's rows were left in conflict.json: {err}");
+    }
+    if let Some((local_key, _)) = &moved {
+        lock.packages.remove(local_key);
     }
     lock.packages
         .insert(key.clone(), LockEntry::at(latest.clone()));

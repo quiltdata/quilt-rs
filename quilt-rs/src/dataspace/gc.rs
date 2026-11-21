@@ -11,6 +11,7 @@ use tracing::info;
 use crate::Error;
 use crate::Res;
 use crate::domain::DomainRoot;
+#[cfg(doc)]
 use crate::domain::RegistryStore;
 use crate::flow::GcReport;
 use crate::io::remote::Remote;
@@ -83,14 +84,18 @@ pub async fn gc(
         "⏳ Clearing what the buckets hold in {}",
         domain.root().display()
     );
-    let collected = each(storage, domain, async |store| {
-        store
-            .clear_published(storage, remote, host(store.bucket()).as_ref())
-            .await
-    })
-    .await?;
+    let collected = each(storage, remote, domain, host, Clear::Published).await?;
     info!("✔️ Cleared {}", collected.total());
     Ok(collected)
+}
+
+/// What [`each`] does in a store.
+#[derive(Clone, Copy)]
+enum Clear {
+    /// Clears what its bucket holds too.
+    Published,
+    /// Counts what that would clear.
+    Estimate,
 }
 
 /// What [`gc`] would clear now, clearing nothing: the same walk and the same
@@ -103,23 +108,35 @@ pub async fn gc_estimate(
     domain: &DomainRoot,
     host: impl Fn(&str) -> Option<Host>,
 ) -> Res<Collected> {
-    each(storage, domain, async |store| {
-        store
-            .estimate_published(storage, remote, host(store.bucket()).as_ref())
-            .await
-    })
-    .await
+    each(storage, remote, domain, host, Clear::Estimate).await
 }
 
 /// Runs `clear` on each bucket's store in `domain`, keeping each outcome.
+/// A plain loop rather than an async closure, so the future is `Send` for
+/// an app that runs it on a spawned task.
 async fn each(
     storage: &(impl Storage + Sync),
+    remote: &impl Remote,
     domain: &DomainRoot,
-    clear: impl AsyncFn(&RegistryStore) -> Res<GcReport>,
+    host: impl Fn(&str) -> Option<Host>,
+    clear: Clear,
 ) -> Res<Collected> {
     let mut collected = Collected::default();
     for store in domain.registries(storage).await? {
-        let outcome = match clear(&store).await {
+        let catalog = host(store.bucket());
+        let cleared = match clear {
+            Clear::Published => {
+                store
+                    .clear_published(storage, remote, catalog.as_ref())
+                    .await
+            }
+            Clear::Estimate => {
+                store
+                    .estimate_published(storage, remote, catalog.as_ref())
+                    .await
+            }
+        };
+        let outcome = match cleared {
             Ok(report) => StoreGc::Freed(report),
             Err(Error::PackageBusy(namespace)) => StoreGc::Busy(namespace),
             Err(err) => StoreGc::Failed(err),

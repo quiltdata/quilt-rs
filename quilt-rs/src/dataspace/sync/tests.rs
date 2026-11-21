@@ -2162,6 +2162,21 @@ pub(crate) async fn gate(world: &World, schema: &str) -> Res {
     Ok(())
 }
 
+/// Makes the bucket's workflow optional again, after [`gate`].
+pub(crate) async fn ungate(world: &World) -> Res {
+    let optional =
+        "version: '1'\nis_workflow_required: false\nworkflows:\n  gate:\n    name: Gate\n";
+    world
+        .remote
+        .put_object(
+            None,
+            &S3Uri::try_from("s3://b/.quilt/workflows/config.yml")?,
+            optional.as_bytes().to_vec(),
+        )
+        .await?;
+    Ok(())
+}
+
 #[test(tokio::test)]
 async fn a_package_another_process_holds_is_left_for_the_next_tick() -> Res {
     let world = World::filled(&[("a.txt", b"v1")]).await?;

@@ -13,12 +13,16 @@ use crate::dataspace::sync::tests::FIRST;
 use crate::dataspace::sync::tests::World;
 use crate::dataspace::sync::tests::advanced;
 use crate::dataspace::sync::tests::files;
+use crate::dataspace::sync::tests::gate;
 use crate::dataspace::sync::tests::hooked;
 use crate::dataspace::sync::tests::key;
+use crate::dataspace::sync::tests::local_key;
+use crate::dataspace::sync::tests::moving;
 use crate::dataspace::sync::tests::out_key;
 use crate::dataspace::sync::tests::package;
 use crate::dataspace::sync::tests::read_text;
 use crate::dataspace::sync::tests::record;
+use crate::dataspace::sync::tests::ungate;
 use crate::dataspace::sync::tests::writer;
 use quilt_uri::Namespace;
 
@@ -342,5 +346,39 @@ async fn a_lock_written_elsewhere_with_files_here_is_refused() -> Res {
         matches!(&refused, Err(CommitError::Mismatch(found)) if found == &[Mismatch::Host]),
         "{refused:?}"
     );
+    Ok(())
+}
+
+/// A package `data.toml` moved to its bucket, whose move the bucket's
+/// workflow refused, is committed in the local registry it still lives in,
+/// after its last local commit, and the move then pushes that commit.
+#[test(tokio::test)]
+async fn a_commit_follows_a_package_moved_to_a_bucket_until_the_move_lands() -> Res {
+    let (world, _, head) = moving().await?;
+    world.local_named("lab-mac").await?;
+    gate(&world, r#"{"type": "object"}"#).await?;
+    world.tick().await?;
+    world.write("a.txt", "v3")?;
+    world.write("b.txt", "v1")?;
+
+    let committed = world.commit_as(&key(), "after the move").await;
+
+    let Ok(Committed {
+        commit: Some(hash), ..
+    }) = committed
+    else {
+        panic!("the moved package was not committed: {committed:?}");
+    };
+    let lock = world.lock().await?;
+    assert_eq!(lock.packages.get(&key()), None, "{lock:?}");
+    assert_eq!(
+        lock.packages
+            .get(&local_key())
+            .map(|locked| locked.commits.clone()),
+        Some(vec![head, hash.clone()])
+    );
+    ungate(&world).await?;
+    world.sync().await?;
+    assert_eq!(world.latest().await?, hash);
     Ok(())
 }
