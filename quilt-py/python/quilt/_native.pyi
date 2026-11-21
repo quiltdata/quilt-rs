@@ -39,3 +39,10 @@ def commit(
     domain: _Path | None = None,
     home: _Path | None = None,
 ) -> dict[str, Any]: ...
+def entries(
+    *,
+    dataspace: _Path | None = None,
+    domain: _Path | None = None,
+    home: _Path | None = None,
+) -> list[dict[str, Any]]: ...
+def set_package_metadata(folder: _Path, metadata: Any) -> None: ...

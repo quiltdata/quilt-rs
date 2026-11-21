@@ -118,3 +118,24 @@ def test_a_local_package_is_created_with_no_warnings(tmp_path):
     )
     assert isinstance(created["commit"], str)
     assert created["warnings"] == []
+
+
+def test_the_entries_of_a_contract_are_listed(tmp_path):
+    space = tmp_path / "space"
+    space.mkdir()
+    (space / "data.toml").write_text(
+        'registry = "s3://b"\n[packages]\nsync = ["team/raw"]\n'
+    )
+    [entry] = quilt.entries(
+        dataspace=space, domain=tmp_path / "domain", home=tmp_path / "home"
+    )
+    assert entry["package"] == "quilt+s3://b#package=team/raw"
+    assert entry["access"] == "sync"
+    assert entry["paths"] is None
+
+
+def test_package_metadata_is_written_to_the_metadata_file(tmp_path):
+    folder = tmp_path / "raw"
+    folder.mkdir()
+    quilt.set_package_metadata(folder, {"assay": "rna"})
+    assert 'assay = "rna"' in (folder / "metadata.toml").read_text()

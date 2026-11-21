@@ -13,9 +13,11 @@ from ._native import (
     commit,
     create,
     default_dataspace,
+    entries,
     install,
     list_registries,
     list_stored,
+    set_package_metadata,
 )
 
 __all__ = [
@@ -24,7 +26,9 @@ __all__ = [
     "commit",
     "create",
     "default_dataspace",
+    "entries",
     "install",
     "list_registries",
     "list_stored",
+    "set_package_metadata",
 ]

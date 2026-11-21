@@ -166,6 +166,44 @@ fn commit(
     to_python(py, &committed)
 }
 
+/// The packages a dataspace's contract declares, each with its access,
+/// working folder and paths.
+#[pyfunction]
+#[pyo3(signature = (*, dataspace=None, domain=None, home=None))]
+fn entries(
+    py: Python<'_>,
+    dataspace: Option<PathBuf>,
+    domain: Option<PathBuf>,
+    home: Option<PathBuf>,
+) -> PyResult<Py<PyAny>> {
+    let declared = block_on(py, async move {
+        let domain = engine::domain(domain.as_deref())?;
+        let home = engine::home(home.as_deref())?;
+        let dataspace = engine::dataspace(dataspace, &home).await?;
+        engine::entries(&domain, &dataspace).await
+    })?;
+    to_python(py, &Value::Array(declared))
+}
+
+/// Replaces the package metadata in a working folder's `metadata.toml`, for
+/// its next commit to publish. `metadata` is anything `json.dumps` takes.
+#[pyfunction]
+fn set_package_metadata(
+    py: Python<'_>,
+    folder: PathBuf,
+    metadata: &Bound<'_, PyAny>,
+) -> PyResult<()> {
+    let text: String = py
+        .import("json")?
+        .call_method1("dumps", (metadata,))?
+        .extract()?;
+    let metadata: Value =
+        serde_json::from_str(&text).map_err(|err| QuiltError::new_err(err.to_string()))?;
+    block_on(py, async move {
+        engine::set_package_metadata(&folder, &metadata).await
+    })
+}
+
 #[pymodule]
 #[pyo3(name = "_native")]
 fn native(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -177,5 +215,7 @@ fn native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(install, m)?)?;
     m.add_function(wrap_pyfunction!(create, m)?)?;
     m.add_function(wrap_pyfunction!(commit, m)?)?;
+    m.add_function(wrap_pyfunction!(entries, m)?)?;
+    m.add_function(wrap_pyfunction!(set_package_metadata, m)?)?;
     Ok(())
 }

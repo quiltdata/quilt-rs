@@ -408,3 +408,86 @@ async fn a_package_created_unchecked_warns() -> Test {
     assert_eq!(warnings[0]["bucket"], "b");
     Ok(())
 }
+
+/// The contract's entries come back with their access, folder and paths,
+/// and listing them names no local registry.
+#[test(tokio::test)]
+async fn the_entries_are_listed_and_nothing_is_written() -> Test {
+    let dir = tempfile::TempDir::new()?;
+    let space = space(
+        dir.path(),
+        "[packages]\nsync = [\"team/raw\"]\nread = [{ package = \"team/other\", path = \"src/\" }]\n",
+    )?;
+    let domain = DomainRoot::new(dir.path().join("domain"));
+
+    let declared = entries(&domain, &space).await?;
+
+    let folder = |name: &str| space.join(name).display().to_string();
+    assert_eq!(
+        declared,
+        [
+            json!({
+                "package": "quilt+s3://b#package=team/other",
+                "registry": "s3://b",
+                "name": "team/other",
+                "access": "read",
+                "folder": folder("team/other"),
+                "paths": ["src/"],
+            }),
+            json!({
+                "package": "quilt+s3://b#package=team/raw",
+                "registry": "s3://b",
+                "name": "team/raw",
+                "access": "sync",
+                "folder": folder("team/raw"),
+                "paths": null,
+            }),
+        ]
+    );
+    assert!(!domain.root().exists());
+    Ok(())
+}
+
+/// The metadata set is what the next commit publishes.
+#[test(tokio::test)]
+async fn the_metadata_set_is_published_by_the_next_commit() -> Test {
+    let dir = tempfile::TempDir::new()?;
+    let space = space(dir.path(), "[packages]\nsync = [\"team/raw\"]\n")?;
+    let folder = space.join("team/raw");
+    std::fs::create_dir_all(&folder)?;
+    std::fs::write(folder.join("a.txt"), b"alpha")?;
+    let domain = DomainRoot::new(dir.path().join("domain"));
+    let home = dir.path().join("home");
+
+    set_package_metadata(&folder, &json!({"assay": "rna", "n": 3})).await?;
+    let committed = commit(
+        &MockRemote::default(),
+        &domain,
+        &home,
+        &space,
+        "team/raw",
+        "first",
+    )
+    .await?;
+
+    let hash = committed["commit"].as_str().ok_or("no commit")?;
+    let manifest = Manifest::from_path(
+        &LocalStorage::new(),
+        &domain
+            .registry("b")?
+            .installed_manifest(&Namespace::try_from("team/raw")?, hash),
+    )
+    .await?;
+    assert_eq!(
+        serde_json::to_value(&manifest.header.user_meta)?,
+        json!({"assay": "rna", "n": 3})
+    );
+    assert!(
+        !manifest
+            .rows
+            .iter()
+            .any(|row| row.logical_key.to_string() == "metadata.toml"),
+        "{manifest:?}"
+    );
+    Ok(())
+}

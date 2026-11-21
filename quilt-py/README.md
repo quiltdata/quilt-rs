@@ -34,6 +34,12 @@ there will be refused until it is fixed, or `unchecked`, where the config
 could not be read or its validator is misconfigured), `bucket`, `reason` and
 the `message` the CLI prints. A package in the local registry is not checked.
 
+`entries` lists the packages a dataspace's contract declares, each with its
+`access`, `folder` and `paths`, so quilt3's build can tell a build onto an
+existing entry from a new package. `set_package_metadata` replaces the
+package metadata in a working folder's `metadata.toml`, which its next
+commit publishes.
+
 ## Develop
 
 ```sh
