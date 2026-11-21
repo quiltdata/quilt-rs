@@ -9,7 +9,7 @@
 
 ### Changed
 
-- `create` and `commit` return a `warnings` list: what checking the commit against its bucket's current workflows config found (`inconsistent` or `unchecked`), the commit being recorded either way. #PRNUM
+- `create` and `commit` return a `warnings` list: what checking the commit against its bucket's current workflows config found (`inconsistent` or `unchecked`), the commit being recorded either way. #1495
 
 ### Fixed
 
