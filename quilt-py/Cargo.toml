@@ -1,0 +1,47 @@
+[package]
+name = "quilt-py"
+description = "The Python binding of quilt-rs, published to PyPI as `quilt`: the engine quilt3 calls for dataspaces."
+readme = "README.md"
+# The wheels go to PyPI as `quilt` (quilt-specs#297, entry 27e); nothing goes
+# to crates.io. maturin turns this version into the wheel's.
+version = "3.0.0-dev"
+publish = false
+
+# Inherit from workspace
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+name = "quilt_py"
+# `cdylib` is the extension module maturin packs; `rlib` lets the Rust tests
+# link the engine layer without Python.
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# The PyO3 module. Off by default, so `cargo test` across the workspace
+# builds and tests the engine layer without a Python to link; maturin turns
+# it on (pyproject.toml), and clippy's `--all-features` lints it.
+python = ["dep:pyo3"]
+
+[dependencies]
+quilt-rs = { path = "../quilt-rs", version = "0.54.0-dev" }
+quilt-uri = { path = "../quilt-uri", version = "0.5.1-dev" }
+
+dirs.workspace = true
+# abi3 from 3.10, quilt3's floor: one wheel per platform serves every
+# CPython from 3.10 on.
+pyo3 = { version = "0.30.1", features = ["abi3-py310"], optional = true }
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+quilt-rs = { path = "../quilt-rs", version = "0.54.0-dev", features = ["testing"] }
+tempfile.workspace = true
+test-log.workspace = true
+
+[lints]
+workspace = true

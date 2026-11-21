@@ -228,6 +228,9 @@ are thin front ends over it.
 - **[`quilt-cli/`](quilt-cli/)**: the `quilt` binary, built on the library.
   It has no config of its own and shares its home folder with QuiltSync
   ([crates.io](https://crates.io/crates/quilt-cli)).
+- **[`quilt-py/`](quilt-py/)**: the Python binding, which quilt3 calls to
+  work with dataspaces. It is built with maturin into platform wheels for
+  PyPI, as `quilt` 3.0; nothing is published yet.
 - **[`quilt-sync/`](quilt-sync/)**: QuiltSync, the desktop app. It watches
   your folders, pulls new revisions and publishes your edits. It keeps your
   local edits when it pulls, and stops to ask when they conflict or the

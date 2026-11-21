@@ -1,0 +1,28 @@
+[build-system]
+requires = ["maturin>=1.9,<2"]
+build-backend = "maturin"
+
+[project]
+# The PyPI project that held Quilt 2 (2.9.15); this library is `quilt` 3.0
+# (quilt-specs#297, entry 27e). The version comes from Cargo.toml.
+name = "quilt"
+dynamic = ["version"]
+description = "The quilt-rs engine for Python: dataspaces, as quilt3 uses them."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+authors = [{ name = "quiltdata", email = "support@quilt.bio" }]
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: 3",
+]
+
+[project.urls]
+Homepage = "https://quilt.bio/"
+Repository = "https://github.com/quiltdata/quilt-rs"
+
+[tool.maturin]
+features = ["python"]
+python-source = "python"
+module-name = "quilt._native"
