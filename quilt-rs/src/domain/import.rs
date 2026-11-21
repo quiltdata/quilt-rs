@@ -449,7 +449,7 @@ impl Cutover {
                 Some(lines.join("\n"))
             }
             Self::FellBack(err) => Some(format!(
-                "The packages an older Quilt kept were not imported, so the ref path runs: {err}. Nothing was changed."
+                "The packages an older Quilt kept were not imported, so the ref path runs: {err}. The old folder was not changed."
             )),
         }
     }
