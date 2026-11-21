@@ -408,6 +408,17 @@ async fn revision_of<'a>(
     Ok((Revision::Bucket(uri), target))
 }
 
+/// The manifest of the revision `entry` names, in its bucket or in the local
+/// registry `local`, as [`read`] finds it.
+pub(crate) async fn revision_manifest(
+    storage: &(impl Storage + Sync),
+    remote: &impl Remote,
+    local: Option<&LocalRegistry>,
+    entry: &Entry,
+) -> Result<Manifest, EntryError> {
+    Ok(revision_of(storage, remote, local, entry).await?.1)
+}
+
 /// The revision `entry` names in the local registry `registry`, and its
 /// manifest; see [`local_hash`].
 async fn local_revision<'a>(

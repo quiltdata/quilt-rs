@@ -54,6 +54,8 @@ cargo install quilt-cli
 | `log`       | List the revisions this copy has, and why each is kept |
 | `uninstall` | Remove a package; `--prune` also deletes its stored files no other package uses |
 | `gc`        | Delete stored files no installed package uses    |
+| `storage`   | Print how much the dataspace Domain holds         |
+| `local-registry` | Print or rename this machine's local registry |
 | `remove-revisions` | Remove old revisions this copy no longer needs |
 | `catalog`   | Show, set or clear the default Quilt stack       |
 | `login`     | Authenticate against a Quilt stack               |
@@ -311,6 +313,59 @@ none left. No revision is protected, and `data.lock.toml` is left as it is:
 the output says when it names a removed revision, which `reset` reads past.
 Under `--json` it prints `package`, `removed`, `latest` (`kept`, `moved` or
 `removed`) and `locked`.
+
+`keep --dataspace <DIR> <PACKAGE>`, or `-n owner/name`, changes what the
+dataspace keeps of the package, in `data.toml`: `--all`, `--folder <DIR>` and
+`--path <PATH>` set the paths its entry covers, `--pin <REVISION>` and
+`--unpin` its pin, which only a `read` entry takes, and `--access` moves it to
+another list; `--from` names the list whose entry changes where the package is
+in two. The package keeps its place in the file. Files a `read` or `sync` entry
+newly covers are read at the revision `data.lock.toml` names before anything
+can count them deleted, and only those: a file deleted under the old paths
+stays deleted. Files it no longer covers stay in the folder, and a pin is read
+by the next `read`. With no change it prints the entry. It exits 1 when the
+newly covered files were not read; then `data.toml` holds the change and the
+lock is left. Under `--json` it prints `package`, `access`, `paths` (`null` for
+the whole package), `revision`, `folder`, `declared`, `outcome` and `placed`.
+
+`create --dataspace <DIR> <PACKAGE>` declares a new package,
+`quilt+s3://bucket#package=owner/name` or `quilt+local://#package=owner/name`,
+in the dataspace's `data.toml` with no revision, under `--access` (`sync`, the
+default, `write` or `replace`), and commits what its folder holds as its first
+commit, with no base; the next sync publishes it, expecting no `latest`.
+`--source <DIR>` names an existing folder to package where it is, inside the
+dataspace or not; nothing is copied, and a folder holding the Domain is
+refused. The metadata is the folder's `metadata.toml`; `-m` is the commit's
+message. A package the dataspace, the lock or its registry already has is
+refused, and so is an owner or name with characters other than letters,
+digits, `_` and `-`. Under `--json` it prints `package`, `access`, `folder` and
+`commit`.
+
+`home --dataspace [<DIR>]` prints the default dataspace, which replaces the
+home, or chooses `<DIR>`, making it a dataspace with an empty `data.toml` where
+it has none. Nothing moves: the dataspace chosen before keeps its contract and
+folders. The choice is kept in `default_dataspace.json` beside this
+application's other settings, in the folder `--domain` names.
+
+`gc --dataspace` clears the dataspace Domain, `bio.quilt.dataspace`: in each
+bucket's store, the manifests the bucket holds and the objects only they use.
+Commits not pushed and their objects are kept, the local registry is never
+touched, and a store whose bucket cannot be asked, as offline, or that another
+quilt process is changing, is left as it is and named; then it exits 1. Each
+bucket is asked through the default catalog, or this machine's AWS credentials
+where none is set. `--dry-run` prints what it would free and deletes nothing.
+Under `--json` it prints `dry_run`, `manifests`, `objects`, `bytes` and
+`stores`, by bucket.
+
+`storage` prints how many bytes the dataspace Domain holds, each bucket's
+store's and the local registry's, and reads no bucket. Under `--json` it prints
+`total_bytes`, `registries` and `local_bytes`.
+
+`local-registry` prints the name this machine's local registry keeps, and the
+names it had; `local-registry <NAME>` renames it. The old name stays an alias,
+so a `quilt+local://` URI, `data.toml` or `data.lock.toml` written with it
+still names the registry, and the autosync work queued under it moves to the
+new name. Under `--json` it prints `name`, `aliases` and `moved`.
 
 `push` with no commit to push prints `Nothing to push` and exits 0; under
 `--json` the same shape has `"hash": null`, `"manifest_uri": null` and

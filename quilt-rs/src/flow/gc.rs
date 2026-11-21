@@ -44,6 +44,15 @@ impl GcReport {
     }
 }
 
+impl std::ops::AddAssign for GcReport {
+    fn add_assign(&mut self, other: Self) {
+        self.objects += other.objects;
+        self.cached_manifests += other.cached_manifests;
+        self.staging += other.staging;
+        self.bytes += other.bytes;
+    }
+}
+
 /// One sentence for every surface that reports a gc: "Freed 630.2 kB: 6
 /// objects, 2 cached manifests", naming only what was removed, or "Nothing
 /// to free".
@@ -159,22 +168,26 @@ pub async fn measure_storage(
     paths: &DomainPaths,
     storage: &(impl Storage + Sync),
 ) -> Res<StorageSize> {
-    let dot_quilt = paths.dot_quilt_dir();
-    let total_bytes = if storage.exists(&dot_quilt).await {
-        let entry = Entry {
-            path: dot_quilt,
-            is_dir: true,
-            len: 0,
-        };
-        sweep_entry(storage, entry, Sweep::Count).await?.1
-    } else {
-        0
-    };
+    let total_bytes = tree_bytes(storage, &paths.dot_quilt_dir()).await?;
     let freeable = gc_estimate(paths, storage).await?;
     Ok(StorageSize {
         total_bytes,
         freeable,
     })
+}
+
+/// Every file's length under `dir`, summed, as [`measure_storage`] sums
+/// `.quilt/`'s; 0 where it is not there.
+pub(crate) async fn tree_bytes(storage: &(impl Storage + Sync), dir: &Path) -> Res<u64> {
+    if !storage.exists(dir).await {
+        return Ok(0);
+    }
+    let entry = Entry {
+        path: dir.to_path_buf(),
+        is_dir: true,
+        len: 0,
+    };
+    Ok(sweep_entry(storage, entry, Sweep::Count).await?.1)
 }
 
 /// Whether a [`sweep`] deletes what it finds or only counts it.

@@ -3,6 +3,8 @@ use crate::cli::model::Commands;
 use crate::cli::output::Render;
 use crate::cli::output::Std;
 
+pub mod dataspace;
+
 pub struct Output {
     report: quilt_rs::flow::GcReport,
 }

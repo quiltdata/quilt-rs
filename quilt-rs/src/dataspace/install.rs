@@ -488,7 +488,7 @@ fn declare(
 }
 
 /// A folder as a contract spells it, with `/` between its parts.
-fn spelled(folder: &Path) -> String {
+pub(crate) fn spelled(folder: &Path) -> String {
     if folder.is_absolute() {
         return folder.to_string_lossy().into_owned();
     }
