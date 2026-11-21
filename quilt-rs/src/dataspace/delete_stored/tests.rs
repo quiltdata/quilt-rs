@@ -180,6 +180,29 @@ async fn a_prefix_matching_nothing_is_refused() -> Res {
     Ok(())
 }
 
+/// A whole hash none of the package's stores holds is refused, though the
+/// package holds other revisions.
+#[test(tokio::test)]
+async fn a_whole_hash_no_store_holds_is_refused() -> Res {
+    let world = World::synced()?;
+    let held = world
+        .domain()
+        .registry("b")?
+        .installed_manifest(&package(), FIRST);
+    place(&held)?;
+
+    let err = delete_stored(&world.storage, &world.domain(), &package(), Some(SECOND))
+        .await
+        .expect_err("not held");
+
+    assert!(
+        matches!(err, DeleteError::HashPrefix(HashPrefixError::NoMatch(_))),
+        "{err:?}"
+    );
+    assert!(held.exists());
+    Ok(())
+}
+
 /// In the local registry, removing the revision `latest` names moves it to
 /// the newest left, and removing the last removes it and the package.
 #[test(tokio::test)]

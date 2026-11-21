@@ -216,11 +216,13 @@ async fn resolve(
 ) -> Result<String, DeleteError> {
     let mut found = BTreeSet::new();
     for target in targets {
-        match flow::resolve_local_hash(storage, target.installed(namespace), prefix).await {
-            Ok(hash) => {
+        let installed = target.installed(namespace);
+        match flow::resolve_local_hash(storage, &installed, prefix).await {
+            // A whole hash resolves as itself, held or not.
+            Ok(hash) if storage.is_file(installed.join(&hash)).await => {
                 found.insert(hash);
             }
-            Err(crate::Error::HashPrefix(HashPrefixError::NoMatch(_))) => {}
+            Ok(_) | Err(crate::Error::HashPrefix(HashPrefixError::NoMatch(_))) => {}
             Err(err) => return Err(err.into()),
         }
     }

@@ -109,3 +109,26 @@ async fn browsing_writes_nothing_to_the_dataspace() -> Res {
     assert_eq!(std::fs::read(&lock)?, before);
     Ok(())
 }
+
+/// A package `data.toml` moved to its bucket, whose move has not landed,
+/// opens at its last commit in the local registry, under its bucket's key.
+#[test(tokio::test)]
+async fn a_package_moved_to_its_bucket_opens_where_its_commits_are() -> Res {
+    let (world, _, head) = crate::dataspace::sync::tests::moving().await?;
+    world.local_named("lab-mac").await?;
+    let bucket = crate::dataspace::sync::tests::key();
+
+    let browsed = browse(
+        &world.storage,
+        &world.remote,
+        &world.domain(),
+        &world.dataspace(),
+        &crate::dataspace::sync::tests::writer(),
+        &bucket,
+    )
+    .await?;
+
+    assert_eq!(browsed.hash, head);
+    assert_eq!(browsed.entry.key(), bucket);
+    Ok(())
+}

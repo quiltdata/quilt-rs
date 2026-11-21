@@ -17,6 +17,7 @@ use crate::dataspace::lock::LockError;
 use crate::dataspace::lock::Writer;
 use crate::dataspace::store::Store;
 use crate::dataspace::sync::manifest_at;
+use crate::dataspace::sync::pending_move;
 use crate::domain::DomainRoot;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
@@ -26,7 +27,9 @@ use crate::manifest::Manifest;
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct Browsed {
-    /// The package's entry, as the contract expands it.
+    /// The package's entry, as the contract expands it. Where its move to
+    /// its bucket has not landed, the revision opened is still the local
+    /// registry's.
     pub entry: Entry,
     /// The revision opened: the lock's last commit of the package, else its
     /// base.
@@ -70,7 +73,9 @@ impl From<LockError> for BrowseError {
 /// manifest of the last commit its lock names, else of its base, from the
 /// package's store in `domain`, else fetched from its bucket. A local
 /// registry renamed since the contract or the lock named it is still
-/// found. Nothing in the dataspace is written.
+/// found, and a package moved to its bucket whose move has not landed is
+/// opened where its commits are, in the local registry. Nothing in the
+/// dataspace is written.
 ///
 /// # Errors
 ///
@@ -88,7 +93,11 @@ pub async fn browse(
     let mut contract = Contract::read(storage, dataspace, writer.local_registry_name()).await?;
     let mut lock = Lock::read(storage, &contract).await?;
     let mut wanted = package.clone();
+    let mut writer = writer.clone();
     if let Some(names) = domain.local().read_names(storage).await.ok().flatten() {
+        // The local registry a pending move left the package's commits in
+        // is this Domain's, as `commit` follows it.
+        writer.local_registry.clone_from(&names.name);
         contract.name_local(&names)?;
         if let Some(lock) = &mut lock {
             lock.name_local(&names);
@@ -105,15 +114,23 @@ pub async fn browse(
         .find(|entry| entry.key() == wanted)
         .cloned()
         .ok_or_else(|| BrowseError::NotDeclared(Box::new(wanted.clone())))?;
-    let locked = lock.as_ref().and_then(|lock| lock.packages.get(&wanted));
+    // A package `data.toml` moved to its bucket, whose move has not landed,
+    // is read where its commits are: under the local registry's key.
+    let held = lock.as_ref().map_or_else(
+        || entry.clone(),
+        |lock| pending_move(lock, &contract, &writer, entry.clone()),
+    );
+    let locked = lock
+        .as_ref()
+        .and_then(|lock| lock.packages.get(&held.key()));
     let Some((hash, commits)) = locked.and_then(|locked| {
         let hash = locked.commits.last().or(locked.base.as_ref())?;
         Some((hash.clone(), locked.commits.clone()))
     }) else {
         return Err(BrowseError::NotRead(Box::new(wanted)));
     };
-    let store = Store::of(storage, domain, &entry).await?;
-    let manifest = manifest_at(storage, remote, &store, &entry, &hash, &commits).await?;
+    let store = Store::of(storage, domain, &held).await?;
+    let manifest = manifest_at(storage, remote, &store, &held, &hash, &commits).await?;
     Ok(Browsed {
         entry,
         hash,
