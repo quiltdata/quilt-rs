@@ -322,7 +322,7 @@ impl ContractEdit {
         let path = self.dataspace.join(CONTRACT_FILE);
         let temp = format!("{CONTRACT_FILE}.tmp-{}", uuid::Uuid::new_v4());
         storage
-            .write_byte_stream_via(&path, temp, ByteStream::from(bytes), None)
+            .write_byte_stream_via(&path, temp, ByteStream::from(bytes), Some(CONTRACT_FILE))
             .await
             .map_err(|source| ContractError::Write {
                 path,

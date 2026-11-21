@@ -11,6 +11,11 @@ def test_version_is_3():
     assert quilt.__version__.startswith("3.")
 
 
+def test_a_default_build_has_no_failpoints():
+    # Only a crash-test wheel, built with `--features failpoints`, stops at them.
+    assert quilt.FAILPOINTS is False
+
+
 def test_a_domain_that_is_not_there_holds_nothing(tmp_path):
     domain = tmp_path / "domain"
     assert quilt.list_registries(domain=domain) == []

@@ -325,6 +325,7 @@ fn delete(
 #[pyo3(name = "_native")]
 fn native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
+    m.add("FAILPOINTS", cfg!(feature = "failpoints"))?;
     m.add("QuiltError", m.py().get_type::<QuiltError>())?;
     m.add_function(wrap_pyfunction!(default_dataspace, m)?)?;
     m.add_function(wrap_pyfunction!(list_registries, m)?)?;

@@ -8,6 +8,7 @@ local data folder. A failure raises :class:`QuiltError`.
 """
 
 from ._native import (
+    FAILPOINTS,
     QuiltError,
     __version__,
     browse,
@@ -24,6 +25,7 @@ from ._native import (
 )
 
 __all__ = [
+    "FAILPOINTS",
     "QuiltError",
     "__version__",
     "browse",
