@@ -270,10 +270,6 @@ impl<R: Spawn> DataspaceTasks<R> {
         }
     }
 
-    fn holds(&self, key: &PackageKey) -> bool {
-        locked(&self.in_flight).contains(key)
-    }
-
     /// Takes the package's hold unless another check has it.
     fn try_hold(&self, key: PackageKey) -> Option<Hold> {
         locked(&self.in_flight).insert(key.clone()).then(|| Hold {
@@ -284,9 +280,13 @@ impl<R: Spawn> DataspaceTasks<R> {
 
     /// Acts on what `revision`, just read into `entry`, asks of this desktop.
     pub async fn check(self: &Arc<Self>, entry: &Entry, revision: &str) {
-        if entry.access != Access::Sync || self.holds(&entry.key()) {
+        if entry.access != Access::Sync {
             return;
         }
+        // Held for the whole check, so a scan and a hook never act together.
+        let Some(hold) = self.try_hold(entry.key()) else {
+            return;
+        };
         let Some(Found {
             settings,
             user_meta,
@@ -299,7 +299,7 @@ impl<R: Spawn> DataspaceTasks<R> {
             Verdict::LeaveAlone => Ok(()),
             Verdict::Claim { document, agent } => {
                 let agent = (agent.clone(), settings.agents[&agent].clone());
-                Box::pin(self.claim(entry, revision, &user_meta, document, agent)).await
+                Box::pin(self.claim(entry, revision, &user_meta, document, agent, hold)).await
             }
             Verdict::Unrunnable { reason } => {
                 Box::pin(self.unrunnable(entry, revision, &user_meta, &reason)).await
@@ -426,10 +426,8 @@ impl<R: Spawn> DataspaceTasks<R> {
         user_meta: &Value,
         document: String,
         (agent_id, agent): (String, AgentSettings),
+        hold: Hold,
     ) -> Result<(), Error> {
-        let Some(hold) = self.try_hold(entry.key()) else {
-            return Ok(());
-        };
         if self.clean_at(entry, revision).await?.is_none() {
             return Ok(());
         }
@@ -484,7 +482,9 @@ impl<R: Spawn> DataspaceTasks<R> {
             guard,
         };
         let run = R::spawn_run(Arc::clone(self), claimed);
-        locked(&self.runs).push(run);
+        let mut runs = locked(&self.runs);
+        runs.retain(|run| !run.is_finished());
+        runs.push(run);
         Ok(())
     }
 
