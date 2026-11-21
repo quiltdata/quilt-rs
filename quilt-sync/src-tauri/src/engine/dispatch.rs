@@ -21,6 +21,7 @@ use crate::engine::commands::{
     RemotePackageResult, RevisionHistoryData, RolesData, SetRemoteResponse, SettingsData,
     SetupData, StopIgnoringPreview, StopIgnoringScope, StorageSize,
 };
+use crate::engine::commands::{ConflictRow, Decision, UnattachedCommit};
 use crate::engine::desktop::{Desktop, ForeignHandler, NOT_AVAILABLE};
 use crate::engine::log_settings::LogLevel;
 use crate::engine::navigation::Navigation;
@@ -224,7 +225,10 @@ commands! {
         check_for_update() -> Option<UpdateInfo>;
         check_path(path: String) -> PathCheck;
         complete_path(prefix: String) -> Vec<String>;
-    }
+        get_conflicts() -> Vec<ConflictRow>;
+        decide_conflict(package: String, key: String, decision: Decision) -> ();
+        get_unattached_commits() -> Vec<UnattachedCommit>;
+        reattach_commit(namespace: String, hash: String) -> String;    }
     desktop {
         open_directory_picker() -> PathBuf;
         copy_to_clipboard(text: String, uri: Option<S3PackageUri>) -> String;

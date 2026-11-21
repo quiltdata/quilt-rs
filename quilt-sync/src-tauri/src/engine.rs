@@ -10,6 +10,7 @@ pub mod autopull;
 pub mod changelog;
 pub mod commands;
 pub mod commit_message;
+pub mod dataspace;
 pub mod desktop;
 pub mod dispatch;
 #[cfg(all(test, feature = "e2e"))]

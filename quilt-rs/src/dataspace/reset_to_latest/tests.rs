@@ -10,6 +10,8 @@ use crate::dataspace::sync::tests::FIRST;
 use crate::dataspace::sync::tests::SECOND;
 use crate::dataspace::sync::tests::World;
 use crate::dataspace::sync::tests::key;
+use crate::dataspace::sync::tests::local_key;
+use crate::dataspace::sync::tests::moving;
 use crate::dataspace::sync::tests::out_key;
 use crate::dataspace::sync::tests::read_text;
 use crate::dataspace::sync::tests::writer;
@@ -190,5 +192,31 @@ async fn a_package_with_no_latest_or_not_read_is_refused() -> Res {
     ))?;
     let refused = world.reset_as(&key()).await;
     assert!(matches!(refused, Err(ResetError::Pinned(_))), "{refused:?}");
+    Ok(())
+}
+
+/// Reset follows a package `data.toml` moved to its bucket, whose move
+/// diverged: the local commits are discarded with the move, and the folder
+/// and the lock take the bucket's `latest`.
+#[test(tokio::test)]
+async fn reset_drops_a_move_to_a_bucket_that_has_not_landed() -> Res {
+    let (world, _, head) = moving().await?;
+    world.publish(FIRST, &[("a.txt", b"theirs")]).await?;
+    world.tick().await?;
+    world.write("a.txt", "v2")?;
+    world.write("b.txt", "v1")?;
+
+    let reset = world.reset_as(&key()).await?;
+
+    assert_eq!(reset.revision, FIRST);
+    assert_eq!(reset.discarded, [head]);
+    let lock = world.lock().await?;
+    assert_eq!(
+        lock.packages.get(&key()),
+        Some(&LockEntry::at(FIRST.to_string()))
+    );
+    assert!(!lock.packages.contains_key(&local_key()), "{lock:?}");
+    assert_eq!(world.text("a.txt").as_deref(), Some("theirs"));
+    assert_eq!(world.text("b.txt"), None);
     Ok(())
 }

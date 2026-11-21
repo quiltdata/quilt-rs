@@ -7,7 +7,10 @@ use crate::dataspace::store::tests::publish_local;
 use crate::dataspace::sync::tests::FIRST;
 use crate::dataspace::sync::tests::World;
 use crate::dataspace::sync::tests::advanced;
+use crate::dataspace::sync::tests::gate;
 use crate::dataspace::sync::tests::key;
+use crate::dataspace::sync::tests::local_key;
+use crate::dataspace::sync::tests::moving;
 use crate::dataspace::sync::tests::out_key;
 use crate::dataspace::sync::tests::read_text;
 use crate::dataspace::sync::tests::writer;
@@ -237,5 +240,30 @@ async fn a_local_registry_entry_is_restored_to_its_base() -> Res {
     assert_eq!(undone.locked, Some(LockEntry::at(first)));
     assert_eq!(read_text(&folder, "o.txt").as_deref(), Some("o1"));
     assert_eq!(read_text(&folder, "p.txt"), None);
+    Ok(())
+}
+
+/// Undo follows a package `data.toml` moved to its bucket, whose move has
+/// not landed: it drops the last local commit in the local registry and
+/// puts the folder back to the revision before it.
+#[test(tokio::test)]
+async fn undo_follows_a_package_moved_to_a_bucket_until_the_move_lands() -> Res {
+    let (world, first, head) = moving().await?;
+    world.local_named("lab-mac").await?;
+    gate(&world, r#"{"type": "object"}"#).await?;
+    world.tick().await?;
+    world.write("a.txt", "v2")?;
+    world.write("b.txt", "v1")?;
+
+    let undone = world.undo_as(&key()).await;
+
+    assert!(
+        matches!(&undone, Ok(undone) if undone.commit == head),
+        "{undone:?}"
+    );
+    let lock = world.lock().await?;
+    assert_eq!(lock.packages.get(&key()), None, "{lock:?}");
+    assert_eq!(lock.packages.get(&local_key()), Some(&LockEntry::at(first)));
+    assert_eq!(world.text("a.txt").as_deref(), Some("v1"));
     Ok(())
 }

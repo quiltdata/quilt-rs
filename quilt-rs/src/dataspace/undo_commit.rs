@@ -35,6 +35,7 @@ use crate::dataspace::store::current_key;
 use crate::dataspace::store::name_local;
 use crate::dataspace::sync::covered_rows;
 use crate::dataspace::sync::manifest_at;
+use crate::dataspace::sync::pending_move;
 use crate::domain::DomainRoot;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
@@ -144,7 +145,9 @@ impl From<crate::Error> for UndoError {
 /// The lock names only commits not pushed: a push releases the ones it
 /// squashed, so undo cannot step back past it (25.9), and a package with no
 /// commit in the lock is refused. A bucket's package and a local
-/// registry's are undone alike. The package's lock in the Domain is held
+/// registry's are undone alike, and a package `data.toml` moved from the
+/// local registry to its bucket, whose move has not landed, is undone in
+/// the local registry. The package's lock in the Domain is held
 /// meanwhile, so a tick does not push the commit underneath. The lock is
 /// used as [`read_all`](crate::dataspace::read_all::read_all) uses it.
 pub async fn undo_commit(
@@ -168,9 +171,14 @@ pub async fn undo_commit(
         .find(|entry| entry.key() == key)
         .cloned()
         .ok_or_else(|| UndoError::NotDeclared(Box::new(key.clone())))?;
+    let declared = entry.clone();
+    let entry = pending_move(&lock, &contract, &writer, entry);
+    let key = entry.key();
     let store = Store::of(storage, domain, &entry).await?;
+    // The lock a tick moving the package takes: the bucket's.
+    let lock_store = Store::of(storage, domain, &declared).await?;
     let Some(_held) = storage
-        .try_lock_exclusive(store.package_lock(&entry.package))
+        .try_lock_exclusive(lock_store.package_lock(&declared.package))
         .await?
     else {
         return Err(UndoError::Busy(Box::new(key)));

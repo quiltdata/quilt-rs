@@ -1259,6 +1259,7 @@ pub fn MainPage() -> impl IntoView {
             <PackageStatusListener reload=reload />
             <ReloadOn event=commands::PACKAGES_CHANGED_EVENT reload=reload />
             <ReloadOn event=commands::ACCOUNTS_CHANGED_EVENT reload=reload />
+            <super::decisions::Decisions reload=reload />
             <MainPageRegions
                 packages=packages
                 accounts=accounts

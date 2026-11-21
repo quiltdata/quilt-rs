@@ -411,6 +411,33 @@ async fn pending_changes_leave_out_what_the_ignore_policy_leaves_out() -> Res {
     Ok(())
 }
 
+/// A folder inside the working folder that holds a `data.toml` of its own
+/// is another dataspace: its files are no change, and status says it was
+/// left out and why (25o item 10).
+#[test(tokio::test)]
+async fn a_nested_dataspace_is_reported_as_left_out() -> Res {
+    let world = World::synced()?;
+    world.fill(&[("a.txt", b"v1")]).await?;
+    world.write("inner/data.toml", "[packages]\n")?;
+    world.write("inner/b.txt", "theirs")?;
+
+    let entry = world.entry().await?;
+
+    assert_eq!(changed(&entry), []);
+    assert_eq!(
+        entry.left_out,
+        [LeftOut {
+            path: PathBuf::from("inner"),
+            reason: LeftOutReason::Dataspace,
+        }]
+    );
+    assert_eq!(
+        LeftOutReason::Dataspace.to_string(),
+        "it holds a data.toml of its own, so it is another dataspace"
+    );
+    Ok(())
+}
+
 /// A file missing from a `read` folder is filled by the next read, so it
 /// is not a deletion; an added or changed one is a local change.
 #[test(tokio::test)]

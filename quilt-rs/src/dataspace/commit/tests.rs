@@ -16,10 +16,13 @@ use crate::dataspace::sync::tests::files;
 use crate::dataspace::sync::tests::gate;
 use crate::dataspace::sync::tests::hooked;
 use crate::dataspace::sync::tests::key;
+use crate::dataspace::sync::tests::local_key;
+use crate::dataspace::sync::tests::moving;
 use crate::dataspace::sync::tests::out_key;
 use crate::dataspace::sync::tests::package;
 use crate::dataspace::sync::tests::read_text;
 use crate::dataspace::sync::tests::record;
+use crate::dataspace::sync::tests::ungate;
 use crate::dataspace::sync::tests::writer;
 use quilt_uri::Namespace;
 
@@ -464,5 +467,63 @@ async fn nothing_committed_has_no_warning() -> Res {
 
     assert_eq!(committed.commit, None);
     assert_eq!(committed.warnings, Vec::new());
+    Ok(())
+}
+
+/// A package `data.toml` moved to its bucket, whose move the bucket's
+/// workflow refused, is committed in the local registry it still lives in,
+/// after its last local commit, and the move then pushes that commit.
+#[test(tokio::test)]
+async fn a_commit_follows_a_package_moved_to_a_bucket_until_the_move_lands() -> Res {
+    let (world, _, head) = moving().await?;
+    world.local_named("lab-mac").await?;
+    gate(&world, r#"{"type": "object"}"#).await?;
+    world.tick().await?;
+    world.write("a.txt", "v3")?;
+    world.write("b.txt", "v1")?;
+
+    let committed = world.commit_as(&key(), "after the move").await;
+
+    let Ok(Committed {
+        commit: Some(hash), ..
+    }) = committed
+    else {
+        panic!("the moved package was not committed: {committed:?}");
+    };
+    let lock = world.lock().await?;
+    assert_eq!(lock.packages.get(&key()), None, "{lock:?}");
+    assert_eq!(
+        lock.packages
+            .get(&local_key())
+            .map(|locked| locked.commits.clone()),
+        Some(vec![head, hash.clone()])
+    );
+    ungate(&world).await?;
+    world.sync().await?;
+    assert_eq!(world.latest().await?, hash);
+    Ok(())
+}
+
+/// The move a tick makes holds the bucket's package lock, so a commit that
+/// follows the pending move takes that lock rather than the local one's.
+#[test(tokio::test)]
+async fn a_commit_on_a_moved_package_waits_for_the_bucket_lock() -> Res {
+    let (world, _, _) = moving().await?;
+    world.local_named("lab-mac").await?;
+    gate(&world, r#"{"type": "object"}"#).await?;
+    world.tick().await?;
+    world.write("b.txt", "v1")?;
+    let store = world.domain().registry("b")?;
+    let _held = world
+        .storage
+        .lock_exclusive(store.package_lock(&package()))
+        .await?;
+
+    let committed = world.commit_as(&key(), "while the move runs").await;
+
+    assert!(
+        matches!(committed, Err(CommitError::Busy(_))),
+        "{committed:?}"
+    );
     Ok(())
 }

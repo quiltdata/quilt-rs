@@ -602,6 +602,26 @@ pub(crate) fn moved_from(
     Some((local, locked.current()?.to_string()))
 }
 
+/// `entry` as the lock still holds it: where [`moved_from`] finds its
+/// package's move to its bucket not landed yet, the entry under the local
+/// registry's key, whose store holds its commits until the move pushes the
+/// last of them; else `entry`. What `commit` and `undo_commit` act on, so a
+/// moved package is followed rather than started again in the bucket.
+pub(crate) fn pending_move(
+    lock: &Lock,
+    contract: &Contract,
+    writer: &Writer,
+    entry: Entry,
+) -> Entry {
+    match moved_from(lock, contract, writer, &entry) {
+        Some((local, _)) => Entry {
+            registry: local.registry,
+            ..entry
+        },
+        None => entry,
+    }
+}
+
 /// Moves `entry`'s package to its bucket where `data.toml` was edited to,
 /// as [`moved_from`] tells: its last local commit is the bucket's first
 /// revision, the commits before it squashed, and the lock then holds the
