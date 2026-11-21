@@ -115,13 +115,21 @@ fn verb_index(argv: &[OsString], verb: &str) -> Option<usize> {
             if takes_value && !long.contains('=') {
                 rest.next();
             }
-        } else if let Some(short) = text.strip_prefix('-').filter(|short| short.len() == 1) {
-            let takes_value = root
-                .get_arguments()
-                .find(|opt| Some(short) == opt.get_short().map(String::from).as_deref())
-                .is_some_and(|opt| opt.get_action().takes_values());
-            if takes_value {
-                rest.next();
+        } else if let Some(group) = text.strip_prefix('-').filter(|group| !group.is_empty()) {
+            // Short options may be grouped (`-vd DIR`, `-vdDIR`): the first
+            // one taking a value takes the rest of the group, or the next
+            // argument when it ends the group.
+            for (at, short) in group.char_indices() {
+                let takes_value = root
+                    .get_arguments()
+                    .find(|opt| opt.get_short() == Some(short))
+                    .is_some_and(|opt| opt.get_action().takes_values());
+                if takes_value {
+                    if at + short.len_utf8() == group.len() {
+                        rest.next();
+                    }
+                    break;
+                }
             }
         } else if !text.starts_with('-') {
             return (text == verb).then_some(at);

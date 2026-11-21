@@ -79,6 +79,27 @@ fn a_domain_named_like_a_verb_is_not_taken_for_the_verb() -> Result<(), clap::Er
     Ok(())
 }
 
+/// Grouped short options: `-vd DIR` and `-vdDIR` take the domain's value,
+/// so the verb after them still gets the default dataspace.
+#[test]
+fn grouped_short_options_are_read_as_clap_reads_them() -> Result<(), clap::Error> {
+    for argv in [
+        &["-vd", "/tmp/domain", "list"][..],
+        &["-vd/tmp/domain", "list"][..],
+        &["-vd", "list", "list"][..],
+    ] {
+        let listing = parse(argv, true)?;
+        assert!(
+            matches!(
+                listing.command,
+                Commands::List { dataspace: Some(ref dir), .. } if *dir == mark()
+            ),
+            "{argv:?}"
+        );
+    }
+    Ok(())
+}
+
 /// Off, nothing is defaulted: the parse is today's.
 #[test]
 fn with_the_switch_off_no_dataspace_is_named() -> Result<(), clap::Error> {
