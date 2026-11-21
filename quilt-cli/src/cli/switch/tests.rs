@@ -61,6 +61,24 @@ fn with_the_switch_on_a_verb_naming_no_dataspace_names_the_default() -> Result<(
     Ok(())
 }
 
+/// A root option's value that spells a verb is not the verb.
+#[test]
+fn a_domain_named_like_a_verb_is_not_taken_for_the_verb() -> Result<(), clap::Error> {
+    for root in [["--domain", "list"], ["-d", "list"]] {
+        let listing = parse(&[root[0], root[1], "list"], true)?;
+        assert!(matches!(
+            listing.command,
+            Commands::List { dataspace: Some(ref dir), .. } if *dir == mark()
+        ));
+    }
+    let listing = parse(&["--domain=list", "list"], true)?;
+    assert!(matches!(
+        listing.command,
+        Commands::List { dataspace: Some(ref dir), .. } if *dir == mark()
+    ));
+    Ok(())
+}
+
 /// Off, nothing is defaulted: the parse is today's.
 #[test]
 fn with_the_switch_off_no_dataspace_is_named() -> Result<(), clap::Error> {

@@ -91,13 +91,43 @@ pub(super) fn with_default_dataspace(argv: Vec<OsString>) -> Vec<OsString> {
     } else {
         return argv;
     };
-    let Some(at) = argv.iter().skip(1).position(|arg| arg == verb) else {
+    let Some(at) = verb_index(&argv, verb) else {
         return argv;
     };
     let mut argv = argv;
-    let at = at + 2;
+    let at = at + 1;
     argv.splice(at..at, inserted.iter().map(OsString::from));
     argv
+}
+
+/// Where `verb` stands in `argv`: the first argument that is not a root
+/// option or that option's value, so `--domain list list` finds the second.
+fn verb_index(argv: &[OsString], verb: &str) -> Option<usize> {
+    let root = Args::command();
+    let mut rest = argv.iter().enumerate().skip(1);
+    while let Some((at, token)) = rest.next() {
+        let text = token.to_str()?;
+        if let Some(long) = text.strip_prefix("--") {
+            let takes_value = root
+                .get_arguments()
+                .find(|opt| opt.get_long() == long.split('=').next())
+                .is_some_and(|opt| opt.get_action().takes_values());
+            if takes_value && !long.contains('=') {
+                rest.next();
+            }
+        } else if let Some(short) = text.strip_prefix('-').filter(|short| short.len() == 1) {
+            let takes_value = root
+                .get_arguments()
+                .find(|opt| Some(short) == opt.get_short().map(String::from).as_deref())
+                .is_some_and(|opt| opt.get_action().takes_values());
+            if takes_value {
+                rest.next();
+            }
+        } else if !text.starts_with('-') {
+            return (text == verb).then_some(at);
+        }
+    }
+    None
 }
 
 /// Whether a verb taking the dataspace first was given one. `reattach`'s
