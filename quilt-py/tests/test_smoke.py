@@ -98,3 +98,23 @@ def test_an_install_whose_read_fails_raises(tmp_path):
             domain=tmp_path / "domain",
             home=tmp_path / "home",
         )
+
+
+def test_a_local_package_is_created_with_no_warnings(tmp_path):
+    """Warnings come back in the result, not as an exception; a package in
+    the local registry has no workflows to warn of."""
+    space = tmp_path / "space"
+    space.mkdir()
+    (space / "data.toml").write_text('registry = "s3://b"\n')
+    folder = tmp_path / "analysis"
+    folder.mkdir()
+    (folder / "result.csv").write_text("1,2")
+    created = quilt.create(
+        "quilt+local://#package=me/analysis",
+        dataspace=space,
+        folder=folder,
+        domain=tmp_path / "domain",
+        home=tmp_path / "home",
+    )
+    assert isinstance(created["commit"], str)
+    assert created["warnings"] == []

@@ -13,6 +13,7 @@ use crate::dataspace::sync::tests::FIRST;
 use crate::dataspace::sync::tests::World;
 use crate::dataspace::sync::tests::advanced;
 use crate::dataspace::sync::tests::files;
+use crate::dataspace::sync::tests::gate;
 use crate::dataspace::sync::tests::hooked;
 use crate::dataspace::sync::tests::key;
 use crate::dataspace::sync::tests::out_key;
@@ -311,6 +312,11 @@ async fn a_local_registry_entry_is_committed_into_the_registry() -> Res {
     .await?;
     assert_eq!(manifest.header.message(), Some("local edit"));
     assert_eq!(manifest.header.workflow, None);
+    assert_eq!(
+        committed.warnings,
+        Vec::new(),
+        "a local registry has no workflows"
+    );
     let pushed = advanced(&world.tick().await?);
     assert_eq!(pushed, commit);
     assert_eq!(read_text(&folder, "o.txt").as_deref(), Some("o2"));
@@ -342,5 +348,121 @@ async fn a_lock_written_elsewhere_with_files_here_is_refused() -> Res {
         matches!(&refused, Err(CommitError::Mismatch(found)) if found == &[Mismatch::Host]),
         "{refused:?}"
     );
+    Ok(())
+}
+
+const CONFIG: &str = "s3://b/.quilt/workflows/config.yml";
+
+/// The workflow id the commit `hash` of `team/raw` names, if any.
+async fn workflow_of(
+    world: &World,
+    hash: &str,
+) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    Ok(world
+        .committed(hash)
+        .await?
+        .header
+        .workflow
+        .and_then(|workflow| workflow.id)
+        .map(|id| id.id))
+}
+
+/// A commit the bucket's workflow refuses is recorded under its default
+/// workflow anyway, in the lock and the store, with a warning that a push of
+/// it will be refused (#297's warn rulings); nothing is pushed.
+#[test(tokio::test)]
+async fn a_commit_the_buckets_workflow_refuses_is_recorded_with_an_inconsistent_warning() -> Res {
+    let world = World::filled(&[("a.txt", b"v1")]).await?;
+    gate(&world, r#"{"type": "object", "required": ["owner"]}"#).await?;
+    world.write("a.txt", "v2")?;
+
+    let committed = world.commit_as(&key(), "refused edit").await?;
+
+    let commit = committed.commit.clone().ok_or("nothing committed")?;
+    let [WorkflowWarning::Inconsistent { bucket, reason }] = committed.warnings.as_slice() else {
+        panic!("expected one inconsistent warning: {committed:?}");
+    };
+    assert_eq!(bucket, "b");
+    assert!(reason.contains("owner"), "{reason}");
+    assert_eq!(
+        world.locked().await?.map(|locked| locked.commits),
+        Some(vec![commit.clone()])
+    );
+    assert_eq!(workflow_of(&world, &commit).await?.as_deref(), Some("gate"));
+    assert_eq!(world.latest().await?, FIRST, "a commit pushes nothing");
+    Ok(())
+}
+
+/// A commit the bucket's workflow accepts carries it, and no warning.
+#[test(tokio::test)]
+async fn a_commit_the_buckets_workflow_accepts_has_no_warning() -> Res {
+    let world = World::filled(&[("a.txt", b"v1")]).await?;
+    gate(&world, r#"{"type": "object"}"#).await?;
+    world.write("a.txt", "v2")?;
+
+    let committed = world.commit_as(&key(), "accepted edit").await?;
+
+    let commit = committed.commit.clone().ok_or("nothing committed")?;
+    assert_eq!(committed.warnings, Vec::new(), "{committed:?}");
+    assert_eq!(workflow_of(&world, &commit).await?.as_deref(), Some("gate"));
+    Ok(())
+}
+
+/// A workflows config that cannot be read does not refuse the commit: it is
+/// recorded with no workflow, and a warning that it went unchecked.
+#[test(tokio::test)]
+async fn a_commit_whose_workflows_config_cannot_be_read_is_recorded_unchecked() -> Res {
+    let world = World::filled(&[("a.txt", b"v1")]).await?;
+    gate(&world, r#"{"type": "object", "required": ["owner"]}"#).await?;
+    world.remote.deny_reads(CONFIG);
+    world.write("a.txt", "v2")?;
+
+    let committed = world.commit_as(&key(), "unreadable").await?;
+
+    let commit = committed.commit.clone().ok_or("nothing committed")?;
+    let [WorkflowWarning::Unchecked { bucket, .. }] = committed.warnings.as_slice() else {
+        panic!("expected one unchecked warning: {committed:?}");
+    };
+    assert_eq!(bucket, "b");
+    assert_eq!(world.committed(&commit).await?.header.workflow, None);
+    assert_eq!(
+        world.locked().await?.map(|locked| locked.commits),
+        Some(vec![commit])
+    );
+    Ok(())
+}
+
+/// A validator the schema misconfigures does not refuse the commit either:
+/// it is recorded under the workflow, with a warning that it went unchecked.
+#[test(tokio::test)]
+async fn a_commit_a_misconfigured_validator_cannot_check_is_recorded_unchecked() -> Res {
+    let world = World::filled(&[("a.txt", b"v1")]).await?;
+    gate(&world, r##"{"$ref": "#/definitions/meta"}"##).await?;
+    world.write("a.txt", "v2")?;
+
+    let committed = world.commit_as(&key(), "misconfigured").await?;
+
+    let commit = committed.commit.clone().ok_or("nothing committed")?;
+    assert!(
+        matches!(
+            committed.warnings.as_slice(),
+            [WorkflowWarning::Unchecked { bucket, .. }] if bucket == "b"
+        ),
+        "{committed:?}"
+    );
+    assert_eq!(workflow_of(&world, &commit).await?.as_deref(), Some("gate"));
+    Ok(())
+}
+
+/// Nothing committed warns of nothing, whatever the workflows say.
+#[test(tokio::test)]
+async fn nothing_committed_has_no_warning() -> Res {
+    let world = World::filled(&[("a.txt", b"v1")]).await?;
+    gate(&world, r#"{"type": "object", "required": ["owner"]}"#).await?;
+
+    let committed = world.commit_as(&key(), "nothing").await?;
+
+    assert_eq!(committed.commit, None);
+    assert_eq!(committed.warnings, Vec::new());
     Ok(())
 }

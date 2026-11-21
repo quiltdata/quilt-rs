@@ -27,6 +27,13 @@ which also holds the credentials. A call that names no `domain` uses
 `QUILT_DOMAIN`, else `bio.quilt.dataspace` in the OS's local data folder. A
 failure raises `quilt.QuiltError`.
 
+`create` and `commit` check the commit against its bucket's current
+workflows config and record it either way: the dict they return lists what
+the check found under `warnings`, each with `kind` (`inconsistent`, so a push
+there will be refused until it is fixed, or `unchecked`, where the config
+could not be read or its validator is misconfigured), `bucket`, `reason` and
+the `message` the CLI prints. A package in the local registry is not checked.
+
 ## Develop
 
 ```sh

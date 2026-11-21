@@ -53,6 +53,7 @@ use crate::domain::LocalRegistry;
 use crate::flow::PackageStore;
 use crate::flow::PushTarget;
 use crate::flow::WorkflowCheck;
+use crate::flow::WorkflowWarning;
 use crate::flow::cache_manifest_at;
 use crate::flow::check_workflow;
 use crate::flow::install_to;
@@ -66,7 +67,9 @@ use crate::io::manifest::read_latest;
 use crate::io::remote::Remote;
 use crate::io::remote::WORKFLOWS_CONFIG_KEY;
 use crate::io::remote::WorkflowIntent;
+use crate::io::remote::fetch_workflows_config;
 use crate::io::remote::resolve_workflow;
+use crate::io::remote::resolve_workflow_from_config;
 use crate::io::storage::Storage;
 use crate::lineage::PackageLineage;
 use crate::manifest::HeaderMessage;
@@ -822,6 +825,48 @@ async fn commit_workflow(
     }
 }
 
+/// [`commit_workflow`] for a commit the user asked for (25.14's build, or
+/// `commit`), which a workflows config that cannot be read does not refuse:
+/// the revision then carries no workflow, and the warning says it went
+/// unchecked (#297's warn rulings). A missing session still fails, and so
+/// does resolving a workflow against a config that was read, such as a
+/// missing schema, as `InstalledPackage::resolve_workflow_for_commit` has it.
+async fn commit_workflow_warn(
+    remote: &impl Remote,
+    store: &Store,
+    entry: &Entry,
+) -> Result<(Option<Workflow>, Option<WorkflowWarning>), EntryError> {
+    let Store::Bucket(_) = store else {
+        return Ok((None, None));
+    };
+    let workflows = S3Uri {
+        bucket: bucket(entry)?.to_string(),
+        key: WORKFLOWS_CONFIG_KEY.to_string(),
+        version: None,
+    };
+    let host = entry.catalog.as_ref();
+    let (config, parsed) = match fetch_workflows_config(remote, host, &workflows).await {
+        Ok(fetched) => fetched,
+        Err(err @ crate::Error::Login(_)) => return Err(err.into()),
+        Err(err) => {
+            let unchecked = WorkflowWarning::Unchecked {
+                bucket: workflows.bucket,
+                reason: err.to_string(),
+            };
+            return Ok((None, Some(unchecked)));
+        }
+    };
+    let workflow = resolve_workflow_from_config(
+        remote,
+        host,
+        WorkflowIntent::BucketDefault,
+        config,
+        parsed.as_ref(),
+    )
+    .await?;
+    Ok((workflow, None))
+}
+
 /// Commits the working folder's changes on the lock's current revision, then
 /// pushes the last commit against the base. `None` where there was nothing
 /// to commit or push. `known` is a revision's manifest already read, by its
@@ -871,11 +916,13 @@ async fn publish(
         user_rules,
         (current_hash.map(String::as_str), &current),
         message,
+        FolderCheck::AtPush,
     )
     .await?;
     if let Some(FolderCommit {
         hash,
         metadata_text,
+        ..
     }) = committed
     {
         crate::failpoint::stop("sync.recorded")?;
@@ -920,6 +967,21 @@ pub(crate) struct FolderCommit {
     pub(crate) hash: String,
     /// `metadata.toml` as the commit took it, if there is one.
     pub(crate) metadata_text: Option<Vec<u8>>,
+    /// What [`FolderCheck::Warn`] found; empty otherwise.
+    pub(crate) warnings: Vec<WorkflowWarning>,
+}
+
+/// When [`commit_folder`] checks the commit against the bucket's workflows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FolderCheck {
+    /// Only at push, as the tick commits (#299's sync-keep-blocked): nothing
+    /// is checked here, and a config that cannot be read stops the commit.
+    AtPush,
+    /// Now as well, for a commit the user asked for (#297's warn rulings): a
+    /// bucket package is checked against its bucket's current workflows
+    /// config and recorded either way, with an `Inconsistent` or `Unchecked`
+    /// warning; a local-registry package gets no check and no warning.
+    Warn,
 }
 
 /// Records what `entry`'s working folder changed from `current`, the lock's
@@ -927,7 +989,8 @@ pub(crate) struct FolderCommit {
 /// a commit on it in `store`, with `message` and the bucket's default
 /// workflow. Where the folder changed, the contract's `pre-write` hook runs
 /// first, as [`take_changed`] says. `None` where nothing changed, or the
-/// commit is the current revision again.
+/// commit is the current revision again. `check` says whether the commit is
+/// checked against the bucket's workflows now, as [`FolderCheck`] has it.
 #[allow(clippy::too_many_arguments, reason = "each is a distinct input")]
 pub(crate) async fn commit_folder(
     storage: &(impl Storage + Sync),
@@ -938,6 +1001,7 @@ pub(crate) async fn commit_folder(
     user_rules: &Path,
     (current_hash, current): (Option<&str>, &Manifest),
     message: &str,
+    check: FolderCheck,
 ) -> Result<Option<FolderCommit>, EntryError> {
     let on = current_hash.map(|_| current);
     let (taken, changed) = take_changed(storage, contract, entry, user_rules, current, on).await?;
@@ -950,17 +1014,40 @@ pub(crate) async fn commit_folder(
         metadata_text,
     } = taken;
     manifest.header.message = HeaderMessage::Text(message.to_string());
-    manifest.header.workflow = commit_workflow(remote, store, entry).await?;
+    let unchecked = match check {
+        FolderCheck::AtPush => {
+            manifest.header.workflow = commit_workflow(remote, store, entry).await?;
+            None
+        }
+        FolderCheck::Warn => {
+            let (workflow, unchecked) = commit_workflow_warn(remote, store, entry).await?;
+            manifest.header.workflow = workflow;
+            unchecked
+        }
+    };
+    let base_hash = current_hash.unwrap_or_default().to_string();
+    // `record` checks a `Warn` commit against the bucket the lineage names.
+    // Under `AtPush` it names none, so nothing is checked here: the push
+    // checks the revision, and stores one the workflow refuses. A
+    // local-registry package names none either way.
+    let remote_uri = match (check, store) {
+        (FolderCheck::Warn, Store::Bucket(_)) => Some(ManifestUri {
+            origin: entry.catalog.clone(),
+            bucket: bucket(entry)?.to_string(),
+            namespace: entry.package.clone(),
+            hash: base_hash.clone(),
+        }),
+        _ => None,
+    };
     let lineage = PackageLineage {
-        base_hash: current_hash.unwrap_or_default().to_string(),
+        remote_uri,
+        base_hash,
         ..PackageLineage::default()
     };
     let (_, recorded) = record(
         store,
         storage,
         remote,
-        // The lineage names no bucket, so nothing is checked here: the push
-        // checks the revision, and stores one the workflow refuses.
         WorkflowCheck::Warn {
             host: entry.catalog.as_ref(),
         },
@@ -970,9 +1057,11 @@ pub(crate) async fn commit_folder(
         &content,
     )
     .await?;
+    let recorded = recorded.with_unchecked(unchecked);
     Ok(recorded.hash().map(|hash| FolderCommit {
         hash: hash.to_string(),
         metadata_text,
+        warnings: recorded.warnings.clone(),
     }))
 }
 
