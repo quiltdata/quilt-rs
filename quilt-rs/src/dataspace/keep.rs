@@ -40,8 +40,11 @@ use crate::dataspace::store::name_local;
 use crate::domain::LocalRegistry;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
+use quilt_uri::Host;
 use quilt_uri::RevisionPointer;
 use quilt_uri::Tag;
+
+use crate::dataspace::contract::Registry;
 
 /// The paths an entry is to cover.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -76,6 +79,13 @@ pub struct Keep {
     pub revision: Option<Pin>,
     /// The list the entry moves to.
     pub access: Option<Access>,
+    /// The registry the package moves to, its folder staying where it is
+    /// (25.4): the explicit edit that moves a package, which sync never
+    /// infers.
+    pub registry: Option<Registry>,
+    /// The entry's own catalog: a host, or `None` for no catalog of its
+    /// own, so the contract's default applies.
+    pub catalog: Option<Option<Host>>,
 }
 
 impl Keep {
@@ -89,6 +99,8 @@ impl Keep {
             paths: None,
             revision: None,
             access: None,
+            registry: None,
+            catalog: None,
         }
     }
 }
@@ -202,7 +214,7 @@ impl From<crate::Error> for KeepError {
 
 /// Changes what the dataspace in the folder `dataspace` keeps of
 /// `request.package`, as `request` asks: its entry's paths, its pin, its
-/// list. Each is an edit of the package's declarations in `data.toml`, which
+/// list, its registry, its catalog. Each is an edit of the package's declarations in `data.toml`, which
 /// keeps the file's comments, writes the package where its declarations
 /// were, and is refused where the contract would refuse the result, as a
 /// pin outside `read` or a path under `replace`. `data.toml` is written
@@ -220,6 +232,11 @@ impl From<crate::Error> for KeepError {
 /// Narrowing the paths, or moving the entry to `write` or `replace`, leaves
 /// the files in the folder: they are the user's, and no longer the entry's.
 /// A pin takes effect at the next read.
+///
+/// Moving a package to another registry keeps its folder, written as the
+/// entry's `folder` where the new registry would place it elsewhere, and
+/// reads nothing: the lock keeps it under its old key, where the tick finds
+/// a local package's move to a bucket and pushes it (25.10).
 ///
 /// The lock is written, naming the new contract where it matched the old
 /// one, only once the change completed; a read that is blocked or fails
@@ -246,7 +263,9 @@ pub async fn keep(
     let key = current_key(storage, local, &request.package).await?;
 
     let entry = chosen(&contract, &key, request.from)?;
-    let wanted = wanted(&entry, request)?;
+    let wanted = wanted(&entry, request, contract.default_catalog())?;
+    // The lock stays under the old key: the tick finds a move there and pushes it.
+    let moved_to = wanted.key();
     if wanted == entry {
         return Ok(Kept {
             entry,
@@ -276,9 +295,9 @@ pub async fn keep(
     let entry = edited
         .entries()
         .iter()
-        .find(|entry| entry.key() == key && entry.access == wanted.access)
+        .find(|entry| entry.key() == moved_to && entry.access == wanted.access)
         .cloned()
-        .ok_or_else(|| ContractError::Edit(format!("{key} was not declared")))?;
+        .ok_or_else(|| ContractError::Edit(format!("{moved_to} was not declared")))?;
     let declared = edit.changed();
     if declared {
         edit.write(storage).await?;
@@ -290,8 +309,8 @@ pub async fn keep(
         local,
         &edited,
         &entry,
-        read_paths(&contract, &key),
-        lock.packages.get(&key),
+        read_paths(&contract, &moved_to),
+        lock.packages.get(&moved_to),
     )
     .await;
     if declared && read.completed() {
@@ -342,9 +361,20 @@ fn chosen(contract: &Contract, key: &PackageKey, from: Option<Access>) -> Result
     }
 }
 
-/// `entry` as `request` would have it.
-fn wanted(entry: &Entry, request: &Keep) -> Result<Entry, KeepError> {
+/// `entry` as `request` would have it; `default_catalog` is the contract's,
+/// which an entry with no catalog of its own takes.
+fn wanted(
+    entry: &Entry,
+    request: &Keep,
+    default_catalog: Option<&Host>,
+) -> Result<Entry, KeepError> {
     let mut wanted = entry.clone();
+    if let Some(registry) = &request.registry {
+        wanted.registry = registry.clone();
+    }
+    if let Some(catalog) = &request.catalog {
+        wanted.catalog = catalog.clone().or_else(|| default_catalog.cloned());
+    }
     match &request.paths {
         None => {}
         Some(Scope::Whole) => wanted.paths = Paths::Whole,

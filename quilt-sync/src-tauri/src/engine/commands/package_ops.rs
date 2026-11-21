@@ -572,7 +572,9 @@ pub async fn package_set_sync_scope(
     folders: Vec<String>,
 ) -> Result<(), String> {
     if let Some(ds) = &s.dataspace {
-        return super::dataspace::set_scope(ds, &namespace, scope, folders).await;
+        // Boxed: keep's state machine is past the `large_futures` budget on
+        // Windows.
+        return Box::pin(super::dataspace::set_scope(ds, &namespace, scope, folders)).await;
     }
     let m = &*s.model;
     let namespace = quilt_uri::Namespace::try_from(namespace.as_str())
@@ -735,6 +737,11 @@ pub async fn package_pull_outcome(
     s: &Services,
     namespace: String,
 ) -> Result<quilt::flow::PullPreview, String> {
+    if let Some(ds) = &s.dataspace {
+        return super::dataspace::pages::pull_preview(ds, &namespace)
+            .await
+            .map_err(|e| e.to_string());
+    }
     let m = &*s.model;
     let watcher = &s.watcher;
     package_pull_outcome_command(m, watcher, &namespace)
@@ -851,7 +858,7 @@ pub struct SetRemoteResponse {
 }
 
 /// The catalog field is optional: left blank, the remote has no host.
-fn remote_origin(origin: &str) -> Result<Option<Host>, Error> {
+pub(super) fn remote_origin(origin: &str) -> Result<Option<Host>, Error> {
     let origin = origin.trim();
     if origin.is_empty() {
         return Ok(None);
@@ -895,6 +902,25 @@ pub async fn set_remote(
     // `Notify::new` logs the init line; on success/failure we log explicitly so
     // the success payload can be the typed struct rather than a bare string.
     Notify::new(format!("Setting remote for {namespace}"));
+    if let Some(ds) = &s.dataspace {
+        // The dataspace's contract carries no workflow: the bucket's is
+        // applied when the move is published.
+        let _ = workflow;
+        let moved = Box::pin(super::dataspace::edits::set_remote(
+            ds, &namespace, &origin, &bucket,
+        ));
+        return match moved.await {
+            Ok(()) => Ok(SetRemoteResponse {
+                message: format!("Successfully set remote for {namespace}"),
+                resolution_warning: None,
+            }),
+            Err(err) => {
+                let msg = set_remote_refusal(&bucket, &err);
+                ::tracing::error!("{msg}");
+                Err(msg)
+            }
+        };
+    }
     match set_remote_command(m, &namespace, &origin, &bucket, workflow).await {
         Ok((ns, resolution_warning)) => {
             // Reported here rather than through `Notify::on_success`, because this
@@ -941,6 +967,19 @@ pub async fn change_catalog(
 ) -> Result<String, String> {
     let watcher = &s.watcher;
     Notify::new(format!("Changing the catalog of {namespace}"));
+    if let Some(ds) = &s.dataspace {
+        let changed = Box::pin(super::dataspace::edits::change_catalog(
+            ds, &namespace, &origin,
+        ));
+        return match changed.await {
+            Ok(()) => Ok(format!("Changed the catalog of {namespace}")),
+            Err(err) => {
+                let msg = format!("Could not change the catalog: {err}");
+                ::tracing::error!("{msg}");
+                Err(msg)
+            }
+        };
+    }
     match change_catalog_command(&*s.model, &namespace, &origin).await {
         Ok(ns) => {
             // What the old catalog refused is not the new one's.
@@ -1094,17 +1133,17 @@ pub async fn add_to_quiltignore(
     let msg_init = format!("Adding {pattern} to .quiltignore");
     let msg_ok = format!("Added {pattern} to .quiltignore");
     let msg_err = |err: &Error| format!("Failed to update .quiltignore: {err}");
+    let result = match &s.dataspace {
+        Some(ds) => super::dataspace::edits::add_to_quiltignore(ds, &namespace, &pattern).await,
+        None => add_to_quiltignore_command(m, &namespace, &pattern).await,
+    };
 
     Notify::new(msg_init)
         .on_success(
             tracing,
             MixpanelEvent::QuiltignorePatternAdded(PackageEvent::for_uri(uri.as_ref())),
         )
-        .map(
-            add_to_quiltignore_command(m, &namespace, &pattern).await,
-            msg_ok,
-            msg_err,
-        )
+        .map(result, msg_ok, msg_err)
 }
 
 /// What *Stop ignoring* writes in one scope, and what the next sync adds.
@@ -1195,12 +1234,16 @@ pub async fn stop_ignoring_preview(
     folder: bool,
 ) -> Result<StopIgnoringPreview, String> {
     let m = &*s.model;
-    Box::pin(stop_ignoring_preview_command(m, &namespace, &path, folder))
-        .await
-        .map_err(|err| match err {
-            Error::General(msg) => msg,
-            err => format!("Could not count the files to add: {err}"),
-        })
+    let preview = match &s.dataspace {
+        Some(ds) => {
+            super::dataspace::edits::stop_ignoring_preview(ds, &namespace, &path, folder).await
+        }
+        None => Box::pin(stop_ignoring_preview_command(m, &namespace, &path, folder)).await,
+    };
+    preview.map_err(|err| match err {
+        Error::General(msg) => msg,
+        err => format!("Could not count the files to add: {err}"),
+    })
 }
 
 async fn stop_ignoring_command(
@@ -1232,7 +1275,13 @@ pub async fn stop_ignoring(
         tracing,
         MixpanelEvent::QuiltignorePatternAdded(PackageEvent::for_uri(uri.as_ref())),
     );
-    let result = stop_ignoring_command(m, &namespace, &path, folder, scope).await;
+    let result = match &s.dataspace {
+        Some(ds) => {
+            super::dataspace::edits::stop_ignoring(ds, &namespace, &path, folder, scope.into())
+                .await
+        }
+        None => stop_ignoring_command(m, &namespace, &path, folder, scope).await,
+    };
     let msg_ok = match (&result, scope) {
         (Ok(Some(lines)), _) if lines.is_empty() => format!("{shown} is no longer ignored"),
         (_, StopIgnoringScope::ThisPackage) => format!("Stopped ignoring {shown} in this package"),

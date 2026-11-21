@@ -23,6 +23,7 @@
 
 ### Added
 
+- `dataspace::keep::Keep` takes a `registry` and a `catalog`: moving a package to another registry, or setting or taking off its own catalog, is an edit of its entry in `data.toml`, which reads nothing: the package keeps its folder, and the lock stays under the old key for the tick to push. `dataspace::status::revision_manifest` reads a revision's manifest and `dataspace::status::entry_status` reads one entry's status alone ([#1494](https://github.com/quiltdata/quilt-rs/pull/1494))
 - `EntryStatus::left_out` lists the folders inside an entry's working folder that hold a `data.toml` of their own, which the tick's commit leaves out as other dataspaces, each with its `LeftOutReason` ([#1493](https://github.com/quiltdata/quilt-rs/pull/1493))
 - `dataspace::commit::commit` and `dataspace::undo_commit::undo_commit` follow a package `data.toml` moved from this machine's local registry to its bucket whose move has not landed: they act on it in the local registry, so the move pushes the last commit; `dataspace::reset_to_latest::reset_to_latest` drops such a move and reads the bucket's `latest` ([#1493](https://github.com/quiltdata/quilt-rs/pull/1493))
 - `dataspace::status::status`, `dataspace::history` and `dataspace::list` read a dataspace and write nothing: each entry's hashes, `UpstreamState`, folder changes and unpushed commits, a package's revisions newest first, and the declared, stored and registry packages. `Remote::published_revision_history` gives each listed revision its time ([#1486](https://github.com/quiltdata/quilt-rs/pull/1486))

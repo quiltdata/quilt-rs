@@ -671,6 +671,11 @@ pub async fn get_package_page_data(
     s: &Services,
     namespace: String,
 ) -> Result<PackagePageData, String> {
+    if let Some(ds) = &s.dataspace {
+        return super::dataspace::pages::package_page(ds, &namespace)
+            .await
+            .map_err(|err| err.to_frontend_string());
+    }
     let m = &*s.model;
     let roles = &*s.roles;
     let watcher = &s.watcher;
@@ -1038,12 +1043,19 @@ pub async fn package_download_backlog(
     let m = &*s.model;
     let tracing = &*s.telemetry;
     let watcher = &s.watcher;
+    let downloaded = match &s.dataspace {
+        Some(ds) => Some(Box::pin(super::dataspace::pages::download(ds, &namespace, &paths)).await),
+        None => None,
+    };
     let namespace: quilt_uri::Namespace = namespace
         .try_into()
         .map_err(|e: quilt_uri::UriError| e.to_string())?;
 
-    let (result, left_out) = match download_backlog_from_model(m, watcher, &namespace, &paths).await
-    {
+    let downloaded = match downloaded {
+        Some(downloaded) => downloaded,
+        None => download_backlog_from_model(m, watcher, &namespace, &paths).await,
+    };
+    let (result, left_out) = match downloaded {
         Ok(left_out) => (Ok(()), left_out),
         Err(err) => (Err(err), NotDownloaded::default()),
     };

@@ -463,6 +463,50 @@ async fn a_missing_file_is_no_deletion_under_read() -> Res {
     Ok(())
 }
 
+/// One entry's status is that entry's alone, not the contract's first, and
+/// an entry the contract lacks has none.
+#[test(tokio::test)]
+async fn one_entry_status_reads_that_entry_alone() -> Res {
+    let world = World::new("sync = [\"team/raw\"]\nread = [\"team/other\"]")?;
+    world.write("a.txt", "new")?;
+    let whole = world.status().await?;
+    let [first, other] = whole.entries.as_slice() else {
+        panic!("{whole:?}");
+    };
+
+    let one = entry_status(
+        &world.storage,
+        &world.remote,
+        Some(&world.domain()),
+        None,
+        &world.dataspace(),
+        &writer(),
+        &world.user_rules(),
+        &other.entry,
+        false,
+    )
+    .await?
+    .ok_or("no status")?;
+    assert_eq!(one.entry, other.entry);
+    assert_eq!(one.changes.len(), other.changes.len());
+    let mut gone = first.entry.clone();
+    gone.package = ("team", "none").into();
+    let none = entry_status(
+        &world.storage,
+        &world.remote,
+        Some(&world.domain()),
+        None,
+        &world.dataspace(),
+        &writer(),
+        &world.user_rules(),
+        &gone,
+        false,
+    )
+    .await?;
+    assert!(none.is_none(), "{none:?}");
+    Ok(())
+}
+
 /// A folder the lock says was filled, now missing, is unavailable rather
 /// than every file deleted.
 #[test(tokio::test)]
@@ -540,6 +584,66 @@ async fn a_local_entry_reads_its_status_from_the_local_registry() -> Res {
     assert_eq!(entry.upstream_state, UpstreamState::Behind, "{entry:?}");
     assert_eq!(entry.hashes.latest.as_deref(), Some(second.as_str()));
     assert_eq!(changed(&entry), [("p.txt".to_string(), "added")]);
+    Ok(())
+}
+
+/// An entry read by the name the local registry had before it was renamed
+/// is still that entry.
+#[test(tokio::test)]
+async fn one_entry_is_found_by_the_name_the_local_registry_had() -> Res {
+    let world = World::new("sync = [\"quilt+local://old-mac#package=me/out\"]")?;
+    let local = world.local_named("old-mac").await?;
+    publish_local(&world.storage, &local, "me/out", &[("o.txt", b"o1")]).await?;
+    world.sync().await?;
+    let mut wanted = world.entry().await?.entry;
+    world.local_named("lab-mac").await?;
+    wanted.registry = Registry::Local("old-mac".to_string());
+
+    let one = entry_status(
+        &world.storage,
+        &world.remote,
+        Some(&world.domain()),
+        None,
+        &world.dataspace(),
+        &writer(),
+        &world.user_rules(),
+        &wanted,
+        false,
+    )
+    .await?;
+
+    assert!(one.is_some_and(|one| one.installed));
+    Ok(())
+}
+
+/// A package moved to its bucket whose move has not landed is read from
+/// the lock where it still is, under the local registry's key.
+#[test(tokio::test)]
+async fn a_moved_package_is_read_where_the_lock_holds_it() -> Res {
+    let (world, _, head) = crate::dataspace::sync::tests::moving().await?;
+    world.local_named("lab-mac").await?;
+    let contract = Contract::read(&world.storage, &world.dataspace(), None).await?;
+    let here = Writer {
+        local_registry: "lab-mac".to_string(),
+        ..writer()
+    };
+
+    let one = entry_status(
+        &world.storage,
+        &world.remote,
+        Some(&world.domain()),
+        None,
+        &world.dataspace(),
+        &here,
+        &world.user_rules(),
+        &contract.entries()[0],
+        false,
+    )
+    .await?
+    .ok_or("no status")?;
+
+    assert!(one.installed, "{one:?}");
+    assert_eq!(one.hashes.current.as_deref(), Some(head.as_str()));
     Ok(())
 }
 

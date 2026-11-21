@@ -6,6 +6,32 @@ use crate::engine::dataspace::tests::Res;
 use crate::engine::dataspace::tests::World;
 use crate::engine::dataspace::tests::raw;
 
+/// A sync whose read left files out did not complete, so a hand pull or
+/// publish under `sync` does not report success; a whole read does.
+#[tokio::test]
+async fn an_incomplete_read_is_no_success() -> Res {
+    use quilt_rs::dataspace::read::ReadReport;
+
+    let world = World::new()?;
+    let ds = world.published().await?;
+    let entry = ds.entry(&raw()).await?;
+    let whole = ReadReport::default();
+    assert!(settled(&entry, &EntrySync::ReadBack(whole.clone())).is_ok());
+
+    let mut partial = whole;
+    partial.skipped.push(PathBuf::from("a.txt"));
+    let ran = EntrySync::Ran {
+        read: Some(partial.clone()),
+        published: None,
+    };
+    assert!(
+        matches!(settled(&entry, &ran), Err(Error::Dataspace(text)) if text.contains("not read whole")),
+        "{ran:?}"
+    );
+    assert!(settled(&entry, &EntrySync::ReadBack(partial)).is_err());
+    Ok(())
+}
+
 /// The main page lists what the default dataspace declares, each row with
 /// the dataspace's own verdict.
 #[tokio::test]

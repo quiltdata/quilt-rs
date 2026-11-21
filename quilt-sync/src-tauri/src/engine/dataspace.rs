@@ -42,8 +42,8 @@ use quilt_rs::dataspace::measure::DomainSize;
 use quilt_rs::dataspace::prune::Pruned;
 use quilt_rs::dataspace::reattach::Unattached;
 use quilt_rs::dataspace::remove_revisions::Removed;
+use quilt_rs::dataspace::rename::Renamed;
 use quilt_rs::dataspace::reset_to_latest::Reset;
-use quilt_rs::dataspace::status::DataspaceStatus;
 use quilt_rs::dataspace::status::EntryStatus;
 use quilt_rs::dataspace::sync::DataspaceSync;
 use quilt_rs::dataspace::undo_commit::Undone;
@@ -53,6 +53,7 @@ use quilt_rs::io::remote::Remote;
 use quilt_rs::io::remote::RemoteS3;
 use quilt_rs::io::storage::LocalStorage;
 use quilt_rs::io::storage::Storage;
+use quilt_rs::manifest::Manifest;
 use quilt_rs::queue::Queue;
 use quilt_rs::quiltignore::Rules;
 use quilt_uri::Host;
@@ -64,7 +65,7 @@ use crate::engine::telemetry::prelude::*;
 /// The message of each revision the autosync tick commits.
 pub const AUTOSYNC_MESSAGE: &str = "Autosync";
 
-fn fail(err: impl Display) -> Error {
+pub(crate) fn fail(err: impl Display) -> Error {
     Error::Dataspace(err.to_string())
 }
 
@@ -288,21 +289,6 @@ impl<R: Remote + Sync> Dataspace<R> {
         Ok((uninstalled, pruned))
     }
 
-    pub async fn status(&self, fetch: bool) -> Result<DataspaceStatus, Error> {
-        quilt_rs::dataspace::status::status(
-            &self.storage,
-            &*self.remote,
-            Some(&self.domain),
-            Some(self.runner.queue()),
-            &self.dataspace(),
-            &self.writer,
-            &self.user_rules,
-            fetch,
-        )
-        .await
-        .map_err(fail)
-    }
-
     /// The status of the entry [`Self::entry`] names `namespace` by.
     pub async fn entry_status(
         &self,
@@ -310,12 +296,22 @@ impl<R: Remote + Sync> Dataspace<R> {
         fetch: bool,
     ) -> Result<EntryStatus, Error> {
         let entry = self.entry(namespace).await?;
-        self.status(fetch)
-            .await?
-            .entries
-            .into_iter()
-            .find(|status| status.entry == entry)
-            .ok_or_else(|| Error::Dataspace(format!("no status for {namespace}")))
+        // That entry's alone: no other folder is walked, no other registry
+        // asked.
+        quilt_rs::dataspace::status::entry_status(
+            &self.storage,
+            &*self.remote,
+            Some(&self.domain),
+            Some(self.runner.queue()),
+            &self.dataspace(),
+            &self.writer,
+            &self.user_rules,
+            &entry,
+            fetch,
+        )
+        .await
+        .map_err(fail)?
+        .ok_or_else(|| Error::Dataspace(format!("no status for {namespace}")))
     }
 
     pub async fn list(&self, fetch: bool) -> Result<Vec<DeclaredPackage>, Error> {
@@ -601,6 +597,39 @@ impl<R: Remote + Sync> Dataspace<R> {
     /// decisions the next read or sync validates and takes.
     pub async fn write_conflicts(&self, map: &ConflictMap) -> Result<(), Error> {
         map.write(&self.storage, &self.dataspace())
+            .await
+            .map_err(fail)
+    }
+
+    /// The manifest of revision `hash` of `entry`'s package: from the
+    /// Domain's store where it holds one, else from the bucket.
+    pub async fn revision_manifest(&self, entry: &Entry, hash: &str) -> Result<Manifest, Error> {
+        quilt_rs::dataspace::status::revision_manifest(
+            &self.storage,
+            &*self.remote,
+            Some(&self.domain),
+            entry,
+            hash,
+        )
+        .await
+        .map_err(fail)
+    }
+
+    /// This machine's local registry's name.
+    pub async fn local_name(&self) -> Result<String, Error> {
+        Ok(self
+            .domain
+            .local()
+            .names(&self.storage)
+            .await
+            .map_err(fail)?
+            .name)
+    }
+
+    /// Renames this machine's local registry, its old name kept as an alias,
+    /// and moves what the queue keeps under any name it had (25t item 8).
+    pub async fn rename(&self, name: &str) -> Result<Renamed, Error> {
+        quilt_rs::dataspace::rename::rename(&self.storage, &self.domain, self.runner.queue(), name)
             .await
             .map_err(fail)
     }

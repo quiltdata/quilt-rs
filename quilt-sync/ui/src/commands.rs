@@ -67,6 +67,9 @@ pub enum RuleSource {
     Extend {
         line: u64,
     },
+    /// A folder holding its own `data.toml`: another dataspace, never
+    /// packaged whatever any rule says.
+    NestedDataspace,
 }
 
 impl RuleSource {
@@ -78,6 +81,7 @@ impl RuleSource {
             Self::Package { line } => format!("This package's .quiltignore, line {line}"),
             Self::Contract => "The dataspace's data.toml".to_string(),
             Self::Extend { line } => format!("The dataspace's extend_patterns, line {line}"),
+            Self::NestedDataspace => "Its own data.toml makes it another dataspace".to_string(),
         }
     }
 }
@@ -106,6 +110,10 @@ pub struct Unreachable {
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "the command's flags, as it sends them"
+)]
 pub struct CommitData {
     pub namespace: Namespace,
     pub uri: Option<S3PackageUri>,
@@ -128,6 +136,9 @@ pub struct CommitData {
     pub settings_workflow: Option<String>,
     /// Whether the publish settings set a message template.
     pub has_message_template: bool,
+    /// The commit takes a message only; the form shows no metadata editor.
+    #[serde(default)]
+    pub message_only: bool,
     /// The previous revision's stamped workflow selection (its `id`), if any.
     pub workflow: Option<WorkflowData>,
     /// The bucket's workflow-selection situation for the commit dialog.
@@ -3409,6 +3420,20 @@ pub async fn decide_conflict(
 /// None while the dataspace engine is off.
 pub async fn get_unattached_commits() -> Result<Vec<UnattachedCommit>, String> {
     engine::invoke_unit("get_unattached_commits").await
+}
+
+/// This machine's local registry's name; `None` while the dataspace engine
+/// is off.
+pub async fn get_local_registry() -> Result<Option<String>, String> {
+    engine::invoke_unit("get_local_registry").await
+}
+
+pub async fn rename_local_registry(name: String) -> Result<String, String> {
+    #[derive(Serialize)]
+    struct Args {
+        name: String,
+    }
+    engine::invoke("rename_local_registry", &Args { name }).await
 }
 
 pub async fn reattach_commit(namespace: String, hash: String) -> Result<String, String> {

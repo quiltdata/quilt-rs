@@ -228,7 +228,10 @@ commands! {
         get_conflicts() -> Vec<ConflictRow>;
         decide_conflict(package: String, key: String, decision: Decision) -> ();
         get_unattached_commits() -> Vec<UnattachedCommit>;
-        reattach_commit(namespace: String, hash: String) -> String;    }
+        reattach_commit(namespace: String, hash: String) -> String;
+        get_local_registry() -> Option<String>;
+        rename_local_registry(name: String) -> String;
+    }
     desktop {
         open_directory_picker() -> PathBuf;
         copy_to_clipboard(text: String, uri: Option<S3PackageUri>) -> String;

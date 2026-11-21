@@ -1011,6 +1011,9 @@ fn column(
 /// The metadata field: the preview or the editor, with the check's caption
 /// and the settings line while the draft is still the Settings value.
 fn metadata_field(d: &CommitData, fixed: &Form, draft: Draft, shown: Memo<FieldErrors>) -> AnyView {
+    if d.message_only {
+        return view! { <p>"Metadata comes from metadata.toml: edit it there."</p> }.into_any();
+    }
     // The read's own note, not the check's, so it does not wait for a press.
     let user_meta_error = d.user_meta_error.clone();
     let metadata_error = Signal::derive(move || {
@@ -1328,6 +1331,7 @@ mod tests {
             settings_user_meta: None,
             settings_workflow: None,
             has_message_template: false,
+            message_only: false,
             workflow: None,
             workflows: CommitWorkflows::NotConfigured,
             no_access_reason: None,
