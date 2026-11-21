@@ -494,3 +494,67 @@ async fn the_metadata_set_is_published_by_the_next_commit() -> Test {
     );
     Ok(())
 }
+
+/// A committed package opens at its commit, its hash resolves from a prefix
+/// in its store, and deleting it takes it out of every store, after which
+/// a second delete finds nothing.
+#[test(tokio::test)]
+async fn a_commit_opens_resolves_and_is_deleted_from_the_stores() -> Test {
+    let dir = tempfile::TempDir::new()?;
+    let space = space(dir.path(), "[packages]\nsync = [\"team/raw\"]\n")?;
+    std::fs::create_dir_all(space.join("team/raw"))?;
+    std::fs::write(space.join("team/raw/a.txt"), b"alpha")?;
+    let domain = DomainRoot::new(dir.path().join("domain"));
+    let home = dir.path().join("home");
+    let remote = MockRemote::default();
+    let committed = commit(&remote, &domain, &home, &space, "team/raw", "first").await?;
+    let hash = committed["commit"].as_str().ok_or("no commit")?.to_string();
+
+    let browsed = browse(&remote, &domain, &space, "team/raw").await?;
+    let resolved = resolve_hash(&domain, "quilt+s3://b#package=team/raw", &hash[..10]).await?;
+    let deleted = delete(&domain, "team/raw", None).await?;
+    let again = delete(&domain, "team/raw", None).await;
+
+    assert_eq!(browsed["package"], "quilt+s3://b#package=team/raw");
+    assert_eq!(browsed["registry"], "s3://b");
+    assert_eq!(browsed["name"], "team/raw");
+    assert_eq!(browsed["hash"], hash.as_str());
+    let manifest = browsed["manifest"].as_str().ok_or("no manifest")?;
+    assert!(manifest.contains("\"a.txt\""), "{manifest}");
+    assert_eq!(resolved, hash);
+    assert_eq!(
+        deleted,
+        [json!({
+            "package": "quilt+s3://b#package=team/raw",
+            "registry": "s3://b",
+            "revisions": [hash],
+            "latest": {"after": "kept", "hash": null},
+        })]
+    );
+    assert_eq!(list_stored(&domain).await?, Vec::<Value>::new());
+    assert!(
+        matches!(again, Err(Error::Delete(DeleteError::NotFound(_)))),
+        "{again:?}"
+    );
+    assert_eq!(std::fs::read(space.join("team/raw/a.txt"))?, b"alpha");
+    Ok(())
+}
+
+/// A package not yet read has nothing to open, and an ambiguous or unknown
+/// prefix is refused.
+#[test(tokio::test)]
+async fn nothing_to_open_and_no_revision_are_errors() -> Test {
+    let dir = tempfile::TempDir::new()?;
+    let space = space(dir.path(), "[packages]\nsync = [\"team/raw\"]\n")?;
+    let domain = DomainRoot::new(dir.path().join("domain"));
+
+    let browsed = browse(&MockRemote::default(), &domain, &space, "team/raw").await;
+    let resolved = resolve_hash(&domain, "quilt+s3://b#package=team/raw", "1111111").await;
+
+    assert!(
+        matches!(browsed, Err(Error::Browse(BrowseError::NotRead(_)))),
+        "{browsed:?}"
+    );
+    assert!(matches!(resolved, Err(Error::Quilt(_))), "{resolved:?}");
+    Ok(())
+}

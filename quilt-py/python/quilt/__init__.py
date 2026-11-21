@@ -10,25 +10,31 @@ local data folder. A failure raises :class:`QuiltError`.
 from ._native import (
     QuiltError,
     __version__,
+    browse,
     commit,
     create,
     default_dataspace,
+    delete,
     entries,
     install,
     list_registries,
     list_stored,
+    resolve_hash,
     set_package_metadata,
 )
 
 __all__ = [
     "QuiltError",
     "__version__",
+    "browse",
     "commit",
     "create",
     "default_dataspace",
+    "delete",
     "entries",
     "install",
     "list_registries",
     "list_stored",
+    "resolve_hash",
     "set_package_metadata",
 ]

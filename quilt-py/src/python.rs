@@ -269,6 +269,58 @@ fn set_package_metadata(
     })
 }
 
+/// Opens a package of a dataspace at the revision its lock holds: the last
+/// local commit, else the base. The manifest comes back as JSON Lines text.
+#[pyfunction]
+#[pyo3(signature = (package, *, dataspace=None, domain=None, home=None))]
+fn browse(
+    py: Python<'_>,
+    package: String,
+    dataspace: Option<PathBuf>,
+    domain: Option<PathBuf>,
+    home: Option<PathBuf>,
+) -> PyResult<Py<PyAny>> {
+    let browsed = block_on(py, async move {
+        let domain = engine::domain(domain.as_deref())?;
+        let home = engine::home(home.as_deref())?;
+        let dataspace = engine::dataspace(dataspace, &home).await?;
+        engine::browse(&remote(home), &domain, &dataspace, &package).await
+    })?;
+    to_python(py, &browsed)
+}
+
+/// The whole top hash of the one revision of a package, in its local store,
+/// that starts with `prefix`.
+#[pyfunction]
+#[pyo3(signature = (uri, prefix, *, domain=None))]
+fn resolve_hash(
+    py: Python<'_>,
+    uri: String,
+    prefix: String,
+    domain: Option<PathBuf>,
+) -> PyResult<String> {
+    block_on(py, async move {
+        let domain = engine::domain(domain.as_deref())?;
+        engine::resolve_hash(&domain, &uri, &prefix).await
+    })
+}
+
+/// Deletes a package, or one revision of it, from every local Package Store.
+#[pyfunction]
+#[pyo3(signature = (name, *, top_hash=None, domain=None))]
+fn delete(
+    py: Python<'_>,
+    name: String,
+    top_hash: Option<String>,
+    domain: Option<PathBuf>,
+) -> PyResult<Py<PyAny>> {
+    let deleted = block_on(py, async move {
+        let domain = engine::domain(domain.as_deref())?;
+        engine::delete(&domain, &name, top_hash.as_deref()).await
+    })?;
+    to_python(py, &Value::Array(deleted))
+}
+
 #[pymodule]
 #[pyo3(name = "_native")]
 fn native(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -280,6 +332,9 @@ fn native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(install, m)?)?;
     m.add_function(wrap_pyfunction!(create, m)?)?;
     m.add_function(wrap_pyfunction!(commit, m)?)?;
+    m.add_function(wrap_pyfunction!(browse, m)?)?;
+    m.add_function(wrap_pyfunction!(resolve_hash, m)?)?;
+    m.add_function(wrap_pyfunction!(delete, m)?)?;
     m.add_function(wrap_pyfunction!(entries, m)?)?;
     m.add_function(wrap_pyfunction!(set_package_metadata, m)?)?;
     Ok(())

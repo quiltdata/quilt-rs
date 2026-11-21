@@ -17,6 +17,9 @@ quilt.install("quilt+s3://bucket#package=team/raw", dataspace=data)
 quilt.create("quilt+s3://bucket#package=team/new", dataspace=data)
 quilt.commit("team/raw", "first", dataspace=data)
 quilt.list_registries()
+quilt.browse("team/raw", dataspace=data)
+quilt.resolve_hash("quilt+s3://bucket#package=team/raw", "1a2b3c4")
+quilt.delete("team/raw")
 ```
 
 Every call blocks until the engine is done, without holding the GIL, on a
@@ -34,11 +37,20 @@ there will be refused until it is fixed, or `unchecked`, where the config
 could not be read or its validator is misconfigured), `bucket`, `reason` and
 the `message` the CLI prints. A package in the local registry is not checked.
 
+`browse` opens a package of a dataspace at the revision its lock holds, its
+last local commit, else its base, and returns its `manifest` as JSON Lines
+text with its `hash`. `resolve_hash` matches a short top hash among the
+package's own installed manifests in its store. `delete` removes a package,
+or with `top_hash` one revision of it, from every local Package Store and the
+local registry, and returns what it removed from each; the dataspaces, the
+buckets and the data objects are left.
+
 `entries` lists the packages a dataspace's contract declares, each with its
 `access`, `folder` and `paths`, so quilt3's build can tell a build onto an
 existing entry from a new package. `set_package_metadata` replaces the
 package metadata in a working folder's `metadata.toml`, which its next
 commit publishes.
+
 
 ## Develop
 

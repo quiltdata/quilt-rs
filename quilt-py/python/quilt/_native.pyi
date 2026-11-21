@@ -39,6 +39,20 @@ def commit(
     domain: _Path | None = None,
     home: _Path | None = None,
 ) -> dict[str, Any]: ...
+def browse(
+    package: str,
+    *,
+    dataspace: _Path | None = None,
+    domain: _Path | None = None,
+    home: _Path | None = None,
+) -> dict[str, Any]: ...
+def resolve_hash(uri: str, prefix: str, *, domain: _Path | None = None) -> str: ...
+def delete(
+    name: str,
+    *,
+    top_hash: str | None = None,
+    domain: _Path | None = None,
+) -> list[dict[str, Any]]: ...
 def entries(
     *,
     dataspace: _Path | None = None,
