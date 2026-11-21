@@ -34,6 +34,9 @@ pub struct Browsed {
     /// The revision opened: the lock's last commit of the package, else its
     /// base.
     pub hash: String,
+    /// The lock's base: the registry revision the package was last read or
+    /// published at, which a push onto that registry builds on.
+    pub base: Option<String>,
     pub manifest: Manifest,
 }
 
@@ -123,9 +126,9 @@ pub async fn browse(
     let locked = lock
         .as_ref()
         .and_then(|lock| lock.packages.get(&held.key()));
-    let Some((hash, commits)) = locked.and_then(|locked| {
+    let Some((hash, base, commits)) = locked.and_then(|locked| {
         let hash = locked.commits.last().or(locked.base.as_ref())?;
-        Some((hash.clone(), locked.commits.clone()))
+        Some((hash.clone(), locked.base.clone(), locked.commits.clone()))
     }) else {
         return Err(BrowseError::NotRead(Box::new(wanted)));
     };
@@ -134,6 +137,7 @@ pub async fn browse(
     Ok(Browsed {
         entry,
         hash,
+        base,
         manifest,
     })
 }

@@ -38,6 +38,7 @@ async fn a_package_opens_at_its_base() -> Res {
     let browsed = opened(&world, &key()).await?;
 
     assert_eq!(browsed.hash, FIRST);
+    assert_eq!(browsed.base.as_deref(), Some(FIRST));
     assert_eq!(browsed.entry.key(), key());
     assert_eq!(keys(&browsed)?, ["a.txt"]);
     Ok(())
@@ -61,6 +62,7 @@ async fn a_package_opens_at_its_last_local_commit() -> Res {
 
     assert_eq!(browsed.hash, committed);
     assert_ne!(browsed.hash, FIRST);
+    assert_eq!(browsed.base.as_deref(), Some(FIRST));
     assert_eq!(keys(&browsed)?, ["a.txt", "b.txt"]);
     Ok(())
 }
