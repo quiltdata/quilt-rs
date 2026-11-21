@@ -186,32 +186,48 @@ pub async fn reset_to_latest(
         .await?
         .ok_or(ResetError::NoLatest)?;
 
-    let locked = lock.packages.get(&key).cloned();
-    let (base, discarded) = locked
-        .clone()
-        .map_or((None, Vec::new()), |locked| (locked.base, locked.commits));
-    let current = match discarded.last().or(base.as_ref()) {
-        None => Manifest::default(),
-        Some(hash) => match manifest_at(storage, remote, &store, &entry, hash, &discarded).await {
+    // A move to the bucket that has not landed is dropped with its local
+    // commits, which stay in the local registry for reattach.
+    let base = lock
+        .packages
+        .get(&key)
+        .and_then(|locked| locked.base.clone());
+    let moved = moved_from(&lock, &contract, &writer, &entry);
+    let (current, discarded) = if let Some((local_key, head)) = &moved {
+        let current = match local_commit(storage, &local, &entry, head).await {
             Ok(current) => current,
             Err(EntryError::Failed(err)) if err.is_not_found() => {
-                warn!("The revision {hash} the lock names is gone, so it is taken as empty");
+                warn!("The revision {head} the move names is gone, so it is taken as empty");
                 Manifest::default()
             }
             Err(err) => return Err(err.into()),
-        },
-    };
-    // A move to the bucket that has not landed is dropped with its local
-    // commits, which stay in the local registry for reattach.
-    let moved = moved_from(&lock, &contract, &writer, &entry);
-    let (current, discarded) = match &moved {
-        Some((local_key, head)) => (
-            local_commit(storage, &local, &entry, head).await?,
-            lock.packages
-                .get(local_key)
-                .map_or_else(Vec::new, |locked| locked.commits.clone()),
-        ),
-        None => (current, discarded),
+        };
+        let discarded = lock
+            .packages
+            .get(local_key)
+            .map_or_else(Vec::new, |locked| locked.commits.clone());
+        (current, discarded)
+    } else {
+        let discarded = lock
+            .packages
+            .get(&key)
+            .map_or_else(Vec::new, |locked| locked.commits.clone());
+        let current = match discarded.last().or(base.as_ref()) {
+            None => Manifest::default(),
+            Some(hash) => {
+                match manifest_at(storage, remote, &store, &entry, hash, &discarded).await {
+                    Ok(current) => current,
+                    Err(EntryError::Failed(err)) if err.is_not_found() => {
+                        warn!(
+                            "The revision {hash} the lock names is gone, so it is taken as empty"
+                        );
+                        Manifest::default()
+                    }
+                    Err(err) => return Err(err.into()),
+                }
+            }
+        };
+        (current, discarded)
     };
 
     hooks::run(&contract, HookPoint::PreRead, &entry, None)

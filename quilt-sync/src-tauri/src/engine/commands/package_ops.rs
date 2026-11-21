@@ -1321,9 +1321,8 @@ pub async fn handle_remote_package(
     let _ = &tracing;
     if let Some(ds) = &s.dataspace {
         let result = super::dataspace::install(ds, &uri, namespace).await;
-        if result.is_ok() {
-            s.events.emit(PACKAGES_CHANGED_EVENT, ());
-        }
+        // Declared even where the read did not complete.
+        s.events.emit(PACKAGES_CHANGED_EVENT, ());
         return result;
     }
 

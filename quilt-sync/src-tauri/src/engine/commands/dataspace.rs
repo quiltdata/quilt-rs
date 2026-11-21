@@ -252,15 +252,27 @@ pub(super) async fn uninstall<R: Remote + Sync>(
 /// The paths a Keeping choice names, as `data.toml` spells them (25t
 /// decision 1): the whole package, or each folder ending in `/`. A choice of
 /// individual files names no file here, so it is refused.
-fn scope(scope: KeepingScope, folders: Vec<String>) -> Result<Scope, Error> {
+fn scope(scope: KeepingScope, folders: &[String]) -> Result<Scope, Error> {
     match scope {
         KeepingScope::EntirePackage => Ok(Scope::Whole),
-        KeepingScope::Folders => Ok(Scope::Only(
-            folders
-                .into_iter()
-                .map(|folder| format!("{}/", folder.trim_end_matches('/')))
-                .collect(),
-        )),
+        KeepingScope::Folders => {
+            let paths: Vec<String> = folders
+                .iter()
+                .map(|folder| folder.trim_end_matches('/'))
+                .map(|folder| {
+                    let named = !folder.is_empty()
+                        && !folder.starts_with('/')
+                        && !folder.split('/').any(|part| part == ".." || part == ".");
+                    named
+                        .then(|| format!("{folder}/"))
+                        .ok_or_else(|| Error::Dataspace(format!("{folder:?} is not a folder name")))
+                })
+                .collect::<Result<_, _>>()?;
+            if paths.is_empty() {
+                return Err(Error::Dataspace("choose at least one folder".to_string()));
+            }
+            Ok(Scope::Only(paths))
+        }
         KeepingScope::IndividualFiles => Err(Error::Dataspace(
             "a dataspace keeps the files data.toml names; choose folders or the entire package"
                 .to_string(),
@@ -276,7 +288,7 @@ pub(super) async fn set_scope<R: Remote + Sync>(
 ) -> Result<(), String> {
     let result = async {
         let mut request = Keep::new(ds.package_key(&namespace(text)?).await?);
-        request.paths = Some(scope(keeping, folders)?);
+        request.paths = Some(scope(keeping, &folders)?);
         ds.keep(&request).await
     }
     .await;

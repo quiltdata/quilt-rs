@@ -593,13 +593,9 @@ async fn nested_dataspaces(
         let Ok(mut entries) = storage.read_dir(&folder.join(&prefix)).await else {
             continue;
         };
-        while let Some(entry) = entries.next_entry().await.map_err(crate::Error::from)? {
-            if !entry
-                .file_type()
-                .await
-                .map_err(crate::Error::from)?
-                .is_dir()
-            {
+        // A folder that goes away mid-walk is left out of a list that only informs.
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            if !entry.file_type().await.is_ok_and(|kind| kind.is_dir()) {
                 continue;
             }
             let relative = prefix.join(entry.file_name());

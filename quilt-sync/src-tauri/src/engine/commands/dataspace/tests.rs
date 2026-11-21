@@ -99,3 +99,22 @@ async fn commit_then_publish_pushes_the_commit() -> Res {
     assert_eq!(status.hashes.latest, status.hashes.base);
     Ok(())
 }
+
+#[test]
+fn a_folder_choice_names_folders_inside_the_package() {
+    for folders in [
+        vec![],
+        vec![String::new()],
+        vec!["/abs".to_string()],
+        vec!["a/../b".to_string()],
+    ] {
+        assert!(
+            scope(KeepingScope::Folders, &folders).is_err(),
+            "{folders:?}"
+        );
+    }
+    assert!(matches!(
+        scope(KeepingScope::Folders, &["data/raw/".to_string()]),
+        Ok(Scope::Only(paths)) if paths == ["data/raw/"]
+    ));
+}
