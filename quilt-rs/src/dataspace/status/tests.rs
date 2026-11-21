@@ -463,6 +463,50 @@ async fn a_missing_file_is_no_deletion_under_read() -> Res {
     Ok(())
 }
 
+/// One entry's status is that entry's alone, not the contract's first, and
+/// an entry the contract lacks has none.
+#[test(tokio::test)]
+async fn one_entry_status_reads_that_entry_alone() -> Res {
+    let world = World::new("sync = [\"team/raw\"]\nread = [\"team/other\"]")?;
+    world.write("a.txt", "new")?;
+    let whole = world.status().await?;
+    let [first, other] = whole.entries.as_slice() else {
+        panic!("{whole:?}");
+    };
+
+    let one = entry_status(
+        &world.storage,
+        &world.remote,
+        Some(&world.domain()),
+        None,
+        &world.dataspace(),
+        &writer(),
+        &world.user_rules(),
+        &other.entry,
+        false,
+    )
+    .await?
+    .ok_or("no status")?;
+    assert_eq!(one.entry, other.entry);
+    assert_eq!(one.changes.len(), other.changes.len());
+    let mut gone = first.entry.clone();
+    gone.package = ("team", "none").into();
+    let none = entry_status(
+        &world.storage,
+        &world.remote,
+        Some(&world.domain()),
+        None,
+        &world.dataspace(),
+        &writer(),
+        &world.user_rules(),
+        &gone,
+        false,
+    )
+    .await?;
+    assert!(none.is_none(), "{none:?}");
+    Ok(())
+}
+
 /// A folder the lock says was filled, now missing, is unavailable rather
 /// than every file deleted.
 #[test(tokio::test)]

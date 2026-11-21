@@ -241,6 +241,55 @@ pub async fn status(
     user_rules: &Path,
     fetch: bool,
 ) -> Result<DataspaceStatus, StatusError> {
+    status_of(
+        storage, remote, domain, queue, dataspace, writer, user_rules, fetch, None,
+    )
+    .await
+}
+
+/// The status of the one entry of the dataspace in the folder `dataspace`
+/// equal to `wanted`, read as [`status`] reads each, and no other: no other
+/// folder is walked and no other registry asked. `None` where the contract
+/// has no such entry.
+#[allow(clippy::too_many_arguments)]
+pub async fn entry_status(
+    storage: &(impl Storage + Sync),
+    remote: &impl Remote,
+    domain: Option<&DomainRoot>,
+    queue: Option<&Queue>,
+    dataspace: &Path,
+    writer: &Writer,
+    user_rules: &Path,
+    wanted: &Entry,
+    fetch: bool,
+) -> Result<Option<EntryStatus>, StatusError> {
+    let status = status_of(
+        storage,
+        remote,
+        domain,
+        queue,
+        dataspace,
+        writer,
+        user_rules,
+        fetch,
+        Some(wanted),
+    )
+    .await?;
+    Ok(status.entries.into_iter().next())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn status_of(
+    storage: &(impl Storage + Sync),
+    remote: &impl Remote,
+    domain: Option<&DomainRoot>,
+    queue: Option<&Queue>,
+    dataspace: &Path,
+    writer: &Writer,
+    user_rules: &Path,
+    fetch: bool,
+    only: Option<&Entry>,
+) -> Result<DataspaceStatus, StatusError> {
     let mut contract = Contract::read(storage, dataspace, writer.local_registry_name()).await?;
     let mut lock = Lock::read(storage, &contract).await?;
     let names = match domain {
@@ -267,6 +316,9 @@ pub async fn status(
 
     let mut entries = Vec::new();
     for entry in contract.entries() {
+        if only.is_some_and(|wanted| wanted != entry) {
+            continue;
+        }
         let locked = lock
             .as_ref()
             .and_then(|lock| lock.packages.get(&entry.key()));

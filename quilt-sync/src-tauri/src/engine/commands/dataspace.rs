@@ -82,6 +82,20 @@ fn settled(entry: &Entry, outcome: &EntrySync) -> Result<(), Error> {
             "{} was stored, but latest names another revision; pull, then publish again",
             entry.package
         ))),
+        // A read that left files out did not complete, whatever else ran.
+        EntrySync::Ran {
+            read: Some(report), ..
+        }
+        | EntrySync::ReadBack(report)
+            if !report.complete() =>
+        {
+            Err(Error::Dataspace(format!(
+                "{} was not read whole: {} files are no longer in the bucket, {} do not match their hash",
+                entry.package,
+                report.skipped.len(),
+                report.hash_mismatch.len()
+            )))
+        }
         // It ran, or read the folder back.
         _ => Ok(()),
     }

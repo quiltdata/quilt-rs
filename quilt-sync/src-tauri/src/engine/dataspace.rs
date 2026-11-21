@@ -44,7 +44,6 @@ use quilt_rs::dataspace::reattach::Unattached;
 use quilt_rs::dataspace::remove_revisions::Removed;
 use quilt_rs::dataspace::rename::Renamed;
 use quilt_rs::dataspace::reset_to_latest::Reset;
-use quilt_rs::dataspace::status::DataspaceStatus;
 use quilt_rs::dataspace::status::EntryStatus;
 use quilt_rs::dataspace::sync::DataspaceSync;
 use quilt_rs::dataspace::undo_commit::Undone;
@@ -290,21 +289,6 @@ impl<R: Remote + Sync> Dataspace<R> {
         Ok((uninstalled, pruned))
     }
 
-    pub async fn status(&self, fetch: bool) -> Result<DataspaceStatus, Error> {
-        quilt_rs::dataspace::status::status(
-            &self.storage,
-            &*self.remote,
-            Some(&self.domain),
-            Some(self.runner.queue()),
-            &self.dataspace(),
-            &self.writer,
-            &self.user_rules,
-            fetch,
-        )
-        .await
-        .map_err(fail)
-    }
-
     /// The status of the entry [`Self::entry`] names `namespace` by.
     pub async fn entry_status(
         &self,
@@ -312,12 +296,22 @@ impl<R: Remote + Sync> Dataspace<R> {
         fetch: bool,
     ) -> Result<EntryStatus, Error> {
         let entry = self.entry(namespace).await?;
-        self.status(fetch)
-            .await?
-            .entries
-            .into_iter()
-            .find(|status| status.entry == entry)
-            .ok_or_else(|| Error::Dataspace(format!("no status for {namespace}")))
+        // That entry's alone: no other folder is walked, no other registry
+        // asked.
+        quilt_rs::dataspace::status::entry_status(
+            &self.storage,
+            &*self.remote,
+            Some(&self.domain),
+            Some(self.runner.queue()),
+            &self.dataspace(),
+            &self.writer,
+            &self.user_rules,
+            &entry,
+            fetch,
+        )
+        .await
+        .map_err(fail)?
+        .ok_or_else(|| Error::Dataspace(format!("no status for {namespace}")))
     }
 
     pub async fn list(&self, fetch: bool) -> Result<Vec<DeclaredPackage>, Error> {
