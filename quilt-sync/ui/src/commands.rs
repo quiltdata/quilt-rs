@@ -110,6 +110,10 @@ pub struct Unreachable {
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "the command's flags, as it sends them"
+)]
 pub struct CommitData {
     pub namespace: Namespace,
     pub uri: Option<S3PackageUri>,
@@ -132,6 +136,9 @@ pub struct CommitData {
     pub settings_workflow: Option<String>,
     /// Whether the publish settings set a message template.
     pub has_message_template: bool,
+    /// The commit takes a message only; the form shows no metadata editor.
+    #[serde(default)]
+    pub message_only: bool,
     /// The previous revision's stamped workflow selection (its `id`), if any.
     pub workflow: Option<WorkflowData>,
     /// The bucket's workflow-selection situation for the commit dialog.

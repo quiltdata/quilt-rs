@@ -141,6 +141,7 @@ async fn the_commit_page_lists_the_changes() -> Res {
 
     assert_eq!(data.message, "Review team/raw");
     assert!(data.remote_locked);
+    assert!(data.message_only);
     assert_eq!(data.counts.changed, 1);
     assert!(matches!(data.workflows, CommitWorkflows::NotConfigured));
     let changed = data

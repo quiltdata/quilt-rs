@@ -409,7 +409,9 @@ pub(in crate::engine::commands) async fn package_page<R: Remote + Sync>(
             "Installed package {namespace} has no current revision"
         ))
     })?;
-    let history = ds.history(&namespace).await?;
+    // Only the current revision's time and message come from it, and the
+    // manifest's header has the message: an unreachable bucket costs the time.
+    let history = ds.history(&namespace).await.unwrap_or_default();
     let revision = history.iter().find(|revision| revision.hash == current);
     let message = revision
         .and_then(|revision| revision.message.clone())
@@ -714,6 +716,7 @@ pub(in crate::engine::commands) async fn commit_data<R: Remote + Sync>(
             .message_template
             .as_deref()
             .is_some_and(|t| !t.trim().is_empty()),
+        message_only: true,
         workflow,
         workflows: CommitWorkflows::NotConfigured,
         no_access_reason: None,

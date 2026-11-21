@@ -35,6 +35,10 @@ use super::package_entries::InstalledPackageEntryData;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "the command's flags, as it sends them"
+)]
 pub struct CommitData {
     pub namespace: quilt_uri::Namespace,
     pub uri: Option<quilt_uri::S3PackageUri>,
@@ -63,6 +67,9 @@ pub struct CommitData {
     /// Whether the publish settings set a message template, so the form can
     /// say where its message comes from.
     pub has_message_template: bool,
+    /// The commit takes a message only: metadata comes from the dataspace's
+    /// `metadata.toml`, so the form shows no editor.
+    pub message_only: bool,
     pub workflow: Option<CommitWorkflowData>,
     pub workflows: CommitWorkflows,
     /// Why the active role cannot reach this package's bucket, worded exactly
@@ -547,6 +554,7 @@ async fn get_commit_data_from_model(
         settings_user_meta,
         settings_workflow,
         has_message_template,
+        message_only: false,
         workflow,
         workflows,
         no_access_reason,

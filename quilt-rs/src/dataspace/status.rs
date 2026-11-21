@@ -31,6 +31,7 @@ use crate::dataspace::read::gone;
 use crate::dataspace::store::Store;
 use crate::dataspace::sync::folder_key;
 use crate::dataspace::sync::latest;
+use crate::dataspace::sync::pending_move;
 use crate::dataspace::sync::take;
 use crate::domain::DomainRoot;
 use crate::domain::LocalNames;
@@ -314,11 +315,26 @@ async fn status_of(
         .as_ref()
         .map_or_else(Vec::new, |lock| lock.mismatches(&contract, writer));
 
+    // `wanted` as the contract now names it, where the local registry was
+    // renamed since the caller read the entry.
+    let wanted = only.map(|wanted| match (&wanted.registry, &names) {
+        (Registry::Local(name), Some(names)) if names.answers_to(name) => Entry {
+            registry: Registry::Local(names.name.clone()),
+            ..wanted.clone()
+        },
+        _ => wanted.clone(),
+    });
     let mut entries = Vec::new();
     for entry in contract.entries() {
-        if only.is_some_and(|wanted| wanted != entry) {
+        if wanted.as_ref().is_some_and(|wanted| wanted != entry) {
             continue;
         }
+        // A package whose move to its bucket has not landed is read where
+        // its commits are: under the local registry's key.
+        let entry = &lock.as_ref().map_or_else(
+            || entry.clone(),
+            |lock| pending_move(lock, &contract, writer, entry.clone()),
+        );
         let locked = lock
             .as_ref()
             .and_then(|lock| lock.packages.get(&entry.key()));

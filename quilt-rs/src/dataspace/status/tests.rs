@@ -587,6 +587,66 @@ async fn a_local_entry_reads_its_status_from_the_local_registry() -> Res {
     Ok(())
 }
 
+/// An entry read by the name the local registry had before it was renamed
+/// is still that entry.
+#[test(tokio::test)]
+async fn one_entry_is_found_by_the_name_the_local_registry_had() -> Res {
+    let world = World::new("sync = [\"quilt+local://old-mac#package=me/out\"]")?;
+    let local = world.local_named("old-mac").await?;
+    publish_local(&world.storage, &local, "me/out", &[("o.txt", b"o1")]).await?;
+    world.sync().await?;
+    let mut wanted = world.entry().await?.entry;
+    world.local_named("lab-mac").await?;
+    wanted.registry = Registry::Local("old-mac".to_string());
+
+    let one = entry_status(
+        &world.storage,
+        &world.remote,
+        Some(&world.domain()),
+        None,
+        &world.dataspace(),
+        &writer(),
+        &world.user_rules(),
+        &wanted,
+        false,
+    )
+    .await?;
+
+    assert!(one.is_some_and(|one| one.installed));
+    Ok(())
+}
+
+/// A package moved to its bucket whose move has not landed is read from
+/// the lock where it still is, under the local registry's key.
+#[test(tokio::test)]
+async fn a_moved_package_is_read_where_the_lock_holds_it() -> Res {
+    let (world, _, head) = crate::dataspace::sync::tests::moving().await?;
+    world.local_named("lab-mac").await?;
+    let contract = Contract::read(&world.storage, &world.dataspace(), None).await?;
+    let here = Writer {
+        local_registry: "lab-mac".to_string(),
+        ..writer()
+    };
+
+    let one = entry_status(
+        &world.storage,
+        &world.remote,
+        Some(&world.domain()),
+        None,
+        &world.dataspace(),
+        &here,
+        &world.user_rules(),
+        &contract.entries()[0],
+        false,
+    )
+    .await?
+    .ok_or("no status")?;
+
+    assert!(one.installed, "{one:?}");
+    assert_eq!(one.hashes.current.as_deref(), Some(head.as_str()));
+    Ok(())
+}
+
 /// Whether the dataspace was filled, and what in the lock's header does not
 /// fit, show.
 #[test(tokio::test)]
