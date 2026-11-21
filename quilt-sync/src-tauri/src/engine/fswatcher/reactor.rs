@@ -717,7 +717,7 @@ mod tests {
     }
 
     fn fresh_pkg() -> quilt::InstalledPackage {
-        quilt::LocalDomain::new(PathBuf::new()).create_installed_package(("acme", "demo").into())
+        crate::engine::model::mocks::nowhere().create_installed_package(("acme", "demo").into())
     }
 
     #[tokio::test]

@@ -68,6 +68,8 @@ pub(crate) struct Published {
 pub(crate) struct Seen {
     /// The status read reached the bucket, not only the last-known tip.
     pub reached: bool,
+    /// The status read could read the package's working folder.
+    pub read_folder: bool,
     /// Each revision a pass uploaded, in order, `latest` or not. A merge's
     /// move after it can still fail, and they are reported all the same.
     pub published: Vec<Published>,
@@ -146,6 +148,11 @@ pub(crate) enum WatchError {
         expired: bool,
     },
     Transient(Error),
+    /// The package's working folder is missing or cannot be read: an
+    /// unplugged drive, a moved or deleted folder. Not a failure to retry on
+    /// backoff, nor a refusal for the user to clear: the pass skips the
+    /// package, and the next tick that reads the folder carries on.
+    Unavailable(std::path::PathBuf),
 }
 
 // String-matches the guard messages in `quilt-rs/src/flow/pull.rs` and
@@ -173,8 +180,8 @@ pub(crate) enum WatchError {
 // - Everything else lands in `Other(_)` — the new default arm flips the
 //   bias from "keep trying quietly" to "stop and surface."
 pub(crate) fn classify_sync_err(err: Error) -> Result<(), WatchError> {
-    match &err {
-        Error::Quilt(quilt::Error::PackageOp(quilt::PackageOpError::Package(msg))) => {
+    match err.quilt_cause() {
+        Some(quilt::Error::PackageOp(quilt::PackageOpError::Package(msg))) => {
             if msg == "package has pending changes" {
                 Err(WatchError::Conflict(PausedReason::PendingChanges))
             } else if msg == "package has pending commits" {
@@ -185,7 +192,7 @@ pub(crate) fn classify_sync_err(err: Error) -> Result<(), WatchError> {
                 Err(WatchError::Conflict(PausedReason::Other(msg.clone())))
             }
         }
-        Error::Quilt(quilt::Error::PackageOp(
+        Some(quilt::Error::PackageOp(
             quilt::PackageOpError::Push(msg)
             | quilt::PackageOpError::Commit(msg)
             | quilt::PackageOpError::Publish(msg),
@@ -194,8 +201,18 @@ pub(crate) fn classify_sync_err(err: Error) -> Result<(), WatchError> {
         // dry-run classifier didn't foresee (a race between classify and
         // apply). Map it to the same `PullConflict` pause the dry-run path
         // produces so both routes agree on the reason the UI renders.
-        Error::Quilt(quilt::Error::PackageOp(quilt::PackageOpError::PullConflict(conflicts))) => {
+        Some(quilt::Error::PackageOp(quilt::PackageOpError::PullConflict(conflicts))) => {
             Err(WatchError::Conflict(PausedReason::pull_conflict(conflicts)))
+        }
+        // The package's working folder is gone (a drive unplugged, a folder
+        // moved or deleted) — here, between the status read that found it and
+        // the operation. Nothing is wrong with the package, and nothing the
+        // user must clear: skip it, so syncing resumes by itself once the
+        // folder is back. It must not fall to the default arm, which would
+        // pause the package until the user clears it by hand, nor be retried
+        // on backoff, which logs it every attempt.
+        Some(quilt::Error::PackageOp(quilt::PackageOpError::WorkingCopyUnavailable(home))) => {
+            Err(WatchError::Unavailable(home.clone()))
         }
         // Workflow rejection (commit- or push-side): user-actionable, so
         // pause rather than retry. Bind the inner `WorkflowValidationError`
@@ -205,7 +222,7 @@ pub(crate) fn classify_sync_err(err: Error) -> Result<(), WatchError> {
         // Kept as `PausedReason::Other` (not a dedicated variant): the UI
         // already renders the free-form message for `Other`, so a new variant
         // would add wire churn for no user-visible gain.
-        Error::Quilt(quilt::Error::WorkflowValidation(inner)) => {
+        Some(quilt::Error::WorkflowValidation(inner)) => {
             Err(WatchError::Conflict(PausedReason::Other(inner.to_string())))
         }
         // A malformed `.quilt/workflows/config.yml` is a user-actionable
@@ -213,7 +230,7 @@ pub(crate) fn classify_sync_err(err: Error) -> Result<(), WatchError> {
         // the inner error so the tray/tooltip reason is the focused
         // "Invalid workflows config: …" message rather than the outer
         // "Quilt error:" wrapper the default arm's `err.to_string()` would add.
-        Error::Quilt(quilt::Error::RemoteCatalog(
+        Some(quilt::Error::RemoteCatalog(
             inner @ quilt::RemoteCatalogError::InvalidWorkflowsConfig(_),
         )) => Err(WatchError::Conflict(PausedReason::Other(inner.to_string()))),
         // Must stay **above** the S3 arm below: a denial arrives as
@@ -234,10 +251,10 @@ pub(crate) fn classify_sync_err(err: Error) -> Result<(), WatchError> {
             host: err.s3_host().cloned(),
             expired: true,
         }),
-        Error::Quilt(quilt::Error::Reqwest(_) | quilt::Error::Io(_) | quilt::Error::S3(_)) => {
+        Some(quilt::Error::Reqwest(_) | quilt::Error::Io(_) | quilt::Error::S3(_)) => {
             Err(WatchError::Transient(err))
         }
-        Error::Quilt(quilt::Error::Login(quilt::LoginError::NoSession(host))) => {
+        Some(quilt::Error::Login(quilt::LoginError::NoSession(host))) => {
             Err(WatchError::LoginRequired {
                 host: host.clone(),
                 expired: false,
@@ -252,8 +269,13 @@ pub(crate) fn classify_sync_err(err: Error) -> Result<(), WatchError> {
 // instead of one backoff (~2 s) later, while everything else backs off as a
 // `Transient`.
 fn classify_transient_or_login(err: Error) -> WatchError {
-    match &err {
-        Error::Quilt(quilt::Error::Login(quilt::LoginError::NoSession(host))) => {
+    match err.quilt_cause() {
+        // The pull dry-run refuses a folder it cannot read; see the same arm
+        // in `classify_sync_err`.
+        Some(quilt::Error::PackageOp(quilt::PackageOpError::WorkingCopyUnavailable(home))) => {
+            WatchError::Unavailable(home.clone())
+        }
+        Some(quilt::Error::Login(quilt::LoginError::NoSession(host))) => {
             WatchError::LoginRequired {
                 host: host.clone(),
                 expired: false,
@@ -447,6 +469,14 @@ pub(crate) async fn refresh_then_maybe_sync(
         None => walk_locked(model, &locked, walks, namespace, lineage).await?,
     };
     seen.reached = status.latest_refreshed;
+    // A folder that could not be read lists no change because nothing was
+    // checked, not because the tree is clean: no pull, publish or merge acts
+    // on it, and its last-change time is left as it was, so the wait resumes
+    // from the change it already knew once the folder is back.
+    if let Some(home) = status.unavailable_home() {
+        return Err(WatchError::Unavailable(home.to_path_buf()));
+    }
+    seen.read_folder = true;
     let upstream = status.upstream_state;
     let has_changes = !status.changes.is_empty();
     // Observed-tree fingerprint, taken before the publish path consumes `status`.
@@ -635,6 +665,10 @@ pub(crate) async fn refresh_then_maybe_sync(
         // tree is a new change, with a wait of its own.
         let status = if reused_walk {
             let fresh = walk_locked(model, &locked, walks, namespace, lineage).await?;
+            if let Some(home) = fresh.unavailable_home() {
+                seen.read_folder = false;
+                return Err(WatchError::Unavailable(home.to_path_buf()));
+            }
             let fresh_fingerprint = status_fingerprint(&fresh);
             if fresh_fingerprint != fingerprint {
                 let changed_at = last_change
@@ -1078,7 +1112,26 @@ pub(crate) async fn sync_package(
         inner.action_needed.session_works(origin);
         inner.action_needed.leave(&package, Kind::NoAccess);
     }
+    // A missing folder the status read could read again ends the episode,
+    // whatever the pass then did with it.
+    if seen.read_folder
+        && let Some(home) = inner.aggregator.note_available(&namespace)
+    {
+        info!(
+            "autosync: {namespace}: working folder {} is back, syncing it again",
+            home.display()
+        );
+    }
     match result {
+        Err(WatchError::Unavailable(home)) => {
+            // The bucket answered: a sign-in it asked for before is done.
+            if seen.reached {
+                inner.login_blocked.write().await.remove(&namespace);
+                inner.aggregator.clear_error(&namespace);
+            }
+            missing_folder(inner, &namespace, &home).await;
+            return Pass::Skipped;
+        }
         Ok(outcome) => {
             inner.backoff.write().await.remove(&namespace);
             inner.login_blocked.write().await.remove(&namespace);
@@ -1177,6 +1230,43 @@ pub(crate) async fn sync_package(
     }
     inner.reporter.report_autosync_changed();
     Pass::Done
+}
+
+/// `namespace`'s working folder `home` is missing or cannot be read: skip it
+/// quietly until it is back.
+///
+/// Logged and announced once, when the episode starts; the ticks that follow
+/// find the same folder missing and say nothing. No backoff: the next tick
+/// reads the package as any other, so it resumes as soon as the folder is
+/// back. A backoff left from before is cleared, or it would hold that first
+/// read back, and so is a run of failing publishes, so the outage does not
+/// count toward it.
+async fn missing_folder(inner: &WatcherInner, namespace: &Namespace, home: &std::path::Path) {
+    // A kept walk read the folder before it went; the next tick walks again.
+    inner.walks.on_signal(namespace);
+    inner.backoff.write().await.remove(namespace);
+    inner.action_needed.publish_settled(namespace);
+    if !inner.aggregator.note_unavailable(namespace, home) {
+        debug!("autosync: {namespace}: working folder still unavailable, skipped");
+        return;
+    }
+    warn!(
+        "autosync: {namespace}: working folder {} is missing or cannot be read; \
+         skipping it until it is back",
+        home.display()
+    );
+    // Its own fingerprint, which no read of a folder can produce: the pages
+    // read the package again, and find it unavailable.
+    inner.reporter.report_status(
+        namespace,
+        PackageStatusEvent {
+            namespace: namespace.clone(),
+            status: "unavailable".to_string(),
+            has_changes: false,
+            fingerprint: format!("unavailable;{}", home.display()),
+        },
+    );
+    inner.reporter.report_autosync_changed();
 }
 
 /// Drop the entries no installed package stands behind any more: an

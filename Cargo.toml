@@ -1,5 +1,5 @@
 [workspace]
-members = ["quilt-auth", "quilt-rs", "quilt-cli", "quilt-sync/src-tauri", "quilt-sync/ui", "quilt-ui-kit", "quilt-uri"]
+members = ["quilt-auth", "quilt-rs", "quilt-cli", "quilt-py", "quilt-sync/src-tauri", "quilt-sync/ui", "quilt-ui-kit", "quilt-uri"]
 resolver = "2"
 
 [workspace.package]
@@ -33,14 +33,15 @@ aws-smithy-http-client = { version = "1.5.2", features = ["rustls-aws-lc"] }
 aws-smithy-runtime-api = { version = "1.19.2", features = ["client", "http-1x"] }
 aws-smithy-types = "1.9.1"
 aws-types = "1.7.0"
-chrono = { version = "0.4.45", features = ["serde"] }
 clap = { version = "4.6.7", features = ["derive", "env"] }
 dirs = "7.0.0"
 getrandom = "0.4"
 gitignores = "4.8"
 hex = "0.4.3"
+hostname = "0.4.2"
 http-body = "1.1.0"
 ignore = "0.4"
+jiff = { version = "1.0.1", features = ["serde"] }
 jsonschema = { version = "0.61.0", default-features = false }
 multibase = "0.9.3"
 multihash = "0.19.5"
@@ -60,6 +61,8 @@ tempfile = "3.27.0"
 thiserror = "2.0.21"
 tokio = { version = "1.54.1", features = ["full"] }
 tokio-stream = "0.1.19"
+toml = "1.1.8"
+toml_edit = "0.25.17"
 tracing = { version = "0.1.44", features = ["log"] }
 tracing-subscriber = "0.3.23"
 url = {version = "2.5.8", features = ["serde"]}

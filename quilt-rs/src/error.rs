@@ -193,10 +193,64 @@ pub enum InstallPathError {
     Uninstall(PathBuf),
 }
 
+/// The message of a hash mismatch on read, in the words `install_paths` uses.
+fn hash_mismatch_message(key: &str, replaced: bool, expected: &str, computed: &str) -> String {
+    if replaced {
+        format!(
+            "The remote no longer holds this revision's content for {key}: the object it points to has been replaced (expected {expected}, got {computed})"
+        )
+    } else {
+        format!(
+            "The package records a hash for {key} that its file does not match: the package may be corrupt (expected {expected}, got {computed})"
+        )
+    }
+}
+
+/// The message of a size mismatch on read.
+fn size_mismatch_message(key: &str, replaced: bool, expected: u64, actual: u64) -> String {
+    let message = format!("{key} is {actual} bytes, but its row says {expected}");
+    if replaced {
+        format!("{message}: the object it points to may have been replaced")
+    } else {
+        message
+    }
+}
+
 #[derive(Error, Debug)]
 pub enum ChecksumError {
     #[error("Checksum error: {0}")]
     Mismatch(String),
+
+    /// A read object's bytes do not hash to its row. `replaced` is whether the
+    /// row's `physical_key` has no `versionId` (or the `null` one), so a later
+    /// revision may have replaced the object: the wording is the one
+    /// `install_paths` uses for that case, and for a pinned version, whose bytes
+    /// cannot have changed and so whose recorded hash must be wrong.
+    #[error("{}", hash_mismatch_message(.key, *.replaced, .expected, .computed))]
+    HashMismatch {
+        /// The row's logical key.
+        key: String,
+        /// The hash the row records.
+        expected: String,
+        /// The hash of the bytes that were read.
+        computed: String,
+        /// Whether the object may have been replaced since the row was made.
+        replaced: bool,
+    },
+
+    /// A read object is not the size its row records. `replaced` is as for
+    /// [`HashMismatch`](Self::HashMismatch).
+    #[error("{}", size_mismatch_message(.key, *.replaced, *.expected, *.actual))]
+    SizeMismatch {
+        /// The row's logical key.
+        key: String,
+        /// The size the row records.
+        expected: u64,
+        /// How many bytes were read.
+        actual: u64,
+        /// Whether the object may have been replaced since the row was made.
+        replaced: bool,
+    },
 
     #[error("Missing checksum: {0:?}")]
     Missing(HostChecksums),
@@ -257,6 +311,97 @@ pub enum LineageError {
         "Folder {0:?} is not inside the package: name it from the package root, without \"..\""
     )]
     FolderOutsidePackage(String),
+
+    /// A package's ref or the domain config does not parse.
+    #[error("Failed to parse {}: {source}", path.display())]
+    FileParse {
+        path: PathBuf,
+        source: serde_json::Error,
+    },
+
+    /// A file written in a format this version does not read, most likely by
+    /// a newer one, which may have added fields this version would drop.
+    #[error(
+        "{} is in format {found}, and this version of quilt reads format {supported}",
+        path.display()
+    )]
+    UnsupportedFormat {
+        path: PathBuf,
+        found: u32,
+        supported: u32,
+    },
+
+    /// A package's ref records working copies a later version may write.
+    #[error(
+        "{} records {found}, and this version of quilt supports only one working copy, in the package's folder, at its base",
+        path.display()
+    )]
+    UnsupportedCopies { path: PathBuf, found: &'static str },
+
+    /// What was placed for the package is removed, but for `kept`, the
+    /// files edited while it was placed.
+    #[error(
+        "The home changed from {} to {} while the package was being placed, so it was not recorded{}",
+        placed.display(),
+        home.display(),
+        kept_files(kept)
+    )]
+    HomeChanged {
+        placed: PathBuf,
+        home: PathBuf,
+        kept: Vec<PathBuf>,
+    },
+
+    /// The domain config, at `path`, does not say the domain's lineage has
+    /// moved to refs, so its packages are neither listed nor written.
+    #[error(
+        "Lineage cannot be listed or written while the move to per-package refs {state} ({})",
+        path.display()
+    )]
+    RefsNotWritable { path: PathBuf, state: &'static str },
+
+    /// `data.json` does not parse, so its lineage is not moved to refs and
+    /// nothing is changed.
+    #[error(
+        "Cannot move the lineage in {} to per-package refs: it does not parse: {source}",
+        path.display()
+    )]
+    MigrationRefused {
+        path: PathBuf,
+        source: serde_json::Error,
+    },
+
+    /// A ref `data.json` cannot hold, so the lineage stays on refs.
+    #[error("Cannot roll the lineage back to data.json: {0}")]
+    RollbackRefused(Box<LineageError>),
+
+    /// `data.json` beside refs is not the stub the move leaves, so a
+    /// rollback would take it for one it had already published.
+    #[error(
+        "{} is not the stub the move to per-package refs leaves, so it may hold a lineage the refs do not; move it aside to roll back",
+        path.display()
+    )]
+    NotTheStub { path: PathBuf },
+
+    /// A rollback was interrupted, and only the command that started it
+    /// finishes it.
+    #[error(
+        "The lineage is being rolled back to data.json; run `quilt lineage rollback` to finish ({})",
+        path.display()
+    )]
+    RollingBack { path: PathBuf },
+}
+
+/// The tail of [`LineageError::HomeChanged`]'s message naming `kept`.
+fn kept_files(kept: &[PathBuf]) -> String {
+    if kept.is_empty() {
+        return String::new();
+    }
+    let files: Vec<String> = kept.iter().map(|file| file.display().to_string()).collect();
+    format!(
+        "; edited meanwhile, these stay where they are: {}",
+        files.join(", ")
+    )
 }
 
 #[derive(Error, Debug, PartialEq)]
@@ -332,6 +477,56 @@ pub enum FsError {
     ByteStream(#[from] byte_stream::error::Error),
 }
 
+/// Why a short top hash did not resolve to one revision.
+///
+/// The three outcomes quilt3's `resolve_top_hash` tells apart
+/// (`api/python/quilt3/backends/base.py` in quiltdata/quilt): a prefix of the
+/// wrong length, a prefix no revision starts with, and one that several do;
+/// plus [`NotHex`](Self::NotHex), which quilt3 has no case for.
+#[derive(Error, Debug, PartialEq, Eq)]
+pub enum HashPrefixError {
+    /// Shorter than [`MIN_HASH_PREFIX_LEN`](crate::flow::MIN_HASH_PREFIX_LEN) or
+    /// longer than a whole top hash.
+    #[error(
+        "Invalid hash: {0:?} (a hash prefix is {min} to {max} characters)",
+        min = crate::flow::MIN_HASH_PREFIX_LEN,
+        max = crate::flow::TOP_HASH_LEN
+    )]
+    InvalidLength(String),
+
+    /// Not lowercase hex, so no top hash starts with it. Refused without
+    /// asking the registry.
+    #[error("Invalid hash: {0:?} (a hash is lowercase hex)")]
+    NotHex(String),
+
+    /// No revision in the registry starts with the prefix.
+    #[error("Found zero matches for {0:?}")]
+    NoMatch(String),
+
+    /// More than one revision starts with the prefix. `matches` lists the
+    /// first [`MAX_LISTED_MATCHES`](crate::flow::MAX_LISTED_MATCHES), sorted,
+    /// so the caller can say which to pick, and `more` counts the rest.
+    #[error(
+        "Found multiple matches: {prefix:?} starts {} revisions ({}{})",
+        .matches.len() + .more,
+        .matches.join(", "),
+        and_more(*.more)
+    )]
+    Ambiguous {
+        prefix: String,
+        matches: Vec<String>,
+        more: usize,
+    },
+}
+
+fn and_more(more: usize) -> String {
+    if more == 0 {
+        String::new()
+    } else {
+        format!(", and {more} more")
+    }
+}
+
 #[derive(Error, Debug, PartialEq)]
 pub enum PackageOpError {
     #[error("Commit error: {0}")]
@@ -339,6 +534,33 @@ pub enum PackageOpError {
 
     #[error("Push error: {0}")]
     Push(String),
+
+    /// The revision's manifest was stored, but writing its timestamp tag, or
+    /// reading or writing `latest`, failed. The revision is reachable by
+    /// `top_hash`; whether `latest` moved is unknown. `reason` is the failure.
+    #[error(
+        "Pushed revision {top_hash}, but could not finish publishing it: {reason}. The revision manifest is saved; latest may not have been updated."
+    )]
+    PushTagFailed {
+        /// The top hash of the revision whose manifest was stored.
+        top_hash: String,
+        /// What failed, as the failing call reported it.
+        reason: String,
+    },
+
+    /// A push whose parent is no longer `latest`: the revision was written,
+    /// and `latest` was left alone.
+    #[error(
+        "Pushed revision {top_hash}, but did not make it latest: latest is {latest}, but this push was built on {expected}. The revision is saved, and latest is unchanged."
+    )]
+    PushedNotLatest {
+        /// The top hash of the revision that was written.
+        top_hash: String,
+        /// The revision `latest` still names.
+        latest: String,
+        /// What the push was built on: "revision <hash>", or "no earlier revision".
+        expected: String,
+    },
 
     #[error("Publish error: {0}")]
     Publish(String),
@@ -351,6 +573,15 @@ pub enum PackageOpError {
 
     #[error("Pull blocked by conflicting local changes: {0:?}")]
     PullConflict(Vec<PathBuf>),
+
+    /// The package tracks files, but its working folder is missing or cannot be
+    /// read, so what the files hold, or whether they were deleted, is unknown.
+    /// Restore the folder, or uninstall the package.
+    #[error(
+        "The working folder {} is missing or cannot be read, so the package's files cannot be checked; restore it, or uninstall the package",
+        .0.display()
+    )]
+    WorkingCopyUnavailable(PathBuf),
 }
 
 /// The error type for this library
@@ -364,6 +595,9 @@ pub enum Error {
 
     #[error(transparent)]
     Fs(#[from] FsError),
+
+    #[error(transparent)]
+    HashPrefix(#[from] HashPrefixError),
 
     #[error(transparent)]
     InstallPackage(InstallPackageError),
@@ -441,6 +675,13 @@ pub enum Error {
     #[error("Unimplemented")]
     Unimplemented,
 
+    /// A row's file could not be uploaded. Classify on [`Error::cause`].
+    #[error("Couldn't upload {key}: {source}")]
+    Upload {
+        key: crate::LogicalKey,
+        source: Box<Error>,
+    },
+
     #[error(transparent)]
     Uri(#[from] UriError),
 
@@ -476,13 +717,23 @@ impl From<crate::workflow::ConfigError> for Error {
 }
 
 impl Error {
+    /// The error under any [`Error::Upload`]: what went wrong, without the
+    /// file it happened to.
+    #[must_use]
+    pub fn cause(&self) -> &Error {
+        match self {
+            Error::Upload { source, .. } => source.cause(),
+            _ => self,
+        }
+    }
+
     /// Returns `true` if this error represents a "not found" — an S3
     /// `NoSuchKey` response, or a local filesystem miss (a working-tree file
     /// that was deleted). Lets callers tell an absent object/file apart from a
     /// genuine I/O failure (permission denied, transient storage error).
     #[must_use]
     pub fn is_not_found(&self) -> bool {
-        match self {
+        match self.cause() {
             Error::S3(s3) => s3.is_not_found(),
             Error::Fs(FsError::NotFound { .. }) => true,
             Error::Fs(FsError::Read { source, .. }) => {
@@ -502,7 +753,7 @@ impl Error {
     /// unchanged.
     #[must_use]
     pub fn is_access_denied(&self) -> bool {
-        matches!(self, Error::S3(s3) if s3.is_access_denied())
+        matches!(self.cause(), Error::S3(s3) if s3.is_access_denied())
     }
 
     /// Returns `true` if S3 rejected the credentials themselves.
@@ -513,7 +764,7 @@ impl Error {
     /// check this first — retrying a rejected credential never succeeds.
     #[must_use]
     pub fn is_invalid_credentials(&self) -> bool {
-        matches!(self, Error::S3(s3) if s3.is_invalid_credentials())
+        matches!(self.cause(), Error::S3(s3) if s3.is_invalid_credentials())
     }
 
     /// No usable session, by either route — refused before issue
@@ -522,7 +773,8 @@ impl Error {
     /// on the state; which route it took is where the failure was noticed.
     #[must_use]
     pub fn is_session_absent(&self) -> bool {
-        self.is_invalid_credentials() || matches!(self, Error::Login(LoginError::NoSession(_)))
+        self.is_invalid_credentials()
+            || matches!(self.cause(), Error::Login(LoginError::NoSession(_)))
     }
 
     /// No usable session and no deployment to sign in to: the AWS credentials
@@ -530,7 +782,7 @@ impl Error {
     /// refused. The remedy is `~/.aws` or `aws sso login`, not a sign-in.
     #[must_use]
     pub fn is_ambient_session_absent(&self) -> bool {
-        match self {
+        match self.cause() {
             Error::Login(LoginError::NoSession(host)) => host.is_none(),
             Error::S3(s3) => s3.is_invalid_credentials() && s3.host.is_none(),
             _ => false,
@@ -545,7 +797,7 @@ impl Error {
     /// says there is no stack to sign back in to.
     #[must_use]
     pub fn s3_host(&self) -> Option<&quilt_uri::Host> {
-        match self {
+        match self.cause() {
             Error::S3(s3) => s3.host.as_ref(),
             _ => None,
         }
@@ -592,6 +844,37 @@ mod tests {
     use quilt_uri::fixtures;
 
     #[test]
+    fn an_upload_failure_is_classified_by_its_cause() {
+        let upload = |source| Error::Upload {
+            key: crate::LogicalKey::new("b.txt").expect("valid key"),
+            source: Box::new(source),
+        };
+
+        let expired = upload(Error::S3(S3Error {
+            host: Some(fixtures::host()),
+            kind: S3ErrorKind::InvalidCredentials("ExpiredToken".to_string()),
+        }));
+        assert!(expired.is_invalid_credentials());
+        assert!(expired.is_session_absent());
+        assert!(!expired.is_ambient_session_absent());
+        assert_eq!(expired.s3_host(), Some(&fixtures::host()));
+        assert!(matches!(expired.cause(), Error::S3(_)));
+
+        let no_session = upload(Error::Login(LoginError::NoSession(None)));
+        assert!(no_session.is_session_absent());
+        assert!(no_session.is_ambient_session_absent());
+
+        let missing = upload(Error::Io(std::io::Error::from(
+            std::io::ErrorKind::NotFound,
+        )));
+        assert!(missing.is_not_found());
+        assert!(
+            missing.to_string().starts_with("Couldn't upload b.txt: "),
+            "{missing}"
+        );
+    }
+
+    #[test]
     fn an_ambient_session_is_absent_only_without_a_host() {
         let invalid = |host| {
             Error::S3(S3Error {
@@ -610,6 +893,44 @@ mod tests {
         assert!(
             !Error::S3(S3Error::new(S3ErrorKind::AccessDenied("no".to_string())))
                 .is_ambient_session_absent()
+        );
+    }
+
+    #[test]
+    fn a_changed_home_names_both_folders() {
+        let err = LineageError::HomeChanged {
+            placed: PathBuf::from("/old/home"),
+            home: PathBuf::from("/new/home"),
+            kept: Vec::new(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "The home changed from /old/home to /new/home while the package was being placed, so it was not recorded"
+        );
+    }
+
+    #[test]
+    fn an_interrupted_rollback_names_the_command_that_finishes_it() {
+        let err = LineageError::RollingBack {
+            path: PathBuf::from("/d/.quilt/domain.json"),
+        };
+        assert!(
+            err.to_string().contains("run `quilt lineage rollback`"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_changed_home_names_the_files_kept() {
+        let err = LineageError::HomeChanged {
+            placed: PathBuf::from("/old/home"),
+            home: PathBuf::from("/new/home"),
+            kept: vec![PathBuf::from("/old/home/a/b/x.csv")],
+        };
+        assert!(
+            err.to_string()
+                .ends_with("; edited meanwhile, these stay where they are: /old/home/a/b/x.csv"),
+            "{err}"
         );
     }
 }

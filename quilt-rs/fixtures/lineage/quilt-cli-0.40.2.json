@@ -1,0 +1,52 @@
+{
+  "packages": {
+    "acme/local": {
+      "commit": {
+        "timestamp": "2026-11-17T06:53:38.993187Z",
+        "hash": "7a88aecfc56f949c6322b85204cba2fd177dd88d505b6ac34e88cc1256317a18",
+        "prev_hashes": [
+          "a827a9b03a89292a8ddadf04b63056dbe2e1456151089285965c0fab0c43dbbf"
+        ]
+      },
+      "base_hash": "",
+      "latest_hash": "",
+      "paths": {
+        "a.csv": {
+          "timestamp": "2026-11-17T06:53:38.929409614Z",
+          "hash": "90ea022041866d7e616f7edeea31c62cca941c8d1826ca0226768abc5e7a960c6256b1f7"
+        },
+        "c.txt": {
+          "timestamp": "2026-11-17T06:53:38.974184342Z",
+          "hash": "90ea0220714b7aa5b0763ea6582d2156f87491351460093fb4cbb05ec6f837b30936f40b"
+        },
+        "data/raw/b.csv": {
+          "timestamp": "2026-11-17T06:53:38.929469281Z",
+          "hash": "90ea02207d759b16b9254aaca9ffb2fddaf5e97ef724f28d7428e0b3409f82ca82b4b09a"
+        }
+      },
+      "sync_scope": "entire_package"
+    },
+    "acme/scoped": {
+      "commit": {
+        "timestamp": "2026-11-17T06:53:39.010095Z",
+        "hash": "a7cd307a0d02d812f1fa31359b40fb325dfd86a9d4116762bfbcdb0984b54e0c",
+        "prev_hashes": []
+      },
+      "base_hash": "",
+      "latest_hash": "",
+      "paths": {
+        "notes.txt": {
+          "timestamp": "2026-11-17T06:53:38.929518906Z",
+          "hash": "90ea02206271dd6bf552cf9d9373652fd6f002ccf3f28bb1959b37f4efb7891849faec7f"
+        }
+      },
+      "sync_scope": {
+        "folders": [
+          "data",
+          "raw"
+        ]
+      }
+    }
+  },
+  "home": "/Users/someone/QuiltSync"
+}

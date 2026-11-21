@@ -79,6 +79,10 @@ is the version:
 
 ```bash
 quilt commit -n lab/assays -m "add well A2"
+# Optional package metadata, as a JSON object: --meta '{"owner": "lab"}'
+# (`-u` and `--user-meta` are the same flag). No flag keeps the previous
+# revision's metadata. `quilt create` also takes `--meta`; without it the
+# first revision has no `user_meta` key.
 ```
 
 ```text
@@ -132,11 +136,24 @@ an ordinary local folder. Edit them in your usual tools; QuiltSync syncs the
 changes back as a new immutable revision, and surfaces divergence when someone
 else published in the meantime.
 
-Builds for macOS (Apple Silicon and Intel), Windows, and Linux are on the
-[releases page](https://github.com/quiltdata/quilt-rs/releases) under
-`QuiltSync/v*`. The Windows installers are Authenticode-signed, and the macOS
+Builds for macOS (one app for Apple Silicon and Intel), Windows, and Linux
+are on the [releases page](https://github.com/quiltdata/quilt-rs/releases)
+under `QuiltSync/v*`. The Windows installers are Authenticode-signed, and the macOS
 app is signed and notarized. QuiltSync and the CLI operate on the same
 packages and revisions, so you can move between them freely.
+
+## Upgrading: the dataspace cutover
+
+`quilt` and QuiltSync now run on dataspaces by default. On first use each
+imports, once, the packages an older version kept into the dataspace Domain,
+making the old home the default dataspace, and says what it imported. The old
+folder is only read; an import that is refused or stops is reported and
+leaves the old behaviour in place until a later start finishes it.
+
+To keep the old behaviour for one more release, set `QUILT_DATASPACES=0` for
+`quilt`, or put `"dataspace_opt_out": true` in QuiltSync's
+`experimental_settings.json`. See the [CLI](quilt-cli/README.md) and
+[QuiltSync](quilt-sync/README.md) READMEs.
 
 ## Why this exists
 
@@ -224,6 +241,9 @@ are thin front ends over it.
 - **[`quilt-cli/`](quilt-cli/)**: the `quilt` binary, built on the library.
   It has no config of its own and shares its home folder with QuiltSync
   ([crates.io](https://crates.io/crates/quilt-cli)).
+- **[`quilt-py/`](quilt-py/)**: the Python binding, which quilt3 calls to
+  work with dataspaces. It is built with maturin into platform wheels for
+  PyPI, as `quilt` 3.0; nothing is published yet.
 - **[`quilt-sync/`](quilt-sync/)**: QuiltSync, the desktop app. It watches
   your folders, pulls new revisions and publishes your edits. It keeps your
   local edits when it pulls, and stops to ask when they conflict or the

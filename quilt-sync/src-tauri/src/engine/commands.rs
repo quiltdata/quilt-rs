@@ -17,6 +17,7 @@
 
 mod auth;
 mod commit_data;
+mod dataspace;
 mod desktop;
 mod main_page;
 mod navigation;
@@ -32,6 +33,10 @@ mod updates;
 
 pub use auth::*;
 pub use commit_data::*;
+pub use dataspace::{
+    ConflictRow, Decision, UnattachedCommit, decide_conflict, get_conflicts, get_local_registry,
+    get_unattached_commits, reattach_commit, rename_local_registry,
+};
 pub use desktop::*;
 pub use main_page::*;
 pub use navigation::*;

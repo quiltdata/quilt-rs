@@ -9,9 +9,8 @@
 //!
 //! The distinction matters because the kit bans the other kind of flag. `sub` on
 //! [`QueueRow`](super::QueueRow) changes indentation; a boolean like
-//! "is the row itself clickable" would change the row's **job**, which is why
-//! `PackageRow` and `FileRow` stayed separate. A slot that accepts either a button or
-//! a sentence changes neither.
+//! "is the row itself clickable" would change the row's **job**. A slot that accepts
+//! either a button or a sentence changes neither.
 //!
 //! # No tone, and that is a loss worth naming
 //!

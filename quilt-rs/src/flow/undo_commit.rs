@@ -102,7 +102,7 @@ pub async fn undo_commit(
             (*logical_key).clone(),
             PathState {
                 timestamp: storage.modified_timestamp(&working_path).await?,
-                hash: (*hash).clone().into(),
+                hash: Some((*hash).clone().into()),
             },
         );
     }
@@ -187,10 +187,11 @@ async fn refuse_unless_clean(
     let mut to_check: BTreeSet<&PathBuf> = lineage.paths.keys().collect();
     to_check.extend(destinations);
 
+    let rows = current_manifest.rows_by_key();
     let mut unexpected: Vec<String> = Vec::new();
     for logical_key in to_check {
         let working_path = LogicalKey::new(logical_key)?.join_to(package_home);
-        let ok = match current_manifest.get_record(logical_key) {
+        let ok = match rows.get(logical_key.as_path()).copied() {
             // Changed, absent, a directory, unreadable: all the same answer.
             Some(row) => matches!(
                 refresh_hash(storage, &working_path, row.clone()).await,

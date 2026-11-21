@@ -15,11 +15,9 @@ use tracing::info;
 
 use crate::Error;
 use crate::Res;
-use crate::io::storage::LockGuard;
 use crate::io::storage::Storage;
-use crate::lineage::DomainLineage;
 use crate::manifest::Manifest;
-use crate::package_lock;
+use crate::package_lock::PackageLock;
 use crate::paths::DomainPaths;
 use quilt_uri::Namespace;
 
@@ -28,7 +26,8 @@ use quilt_uri::Namespace;
 pub struct GcReport {
     /// Files deleted from `objects/`.
     pub objects: usize,
-    /// Manifests deleted from the `packages/` cache.
+    /// Manifests deleted as cache: from the `packages/` cache, and from a
+    /// registry store's `installed/` when its bucket holds them.
     pub cached_manifests: usize,
     /// Entries removed from `staging/`.
     pub staging: usize,
@@ -42,6 +41,15 @@ impl GcReport {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.objects == 0 && self.cached_manifests == 0 && self.staging == 0
+    }
+}
+
+impl std::ops::AddAssign for GcReport {
+    fn add_assign(&mut self, other: Self) {
+        self.objects += other.objects;
+        self.cached_manifests += other.cached_manifests;
+        self.staging += other.staging;
+        self.bytes += other.bytes;
     }
 }
 
@@ -103,19 +111,31 @@ pub fn format_bytes(bytes: u64) -> String {
 /// Delete every object no installed manifest uses, everything in the
 /// `packages/` cache and everything in `staging/`.
 ///
-/// Try-locks every package first, and deletes nothing if one is busy:
-/// [`Error::PackageBusy`] names it. The locks are held to the end, so no
-/// writer can stage a file or file an object meanwhile.
+/// Try-locks every package first, each of `installed` and each with a lock
+/// file, and deletes nothing if one is busy: [`Error::PackageBusy`] names it.
+/// The locks are held to the end, so no writer can stage a file or file an
+/// object meanwhile.
 pub async fn gc(
     paths: &DomainPaths,
     storage: &(impl Storage + Sync),
-    lineage: &DomainLineage,
+    installed: &BTreeSet<Namespace>,
+) -> Res<GcReport> {
+    gc_under(paths, storage, installed, async |_| Ok(())).await
+}
+
+/// [`gc`], running `also` under the locks it takes before it deletes.
+pub(crate) async fn gc_under(
+    paths: &DomainPaths,
+    storage: &(impl Storage + Sync),
+    installed: &BTreeSet<Namespace>,
+    also: impl AsyncFnOnce(&[PackageLock]) -> Res,
 ) -> Res<GcReport> {
     info!(
         "⏳ Collecting garbage in {}",
         paths.dot_quilt_dir().display()
     );
-    let _held = lock_every_package(paths, storage, lineage, None).await?;
+    let held = lock_every_package(paths, storage, installed, None).await?;
+    also(&held).await?;
     let report = sweep(paths, storage, Sweep::Delete).await?;
     info!("✔️ Collected garbage: {report:?}");
     Ok(report)
@@ -148,22 +168,26 @@ pub async fn measure_storage(
     paths: &DomainPaths,
     storage: &(impl Storage + Sync),
 ) -> Res<StorageSize> {
-    let dot_quilt = paths.dot_quilt_dir();
-    let total_bytes = if storage.exists(&dot_quilt).await {
-        let entry = Entry {
-            path: dot_quilt,
-            is_dir: true,
-            len: 0,
-        };
-        sweep_entry(storage, entry, Sweep::Count).await?.1
-    } else {
-        0
-    };
+    let total_bytes = tree_bytes(storage, &paths.dot_quilt_dir()).await?;
     let freeable = gc_estimate(paths, storage).await?;
     Ok(StorageSize {
         total_bytes,
         freeable,
     })
+}
+
+/// Every file's length under `dir`, summed, as [`measure_storage`] sums
+/// `.quilt/`'s; 0 where it is not there.
+pub(crate) async fn tree_bytes(storage: &(impl Storage + Sync), dir: &Path) -> Res<u64> {
+    if !storage.exists(dir).await {
+        return Ok(0);
+    }
+    let entry = Entry {
+        path: dir.to_path_buf(),
+        is_dir: true,
+        len: 0,
+    };
+    Ok(sweep_entry(storage, entry, Sweep::Count).await?.1)
 }
 
 /// Whether a [`sweep`] deletes what it finds or only counts it.
@@ -300,14 +324,14 @@ async fn object_len(storage: &(impl Storage + Sync), path: &Path) -> Res<Option<
 pub(crate) async fn prune(
     paths: &DomainPaths,
     storage: &(impl Storage + Sync),
-    lineage: &DomainLineage,
+    installed: &BTreeSet<Namespace>,
     candidates: BTreeMap<String, u64>,
 ) -> Res<Pruned> {
     // Nothing to delete needs no lock, and a busy package then keeps nothing.
     if candidates.is_empty() {
         return Ok(Pruned::Freed(GcReport::default()));
     }
-    let _held = match lock_every_package(paths, storage, lineage, None).await {
+    let _held = match lock_every_package(paths, storage, installed, None).await {
         Ok(held) => held,
         Err(Error::PackageBusy(namespace)) => return Ok(Pruned::Busy(namespace)),
         Err(err) => return Err(err),
@@ -394,9 +418,9 @@ pub(crate) fn row_objects(
     std::iter::once(hex::encode(hash.digest())).chain(by_key)
 }
 
-/// Try-lock every package in the lineage and every package with a lock
-/// file. An install takes its lock before its lineage entry exists, so the
-/// files catch one in flight.
+/// Try-lock every `installed` package and every package with a lock file. An
+/// install takes its lock before its lineage entry exists, so the files catch
+/// one in flight.
 ///
 /// A package created or first installed after this scan takes a lock that
 /// is not held here, so its new objects are not protected. That is by
@@ -408,11 +432,33 @@ pub(crate) fn row_objects(
 pub(crate) async fn lock_every_package(
     paths: &DomainPaths,
     storage: &(impl Storage + Sync),
-    lineage: &DomainLineage,
+    installed: &BTreeSet<Namespace>,
     except: Option<&Namespace>,
-) -> Res<Vec<LockGuard>> {
-    let mut namespaces: BTreeSet<Namespace> = lineage.namespaces().into_iter().collect();
-    for owner_dir in list_dirs(storage, &paths.locks_dir()).await? {
+) -> Res<Vec<PackageLock>> {
+    let mut namespaces = installed.clone();
+    namespaces.extend(locked_namespaces(storage, &paths.locks_dir()).await?);
+
+    if let Some(except) = except {
+        namespaces.remove(except);
+    }
+    let mut held = Vec::with_capacity(namespaces.len());
+    for namespace in namespaces {
+        match PackageLock::try_take(storage, paths, &namespace).await? {
+            Some(lock) => held.push(lock),
+            None => return Err(Error::PackageBusy(namespace)),
+        }
+    }
+    Ok(held)
+}
+
+/// The packages with a lock file under `locks_dir`,
+/// `<owner>/<name>.lock`.
+pub(crate) async fn locked_namespaces(
+    storage: &(impl Storage + Sync),
+    locks_dir: &Path,
+) -> Res<BTreeSet<Namespace>> {
+    let mut namespaces = BTreeSet::new();
+    for owner_dir in list_dirs(storage, locks_dir).await? {
         let Some(owner) = owner_dir.file_name() else {
             continue;
         };
@@ -435,18 +481,7 @@ pub(crate) async fn lock_every_package(
             }
         }
     }
-
-    if let Some(except) = except {
-        namespaces.remove(except);
-    }
-    let mut held = Vec::with_capacity(namespaces.len());
-    for namespace in namespaces {
-        match package_lock::try_lock(storage, paths, &namespace).await? {
-            Some(guard) => held.push(guard),
-            None => return Err(Error::PackageBusy(namespace)),
-        }
-    }
-    Ok(held)
+    Ok(namespaces)
 }
 
 /// One entry of a directory, as it is itself: a symlink is not followed.
@@ -480,7 +515,7 @@ async fn list_entries(storage: &(impl Storage + Sync), dir: &Path) -> Res<Vec<En
 
 /// The subdirectories of `dir`: a stray file beside them, such as the OS's
 /// own, is not one.
-async fn list_dirs(storage: &(impl Storage + Sync), dir: &Path) -> Res<Vec<PathBuf>> {
+pub(crate) async fn list_dirs(storage: &(impl Storage + Sync), dir: &Path) -> Res<Vec<PathBuf>> {
     Ok(list_entries(storage, dir)
         .await?
         .into_iter()
@@ -602,7 +637,12 @@ mod tests {
         }
         let namespace: Namespace = namespace.try_into()?;
         domain
-            .create_package(namespace, Some(source.path().to_path_buf()), None)
+            .create_package(
+                namespace,
+                Some(source.path().to_path_buf()),
+                None,
+                crate::flow::UserMeta::Clear,
+            )
             .await?;
         Ok(())
     }
@@ -691,7 +731,7 @@ mod tests {
         let before = object_names(&paths)?;
 
         let busy: Namespace = "acme/busy".try_into()?;
-        let _held = package_lock::lock(&LocalStorage::new(), &paths, &busy).await?;
+        let _held = PackageLock::take(&LocalStorage::new(), &paths, &busy).await?;
         let result = domain.gc().await;
 
         assert!(
@@ -708,7 +748,7 @@ mod tests {
     async fn an_install_holding_its_lock_before_its_entry_is_busy() -> Res {
         let (domain, paths, _dir) = domain().await?;
         let installing: Namespace = "acme/new".try_into()?;
-        let _held = package_lock::lock(&LocalStorage::new(), &paths, &installing).await?;
+        let _held = PackageLock::take(&LocalStorage::new(), &paths, &installing).await?;
 
         let result = domain.gc().await;
 
@@ -725,7 +765,7 @@ mod tests {
     async fn a_held_lock_of_a_dot_named_package_is_busy() -> Res {
         let (domain, paths, _dir) = domain().await?;
         let creating: Namespace = "acme/.foo".try_into()?;
-        let _held = package_lock::lock(&LocalStorage::new(), &paths, &creating).await?;
+        let _held = PackageLock::take(&LocalStorage::new(), &paths, &creating).await?;
         assert!(paths.locks_dir().join("acme/.foo.lock").is_file());
 
         let result = domain.gc().await;
@@ -854,7 +894,7 @@ mod tests {
         let (domain, paths, _dir) = domain().await?;
         create(&domain, "acme/kept", &[("a.txt", "a")]).await?;
         let invalid = Namespace::from(("acme", "."));
-        let _held = package_lock::lock(&LocalStorage::new(), &paths, &invalid).await?;
+        let _held = PackageLock::take(&LocalStorage::new(), &paths, &invalid).await?;
         assert!(paths.locks_dir().join("acme/..lock").is_file());
 
         assert!(domain.gc().await?.is_empty());
@@ -982,7 +1022,7 @@ mod tests {
         create(&domain, "acme/gone", &[("b.txt", "bb")]).await?;
         let before = object_names(&paths)?;
         let busy: Namespace = "acme/busy".try_into()?;
-        let _held = package_lock::lock(&LocalStorage::new(), &paths, &busy).await?;
+        let _held = PackageLock::take(&LocalStorage::new(), &paths, &busy).await?;
 
         let pruned = domain
             .uninstall_package_pruning("acme/gone".try_into()?)
@@ -1116,7 +1156,7 @@ mod tests {
         }
         let before = object_names(&paths)?;
         let busy: Namespace = "acme/busy".try_into()?;
-        let _held = package_lock::lock(&LocalStorage::new(), &paths, &busy).await?;
+        let _held = PackageLock::take(&LocalStorage::new(), &paths, &busy).await?;
 
         let result = domain.uninstall_package_pruning(namespace).await;
 
@@ -1150,7 +1190,7 @@ mod tests {
         create(&domain, "acme/busy", &[("a.txt", "a")]).await?;
         create(&domain, "acme/empty", &[]).await?;
         let busy: Namespace = "acme/busy".try_into()?;
-        let _held = package_lock::lock(&LocalStorage::new(), &paths, &busy).await?;
+        let _held = PackageLock::take(&LocalStorage::new(), &paths, &busy).await?;
 
         let pruned = domain
             .uninstall_package_pruning("acme/empty".try_into()?)
@@ -1258,7 +1298,7 @@ mod tests {
     async fn the_estimate_answers_while_a_package_is_busy() -> Res {
         let (domain, paths, _dir) = domain_with_garbage().await?;
         let busy: Namespace = "acme/kept".try_into()?;
-        let _held = package_lock::lock(&LocalStorage::new(), &paths, &busy).await?;
+        let _held = PackageLock::take(&LocalStorage::new(), &paths, &busy).await?;
 
         let size = domain.measure_storage().await?;
 

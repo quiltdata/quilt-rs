@@ -1,0 +1,906 @@
+use super::*;
+
+use test_log::test;
+
+use crate::io::storage::mocks::MockStorage;
+
+type Res = Result<(), Box<dyn std::error::Error>>;
+
+const ROOT: &str = "/work/rnaseq";
+
+/// This machine's local registry.
+const HERE: &str = "lab-mac";
+
+const FULL_HASH: &str = "abc1230000000000000000000000000000000000000000000000000000000000";
+
+fn parse_as(text: &str, case: FolderCase) -> Result<Contract, ContractError> {
+    Contract::parse(text.as_bytes(), Path::new(ROOT), case, Some(HERE))
+}
+
+fn parse(text: &str) -> Result<Contract, ContractError> {
+    parse_as(text, FolderCase::Sensitive)
+}
+
+fn entries(text: &str) -> Result<Vec<Entry>, ContractError> {
+    Ok(parse(text)?.entries().to_vec())
+}
+
+fn only(text: &str) -> Result<Entry, Box<dyn std::error::Error>> {
+    let mut entries = entries(text)?;
+    assert_eq!(entries.len(), 1, "{entries:?}");
+    Ok(entries.remove(0))
+}
+
+fn package(name: &str) -> Namespace {
+    Namespace::try_from(name).unwrap()
+}
+
+fn bucket(name: &str) -> Registry {
+    Registry::S3(name.to_string())
+}
+
+fn folder(relative: &str) -> PathBuf {
+    Path::new(ROOT).join(relative)
+}
+
+fn key(path: &str) -> LogicalKey {
+    LogicalKey::new(path).unwrap()
+}
+
+fn entry_problem(text: &str) -> EntryProblem {
+    match parse(text) {
+        Err(ContractError::Entry { problem, .. }) => problem,
+        other => panic!("expected an entry's problem, got {other:?}"),
+    }
+}
+
+fn package_problem(text: &str) -> PackageProblem {
+    match parse(text) {
+        Err(ContractError::Package { problem, .. }) => problem,
+        other => panic!("expected a package's problem, got {other:?}"),
+    }
+}
+
+const DEFAULTS: &str = "registry = \"s3://quilt-dev\"\n";
+
+fn with_defaults(packages: &str) -> String {
+    format!("{DEFAULTS}[packages]\n{packages}")
+}
+
+#[test]
+fn an_access_reads_back_from_its_list_name_and_nothing_else() -> Res {
+    for (name, access) in [
+        ("read", Access::Read),
+        ("write", Access::Write),
+        ("replace", Access::Replace),
+        ("sync", Access::Sync),
+    ] {
+        assert_eq!(name.parse::<Access>()?, access);
+        assert_eq!(access.to_string(), name);
+    }
+    for name in ["Read", "publish", ""] {
+        assert!(name.parse::<Access>().is_err(), "{name:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn three_spellings_of_one_package_expand_to_one_entry() -> Res {
+    let expected = Entry {
+        registry: bucket("quilt-dev"),
+        catalog: None,
+        package: package("team/raw"),
+        revision: RevisionPointer::Tag(Tag::Latest),
+        paths: Paths::Whole,
+        folder: folder("team/raw"),
+        access: Access::Read,
+    };
+    for list in [
+        r#"read = ["team/raw"]"#,
+        r#"read = [{ package = "team/raw" }]"#,
+        r#"read = [{ uri = "quilt+s3://quilt-dev#package=team/raw", folder = "team/raw" }]"#,
+    ] {
+        assert_eq!(only(&with_defaults(list))?, expected, "{list}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_plain_string_implies_its_package_from_its_last_two_segments() -> Res {
+    let entry = only(&with_defaults(r#"read = ["data/team/raw"]"#))?;
+    assert_eq!(entry.package, package("team/raw"));
+    assert_eq!(entry.folder, folder("data/team/raw"));
+    Ok(())
+}
+
+#[test]
+fn a_short_folder_takes_its_owner_from_the_path_above_it() -> Res {
+    let entry = only(&with_defaults(r#"sync = ["analysis"]"#))?;
+    assert_eq!(entry.package, package("rnaseq/analysis"));
+    assert_eq!(entry.folder, folder("analysis"));
+    Ok(())
+}
+
+#[test]
+fn an_implied_name_has_its_other_characters_replaced() -> Res {
+    let entry = only(&with_defaults(r#"read = ["team/My Analysis (v2)"]"#))?;
+    assert_eq!(entry.package, package("team/My_Analysis__v2_"));
+    assert_eq!(entry.folder, folder("team/My Analysis (v2)"));
+    Ok(())
+}
+
+#[test]
+fn a_folder_that_runs_out_of_path_takes_the_default_prefix() -> Res {
+    let contract = format!(
+        "default_prefix = \"me\"\n{}",
+        with_defaults(r#"read = ["/data"]"#)
+    );
+    assert_eq!(only(&contract)?.package, package("me/data"));
+    assert!(matches!(
+        entry_problem(&with_defaults(r#"read = ["/data"]"#)),
+        EntryProblem::FolderTooShort
+    ));
+    Ok(())
+}
+
+#[test]
+fn an_entry_that_states_its_bucket_is_placed_under_it() -> Res {
+    let stated = only(&with_defaults(
+        r#"read = [{ registry = "s3://quilt-dev", package = "team/raw" }]"#,
+    ))?;
+    assert_eq!(stated.folder, folder("quilt-dev/team/raw"));
+    let uri = only(&with_defaults(
+        r#"sync = ["quilt+s3://other-bucket#package=team/notes"]"#,
+    ))?;
+    assert_eq!(uri.registry, bucket("other-bucket"));
+    assert_eq!(uri.folder, folder("other-bucket/team/notes"));
+    Ok(())
+}
+
+#[test]
+fn an_entry_naming_no_registry_needs_a_default() -> Res {
+    for list in [
+        r#"read = ["team/raw"]"#,
+        r#"read = [{ package = "team/raw" }]"#,
+    ] {
+        let problem = entry_problem(&format!("[packages]\n{list}"));
+        assert!(
+            matches!(problem, EntryProblem::NoDefaultRegistry),
+            "{list}: {problem}"
+        );
+    }
+    let entry = only("[packages]\nread = [\"quilt+s3://quilt-dev#package=team/raw\"]")?;
+    assert_eq!(entry.registry, bucket("quilt-dev"));
+    Ok(())
+}
+
+#[test]
+fn a_folder_overlapping_the_contract_the_lock_or_the_conflict_map_is_refused() {
+    for list in [
+        r#"read = ["."]"#,
+        r#"read = ["./"]"#,
+        r#"read = [".."]"#,
+        r#"read = [{ package = "team/raw", folder = "." }]"#,
+        r#"read = ["data.toml"]"#,
+        r#"read = [{ package = "team/raw", folder = "data.toml/x" }]"#,
+        r#"read = [{ package = "data.toml/x" }]"#,
+        r#"read = ["data.lock.toml"]"#,
+        r#"read = [{ package = "data.lock.toml/x" }]"#,
+        r#"read = ["conflict.json"]"#,
+        r#"read = [{ package = "conflict.json/x" }]"#,
+    ] {
+        let problem = entry_problem(&with_defaults(list));
+        assert!(
+            matches!(problem, EntryProblem::DataspaceFolder),
+            "{list}: {problem}"
+        );
+    }
+}
+
+#[test]
+fn a_plain_string_in_a_local_registry_folder_is_refused() {
+    assert!(matches!(
+        entry_problem(&with_defaults(r#"read = ["host@local/me/analysis"]"#)),
+        EntryProblem::LocalFolder
+    ));
+}
+
+#[test]
+fn overlapping_folders_are_refused() {
+    for list in [
+        r#"read = ["team/raw", "team/raw/inner"]"#,
+        r#"read = [{ package = "a/b", folder = "x" }, { package = "c/d", folder = "x" }]"#,
+    ] {
+        assert!(
+            matches!(
+                parse(&with_defaults(list)),
+                Err(ContractError::FoldersOverlap { .. })
+            ),
+            "{list}"
+        );
+    }
+}
+
+#[test]
+fn folders_differing_in_case_overlap_where_names_ignore_case() {
+    let contract = with_defaults(r#"read = ["Team/Raw", "team/raw"]"#);
+    assert!(parse_as(&contract, FolderCase::Sensitive).is_ok());
+    assert!(matches!(
+        parse_as(&contract, FolderCase::Insensitive),
+        Err(ContractError::FoldersOverlap { .. })
+    ));
+}
+
+/// Whether two files whose names differ in case are one, counted by listing
+/// the folder rather than by asking for a name.
+fn ignores_case(dir: &Path) -> std::io::Result<bool> {
+    let probe = dir.join("probe");
+    std::fs::create_dir(&probe)?;
+    std::fs::write(probe.join("a"), "")?;
+    std::fs::write(probe.join("A"), "")?;
+    Ok(std::fs::read_dir(&probe)?.count() == 1)
+}
+
+#[test(tokio::test)]
+async fn read_compares_folders_as_the_dataspace_file_system_does() -> Res {
+    let storage = MockStorage::default();
+    let dataspace = storage.temp_dir.path().join("rnaseq");
+    std::fs::create_dir(&dataspace)?;
+    // A file of its own where names keep case, and the contract where they don't.
+    std::fs::write(dataspace.join("DATA.TOML"), "")?;
+    std::fs::write(
+        dataspace.join(CONTRACT_FILE),
+        with_defaults(r#"read = ["Team/Raw", "team/raw"]"#),
+    )?;
+    let read = Contract::read(&storage, &dataspace, None).await;
+    if ignores_case(storage.temp_dir.path())? {
+        assert!(matches!(read, Err(ContractError::FoldersOverlap { .. })));
+    } else {
+        let folders: Vec<PathBuf> = read?.entries().iter().map(|e| e.folder.clone()).collect();
+        assert_eq!(
+            folders,
+            [dataspace.join("Team/Raw"), dataspace.join("team/raw")]
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_uri_and_parts_that_disagree_are_refused() -> Res {
+    let pinned = format!("revision = \"{FULL_HASH}\"");
+    for (field, extra) in [
+        ("package", r#"package = "team/other""#),
+        ("registry", r#"registry = "s3://other-bucket""#),
+        ("revision", pinned.as_str()),
+        ("path", r#"path = "src/""#),
+        ("catalog", r#"catalog = "nightly.quilttest.com""#),
+    ] {
+        let list =
+            format!(r#"read = [{{ uri = "quilt+s3://quilt-dev#package=team/raw", {extra} }}]"#);
+        let problem = entry_problem(&with_defaults(&list));
+        assert!(
+            matches!(problem, EntryProblem::Disagrees(f) if f == field),
+            "{field}: {problem}"
+        );
+    }
+    let agreeing = only(&with_defaults(
+        r#"read = [{ uri = "quilt+s3://quilt-dev#package=team/raw&path=src/", package = "team/raw", path = "src/" }]"#,
+    ))?;
+    assert_eq!(
+        agreeing.paths,
+        Paths::Only(vec![PackagePath::Folder(key("src"))])
+    );
+    Ok(())
+}
+
+#[test]
+fn a_pin_is_allowed_under_read_only() -> Res {
+    let read = only(&with_defaults(&format!(
+        r#"read = [{{ package = "team/reference", revision = "{FULL_HASH}" }}]"#
+    )))?;
+    assert_eq!(read.revision, RevisionPointer::Hash(FULL_HASH.to_string()));
+    for access in ["write", "replace", "sync"] {
+        let problem = package_problem(&with_defaults(&format!(
+            r#"{access} = [{{ package = "team/p", revision = "abc123" }}]"#
+        )));
+        assert!(
+            matches!(problem, PackageProblem::PinOutsideRead(a) if a.to_string() == access),
+            "{access}: {problem}"
+        );
+    }
+    let shared = package_problem(&with_defaults(
+        r#"read = [{ package = "team/p", path = "in/", revision = "abc123" }]
+write = [{ package = "team/p", path = "out/" }]"#,
+    ));
+    assert!(matches!(
+        shared,
+        PackageProblem::PinOutsideRead(Access::Write)
+    ));
+    Ok(())
+}
+
+#[test]
+fn replace_takes_no_path() {
+    assert!(matches!(
+        entry_problem(&with_defaults(
+            r#"replace = [{ package = "team/snapshot", path = "src/" }]"#
+        )),
+        EntryProblem::PathUnderReplace
+    ));
+}
+
+#[test]
+fn a_package_under_sync_or_replace_is_listed_under_nothing_else() {
+    for (exclusive, other) in [("sync", "read"), ("replace", "write"), ("sync", "replace")] {
+        let problem = package_problem(&with_defaults(&format!(
+            "{other} = [\"team/p\"]\n{exclusive} = [\"team/p\"]"
+        )));
+        assert!(
+            matches!(problem, PackageProblem::ExclusiveAccess(..)),
+            "{exclusive} and {other}: {problem}"
+        );
+    }
+}
+
+#[test]
+fn a_package_may_be_read_and_written_at_paths_that_do_not_overlap() -> Res {
+    let both = entries(&with_defaults(
+        r#"read = [{ package = "team/p", path = "data/" }]
+write = [{ package = "team/p", path = "out/" }]"#,
+    ))?;
+    let accesses: Vec<Access> = both.iter().map(|e| e.access).collect();
+    assert_eq!(accesses, [Access::Read, Access::Write]);
+    assert_eq!(both[0].folder, both[1].folder);
+
+    for (read, write) in [
+        (r#", path = "data/""#, r#", path = "data/x.csv""#),
+        (r#", path = "data/x.csv""#, r#", path = "data/x.csv""#),
+        (r#", path = "data""#, r#", path = "data/x/""#),
+        ("", r#", path = "out/""#),
+    ] {
+        let contract = with_defaults(&format!(
+            "read = [{{ package = \"team/p\"{read} }}]\nwrite = [{{ package = \"team/p\"{write} }}]"
+        ));
+        assert!(
+            matches!(
+                package_problem(&contract),
+                PackageProblem::PathsOverlap(Access::Read, Access::Write)
+            ),
+            "{read} and {write}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn repeated_paths_under_one_access_are_their_union() -> Res {
+    let union = |paths: &[&str]| -> Result<Paths, Box<dyn std::error::Error>> {
+        let list: Vec<String> = paths
+            .iter()
+            .map(|path| match *path {
+                "" => r#"{ package = "team/p" }"#.to_string(),
+                path => format!(r#"{{ package = "team/p", path = "{path}" }}"#),
+            })
+            .collect();
+        Ok(only(&with_defaults(&format!("sync = [{}]", list.join(", "))))?.paths)
+    };
+    assert_eq!(
+        union(&["src/", "docs/"])?,
+        Paths::Only(vec![
+            PackagePath::Folder(key("docs")),
+            PackagePath::Folder(key("src"))
+        ])
+    );
+    assert_eq!(
+        union(&["src/a.py", "src/", "src/a.py"])?,
+        Paths::Only(vec![PackagePath::Folder(key("src"))])
+    );
+    assert_eq!(union(&["src/", ""])?, Paths::Whole);
+    let collisions: [&[&str]; 6] = [
+        &["a/b", "a/b/c/"],
+        &["a/b/c/", "a/b"],
+        &["src", "src/"],
+        &["src/", "src/item", "src/item/"],
+        &["src/item", "src/item/", "src/"],
+        &["", "a/b", "a/b/c/"],
+    ];
+    for paths in collisions {
+        let list: Vec<String> = paths
+            .iter()
+            .map(|path| match *path {
+                "" => r#"{ package = "team/p" }"#.to_string(),
+                path => format!(r#"{{ package = "team/p", path = "{path}" }}"#),
+            })
+            .collect();
+        let problem = package_problem(&with_defaults(&format!("sync = [{}]", list.join(", "))));
+        assert!(
+            matches!(problem, PackageProblem::PathsCollide(Access::Sync)),
+            "{paths:?}: {problem}"
+        );
+    }
+    assert_eq!(
+        union(&["src/a.py"])?,
+        Paths::Only(vec![PackagePath::File(key("src/a.py"))])
+    );
+    Ok(())
+}
+
+#[test]
+fn the_declarations_of_a_package_share_one_pin() -> Res {
+    let shared = only(&with_defaults(
+        r#"read = [{ package = "team/p", path = "a/", revision = "abc123" }, { package = "team/p", path = "b/" }]"#,
+    ))?;
+    assert_eq!(
+        shared.revision,
+        RevisionPointer::HashPrefix("abc123".to_string())
+    );
+    for other in [
+        r#"{ package = "team/p", path = "b/", revision = "def456" }"#,
+        r#"{ package = "team/p", path = "b/", revision = ":latest" }"#,
+        r#"{ uri = "quilt+s3://quilt-dev#package=team/p:latest&path=b/", folder = "team/p" }"#,
+        r#"{ uri = "quilt+s3://quilt-dev#%70ackage=team/p:latest&path=b/", folder = "team/p" }"#,
+        r#"{ uri = "quilt+s3://quilt-dev#pack\tage=team/p:latest&path=b/", folder = "team/p" }"#,
+    ] {
+        let problem = package_problem(&with_defaults(&format!(
+            r#"read = [{{ package = "team/p", path = "a/", revision = "abc123" }}, {other}]"#,
+        )));
+        assert!(
+            matches!(problem, PackageProblem::Revisions),
+            "{other}: {problem}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn one_package_written_two_ways_is_refused() {
+    let problem = package_problem(&with_defaults(
+        r#"read = ["team/raw", "quilt+s3://quilt-dev#package=team/raw"]"#,
+    ));
+    assert!(
+        matches!(&problem, PackageProblem::Folders(one, other)
+            if *one == folder("team/raw") && *other == folder("quilt-dev/team/raw")),
+        "{problem}"
+    );
+}
+
+#[test]
+fn the_default_catalog_applies_only_where_an_entry_names_none() -> Res {
+    let contract = |list: &str| {
+        format!(
+            "catalog = \"nightly.quilttest.com\"\n{}",
+            with_defaults(list)
+        )
+    };
+    let host = |name: &str| Host::from_str(name).unwrap();
+    for list in [
+        r#"read = ["team/raw"]"#,
+        r#"read = [{ package = "team/raw" }]"#,
+    ] {
+        assert_eq!(
+            only(&contract(list))?.catalog,
+            Some(host("nightly.quilttest.com")),
+            "{list}"
+        );
+    }
+    assert_eq!(
+        only(&contract(
+            r#"read = [{ package = "team/raw", catalog = "open.quilt.bio" }]"#
+        ))?
+        .catalog,
+        Some(host("open.quilt.bio"))
+    );
+    assert_eq!(
+        only(&contract(
+            r#"read = ["quilt+s3://quilt-dev#package=team/raw&catalog=open.quilt.bio"]"#
+        ))?
+        .catalog,
+        Some(host("open.quilt.bio"))
+    );
+    assert!(matches!(
+        package_problem(&contract(
+            r#"read = [{ package = "team/raw", path = "a/" }, { package = "team/raw", path = "b/", catalog = "open.quilt.bio" }]"#
+        )),
+        PackageProblem::Catalogs
+    ));
+    Ok(())
+}
+
+#[test]
+fn a_revision_is_a_hash_or_a_tag() -> Res {
+    let revision = |text: &str| -> Result<RevisionPointer, Box<dyn std::error::Error>> {
+        Ok(only(&with_defaults(&format!(
+            r#"read = [{{ package = "team/p", revision = "{text}" }}]"#
+        )))?
+        .revision)
+    };
+    assert_eq!(revision(":latest")?, RevisionPointer::Tag(Tag::Latest));
+    assert_eq!(
+        revision(FULL_HASH)?,
+        RevisionPointer::Hash(FULL_HASH.to_string())
+    );
+    assert_eq!(
+        revision("abc123")?,
+        RevisionPointer::HashPrefix("abc123".to_string())
+    );
+    for bad in ["latest", "ABC123", "abc12", ":", "xyz123"] {
+        let problem = entry_problem(&with_defaults(&format!(
+            r#"read = [{{ package = "team/p", revision = "{bad}" }}]"#
+        )));
+        assert!(
+            matches!(problem, EntryProblem::Revision(_)),
+            "{bad}: {problem}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_mistyped_uri_is_refused_rather_than_read_as_a_folder() {
+    assert!(matches!(
+        entry_problem(&with_defaults(
+            r#"read = ["quilt+s3:/quilt-dev#package=team/raw"]"#
+        )),
+        EntryProblem::Uri(_)
+    ));
+}
+
+/// A local package, by URI or by field, its registry named or left to this
+/// machine's, is that registry's, and is placed under `<name>@local/`.
+#[test]
+fn a_local_package_is_placed_under_its_registry() -> Res {
+    for list in [
+        r#"sync = ["quilt+local://lab-mac#package=me/analysis"]"#,
+        r#"sync = ["quilt+local://#package=me/analysis"]"#,
+        r#"sync = [{ registry = "quilt+local://lab-mac", package = "me/analysis" }]"#,
+        r#"sync = [{ registry = "quilt+local://", package = "me/analysis" }]"#,
+    ] {
+        let entry = only(&format!(
+            "catalog = \"quilt.test\"\n{}",
+            with_defaults(list)
+        ))?;
+        assert_eq!(entry.registry, Registry::Local(HERE.to_string()), "{list}");
+        assert_eq!(entry.folder, folder("lab-mac@local/me/analysis"), "{list}");
+        assert_eq!(
+            entry.catalog, None,
+            "{list}: the default catalog is a bucket's"
+        );
+        assert_eq!(
+            entry.key().to_string(),
+            "quilt+local://lab-mac#package=me/analysis"
+        );
+    }
+    let other = only(&with_defaults(
+        r#"read = ["quilt+local://other-mac#package=me/analysis@abc123"]"#,
+    ))?;
+    assert_eq!(other.registry, Registry::Local("other-mac".to_string()));
+    assert_eq!(other.folder, folder("other-mac@local/me/analysis"));
+    Ok(())
+}
+
+/// A default local registry is stated by no entry, so its packages are placed
+/// as any default registry's are.
+#[test]
+fn a_default_local_registry_places_packages_by_name() -> Res {
+    let entry =
+        only("registry = \"quilt+local://\"\n[packages]\nsync = [{ package = \"me/analysis\" }]")?;
+    assert_eq!(entry.registry, Registry::Local(HERE.to_string()));
+    assert_eq!(entry.folder, folder("me/analysis"));
+    Ok(())
+}
+
+/// With no local registry here, a URI or field that leaves its name to this
+/// machine names none.
+#[test]
+fn this_machines_registry_needs_one_here() {
+    for list in [
+        r#"sync = ["quilt+local://#package=me/analysis"]"#,
+        r#"sync = [{ registry = "quilt+local://", package = "me/analysis" }]"#,
+    ] {
+        let text = with_defaults(list);
+        let read = Contract::parse(
+            text.as_bytes(),
+            Path::new(ROOT),
+            FolderCase::Sensitive,
+            None,
+        );
+        assert!(
+            matches!(
+                read,
+                Err(ContractError::Entry {
+                    problem: EntryProblem::NoLocalRegistry,
+                    ..
+                })
+            ),
+            "{list}: {read:?}"
+        );
+    }
+}
+
+#[test]
+fn a_local_package_has_no_catalog() {
+    for list in [
+        r#"sync = [{ registry = "quilt+local://", package = "me/analysis", catalog = "quilt.test" }]"#,
+        r#"sync = [{ uri = "quilt+local://lab-mac#package=me/analysis", catalog = "quilt.test" }]"#,
+    ] {
+        let problem = entry_problem(&with_defaults(list));
+        assert!(
+            matches!(problem, EntryProblem::LocalCatalog),
+            "{list}: {problem}"
+        );
+    }
+}
+
+#[test]
+fn a_registry_field_that_is_neither_spelling_is_refused() {
+    for list in [
+        r#"read = [{ registry = "quilt+local://lab_mac", package = "me/analysis" }]"#,
+        r#"read = [{ registry = "quilt+local:lab-mac", package = "me/analysis" }]"#,
+        r#"read = [{ registry = "local://lab-mac", package = "me/analysis" }]"#,
+        r#"read = [{ registry = "quilt+local://--", package = "me/analysis" }]"#,
+        r#"read = ["quilt+local://--#package=me/analysis"]"#,
+        r#"read = ["quilt+local://.lab-mac#package=me/analysis"]"#,
+        r#"read = ["QUILT+LOCAL://lab-mac#package=me/analysis"]"#,
+    ] {
+        let problem = entry_problem(&with_defaults(list));
+        assert!(
+            matches!(problem, EntryProblem::Registry(_) | EntryProblem::Uri(_)),
+            "{list}: {problem}"
+        );
+    }
+    // This machine's name is held to the same rule as one written.
+    let text = with_defaults(r#"read = ["quilt+local://#package=me/analysis"]"#);
+    let read = Contract::parse(
+        text.as_bytes(),
+        Path::new(ROOT),
+        FolderCase::Sensitive,
+        Some("../x"),
+    );
+    assert!(
+        matches!(
+            read,
+            Err(ContractError::Entry {
+                problem: EntryProblem::Registry(_),
+                ..
+            })
+        ),
+        "{read:?}"
+    );
+}
+
+#[test]
+fn hooks_are_read_beside_the_entries_and_unknown_keys_are_refused() -> Res {
+    let hooked = format!(
+        "{}\n[hooks.post-read]\ncommand = \"after-read\"\n",
+        with_defaults(r#"read = ["team/raw"]"#)
+    );
+    assert_eq!(parse(&hooked)?.entries().len(), 1);
+    assert!(matches!(
+        parse("regsitry = \"s3://quilt-dev\""),
+        Err(ContractError::Syntax(_))
+    ));
+    assert!(matches!(
+        entry_problem(&with_defaults(r#"read = [{ pakage = "team/raw" }]"#)),
+        EntryProblem::Table(_)
+    ));
+    assert!(matches!(
+        entry_problem(&with_defaults("read = [1]")),
+        EntryProblem::Spelling("integer")
+    ));
+    Ok(())
+}
+
+#[test]
+fn a_folder_may_be_outside_the_dataspace() -> Res {
+    let entry = only(&with_defaults(
+        r#"read = [{ package = "me/analysis", folder = "/elsewhere/analysis" }]"#,
+    ))?;
+    assert_eq!(entry.folder, Path::new("/elsewhere/analysis"));
+    Ok(())
+}
+
+#[test]
+fn a_package_whose_name_holds_an_at_sign_is_refused() {
+    for list in [
+        r#"read = [{ package = "team/raw@abc123" }]"#,
+        r#"read = [{ package = "me@host/raw" }]"#,
+    ] {
+        let problem = entry_problem(&with_defaults(list));
+        assert!(
+            matches!(problem, EntryProblem::AtInPackage),
+            "{list}: {problem}"
+        );
+    }
+}
+
+#[test]
+fn a_package_key_is_its_canonical_uri() -> Res {
+    let entry = only(&with_defaults(
+        r#"read = [{ uri = "quilt+s3://quilt-dev#package=team/raw:latest&path=a.csv&catalog=open.quilt.bio" }]"#,
+    ))?;
+    assert_eq!(
+        entry.key().to_string(),
+        "quilt+s3://quilt-dev#package=team/raw"
+    );
+    Ok(())
+}
+
+/// The error for a registry masks a user and password in it.
+#[test]
+fn a_registry_error_masks_a_user_and_password() {
+    for list in [
+        r#"read = [{ registry = "s3://KEY:secret@bucket", package = "me/analysis" }]"#,
+        r#"read = [{ registry = "quilt+local://KEY:secret@lab-mac", package = "me/analysis" }]"#,
+    ] {
+        let Err(err) = parse(&with_defaults(list)) else {
+            panic!("{list} should be refused");
+        };
+        for text in [err.to_string(), format!("{err:?}")] {
+            assert!(!text.contains("secret") && !text.contains("KEY"), "{text}");
+            assert!(text.contains("***@"), "{text}");
+        }
+    }
+}
+
+/// Two names for the local registry leave one package in two folders, which
+/// the contract could not see while they were two registries.
+#[test]
+fn a_package_under_two_names_of_the_local_registry_in_two_folders_is_refused() -> Res {
+    let mut contract = parse(&with_defaults(
+        r#"replace = [
+            { registry = "quilt+local://old-mac", package = "me/analysis" },
+            { registry = "quilt+local://lab-mac", package = "me/analysis" },
+        ]"#,
+    ))?;
+    let names = LocalNames {
+        name: HERE.to_string(),
+        aliases: vec!["old-mac".to_string()],
+    };
+
+    let err = contract.name_local(&names).expect_err("two folders");
+
+    assert!(
+        matches!(
+            err,
+            ContractError::Package {
+                problem: PackageProblem::Folders(..),
+                ..
+            }
+        ),
+        "{err:?}"
+    );
+    Ok(())
+}
+
+/// A dataspace of two packages, with `ignore` as its `[ignore]` table.
+fn ignoring(ignore: &str) -> Result<Contract, ContractError> {
+    parse(&format!(
+        "{}\n[ignore]\n{ignore}",
+        with_defaults(r#"sync = ["team/raw", "team/clean"]"#)
+    ))
+}
+
+#[test]
+fn the_ignore_table_defaults_every_switch_on() -> Res {
+    let expected = Ignore {
+        packages: true,
+        lockfile: true,
+        standard_patterns: true,
+        extend_patterns: Vec::new(),
+    };
+    assert_eq!(parse(&with_defaults(""))?.ignore(), &expected);
+    assert_eq!(ignoring("")?.ignore(), &expected);
+    let set = ignoring(
+        "packages = false\nlockfile = false\nstandard_patterns = false\nextend_patterns = [\"*.tmp\", \"!keep.tmp\"]\n",
+    )?;
+    assert_eq!(
+        set.ignore(),
+        &Ignore {
+            packages: false,
+            lockfile: false,
+            standard_patterns: false,
+            extend_patterns: vec!["*.tmp".to_string(), "!keep.tmp".to_string()],
+        }
+    );
+    Ok(())
+}
+
+#[test]
+fn an_unknown_key_or_a_wrong_type_in_the_ignore_table_is_refused() {
+    for table in [
+        "package = false",
+        "secrets = false",
+        "packages = \"no\"",
+        "lockfile = 0",
+        "standard_patterns = []",
+        "extend_patterns = \"*.tmp\"",
+        "extend_patterns = [1]",
+        "[ignore.packages]",
+    ] {
+        let refused = ignoring(table);
+        assert!(
+            matches!(refused, Err(ContractError::Syntax(_))),
+            "{table}: {refused:?}"
+        );
+    }
+}
+
+#[test]
+fn an_extend_pattern_that_is_not_one_valid_line_is_refused() {
+    for (patterns, index) in [(r#"["ok", "a{b"]"#, 1), (r#"["a\nb"]"#, 0)] {
+        let refused = ignoring(&format!("extend_patterns = {patterns}"));
+        assert!(
+            matches!(refused, Err(ContractError::Ignore { index: i, .. }) if i == index),
+            "{patterns}: {refused:?}"
+        );
+    }
+}
+
+/// An entry's folder never holds the dataspace or another package, so only
+/// the files at its own top are left out.
+#[test]
+fn an_entrys_folder_leaves_out_its_own_control_files() -> Res {
+    let contract = ignoring("")?;
+    let policy = contract.ignore_policy(&folder("team/raw"));
+    assert_eq!(
+        policy.left_out,
+        [PathBuf::from("data.toml"), PathBuf::from("metadata.toml")]
+    );
+    assert!(policy.standard_patterns);
+    assert!(!policy.fold_case);
+    Ok(())
+}
+
+/// Packaging a folder that holds the dataspace leaves out its contract and
+/// conflict map always, and the lock and the declared folders while their
+/// switches are on.
+#[test]
+fn the_lockfile_and_packages_switches_set_what_a_folder_above_leaves_out() -> Res {
+    let above = |ignore: &str| -> Result<Vec<PathBuf>, ContractError> {
+        Ok(ignoring(ignore)?.ignore_policy(Path::new("/work")).left_out)
+    };
+    let always = [
+        "data.toml",
+        "metadata.toml",
+        "rnaseq/conflict.json",
+        "rnaseq/data.toml",
+    ];
+    let paths = |extra: &[&str]| -> Vec<PathBuf> {
+        let mut paths: Vec<PathBuf> = always.iter().chain(extra).map(PathBuf::from).collect();
+        paths.sort();
+        paths
+    };
+    let lock = "rnaseq/data.lock.toml";
+    let (raw, clean) = ("rnaseq/team/raw", "rnaseq/team/clean");
+    assert_eq!(above("")?, paths(&[lock, raw, clean]));
+    assert_eq!(above("lockfile = false")?, paths(&[raw, clean]));
+    assert_eq!(above("packages = false")?, paths(&[lock]));
+    assert_eq!(above("lockfile = false\npackages = false")?, paths(&[]));
+    // The dataspace itself is such a folder.
+    let root = ignoring("")?.ignore_policy(Path::new(ROOT)).left_out;
+    for path in ["conflict.json", "data.lock.toml", "team/raw", "team/clean"] {
+        assert!(root.contains(&PathBuf::from(path)), "{path}: {root:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn the_ignore_policy_carries_the_pattern_switches_and_the_folder_case() -> Res {
+    let contract = parse_as(
+        &format!(
+            "{}\n[ignore]\nstandard_patterns = false\nextend_patterns = [\"*.tmp\"]\n",
+            with_defaults(r#"sync = ["Team/Raw"]"#)
+        ),
+        FolderCase::Insensitive,
+    )?;
+    let policy = contract.ignore_policy(Path::new("/WORK"));
+    assert!(!policy.standard_patterns);
+    assert!(policy.fold_case);
+    assert_eq!(policy.extend_patterns, ["*.tmp"]);
+    assert!(
+        policy.left_out.contains(&PathBuf::from("rnaseq/Team/Raw")),
+        "{:?}",
+        policy.left_out
+    );
+    Ok(())
+}

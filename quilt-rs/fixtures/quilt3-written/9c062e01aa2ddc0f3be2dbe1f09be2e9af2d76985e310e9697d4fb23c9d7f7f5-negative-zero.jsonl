@@ -1,0 +1,4 @@
+{"version": "v0", "message": "", "user_meta": {"int": 0, "float": -0.0, "list": [0, -0.0, 0], "nested": {"z": 0}}}
+{"logical_key": "a.txt", "physical_keys": ["s3://bucket/a.txt"], "size": 1, "hash": {"type": "SHA256", "value": "0000000000000000000000000000000000000000000000000000000000000000"}, "meta": {"z": 0, "f": -0.0, "e": -0.0}}
+{"logical_key": "b.txt", "physical_keys": ["s3://bucket/b.txt"], "size": 1, "hash": {"type": "SHA256", "value": "0000000000000000000000000000000000000000000000000000000000000000"}, "meta": {}}
+{"logical_key": "c.txt", "physical_keys": ["s3://bucket/c.txt"], "size": 1, "hash": {"type": "SHA256", "value": "0000000000000000000000000000000000000000000000000000000000000000"}, "meta": [0]}

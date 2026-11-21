@@ -1,3 +1,5 @@
+pub mod dataspace;
+
 use quilt_rs::io::remote::HostConfig;
 use quilt_rs::lineage::Change;
 use quilt_rs::lineage::InstalledPackageStatus;
@@ -117,6 +119,8 @@ fn source_words(source: &RuleSource) -> String {
         RuleSource::Default => "built-in".to_string(),
         RuleSource::User { path, line } => format!("{}:{line}", path.display()),
         RuleSource::Package { line } => format!(".quiltignore:{line}"),
+        RuleSource::Contract => "data.toml".to_string(),
+        RuleSource::Extend { line } => format!("data.toml extend_patterns:{line}"),
     }
 }
 
@@ -136,7 +140,12 @@ impl std::fmt::Display for Output {
 
         output.push(discrete_state.to_string());
 
-        if self.status.changes.is_empty() {
+        if let Some(home) = self.status.unavailable_home() {
+            output.push(format!(
+                "Working copy unavailable: {} is missing or cannot be read, so no file changes are listed",
+                home.display()
+            ));
+        } else if self.status.changes.is_empty() {
             output.push("No changes".to_string());
         } else {
             let entries = self
@@ -208,6 +217,9 @@ impl Render for Output {
                 "folders": self.status.ignored_dirs.len(),
             },
         });
+        if let Some(home) = self.status.unavailable_home() {
+            json["working_copy_unavailable"] = serde_json::json!(home.display().to_string());
+        }
         if self.list_ignored {
             let paths: Vec<JsonIgnored> = self
                 .ignored()
@@ -219,6 +231,8 @@ impl Render for Output {
                             ("user", Some(path.display().to_string()), Some(*line))
                         }
                         RuleSource::Package { line } => ("package", None, Some(*line)),
+                        RuleSource::Contract => ("contract", None, None),
+                        RuleSource::Extend { line } => ("extend", None, Some(*line)),
                     };
                     JsonIgnored {
                         kind: if i.size.is_some() { "file" } else { "folder" },
@@ -292,6 +306,28 @@ mod tests {
         assert_eq!(
             output.to_json().to_string(),
             r#"{"upstream_state":"up_to_date","changes":[],"ignored":{"files":0,"folders":0}}"#
+        );
+    }
+
+    #[test]
+    fn test_unavailable_working_copy_lists_no_changes() {
+        let mut status =
+            InstalledPackageStatus::new(UpstreamState::UpToDate, std::collections::BTreeMap::new());
+        status.working_copy =
+            quilt_rs::lineage::WorkingCopy::Unavailable(PathBuf::from("/home/test/pkg"));
+        let output = Output {
+            status,
+            list_ignored: false,
+        };
+
+        assert_eq!(
+            output.to_string(),
+            "Installed package is up to date\n\
+             Working copy unavailable: /home/test/pkg is missing or cannot be read, so no file changes are listed"
+        );
+        assert_eq!(
+            output.to_json().to_string(),
+            r#"{"upstream_state":"up_to_date","changes":[],"ignored":{"files":0,"folders":0},"working_copy_unavailable":"/home/test/pkg"}"#
         );
     }
 
@@ -441,6 +477,7 @@ mod tests {
                 hash: quilt_rs::object_hash::ObjectHash::default(),
                 size: 0,
                 meta: None,
+                meta_numbers: quilt_rs::manifest::RawNumbers::default(),
             })
         };
         let changes = std::collections::BTreeMap::from([

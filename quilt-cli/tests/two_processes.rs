@@ -25,6 +25,8 @@ const DEADLINE: Duration = Duration::from_secs(20);
 /// Runs `quilt` on `domain` to the end and returns its output if it succeeded.
 fn quilt(domain: &Path, args: &[&str]) -> Output {
     let output = Command::new(env!("CARGO_BIN_EXE_quilt"))
+        // The ref path's commands, which the switch off keeps.
+        .env("QUILT_DATASPACES", "0")
         .arg("--domain")
         .arg(domain)
         .args(args)
@@ -49,6 +51,7 @@ struct Running {
 impl Running {
     fn spawn(domain: &Path, args: &[&str]) -> Self {
         let mut child = Command::new(env!("CARGO_BIN_EXE_quilt"))
+            .env("QUILT_DATASPACES", "0")
             .arg("--domain")
             .arg(domain)
             .args(args)
@@ -179,29 +182,44 @@ fn two_processes_committing_one_package_keep_both_commits() {
         messages.insert(commit_hash(&stdout), message);
     }
 
-    let lineage: serde_json::Value =
-        serde_json::from_slice(&fs::read(paths.lineage()).expect("data.json")).expect("its JSON");
-    let head = &lineage["packages"]["test/pkg"]["commit"];
-    let last = head["hash"].as_str().expect("the head's hash");
-    let first = head["prev_hashes"][0].as_str().expect("the head's parent");
+    let lineage = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("a runtime")
+        .block_on(async {
+            quilt_rs::LocalDomain::new(&domain)
+                .get_installed_package(&namespace)
+                .await
+                .expect("the domain reads")
+                .expect("installed")
+                .lineage()
+                .await
+                .expect("its lineage")
+        });
+    let head = lineage.commit.expect("a commit");
+    let last = head.hash.as_str();
+    let first = head.prev_hashes[0].as_str();
     assert!(
         messages.contains_key(last) && messages.contains_key(first) && first != last,
-        "the last commit builds on the first: {head}"
+        "the last commit builds on the first: {head:?}"
     );
 
     let log: serde_json::Value = serde_json::from_slice(
         &quilt(&domain, &["--json", "log", "--namespace", "test/pkg"]).stdout,
     )
     .expect("log's JSON");
-    let history: Vec<&str> = log["revisions"]
+    let mut history: Vec<&str> = log["revisions"]
         .as_array()
         .expect("revisions")
         .iter()
         .map(|revision| revision["message"].as_str().expect("a message"))
         .collect();
+    // The log orders by file time, which revisions a few milliseconds apart can
+    // share; the lineage above already checks which commit came first.
+    history.sort_unstable();
     assert_eq!(
         history,
-        [messages[last], messages[first], "Created package"],
+        ["Created package", "one", "two"],
         "the history keeps both commits"
     );
 }

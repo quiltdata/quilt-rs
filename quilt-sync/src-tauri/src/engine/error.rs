@@ -126,6 +126,10 @@ pub enum Error {
     #[error("General error: {0}")]
     General(String),
 
+    /// A dataspace call failed; the sentence is quilt-rs's own.
+    #[error("{0}")]
+    Dataspace(String),
+
     #[error("Package name must be prefix/name, using only letters, digits, _ and -; got: {0}")]
     PackageName(String),
 
@@ -204,6 +208,15 @@ impl Error {
         matches!(self, Error::Quilt(err) if err.is_access_denied())
     }
 
+    /// The quilt error under any failed upload: what to classify on.
+    #[must_use]
+    pub fn quilt_cause(&self) -> Option<&quilt::Error> {
+        match self {
+            Error::Quilt(err) => Some(err.cause()),
+            _ => None,
+        }
+    }
+
     /// This error in the words a user should read: the domain error's own
     /// message, without the `Quilt error:` wrapper that [`Display`] adds.
     ///
@@ -263,44 +276,76 @@ impl Error {
     /// the receiving surface's call.
     pub fn to_frontend_string(&self) -> String {
         match self {
-            Error::Quilt(quilt::Error::Login(quilt::LoginError::NoSession(host))) => {
-                let mut json = serde_json::json!({
-                    "kind": "session_absent",
-                    "message": self.to_string(),
-                });
-                if let Some(h) = host {
-                    json["host"] = serde_json::Value::String(h.to_string());
-                }
-                json.to_string()
-            }
-            // Not `session_absent`: the deployment answered, so no session is
-            // missing and a sign-in cannot help. Unmatched by the router,
-            // which renders it in place.
-            Error::Quilt(quilt::Error::Login(quilt::LoginError::NoRegistryUrl(host))) => {
-                serde_json::json!({
-                    "kind": "registry_url_missing",
-                    "message": format!(
-                        "{host} is not configured as a Quilt deployment — its config.json \
-                         names no registry. Whoever administers it will need to fix that."
-                    ),
-                    "host": host.to_string(),
-                })
-                .to_string()
-            }
-            Error::Quilt(quilt::Error::Lineage(
-                quilt::LineageError::Missing | quilt::LineageError::MissingHome,
-            )) => serde_json::json!({
-                "kind": "setup_required",
-                "message": self.to_string(),
-            })
-            .to_string(),
-            Error::Quilt(quilt::Error::S3(error)) => s3_error_to_frontend(error),
+            Error::Quilt(err) => match quilt_state(err, &self.to_string()) {
+                Some(json) => json.to_string(),
+                // Without the "Quilt error:" frame: S3's own sentence is the
+                // whole message.
+                None if matches!(err, quilt::Error::S3(_)) => err.to_string(),
+                None => self.to_string(),
+            },
             _ => self.to_string(),
         }
     }
 }
 
-fn s3_error_to_frontend(error: &quilt::S3Error) -> String {
+/// The recognized state `err` is in, as the frontend's JSON; `None` for one
+/// shown as plain text. `display` is the message for states that show the
+/// error as it reads.
+fn quilt_state(err: &quilt::Error, display: &str) -> Option<serde_json::Value> {
+    match err {
+        // The cause's state, with the file in front of its message.
+        quilt::Error::Upload { key, source } => {
+            let mut json = quilt_state(source, &source.to_string())?;
+            let message = json["message"].as_str().unwrap_or_default();
+            json["message"] = format!("Couldn't upload {key}: {message}").into();
+            Some(json)
+        }
+        quilt::Error::Login(quilt::LoginError::NoSession(host)) => {
+            let mut json = serde_json::json!({
+                "kind": "session_absent",
+                "message": display,
+            });
+            if let Some(h) = host {
+                json["host"] = serde_json::Value::String(h.to_string());
+            }
+            Some(json)
+        }
+        // Not `session_absent`: the deployment answered, so no session is
+        // missing and a sign-in cannot help. Unmatched by the router,
+        // which renders it in place.
+        quilt::Error::Login(quilt::LoginError::NoRegistryUrl(host)) => Some(serde_json::json!({
+            "kind": "registry_url_missing",
+            "message": format!(
+                "{host} is not configured as a Quilt deployment — its config.json \
+                 names no registry. Whoever administers it will need to fix that."
+            ),
+            "host": host.to_string(),
+        })),
+        quilt::Error::Lineage(error) => lineage_kind(error).map(|kind| {
+            serde_json::json!({
+                "kind": kind,
+                "message": display,
+            })
+        }),
+        quilt::Error::S3(error) => s3_error_to_frontend(error),
+        _ => None,
+    }
+}
+
+/// Not `setup_required` for a domain moving between `data.json` and refs:
+/// setting up again cannot finish or undo the move.
+fn lineage_kind(error: &quilt::LineageError) -> Option<&'static str> {
+    match error {
+        quilt::LineageError::Missing | quilt::LineageError::MissingHome => Some("setup_required"),
+        quilt::LineageError::RefsNotWritable { .. } => Some("lineage_not_writable"),
+        quilt::LineageError::MigrationRefused { .. } => Some("lineage_migration_refused"),
+        quilt::LineageError::RollbackRefused(_) => Some("lineage_rollback_refused"),
+        quilt::LineageError::RollingBack { .. } => Some("lineage_rolling_back"),
+        _ => None,
+    }
+}
+
+fn s3_error_to_frontend(error: &quilt::S3Error) -> Option<serde_json::Value> {
     let (kind, message) = match &error.kind {
         quilt::S3ErrorKind::InvalidCredentials(_) if error.host.is_none() => (
             "credentials_invalid",
@@ -324,7 +369,7 @@ fn s3_error_to_frontend(error: &quilt::S3Error) -> String {
             "access_denied",
             "The active role does not have access to this object.".to_string(),
         ),
-        _ => return error.to_string(),
+        _ => return None,
     };
 
     let mut response = serde_json::json!({
@@ -334,7 +379,7 @@ fn s3_error_to_frontend(error: &quilt::S3Error) -> String {
     if let Some(host) = &error.host {
         response["host"] = serde_json::Value::String(host.to_string());
     }
-    response.to_string()
+    Some(response)
 }
 
 impl From<Error> for String {
@@ -446,6 +491,45 @@ mod tests {
         assert_eq!(json["kind"], "setup_required");
     }
 
+    /// A domain moving between `data.json` and refs is not one to set up:
+    /// each state of the move is a kind of its own, worded as quilt words it,
+    /// so an interrupted rollback still names the command that finishes it.
+    #[test]
+    fn to_frontend_string_a_lineage_move_is_not_setup() {
+        let config = PathBuf::from("/d/.quilt/domain.json");
+        let unparsed = serde_json::from_str::<serde_json::Value>("{").unwrap_err();
+        for (error, kind) in [
+            (
+                quilt::LineageError::RefsNotWritable {
+                    path: config.clone(),
+                    state: "is in progress",
+                },
+                "lineage_not_writable",
+            ),
+            (
+                quilt::LineageError::MigrationRefused {
+                    path: PathBuf::from("/d/.quilt/data.json"),
+                    source: unparsed,
+                },
+                "lineage_migration_refused",
+            ),
+            (
+                quilt::LineageError::RollbackRefused(Box::new(quilt::LineageError::NoRemote)),
+                "lineage_rollback_refused",
+            ),
+            (
+                quilt::LineageError::RollingBack { path: config },
+                "lineage_rolling_back",
+            ),
+        ] {
+            let err = Error::Quilt(quilt::Error::Lineage(error));
+            let sent = err.to_frontend_string();
+            let json: serde_json::Value = serde_json::from_str(&sent).unwrap_or_default();
+            assert_eq!(json["kind"], kind, "{sent}");
+            assert_eq!(json["message"], err.to_string(), "{sent}");
+        }
+    }
+
     #[test]
     fn to_frontend_string_other_errors_are_plain_text() {
         let err = Error::General("something broke".to_string());
@@ -492,6 +576,43 @@ mod tests {
             format!("Your session for {host} has expired. Please sign in again.")
         );
         assert!(!json["message"].as_str().unwrap().contains("raw SDK"));
+    }
+
+    /// An upload that fails on an expired session still sends the user to
+    /// sign in, and says which file it was.
+    #[test]
+    fn to_frontend_string_failed_upload_keeps_its_cause_and_names_the_file() {
+        let host = fixtures::host();
+        let err = Error::Quilt(quilt::Error::Upload {
+            key: quilt::LogicalKey::new("data/b.txt").unwrap(),
+            source: Box::new(quilt::Error::S3(quilt::S3Error {
+                host: Some(host.clone()),
+                kind: quilt::S3ErrorKind::InvalidCredentials("ExpiredToken".to_string()),
+            })),
+        });
+
+        let json: serde_json::Value = serde_json::from_str(&err.to_frontend_string()).unwrap();
+        assert_eq!(json["kind"], "session_absent");
+        assert_eq!(json["host"], host.to_string());
+        assert_eq!(
+            json["message"],
+            format!(
+                "Couldn't upload data/b.txt: Your session for {host} has expired. Please sign in again."
+            )
+        );
+    }
+
+    #[test]
+    fn to_frontend_string_failed_upload_of_any_other_cause_is_plain_text() {
+        let err = Error::Quilt(quilt::Error::Upload {
+            key: quilt::LogicalKey::new("b.txt").unwrap(),
+            source: Box::new(quilt::Error::Io(std::io::Error::from(
+                std::io::ErrorKind::NotFound,
+            ))),
+        });
+        let result = err.to_frontend_string();
+        assert!(serde_json::from_str::<serde_json::Value>(&result).is_err());
+        assert!(result.contains("Couldn't upload b.txt: "), "{result}");
     }
 
     #[test]

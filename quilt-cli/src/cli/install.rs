@@ -9,6 +9,8 @@ use crate::cli::model::Commands;
 use crate::cli::output::Render;
 use crate::cli::output::Std;
 
+pub mod dataspace;
+
 #[derive(Debug)]
 pub struct Input {
     pub namespace: Option<Namespace>,
@@ -197,6 +199,7 @@ pub async fn model(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quilt_rs::flow::UserMeta;
 
     use std::path::PathBuf;
 
@@ -450,6 +453,7 @@ mod tests {
                 namespace: ("test", "pkg").into(),
                 source: None,
                 message: None,
+                user_meta: UserMeta::Clear,
             })
             .await?;
 
@@ -544,6 +548,7 @@ mod tests {
                 namespace: ("test", "pkg").into(),
                 source: None,
                 message: None,
+                user_meta: UserMeta::Clear,
             })
             .await?;
 
@@ -656,6 +661,7 @@ mod tests {
                 namespace: ("test", "bare").into(),
                 source: None,
                 message: None,
+                user_meta: UserMeta::Clear,
             })
             .await?;
 

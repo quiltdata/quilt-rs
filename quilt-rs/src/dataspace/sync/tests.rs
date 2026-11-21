@@ -1,0 +1,2464 @@
+use super::*;
+
+use tempfile::TempDir;
+use test_log::test;
+
+use crate::dataspace::METADATA_FILE;
+use crate::dataspace::contract::PackageKey;
+use crate::dataspace::hooks::HookPoint::PostRead;
+use crate::dataspace::hooks::HookPoint::PostWrite;
+use crate::dataspace::hooks::HookPoint::PreRead;
+use crate::dataspace::hooks::HookPoint::PreWrite;
+use crate::dataspace::hooks::tests::CLEAR_VAR;
+use crate::dataspace::hooks::tests::FAIL_VAR;
+use crate::dataspace::hooks::tests::IGNORE_VAR;
+use crate::dataspace::hooks::tests::METADATA_VAR;
+use crate::dataspace::hooks::tests::call;
+use crate::dataspace::hooks::tests::calls;
+use crate::dataspace::hooks::tests::table;
+use crate::dataspace::hooks::tests::tables;
+use crate::dataspace::store::tests::local_bytes;
+use crate::dataspace::store::tests::publish_local;
+use crate::failpoint::stopping_at;
+use crate::io::manifest::fetch_jsonl;
+use crate::io::remote::mocks::MockRemote;
+use crate::io::storage::LocalStorage;
+use crate::manifest::ManifestHeader;
+use quilt_uri::Namespace;
+
+type Res = Result<(), Box<dyn std::error::Error>>;
+
+pub(crate) const LATEST: &str = "s3://b/.quilt/named_packages/team/raw/latest";
+pub(crate) const FIRST: &str = "1111111111111111111111111111111111111111111111111111111111111111";
+pub(crate) const SECOND: &str = "2222222222222222222222222222222222222222222222222222222222222222";
+// A bucket stores a manifest by its hash alone, so each package has its own.
+const THIRD: &str = "3333333333333333333333333333333333333333333333333333333333333333";
+const FOURTH: &str = "4444444444444444444444444444444444444444444444444444444444444444";
+pub(crate) const MESSAGE: &str = "autosync";
+
+pub(crate) fn writer() -> Writer {
+    Writer {
+        host: "here".to_string(),
+        user: "me".to_string(),
+        local_registry: String::new(),
+    }
+}
+
+/// A dataspace with `team/raw` in bucket `b`, its Domain beside it, and the
+/// bucket on a mock remote.
+pub(crate) struct World {
+    pub(crate) dir: TempDir,
+    pub(crate) remote: MockRemote,
+    pub(crate) storage: LocalStorage,
+}
+
+impl World {
+    /// A dataspace whose `[packages]` table is `packages`.
+    pub(crate) fn new(packages: &str) -> std::io::Result<Self> {
+        let world = Self {
+            dir: TempDir::new()?,
+            remote: MockRemote::default(),
+            storage: LocalStorage::new(),
+        };
+        world.contract(packages)?;
+        Ok(world)
+    }
+
+    /// The whole package under `sync`.
+    pub(crate) fn synced() -> std::io::Result<Self> {
+        Self::new("sync = [\"team/raw\"]")
+    }
+
+    pub(crate) fn contract(&self, packages: &str) -> std::io::Result<()> {
+        std::fs::create_dir_all(self.dataspace())?;
+        std::fs::write(
+            self.dataspace().join("data.toml"),
+            format!("registry = \"s3://b\"\n\n[packages]\n{packages}"),
+        )
+    }
+
+    pub(crate) fn dataspace(&self) -> PathBuf {
+        self.dir.path().join("rnaseq")
+    }
+
+    pub(crate) fn folder(&self) -> PathBuf {
+        self.dataspace().join("team/raw")
+    }
+
+    pub(crate) fn domain(&self) -> DomainRoot {
+        DomainRoot::new(self.dir.path().join("domain"))
+    }
+
+    /// The user-wide ignore rules file, which need not exist.
+    pub(crate) fn user_rules(&self) -> PathBuf {
+        self.dir.path().join("user.quiltignore")
+    }
+
+    /// The Domain's queue, opened again by each tick as a new process would.
+    pub(crate) async fn queue(&self) -> Result<Queue, Box<dyn std::error::Error>> {
+        Ok(Queue::open(&self.dir.path().join("queue.db")).await?)
+    }
+
+    pub(crate) async fn sync(&self) -> Result<DataspaceSync, Box<dyn std::error::Error>> {
+        let dataspace = self.dataspace();
+        Ok(Box::pin(sync(
+            &self.storage,
+            &self.remote,
+            &self.domain(),
+            &self.queue().await?,
+            &dataspace,
+            &writer(),
+            MESSAGE,
+            &self.user_rules(),
+        ))
+        .await?)
+    }
+
+    pub(crate) async fn kept(&self) -> Result<Option<KeptRevision>, Box<dyn std::error::Error>> {
+        // The contract's spelling of the folder, which on Windows is not
+        // `folder()`'s.
+        let contract = Contract::read(&self.storage, &self.dataspace(), None).await?;
+        let entry = contract.entries().first().ok_or("no entry")?;
+        let folder = FolderKey {
+            registry: Some(entry.registry.clone()),
+            package: entry.package.clone(),
+            folder: entry.folder.clone(),
+        };
+        Ok(self.queue().await?.kept(&folder).await?)
+    }
+
+    pub(crate) async fn read_all(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let dataspace = self.dataspace();
+        let local = self.domain().local();
+        crate::dataspace::read_all::read_all(
+            &self.storage,
+            &self.remote,
+            Some(&local),
+            &dataspace,
+            &writer(),
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// The tick's one entry.
+    pub(crate) async fn tick(&self) -> Result<EntrySync, Box<dyn std::error::Error>> {
+        let mut synced = self.sync().await?;
+        assert_eq!(synced.entries.len(), 1, "{synced:?}");
+        Ok(synced.entries.remove(0).1)
+    }
+
+    /// Stores `files` as revision `hash` and tags it `latest`.
+    pub(crate) async fn publish(&self, hash: &str, files: &[(&str, &[u8])]) -> Res {
+        self.publish_to("team/raw", hash, files).await
+    }
+
+    /// [`World::publish`] for `package`.
+    pub(crate) async fn publish_to(
+        &self,
+        package: &str,
+        hash: &str,
+        files: &[(&str, &[u8])],
+    ) -> Res {
+        let header = ManifestHeader::default();
+        self.publish_with(package, hash, files, header, Vec::new())
+            .await
+    }
+
+    /// [`World::publish_to`], under `header` and with metadata for folders.
+    async fn publish_with(
+        &self,
+        package: &str,
+        hash: &str,
+        files: &[(&str, &[u8])],
+        header: ManifestHeader,
+        dir_meta: Vec<crate::manifest::DirMeta>,
+    ) -> Res {
+        let mut rows = Vec::new();
+        for (key, body) in files {
+            use sha2::Digest;
+            let digest = multihash::Multihash::<256>::wrap(0x12, &sha2::Sha256::digest(body))?;
+            let row = ManifestRow {
+                logical_key: LogicalKey::new(*key)?,
+                physical_key: format!("s3://b/{package}/{key}?versionId={}", hex::encode(body)),
+                hash: digest.try_into()?,
+                size: body.len() as u64,
+                meta: None,
+                meta_numbers: RawNumbers::default(),
+            };
+            self.remote
+                .put_object(
+                    None,
+                    &S3Uri::try_from(row.physical_key.as_str())?,
+                    body.to_vec(),
+                )
+                .await?;
+            rows.push(row);
+        }
+        let manifest = Manifest {
+            header,
+            rows,
+            dir_meta,
+        };
+        self.remote
+            .put_object(
+                None,
+                &S3Uri::try_from(format!("s3://b/.quilt/packages/{hash}").as_str())?,
+                manifest.to_jsonlines().into_bytes(),
+            )
+            .await?;
+        self.remote
+            .put_object(
+                None,
+                &S3Uri::try_from(
+                    format!("s3://b/.quilt/named_packages/{package}/latest").as_str(),
+                )?,
+                hash.as_bytes().to_vec(),
+            )
+            .await?;
+        Ok(())
+    }
+
+    pub(crate) async fn latest(&self) -> Result<String, Box<dyn std::error::Error>> {
+        let bytes = self.remote.current(LATEST).await?.ok_or("no latest")?;
+        Ok(String::from_utf8(bytes)?)
+    }
+
+    /// The files of the revision `hash` names, by key, with their bytes.
+    pub(crate) async fn revision(
+        &self,
+        hash: &str,
+    ) -> Result<Vec<(String, String)>, Box<dyn std::error::Error>> {
+        let uri = ManifestUri {
+            origin: None,
+            bucket: "b".to_string(),
+            namespace: package(),
+            hash: hash.to_string(),
+        };
+        let manifest = fetch_jsonl(&self.remote, &uri).await?;
+        let mut files = Vec::new();
+        for row in manifest.rows {
+            let uri = S3Uri::try_from(row.physical_key.as_str())?;
+            let bytes = self.remote.current(&uri.to_string()).await?;
+            let body = match bytes {
+                Some(bytes) => String::from_utf8(bytes)?,
+                None => format!("<{}>", row.physical_key),
+            };
+            files.push((row.logical_key.to_string(), body));
+        }
+        files.sort();
+        Ok(files)
+    }
+
+    pub(crate) async fn lock(&self) -> Result<Lock, Box<dyn std::error::Error>> {
+        let contract = Contract::read(&self.storage, &self.dataspace(), None).await?;
+        Ok(Lock::read(&self.storage, &contract)
+            .await?
+            .ok_or("no lock")?)
+    }
+
+    pub(crate) async fn locked(&self) -> Result<Option<LockEntry>, Box<dyn std::error::Error>> {
+        Ok(self.lock().await?.packages.get(&key()).cloned())
+    }
+
+    /// The lock's base for the package, `None` where it has none.
+    pub(crate) async fn base(&self) -> Result<Option<String>, Box<dyn std::error::Error>> {
+        Ok(self.locked().await?.and_then(|locked| locked.base))
+    }
+
+    pub(crate) fn write(&self, key: &str, body: &str) -> std::io::Result<()> {
+        let path = self.folder().join(key);
+        std::fs::create_dir_all(path.parent().expect("a folder"))?;
+        std::fs::write(path, body)
+    }
+
+    pub(crate) fn text(&self, key: &str) -> Option<String> {
+        std::fs::read_to_string(self.folder().join(key)).ok()
+    }
+
+    pub(crate) fn remove(&self, key: &str) -> std::io::Result<()> {
+        std::fs::remove_file(self.folder().join(key))
+    }
+
+    /// A dataspace filled at [`FIRST`], holding `files`.
+    pub(crate) async fn filled(
+        files: &[(&str, &[u8])],
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::filled_in(Self::synced()?, files).await
+    }
+
+    /// [`World::filled`], for `world`'s contract.
+    pub(crate) async fn filled_in(
+        world: Self,
+        files: &[(&str, &[u8])],
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        world.publish(FIRST, files).await?;
+        let synced = world.sync().await?;
+        assert!(synced.read_only, "{synced:?}");
+        assert_eq!(world.base().await?.as_deref(), Some(FIRST));
+        Ok(world)
+    }
+}
+
+pub(crate) fn package() -> Namespace {
+    ("team", "raw").into()
+}
+
+pub(crate) fn key() -> PackageKey {
+    PackageKey {
+        registry: Registry::S3("b".to_string()),
+        package: package(),
+    }
+}
+
+pub(crate) fn files(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+    pairs
+        .iter()
+        .map(|(key, body)| ((*key).to_string(), (*body).to_string()))
+        .collect()
+}
+
+pub(crate) fn advanced(outcome: &EntrySync) -> String {
+    match outcome {
+        EntrySync::Ran {
+            published: Some(Published::Advanced { revision, .. }),
+            ..
+        } => revision.clone(),
+        other => panic!("expected a publish that advanced latest, got {other:?}"),
+    }
+}
+
+#[test(tokio::test)]
+async fn a_first_tick_fills_the_folder_and_publishes_nothing() -> Res {
+    let world = World::synced()?;
+    world.publish(FIRST, &[("a.txt", b"alpha")]).await?;
+    world.write("mine.txt", "local")?;
+
+    let synced = world.sync().await?;
+
+    assert!(synced.read_only);
+    assert_eq!(world.text("a.txt").as_deref(), Some("alpha"));
+    assert_eq!(world.latest().await?, FIRST);
+    let lock = world.lock().await?;
+    assert!(lock.header.filled.is_some());
+    assert_eq!(lock.packages.get(&key()), Some(&LockEntry::at(FIRST)));
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_tick_publishes_additions_changes_and_deletions_against_the_base() -> Res {
+    let world = World::filled(&[("a.txt", b"v1"), ("b.txt", b"v1"), ("c.txt", b"v1")]).await?;
+    world.write("a.txt", "v2")?;
+    world.remove("b.txt")?;
+    world.write("new/d.txt", "added")?;
+
+    let outcome = world.tick().await?;
+
+    let revision = advanced(&outcome);
+    assert_eq!(world.latest().await?, revision);
+    assert_eq!(
+        world.revision(&revision).await?,
+        files(&[("a.txt", "v2"), ("c.txt", "v1"), ("new/d.txt", "added")])
+    );
+    assert_eq!(world.locked().await?, Some(LockEntry::at(revision)));
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_tick_leaves_out_what_the_ignore_rules_leave_out_of_a_commit() -> Res {
+    let world = World::filled(&[("a.txt", b"a"), (".env", b"old"), ("old.csv", b"o")]).await?;
+    std::fs::write(world.user_rules(), "*.tmp\n")?;
+    world.write(".quiltignore", "*.log\nold.csv\n")?;
+    world.write(".env", "new")?;
+    world.write("new.txt", "n")?;
+    world.write("run.log", "l")?;
+    world.write("scratch.tmp", "t")?;
+    world.write("cache/.DS_Store", "d")?;
+
+    let outcome = world.tick().await?;
+
+    // The built-in rules spare a key the package has; the folder's own rules
+    // do not.
+    assert_eq!(
+        world.revision(&advanced(&outcome)).await?,
+        files(&[
+            (".env", "new"),
+            (".quiltignore", "*.log\nold.csv\n"),
+            ("a.txt", "a"),
+            ("new.txt", "n"),
+        ])
+    );
+    Ok(())
+}
+
+/// The tick's commit takes the contract's `[ignore]` table, and writes no
+/// rules file for it.
+#[test(tokio::test)]
+async fn a_tick_leaves_out_what_the_ignore_table_leaves_out() -> Res {
+    let world = World::new(
+        "sync = [\"team/raw\"]\n\n[ignore]\npackages = false\nstandard_patterns = false\nextend_patterns = [\"*.tmp\", \"!keep.tmp\"]\n",
+    )?;
+    let world = World::filled_in(world, &[("a.txt", b"a")]).await?;
+    world.write(".DS_Store", "d")?;
+    world.write(".env", "SECRET=1")?;
+    world.write("key.pem", "k")?;
+    world.write("scratch.tmp", "t")?;
+    world.write("keep.tmp", "k")?;
+    world.write("inner/data.toml", "[packages]\n")?;
+    world.write("inner/b.txt", "b")?;
+
+    let outcome = world.tick().await?;
+
+    assert_eq!(
+        world.revision(&advanced(&outcome)).await?,
+        files(&[(".DS_Store", "d"), ("a.txt", "a"), ("keep.tmp", "k")])
+    );
+    assert!(!world.folder().join(".quiltignore").exists());
+    assert!(!world.dataspace().join(".quiltignore").exists());
+    assert!(!world.user_rules().exists());
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_tick_reads_latest_then_publishes_the_local_work_kept() -> Res {
+    let world = World::filled(&[("a.txt", b"v1"), ("b.txt", b"v1")]).await?;
+    world
+        .publish(SECOND, &[("a.txt", b"v1"), ("b.txt", b"v2")])
+        .await?;
+    world.write("a.txt", "mine")?;
+
+    let outcome = world.tick().await?;
+
+    let EntrySync::Ran {
+        read: Some(read), ..
+    } = &outcome
+    else {
+        panic!("expected a read, got {outcome:?}");
+    };
+    assert_eq!(read.revision, SECOND);
+    let revision = advanced(&outcome);
+    assert_eq!(world.text("b.txt").as_deref(), Some("v2"));
+    assert_eq!(
+        world.revision(&revision).await?,
+        files(&[("a.txt", "mine"), ("b.txt", "v2")])
+    );
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_collision_blocks_the_tick_before_anything_is_applied_or_published() -> Res {
+    let world = World::filled(&[("a.txt", b"v1"), ("b.txt", b"v1")]).await?;
+    world
+        .publish(SECOND, &[("a.txt", b"v2"), ("b.txt", b"v2")])
+        .await?;
+    world.write("a.txt", "mine")?;
+
+    let outcome = world.tick().await?;
+
+    assert!(
+        matches!(&outcome, EntrySync::Blocked { revision, conflicts }
+            if revision == SECOND && *conflicts == [PathBuf::from("a.txt")]),
+        "{outcome:?}"
+    );
+    assert_eq!(world.text("b.txt").as_deref(), Some("v1"));
+    assert_eq!(world.latest().await?, SECOND);
+    assert_eq!(world.base().await?.as_deref(), Some(FIRST));
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_collision_kept_as_the_folder_holds_it_is_read_then_published() -> Res {
+    use crate::dataspace::conflict::ConflictMap;
+    let world = World::filled(&[("a.txt", b"v1"), ("b.txt", b"v1")]).await?;
+    world
+        .publish(SECOND, &[("a.txt", b"v2"), ("b.txt", b"v2")])
+        .await?;
+    world.write("a.txt", "mine")?;
+    world.tick().await?;
+    let mut map = ConflictMap::read(&world.storage, &world.dataspace()).await?;
+    let row = map
+        .packages
+        .get_mut(&key())
+        .and_then(|rows| rows.get_mut(&LogicalKey::new("a.txt").ok()?))
+        .ok_or("no row for a.txt")?;
+    row.resolved = row
+        .current
+        .as_ref()
+        .and_then(|side| side.physical_key.clone());
+    map.write(&world.storage, &world.dataspace()).await?;
+
+    let outcome = world.tick().await?;
+
+    let revision = advanced(&outcome);
+    assert_eq!(
+        world.revision(&revision).await?,
+        files(&[("a.txt", "mine"), ("b.txt", "v2")])
+    );
+    assert!(!world.dataspace().join("conflict.json").exists());
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn only_the_entrys_paths_are_read_and_published() -> Res {
+    let world = World::new("sync = [{ package = \"team/raw\", path = \"data/\" }]")?;
+    world
+        .publish(FIRST, &[("data/a.txt", b"v1"), ("notes.txt", b"v1")])
+        .await?;
+    world.sync().await?;
+    world
+        .publish(SECOND, &[("data/a.txt", b"v1"), ("notes.txt", b"v2")])
+        .await?;
+    world.write("data/b.txt", "added")?;
+    world.write("other.txt", "not the package's")?;
+
+    let outcome = world.tick().await?;
+
+    let revision = advanced(&outcome);
+    assert_eq!(world.text("notes.txt"), None);
+    assert_eq!(
+        world.revision(&revision).await?,
+        files(&[
+            ("data/a.txt", "v1"),
+            ("data/b.txt", "added"),
+            ("notes.txt", "v2")
+        ])
+    );
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_folder_with_nothing_new_publishes_nothing() -> Res {
+    let world = World::filled(&[("a.txt", b"v1")]).await?;
+
+    let outcome = world.tick().await?;
+
+    assert!(
+        matches!(
+            &outcome,
+            EntrySync::Ran {
+                read: None,
+                published: None
+            }
+        ),
+        "{outcome:?}"
+    );
+    assert_eq!(world.latest().await?, FIRST);
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_push_that_latest_moved_past_is_left_stored_and_the_lock_unmoved() -> Res {
+    let world = World::filled(&[("a.txt", b"v1")]).await?;
+    world.write("a.txt", "v2")?;
+    let gate = world.remote.park(LATEST);
+
+    let rival = async {
+        // The tick's own read of `latest`, then the push's.
+        gate.arrived().await;
+        let push = world.remote.park(LATEST);
+        gate.release();
+        push.arrived().await;
+        world.publish(SECOND, &[("a.txt", b"theirs")]).await?;
+        push.release();
+        Res::Ok(())
+    };
+    let (outcome, rivalled) = tokio::join!(world.tick(), rival);
+    rivalled?;
+    let outcome = outcome?;
+
+    let EntrySync::Ran {
+        published: Some(Published::Stored { revision, latest }),
+        ..
+    } = &outcome
+    else {
+        panic!("expected the revision stored, got {outcome:?}");
+    };
+    assert_eq!(latest.as_deref(), Some(SECOND));
+    assert_eq!(world.revision(revision).await?, files(&[("a.txt", "v2")]));
+    let locked = world.locked().await?.ok_or("no lock entry")?;
+    assert_eq!(locked.base.as_deref(), Some(FIRST));
+    assert_eq!(locked.commits, std::slice::from_ref(revision));
+    assert_eq!(
+        world.kept().await?,
+        Some(KeptRevision {
+            hash: revision.clone(),
+            base: Some(FIRST.to_string()),
+            reason: KeptReason::LatestMoved,
+        })
+    );
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_package_whose_latest_is_gone_is_diverged_and_its_lock_kept() -> Res {
+    let world = World::filled(&[("a.txt", b"v1")]).await?;
+    world
+        .remote
+        .storage
+        .remove_file(LATEST.strip_prefix("s3://").ok_or("an s3 URI")?)
+        .await?;
+
+    let outcome = world.tick().await;
+
+    assert!(
+        matches!(&outcome, Ok(EntrySync::Diverged { latest: None })),
+        "{outcome:?}"
+    );
+    assert_eq!(world.base().await?.as_deref(), Some(FIRST));
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_push_squashes_the_commits_not_pushed_and_releases_them() -> Res {
+    let world = World::filled(&[("a.txt", b"v1")]).await?;
+    world.write("a.txt", "v2")?;
+    stopping_at("push.object", 0, world.tick()).await?;
+    let squashed = world.locked().await?.ok_or("no lock entry")?.commits;
+    assert_eq!(squashed.len(), 1);
+    world.write("b.txt", "added")?;
+
+    let outcome = world.tick().await?;
+
+    let revision = advanced(&outcome);
+    assert_eq!(
+        world.revision(&revision).await?,
+        files(&[("a.txt", "v2"), ("b.txt", "added")])
+    );
+    assert_eq!(world.locked().await?, Some(LockEntry::at(revision.clone())));
+    // Squashed: only the last commit was stored in the bucket.
+    assert!(world.revision(&squashed[0]).await.is_err());
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_missing_or_empty_folder_is_read_back_at_the_lock_and_nothing_published() -> Res {
+    let world = World::filled(&[("a.txt", b"v1"), ("b.txt", b"v1")]).await?;
+    world
+        .publish(SECOND, &[("a.txt", b"v2"), ("b.txt", b"v2")])
+        .await?;
+
+    for empty in [false, true] {
+        std::fs::remove_dir_all(world.folder())?;
+        if empty {
+            std::fs::create_dir_all(world.folder())?;
+        }
+
+        let outcome = world.tick().await?;
+
+        assert!(
+            matches!(&outcome, EntrySync::ReadBack(read) if read.revision == FIRST),
+            "{outcome:?}"
+        );
+        assert_eq!(world.text("a.txt").as_deref(), Some("v1"));
+        assert_eq!(world.text("b.txt").as_deref(), Some("v1"));
+        assert!(world.folder().join(METADATA_FILE).exists());
+        assert_eq!(world.latest().await?, SECOND);
+        assert_eq!(world.base().await?.as_deref(), Some(FIRST));
+    }
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_missing_folder_is_read_back_at_the_local_commit_the_lock_names() -> Res {
+    let world = World::filled(&[("a.txt", b"v1"), ("b.txt", b"v1")]).await?;
+    world.write("a.txt", "v2")?;
+    stopping_at("push.object", 0, world.tick()).await?;
+    let commits = world.locked().await?.ok_or("no lock entry")?.commits;
+    assert_eq!(commits.len(), 1);
+    std::fs::remove_dir_all(world.folder())?;
+
+    let outcome = world.tick().await?;
+
+    assert!(
+        matches!(&outcome, EntrySync::ReadBack(read) if read.revision == commits[0]),
+        "{outcome:?}"
+    );
+    assert_eq!(world.text("a.txt").as_deref(), Some("v2"));
+    assert_eq!(world.text("b.txt").as_deref(), Some("v1"));
+    assert_eq!(world.latest().await?, FIRST);
+    let locked = world.locked().await?.ok_or("no lock entry")?;
+    assert_eq!(locked.base.as_deref(), Some(FIRST));
+    assert_eq!(locked.commits, commits);
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn after_data_toml_is_edited_a_tick_reads_the_entry_whole_first() -> Res {
+    let world = World::filled(&[("a.txt", b"v1"), ("b.txt", b"v1")]).await?;
+    world.remove("a.txt")?;
+    world.contract("# edited\nsync = [\"team/raw\"]")?;
+
+    let synced = world.sync().await?;
+
+    assert!(synced.read_only, "{synced:?}");
+    assert_eq!(world.text("a.txt").as_deref(), Some("v1"));
+    assert_eq!(world.latest().await?, FIRST);
+    let outcome = world.tick().await?;
+    assert!(
+        matches!(
+            &outcome,
+            EntrySync::Ran {
+                read: None,
+                published: None
+            }
+        ),
+        "{outcome:?}"
+    );
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn after_data_toml_is_edited_commits_not_pushed_are_pushed_before_the_read() -> Res {
+    let world = World::filled(&[("a.txt", b"v1"), ("b.txt", b"v1")]).await?;
+    world.write("a.txt", "v2")?;
+    stopping_at("push.object", 0, world.tick()).await?;
+    let commit = world.locked().await?.ok_or("no lock entry")?.commits;
+    world.remove("b.txt")?;
+    world.contract("# edited\nsync = [\"team/raw\"]")?;
+
+    let synced = world.sync().await?;
+
+    assert!(synced.read_only, "{synced:?}");
+    assert_eq!(world.latest().await?, commit[0]);
+    assert_eq!(
+        world.revision(&commit[0]).await?,
+        files(&[("a.txt", "v2"), ("b.txt", "v1")])
+    );
+    assert_eq!(world.text("b.txt").as_deref(), Some("v1"));
+    assert_eq!(
+        world.locked().await?,
+        Some(LockEntry::at(commit[0].clone()))
+    );
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn an_edit_to_data_toml_that_read_all_saw_is_still_read_whole_by_the_tick() -> Res {
+    let world = World::new("read = [\"team/ref\"]\nsync = [\"team/raw\"]")?;
+    world
+        .publish_to("team/ref", THIRD, &[("r.txt", b"ref")])
+        .await?;
+    world
+        .publish(FIRST, &[("a.txt", b"v1"), ("b.txt", b"v1")])
+        .await?;
+    world.read_all().await?;
+    world.sync().await?;
+    assert!(world.lock().await?.header.filled.is_some());
+    world.remove("a.txt")?;
+    world.contract("# edited\nread = [\"team/ref\"]\nsync = [\"team/raw\"]")?;
+
+    world.read_all().await?;
+    let synced = world.sync().await?;
+
+    assert!(synced.read_only, "{synced:?}");
+    assert_eq!(world.text("a.txt").as_deref(), Some("v1"));
+    assert_eq!(world.latest().await?, FIRST);
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn after_data_toml_is_edited_an_entry_read_whole_keeps_its_base_while_another_is_blocked()
+-> Res {
+    let world = World::new("sync = [\"team/raw\", \"team/ref\"]")?;
+    world.publish(FIRST, &[("a.txt", b"v1")]).await?;
+    world
+        .publish_to("team/ref", THIRD, &[("r.txt", b"v1")])
+        .await?;
+    world.sync().await?;
+    world.publish(SECOND, &[("a.txt", b"v2")]).await?;
+    world
+        .publish_to("team/ref", FOURTH, &[("r.txt", b"v2")])
+        .await?;
+    std::fs::write(world.dataspace().join("team/ref/r.txt"), "mine")?;
+    world.contract("# edited\nsync = [\"team/raw\", \"team/ref\"]")?;
+
+    let synced = world.sync().await?;
+
+    assert!(synced.read_only, "{synced:?}");
+    assert_eq!(world.text("a.txt").as_deref(), Some("v2"));
+    let lock = world.lock().await?;
+    assert_eq!(lock.packages.get(&key()), Some(&LockEntry::at(SECOND)));
+    let contract = Contract::read(&world.storage, &world.dataspace(), None).await?;
+    assert_ne!(lock.header.data_toml_hash, contract.data_toml_hash());
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn after_data_toml_is_edited_a_commit_whose_latest_is_gone_is_not_pushed() -> Res {
+    let world = World::filled(&[("a.txt", b"v1")]).await?;
+    world.write("a.txt", "v2")?;
+    stopping_at("push.object", 0, world.tick()).await?;
+    world
+        .remote
+        .storage
+        .remove_file(LATEST.strip_prefix("s3://").ok_or("an s3 URI")?)
+        .await?;
+    world.contract("# edited\nsync = [\"team/raw\"]")?;
+
+    let outcome = world.tick().await?;
+
+    assert!(
+        matches!(&outcome, EntrySync::Diverged { latest: None }),
+        "{outcome:?}"
+    );
+    assert!(world.remote.current(LATEST).await?.is_none());
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_revision_read_after_a_push_finds_the_metadata_file_unchanged() -> Res {
+    let world = World::filled(&[("a.txt", b"v1"), ("b.txt", b"v1")]).await?;
+    world.write("a.txt", "v2")?;
+    advanced(&world.tick().await?);
+    let theirs = ManifestHeader {
+        message: crate::manifest::HeaderMessage::Text("theirs".to_string()),
+        ..ManifestHeader::default()
+    };
+    world
+        .publish_with(
+            "team/raw",
+            SECOND,
+            &[("a.txt", b"v2"), ("b.txt", b"v2")],
+            theirs,
+            Vec::new(),
+        )
+        .await?;
+
+    let outcome = world.tick().await?;
+
+    assert!(
+        matches!(&outcome, EntrySync::Ran { read: Some(read), .. } if read.revision == SECOND),
+        "{outcome:?}"
+    );
+    assert_eq!(world.text("b.txt").as_deref(), Some("v2"));
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_change_undone_before_its_push_releases_the_commits() -> Res {
+    let world = World::filled(&[("a.txt", b"v1")]).await?;
+    world.write("a.txt", "v2")?;
+    let base = advanced(&world.tick().await?);
+    world.write("a.txt", "v3")?;
+    stopping_at("push.object", 0, world.tick()).await?;
+    world.write("a.txt", "v2")?;
+
+    let outcome = world.tick().await?;
+
+    assert!(
+        matches!(
+            &outcome,
+            EntrySync::Ran {
+                published: None,
+                ..
+            }
+        ),
+        "{outcome:?}"
+    );
+    assert_eq!(world.locked().await?, Some(LockEntry::at(base)));
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_folder_turned_into_a_file_loses_the_folders_metadata() -> Res {
+    let world = World::synced()?;
+    let folder = crate::manifest::DirMeta::new(
+        LogicalKey::new("dir")?,
+        serde_json::json!({"user_meta": {"units": "m"}}),
+    );
+    world
+        .publish_with(
+            "team/raw",
+            FIRST,
+            &[("dir/a.txt", b"v1"), ("b.txt", b"v1")],
+            ManifestHeader::default(),
+            vec![folder],
+        )
+        .await?;
+    world.sync().await?;
+    std::fs::remove_dir_all(world.folder().join("dir"))?;
+    world.write("dir", "now a file")?;
+
+    let outcome = world.tick().await?;
+
+    let revision = advanced(&outcome);
+    assert_eq!(
+        world.revision(&revision).await?,
+        files(&[("b.txt", "v1"), ("dir", "now a file")])
+    );
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn metadata_of_a_folder_that_held_no_files_is_no_change() -> Res {
+    let world = World::synced()?;
+    let folder = crate::manifest::DirMeta::new(
+        LogicalKey::new("empty")?,
+        serde_json::json!({"user_meta": {"units": "m"}}),
+    );
+    world
+        .publish_with(
+            "team/raw",
+            FIRST,
+            &[("a.txt", b"v1")],
+            ManifestHeader::default(),
+            vec![folder],
+        )
+        .await?;
+    world.sync().await?;
+
+    let outcome = world.tick().await?;
+
+    assert!(
+        matches!(
+            &outcome,
+            EntrySync::Ran {
+                read: None,
+                published: None
+            }
+        ),
+        "{outcome:?}"
+    );
+    assert_eq!(world.latest().await?, FIRST);
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_package_another_process_holds_is_not_filled() -> Res {
+    let world = World::synced()?;
+    world.publish(FIRST, &[("a.txt", b"v1")]).await?;
+    let store = world.domain().registry("b")?;
+    let _held = world
+        .storage
+        .lock_exclusive(store.package_lock(&package()))
+        .await?;
+
+    let outcome = world.tick().await?;
+
+    assert!(matches!(outcome, EntrySync::Busy), "{outcome:?}");
+    assert_eq!(world.text("a.txt"), None);
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_fill_that_does_not_read_every_entry_whole_leaves_the_dataspace_unfilled() -> Res {
+    let world = World::filled(&[("a.txt", b"v1")]).await?;
+    // As a lock carried from another checkout is taken up.
+    let contract = Contract::read(&world.storage, &world.dataspace(), None).await?;
+    let mut lock = world.lock().await?;
+    lock.header.filled = None;
+    lock.write(&world.storage, &contract, &writer()).await?;
+    world.publish(SECOND, &[("a.txt", b"v2")]).await?;
+    world.write("a.txt", "mine")?;
+
+    let synced = world.sync().await?;
+
+    assert!(synced.read_only, "{synced:?}");
+    assert!(world.lock().await?.header.filled.is_none());
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_dataspace_is_not_filled_while_a_read_entry_is_unread() -> Res {
+    let world = World::new("read = [\"team/ref\"]\nsync = [\"team/raw\"]")?;
+    world
+        .publish_to("team/ref", THIRD, &[("r.txt", b"ref")])
+        .await?;
+    world.publish(FIRST, &[("a.txt", b"v1")]).await?;
+
+    world.sync().await?;
+    world.write("a.txt", "v2")?;
+    let synced = world.sync().await?;
+
+    assert!(synced.read_only);
+    assert!(world.lock().await?.header.filled.is_none());
+    assert_eq!(world.latest().await?, FIRST);
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_read_entry_with_no_revision_does_not_keep_the_dataspace_unfilled() -> Res {
+    let world = World::new("read = [\"team/ref\"]\nsync = [\"team/raw\"]")?;
+    world.publish(FIRST, &[("a.txt", b"v1")]).await?;
+
+    let synced = world.sync().await?;
+
+    assert!(synced.read_only);
+    assert!(world.lock().await?.header.filled.is_some());
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_pinned_read_entry_keeps_the_dataspace_unfilled_until_it_is_read() -> Res {
+    let world = World::new(&format!(
+        "read = [{{ package = \"team/ref\", revision = \"{THIRD}\" }}]\nsync = [\"team/raw\"]"
+    ))?;
+    world.publish(FIRST, &[("a.txt", b"v1")]).await?;
+
+    world.sync().await?;
+
+    assert!(world.lock().await?.header.filled.is_none());
+    Ok(())
+}
+
+const WITH_LOCAL: &str = "sync = [\"team/raw\", \"quilt+local://lab-mac#package=me/out\"]";
+
+impl World {
+    /// The Domain's local registry, named `name`.
+    pub(crate) async fn local_named(
+        &self,
+        name: &str,
+    ) -> Result<LocalRegistry, Box<dyn std::error::Error>> {
+        let local = self.domain().local();
+        local.rename(&self.storage, name).await?;
+        Ok(local)
+    }
+
+    /// The working folder of the contract's local registry entry.
+    pub(crate) async fn local_folder(&self) -> Result<PathBuf, Box<dyn std::error::Error>> {
+        let contract = Contract::read(&self.storage, &self.dataspace(), None).await?;
+        let entry = contract
+            .entries()
+            .iter()
+            .find(|entry| matches!(entry.registry, Registry::Local(_)))
+            .ok_or("no local entry")?;
+        Ok(entry.folder.clone())
+    }
+}
+
+/// The text of `key` in `folder`, `None` where it is not there.
+pub(crate) fn read_text(folder: &Path, key: &str) -> Option<String> {
+    std::fs::read_to_string(folder.join(key)).ok()
+}
+
+/// The lock's key for `me/out` in the local registry `name`.
+pub(crate) fn out_key(name: &str) -> PackageKey {
+    PackageKey {
+        registry: Registry::Local(name.to_string()),
+        package: Namespace::try_from("me/out").expect("package"),
+    }
+}
+
+/// The local registry is a registry like a bucket, so a dataspace syncing
+/// one of its packages beside a bucket's fills, and then publishes.
+#[test(tokio::test)]
+async fn a_local_and_a_bucket_sync_entry_fill_then_the_bucket_edit_is_published() -> Res {
+    let world = World::new(WITH_LOCAL)?;
+    let local = world.local_named("lab-mac").await?;
+    world.publish(FIRST, &[("a.txt", b"v1")]).await?;
+    let out = publish_local(&world.storage, &local, "me/out", &[("o.txt", b"o1")]).await?;
+
+    let filling = world.sync().await?;
+
+    assert!(filling.read_only, "{filling:?}");
+    let [(_, raw), (_, mine)] = filling.entries.as_slice() else {
+        panic!("{filling:?}");
+    };
+    assert!(matches!(raw, EntrySync::Ran { .. }), "{raw:?}");
+    assert!(matches!(mine, EntrySync::Ran { .. }), "{mine:?}");
+    let lock = world.lock().await?;
+    assert!(lock.header.filled.is_some(), "{lock:?}");
+    let locked = lock
+        .packages
+        .get(&out_key("lab-mac"))
+        .ok_or("no lock entry")?;
+    assert_eq!(locked.base.as_ref(), Some(&out));
+    let folder = world.local_folder().await?;
+    assert_eq!(read_text(&folder, "o.txt").as_deref(), Some("o1"));
+
+    world.write("a.txt", "v2")?;
+    let synced = world.sync().await?;
+
+    assert!(!synced.read_only, "{synced:?}");
+    let [(_, raw), (_, mine)] = synced.entries.as_slice() else {
+        panic!("{synced:?}");
+    };
+    let revision = advanced(raw);
+    assert_eq!(world.latest().await?, revision);
+    assert!(
+        matches!(
+            mine,
+            EntrySync::Ran {
+                read: None,
+                published: None
+            }
+        ),
+        "{mine:?}"
+    );
+    Ok(())
+}
+
+/// A local entry reads what another dataspace published to the local
+/// registry, and publishes its own edit there, moving `latest` and the lock.
+#[test(tokio::test)]
+async fn a_local_sync_entry_reads_and_publishes_through_the_local_registry() -> Res {
+    let world = World::new("sync = [\"quilt+local://lab-mac#package=me/out\"]")?;
+    let local = world.local_named("lab-mac").await?;
+    let namespace = Namespace::try_from("me/out")?;
+    let first = publish_local(&world.storage, &local, "me/out", &[("o.txt", b"o1")]).await?;
+    world.sync().await?;
+    let folder = world.local_folder().await?;
+    assert_eq!(read_text(&folder, "o.txt").as_deref(), Some("o1"));
+
+    // Down: another dataspace's publish is read.
+    let second = publish_local(&world.storage, &local, "me/out", &[("o.txt", b"o2")]).await?;
+    assert_ne!(first, second);
+    let outcome = world.tick().await?;
+
+    assert!(
+        matches!(
+            &outcome,
+            EntrySync::Ran {
+                read: Some(_),
+                published: None
+            }
+        ),
+        "{outcome:?}"
+    );
+    assert_eq!(read_text(&folder, "o.txt").as_deref(), Some("o2"));
+    let locked = world
+        .lock()
+        .await?
+        .packages
+        .get(&out_key("lab-mac"))
+        .cloned();
+    assert_eq!(locked.and_then(|locked| locked.base), Some(second.clone()));
+
+    // Up: the folder's edit is published to the local registry.
+    std::fs::write(folder.join("o.txt"), "o3")?;
+    let outcome = world.tick().await?;
+
+    let third = advanced(&outcome);
+    assert_eq!(
+        local.read_latest(&world.storage, &namespace).await?,
+        Some(third.clone())
+    );
+    assert_eq!(
+        local_bytes(&world.storage, &local, &third, "o.txt").await?,
+        b"o3"
+    );
+    let locked = world
+        .lock()
+        .await?
+        .packages
+        .get(&out_key("lab-mac"))
+        .cloned();
+    assert_eq!(
+        locked,
+        Some(LockEntry {
+            base: Some(third),
+            commits: Vec::new()
+        })
+    );
+    Ok(())
+}
+
+/// A package of the local registry that was never published is committed with
+/// no base, and its first publication expects no `latest` and bases the entry
+/// at the commit.
+#[test(tokio::test)]
+async fn a_local_package_never_published_is_published_first_with_no_base() -> Res {
+    let world = World::new("sync = [\"quilt+local://lab-mac#package=me/out\"]")?;
+    let local = world.local_named("lab-mac").await?;
+    assert!(world.sync().await?.read_only);
+    std::fs::create_dir_all(world.local_folder().await?)?;
+    std::fs::write(world.local_folder().await?.join("o.txt"), "first")?;
+
+    let outcome = world.tick().await?;
+
+    let commit = advanced(&outcome);
+    assert_eq!(
+        local
+            .read_latest(&world.storage, &Namespace::try_from("me/out")?)
+            .await?,
+        Some(commit.clone())
+    );
+    let locked = world
+        .lock()
+        .await?
+        .packages
+        .get(&out_key("lab-mac"))
+        .cloned();
+    assert_eq!(locked, Some(LockEntry::at(commit)));
+    Ok(())
+}
+
+/// A commit of a local package that the lock names is read back from the
+/// registry's objects, each checked against its row: a damaged object is not
+/// placed.
+#[test(tokio::test)]
+async fn a_damaged_local_object_is_not_read_back_into_the_folder() -> Res {
+    let world = World::new("sync = [\"quilt+local://lab-mac#package=me/out\"]")?;
+    let local = world.local_named("lab-mac").await?;
+    let first = publish_local(&world.storage, &local, "me/out", &[("o.txt", b"o1")]).await?;
+    world.sync().await?;
+    let folder = world.local_folder().await?;
+    std::fs::write(folder.join("o.txt"), "o2")?;
+    stopping_at("sync.recorded", 0, world.tick()).await?;
+    let dataspace = world.dataspace();
+    let (domain, storage) = (world.domain(), &world.storage);
+    let package = out_key("lab-mac");
+    let listed = crate::dataspace::reattach::unattached(
+        storage,
+        &world.remote,
+        &domain,
+        &dataspace,
+        &writer(),
+        &package,
+    )
+    .await?;
+    assert_eq!(listed.len(), 1, "{listed:?}");
+    crate::dataspace::reattach::reattach(
+        storage,
+        &world.remote,
+        &domain,
+        &dataspace,
+        &writer(),
+        &package,
+        &listed[0].hash,
+        Some(&first),
+    )
+    .await?;
+    std::fs::remove_dir_all(&folder)?;
+    for object in std::fs::read_dir(local.objects_dir())? {
+        let path = object?.path();
+        if std::fs::read(&path)? == b"o2" {
+            std::fs::write(&path, "xx")?;
+        }
+    }
+
+    let outcome = world.tick().await?;
+
+    assert!(
+        matches!(&outcome, EntrySync::ReadBack(read) if !read.hash_mismatch.is_empty()),
+        "{outcome:?}"
+    );
+    assert!(!folder.join("o.txt").exists());
+    Ok(())
+}
+
+/// A local registry renamed keeps its old name as an alias: an entry, and a
+/// lock key, naming it by the old name still reach it, and the lock is
+/// written under its current name.
+#[test(tokio::test)]
+async fn a_local_entry_under_an_old_name_is_synced_and_locked_under_the_current_one() -> Res {
+    let world = World::new("sync = [\"quilt+local://old-mac#package=me/out\"]")?;
+    let local = world.local_named("old-mac").await?;
+    let first = publish_local(&world.storage, &local, "me/out", &[("o.txt", b"o1")]).await?;
+    world.sync().await?;
+    let lock = world.lock().await?;
+    assert_eq!(
+        lock.packages
+            .get(&out_key("old-mac"))
+            .and_then(|locked| locked.base.as_ref()),
+        Some(&first)
+    );
+    world.local_named("new-mac").await?;
+    let second = publish_local(&world.storage, &local, "me/out", &[("o.txt", b"o2")]).await?;
+
+    let outcome = world.tick().await?;
+
+    // Read on the base the old key holds, not as a first read that collides.
+    assert!(
+        matches!(&outcome, EntrySync::Ran { read: Some(_), .. }),
+        "{outcome:?}"
+    );
+    let folder = world.local_folder().await?;
+    assert_eq!(read_text(&folder, "o.txt").as_deref(), Some("o2"));
+    let lock = world.lock().await?;
+    assert_eq!(
+        lock.packages
+            .get(&out_key("new-mac"))
+            .and_then(|locked| locked.base.as_ref()),
+        Some(&second)
+    );
+    assert!(!lock.packages.contains_key(&out_key("old-mac")), "{lock:?}");
+    Ok(())
+}
+
+/// An entry naming another machine's local registry is not this Domain's to
+/// reach.
+#[test(tokio::test)]
+async fn another_local_registrys_entry_is_refused_and_keeps_the_dataspace_unfilled() -> Res {
+    let world = World::new(WITH_LOCAL)?;
+    world.publish(FIRST, &[("a.txt", b"v1")]).await?;
+
+    let synced = world.sync().await?;
+
+    let [(_, raw), (_, local)] = synced.entries.as_slice() else {
+        panic!("{synced:?}");
+    };
+    assert!(matches!(raw, EntrySync::Ran { .. }), "{raw:?}");
+    assert!(
+        matches!(local, EntrySync::Failed(EntryError::LocalRegistry)),
+        "{local:?}"
+    );
+    assert_eq!(world.text("a.txt").as_deref(), Some("v1"));
+    assert!(world.lock().await?.header.filled.is_none());
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_filled_tick_refuses_another_local_registrys_entry_and_publishes_the_rest() -> Res {
+    let world = World::new(WITH_LOCAL)?;
+    world.publish(FIRST, &[("a.txt", b"v1")]).await?;
+    world.sync().await?;
+    // As a lock carried from another checkout, filled for this contract.
+    let contract = Contract::read(&world.storage, &world.dataspace(), None).await?;
+    let mut lock = world.lock().await?;
+    lock.header.filled = Some(crate::time::to_second(jiff::Timestamp::now()));
+    lock.write_for(
+        &world.storage,
+        &contract,
+        &writer(),
+        contract.data_toml_hash(),
+    )
+    .await?;
+    world.write("a.txt", "v2")?;
+
+    let synced = world.sync().await?;
+
+    assert!(!synced.read_only, "{synced:?}");
+    let [(_, raw), (_, local)] = synced.entries.as_slice() else {
+        panic!("{synced:?}");
+    };
+    advanced(raw);
+    assert!(
+        matches!(local, EntrySync::Failed(EntryError::LocalRegistry)),
+        "{local:?}"
+    );
+    Ok(())
+}
+
+/// The lock's key for `team/raw` in the local registry `lab-mac`.
+pub(crate) fn local_key() -> PackageKey {
+    PackageKey {
+        registry: Registry::Local("lab-mac".to_string()),
+        package: package(),
+    }
+}
+
+/// A dataspace whose `team/raw` the lock holds in the local registry
+/// `lab-mac`, as an import leaves it: a revision published there and a local
+/// commit on it. Then `data.toml` is edited to name bucket `b` for it. The
+/// revision and the commit, by hash.
+pub(crate) async fn moving() -> Result<(World, String, String), Box<dyn std::error::Error>> {
+    let world = World::new("sync = [\"quilt+local://lab-mac#package=team/raw\"]")?;
+    let first = world
+        .commit_locally(None, &[("a.txt", b"v1"), ("b.txt", b"v1")])
+        .await?;
+    let local = world.domain().local();
+    let published = local
+        .publish(&world.storage, &package(), None, &first)
+        .await?;
+    assert_eq!(published, crate::domain::LocalPublish::Advanced);
+    let head = world
+        .commit_locally(Some(&first), &[("a.txt", b"v2"), ("b.txt", b"v1")])
+        .await?;
+    let here = Writer {
+        local_registry: "lab-mac".to_string(),
+        ..writer()
+    };
+    let contract = Contract::read(&world.storage, &world.dataspace(), None).await?;
+    let mut lock = Lock::new(&contract, &here);
+    lock.packages.insert(
+        local_key(),
+        LockEntry {
+            base: Some(first.clone()),
+            commits: vec![head.clone()],
+        },
+    );
+    lock.write(&world.storage, &contract, &here).await?;
+    world.contract("sync = [\"team/raw\"]")?;
+    Ok((world, first, head))
+}
+
+impl World {
+    /// Records `files` in the local registry as a commit of `team/raw` on
+    /// `base`, and returns its hash.
+    async fn commit_locally(
+        &self,
+        base: Option<&str>,
+        files: &[(&'static str, &'static [u8])],
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        let mut rows = Vec::new();
+        let mut content = BTreeMap::new();
+        for (key, body) in files {
+            let key = LogicalKey::new(*key)?;
+            rows.push(changed(key.clone(), None));
+            content.insert(key, RowContent::Bytes(bytes::Bytes::from_static(body)));
+        }
+        let lineage = PackageLineage {
+            base_hash: base.unwrap_or_default().to_string(),
+            ..PackageLineage::default()
+        };
+        let manifest = Manifest {
+            rows,
+            ..Manifest::default()
+        };
+        let (_, recorded) = crate::flow::record(
+            &self.domain().local(),
+            &self.storage,
+            &self.remote,
+            WorkflowCheck::Warn { host: None },
+            &package(),
+            lineage,
+            manifest,
+            &content,
+        )
+        .await?;
+        Ok(recorded.hash().ok_or("nothing recorded")?.to_string())
+    }
+}
+
+#[test(tokio::test)]
+async fn a_local_package_moved_to_a_bucket_starts_there_at_its_last_local_commit() -> Res {
+    let (world, first, head) = moving().await?;
+
+    let synced = world.sync().await?;
+
+    let [(_, outcome)] = synced.entries.as_slice() else {
+        panic!("{synced:?}");
+    };
+    assert_eq!(advanced(outcome), head);
+    assert_eq!(world.latest().await?, head);
+    assert_eq!(
+        world.revision(&head).await?,
+        files(&[("a.txt", "v2"), ("b.txt", "v1")])
+    );
+    // Squashed: the bucket holds no revision before it.
+    let before = format!("s3://b/.quilt/packages/{first}");
+    assert_eq!(world.remote.current(&before).await?, None);
+    let lock = world.lock().await?;
+    assert_eq!(lock.packages.get(&local_key()), None);
+    assert_eq!(
+        lock.packages.get(&key()),
+        Some(&LockEntry::at(head.clone()))
+    );
+    assert_eq!(world.text("a.txt").as_deref(), Some("v2"));
+    // The local registry keeps the package.
+    let local = world.domain().local();
+    assert_eq!(
+        local.read_latest(&world.storage, &package()).await?,
+        Some(first)
+    );
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_move_to_a_bucket_that_has_the_package_is_diverged_and_keeps_the_local_key() -> Res {
+    let (world, first, head) = moving().await?;
+    world.publish(FIRST, &[("a.txt", b"theirs")]).await?;
+
+    let outcome = world.tick().await?;
+
+    assert!(
+        matches!(&outcome, EntrySync::Diverged { latest: Some(latest) } if latest == FIRST),
+        "{outcome:?}"
+    );
+    assert_eq!(world.latest().await?, FIRST);
+    let lock = world.lock().await?;
+    assert_eq!(lock.packages.get(&key()), None);
+    assert_eq!(
+        lock.packages.get(&local_key()),
+        Some(&LockEntry {
+            base: Some(first),
+            commits: vec![head],
+        })
+    );
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_move_whose_push_landed_before_the_lock_was_written_is_not_pushed_again() -> Res {
+    let (world, _, head) = moving().await?;
+    let path = world.dataspace().join(crate::dataspace::lock::LOCK_FILE);
+    let before = std::fs::read(&path)?;
+    world.sync().await?;
+    // As if the tick stopped after the push.
+    std::fs::write(&path, before)?;
+
+    let outcome = world.tick().await?;
+
+    assert!(
+        matches!(
+            &outcome,
+            EntrySync::Ran {
+                published: None,
+                ..
+            }
+        ),
+        "{outcome:?}"
+    );
+    assert_eq!(world.latest().await?, head);
+    let lock = world.lock().await?;
+    assert_eq!(lock.packages.get(&local_key()), None);
+    assert_eq!(lock.packages.get(&key()), Some(&LockEntry::at(head)));
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_move_the_buckets_workflow_refuses_keeps_the_local_key_until_it_is_accepted() -> Res {
+    let (world, _, head) = moving().await?;
+    // The commit is pushed as it was committed, with no workflow, which the
+    // gate requires.
+    gate(&world, r#"{"type": "object"}"#).await?;
+
+    let refused = world.tick().await?;
+
+    assert!(
+        matches!(&refused, EntrySync::Ran {
+            published: Some(Published::WorkflowBlocked { revision, .. }),
+            ..
+        } if *revision == head),
+        "{refused:?}"
+    );
+    let lock = world.lock().await?;
+    assert_eq!(lock.packages.get(&key()), None);
+    assert!(lock.packages.contains_key(&local_key()), "{lock:?}");
+
+    let optional =
+        "version: '1'\nis_workflow_required: false\nworkflows:\n  gate:\n    name: Gate\n";
+    world
+        .remote
+        .put_object(
+            None,
+            &S3Uri::try_from("s3://b/.quilt/workflows/config.yml")?,
+            optional.as_bytes().to_vec(),
+        )
+        .await?;
+    let synced = world.sync().await?;
+
+    // The refusal left the dataspace unfilled, so this tick still fills it.
+    assert!(synced.read_only, "{synced:?}");
+    let [(_, moved)] = synced.entries.as_slice() else {
+        panic!("{synced:?}");
+    };
+    assert_eq!(advanced(moved), head);
+    assert_eq!(world.latest().await?, head);
+    assert_eq!(world.base().await?, Some(head));
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_move_the_workflow_refuses_leaves_the_folder_to_be_read_whole_once_it_goes_through() -> Res
+{
+    let (world, _, head) = moving().await?;
+    gate(&world, r#"{"type": "object"}"#).await?;
+
+    let refused = world.sync().await?;
+
+    assert!(refused.read_only, "{refused:?}");
+    assert_eq!(world.text("b.txt"), None);
+    let optional =
+        "version: '1'\nis_workflow_required: false\nworkflows:\n  gate:\n    name: Gate\n";
+    world
+        .remote
+        .put_object(
+            None,
+            &S3Uri::try_from("s3://b/.quilt/workflows/config.yml")?,
+            optional.as_bytes().to_vec(),
+        )
+        .await?;
+    let moved = world.sync().await?;
+
+    assert!(moved.read_only, "{moved:?}");
+    assert_eq!(world.latest().await?, head);
+    assert_eq!(world.text("b.txt").as_deref(), Some("v1"));
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn post_write_follows_a_move_to_a_bucket_once() -> Res {
+    let (world, _, head) = moving().await?;
+    let hooks = table(PostWrite, &record(&world), &[]);
+    world.contract(&format!("sync = [\"team/raw\"]\n{hooks}"))?;
+
+    world.sync().await?;
+    world.tick().await?;
+
+    assert_eq!(
+        calls(&record(&world)),
+        [call(PostWrite, Some(head.as_str()))]
+    );
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_package_the_contract_still_names_in_the_local_registry_is_not_moved() -> Res {
+    let (world, _, _) = moving().await?;
+    world.contract("sync = [\"team/raw\", \"quilt+local://lab-mac#package=team/raw\"]")?;
+
+    let synced = world.sync().await?;
+
+    let [(_, raw), (_, local)] = synced.entries.as_slice() else {
+        panic!("{synced:?}");
+    };
+    assert!(
+        matches!(
+            raw,
+            EntrySync::Ran {
+                read: None,
+                published: None
+            }
+        ),
+        "{raw:?}"
+    );
+    assert!(
+        matches!(local, EntrySync::Failed(EntryError::LocalRegistry)),
+        "{local:?}"
+    );
+    assert!(world.remote.current(LATEST).await?.is_none());
+    assert!(world.lock().await?.packages.contains_key(&local_key()));
+    Ok(())
+}
+
+/// A lock key naming the local registry by a name it had, `lab-mac`, under
+/// a header naming it by its current one, is still the package moving to
+/// the bucket.
+#[test(tokio::test)]
+async fn a_move_finds_the_local_key_under_a_name_the_registry_had() -> Res {
+    let (world, _, head) = moving().await?;
+    let local = world.local_named("lab-mac").await?;
+    local.rename(&world.storage, "new-mac").await?;
+    let contract = Contract::read(&world.storage, &world.dataspace(), None).await?;
+    let mut lock = world.lock().await?;
+    let renamed = Writer {
+        local_registry: "new-mac".to_string(),
+        ..writer()
+    };
+    lock.write(&world.storage, &contract, &renamed).await?;
+
+    let synced = world.sync().await?;
+
+    let [(_, outcome)] = synced.entries.as_slice() else {
+        panic!("{synced:?}");
+    };
+    assert_eq!(advanced(outcome), head);
+    let lock = world.lock().await?;
+    assert!(!lock.packages.contains_key(&local_key()), "{lock:?}");
+    assert_eq!(lock.header.writer.local_registry, "new-mac");
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_file_named_as_a_folder_that_held_none_takes_its_place() -> Res {
+    let world = World::synced()?;
+    let folder = crate::manifest::DirMeta::new(
+        LogicalKey::new("empty")?,
+        serde_json::json!({"user_meta": {"units": "m"}}),
+    );
+    world
+        .publish_with(
+            "team/raw",
+            FIRST,
+            &[("a.txt", b"v1")],
+            ManifestHeader::default(),
+            vec![folder],
+        )
+        .await?;
+    world.sync().await?;
+    world.write("empty", "now a file")?;
+
+    let outcome = world.tick().await?;
+
+    let revision = advanced(&outcome);
+    assert_eq!(
+        world.revision(&revision).await?,
+        files(&[("a.txt", "v1"), ("empty", "now a file")])
+    );
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_package_with_no_revision_is_published_once_the_dataspace_is_filled() -> Res {
+    let world = World::synced()?;
+    world.write("a.txt", "first")?;
+
+    let filling = world.sync().await?;
+    let outcome = world.tick().await?;
+
+    assert!(filling.read_only);
+    let revision = advanced(&outcome);
+    assert_eq!(
+        world.revision(&revision).await?,
+        files(&[("a.txt", "first")])
+    );
+    assert_eq!(world.locked().await?, Some(LockEntry::at(revision)));
+    Ok(())
+}
+
+/// The publish leaves a link out, as a commit does; it deletes nothing.
+#[cfg(unix)]
+#[test(tokio::test)]
+async fn a_link_where_a_file_was_is_no_deletion() -> Res {
+    let world = World::filled(&[("a.txt", b"v1"), ("b.txt", b"v1")]).await?;
+    world.remove("a.txt")?;
+    std::os::unix::fs::symlink(
+        world.dir.path().join("elsewhere"),
+        world.folder().join("a.txt"),
+    )?;
+    world.write("b.txt", "v2")?;
+
+    let outcome = world.tick().await?;
+
+    let revision = advanced(&outcome);
+    assert_eq!(
+        world.revision(&revision).await?,
+        files(&[("a.txt", "v1"), ("b.txt", "v2")])
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test(tokio::test)]
+async fn a_link_where_a_folder_was_deletes_none_of_its_files() -> Res {
+    let world = World::filled(&[("data/a.txt", b"v1"), ("b.txt", b"v1")]).await?;
+    let elsewhere = world.dir.path().join("elsewhere");
+    std::fs::rename(world.folder().join("data"), &elsewhere)?;
+    std::os::unix::fs::symlink(&elsewhere, world.folder().join("data"))?;
+    world.write("b.txt", "v2")?;
+
+    let outcome = world.tick().await?;
+
+    let revision = advanced(&outcome);
+    assert_eq!(
+        world.revision(&revision).await?,
+        files(&[("b.txt", "v2"), ("data/a.txt", "v1")])
+    );
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_package_with_no_revision_and_no_folder_publishes_nothing() -> Res {
+    let world = World::synced()?;
+    world.sync().await?;
+
+    let outcome = world.tick().await?;
+
+    assert!(
+        matches!(
+            &outcome,
+            EntrySync::Ran {
+                read: None,
+                published: None
+            }
+        ),
+        "{outcome:?}"
+    );
+    Ok(())
+}
+
+/// A filled dataspace whose package has no revision, its folder holding a
+/// file to publish first.
+pub(crate) async fn unpublished() -> Result<World, Box<dyn std::error::Error>> {
+    let world = World::synced()?;
+    world.write("a.txt", "first")?;
+    assert!(world.sync().await?.read_only);
+    Ok(world)
+}
+
+/// The commit of a package never published is in the lock, with no base,
+/// before its push: a push that is lost leaves it there, and a lock deleted
+/// after that loses nothing, since reattach reaches the commit. Its first
+/// push then bases the entry at it.
+#[test(tokio::test)]
+async fn a_commit_never_published_is_locked_before_its_push_and_reattached() -> Res {
+    let world = unpublished().await?;
+
+    let stopped = stopping_at("push.object", 0, world.tick()).await?;
+
+    assert!(matches!(stopped, EntrySync::Failed(_)), "{stopped:?}");
+    assert!(world.remote.current(LATEST).await?.is_none());
+    let locked = world.locked().await?;
+    let commit = match &locked {
+        Some(LockEntry {
+            base: None,
+            commits,
+        }) if commits.len() == 1 => commits[0].clone(),
+        other => panic!("expected one commit locked with no base, got {other:?}"),
+    };
+
+    std::fs::remove_file(world.dataspace().join(crate::dataspace::lock::LOCK_FILE))?;
+    let dataspace = world.dataspace();
+    let (domain, storage) = (world.domain(), &world.storage);
+    let listed = crate::dataspace::reattach::unattached(
+        storage,
+        &world.remote,
+        &domain,
+        &dataspace,
+        &writer(),
+        &key(),
+    )
+    .await?;
+    assert_eq!(
+        listed.iter().map(|commit| &commit.hash).collect::<Vec<_>>(),
+        [&commit]
+    );
+    crate::dataspace::reattach::reattach(
+        storage,
+        &world.remote,
+        &domain,
+        &dataspace,
+        &writer(),
+        &key(),
+        &commit,
+        None,
+    )
+    .await?;
+    assert_eq!(world.locked().await?, locked);
+
+    // A new lock is not filled, so the commit is pushed by a read-only tick.
+    let synced = world.sync().await?;
+
+    assert!(synced.read_only, "{synced:?}");
+    assert_eq!(advanced(&synced.entries[0].1), commit);
+    assert_eq!(world.latest().await?, commit);
+    assert_eq!(world.revision(&commit).await?, files(&[("a.txt", "first")]));
+    assert_eq!(world.locked().await?, Some(LockEntry::at(commit)));
+    Ok(())
+}
+
+/// The first push of a package expects no `latest`: one that appears while
+/// it runs leaves the revision stored and kept, and the lock holding the
+/// commit with no base.
+#[test(tokio::test)]
+async fn a_first_push_that_a_latest_appeared_before_is_left_stored_and_locked() -> Res {
+    let world = unpublished().await?;
+    let gate = world.remote.park(LATEST);
+
+    let rival = async {
+        // The tick's own read of `latest`, then the push's.
+        gate.arrived().await;
+        let push = world.remote.park(LATEST);
+        gate.release();
+        push.arrived().await;
+        world.publish(SECOND, &[("a.txt", b"theirs")]).await?;
+        push.release();
+        Res::Ok(())
+    };
+    let (outcome, rivalled) = tokio::join!(world.tick(), rival);
+    rivalled?;
+    let outcome = outcome?;
+
+    let EntrySync::Ran {
+        published: Some(Published::Stored { revision, latest }),
+        ..
+    } = &outcome
+    else {
+        panic!("expected the revision stored, got {outcome:?}");
+    };
+    assert_eq!(latest.as_deref(), Some(SECOND));
+    assert_eq!(world.latest().await?, SECOND);
+    assert_eq!(
+        world.locked().await?,
+        Some(LockEntry {
+            base: None,
+            commits: vec![revision.clone()],
+        })
+    );
+    assert_eq!(
+        world.kept().await?,
+        Some(KeptRevision {
+            hash: revision.clone(),
+            base: None,
+            reason: KeptReason::LatestMoved,
+        })
+    );
+    Ok(())
+}
+
+/// A `latest` that appears before the first push of a package's commits, and
+/// holds a key they hold other bytes of, collides with them: nothing is read
+/// or published, and the lock and the folder keep them.
+#[test(tokio::test)]
+async fn a_latest_that_appears_before_a_first_push_with_the_same_key_collides() -> Res {
+    let world = unpublished().await?;
+    stopping_at("push.object", 0, world.tick()).await?;
+    let locked = world.locked().await?;
+    world.publish(SECOND, &[("a.txt", b"theirs")]).await?;
+
+    let outcome = world.tick().await?;
+
+    assert!(
+        matches!(&outcome, EntrySync::Blocked { revision, conflicts }
+            if revision == SECOND && *conflicts == [PathBuf::from("a.txt")]),
+        "{outcome:?}"
+    );
+    assert!(locked.as_ref().is_some_and(|locked| locked.base.is_none()));
+    assert_eq!(world.locked().await?, locked);
+    assert_eq!(world.text("a.txt").as_deref(), Some("first"));
+    Ok(())
+}
+
+/// [`a_tick_stopped_at_any_file_manifest_or_lock_step_ends_as_one_that_was_not`]
+/// for a package's first publication.
+#[test(tokio::test)]
+async fn a_first_publication_stopped_at_any_step_ends_as_one_that_was_not() -> Res {
+    let uninterrupted = unpublished().await?;
+    let expected = advanced(&uninterrupted.tick().await?);
+
+    for point in [
+        "record.object",
+        "sync.recorded",
+        "push.object",
+        "push.stored",
+        "sync.pushed",
+    ] {
+        let world = unpublished().await?;
+        let stopped = stopping_at(point, 0, world.tick()).await?;
+        assert!(
+            matches!(stopped, EntrySync::Failed(_)),
+            "{point} did not stop the tick: {stopped:?}"
+        );
+
+        world.tick().await?;
+
+        assert_eq!(world.latest().await?, expected, "stopped at {point}");
+        assert_eq!(
+            world.locked().await?,
+            Some(LockEntry::at(expected.clone())),
+            "stopped at {point}"
+        );
+    }
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_change_the_buckets_workflow_refuses_is_stored_kept_and_not_uploaded_again() -> Res {
+    let world = World::filled(&[("a.txt", b"v1")]).await?;
+    gate(&world, r#"{"type": "object", "required": ["owner"]}"#).await?;
+    world.write("a.txt", "v2")?;
+
+    let outcome = world.tick().await?;
+
+    let EntrySync::Ran {
+        published: Some(Published::WorkflowBlocked { revision, .. }),
+        ..
+    } = &outcome
+    else {
+        panic!("expected the revision stored and blocked, got {outcome:?}");
+    };
+    assert_eq!(world.revision(revision).await?, files(&[("a.txt", "v2")]));
+    assert_eq!(world.latest().await?, FIRST);
+    assert_eq!(world.base().await?.as_deref(), Some(FIRST));
+    assert_eq!(
+        world.kept().await?,
+        Some(KeptRevision {
+            hash: revision.clone(),
+            base: Some(FIRST.to_string()),
+            reason: KeptReason::WorkflowBlocked,
+        })
+    );
+
+    // Overwritten in the bucket, the file would be put back by an upload.
+    let stored = fetch_jsonl(
+        &world.remote,
+        &ManifestUri {
+            origin: None,
+            bucket: "b".to_string(),
+            namespace: package(),
+            hash: revision.clone(),
+        },
+    )
+    .await?;
+    let object = &stored.rows.first().ok_or("no row")?.physical_key;
+    world
+        .remote
+        .put_object(
+            None,
+            &S3Uri::try_from(object.as_str())?,
+            b"overwritten".to_vec(),
+        )
+        .await?;
+    let again = world.tick().await?;
+
+    assert!(
+        matches!(&again, EntrySync::Ran {
+            published: Some(Published::WorkflowBlocked { revision: again, .. }),
+            ..
+        } if again == revision),
+        "{again:?}"
+    );
+    assert_eq!(
+        world.revision(revision).await?,
+        files(&[("a.txt", "overwritten")])
+    );
+    assert_eq!(world.latest().await?, FIRST);
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_kept_revision_the_bucket_no_longer_holds_is_stored_again() -> Res {
+    let world = World::filled(&[("a.txt", b"v1")]).await?;
+    world.write("a.txt", "v2")?;
+    let gate = world.remote.park(LATEST);
+    let rival = async {
+        gate.arrived().await;
+        let push = world.remote.park(LATEST);
+        gate.release();
+        push.arrived().await;
+        world.publish(SECOND, &[("a.txt", b"theirs")]).await?;
+        push.release();
+        Res::Ok(())
+    };
+    let (outcome, rivalled) = tokio::join!(world.tick(), rival);
+    rivalled?;
+    let EntrySync::Ran {
+        published: Some(Published::Stored { revision, .. }),
+        ..
+    } = &outcome?
+    else {
+        panic!("expected the revision stored");
+    };
+    let revision = revision.clone();
+    let stored = format!("b/.quilt/packages/{revision}");
+    world.remote.storage.remove_file(&stored).await?;
+    // `latest` back on the base, so the kept commit is pushed again.
+    world.publish(FIRST, &[("a.txt", b"v1")]).await?;
+
+    let outcome = world.tick().await?;
+
+    assert_eq!(advanced(&outcome), revision);
+    assert!(world.remote.current(&stored).await?.is_some());
+    assert_eq!(world.revision(&revision).await?, files(&[("a.txt", "v2")]));
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_workflow_that_cannot_be_checked_fails_the_push_before_anything_is_uploaded() -> Res {
+    let world = World::filled(&[("a.txt", b"v1")]).await?;
+    gate(&world, r#"{"type": "object"}"#).await?;
+    world.write("a.txt", "v2")?;
+    stopping_at("push.object", 0, world.tick()).await?;
+    let commits = world.locked().await?.ok_or("no lock entry")?.commits;
+    assert_eq!(commits.len(), 1);
+    // A schema the validator does not support, not a refusal of the revision.
+    gate(&world, r##"{"$ref": "#/definitions/meta"}"##).await?;
+
+    let outcome = world.tick().await?;
+
+    assert!(matches!(&outcome, EntrySync::Failed(_)), "{outcome:?}");
+    let stored = format!("b/.quilt/packages/{}", commits[0]);
+    assert!(world.remote.current(&stored).await?.is_none());
+    assert_eq!(world.kept().await?, None);
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_blocked_commit_the_store_cleared_is_read_from_the_bucket() -> Res {
+    let world = World::filled(&[("a.txt", b"v1")]).await?;
+    gate(&world, r#"{"type": "object", "required": ["owner"]}"#).await?;
+    world.write("a.txt", "v2")?;
+    world.tick().await?;
+    // The bucket holds the blocked revision, so the store counts it published.
+    world
+        .domain()
+        .registry("b")?
+        .clear_published(&world.storage, &world.remote, None)
+        .await?;
+
+    let outcome = world.tick().await?;
+
+    assert!(
+        matches!(
+            &outcome,
+            EntrySync::Ran {
+                published: Some(Published::WorkflowBlocked { .. }),
+                ..
+            }
+        ),
+        "{outcome:?}"
+    );
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_read_back_stopped_partway_leaves_the_folder_empty_for_the_next_tick() -> Res {
+    let world = World::filled(&[("a.txt", b"v1"), ("b.txt", b"v1")]).await?;
+    std::fs::remove_dir_all(world.folder())?;
+
+    let stopped = stopping_at("sync.read_back", 0, world.tick()).await?;
+
+    assert!(matches!(stopped, EntrySync::Failed(_)), "{stopped:?}");
+    assert_eq!(world.text("a.txt"), None);
+    assert_eq!(world.text("b.txt"), None);
+    let outcome = world.tick().await?;
+    assert!(matches!(&outcome, EntrySync::ReadBack(_)), "{outcome:?}");
+    assert_eq!(world.text("b.txt").as_deref(), Some("v1"));
+    assert_eq!(world.latest().await?, FIRST);
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn after_data_toml_is_edited_a_blocked_commit_is_read_whole_and_kept() -> Res {
+    let world = World::filled(&[("a.txt", b"v1"), ("b.txt", b"v1")]).await?;
+    gate(&world, r#"{"type": "object", "required": ["owner"]}"#).await?;
+    world.write("a.txt", "v2")?;
+    world.tick().await?;
+    let commits = world.locked().await?.ok_or("no lock entry")?.commits;
+    assert_eq!(commits.len(), 1);
+    world.remove("b.txt")?;
+    world.contract("# edited\nsync = [\"team/raw\"]")?;
+
+    let synced = world.sync().await?;
+
+    assert!(synced.read_only, "{synced:?}");
+    assert_eq!(world.text("a.txt").as_deref(), Some("v2"));
+    assert_eq!(world.text("b.txt").as_deref(), Some("v1"));
+    let lock = world.lock().await?;
+    let contract = Contract::read(&world.storage, &world.dataspace(), None).await?;
+    assert_eq!(lock.header.data_toml_hash, contract.data_toml_hash());
+    let locked = lock.packages.get(&key()).ok_or("no lock entry")?;
+    assert_eq!(locked.base.as_deref(), Some(FIRST));
+    assert_eq!(locked.commits, commits);
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_folder_that_cannot_be_read_back_whole_is_left_empty_and_nothing_published() -> Res {
+    let world = World::filled(&[("a.txt", b"v1"), ("b.txt", b"v1")]).await?;
+    std::fs::remove_dir_all(world.folder())?;
+    // b.txt's bytes in the bucket no longer match its row.
+    world
+        .remote
+        .put_object(
+            None,
+            &S3Uri::try_from(
+                format!("s3://b/team/raw/b.txt?versionId={}", hex::encode(b"v1")).as_str(),
+            )?,
+            b"corrupt".to_vec(),
+        )
+        .await?;
+
+    let first = world.tick().await?;
+    let second = world.tick().await?;
+
+    for outcome in [first, second] {
+        assert!(
+            matches!(&outcome, EntrySync::ReadBack(read)
+                if read.placed.is_empty() && read.hash_mismatch == [PathBuf::from("b.txt")]),
+            "{outcome:?}"
+        );
+    }
+    assert_eq!(world.text("a.txt"), None);
+    assert_eq!(world.latest().await?, FIRST);
+    Ok(())
+}
+
+/// Makes the bucket's default workflow `gate`, whose metadata schema is
+/// `schema`.
+pub(crate) async fn gate(world: &World, schema: &str) -> Res {
+    let config = "version: \"1\"\ndefault_workflow: gate\nworkflows:\n  gate:\n    name: Gate\n    metadata_schema: meta\nschemas:\n  meta:\n    url: s3://b/schemas/meta.json\n";
+    for (key, body) in [
+        ("s3://b/.quilt/workflows/config.yml", config),
+        ("s3://b/schemas/meta.json", schema),
+    ] {
+        world
+            .remote
+            .put_object(None, &S3Uri::try_from(key)?, body.as_bytes().to_vec())
+            .await?;
+    }
+    Ok(())
+}
+
+/// Makes the bucket's workflow optional again, after [`gate`].
+pub(crate) async fn ungate(world: &World) -> Res {
+    let optional =
+        "version: '1'\nis_workflow_required: false\nworkflows:\n  gate:\n    name: Gate\n";
+    world
+        .remote
+        .put_object(
+            None,
+            &S3Uri::try_from("s3://b/.quilt/workflows/config.yml")?,
+            optional.as_bytes().to_vec(),
+        )
+        .await?;
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_package_another_process_holds_is_left_for_the_next_tick() -> Res {
+    let world = World::filled(&[("a.txt", b"v1")]).await?;
+    world.write("a.txt", "v2")?;
+    let store = world.domain().registry("b")?;
+    let _held = world
+        .storage
+        .lock_exclusive(store.package_lock(&package()))
+        .await?;
+
+    let outcome = world.tick().await?;
+
+    assert!(matches!(outcome, EntrySync::Busy), "{outcome:?}");
+    assert_eq!(world.latest().await?, FIRST);
+    Ok(())
+}
+
+/// Each point a tick that reads and publishes passes, and how many times.
+const TRANSITIONS: &[(&str, usize)] = &[
+    // Placing b.txt and c.txt, removing x.txt.
+    ("read.file", 3),
+    // b.txt, c.txt and d.txt into the Domain's store.
+    ("record.object", 3),
+    ("sync.recorded", 1),
+    ("push.object", 3),
+    ("push.stored", 1),
+    ("sync.pushed", 1),
+];
+
+/// A filled dataspace whose `latest` moved and whose folder changed.
+async fn changed_both_ways() -> Result<World, Box<dyn std::error::Error>> {
+    let world = World::filled(&[("a.txt", b"v1"), ("b.txt", b"v1"), ("x.txt", b"v1")]).await?;
+    world
+        .publish(
+            SECOND,
+            &[("a.txt", b"v1"), ("b.txt", b"v2"), ("c.txt", b"v1")],
+        )
+        .await?;
+    world.remove("a.txt")?;
+    world.write("d.txt", "added")?;
+    Ok(world)
+}
+
+#[test(tokio::test)]
+async fn a_tick_stopped_at_any_file_manifest_or_lock_step_ends_as_one_that_was_not() -> Res {
+    let uninterrupted = changed_both_ways().await?;
+    let expected = advanced(&uninterrupted.tick().await?);
+    let expected_files = uninterrupted.revision(&expected).await?;
+    assert_eq!(
+        expected_files,
+        files(&[("b.txt", "v2"), ("c.txt", "v1"), ("d.txt", "added")])
+    );
+
+    for (point, passes) in TRANSITIONS {
+        for pass in 0..*passes {
+            let world = changed_both_ways().await?;
+            let stopped = stopping_at(point, pass, world.tick()).await?;
+            assert!(
+                matches!(stopped, EntrySync::Failed(_)),
+                "{point} #{pass} did not stop the tick: {stopped:?}"
+            );
+
+            // As many ticks as it takes, but no more than the steps left.
+            for _ in 0..2 {
+                world.tick().await?;
+            }
+
+            let context = format!("stopped at {point} #{pass}");
+            assert_eq!(world.latest().await?, expected, "{context}");
+            let locked = world.locked().await?.ok_or("no lock entry")?;
+            assert_eq!(locked, LockEntry::at(expected.clone()), "{context}");
+            for (key, body) in &expected_files {
+                assert_eq!(world.text(key).as_ref(), Some(body), "{context}: {key}");
+            }
+            assert_eq!(world.text("a.txt"), None, "{context}");
+            assert_eq!(world.text("x.txt"), None, "{context}");
+            assert!(world.folder().join(METADATA_FILE).exists(), "{context}");
+        }
+    }
+    Ok(())
+}
+
+/// Where a test's hooks record their calls.
+pub(crate) fn record(world: &World) -> PathBuf {
+    world.dir.path().join("calls")
+}
+
+/// A dataspace with `team/raw` under `sync` and the hooks `hooks` declares
+/// to record in [`record`], filled at [`FIRST`] holding `a.txt`.
+pub(crate) async fn hooked(
+    hooks: impl Fn(&Path) -> String,
+) -> Result<World, Box<dyn std::error::Error>> {
+    let world = World::synced()?;
+    let hooks = hooks(&record(&world));
+    world.contract(&format!("sync = [\"team/raw\"]\n{hooks}"))?;
+    world.publish(FIRST, &[("a.txt", b"v1")]).await?;
+    world.sync().await?;
+    Ok(world)
+}
+
+#[test(tokio::test)]
+async fn hooks_run_around_a_read_of_a_newer_latest_and_a_publish_and_not_on_an_idle_tick() -> Res {
+    let world = hooked(|record| tables(&[PreRead, PostRead, PreWrite, PostWrite], record)).await?;
+    world.tick().await?;
+    world.write("a.txt", "v2")?;
+    let pushed = advanced(&world.tick().await?);
+    world.tick().await?;
+    world
+        .publish(SECOND, &[("a.txt", b"v2"), ("b.txt", b"b")])
+        .await?;
+    world.tick().await?;
+    world.tick().await?;
+
+    assert_eq!(world.text("b.txt").as_deref(), Some("b"));
+    assert_eq!(
+        calls(&record(&world)),
+        [
+            call(PreRead, None),
+            call(PostRead, Some(FIRST)),
+            call(PreWrite, None),
+            call(PostWrite, Some(&pushed)),
+            call(PreRead, None),
+            call(PostRead, Some(SECOND)),
+        ]
+    );
+    Ok(())
+}
+
+/// An application's `post-read` hook is called as the script is: once the
+/// lock moved to a newer revision, not on an idle tick, and not once its
+/// registration is dropped.
+#[test(tokio::test)]
+async fn a_registered_post_read_hook_follows_each_newer_revision_read() -> Res {
+    let world = World::synced()?;
+    world.publish(FIRST, &[("a.txt", b"v1")]).await?;
+    let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen = std::sync::Arc::clone(&calls);
+    let registration = crate::dataspace::hooks::register(
+        &world.dataspace(),
+        PostRead,
+        std::sync::Arc::new(move |call: &crate::dataspace::hooks::HookCall| {
+            seen.lock()
+                .expect("calls")
+                .push((call.entry.key().to_string(), call.revision.clone()));
+        }),
+    );
+    world.sync().await?;
+    world.tick().await?;
+    world.publish(SECOND, &[("a.txt", b"v2")]).await?;
+    world.tick().await?;
+    drop(registration);
+    world.publish(THIRD, &[("a.txt", b"v3")]).await?;
+    world.tick().await?;
+
+    let key = "quilt+s3://b#package=team/raw".to_string();
+    assert_eq!(
+        *calls.lock().expect("calls"),
+        [(key.clone(), FIRST.to_string()), (key, SECOND.to_string())]
+    );
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_pre_write_hook_rewrites_metadata_toml_before_the_commit() -> Res {
+    let stamp = "[metadata.package]\nstamped = true\n";
+    let world = hooked(|record| table(PreWrite, record, &[(METADATA_VAR, stamp)])).await?;
+    world.write("a.txt", "v2")?;
+
+    let pushed = advanced(&world.tick().await?);
+
+    let uri = ManifestUri {
+        origin: None,
+        bucket: "b".to_string(),
+        namespace: package(),
+        hash: pushed,
+    };
+    let header = fetch_jsonl(&world.remote, &uri).await?.header;
+    assert_eq!(header.user_meta, Some(serde_json::json!({"stamped": true})));
+    assert_eq!(header.message(), Some(MESSAGE));
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_pre_write_hook_may_ignore_a_file_it_leaves_in_the_folder() -> Res {
+    let world = hooked(|record| table(PreWrite, record, &[(IGNORE_VAR, "b.txt\n")])).await?;
+    world.write("a.txt", "v2")?;
+    world.write("b.txt", "generated")?;
+
+    let pushed = advanced(&world.tick().await?);
+
+    let keys: Vec<String> = world
+        .revision(&pushed)
+        .await?
+        .into_iter()
+        .map(|(key, _)| key)
+        .collect();
+    assert!(keys.contains(&"a.txt".to_string()), "{keys:?}");
+    assert!(!keys.contains(&"b.txt".to_string()), "{keys:?}");
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_pre_write_hook_that_empties_the_folder_publishes_nothing() -> Res {
+    let world = hooked(|record| table(PreWrite, record, &[(CLEAR_VAR, "1")])).await?;
+    world.write("a.txt", "v2")?;
+
+    let outcome = world.tick().await?;
+
+    assert!(
+        matches!(&outcome, EntrySync::Failed(EntryError::FolderGone(_))),
+        "{outcome:?}"
+    );
+    assert_eq!(world.latest().await?, FIRST);
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_pre_write_hook_that_fails_commits_nothing() -> Res {
+    let world = hooked(|record| table(PreWrite, record, &[(FAIL_VAR, "1")])).await?;
+    world.write("a.txt", "v2")?;
+
+    let outcome = world.tick().await?;
+
+    assert!(
+        matches!(&outcome, EntrySync::Failed(EntryError::Hook(_))),
+        "{outcome:?}"
+    );
+    assert_eq!(world.latest().await?, FIRST);
+    let locked = world.locked().await?.ok_or("no lock entry")?;
+    assert_eq!(locked.commits, Vec::<String>::new());
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn post_write_follows_a_blocked_revision_once_and_not_its_push_again() -> Res {
+    let world = hooked(|record| table(PostWrite, record, &[])).await?;
+    gate(&world, r#"{"type": "object", "required": ["owner"]}"#).await?;
+    world.write("a.txt", "v2")?;
+
+    let blocked = world.tick().await?;
+    let again = world.tick().await?;
+
+    let EntrySync::Ran {
+        published: Some(Published::WorkflowBlocked { revision, .. }),
+        ..
+    } = &blocked
+    else {
+        panic!("expected the revision stored and blocked, got {blocked:?}");
+    };
+    assert!(
+        matches!(
+            &again,
+            EntrySync::Ran {
+                published: Some(Published::WorkflowBlocked { .. }),
+                ..
+            }
+        ),
+        "{again:?}"
+    );
+    assert_eq!(calls(&record(&world)), [call(PostWrite, Some(revision))]);
+    Ok(())
+}
+
+mod merge;
+
+/// The tick checks a commit's workflow at push only (#299's
+/// sync-keep-blocked): a workflows config it cannot read stops its commit,
+/// rather than recording one unchecked as `commit` and `create` do.
+#[test(tokio::test)]
+async fn a_tick_whose_workflows_config_cannot_be_read_commits_nothing() -> Res {
+    let world = World::filled(&[("a.txt", b"v1")]).await?;
+    world
+        .remote
+        .deny_reads("s3://b/.quilt/workflows/config.yml");
+    world.write("a.txt", "v2")?;
+
+    let outcome = world.tick().await?;
+
+    assert!(matches!(&outcome, EntrySync::Failed(_)), "{outcome:?}");
+    assert_eq!(
+        world.locked().await?,
+        Some(LockEntry::at(FIRST.to_string()))
+    );
+    Ok(())
+}

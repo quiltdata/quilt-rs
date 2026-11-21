@@ -3,6 +3,8 @@ use crate::cli::model::Commands;
 use crate::cli::output::Render;
 use crate::cli::output::Std;
 
+pub mod dataspace;
+
 pub struct Output {
     report: quilt_rs::flow::GcReport,
 }
@@ -45,6 +47,7 @@ pub async fn model(local_domain: &quilt_rs::LocalDomain) -> Result<Output, Error
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quilt_rs::flow::UserMeta;
 
     use test_log::test;
 
@@ -61,6 +64,7 @@ mod tests {
             namespace: namespace.clone(),
             source: Some(source.path().to_path_buf()),
             message: None,
+            user_meta: UserMeta::Clear,
         })
         .await?;
         m.uninstall(crate::cli::uninstall::Input {
@@ -90,6 +94,7 @@ mod tests {
             namespace: namespace.clone(),
             source: None,
             message: None,
+            user_meta: UserMeta::Clear,
         })
         .await?;
         let package = m

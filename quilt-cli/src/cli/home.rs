@@ -8,6 +8,8 @@ use crate::cli::model::Commands;
 use crate::cli::output::Render;
 use crate::cli::output::Std;
 
+pub mod dataspace;
+
 #[derive(Debug)]
 pub struct Input {
     /// `None` prints the current home.
@@ -142,6 +144,7 @@ mod tests {
     use crate::cli::model::Model;
     use crate::cli::model::create_model_in_temp_dir;
     use crate::cli::print;
+    use quilt_rs::flow::UserMeta;
 
     fn home_args(domain: &std::path::Path, dir: Option<PathBuf>, overwrite: bool) -> Args {
         Args {
@@ -151,7 +154,11 @@ mod tests {
             log: None,
             format: None,
             json: false,
-            command: Commands::Home { dir, overwrite },
+            command: Commands::Home {
+                dir,
+                dataspace: false,
+                overwrite,
+            },
         }
     }
 
@@ -181,6 +188,7 @@ mod tests {
             namespace: ("example", "local").into(),
             source: None,
             message: None,
+            user_meta: UserMeta::Clear,
         })
         .await?;
         Ok((m, temp_dir))
@@ -403,7 +411,8 @@ mod tests {
             args.command,
             Commands::Home {
                 dir: Some(_),
-                overwrite: true
+                overwrite: true,
+                ..
             }
         ));
     }

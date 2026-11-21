@@ -241,6 +241,7 @@ impl From<&crate::engine::error::Error> for Failure {
             | E::ParseUrl(_)
             | E::Commit(_)
             | E::General(_)
+            | E::Dataspace(_)
             | E::Test(_) => Self::Fault,
         }
     }
@@ -249,8 +250,8 @@ impl From<&crate::engine::error::Error> for Failure {
 impl From<&crate::engine::quilt::Error> for Failure {
     fn from(err: &crate::engine::quilt::Error) -> Self {
         use crate::engine::quilt::{
-            Error as E, InstallPackageError, LoginError, PackageOpError, RemoteCatalogError,
-            RoleError, WorkflowValidationError,
+            Error as E, HashPrefixError, InstallPackageError, LoginError, PackageOpError,
+            RemoteCatalogError, RoleError, WorkflowValidationError,
         };
 
         match err {
@@ -307,11 +308,21 @@ impl From<&crate::engine::quilt::Error> for Failure {
 
             // The page offered a revision this copy no longer holds, or one that
             // became protected since the list was drawn: either way the
-            // revision the user meant is no longer there to remove.
-            E::RevisionNotRemovable { .. } => Self::Refusal(RefusalKind::Missing),
+            // revision the user meant is no longer there to remove. The same
+            // goes for a link whose short hash names no revision, or no single
+            // one.
+            // A working folder that is gone is the same: the files the user meant
+            // are not there to read, and restoring the folder is theirs to do.
+            E::RevisionNotRemovable { .. }
+            | E::HashPrefix(HashPrefixError::NoMatch(_) | HashPrefixError::Ambiguous { .. })
+            | E::PackageOp(PackageOpError::WorkingCopyUnavailable(_)) => {
+                Self::Refusal(RefusalKind::Missing)
+            }
 
             // The uninstall happened; what kept the objects is the failure.
             E::PruneFailed(_, inner, _) => Self::from(inner.as_ref()),
+            // The file is context; the cause is the failure.
+            E::Upload { source, .. } => Self::from(source.as_ref()),
 
             // The remaining opaque-string and mechanical variants. Ours, or
             // unclassifiable without giving them variants first — which is the same
@@ -326,6 +337,8 @@ impl From<&crate::engine::quilt::Error> for Failure {
             E::PackageOp(
                 PackageOpError::Commit(_)
                 | PackageOpError::Push(_)
+                | PackageOpError::PushedNotLatest { .. }
+                | PackageOpError::PushTagFailed { .. }
                 | PackageOpError::Publish(_)
                 | PackageOpError::Undo(_)
                 | PackageOpError::Package(_),
@@ -334,6 +347,10 @@ impl From<&crate::engine::quilt::Error> for Failure {
             | E::S3(_)
             | E::Checksum(_)
             | E::Fs(_)
+            // The rest of the short-hash failures are a prefix of the wrong length
+            // or not hex. A link's parser refuses those before anything is
+            // resolved, so one reaching here was built by our own code.
+            | E::HashPrefix(HashPrefixError::InvalidLength(_) | HashPrefixError::NotHex(_))
             | E::InstallPath(_)
             | E::Io(_)
             | E::Json(_)
@@ -607,6 +624,18 @@ mod tests {
         assert_eq!(refusal(&err), Some(RefusalKind::Busy));
     }
 
+    /// A failed upload is placed by its cause: an expired session is the
+    /// user's to sign back in to, whichever file it stopped on.
+    #[test]
+    fn a_failed_upload_is_placed_by_its_cause() {
+        let err = Error::Quilt(quilt::Error::Upload {
+            key: quilt::LogicalKey::new("b.txt").expect("valid key"),
+            source: Box::new(quilt::Error::Login(quilt::LoginError::NoSession(None))),
+        });
+
+        assert_eq!(refusal(&err), Some(RefusalKind::LoginRequired));
+    }
+
     /// A typed name the format refuses is the user's to retype, not a bug.
     #[test]
     fn a_refused_package_name_is_a_refusal() {
@@ -624,6 +653,37 @@ mod tests {
             hash: "abc".into(),
             why: "this copy does not hold it".into(),
         });
+
+        assert_eq!(refusal(&err), Some(RefusalKind::Missing));
+    }
+
+    /// A link's short hash that no revision starts with, or that several do,
+    /// is a revision the user meant that is not there to open.
+    #[test]
+    fn a_short_hash_that_names_no_single_revision_is_a_refusal() {
+        use quilt::HashPrefixError;
+
+        for inner in [
+            HashPrefixError::NoMatch("abcdef".into()),
+            HashPrefixError::Ambiguous {
+                prefix: "abcdef".into(),
+                matches: vec!["a".repeat(64), "b".repeat(64)],
+                more: 0,
+            },
+        ] {
+            let err = Error::Quilt(quilt::Error::HashPrefix(inner));
+
+            assert_eq!(refusal(&err), Some(RefusalKind::Missing));
+        }
+    }
+
+    /// A package whose working folder is gone is not a fault of ours: the user
+    /// restores the folder or uninstalls the package.
+    #[test]
+    fn a_missing_working_folder_is_a_refusal() {
+        let err = Error::Quilt(quilt::Error::PackageOp(
+            quilt::PackageOpError::WorkingCopyUnavailable("/gone/demo".into()),
+        ));
 
         assert_eq!(refusal(&err), Some(RefusalKind::Missing));
     }

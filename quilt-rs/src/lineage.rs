@@ -1,5 +1,7 @@
 //!
-//! Module that contains various structs and helpers to work with `.quilt/lineage.json`.
+//! A domain's lineage: each installed package's origin, commit and tracked
+//! paths, kept in a ref per package under `.quilt/refs/`, beside the home in
+//! `.quilt/domain.json`.
 
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
@@ -7,19 +9,14 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use serde::Deserialize;
-use serde::Serialize;
 use tracing::log;
-
-#[cfg(test)]
-use tempfile::TempDir;
 
 use crate::Error;
 use crate::InstallPackageError;
 use crate::Res;
 use crate::error::LineageError;
 use crate::io::storage::Storage;
-use crate::io::storage::StorageExt;
+use crate::package_lock::PackageLock;
 use crate::paths;
 use quilt_uri::Namespace;
 
@@ -28,6 +25,7 @@ pub use status::Change;
 pub use status::ChangeSet;
 pub use status::InstalledPackageStatus;
 pub use status::UpstreamState;
+pub use status::WorkingCopy;
 
 mod state;
 pub use state::PackageState;
@@ -48,71 +46,33 @@ mod home;
 pub use home::DEFAULT_HOME_DIR_NAME;
 pub use home::Home;
 
-/// It's essentially just a map of `PackageLineage`.
-/// Represents the contents of `.quilt/data.json`
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
-pub struct DomainLineage {
-    #[serde(default = "BTreeMap::new")]
-    pub packages: BTreeMap<Namespace, PackageLineage>,
-    #[serde(default)]
-    pub home: Home,
-}
+mod legacy;
+pub use legacy::DomainLineage;
 
-impl DomainLineage {
-    pub fn new(home_dir: impl AsRef<Path>) -> Self {
-        DomainLineage {
-            packages: BTreeMap::new(),
-            home: Home::from(home_dir),
-        }
-    }
+pub(crate) mod refs;
 
-    /// Returns a sorted vector of all namespaces in the lineage
-    #[must_use]
-    pub fn namespaces(&self) -> Vec<Namespace> {
-        let mut namespaces: Vec<Namespace> = self.packages.keys().cloned().collect();
-        namespaces.sort();
-        namespaces
-    }
-
-    #[cfg(test)]
-    pub fn from_temp_dir() -> Res<(Self, tempfile::TempDir)> {
-        let temp_dir = TempDir::new()?;
-        Ok((DomainLineage::new(temp_dir.path()), temp_dir))
-    }
-}
-
-impl AsRef<PathBuf> for DomainLineage {
-    fn as_ref(&self) -> &PathBuf {
-        self.home.as_ref()
-    }
-}
-
-impl DomainLineage {
-    pub fn from_slice(input: &[u8]) -> Res<Self> {
-        let result: Result<Self, serde_json::Error> = serde_json::from_slice(input);
-
-        match result {
-            Ok(lineage) => {
-                if lineage.as_ref().as_os_str().is_empty() {
-                    return Err(Error::Lineage(LineageError::MissingHome));
-                }
-                Ok(lineage)
-            }
-            Err(err) => {
-                log::error!("Failed to parse DomainLineage from `{input:?}`");
-                Err(Error::Lineage(LineageError::Parse(err)))
-            }
-        }
+/// A step for one package's entry that applies `edit`, refusing a package
+/// that is not installed.
+fn edit_entry<'a>(
+    namespace: &'a Namespace,
+    edit: impl FnOnce(&mut PackageLineage) + 'a,
+) -> impl FnOnce(&mut Option<PackageLineage>) -> Res<PackageLineage> + 'a {
+    move |entry| {
+        let package = entry.as_mut().ok_or_else(|| {
+            Error::InstallPackage(InstallPackageError::NotInstalled(namespace.clone()))
+        })?;
+        edit(package);
+        Ok(package.clone())
     }
 }
 
 type HookFn = dyn Fn(&Namespace, Option<&PackageLineage>, Option<&PackageLineage>) + Send + Sync;
 
-/// Told of each package entry a write of `data.json` changed: the entry as
-/// the write found it and as it left it, `None` when not installed.
+/// Told of each package entry a lineage write changed: the entry as the
+/// write found it and as it left it, `None` when not installed.
 ///
-/// It runs under the short lock, after the write landed, so it must return
-/// at once. It sees only this process's writes: another process, the quilt
+/// It runs under the lock the write took, after the write landed, so it must
+/// return at once. It sees only this process's writes: another process, the quilt
 /// CLI among them, writes without it.
 #[derive(Clone)]
 pub struct LineageHook(Arc<HookFn>);
@@ -142,66 +102,347 @@ impl PartialEq for LineageHook {
 
 impl Eq for LineageHook {}
 
-/// Wrapper for reading and writing `DomainLineage`
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct DomainLineageIo {
-    path: PathBuf,
-    hook: Option<LineageHook>,
+/// Where a domain keeps its packages' lineage.
+#[cfg(any(test, feature = "testing"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LineageStore {
+    /// `.quilt/data.json`, every package's lineage in one file, as a build
+    /// from before refs keeps it.
+    DataJson,
+    /// A ref per package under `.quilt/refs/`.
+    Refs,
 }
 
-// TODO impl std::io::Write and std::io::Read for DomainLineageIo
+/// Reads and writes the lineage of a domain's packages, a ref per package.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DomainLineageIo {
+    refs: refs::RefStore,
+    ready: Ready,
+    /// The domain's `data.json` is read and written instead, as an older
+    /// build does.
+    #[cfg(any(test, feature = "testing"))]
+    on_data_json: bool,
+}
+
+/// Whether a handle or one of its clones has found its domain on refs; see
+/// [`DomainLineageIo::ready`].
+#[derive(Clone, Debug, Default)]
+struct Ready(Arc<tokio::sync::OnceCell<()>>);
+
+/// What a handle has seen is no part of which domain it is.
+impl PartialEq for Ready {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for Ready {}
+
 impl DomainLineageIo {
+    /// The domain at `paths`, its lineage moved there from `data.json` on
+    /// first use: see [`Self::ready`].
     #[must_use]
-    pub fn new(path: PathBuf) -> Self {
-        DomainLineageIo { path, hook: None }
+    pub(crate) fn new(paths: paths::DomainPaths) -> Self {
+        DomainLineageIo {
+            refs: refs::RefStore::new(paths),
+            ready: Ready::default(),
+            #[cfg(any(test, feature = "testing"))]
+            on_data_json: false,
+        }
+    }
+
+    /// Moves the lineage to refs from `data.json` until this handle or a
+    /// clone first finds it there, one at a time, so a running app never
+    /// undoes a rollback; an interrupted one is [`LineageError::RollingBack`].
+    /// The move takes package locks: the caller holds none.
+    async fn ready(&self, storage: &(impl Storage + Sync)) -> Res {
+        #[cfg(any(test, feature = "testing"))]
+        if self.on_data_json {
+            return Ok(());
+        }
+        let paths = self.refs.paths();
+        self.ready
+            .0
+            .get_or_try_init(|| async {
+                match refs::state::detect(storage, paths).await? {
+                    refs::state::DomainState::Refs => {}
+                    // Waiting for the rollback's lock would move the
+                    // domain back once it finished.
+                    refs::state::DomainState::RollingBack { .. } => {
+                        return Err(LineageError::RollingBack {
+                            path: paths.domain_config(),
+                        }
+                        .into());
+                    }
+                    _ => {
+                        // Boxed: inline, the move once per handle would grow
+                        // every writer's future, and a debug build's stack.
+                        let migrated = Box::pin(refs::migrate::up(storage, paths)).await?;
+                        log::info!(
+                            "Moved the lineage of {} packages to refs, leaving out {}",
+                            migrated.written.len(),
+                            migrated.skipped.len()
+                        );
+                    }
+                }
+                Ok::<_, Error>(())
+            })
+            .await?;
+        Ok(())
+    }
+
+    /// The package's lock, for a writer: [`Self::ready`] runs first, since
+    /// the move takes every package's lock and would wait on the writer's.
+    pub(crate) async fn lock_package(
+        &self,
+        storage: &(impl Storage + Sync),
+        paths: &paths::DomainPaths,
+        namespace: &Namespace,
+    ) -> Res<PackageLock> {
+        self.ready(storage).await?;
+        PackageLock::take(storage, paths, namespace).await
+    }
+
+    /// [`Self::lock_package`] without waiting for the package's lock: `None`
+    /// while another writer holds it. A move on first use still waits.
+    pub(crate) async fn try_lock_package(
+        &self,
+        storage: &(impl Storage + Sync),
+        paths: &paths::DomainPaths,
+        namespace: &Namespace,
+    ) -> Res<Option<PackageLock>> {
+        self.ready(storage).await?;
+        PackageLock::try_take(storage, paths, namespace).await
+    }
+
+    /// This handle, with its hook, on the domain's `data.json`.
+    #[cfg(any(test, feature = "testing"))]
+    #[must_use]
+    pub(crate) fn into_data_json(self) -> Self {
+        Self {
+            on_data_json: true,
+            ..self
+        }
+    }
+
+    /// The domain's `data.json`, when this handle is on it.
+    #[cfg(any(test, feature = "testing"))]
+    fn data_json(&self) -> Option<legacy::DataJson<'_>> {
+        self.on_data_json
+            .then(|| legacy::DataJson::new(self.refs.paths(), self.refs.hook()))
     }
 
     /// Tell `hook` of every package entry this handle's writes change.
     #[must_use]
-    pub fn with_hook(mut self, hook: LineageHook) -> Self {
-        self.hook = Some(hook);
-        self
+    pub fn with_hook(self, hook: LineageHook) -> Self {
+        Self {
+            refs: self.refs.with_hook(hook),
+            ..self
+        }
     }
 
-    /// Read the whole record under the short lock and hand it to `look`, so no
-    /// write of this process or another lands while `look` runs.
-    pub async fn read_locked<T>(
+    /// Show `look` each installed package's entry under the lock its writes
+    /// take, so none lands while `look` runs, then hand `finish` every
+    /// installed package's namespace before that lock is released.
+    ///
+    /// Each package is read under its own lock, and one whose lock is busy,
+    /// or whose ref can't be read, is not shown to `look`. `finish` runs
+    /// after the last, under the lock that installing and uninstalling take,
+    /// with every installed package, or with `None` when that lock is busy or
+    /// the packages can't be listed.
+    pub async fn check_each<T>(
         &self,
         storage: &(impl Storage + Sync),
-        look: impl FnOnce(&DomainLineage) -> T,
+        look: impl FnMut(&Namespace, &PackageLineage),
+        finish: impl FnOnce(Option<&BTreeSet<Namespace>>) -> T,
     ) -> Res<T> {
-        let _locked = storage.lock_exclusive(self.lock_path()).await?;
-        Ok(look(&self.read(storage).await?))
+        #[cfg(any(test, feature = "testing"))]
+        if let Some(legacy) = self.data_json() {
+            return legacy.check_each(storage, look, finish).await;
+        }
+        self.ready(storage).await?;
+        self.refs.check_each(storage, look, finish).await
     }
 
-    /// Tell the hook of each package entry that differs from `before` to
-    /// `after`.
-    fn tell(&self, before: &DomainLineage, after: &DomainLineage) {
-        let Some(LineageHook(hook)) = &self.hook else {
-            return;
+    pub async fn home(&self, storage: &(impl Storage + Sync)) -> Res<Home> {
+        #[cfg(any(test, feature = "testing"))]
+        if let Some(legacy) = self.data_json() {
+            return legacy.home(storage).await;
+        }
+        self.ready(storage).await?;
+        let home = self.refs.home(storage).await?;
+        if home.as_ref().as_os_str().is_empty() {
+            return Err(LineageError::MissingHome.into());
+        }
+        Ok(home)
+    }
+
+    /// The stored home, or `None` when the domain has none yet. A record that
+    /// exists but can't be read, such as for lack of permission, is an error.
+    /// It only reads: a domain not yet moved to refs is not moved.
+    pub async fn stored_home(&self, storage: &(impl Storage + Sync)) -> Res<Option<Home>> {
+        use refs::state::DomainState;
+
+        #[cfg(any(test, feature = "testing"))]
+        if let Some(legacy) = self.data_json() {
+            return legacy.stored_home(storage).await;
+        }
+        let paths = self.refs.paths();
+        let unmoved = match refs::state::detect(storage, paths).await? {
+            DomainState::Legacy => paths.lineage(),
+            DomainState::StubOnly => paths.lineage_migrating(),
+            _ => {
+                let home = self.refs.home(storage).await?;
+                return Ok(Some(home).filter(|home| !home.as_ref().as_os_str().is_empty()));
+            }
         };
-        let namespaces: BTreeSet<&Namespace> = before
-            .packages
-            .keys()
-            .chain(after.packages.keys())
-            .collect();
-        for namespace in namespaces {
-            let was = before.packages.get(namespace);
-            let is = after.packages.get(namespace);
-            if was != is {
-                hook(namespace, was, is);
-            }
-        }
+        legacy::stored_home(storage, &unmoved).await
     }
 
-    pub async fn read(&self, storage: &(impl Storage + Sync)) -> Res<DomainLineage> {
-        match storage.read_bytes(&self.path).await {
-            Ok(bytes) => DomainLineage::from_slice(&bytes),
-            Err(_) if !storage.exists(&self.path).await => {
-                Err(Error::Lineage(LineageError::Missing))
-            }
-            Err(e) => Err(e),
+    pub async fn namespaces(&self, storage: &(impl Storage + Sync)) -> Res<BTreeSet<Namespace>> {
+        #[cfg(any(test, feature = "testing"))]
+        if let Some(legacy) = self.data_json() {
+            return legacy.namespaces(storage).await;
         }
+        self.ready(storage).await?;
+        self.refs.namespaces(storage).await
+    }
+
+    /// Whether `namespace` is installed. A ref that does not parse counts.
+    pub async fn contains(
+        &self,
+        storage: &(impl Storage + Sync),
+        namespace: &Namespace,
+    ) -> Res<bool> {
+        #[cfg(any(test, feature = "testing"))]
+        if let Some(legacy) = self.data_json() {
+            return legacy.contains(storage, namespace).await;
+        }
+        self.ready(storage).await?;
+        Ok(self.refs.contains(storage, namespace).await)
+    }
+
+    /// [`Self::contains`] for a writer about to place a package's files,
+    /// refusing first while its lineage can't be written, until the move to
+    /// refs is done, so nothing is placed only to be removed.
+    pub(crate) async fn contains_to_write(
+        &self,
+        storage: &(impl Storage + Sync),
+        namespace: &Namespace,
+    ) -> Res<bool> {
+        let installed = self.contains(storage, namespace).await?;
+        #[cfg(any(test, feature = "testing"))]
+        if self.on_data_json {
+            return Ok(installed);
+        }
+        self.refs.writable_config(storage).await?;
+        Ok(installed)
+    }
+
+    /// [`Self::contains`], refusing a package this build can't remove: one
+    /// whose ref is in a format or state it does not support.
+    pub(crate) async fn removable(
+        &self,
+        storage: &(impl Storage + Sync),
+        namespace: &Namespace,
+    ) -> Res<bool> {
+        #[cfg(any(test, feature = "testing"))]
+        if let Some(legacy) = self.data_json() {
+            return legacy.contains(storage, namespace).await;
+        }
+        self.refs.removable(storage, namespace).await
+    }
+
+    /// Every installed package's entry, each read on its own: an entry that
+    /// can't be read is an error for that package alone.
+    pub async fn read_packages(
+        &self,
+        storage: &(impl Storage + Sync),
+    ) -> Res<BTreeMap<Namespace, Res<PackageLineage>>> {
+        #[cfg(any(test, feature = "testing"))]
+        if let Some(legacy) = self.data_json() {
+            return legacy.read_packages(storage).await;
+        }
+        self.ready(storage).await?;
+        self.refs.read_all(storage).await
+    }
+
+    /// Store the locked package's first entry, as an install or a create
+    /// made it, its files placed under `placed`. A home changed since is
+    /// refused with [`LineageError::HomeChanged`] and nothing is stored.
+    pub(crate) async fn create_package(
+        &self,
+        storage: &(impl Storage + Sync),
+        held: &PackageLock,
+        lineage: PackageLineage,
+        placed: &Home,
+    ) -> Res {
+        #[cfg(any(test, feature = "testing"))]
+        if let Some(legacy) = self.data_json() {
+            return legacy
+                .update_entry(storage, held.namespace(), |entry| {
+                    *entry = Some(lineage);
+                    Ok(())
+                })
+                .await;
+        }
+        self.refs.create(storage, held, &lineage, placed).await
+    }
+
+    /// Forget the locked package, as an uninstall does.
+    pub(crate) async fn remove_package(
+        &self,
+        storage: &(impl Storage + Sync),
+        held: &PackageLock,
+    ) -> Res {
+        #[cfg(any(test, feature = "testing"))]
+        if let Some(legacy) = self.data_json() {
+            return legacy
+                .update_entry(storage, held.namespace(), |entry| {
+                    *entry = None;
+                    Ok(())
+                })
+                .await;
+        }
+        self.refs.remove(storage, held).await
+    }
+
+    /// Change the locked package's entry: `step` sees `None` when the package
+    /// is not installed, and setting it to `None` removes the entry.
+    pub(crate) async fn update_locked<T>(
+        &self,
+        storage: &(impl Storage + Sync),
+        held: &PackageLock,
+        step: impl FnOnce(&mut Option<PackageLineage>) -> Res<T>,
+    ) -> Res<T> {
+        #[cfg(any(test, feature = "testing"))]
+        if let Some(legacy) = self.data_json() {
+            return legacy.update_entry(storage, held.namespace(), step).await;
+        }
+        self.refs.update_entry(storage, held, step).await
+    }
+
+    /// Delete the leftovers of writes a kill interrupted.
+    pub(crate) async fn sweep(&self, storage: &(impl Storage + Sync)) -> Res {
+        #[cfg(any(test, feature = "testing"))]
+        if self.on_data_json {
+            return Ok(());
+        }
+        self.refs.sweep(storage).await
+    }
+
+    /// [`Self::sweep`] by a caller holding the locks in `held`, sweeping only
+    /// those packages'.
+    pub(crate) async fn sweep_held(
+        &self,
+        storage: &(impl Storage + Sync),
+        held: &[PackageLock],
+    ) -> Res {
+        #[cfg(any(test, feature = "testing"))]
+        if self.on_data_json {
+            return Ok(());
+        }
+        self.refs.sweep_held(storage, held).await
     }
 
     /// Read a specific package lineage from the domain lineage
@@ -210,96 +451,52 @@ impl DomainLineageIo {
         storage: &(impl Storage + Sync),
         namespace: &Namespace,
     ) -> Res<(PathBuf, PackageLineage)> {
-        let domain_lineage = self.read(storage).await?;
-
-        match domain_lineage.packages.get(namespace) {
-            Some(package_lineage) => {
-                let package_home = paths::package_home(&domain_lineage.home, namespace);
-                Ok((package_home, package_lineage.clone()))
-            }
-            None => Err(Error::InstallPackage(InstallPackageError::NotInstalled(
-                namespace.clone(),
-            ))),
+        #[cfg(any(test, feature = "testing"))]
+        if let Some(legacy) = self.data_json() {
+            return legacy.read_package_lineage(storage, namespace).await;
         }
+        self.ready(storage).await?;
+        let lineage = self.refs.read(storage, namespace).await?;
+        let home = self.home(storage).await?;
+        Ok((paths::package_home(&home, namespace), lineage))
     }
 
-    /// `data.json.lock`, beside the file it guards. `data.json` itself is
-    /// replaced by rename, and a lock on the old file would guard nothing.
-    fn lock_path(&self) -> PathBuf {
-        let mut path = self.path.clone().into_os_string();
-        path.push(".lock");
-        PathBuf::from(path)
-    }
-
-    /// **The short lock.** Under `data.json.lock`: re-read the whole record,
-    /// let `step` change it, and write it back if it changed. An error from
-    /// `step` writes nothing.
-    ///
-    /// Every write of `data.json` goes through here, so the short lock is held
-    /// for a re-read, a splice and a write, never for a writer's slow work.
-    /// The file holds every package's entry, so this is where writers of
-    /// different packages meet. A writer of one package holds that package's
-    /// lock (see [`InstalledPackage::lock`](crate::InstalledPackage::lock))
-    /// from its first read, and takes this one only inside it.
-    pub async fn update<T>(
-        &self,
-        storage: &(impl Storage + Sync),
-        step: impl FnOnce(&mut DomainLineage) -> Res<T>,
-    ) -> Res<T> {
-        let _locked = storage.lock_exclusive(self.lock_path()).await?;
-        let mut lineage = self.read(storage).await?;
-        let before = lineage.clone();
-        let out = step(&mut lineage)?;
-        if lineage != before {
-            self.write_unlocked(storage, &lineage).await?;
-            self.tell(&before, &lineage);
-        }
-        Ok(out)
-    }
-
-    /// [`Self::update`] for one package's entry: `step` sees `None` when the
-    /// package is not installed, and setting it to `None` removes the entry.
+    /// `update_locked` for a test, which holds no package lock. It takes
+    /// that lock, so a caller holding it must not call it.
+    #[cfg(any(test, feature = "testing"))]
     pub async fn update_package_lineage<T>(
         &self,
         storage: &(impl Storage + Sync),
         namespace: &Namespace,
         step: impl FnOnce(&mut Option<PackageLineage>) -> Res<T>,
     ) -> Res<T> {
-        self.update(storage, |lineage| {
-            let mut entry = lineage.packages.remove(namespace);
-            let out = step(&mut entry);
-            if let Some(entry) = entry {
-                lineage.packages.insert(namespace.clone(), entry);
-            }
-            out
-        })
-        .await
+        if let Some(legacy) = self.data_json() {
+            return legacy.update_entry(storage, namespace, step).await;
+        }
+        let held = self
+            .lock_package(storage, self.refs.paths(), namespace)
+            .await?;
+        self.refs.update_entry(storage, &held, step).await
     }
 
-    /// Apply `edit` to one package's entry under the lock and write it: a
-    /// field update that does not depend on other work. A package that is not
-    /// installed is an error.
+    /// [`Self::update_package_lineage`] applying `edit` to the entry. A
+    /// package that is not installed is an error.
+    #[cfg(any(test, feature = "testing"))]
     pub async fn edit_package_lineage(
         &self,
         storage: &(impl Storage + Sync),
         namespace: &Namespace,
         edit: impl FnOnce(&mut PackageLineage),
     ) -> Res<PackageLineage> {
-        self.update_package_lineage(storage, namespace, |entry| {
-            let package = entry.as_mut().ok_or_else(|| {
-                Error::InstallPackage(InstallPackageError::NotInstalled(namespace.clone()))
-            })?;
-            edit(package);
-            Ok(package.clone())
-        })
-        .await
+        self.update_package_lineage(storage, namespace, edit_entry(namespace, edit))
+            .await
     }
 
     /// Point the domain at `home`, creating its folder.
     ///
-    /// The folder is created before `data.json` is written, so a home that
+    /// The folder is created before the home is stored, so a home that
     /// can't be created is never stored. When `home` is already the stored
-    /// one, only a missing folder is created and `data.json` is not rewritten.
+    /// one, only a missing folder is created and nothing is rewritten.
     /// Refuses with
     /// [`LineageError::HomeInUse`] and changes nothing when `home` differs and
     /// any package is installed, because their working folders live under the
@@ -308,7 +505,7 @@ impl DomainLineageIo {
         &self,
         storage: &(impl Storage + Sync),
         home: impl AsRef<Path>,
-    ) -> Res<DomainLineage> {
+    ) -> Res<Home> {
         self.change_home(storage, home, false).await
     }
 
@@ -320,87 +517,87 @@ impl DomainLineageIo {
         &self,
         storage: &(impl Storage + Sync),
         home: impl AsRef<Path>,
-    ) -> Res<DomainLineage> {
+    ) -> Res<Home> {
         self.change_home(storage, home, true).await
     }
 
-    /// Read, check and write `data.json` under the short lock, so a package
-    /// writer's splice can't land between the check and the write.
     async fn change_home(
         &self,
         storage: &(impl Storage + Sync),
         home: impl AsRef<Path>,
         overwrite: bool,
-    ) -> Res<DomainLineage> {
-        let _locked = storage.lock_exclusive(self.lock_path()).await?;
-        match storage.read_bytes(&self.path).await {
-            Ok(bytes) => {
-                let (mut lineage, home_missing) = match DomainLineage::from_slice(&bytes) {
-                    Ok(lineage) => (lineage, false),
-                    Err(Error::Lineage(LineageError::MissingHome)) => {
-                        (serde_json::from_slice(&bytes)?, true)
-                    }
-                    Err(err) => return Err(err),
-                };
-                let home = Home::from(home);
-                if lineage.home == home {
-                    storage.create_dir_all(home.as_ref()).await?;
-                    return Ok(lineage);
-                }
-                if !overwrite && !home_missing && !lineage.packages.is_empty() {
-                    return Err(Error::Lineage(LineageError::HomeInUse {
-                        home: lineage.home.as_ref().clone(),
-                        installed: lineage.packages.len(),
-                    }));
-                }
-                storage.create_dir_all(home.as_ref()).await?;
-                lineage.home = home;
-                self.write_unlocked(storage, &lineage).await?;
-                Ok(lineage)
-            }
-            Err(_) if !storage.exists(&self.path).await => {
-                storage.create_dir_all(home.as_ref()).await?;
-                let lineage = DomainLineage::new(home);
-                self.write_unlocked(storage, &lineage).await?;
-                Ok(lineage)
-            }
-            Err(e) => Err(e),
+    ) -> Res<Home> {
+        #[cfg(any(test, feature = "testing"))]
+        if let Some(legacy) = self.data_json() {
+            return legacy.change_home(storage, home, overwrite).await;
         }
-    }
-
-    /// Replace the whole record, under the lock. For setting a domain up; a
-    /// writer of one package goes through [`Self::update_package_lineage`], or
-    /// it writes back every other package's entry as it read them.
-    pub async fn write(
-        &self,
-        storage: &(impl Storage + Sync),
-        lineage: DomainLineage,
-    ) -> Res<DomainLineage> {
-        let _locked = storage.lock_exclusive(self.lock_path()).await?;
-        let before = if self.hook.is_some() {
-            self.read(storage).await.unwrap_or_default()
+        self.ready(storage).await?;
+        let home = Home::from(home);
+        if overwrite {
+            self.refs.overwrite_home(storage, &home).await?;
         } else {
-            DomainLineage::default()
-        };
-        self.write_unlocked(storage, &lineage).await?;
-        self.tell(&before, &lineage);
-        Ok(lineage)
-    }
-
-    async fn write_unlocked(
-        &self,
-        storage: &(impl Storage + Sync),
-        lineage: &DomainLineage,
-    ) -> Res {
-        let contents = serde_json::to_string_pretty(lineage)?;
-        storage
-            .write_byte_stream(self.path.clone(), contents.into_bytes().into())
-            .await
+            self.refs.set_home(storage, &home).await?;
+        }
+        Ok(home)
     }
 
     #[must_use]
     pub fn create_package_lineage(&self, namespace: Namespace) -> PackageLineageIo {
         PackageLineageIo::new(self.clone(), namespace)
+    }
+
+    /// Store a test's domain in `store`: `home` and `packages` replace
+    /// whatever the domain at `paths` held there. Returns the handle its
+    /// packages read through.
+    #[cfg(any(test, feature = "testing"))]
+    pub async fn write_fixture(
+        store: LineageStore,
+        storage: &(impl Storage + Sync),
+        paths: &paths::DomainPaths,
+        home: impl AsRef<Path>,
+        packages: impl IntoIterator<Item = (Namespace, PackageLineage)>,
+    ) -> Res<Self> {
+        let home = Home::from(home);
+        match store {
+            LineageStore::DataJson => {
+                let lineage = DomainLineage {
+                    packages: packages.into_iter().collect(),
+                    home,
+                };
+                legacy::DataJson::new(paths, None)
+                    .write(storage, lineage)
+                    .await?;
+                Ok(Self::new(paths.clone()).into_data_json())
+            }
+            LineageStore::Refs => {
+                let refs = refs::RefStore::new(paths.clone());
+                refs.replace_fixture(storage, &home).await?;
+                for (namespace, lineage) in packages {
+                    let held = PackageLock::take(storage, paths, &namespace).await?;
+                    refs.create(storage, &held, &lineage, &home).await?;
+                }
+                Ok(Self::new(paths.clone()))
+            }
+        }
+    }
+
+    /// Leave `namespace`'s stored entry one no reader can parse.
+    #[cfg(any(test, feature = "testing"))]
+    pub async fn damage_fixture(
+        &self,
+        storage: &(impl Storage + Sync),
+        namespace: &Namespace,
+    ) -> Res {
+        if let Some(legacy) = self.data_json() {
+            return legacy.damage(storage, namespace).await;
+        }
+        self.refs.damage_fixture(storage, namespace).await
+    }
+
+    /// The `data.json` this handle reads and writes.
+    #[cfg(test)]
+    pub(crate) fn legacy(&self) -> legacy::DataJson<'_> {
+        self.data_json().expect("a handle on data.json")
     }
 }
 
@@ -413,8 +610,8 @@ pub struct PackageLineageIo {
 }
 
 impl PackageLineageIo {
-    /// See [`DomainLineageIo::edit_package_lineage`]: a field update under the
-    /// lock, for callers that do not need to compute from the entry first.
+    /// [`DomainLineageIo::edit_package_lineage`] for this package.
+    #[cfg(any(test, feature = "testing"))]
     pub async fn edit(
         &self,
         storage: &(impl Storage + Sync),
@@ -439,9 +636,8 @@ impl PackageLineageIo {
             .await
     }
 
-    /// The whole domain's record this package's entry lives in.
-    pub(crate) async fn read_domain(&self, storage: &(impl Storage + Sync)) -> Res<DomainLineage> {
-        self.domain_lineage.read(storage).await
+    pub(crate) fn domain(&self) -> &DomainLineageIo {
+        &self.domain_lineage
     }
 
     pub async fn package_home(&self, storage: &(impl Storage + Sync)) -> Res<PathBuf> {
@@ -452,13 +648,12 @@ impl PackageLineageIo {
     }
 
     pub async fn domain_home(&self, storage: &(impl Storage + Sync)) -> Res<Home> {
-        let domain_lineage = self.domain_lineage.read(storage).await?;
-        Ok(domain_lineage.home)
+        self.domain_lineage.home(storage).await
     }
 
-    /// Splices `lineage` in as this package's entry, under the short lock,
-    /// leaving every other package's entry as it is on disk now. The caller
-    /// holds the package's lock, so the entry it replaces is the one it read.
+    /// [`DomainLineageIo::update_package_lineage`] setting this package's
+    /// entry to `lineage`.
+    #[cfg(any(test, feature = "testing"))]
     pub async fn write(
         &self,
         storage: &(impl Storage + Sync),
@@ -471,6 +666,38 @@ impl PackageLineageIo {
             })
             .await
     }
+
+    /// Store `lineage` as this package's entry, leaving every other
+    /// package's entry as it is on disk now. The caller holds the package's
+    /// lock, so the entry it replaces is the one it read.
+    pub(crate) async fn write_locked(
+        &self,
+        storage: &(impl Storage + Sync),
+        held: &PackageLock,
+        lineage: PackageLineage,
+    ) -> Res<PackageLineage> {
+        debug_assert_eq!(held.namespace(), &self.namespace);
+        self.domain_lineage
+            .update_locked(storage, held, |entry| {
+                *entry = Some(lineage.clone());
+                Ok(lineage)
+            })
+            .await
+    }
+
+    /// Apply `edit` to this package's entry under the lock `held` proves. A
+    /// package that is not installed is an error.
+    pub(crate) async fn edit_locked(
+        &self,
+        storage: &(impl Storage + Sync),
+        held: &PackageLock,
+        edit: impl FnOnce(&mut PackageLineage),
+    ) -> Res<PackageLineage> {
+        debug_assert_eq!(held.namespace(), &self.namespace);
+        self.domain_lineage
+            .update_locked(storage, held, edit_entry(&self.namespace, edit))
+            .await
+    }
 }
 
 #[cfg(test)]
@@ -478,129 +705,6 @@ mod tests {
     use super::*;
 
     use test_log::test;
-
-    use aws_sdk_s3::primitives::ByteStream;
-    use aws_smithy_types::base64;
-
-    use crate::io::storage::mocks::MockStorage;
-    use crate::object_hash::Sha256ChunkedHash;
-    use quilt_uri::ManifestUri;
-
-    #[test]
-    fn test_syntax_error() {
-        assert_eq!(
-            DomainLineage::from_slice(b"err").unwrap_err().to_string(),
-            "Failed to parse lineage file: expected value at line 1 column 1".to_string()
-        );
-    }
-
-    #[test]
-    fn test_wrong_key() {
-        // NOTE: @fiskus I don't think this is developer friendly
-        //       I'd like to remove serde(default), so this test fails
-        assert!(DomainLineage::from_slice(br#"{"notkey": 123}"#).is_err());
-    }
-
-    #[test]
-    fn test_wrong_value() {
-        assert!(
-            DomainLineage::from_slice(br#"{"packages": 123}"#)
-                .unwrap_err()
-                .to_string()
-                .starts_with("Failed to parse lineage file: invalid type:")
-        );
-    }
-
-    #[test]
-    fn test_missing_working_directory() {
-        assert_eq!(
-            DomainLineage::from_slice(br#"{"packages":{}}"#)
-                .unwrap_err()
-                .to_string(),
-            "Domain lineage missing Home directory".to_string()
-        );
-    }
-
-    #[test]
-    fn test_with_working_directory() -> Res {
-        let lineage =
-            DomainLineage::from_slice(br#"{"packages":{},"home":"/tmp/working_dir"}"#).unwrap();
-        assert_eq!(lineage.as_ref(), &PathBuf::from("/tmp/working_dir"));
-        Ok(())
-    }
-
-    /// A catalog host kept in a package's remote is read back whatever it is: one
-    /// the rule for typed names would refuse, such as an IP address, must not make
-    /// the whole `.quilt/data.json` unreadable.
-    #[test]
-    fn a_stored_catalog_host_is_read_back_as_stored() -> Res {
-        for origin in ["quilt.test", "127.0.0.1", "[::1]", "xn--bcher-kva.example"] {
-            let json = format!(
-                r#"{{
-                    "packages": {{
-                        "test/stored": {{
-                            "commit": null,
-                            "remote": {{
-                                "bucket": "bucket",
-                                "namespace": "test/stored",
-                                "hash": "abcdef0000000000000000000000000000000000000000000000000000000000",
-                                "origin": "{origin}"
-                            }},
-                            "base_hash": "abcdef0000000000000000000000000000000000000000000000000000000000",
-                            "latest_hash": "abcdef0000000000000000000000000000000000000000000000000000000000",
-                            "paths": {{}}
-                        }}
-                    }},
-                    "home": "/tmp/working_dir"
-                }}"#
-            );
-            let lineage = DomainLineage::from_slice(json.as_bytes())
-                .unwrap_or_else(|e| panic!("origin {origin}: {e}"));
-            let again = serde_json::to_value(&lineage)?;
-            assert_eq!(
-                again["packages"]["test/stored"]["remote"]["origin"], origin,
-                "origin {origin} does not round-trip"
-            );
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn test_domain_lineage_from_temp_dir() -> Res {
-        let (lineage, temp_dir) = DomainLineage::from_temp_dir()?;
-        assert_eq!(lineage.as_ref(), &temp_dir.path().to_path_buf());
-        assert!(lineage.packages.is_empty());
-        Ok(())
-    }
-
-    #[test]
-    fn test_namespaces() -> Res {
-        let mut lineage = DomainLineage::new("/tmp/home");
-
-        // Empty lineage should return empty vector
-        assert_eq!(lineage.namespaces(), [] as [Namespace; 0]);
-
-        // Add some packages
-        lineage
-            .packages
-            .insert(Namespace::from(("foo", "bar")), PackageLineage::default());
-        lineage
-            .packages
-            .insert(Namespace::from(("abc", "xyz")), PackageLineage::default());
-        lineage.packages.insert(
-            Namespace::from(("test", "package")),
-            PackageLineage::default(),
-        );
-
-        // Check that namespaces are returned in sorted order
-        let namespaces = lineage.namespaces();
-        assert_eq!(namespaces.len(), 3);
-        assert_eq!(namespaces[0], Namespace::from(("abc", "xyz")));
-        assert_eq!(namespaces[1], Namespace::from(("foo", "bar")));
-        assert_eq!(namespaces[2], Namespace::from(("test", "package")));
-
-        Ok(())
-    }
 
     #[test]
     fn test_deserialize_package_lineage_without_remote() {
@@ -661,217 +765,21 @@ mod tests {
         assert!(!json.contains("sync_scope"), "{json}");
     }
 
-    /// A scope a later version adds, a word or an object, must not stop this
-    /// version loading `data.json`: it reads as individual files.
+    /// Every writer awaits its package's lock, so the lock future is part of
+    /// every command's, and a debug `quilt` on Windows has 1 MB of stack for
+    /// them all. The move to refs, which a handle runs at most once, stays
+    /// out of it.
     #[test]
-    fn an_unknown_scope_reads_as_individual_files() {
-        let json = br#"{"packages":{
-            "a/word":{"commit":null,"base_hash":"","latest_hash":"","paths":{},"sync_scope":"by_pattern"},
-            "a/object":{"commit":null,"base_hash":"","latest_hash":"","paths":{},"sync_scope":{"by_pattern":["*.csv"]}},
-            "a/whole":{"commit":null,"base_hash":"","latest_hash":"","paths":{},"sync_scope":"entire_package"}
-        },"home":"/home/directory"}"#;
-        let lineage = DomainLineage::from_slice(json).unwrap();
-        let scope = |name| &lineage.packages[&Namespace::from(("a", name))].sync_scope;
-        assert_eq!(scope("word"), &SyncScope::IndividualFiles);
-        assert_eq!(scope("object"), &SyncScope::IndividualFiles);
-        assert_eq!(scope("whole"), &SyncScope::EntirePackage);
-    }
+    fn a_writers_lock_future_does_not_carry_the_move_to_refs() {
+        let paths = paths::DomainPaths::new(PathBuf::from("domain"));
+        let io = DomainLineageIo::new(paths.clone());
+        let storage = crate::io::storage::LocalStorage::new();
+        let namespace = Namespace::from(("foo", "bar"));
 
-    #[test(tokio::test)]
-    async fn test_domain_lineage_from_file() -> Res {
-        let storage = MockStorage::default();
-        let file_path = PathBuf::from("foo");
-        storage
-            .write_byte_stream(
-                &file_path,
-                ByteStream::from_static(br#"{"packages":{},"home":"/home/directory"}"#),
-            )
-            .await?;
-        let lineage = DomainLineageIo::new(file_path).read(&storage).await?;
-        assert_eq!(lineage, DomainLineage::new("/home/directory"));
-        Ok(())
-    }
+        let locking = io.lock_package(&storage, &paths, &namespace);
 
-    #[test(tokio::test)]
-    async fn test_set_home_repairs_existing_lineage_with_missing_home() -> Res {
-        let storage = MockStorage::default();
-        let file_path = PathBuf::from("foo");
-        storage
-            .write_byte_stream(
-                &file_path,
-                ByteStream::from_static(br#"{"packages":{},"home":""}"#),
-            )
-            .await?;
-
-        let lineage = DomainLineageIo::new(file_path)
-            .set_home(&storage, "/home/directory")
-            .await?;
-
-        assert_eq!(lineage, DomainLineage::new("/home/directory"));
-        Ok(())
-    }
-
-    /// The stored bytes are compact JSON and `write` pretty-prints, so any
-    /// rewrite would change them.
-    #[test(tokio::test)]
-    async fn set_home_to_the_current_home_writes_nothing() -> Res {
-        let storage = MockStorage::default();
-        let file_path = PathBuf::from("foo");
-        let stored = br#"{"packages":{},"home":"/home/directory"}"#;
-        storage
-            .write_byte_stream(&file_path, ByteStream::from_static(stored))
-            .await?;
-
-        let lineage = DomainLineageIo::new(file_path.clone())
-            .set_home(&storage, "/home/directory")
-            .await?;
-
-        assert_eq!(lineage, DomainLineage::new("/home/directory"));
-        assert_eq!(storage.read_bytes(&file_path).await?, stored.to_vec());
-        assert!(
-            storage.exists("/home/directory").await,
-            "a missing folder is still created"
-        );
-        Ok(())
-    }
-
-    const ONE_INSTALLED: &[u8] =
-        br#"{"packages":{"foo/bar":{"commit":null,"base_hash":"","latest_hash":"","paths":{}}},"home":"/old/home"}"#;
-
-    #[test(tokio::test)]
-    async fn set_home_refuses_a_new_home_while_packages_are_installed() -> Res {
-        let storage = MockStorage::default();
-        let file_path = PathBuf::from("foo");
-        storage
-            .write_byte_stream(&file_path, ByteStream::from_static(ONE_INSTALLED))
-            .await?;
-
-        let err = DomainLineageIo::new(file_path.clone())
-            .set_home(&storage, "/new/home")
-            .await
-            .unwrap_err();
-
-        assert!(
-            matches!(
-                &err,
-                Error::Lineage(LineageError::HomeInUse { home, installed: 1 })
-                    if home == &PathBuf::from("/old/home")
-            ),
-            "{err:?}"
-        );
-        assert_eq!(
-            err.to_string(),
-            "Cannot change the home: 1 package is installed in /old/home"
-        );
-        assert_eq!(
-            storage.read_bytes(&file_path).await?,
-            ONE_INSTALLED.to_vec()
-        );
-        assert!(!storage.exists("/new/home").await, "no folder is created");
-        Ok(())
-    }
-
-    #[test(tokio::test)]
-    async fn set_home_to_the_current_home_is_allowed_while_packages_are_installed() -> Res {
-        let storage = MockStorage::default();
-        let file_path = PathBuf::from("foo");
-        storage
-            .write_byte_stream(&file_path, ByteStream::from_static(ONE_INSTALLED))
-            .await?;
-
-        let lineage = DomainLineageIo::new(file_path)
-            .set_home(&storage, "/old/home")
-            .await?;
-
-        assert_eq!(lineage.home, Home::from("/old/home"));
-        Ok(())
-    }
-
-    #[test(tokio::test)]
-    async fn overwrite_home_changes_the_home_while_packages_are_installed() -> Res {
-        let storage = MockStorage::default();
-        let file_path = PathBuf::from("foo");
-        storage
-            .write_byte_stream(&file_path, ByteStream::from_static(ONE_INSTALLED))
-            .await?;
-        let io = DomainLineageIo::new(file_path);
-
-        io.overwrite_home(&storage, "/new/home").await?;
-
-        let lineage = io.read(&storage).await?;
-        assert_eq!(lineage.home, Home::from("/new/home"));
-        assert_eq!(lineage.namespaces(), vec![Namespace::from(("foo", "bar"))]);
-        Ok(())
-    }
-
-    #[test(tokio::test)]
-    async fn set_home_creates_the_home_folder() -> Res {
-        let storage = MockStorage::default();
-
-        DomainLineageIo::new(PathBuf::from("foo"))
-            .set_home(&storage, "/new/home")
-            .await?;
-
-        assert!(storage.exists("/new/home").await);
-        Ok(())
-    }
-
-    #[test(tokio::test)]
-    async fn changing_the_home_creates_the_new_folder() -> Res {
-        let storage = MockStorage::default();
-        let file_path = PathBuf::from("foo");
-        storage
-            .write_byte_stream(&file_path, ByteStream::from_static(ONE_INSTALLED))
-            .await?;
-
-        DomainLineageIo::new(file_path)
-            .overwrite_home(&storage, "/new/home")
-            .await?;
-
-        assert!(storage.exists("/new/home").await);
-        Ok(())
-    }
-
-    /// A file where the home's parent should be makes the folder impossible
-    /// to create.
-    #[test(tokio::test)]
-    async fn a_home_that_cannot_be_created_is_not_stored() -> Res {
-        let storage = MockStorage::default();
-        storage
-            .write_byte_stream("/blocked", ByteStream::from_static(b"a file"))
-            .await?;
-        let file_path = PathBuf::from("foo");
-        storage
-            .write_byte_stream(&file_path, ByteStream::from_static(ONE_INSTALLED))
-            .await?;
-
-        DomainLineageIo::new(file_path.clone())
-            .overwrite_home(&storage, "/blocked/home")
-            .await
-            .unwrap_err();
-
-        assert_eq!(
-            storage.read_bytes(&file_path).await?,
-            ONE_INSTALLED.to_vec()
-        );
-        Ok(())
-    }
-
-    #[test(tokio::test)]
-    async fn a_first_home_that_cannot_be_created_writes_no_record() -> Res {
-        let storage = MockStorage::default();
-        storage
-            .write_byte_stream("/blocked", ByteStream::from_static(b"a file"))
-            .await?;
-        let file_path = PathBuf::from("foo");
-
-        DomainLineageIo::new(file_path.clone())
-            .set_home(&storage, "/blocked/home")
-            .await
-            .unwrap_err();
-
-        assert!(!storage.exists(&file_path).await);
-        Ok(())
+        let size = std::mem::size_of_val(&locking);
+        assert!(size <= 2048, "the lock future is {size} bytes");
     }
 
     #[test]
@@ -887,374 +795,9 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn test_domain_lineage_from_nothing() -> Res {
-        let storage = MockStorage::default();
-        let lineage = DomainLineageIo::new(PathBuf::from("does-not-exist"))
-            .read(&storage)
-            .await
-            .unwrap_err();
-        assert!(matches!(lineage, Error::Lineage(LineageError::Missing)));
-        Ok(())
-    }
-
-    #[test(tokio::test)]
-    async fn test_domain_lineage_write() -> Res {
-        let storage = MockStorage::default();
-        let file_path = PathBuf::from("foo");
-        assert!(!storage.exists(&file_path).await);
-        let bytes = "0123456789abcdef".as_bytes();
-        let working_dir = PathBuf::from("/tmp/working_dir");
-        DomainLineageIo::new(file_path.clone())
-            .write(
-                &storage,
-                DomainLineage {
-                    home: Home::new(working_dir),
-                    packages: BTreeMap::from([(
-                        ("foo", "bar").into(),
-                        PackageLineage {
-                            commit: None,
-                            remote_uri: Some(ManifestUri {
-                                bucket: "bucket".to_string(),
-                                namespace: ("foo", "bar").into(),
-                                hash: "abcdef0000000000000000000000000000000000000000000000000000000000".to_string(),
-                                origin: None,
-                            }),
-                            base_hash: "abcdef0000000000000000000000000000000000000000000000000000000000".to_string(),
-                            latest_hash: "abcdef0000000000000000000000000000000000000000000000000000000000".to_string(),
-                            paths: BTreeMap::from([(
-                                PathBuf::from("foo"),
-                                PathState {
-                                    timestamp: chrono::DateTime::from_timestamp_millis(
-                                        1_737_031_820_534,
-                                    )
-                                    .unwrap(),
-                                    hash: Sha256ChunkedHash::from_async_read(
-                                        bytes,
-                                        bytes.len() as u64,
-                                    )
-                                    .await?
-                                    .into(),
-                                },
-                            )]),
-                            ..PackageLineage::default()
-                        },
-                    )]),
-                },
-            )
-            .await?;
-        assert!(storage.exists(&file_path).await);
-        let file_contents = storage.read_bytes(&file_path).await?;
-        let lineage = DomainLineage::from_slice(&file_contents)?;
-
-        assert_eq!(lineage.as_ref(), &PathBuf::from("/tmp/working_dir"));
-
-        let multihash_from_lineage = lineage
-            .packages
-            .get(&(("foo".to_string(), "bar".to_string()).into()))
-            .unwrap()
-            .paths
-            .get(&PathBuf::from("foo"))
-            .unwrap()
-            .hash;
-        let hash_from_lineage = base64::encode(multihash_from_lineage.digest());
-        assert_eq!(
-            hash_from_lineage,
-            "Xb1PbjJeWof4zD7zuHc9PI7sLiz/Ykj4gphlaZEt3xA="
-        );
-        Ok(())
-    }
-
-    #[test(tokio::test)]
-    async fn test_read_package_lineage() -> Res {
-        let storage = MockStorage::default();
-        let file_path = PathBuf::from("lineage.json");
-        let namespace = Namespace::from(("foo", "bar"));
-        let package_lineage = PackageLineage {
-            commit: None,
-            remote_uri: Some(ManifestUri {
-                bucket: "bucket".to_string(),
-                namespace: namespace.clone(),
-                hash: "abcdef0000000000000000000000000000000000000000000000000000000000"
-                    .to_string(),
-                origin: None,
-            }),
-            base_hash: "abcdef0000000000000000000000000000000000000000000000000000000000"
-                .to_string(),
-            latest_hash: "abcdef0000000000000000000000000000000000000000000000000000000000"
-                .to_string(),
-            paths: BTreeMap::new(),
-            ..PackageLineage::default()
-        };
-
-        // Create a domain lineage with a package
-        let lineage = DomainLineage {
-            home: Home::from("/home/user/quilt"),
-            packages: BTreeMap::from([(namespace.clone(), package_lineage.clone())]),
-        };
-
-        // Write it to storage
-        let lineage_io = DomainLineageIo::new(file_path.clone());
-        lineage_io.write(&storage, lineage).await?;
-
-        // Read the package lineage
-        let (package_home, read_package_lineage) = lineage_io
-            .read_package_lineage(&storage, &namespace)
-            .await?;
-
-        // Verify the results
-        assert_eq!(package_home, PathBuf::from("/home/user/quilt/foo/bar"));
-        assert_eq!(read_package_lineage, package_lineage);
-
-        // Try reading a non-existent package
-        let non_existent = Namespace::from(("does", "notexist"));
-        let result = lineage_io
-            .read_package_lineage(&storage, &non_existent)
-            .await;
-        assert!(matches!(
-            result.unwrap_err(),
-            Error::InstallPackage(InstallPackageError::NotInstalled(ns)) if ns == non_existent
-        ));
-
-        Ok(())
-    }
-
-    #[test(tokio::test)]
-    async fn test_update_package_lineage() -> Res {
-        let storage = MockStorage::default();
-        let file_path = PathBuf::from("lineage.json");
-        let lineage_io = DomainLineageIo::new(file_path.clone());
-
-        // Create an initial domain lineage with home directory
-        let initial_lineage = DomainLineage {
-            home: Home::from("/home/user/quilt"),
-            packages: BTreeMap::new(),
-        };
-
-        // Write the initial lineage
-        lineage_io.write(&storage, initial_lineage).await?;
-
-        // Create a package lineage to write
-        let namespace = Namespace::from(("foo", "bar"));
-        let package_lineage = PackageLineage {
-            commit: None,
-            remote_uri: Some(ManifestUri {
-                bucket: "bucket".to_string(),
-                namespace: namespace.clone(),
-                hash: "abcdef0000000000000000000000000000000000000000000000000000000000"
-                    .to_string(),
-                origin: None,
-            }),
-            base_hash: "abcdef0000000000000000000000000000000000000000000000000000000000"
-                .to_string(),
-            latest_hash: "abcdef0000000000000000000000000000000000000000000000000000000000"
-                .to_string(),
-            paths: BTreeMap::new(),
-            ..PackageLineage::default()
-        };
-
-        // Write the package lineage
-        let written_lineage = lineage_io
-            .update_package_lineage(&storage, &namespace, |entry| {
-                *entry = Some(package_lineage.clone());
-                Ok(package_lineage.clone())
-            })
-            .await?;
-
-        // Verify the written lineage matches what we provided
-        assert_eq!(written_lineage, package_lineage);
-
-        // Read the domain lineage to verify the package was added
-        let domain_lineage = lineage_io.read(&storage).await?;
-        assert_eq!(domain_lineage.packages.len(), 1);
-        assert!(domain_lineage.packages.contains_key(&namespace));
-        assert_eq!(
-            domain_lineage.packages.get(&namespace).unwrap(),
-            &package_lineage
-        );
-
-        // Update the package lineage
-        let updated_package_lineage = PackageLineage {
-            commit: Some(CommitState {
-                timestamp: chrono::Utc::now(),
-                hash: String::new(),
-                prev_hashes: Vec::new(),
-            }),
-            ..package_lineage.clone()
-        };
-
-        // Write the updated package lineage
-        lineage_io
-            .update_package_lineage(&storage, &namespace, |entry| {
-                *entry = Some(updated_package_lineage.clone());
-                Ok(())
-            })
-            .await?;
-
-        // Read the domain lineage again to verify the update
-        let updated_domain_lineage = lineage_io.read(&storage).await?;
-        assert_eq!(updated_domain_lineage.packages.len(), 1);
-        assert!(updated_domain_lineage.packages.contains_key(&namespace));
-        assert_eq!(
-            updated_domain_lineage.packages.get(&namespace).unwrap(),
-            &updated_package_lineage
-        );
-
-        Ok(())
-    }
-
-    /// The narrow edit reads the domain, changes one field, and writes — so a
-    /// value another writer put in the same entry *before* that read survives,
-    /// which is the point of not holding a copy across other work.
-    #[test(tokio::test)]
-    async fn edit_package_lineage_preserves_the_rest_of_the_entry() -> Res {
-        let storage = MockStorage::default();
-        let namespace = Namespace::from(("foo", "bar"));
-        let lineage_io = DomainLineageIo::new(PathBuf::from("lineage.json"));
-        lineage_io
-            .write(
-                &storage,
-                DomainLineage {
-                    home: Home::from("/home/user/quilt"),
-                    packages: BTreeMap::from([(namespace.clone(), PackageLineage::default())]),
-                },
-            )
-            .await?;
-
-        // Stand in for a concurrent operation that advanced the entry.
-        lineage_io
-            .edit_package_lineage(&storage, &namespace, |l| {
-                l.base_hash = "advanced".to_string();
-            })
-            .await?;
-
-        let updated = lineage_io
-            .edit_package_lineage(&storage, &namespace, |l| {
-                l.sync_scope = package::SyncScope::EntirePackage;
-            })
-            .await?;
-
-        assert_eq!(updated.sync_scope, package::SyncScope::EntirePackage);
-        assert_eq!(
-            updated.base_hash, "advanced",
-            "the scope write must not roll back the other writer"
-        );
-        Ok(())
-    }
-
-    /// A package that is not installed is an error, not a silent insert.
-    #[test(tokio::test)]
-    async fn edit_package_lineage_refuses_an_unknown_namespace() -> Res {
-        let storage = MockStorage::default();
-        let lineage_io = DomainLineageIo::new(PathBuf::from("lineage.json"));
-        lineage_io
-            .write(&storage, DomainLineage::new("/home/user/quilt"))
-            .await?;
-
-        let err = lineage_io
-            .edit_package_lineage(&storage, &Namespace::from(("no", "such")), |l| {
-                l.sync_scope = package::SyncScope::EntirePackage;
-            })
-            .await
-            .unwrap_err();
-        assert!(matches!(
-            err,
-            Error::InstallPackage(InstallPackageError::NotInstalled(_))
-        ));
-        Ok(())
-    }
-
-    type Told = std::sync::Mutex<Vec<(Namespace, Option<String>, Option<String>)>>;
-
-    /// A handle whose hook notes each change as the base hashes before and
-    /// after.
-    fn hooked() -> (DomainLineageIo, Arc<Told>) {
-        let told = Arc::new(Told::default());
-        let noted = Arc::clone(&told);
-        let io = DomainLineageIo::new(PathBuf::from("lineage.json")).with_hook(LineageHook::new(
-            move |namespace, was, is| {
-                noted.lock().unwrap().push((
-                    namespace.clone(),
-                    was.map(|l| l.base_hash.clone()),
-                    is.map(|l| l.base_hash.clone()),
-                ));
-            },
-        ));
-        (io, told)
-    }
-
-    #[test(tokio::test)]
-    async fn the_hook_hears_each_changed_entry_once() -> Res {
-        let storage = MockStorage::default();
-        let (io, told) = hooked();
-        let foo = Namespace::from(("foo", "bar"));
-        let other = Namespace::from(("other", "pkg"));
-        let entry = |hash: &str| PackageLineage {
-            base_hash: hash.to_string(),
-            ..PackageLineage::default()
-        };
-        io.write(
-            &storage,
-            DomainLineage {
-                home: Home::from("/home/user/quilt"),
-                packages: BTreeMap::from([(other.clone(), entry("o"))]),
-            },
-        )
-        .await?;
-        io.update_package_lineage(&storage, &foo, |e| {
-            *e = Some(entry("a"));
-            Ok(())
-        })
-        .await?;
-        io.edit_package_lineage(&storage, &foo, |l| l.base_hash = "b".to_string())
-            .await?;
-        // A write that changes nothing is not told.
-        io.edit_package_lineage(&storage, &foo, |l| l.base_hash = "b".to_string())
-            .await?;
-        io.update_package_lineage(&storage, &foo, |e| {
-            *e = None;
-            Ok(())
-        })
-        .await?;
-
-        let some = |s: &str| Some(s.to_string());
-        assert_eq!(
-            *told.lock().unwrap(),
-            vec![
-                (other, None, some("o")),
-                (foo.clone(), None, some("a")),
-                (foo.clone(), some("a"), some("b")),
-                (foo, some("b"), None),
-            ]
-        );
-        Ok(())
-    }
-
-    /// A handle without the hook, as another process writes, tells nothing.
-    #[test(tokio::test)]
-    async fn a_write_without_the_hook_is_not_told() -> Res {
-        let storage = MockStorage::default();
-        let (io, told) = hooked();
-        io.write(&storage, DomainLineage::new("/home/user/quilt"))
-            .await?;
-        let foo = Namespace::from(("foo", "bar"));
-        DomainLineageIo::new(PathBuf::from("lineage.json"))
-            .update_package_lineage(&storage, &foo, |e| {
-                *e = Some(PackageLineage::default());
-                Ok(())
-            })
-            .await?;
-        let seen = io
-            .read_locked(&storage, |l| l.packages.contains_key(&foo))
-            .await?;
-        assert!(seen);
-        assert!(told.lock().unwrap().is_empty());
-        Ok(())
-    }
-
-    #[test(tokio::test)]
     async fn test_domain_lineage_create_package_lineage() -> Res {
         let namespace = ("foo", "bar");
-        let domain_lineage = DomainLineageIo::default();
+        let domain_lineage = DomainLineageIo::new(paths::DomainPaths::new(PathBuf::new()));
         let lineage = domain_lineage.create_package_lineage(namespace.into());
         assert_eq!(
             lineage,

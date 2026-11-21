@@ -1,4 +1,5 @@
 use quilt_rs::flow::Committed;
+use quilt_rs::flow::Recorded;
 use quilt_rs::flow::UserMeta;
 use quilt_rs::io::remote::HostConfig;
 use quilt_rs::io::remote::WorkflowIntent;
@@ -11,6 +12,8 @@ use crate::cli::model::Commands;
 use crate::cli::output::Render;
 use crate::cli::output::Std;
 
+pub mod dataspace;
+
 #[derive(Clone, Debug)]
 pub struct Input {
     pub message: String,
@@ -20,25 +23,37 @@ pub struct Input {
     pub host_config: Option<HostConfig>,
 }
 
-/// `None` when the new hash was the current revision's and nothing was
-/// committed.
+/// `commit` is `None` when the new hash was the current revision's and
+/// nothing was committed. `warnings` say how the revision is inconsistent
+/// with the remote bucket's workflows, which a local commit does not refuse;
+/// the text output prints each on a line of its own, whatever the log level.
 #[derive(Debug)]
 pub struct Output {
     pub commit: Option<CommitState>,
+    pub warnings: Vec<String>,
 }
 
 impl std::fmt::Display for Output {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.commit {
-            Some(commit) => write!(f, r#"New commit "{}" created"#, commit.hash),
-            None => write!(f, "Nothing to commit"),
+            Some(commit) => write!(f, r#"New commit "{}" created"#, commit.hash)?,
+            None => write!(f, "Nothing to commit")?,
         }
+        for warning in &self.warnings {
+            write!(f, "\nWarning: {warning}")?;
+        }
+        Ok(())
     }
 }
 
 impl Render for Output {
     fn to_json(&self) -> serde_json::Value {
-        serde_json::json!({ "hash": self.commit.as_ref().map(|commit| &commit.hash) })
+        let mut json =
+            serde_json::json!({ "hash": self.commit.as_ref().map(|commit| &commit.hash) });
+        if !self.warnings.is_empty() {
+            json["warnings"] = serde_json::json!(self.warnings);
+        }
+        json
     }
 }
 
@@ -53,7 +68,7 @@ async fn commit_package(
     user_meta: UserMeta,
     workflow: WorkflowIntent,
     host_config: Option<HostConfig>,
-) -> Result<Committed, Error> {
+) -> Result<Recorded, Error> {
     match local_domain.get_installed_package(&namespace).await? {
         Some(installed_package) => {
             // Preserve the requested id before the intent is consumed so we can
@@ -62,11 +77,14 @@ async fn commit_package(
                 WorkflowIntent::Named(id) => Some(id.clone()),
                 WorkflowIntent::BucketDefault | WorkflowIntent::NoWorkflow => None,
             };
-            let workflow = installed_package.resolve_workflow(workflow).await?;
+            let (workflow, unchecked) = installed_package
+                .resolve_workflow_for_commit(workflow)
+                .await?;
             // A remote-less package has no workflows config to resolve against,
             // so a `Named` intent silently resolves to nothing. Warn instead of
             // dropping it quietly — the workflow can be chosen at push/set-remote.
             if workflow.is_none()
+                && unchecked.is_none()
                 && let Some(id) = named_id
             {
                 log::warn!(
@@ -75,7 +93,8 @@ async fn commit_package(
             }
             Ok(installed_package
                 .commit(message, user_meta, workflow, host_config)
-                .await?)
+                .await?
+                .with_unchecked(unchecked))
         }
         None => Err(Error::NamespaceNotFound(namespace)),
     }
@@ -100,11 +119,12 @@ pub async fn model(
         host_config,
     )
     .await?;
-    let commit = match commit {
+    let warnings = commit.warnings.iter().map(ToString::to_string).collect();
+    let commit = match commit.committed {
         Committed::NothingToCommit => None,
         Committed::Recorded(commit) => Some(commit),
     };
-    Ok(Output { commit })
+    Ok(Output { commit, warnings })
 }
 
 #[cfg(test)]
@@ -243,20 +263,21 @@ mod tests {
         Ok(())
     }
 
-    /// A commit that violates its workflow's `metadata_schema` must surface a
-    /// clear CLI error. The `my-workflow` gate requires `Date`/`Name`/`Owner`/
-    /// `Type` in the package metadata; committing with `Clear` (no metadata)
-    /// against that same workflow is rejected, and the message the user sees
-    /// must name the failing rule (`metadata_schema`) and every missing field.
+    /// A local commit that violates its workflow's `metadata_schema` is
+    /// committed, and its warning says why the push will refuse it. The
+    /// `my-workflow` gate requires `Date`/`Name`/`Owner`/`Type` in the package
+    /// metadata; committing with `Clear` (no metadata) against that same
+    /// workflow is inconsistent with it, and the warning must name the
+    /// failing rule (`metadata_schema`) and every missing field.
     #[test(tokio::test)]
-    async fn live_commit_rejected_by_workflow_surfaces_clear_error() -> Result<(), Error> {
+    async fn live_commit_inconsistent_with_workflow_warns_with_clear_reason() -> Result<(), Error> {
         use crate::cli::fixtures::packages::my_workflow as pkg;
 
         let uri = pkg::URI;
         let (m, _installed_package, _tempdir) = install_package_into_temp_dir(uri).await?;
         let local_domain = m.get_local_domain();
 
-        let err = model(
+        let output = model(
             local_domain,
             Input {
                 message: pkg::MESSAGE.to_string(),
@@ -266,26 +287,27 @@ mod tests {
                 host_config: None,
             },
         )
-        .await
-        .unwrap_err();
+        .await?;
 
-        let message = err.to_string();
-        // The CLI wraps the quilt-rs error transparently, so the validator's own
-        // wording reaches the user verbatim.
+        assert!(output.commit.is_some(), "a local commit is not refused");
+        let [warning] = output.warnings.as_slice() else {
+            panic!("expected one warning, got {:?}", output.warnings);
+        };
+        // The validator's own wording reaches the user verbatim.
         assert!(
-            message.starts_with("quilt_rs error: package does not satisfy the workflow"),
-            "message must announce a workflow rejection, got: {message}"
+            warning.contains("package does not satisfy the workflow"),
+            "the warning must announce a workflow inconsistency, got: {warning}"
         );
         // Names the failing rule …
         assert!(
-            message.contains("metadata_schema"),
-            "message must name the failing rule, got: {message}"
+            warning.contains("metadata_schema"),
+            "the warning must name the failing rule, got: {warning}"
         );
         // … and every field the schema requires (order-independent).
         for field in ["Date", "Name", "Owner", "Type"] {
             assert!(
-                message.contains(field),
-                "message must name the missing field {field}, got: {message}"
+                warning.contains(field),
+                "the warning must name the missing field {field}, got: {warning}"
             );
         }
 
@@ -306,7 +328,7 @@ mod tests {
                 Input {
                     message: pkg::MESSAGE.to_string(),
                     namespace: pkg::NAMESPACE.into(),
-                    user_meta: UserMeta::Set(serde_json::json!({
+                    user_meta: UserMeta::set(serde_json::json!({
                         "Date": "2025-12-31",
                         "Name": "Foo",
                         "Owner": "Kevin",
@@ -399,7 +421,7 @@ mod tests {
                 Input {
                     message: "Initial".to_string(),
                     namespace: pkg::NAMESPACE.into(),
-                    user_meta: UserMeta::Set(serde_json::json!({
+                    user_meta: UserMeta::set(serde_json::json!({
                         // NOTE: will be sorted
                         "C": "D",
                         "c": "d",
@@ -434,6 +456,7 @@ mod tests {
                 namespace: namespace.clone(),
                 source: None,
                 message: None,
+                user_meta: UserMeta::Clear,
             })
             .await?;
 
@@ -513,7 +536,7 @@ mod tests {
                 Input {
                     message: "New commit message".to_string(),
                     namespace: ("spec", "quilt-rs").into(),
-                    user_meta: UserMeta::Set(serde_json::json!({"key": "value"})),
+                    user_meta: UserMeta::set(serde_json::json!({"key": "value"})),
                     workflow: WorkflowIntent::NoWorkflow,
                     host_config: None,
                 },
@@ -608,10 +631,11 @@ mod tests {
     fn json_carries_the_hash_and_no_timestamp() {
         let output = Output {
             commit: Some(CommitState {
-                timestamp: std::time::SystemTime::UNIX_EPOCH.into(),
+                timestamp: jiff::Timestamp::UNIX_EPOCH,
                 hash: "abc123".to_string(),
                 prev_hashes: vec!["older".to_string()],
             }),
+            warnings: Vec::new(),
         };
 
         assert_eq!(output.to_json().to_string(), r#"{"hash":"abc123"}"#);
@@ -619,9 +643,51 @@ mod tests {
 
     #[test]
     fn nothing_to_commit_says_so_with_a_null_hash() {
-        let output = Output { commit: None };
+        let output = Output {
+            commit: None,
+            warnings: Vec::new(),
+        };
 
         assert_eq!(output.to_string(), "Nothing to commit");
         assert_eq!(output.to_json().to_string(), r#"{"hash":null}"#);
+    }
+
+    /// A commit the remote's workflows would refuse is recorded, and its JSON
+    /// lists why.
+    #[test]
+    fn json_lists_the_workflow_warnings() {
+        let output = Output {
+            commit: Some(CommitState {
+                hash: "abc123".to_string(),
+                ..CommitState::default()
+            }),
+            warnings: vec!["needs a workflow".to_string()],
+        };
+
+        assert_eq!(
+            output.to_json().to_string(),
+            r#"{"hash":"abc123","warnings":["needs a workflow"]}"#
+        );
+    }
+
+    /// The text output prints each warning after the commit line, so a
+    /// quiet log level does not hide them.
+    #[test]
+    fn text_prints_the_workflow_warnings() {
+        let output = Output {
+            commit: Some(CommitState {
+                hash: "abc123".to_string(),
+                ..CommitState::default()
+            }),
+            warnings: vec![
+                "needs a workflow".to_string(),
+                "needs a message".to_string(),
+            ],
+        };
+
+        assert_eq!(
+            output.to_string(),
+            "New commit \"abc123\" created\nWarning: needs a workflow\nWarning: needs a message"
+        );
     }
 }

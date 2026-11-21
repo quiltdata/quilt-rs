@@ -1,11 +1,11 @@
 use super::*;
 use quilt_uri::fixtures;
 
+use std::path::Path;
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use tokio::sync::RwLock;
 
 use crate::engine::autopull::AutosyncSettings;
@@ -35,6 +35,7 @@ fn pulled(uri: quilt_uri::ManifestUri) -> quilt::flow::PullReport {
 }
 
 mod merge;
+mod missing_folder;
 mod publish;
 mod watched;
 
@@ -155,6 +156,27 @@ fn classify_generic_is_paused() {
 }
 
 #[test]
+fn classify_a_missing_package_folder_skips_the_package() {
+    // Nothing for the user to clear, where the default arm would pause until
+    // cleared, and nothing to retry on backoff: the pass skips the package
+    // and the next tick that reads the folder resumes it.
+    let missing = || {
+        Error::from(quilt::Error::PackageOp(
+            quilt::PackageOpError::WorkingCopyUnavailable("/gone/demo".into()),
+        ))
+    };
+    match classify_sync_err(missing()) {
+        Err(WatchError::Unavailable(home)) => assert_eq!(home, Path::new("/gone/demo")),
+        other => panic!("expected Unavailable(_), got {other:?}"),
+    }
+    // The pull dry-run's refusal, on the read side.
+    match classify_transient_or_login(missing()) {
+        WatchError::Unavailable(home) => assert_eq!(home, Path::new("/gone/demo")),
+        other => panic!("expected Unavailable(_), got {other:?}"),
+    }
+}
+
+#[test]
 fn classify_config_format_error_is_conflict() {
     // A malformed `.quilt/workflows/config.yml` surfaces as
     // `RemoteCatalogError::InvalidWorkflowsConfig` (config-schema rejection). It
@@ -239,6 +261,33 @@ fn classify_io_is_transient() {
     match classify_sync_err(err) {
         Err(WatchError::Transient(_)) => {}
         other => panic!("expected Transient(_), got {other:?}"),
+    }
+}
+
+/// A failed upload is classified by its cause: a network blip on one file
+/// backs off, and an expired session asks for a sign-in, as when the same
+/// failure is not an upload's.
+#[test]
+fn classify_a_failed_upload_by_its_cause() {
+    let upload = |source| {
+        Error::from(quilt::Error::Upload {
+            key: quilt::LogicalKey::new("b.txt").expect("valid key"),
+            source: Box::new(source),
+        })
+    };
+
+    let blip = upload(quilt::Error::S3(quilt::S3Error::new(
+        quilt::S3ErrorKind::PutObject("connection reset by peer".to_string()),
+    )));
+    match classify_sync_err(blip) {
+        Err(WatchError::Transient(_)) => {}
+        other => panic!("expected Transient(_), got {other:?}"),
+    }
+
+    let no_session = upload(quilt::Error::Login(quilt::LoginError::NoSession(None)));
+    match classify_sync_err(no_session) {
+        Err(WatchError::LoginRequired { expired: false, .. }) => {}
+        other => panic!("expected LoginRequired, got {other:?}"),
     }
 }
 
@@ -398,7 +447,7 @@ async fn a_running_tick_advertises_the_next_tick_not_the_one_it_is_serving() -> 
         "precondition: a cold start has nothing armed"
     );
 
-    let before = DateTime::<Utc>::from(crate::engine::autopull::last_change::now());
+    let before = Timestamp::try_from(crate::engine::autopull::last_change::now()).unwrap();
     run_once(&model, &RoleCache::default(), &inner).await?;
 
     let at = inner
@@ -432,7 +481,7 @@ async fn run_once_behind_and_clean_pulls_and_emits_up_to_date() -> Result<(), Er
         .expect_get_installed_packages_list()
         .returning(move || {
             Ok(vec![
-                quilt::LocalDomain::new(std::path::PathBuf::new())
+                crate::engine::model::mocks::nowhere()
                     .create_installed_package(("acme", "demo").into()),
             ])
         });
@@ -444,7 +493,7 @@ async fn run_once_behind_and_clean_pulls_and_emits_up_to_date() -> Result<(), Er
         .returning(|p| Ok(Some(p.namespace.clone())));
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
-            quilt::LocalDomain::new(std::path::PathBuf::new())
+            crate::engine::model::mocks::nowhere()
                 .create_installed_package(("acme", "demo").into()),
         ))
     });
@@ -539,7 +588,7 @@ async fn a_stored_whole_package_scope_reaches_the_background_pull() -> Result<()
         .expect_get_installed_packages_list()
         .returning(move || {
             Ok(vec![
-                quilt::LocalDomain::new(std::path::PathBuf::new())
+                crate::engine::model::mocks::nowhere()
                     .create_installed_package(("acme", "demo").into()),
             ])
         });
@@ -551,7 +600,7 @@ async fn a_stored_whole_package_scope_reaches_the_background_pull() -> Result<()
         .returning(|p| Ok(Some(p.namespace.clone())));
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
-            quilt::LocalDomain::new(std::path::PathBuf::new())
+            crate::engine::model::mocks::nowhere()
                 .create_installed_package(("acme", "demo").into()),
         ))
     });
@@ -625,7 +674,7 @@ async fn a_pull_reports_what_it_brought() -> Result<(), Error> {
         .expect_get_installed_packages_list()
         .returning(move || {
             Ok(vec![
-                quilt::LocalDomain::new(std::path::PathBuf::new())
+                crate::engine::model::mocks::nowhere()
                     .create_installed_package(("acme", "demo").into()),
             ])
         });
@@ -637,7 +686,7 @@ async fn a_pull_reports_what_it_brought() -> Result<(), Error> {
         .returning(|p| Ok(Some(p.namespace.clone())));
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
-            quilt::LocalDomain::new(std::path::PathBuf::new())
+            crate::engine::model::mocks::nowhere()
                 .create_installed_package(("acme", "demo").into()),
         ))
     });
@@ -723,7 +772,7 @@ async fn behind_with_kept_changes_pulls() -> Result<(), Error> {
     let mut model = MockQuiltModel::new();
     model.expect_get_installed_packages_list().returning(|| {
         Ok(vec![
-            quilt::LocalDomain::new(std::path::PathBuf::new())
+            crate::engine::model::mocks::nowhere()
                 .create_installed_package(("acme", "demo").into()),
         ])
     });
@@ -735,7 +784,7 @@ async fn behind_with_kept_changes_pulls() -> Result<(), Error> {
         .returning(|p| Ok(Some(p.namespace.clone())));
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
-            quilt::LocalDomain::new(std::path::PathBuf::new())
+            crate::engine::model::mocks::nowhere()
                 .create_installed_package(("acme", "demo").into()),
         ))
     });
@@ -841,7 +890,7 @@ async fn behind_trivially_resolved_reports_clean() -> Result<(), Error> {
     let mut model = MockQuiltModel::new();
     model.expect_get_installed_packages_list().returning(|| {
         Ok(vec![
-            quilt::LocalDomain::new(std::path::PathBuf::new())
+            crate::engine::model::mocks::nowhere()
                 .create_installed_package(("acme", "demo").into()),
         ])
     });
@@ -853,7 +902,7 @@ async fn behind_trivially_resolved_reports_clean() -> Result<(), Error> {
         .returning(|p| Ok(Some(p.namespace.clone())));
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
-            quilt::LocalDomain::new(std::path::PathBuf::new())
+            crate::engine::model::mocks::nowhere()
                 .create_installed_package(("acme", "demo").into()),
         ))
     });
@@ -953,7 +1002,7 @@ async fn behind_clean_update_ignores_stale_pre_pull_changes() -> Result<(), Erro
     let mut model = MockQuiltModel::new();
     model.expect_get_installed_packages_list().returning(|| {
         Ok(vec![
-            quilt::LocalDomain::new(std::path::PathBuf::new())
+            crate::engine::model::mocks::nowhere()
                 .create_installed_package(("acme", "demo").into()),
         ])
     });
@@ -965,7 +1014,7 @@ async fn behind_clean_update_ignores_stale_pre_pull_changes() -> Result<(), Erro
         .returning(|p| Ok(Some(p.namespace.clone())));
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
-            quilt::LocalDomain::new(std::path::PathBuf::new())
+            crate::engine::model::mocks::nowhere()
                 .create_installed_package(("acme", "demo").into()),
         ))
     });
@@ -1056,7 +1105,7 @@ async fn dry_run_login_required_is_classified() -> Result<(), Error> {
         .returning(|p| Ok(Some(p.namespace.clone())));
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
-            quilt::LocalDomain::new(std::path::PathBuf::new())
+            crate::engine::model::mocks::nowhere()
                 .create_installed_package(("acme", "demo").into()),
         ))
     });
@@ -1119,7 +1168,7 @@ async fn behind_blocked_pauses() -> Result<(), Error> {
     let mut model = MockQuiltModel::new();
     model.expect_get_installed_packages_list().returning(|| {
         Ok(vec![
-            quilt::LocalDomain::new(std::path::PathBuf::new())
+            crate::engine::model::mocks::nowhere()
                 .create_installed_package(("acme", "demo").into()),
         ])
     });
@@ -1131,7 +1180,7 @@ async fn behind_blocked_pauses() -> Result<(), Error> {
         .returning(|p| Ok(Some(p.namespace.clone())));
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
-            quilt::LocalDomain::new(std::path::PathBuf::new())
+            crate::engine::model::mocks::nowhere()
                 .create_installed_package(("acme", "demo").into()),
         ))
     });
@@ -1211,7 +1260,7 @@ async fn run_once_login_required_bumps_backoff() -> Result<(), Error> {
     let mut model = MockQuiltModel::new();
     model.expect_get_installed_packages_list().returning(|| {
         Ok(vec![
-            quilt::LocalDomain::new(std::path::PathBuf::new())
+            crate::engine::model::mocks::nowhere()
                 .create_installed_package(("acme", "demo").into()),
         ])
     });
@@ -1223,7 +1272,7 @@ async fn run_once_login_required_bumps_backoff() -> Result<(), Error> {
         .returning(|p| Ok(Some(p.namespace.clone())));
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
-            quilt::LocalDomain::new(std::path::PathBuf::new())
+            crate::engine::model::mocks::nowhere()
                 .create_installed_package(("acme", "demo").into()),
         ))
     });
@@ -1354,7 +1403,7 @@ async fn no_action_tick_carries_status_fingerprint() -> Result<(), Error> {
         .returning(|p| Ok(Some(p.namespace.clone())));
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
-            quilt::LocalDomain::new(std::path::PathBuf::new())
+            crate::engine::model::mocks::nowhere()
                 .create_installed_package(("acme", "demo").into()),
         ))
     });
@@ -1419,7 +1468,7 @@ async fn conflict_emit_carries_stable_fingerprint() -> Result<(), Error> {
     let mut model = MockQuiltModel::new();
     model.expect_get_installed_packages_list().returning(|| {
         Ok(vec![
-            quilt::LocalDomain::new(std::path::PathBuf::new())
+            crate::engine::model::mocks::nowhere()
                 .create_installed_package(("acme", "demo").into()),
         ])
     });
@@ -1431,7 +1480,7 @@ async fn conflict_emit_carries_stable_fingerprint() -> Result<(), Error> {
         .returning(|p| Ok(Some(p.namespace.clone())));
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
-            quilt::LocalDomain::new(std::path::PathBuf::new())
+            crate::engine::model::mocks::nowhere()
                 .create_installed_package(("acme", "demo").into()),
         ))
     });
@@ -1548,7 +1597,7 @@ fn an_unattributed_login_failure_does_not_join_a_hosts_episode() {
 #[tokio::test]
 async fn arming_the_pull_records_a_deadline_one_cadence_out() {
     let inner = make_inner(enabled());
-    let before = DateTime::<Utc>::from(crate::engine::autopull::last_change::now());
+    let before = Timestamp::try_from(crate::engine::autopull::last_change::now()).unwrap();
     crate::engine::autopull::arm_next_pull(&inner, Duration::from_secs(30)).await;
     let at = inner
         .clocks
@@ -1585,7 +1634,7 @@ fn local_status(files: usize) -> quilt::lineage::InstalledPackageStatus {
 }
 
 /// The card's deadline, with the wait `enabled()` sets.
-async fn card_deadline(inner: &WatcherInner) -> Option<DateTime<Utc>> {
+async fn card_deadline(inner: &WatcherInner) -> Option<Timestamp> {
     crate::engine::autopull::next_publish_at(inner, Duration::from_secs(300)).await
 }
 
@@ -1596,7 +1645,7 @@ async fn a_local_edit_starts_the_countdown_without_waiting_for_a_tick() {
     // "1 file changed".
     let inner = make_inner(enabled());
     let ns: Namespace = ("acme", "demo").into();
-    let before = DateTime::<Utc>::from(crate::engine::autopull::last_change::now());
+    let before = Timestamp::try_from(crate::engine::autopull::last_change::now()).unwrap();
 
     crate::engine::autopull::observe_walk(
         &inner,
@@ -1672,7 +1721,7 @@ async fn a_deadline_already_past_still_shows_the_package_waiting() {
     assert!(
         card_deadline(&inner)
             .await
-            .is_some_and(|at| at < Utc::now())
+            .is_some_and(|at| at < Timestamp::now())
     );
 }
 
@@ -1695,7 +1744,7 @@ async fn the_card_reads_the_wait_as_it_is_now() {
     let long = crate::engine::autopull::next_publish_at(&inner, Duration::from_mins(10)).await;
     let short = crate::engine::autopull::next_publish_at(&inner, Duration::from_mins(5)).await;
     let (long, short) = (long.expect("waiting"), short.expect("waiting"));
-    assert_eq!(long - short, chrono::Duration::minutes(5));
+    assert_eq!(long - short, jiff::SignedDuration::from_mins(5));
 }
 
 #[tokio::test]
@@ -1768,7 +1817,7 @@ fn behind_model_on(
     let mut model = MockQuiltModel::new();
     model.expect_get_installed_packages_list().returning(|| {
         Ok(vec![
-            quilt::LocalDomain::new(std::path::PathBuf::new())
+            crate::engine::model::mocks::nowhere()
                 .create_installed_package(("acme", "demo").into()),
         ])
     });
@@ -1780,7 +1829,7 @@ fn behind_model_on(
         .returning(|p| Ok(Some(p.namespace.clone())));
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
-            quilt::LocalDomain::new(std::path::PathBuf::new())
+            crate::engine::model::mocks::nowhere()
                 .create_installed_package(("acme", "demo").into()),
         ))
     });
@@ -2124,7 +2173,7 @@ fn two_behind_packages(busy: bool) -> MockQuiltModel {
     let lineage = behind_clean_lineage();
     let mut model = MockQuiltModel::new();
     model.expect_get_installed_packages_list().returning(|| {
-        let domain = quilt::LocalDomain::new(std::path::PathBuf::new());
+        let domain = crate::engine::model::mocks::nowhere();
         Ok(vec![
             domain.create_installed_package(("acme", "busy").into()),
             domain.create_installed_package(("acme", "demo").into()),
@@ -2135,7 +2184,7 @@ fn two_behind_packages(busy: bool) -> MockQuiltModel {
         .returning(move |_| Ok(lineage.clone()));
     model.expect_get_installed_package().returning(|ns| {
         Ok(Some(
-            quilt::LocalDomain::new(std::path::PathBuf::new()).create_installed_package(ns.clone()),
+            crate::engine::model::mocks::nowhere().create_installed_package(ns.clone()),
         ))
     });
     let busy_ns: Namespace = ("acme", "busy").into();
@@ -2282,7 +2331,7 @@ async fn the_classify_shows_no_activity() -> Result<(), Error> {
     let mut model = MockQuiltModel::new();
     model.expect_get_installed_packages_list().returning(|| {
         Ok(vec![
-            quilt::LocalDomain::new(std::path::PathBuf::new())
+            crate::engine::model::mocks::nowhere()
                 .create_installed_package(("acme", "demo").into()),
         ])
     });
@@ -2294,7 +2343,7 @@ async fn the_classify_shows_no_activity() -> Result<(), Error> {
         .returning(|p| Ok(Some(p.namespace.clone())));
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
-            quilt::LocalDomain::new(std::path::PathBuf::new())
+            crate::engine::model::mocks::nowhere()
                 .create_installed_package(("acme", "demo").into()),
         ))
     });
@@ -2348,7 +2397,7 @@ async fn a_tick_with_nothing_to_transfer_never_sets_the_activity() -> Result<(),
     let mut model = MockQuiltModel::new();
     model.expect_get_installed_packages_list().returning(|| {
         Ok(vec![
-            quilt::LocalDomain::new(std::path::PathBuf::new())
+            crate::engine::model::mocks::nowhere()
                 .create_installed_package(("acme", "demo").into()),
         ])
     });
@@ -2360,7 +2409,7 @@ async fn a_tick_with_nothing_to_transfer_never_sets_the_activity() -> Result<(),
         .returning(|p| Ok(Some(p.namespace.clone())));
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
-            quilt::LocalDomain::new(std::path::PathBuf::new())
+            crate::engine::model::mocks::nowhere()
                 .create_installed_package(("acme", "demo").into()),
         ))
     });
@@ -2406,14 +2455,13 @@ async fn a_package_held_by_a_task_run_is_not_synced() {
         .returning(move |_| Ok(lineage.clone()));
     model.expect_get_installed_package().returning(|ns| {
         Ok(Some(
-            quilt::LocalDomain::new(std::path::PathBuf::new()).create_installed_package(ns.clone()),
+            crate::engine::model::mocks::nowhere().create_installed_package(ns.clone()),
         ))
     });
     // Another writer holds the lock, so an unheld package comes back `Busy`.
     model.expect_try_lock_package().returning(|_| Ok(None));
     let inner = make_inner(enabled());
-    let pkg =
-        quilt::LocalDomain::new(std::path::PathBuf::new()).create_installed_package(ns.clone());
+    let pkg = crate::engine::model::mocks::nowhere().create_installed_package(ns.clone());
     let run = PassSettings {
         publish: PublishSettings::default(),
         wait: Duration::ZERO,
@@ -2431,8 +2479,7 @@ async fn a_package_held_by_a_task_run_is_not_synced() {
 }
 
 fn demo_package() -> quilt::InstalledPackage {
-    quilt::LocalDomain::new(std::path::PathBuf::new())
-        .create_installed_package(("acme", "demo").into())
+    crate::engine::model::mocks::nowhere().create_installed_package(("acme", "demo").into())
 }
 
 /// The one package, at `latest` in `bucket`, whose head is claimed under the
@@ -2470,6 +2517,7 @@ fn stale_claim_model(
                     ..quilt::manifest::ManifestHeader::default()
                 },
                 rows: Vec::new(),
+                dir_meta: Vec::new(),
             })
         });
     model
@@ -2503,6 +2551,7 @@ fn stale_claim_model(
                         origin: None,
                     },
                     certified_latest: true,
+                    latest_unchecked: false,
                 },
             ))
         });
@@ -2557,7 +2606,7 @@ async fn our_own_interrupted_claim_is_published_by_the_sweep_not_autosync() -> R
         1,
         "one revision, the sweep's: {published:?}"
     );
-    let quilt::flow::UserMeta::Set(meta) = &published[0] else {
+    let quilt::flow::UserMeta::Set(meta, _) = &published[0] else {
         panic!("the sweep sets the metadata, got {:?}", published[0]);
     };
     assert_eq!(meta["agent_exec"]["claim"]["status"], "failed");
@@ -2633,7 +2682,7 @@ async fn unusable_credentials_without_a_catalog_name_the_aws_files() -> Result<(
     let mut model = MockQuiltModel::new();
     model.expect_get_installed_packages_list().returning(|| {
         Ok(vec![
-            quilt::LocalDomain::new(std::path::PathBuf::new())
+            crate::engine::model::mocks::nowhere()
                 .create_installed_package(("acme", "demo").into()),
         ])
     });
@@ -2645,7 +2694,7 @@ async fn unusable_credentials_without_a_catalog_name_the_aws_files() -> Result<(
         .returning(|p| Ok(Some(p.namespace.clone())));
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
-            quilt::LocalDomain::new(std::path::PathBuf::new())
+            crate::engine::model::mocks::nowhere()
                 .create_installed_package(("acme", "demo").into()),
         ))
     });
@@ -2693,7 +2742,7 @@ fn catalog_changed_mid_pass(
     let mut model = MockQuiltModel::new();
     model.expect_get_installed_packages_list().returning(|| {
         Ok(vec![
-            quilt::LocalDomain::new(std::path::PathBuf::new())
+            crate::engine::model::mocks::nowhere()
                 .create_installed_package(("acme", "demo").into()),
         ])
     });
@@ -2706,7 +2755,7 @@ fn catalog_changed_mid_pass(
         .returning(|p| Ok(Some(p.namespace.clone())));
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
-            quilt::LocalDomain::new(std::path::PathBuf::new())
+            crate::engine::model::mocks::nowhere()
                 .create_installed_package(("acme", "demo").into()),
         ))
     });
@@ -2759,7 +2808,7 @@ async fn a_sign_in_the_old_catalog_asked_for_is_not_recorded() -> Result<(), Err
     let mut model = MockQuiltModel::new();
     model.expect_get_installed_packages_list().returning(|| {
         Ok(vec![
-            quilt::LocalDomain::new(std::path::PathBuf::new())
+            crate::engine::model::mocks::nowhere()
                 .create_installed_package(("acme", "demo").into()),
         ])
     });
@@ -2772,7 +2821,7 @@ async fn a_sign_in_the_old_catalog_asked_for_is_not_recorded() -> Result<(), Err
         .returning(|p| Ok(Some(p.namespace.clone())));
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
-            quilt::LocalDomain::new(std::path::PathBuf::new())
+            crate::engine::model::mocks::nowhere()
                 .create_installed_package(("acme", "demo").into()),
         ))
     });
@@ -2802,7 +2851,7 @@ async fn a_transient_failure_from_the_old_catalog_leaves_no_backoff() -> Result<
     let mut model = MockQuiltModel::new();
     model.expect_get_installed_packages_list().returning(|| {
         Ok(vec![
-            quilt::LocalDomain::new(std::path::PathBuf::new())
+            crate::engine::model::mocks::nowhere()
                 .create_installed_package(("acme", "demo").into()),
         ])
     });
@@ -2815,7 +2864,7 @@ async fn a_transient_failure_from_the_old_catalog_leaves_no_backoff() -> Result<
         .returning(|p| Ok(Some(p.namespace.clone())));
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
-            quilt::LocalDomain::new(std::path::PathBuf::new())
+            crate::engine::model::mocks::nowhere()
                 .create_installed_package(("acme", "demo").into()),
         ))
     });
@@ -2861,8 +2910,8 @@ async fn a_pass_drops_what_no_package_stands_behind() {
     model
         .expect_get_installed_package_lineage()
         .returning(move |_| Ok(lineage.clone()));
-    let packages = [quilt::LocalDomain::new(std::path::PathBuf::new())
-        .create_installed_package(installed.clone())];
+    let packages =
+        [crate::engine::model::mocks::nowhere().create_installed_package(installed.clone())];
 
     let inner = make_inner(enabled());
     let set = &inner.action_needed;
@@ -2923,8 +2972,7 @@ async fn only_a_pass_that_reaches_the_bucket_clears_what_action_needed() {
             .returning(move |_| Ok(lineage.clone()));
         model.expect_get_installed_package().returning(|ns| {
             Ok(Some(
-                quilt::LocalDomain::new(std::path::PathBuf::new())
-                    .create_installed_package(ns.clone()),
+                crate::engine::model::mocks::nowhere().create_installed_package(ns.clone()),
             ))
         });
         model
@@ -2952,8 +3000,7 @@ async fn only_a_pass_that_reaches_the_bucket_clears_what_action_needed() {
     inner
         .action_needed
         .enter(Subject::package(&ns), Cause::NoAccess { role: None });
-    let pkg =
-        quilt::LocalDomain::new(std::path::PathBuf::new()).create_installed_package(ns.clone());
+    let pkg = crate::engine::model::mocks::nowhere().create_installed_package(ns.clone());
     let roles = RoleCache::default();
 
     inner.action_needed.enter(

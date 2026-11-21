@@ -7,10 +7,13 @@ use crate::Error;
 use crate::Res;
 use crate::error::PackageOpError;
 use crate::flow;
+use crate::io::manifest::LatestAdvance;
+use crate::io::manifest::LatestSeen;
 use crate::io::manifest::RowsStream;
 use crate::io::manifest::StreamItem;
+use crate::io::manifest::advance_latest;
 use crate::io::manifest::build_manifest_from_rows_stream;
-use crate::io::manifest::resolve_tag;
+use crate::io::manifest::read_latest;
 use crate::io::manifest::tag_timestamp;
 use crate::io::manifest::upload_manifest;
 use crate::io::manifest::upload_row;
@@ -27,7 +30,6 @@ use crate::workflow::EntryView;
 use quilt_uri::ManifestUri;
 use quilt_uri::Namespace;
 use quilt_uri::S3PackageHandle;
-use quilt_uri::Tag;
 
 async fn use_existing_row_or_upload(
     remote: &impl Remote,
@@ -37,10 +39,11 @@ async fn use_existing_row_or_upload(
     rows: StreamItem,
 ) -> StreamItem {
     let mut output = Vec::new();
+    let remote_rows = remote_manifest.rows_by_key();
     for row in rows? {
         let row = row?;
         debug!("⏳ Processing row: {}", row.logical_key.display());
-        if let Some(remote_row) = remote_manifest.get_record(&row.logical_key) {
+        if let Some(remote_row) = remote_rows.get(row.logical_key.as_path()) {
             if remote_row.matches_content(&row) {
                 debug!(
                     "✔️ Using existing remote row for: {}",
@@ -91,6 +94,10 @@ pub struct PushResult {
     /// base: someone else pushed since we last checked, or, on a first push,
     /// had already published under this name.
     pub certified_latest: bool,
+    /// Whether "latest" was written without the base check, because the role
+    /// may not read the tag or the store gave no `ETag`: another writer's
+    /// revision may have been overwritten.
+    pub latest_unchecked: bool,
 }
 
 /// Push the new package revision to the remote and tags it as "latest".
@@ -154,6 +161,7 @@ pub(crate) async fn push_package_impl(
         return Ok(PushResult {
             lineage,
             certified_latest: true,
+            latest_unchecked: false,
         });
     };
 
@@ -242,9 +250,14 @@ pub(crate) async fn push_package_impl(
     // also why the `new_manifest_uri.hash != commit.hash` guard below does not
     // fire on a normal push.
     let dest_dir = paths.cached_manifests_dir(&manifest_uri.bucket);
-    let (cache_path, top_hash) =
-        build_manifest_from_rows_stream(storage, dest_dir, local_manifest.header.clone(), stream)
-            .await?;
+    let (cache_path, top_hash) = build_manifest_from_rows_stream(
+        storage,
+        dest_dir,
+        local_manifest.header.clone(),
+        local_manifest.dir_meta.clone(),
+        stream,
+    )
+    .await?;
     debug!(
         "✔️ Built manifest with hash {} at {}",
         top_hash,
@@ -268,21 +281,11 @@ pub(crate) async fn push_package_impl(
     debug!("✔️ Timestamp tag added");
 
     debug!("⏳ Checking remote's latest manifest hash");
-    lineage.latest_hash = match resolve_tag(
-        remote,
-        new_manifest_uri.origin.as_ref(),
-        manifest_uri,
-        Tag::Latest,
-    )
-    .await
-    {
-        Ok(uri) => uri.hash,
-        Err(e) if e.is_not_found() => {
-            debug!("✔️ No existing latest tag — first push for this package");
-            String::new()
-        }
-        Err(e) => return Err(e),
-    };
+    let latest = read_latest(remote, new_manifest_uri.origin.as_ref(), &new_manifest_uri).await?;
+    if latest == LatestSeen::Absent {
+        debug!("✔️ No existing latest tag — first push for this package");
+    }
+    lineage.latest_hash = latest.hash().unwrap_or_default().to_owned();
     debug!("✔️ Latest hash is: {}", lineage.latest_hash);
 
     lineage.remote_uri = Some(new_manifest_uri.clone());
@@ -299,24 +302,52 @@ pub(crate) async fn push_package_impl(
     // Certify latest when the remote has no "latest" yet, when it already is
     // what we pushed, or when it is still our base. A first push has no base,
     // so another writer's "latest" stays, and the empty base leaves the copy
-    // Diverged until the user promotes or resets.
-    if lineage.latest_hash.is_empty()
-        || lineage.latest_hash == new_manifest_uri.hash
-        || (!lineage.base_hash.is_empty() && lineage.base_hash == lineage.latest_hash)
-    {
-        debug!("⏳ Certifying new latest (no existing latest, already ours, or tracking)");
-        let lineage = flow::certify_latest(lineage, remote, new_manifest_uri).await?;
+    // Diverged until the user promotes or resets. A role that may not read
+    // "latest" cannot tell, so it writes the tag unchecked.
+    let advance = match &latest {
+        LatestSeen::Absent | LatestSeen::Unreadable => true,
+        LatestSeen::Tagged { uri, .. } => {
+            uri.hash == new_manifest_uri.hash
+                || (!lineage.base_hash.is_empty() && lineage.base_hash == uri.hash)
+        }
+    };
+    if !advance {
+        warn!("Pushed but did not certify latest: remote has newer changes");
+        info!("✔️ Successfully pushed package (without certifying latest)");
         return Ok(PushResult {
             lineage,
-            certified_latest: true,
+            certified_latest: false,
+            latest_unchecked: false,
         });
     }
 
-    warn!("Pushed but did not certify latest: remote has newer changes");
-    info!("✔️ Successfully pushed package (without certifying latest)");
+    debug!("⏳ Certifying new latest");
+    let written = advance_latest(remote, &new_manifest_uri, &latest).await?;
+    if let LatestAdvance::Moved { latest } = &written {
+        warn!("Pushed but did not certify latest: it moved while this push read it");
+        // Without a hash `latest` moved to other than our base, the lineage
+        // cannot say it moved; the error keeps the commit pending, and the
+        // next push reads it again.
+        let Some(hash) = latest.as_ref().filter(|hash| **hash != lineage.base_hash) else {
+            return Err(PackageOpError::PushTagFailed {
+                top_hash: new_manifest_uri.hash,
+                reason: "latest changed while this push ran".to_string(),
+            }
+            .into());
+        };
+        lineage.latest_hash.clone_from(hash);
+        return Ok(PushResult {
+            lineage,
+            certified_latest: false,
+            latest_unchecked: false,
+        });
+    }
+    lineage.update_latest(new_manifest_uri);
+    info!("✔️ Certified latest");
     Ok(PushResult {
         lineage,
-        certified_latest: false,
+        certified_latest: true,
+        latest_unchecked: written == LatestAdvance::Unchecked,
     })
 }
 
@@ -381,7 +412,7 @@ mod tests {
     fn first_push_governed_lineage() -> PackageLineage {
         PackageLineage {
             commit: Some(CommitState {
-                timestamp: chrono::Utc::now(),
+                timestamp: jiff::Timestamp::now(),
                 // Deliberately not the built hash: the valid-path test relies on
                 // the push reaching the post-upload hash check, which proves the
                 // gate let it through.
@@ -455,6 +486,55 @@ mod tests {
         assert!(
             !storage.exists(&paths.cached_manifests_dir("b")).await,
             "a rejected push must not build or upload a manifest"
+        );
+        Ok(())
+    }
+
+    /// Push refuses a revision whose workflow's schema is invalid, before any
+    /// bytes reach the remote. A local commit records such a revision with an
+    /// `Unchecked` warning; push is where it stops.
+    #[test(tokio::test)]
+    async fn test_push_refuses_an_invalid_schema_and_uploads_nothing() -> Res {
+        let paths = paths::DomainPaths::new(std::path::absolute("/foo")?);
+        let storage = MockStorage::default();
+        let remote = MockRemote::default();
+        remote
+            .put_object(
+                None,
+                &S3Uri::try_from("s3://b/.quilt/workflows/config.yml")?,
+                b"version: \"1\"\nworkflows:\n  gate:\n    name: Gate\n    metadata_schema: meta\nschemas:\n  meta:\n    url: s3://b/schemas/meta.json\n".to_vec(),
+            )
+            .await?;
+        remote
+            .put_object(
+                None,
+                &S3Uri::try_from("s3://b/schemas/meta.json")?,
+                br#"{"type": 123}"#.to_vec(),
+            )
+            .await?;
+
+        let err = push_package(
+            first_push_governed_lineage(),
+            governed_manifest(),
+            &paths,
+            &storage,
+            &remote,
+            None,
+            HostConfig::default(),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            matches!(
+                err,
+                Error::WorkflowValidation(WorkflowValidationError::InvalidSchema { .. })
+            ),
+            "expected an invalid-schema refusal, got: {err:?}"
+        );
+        assert!(
+            !storage.exists(&paths.cached_manifests_dir("b")).await,
+            "a refused push must not build or upload a manifest"
         );
         Ok(())
     }
@@ -1003,7 +1083,7 @@ mod tests {
         };
         let lineage = PackageLineage {
             commit: Some(CommitState {
-                timestamp: chrono::Utc::now(),
+                timestamp: jiff::Timestamp::now(),
                 hash: fixtures::top_hash::EMPTY_NULL_TOP_HASH.to_string(),
                 prev_hashes: Vec::new(),
             }),
@@ -1067,6 +1147,62 @@ mod tests {
         Ok(())
     }
 
+    /// A push whose upload fails ends with that error, and writes no manifest
+    /// from the files uploaded before it, neither locally nor on the bucket.
+    #[test(tokio::test)]
+    async fn test_push_fails_when_an_upload_fails() -> Res {
+        let paths = paths::DomainPaths::new(std::path::absolute("/foo")?);
+        let storage = MockStorage::default();
+        let remote = MockRemote::default();
+
+        let file_content = b"bytes\n";
+        remote
+            .storage
+            .write_byte_stream(
+                std::path::absolute("/b/a/ra")?,
+                ByteStream::from_static(file_content),
+            )
+            .await?;
+
+        // `a.txt` uploads; `b.txt` names a file that is not there.
+        let mut manifest = header_none_manifest();
+        for (name, path) in [("a.txt", "/b/a/ra"), ("b.txt", "/b/a/missing")] {
+            manifest
+                .insert_record(ManifestRow {
+                    logical_key: crate::LogicalKey::new(name)?,
+                    physical_key: local_file_url(path),
+                    size: file_content.len() as u64,
+                    ..ManifestRow::default()
+                })
+                .await?;
+        }
+
+        let err = push_package(
+            first_push_governed_lineage(),
+            manifest,
+            &paths,
+            &storage,
+            &remote,
+            None,
+            HostConfig::default(),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            matches!(&err, Error::Upload { key, source } if key.to_string() == "b.txt" && source.is_not_found()),
+            "the failed upload must end the push, naming its file, got: {err:?}"
+        );
+        assert!(!storage.exists(&paths.cached_manifests_dir("b")).await);
+        assert_eq!(
+            remote
+                .current("s3://b/.quilt/named_packages/foo/bar/latest")
+                .await?,
+            None
+        );
+        Ok(())
+    }
+
     #[test(tokio::test)]
     async fn test_push_virtual_manifest() -> Res {
         let manifest_uri = ManifestUri {
@@ -1077,7 +1213,7 @@ mod tests {
         };
         let lineage = PackageLineage {
             commit: Some(CommitState {
-                timestamp: chrono::Utc::now(),
+                timestamp: jiff::Timestamp::now(),
                 hash: fixtures::manifest::TOP_HASH.to_string(),
                 prev_hashes: Vec::new(),
             }),
@@ -1127,6 +1263,7 @@ mod tests {
                     .into(),
                     size: file_content.len() as u64,
                     meta: Some(serde_json::Value::Null),
+                    meta_numbers: crate::manifest::RawNumbers::default(),
                 })
                 .await?;
         }
@@ -1169,6 +1306,73 @@ mod tests {
             latest.body.collect().await?.to_vec(),
             "a".repeat(64).as_bytes()
         );
+        Ok(())
+    }
+
+    /// The folders' metadata goes up with the manifest, and the top hash, which
+    /// is the one the commit named, does not change for it.
+    #[test(tokio::test)]
+    async fn test_push_keeps_the_folder_metadata() -> Res {
+        let manifest_uri = ManifestUri {
+            bucket: "b".to_string(),
+            namespace: ("a", "c").into(),
+            hash: "__FOO__".to_string(),
+            origin: None,
+        };
+        let lineage = PackageLineage {
+            commit: Some(CommitState {
+                timestamp: jiff::Timestamp::now(),
+                hash: fixtures::top_hash::EMPTY_NULL_TOP_HASH.to_string(),
+                prev_hashes: Vec::new(),
+            }),
+            remote_uri: Some(manifest_uri),
+            ..PackageLineage::default()
+        };
+        let paths = paths::DomainPaths::new(std::path::absolute("/foo")?);
+        let storage = MockStorage::default();
+        let remote = MockRemote::default();
+        remote
+            .put_object(
+                None,
+                &S3Uri::try_from("s3://b/.quilt/packages/__FOO__")?,
+                br#"{"version": "v0"}"#.to_vec(),
+            )
+            .await?;
+        remote
+            .put_object(
+                None,
+                &S3Uri::try_from("s3://b/.quilt/named_packages/a/c/latest")?,
+                fixtures::top_hash::EMPTY_NULL_TOP_HASH.as_bytes().to_vec(),
+            )
+            .await?;
+        let mut manifest = Manifest::default();
+        manifest.header.user_meta = Some(serde_json::Value::Null);
+        let (meta, meta_numbers) =
+            crate::manifest::RawNumbers::parse(r#"{"n": 123456789012345678901234567890}"#)?;
+        let mut dir = crate::manifest::DirMeta::new(crate::LogicalKey::new("data")?, meta);
+        dir.meta_numbers = meta_numbers;
+        manifest.dir_meta = vec![dir];
+
+        let result = push_package(
+            lineage,
+            manifest.clone(),
+            &paths,
+            &storage,
+            &remote,
+            None,
+            HostConfig::default(),
+        )
+        .await?;
+
+        assert!(result.certified_latest);
+        let cached = paths
+            .cached_manifests_dir("b")
+            .join(fixtures::top_hash::EMPTY_NULL_TOP_HASH);
+        let pushed = Manifest::from_path(&storage, &cached).await?;
+        assert_eq!(pushed.dir_meta, manifest.dir_meta);
+        assert!(!pushed.dir_meta[0].meta_numbers.is_empty());
+        let text = pushed.try_to_jsonlines()?;
+        assert!(text.contains("123456789012345678901234567890"), "{text}");
         Ok(())
     }
 }

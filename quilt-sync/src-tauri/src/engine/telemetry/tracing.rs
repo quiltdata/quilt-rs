@@ -501,7 +501,8 @@ mod tests {
     fn shutdown_waits_for_the_writer_to_drain() {
         // Enough that the worker is certainly behind, few enough that draining
         // stays inside the appender's own one-second cap on the shutdown wait.
-        const LINES: usize = 100;
+        // Some CI runners sleep 10 ms or more when asked for 1 ms.
+        const LINES: usize = 20;
 
         let written = Arc::new(Mutex::new(Vec::new()));
         let (writer, guard) = tracing_appender::non_blocking(SlowWriter(Arc::clone(&written)));

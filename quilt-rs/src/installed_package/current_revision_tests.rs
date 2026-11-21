@@ -1,4 +1,4 @@
-use chrono::Utc;
+use jiff::Timestamp;
 use tempfile::TempDir;
 use test_log::test;
 
@@ -14,9 +14,20 @@ async fn current_revision_reads_only_the_selected_installed_manifest() -> Res {
     domain.set_home(temp_dir.path()).await?;
 
     let namespace: Namespace = ("demo", "sales").into();
-    let before = Utc::now();
+    // The revision time is the manifest file's modified time. Some Linux
+    // filesystems stamp files from a clock that lags `Timestamp::now()` by a few
+    // milliseconds, so the lower bound is a file written just before.
+    let marker = temp_dir.path().join("before");
+    tokio::fs::write(&marker, b"").await?;
+    let before: Timestamp =
+        crate::time::from_system(tokio::fs::metadata(&marker).await?.modified()?)?;
     let (package, _) = domain
-        .create_package(namespace.clone(), None, Some("initial import".to_string()))
+        .create_package(
+            namespace.clone(),
+            None,
+            Some("initial import".to_string()),
+            UserMeta::Clear,
+        )
         .await?;
     let snapshot = package.lineage().await?;
     let expected_hash = snapshot
@@ -49,7 +60,7 @@ async fn current_revision_reads_only_the_selected_installed_manifest() -> Res {
         .current_revision(&snapshot)
         .await?
         .expect("a created package has a current revision");
-    let after = Utc::now();
+    let after = Timestamp::now();
 
     assert_eq!(revision.hash, expected_hash);
     assert_eq!(revision.message.as_deref(), Some("initial import"));
@@ -67,7 +78,12 @@ async fn current_revision_prefers_a_pending_commit_over_the_remote_hash() -> Res
 
     let namespace: Namespace = ("demo", "pending").into();
     let (package, _) = domain
-        .create_package(namespace.clone(), None, Some("local work".to_string()))
+        .create_package(
+            namespace.clone(),
+            None,
+            Some("local work".to_string()),
+            UserMeta::Clear,
+        )
         .await?;
     let pending_hash = package
         .lineage()

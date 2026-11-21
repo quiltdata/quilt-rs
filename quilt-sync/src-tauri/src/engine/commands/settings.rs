@@ -13,7 +13,6 @@ use crate::engine::fswatcher::FsWatcherSettings;
 use crate::engine::log_settings::LogEnv;
 use crate::engine::log_settings::LogLevel;
 use crate::engine::log_settings::LogSettings;
-use crate::engine::model::QuiltModel;
 use crate::engine::publish_settings::PublishSettings;
 use crate::engine::quilt;
 use crate::engine::services::Services;
@@ -346,7 +345,6 @@ pub struct SettingsData {
 }
 
 pub async fn get_settings_data(s: &Services) -> Result<SettingsData, String> {
-    let m = &*s.model;
     let app = &s.app;
     let publish = &s.publish_settings;
     let autosync_settings = &s.autosync_settings;
@@ -356,14 +354,7 @@ pub async fn get_settings_data(s: &Services) -> Result<SettingsData, String> {
 
     let data_dir = s.data_dir.clone();
 
-    let home_dir = m
-        .get_quilt()
-        .lock()
-        .await
-        .get_home()
-        .await
-        .ok()
-        .map(|h| h.as_ref().display().to_string());
+    let home_dir = s.home_dir().await.map(|home| home.display().to_string());
 
     let auth_hosts = quilt::paths::list_auth_hosts(&data_dir);
     // A broken file costs the dropdown its value, not the whole page; startup
@@ -373,7 +364,7 @@ pub async fn get_settings_data(s: &Services) -> Result<SettingsData, String> {
     let autosync_data = AutosyncSettingsData::from(autosync_settings.read().await.clone());
     let fswatcher_data = FsWatcherSettingsData::from(fswatcher_settings.read().await.clone());
     let experimental_data = ExperimentalSettingsData::from(experimental.read().await.clone());
-    let user_rules = m.get_quilt().lock().await.user_quiltignore();
+    let user_rules = s.user_rules();
     let tasks = TaskSettingsData::read(&data_dir).await;
 
     Ok(SettingsData {
@@ -423,14 +414,14 @@ async fn save_task_settings(
 /// The file watcher sees the user-wide file change and checks every package
 /// again.
 pub async fn set_default_ignore_rules(s: &Services, off: Vec<String>) -> Result<(), String> {
-    let m = &*s.model;
-    // A clone, so the domain's mutex is not held while the file's lock waits.
-    let domain = m.get_quilt().lock().await.clone();
     let off: Vec<&str> = off.iter().map(String::as_str).collect();
-    domain
-        .set_default_rules(&off)
-        .await
-        .map_err(|e| e.to_string())
+    quilt::quiltignore::set_user_default_rules(
+        &quilt::io::storage::LocalStorage::new(),
+        &quilt::paths::DomainPaths::new(s.data_dir.clone()),
+        &off,
+    )
+    .await
+    .map_err(|e| e.to_string())
 }
 
 /// The first line of a user-wide rules file *Open file* creates.
@@ -440,8 +431,7 @@ const USER_RULES_HEADER: &str =
 /// Open the user-wide rules file in the default application, creating it
 /// first if missing.
 pub async fn open_user_ignore_rules(s: &Services) -> Result<(), String> {
-    let m = &*s.model;
-    let file = m.get_quilt().lock().await.user_quiltignore();
+    let file = s.user_rules();
     if !file.exists() {
         quilt::quiltignore::append_lines(&file, &[USER_RULES_HEADER.to_string()])
             .map_err(|e| e.to_string())?;

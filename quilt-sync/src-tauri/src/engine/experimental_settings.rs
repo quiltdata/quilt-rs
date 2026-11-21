@@ -21,7 +21,8 @@ const FILE_NAME: &str = "experimental_settings.json";
 ///
 /// Everything here defaults to **off**. An experiment is shown to someone who
 /// went looking for it, not shipped quietly to everyone with a switch to turn
-/// it back off.
+/// it back off. The one exception is the dataspace engine's opt-out, which
+/// is a way back for one release after the cutover, not an experiment.
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
 pub struct ExperimentalSettings {
     /// Whether the Settings page shows the Agent tasks card. Only the card:
@@ -29,9 +30,28 @@ pub struct ExperimentalSettings {
     /// turning it off leaves that file as it is.
     #[serde(default)]
     pub agent_tasks: bool,
+    /// Whether the engine keeps to the ref API rather than the dataspace
+    /// API, which it runs on since the cutover: see
+    /// [`crate::engine::dataspace`]. The opt-out lasts one release, until
+    /// the ref API is retired. Read once, when the app starts, so a change
+    /// takes effect at the next start. No page sets it: it is for whoever
+    /// edits the file.
+    ///
+    /// Its own key, not a `false` under the `dataspace` key the switch had
+    /// before the cutover: every save wrote that key, so a `false` there says
+    /// only that the file was saved while the switch was off by default. That
+    /// key is now ignored, and dropped on the next save.
+    #[serde(default)]
+    pub dataspace_opt_out: bool,
 }
 
 impl ExperimentalSettings {
+    /// Whether the engine runs on the dataspace API: unless the file opts
+    /// out.
+    pub fn dataspace(&self) -> bool {
+        !self.dataspace_opt_out
+    }
+
     fn file_path(data_dir: &Path) -> PathBuf {
         data_dir.join(FILE_NAME)
     }
@@ -85,7 +105,10 @@ mod tests {
     #[tokio::test]
     async fn roundtrip() -> Result<(), Error> {
         let dir = TempDir::new().unwrap();
-        let settings = ExperimentalSettings { agent_tasks: true };
+        let settings = ExperimentalSettings {
+            agent_tasks: true,
+            dataspace_opt_out: true,
+        };
         settings.save(dir.path()).await?;
         assert_eq!(ExperimentalSettings::load(dir.path()).await?, settings);
         Ok(())
@@ -112,9 +135,36 @@ mod tests {
         Ok(())
     }
 
+    /// Since the cutover the dataspace engine is on unless the file opts
+    /// out. The `false` every save wrote under the old `dataspace` key is
+    /// not an opt-out.
+    #[tokio::test]
+    async fn the_dataspace_switch_is_on_unless_the_file_opts_out() -> Result<(), Error> {
+        let dir = TempDir::new().unwrap();
+        let file = dir.path().join(FILE_NAME);
+        assert!(ExperimentalSettings::load(dir.path()).await?.dataspace());
+        for on in [
+            r#"{"agent_tasks":true}"#,
+            r#"{"agent_tasks":false,"dataspace":false}"#,
+            r#"{"dataspace_opt_out":false}"#,
+        ] {
+            tokio::fs::write(&file, on).await?;
+            assert!(
+                ExperimentalSettings::load(dir.path()).await?.dataspace(),
+                "{on}"
+            );
+        }
+        tokio::fs::write(&file, br#"{"dataspace_opt_out":true}"#).await?;
+        assert!(!ExperimentalSettings::load(dir.path()).await?.dataspace());
+        Ok(())
+    }
+
     #[test]
     fn patch_leaves_untouched_flags_alone() {
-        let mut s = ExperimentalSettings { agent_tasks: true };
+        let mut s = ExperimentalSettings {
+            agent_tasks: true,
+            dataspace_opt_out: true,
+        };
         s.patch(None);
         assert!(
             s.agent_tasks,
@@ -122,6 +172,10 @@ mod tests {
         );
         s.patch(Some(false));
         assert!(!s.agent_tasks);
+        assert!(
+            s.dataspace_opt_out,
+            "the switch has no patch, so none resets it"
+        );
     }
 
     /// A retired experiment leaves its key in files written before it went.
@@ -138,7 +192,13 @@ mod tests {
         .await?;
 
         let loaded = ExperimentalSettings::load(dir.path()).await?;
-        assert_eq!(loaded, ExperimentalSettings { agent_tasks: true });
+        assert_eq!(
+            loaded,
+            ExperimentalSettings {
+                agent_tasks: true,
+                dataspace_opt_out: false,
+            }
+        );
 
         loaded.save(dir.path()).await?;
         let written = tokio::fs::read_to_string(&path).await?;

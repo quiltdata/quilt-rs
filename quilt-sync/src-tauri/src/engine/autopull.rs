@@ -4,9 +4,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::time::SystemTime;
 
-use chrono::DateTime;
-use chrono::Utc;
 use futures_util::StreamExt;
+use jiff::Timestamp;
 use quilt_uri::Host;
 use quilt_uri::Namespace;
 use tokio::sync::RwLock;
@@ -117,7 +116,7 @@ pub(crate) struct Clocks {
     /// failing ticks would push the derived deadline further and further into
     /// the past; and it is `None` until the first tick *completes*, so an
     /// enabled toggle would read idle for the first cadence of every session.
-    pub next_pull_at: RwLock<Option<DateTime<Utc>>>,
+    pub next_pull_at: RwLock<Option<Timestamp>>,
     /// The packages counting down to a publish. Their deadlines are not kept
     /// here: each is the stored last-change time plus the wait as it is when
     /// read, so a new wait applies at once.
@@ -181,14 +180,14 @@ impl WatcherInner {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PackageAutosync {
     Waiting {
-        publish_at: DateTime<Utc>,
+        publish_at: Timestamp,
         /// The restart check proved it changed while the app was closed.
         changed_while_closed: bool,
     },
     Publishing,
     Retrying {
         error: String,
-        next_try_at: DateTime<Utc>,
+        next_try_at: Timestamp,
     },
     Paused(PausedReason),
     /// It has changes and publishing is off.
@@ -207,7 +206,9 @@ pub struct WatcherFacts {
     pub publish_enabled: bool,
     /// Every paused namespace with its reason, from one read of the map.
     pub paused: Vec<(Namespace, PausedReason)>,
-    pub next_pull_at: Option<DateTime<Utc>>,
+    /// Each package's last-change time, the one autopublish waits from.
+    pub last_changes: BTreeMap<Namespace, SystemTime>,
+    pub next_pull_at: Option<Timestamp>,
     /// Each package with something to show, by namespace.
     pub packages: Vec<(Namespace, PackageAutosync)>,
     /// The cadence the loop is actually sleeping: the one check interval.
@@ -279,6 +280,7 @@ impl Watcher {
         last_change: last_change::LastChange,
         action_needed: Arc<ActionNeeded>,
         outside: Arc<crate::engine::record::Outside>,
+        dataspace: Option<Arc<crate::engine::dataspace::Dataspace>>,
     ) -> (Self, watch::Receiver<SyncTrayStatus>) {
         let (tx, rx) = watch::channel(SyncTrayStatus::default());
         let aggregator = Arc::new(SyncTrayAggregator::new(tx));
@@ -309,24 +311,27 @@ impl Watcher {
             last_change,
             tasks,
         });
-        // Its own task: a package whose catalog is slow to answer its host
-        // config must not hold back the loop.
-        let walk_inner = Arc::clone(&inner);
-        let walk_model = Arc::clone(&model);
-        crate::engine::events::spawn(async move {
-            Box::pin(walk_every_package(&*walk_model, &walk_inner)).await;
-        });
-        let timer_inner = Arc::clone(&inner);
-        let timer_model = Arc::clone(&model);
-        let timer_roles = Arc::clone(&roles);
-        crate::engine::events::spawn(async move {
-            Box::pin(publish_timer::run(
-                &*timer_model,
-                &timer_roles,
-                &timer_inner,
-            ))
-            .await;
-        });
+        // The ref engine's own walk and timer; the dataspace engine has its runner.
+        if dataspace.is_none() {
+            // Its own task: a package whose catalog is slow to answer its host
+            // config must not hold back the loop.
+            let walk_inner = Arc::clone(&inner);
+            let walk_model = Arc::clone(&model);
+            crate::engine::events::spawn(async move {
+                Box::pin(walk_every_package(&*walk_model, &walk_inner)).await;
+            });
+            let timer_inner = Arc::clone(&inner);
+            let timer_model = Arc::clone(&model);
+            let timer_roles = Arc::clone(&roles);
+            crate::engine::events::spawn(async move {
+                Box::pin(publish_timer::run(
+                    &*timer_model,
+                    &timer_roles,
+                    &timer_inner,
+                ))
+                .await;
+            });
+        }
         let task_inner = Arc::clone(&inner);
         crate::engine::events::spawn(async move {
             loop {
@@ -341,6 +346,23 @@ impl Watcher {
                 tokio::time::sleep(cadence).await;
                 let _passes = task_inner.clocks.passes.lock().await;
                 task_inner.aggregator.note_tick_started();
+                // With the dataspace engine on, its runner ticks in place of
+                // the ref engine's: the Domain's dataspaces on autosync, each
+                // entry as its access says.
+                if let Some(ds) = &dataspace {
+                    let (pull, push) = {
+                        let settings = task_inner.settings.read().await;
+                        (settings.pull.enabled, settings.push.enabled)
+                    };
+                    match Box::pin(crate::engine::dataspace::autosync::tick(ds, pull, push)).await {
+                        Ok(_) => task_inner.aggregator.note_tick_ended_ok(),
+                        Err(err) => {
+                            warn!("autosync: dataspace tick error: {err}");
+                            task_inner.aggregator.note_tick_ended_err();
+                        }
+                    }
+                    continue;
+                }
                 // Box the tick future: it is the largest in the app and lives
                 // on the spawn task's stack across every iteration of this
                 // loop, so it exceeds the `large_futures` budget. See
@@ -579,11 +601,20 @@ impl Watcher {
         let settings = self.inner.settings.read().await.clone();
         let wait = Duration::from_secs(settings.push.idle_timeout_secs);
         let paused: BTreeMap<Namespace, PausedReason> = self.inner.paused.read().await.clone();
+        let last_changes = last_change_times(&self.inner).await;
         WatcherFacts {
             pull_enabled: settings.pull.enabled,
             publish_enabled: settings.push.enabled,
-            packages: package_states(&self.inner, &paused, settings.push.enabled, wait).await,
+            packages: package_states(
+                &self.inner,
+                &paused,
+                &last_changes,
+                settings.push.enabled,
+                wait,
+            )
+            .await,
             paused: paused.into_iter().collect(),
+            last_changes,
             next_pull_at: *self.inner.clocks.next_pull_at.read().await,
             pull_interval: pull_cadence(&settings.pull),
             publish_interval: wait,
@@ -676,7 +707,17 @@ impl Watcher {
 /// loop never returns and cannot be driven from a test, and an untested
 /// rule is a rule that survives only as prose.
 pub(crate) async fn arm_next_pull(inner: &WatcherInner, cadence: Duration) {
-    *inner.clocks.next_pull_at.write().await = Some(Utc::now() + cadence);
+    *inner.clocks.next_pull_at.write().await = Some(Timestamp::now() + cadence);
+}
+
+async fn last_change_times(inner: &WatcherInner) -> BTreeMap<Namespace, SystemTime> {
+    let mut times = BTreeMap::new();
+    for namespace in inner.last_change.namespaces().await {
+        if let Some(at) = inner.last_change.get(&namespace).await {
+            times.insert(namespace, at);
+        }
+    }
+    times
 }
 
 /// Each package's autosync state, with `wait` as it is now. The first that
@@ -689,6 +730,7 @@ pub(crate) async fn arm_next_pull(inner: &WatcherInner, cadence: Duration) {
 pub(crate) async fn package_states(
     inner: &WatcherInner,
     paused: &BTreeMap<Namespace, PausedReason>,
+    last_changes: &BTreeMap<Namespace, SystemTime>,
     push_enabled: bool,
     wait: Duration,
 ) -> Vec<(Namespace, PackageAutosync)> {
@@ -699,17 +741,16 @@ pub(crate) async fn package_states(
         .map(|activity| activity.namespace);
     let waiting = inner.clocks.publish_waiting.read().await.clone();
     let backoff = inner.backoff.read().await.clone();
-    let mut namespaces: BTreeSet<Namespace> =
-        inner.last_change.namespaces().await.into_iter().collect();
+    let mut namespaces: BTreeSet<Namespace> = last_changes.keys().cloned().collect();
     namespaces.extend(waiting.iter().cloned());
     namespaces.extend(paused.keys().cloned());
     namespaces.extend(backoff.keys().cloned());
     namespaces.extend(publishing.clone());
 
-    let (now, wall) = (std::time::Instant::now(), Utc::now());
+    let (now, wall) = (std::time::Instant::now(), Timestamp::now());
     let mut states = Vec::new();
     for namespace in namespaces {
-        let last_change = inner.last_change.get(&namespace).await;
+        let last_change = last_changes.get(&namespace).copied();
         let has_changes = waiting.contains(&namespace) || last_change.is_some();
         let state = if publishing.as_ref() == Some(&namespace) {
             PackageAutosync::Publishing
@@ -725,10 +766,11 @@ pub(crate) async fn package_states(
                 next_try_at: wall + failed.next_attempt.saturating_duration_since(now),
             }
         } else if waiting.contains(&namespace)
-            && let Some(at) = publish_deadline(last_change, wait)
+            && let Some(at) =
+                publish_deadline(last_change, wait).and_then(|at| Timestamp::try_from(at).ok())
         {
             PackageAutosync::Waiting {
-                publish_at: at.into(),
+                publish_at: at,
                 changed_while_closed: inner.last_change.changed_while_closed(&namespace),
             }
         } else {
@@ -741,10 +783,11 @@ pub(crate) async fn package_states(
 
 /// The earliest deadline among the waiting packages, as the card would show it.
 #[cfg(test)]
-pub(crate) async fn next_publish_at(inner: &WatcherInner, wait: Duration) -> Option<DateTime<Utc>> {
+pub(crate) async fn next_publish_at(inner: &WatcherInner, wait: Duration) -> Option<Timestamp> {
     let paused = inner.paused.read().await.clone();
     let push_enabled = inner.settings.read().await.push.enabled;
-    package_states(inner, &paused, push_enabled, wait)
+    let last_changes = last_change_times(inner).await;
+    package_states(inner, &paused, &last_changes, push_enabled, wait)
         .await
         .into_iter()
         .filter_map(|(_, state)| match state {
@@ -768,6 +811,16 @@ pub(crate) async fn observe_walk(
     status: &crate::engine::quilt::lineage::InstalledPackageStatus,
     pending_commit: last_change::PendingCommit,
 ) {
+    // An unread folder lists no change because nothing was checked. Observed
+    // as a clean tree, it would drop or restart the publish countdown. The
+    // startup walk comes through here too.
+    if let Some(home) = status.unavailable_home() {
+        debug!(
+            "autosync: {namespace}: working folder {} unavailable, its last change is kept",
+            home.display()
+        );
+        return;
+    }
     let changed_at = inner
         .last_change
         .observe(namespace, home, status, pending_commit)
@@ -873,15 +926,13 @@ mod tests {
                 Ok(listed
                     .iter()
                     .map(|ns| {
-                        crate::engine::quilt::LocalDomain::new(std::path::PathBuf::new())
-                            .create_installed_package(ns.clone())
+                        crate::engine::model::mocks::nowhere().create_installed_package(ns.clone())
                     })
                     .collect())
             });
         model.expect_get_installed_package().returning(|ns| {
             Ok(Some(
-                crate::engine::quilt::LocalDomain::new(std::path::PathBuf::new())
-                    .create_installed_package(ns.clone()),
+                crate::engine::model::mocks::nowhere().create_installed_package(ns.clone()),
             ))
         });
         model
@@ -912,6 +963,47 @@ mod tests {
         }
     }
 
+    /// A package whose folder is missing at launch keeps the last-change time
+    /// it had: the startup walk reads its empty change list as nothing checked,
+    /// not as a clean tree.
+    #[tokio::test]
+    async fn the_startup_walk_keeps_the_last_change_of_a_missing_folder() {
+        let ns: Namespace = ("acme", "demo").into();
+        let mut model = crate::engine::model::MockQuiltModel::new();
+        model.expect_get_installed_packages_list().returning(|| {
+            Ok(vec![
+                crate::engine::model::mocks::nowhere()
+                    .create_installed_package(("acme", "demo").into()),
+            ])
+        });
+        model.expect_get_installed_package().returning(|ns| {
+            Ok(Some(
+                crate::engine::model::mocks::nowhere().create_installed_package(ns.clone()),
+            ))
+        });
+        model
+            .expect_get_installed_package_lineage()
+            .returning(|_| Ok(crate::engine::quilt::lineage::PackageLineage::default()));
+        model.expect_recompute_local_status().returning(|_, _| {
+            Ok(crate::engine::quilt::lineage::InstalledPackageStatus {
+                working_copy: crate::engine::quilt::lineage::WorkingCopy::Unavailable(
+                    "/Volumes/gone/demo".into(),
+                ),
+                ..crate::engine::quilt::lineage::InstalledPackageStatus::default()
+            })
+        });
+        let inner = WatcherInner {
+            last_change: last_change::LastChange::changed_for_test(&ns, Duration::from_hours(1))
+                .await,
+            ..inner_for_tests(AutosyncSettings::default())
+        };
+        let before = inner.last_change.get(&ns).await.expect("a last change");
+
+        walk_every_package(&model, &inner).await;
+
+        assert_eq!(inner.last_change.get(&ns).await, Some(before));
+    }
+
     /// A model whose walks each take a second, counting how many run at once.
     struct SlowWalks {
         quilt: tokio::sync::Mutex<crate::engine::quilt::LocalDomain>,
@@ -923,9 +1015,7 @@ mod tests {
     impl SlowWalks {
         fn new(count: usize) -> Self {
             Self {
-                quilt: tokio::sync::Mutex::new(crate::engine::quilt::LocalDomain::new(
-                    std::path::PathBuf::new(),
-                )),
+                quilt: tokio::sync::Mutex::new(crate::engine::model::mocks::nowhere()),
                 packages: (0..count)
                     .map(|i| ("acme", format!("pkg{i}").as_str()).into())
                     .collect(),
@@ -935,8 +1025,7 @@ mod tests {
         }
 
         fn package(namespace: &Namespace) -> crate::engine::quilt::InstalledPackage {
-            crate::engine::quilt::LocalDomain::new(std::path::PathBuf::new())
-                .create_installed_package(namespace.clone())
+            crate::engine::model::mocks::nowhere().create_installed_package(namespace.clone())
         }
     }
 
@@ -949,6 +1038,10 @@ mod tests {
 
         fn get_quilt(&self) -> &tokio::sync::Mutex<crate::engine::quilt::LocalDomain> {
             &self.quilt
+        }
+
+        fn remote(&self) -> Arc<crate::engine::quilt::io::remote::RemoteS3> {
+            crate::engine::model::mocks::nowhere().remote_handle()
         }
 
         async fn get_installed_packages_list(
@@ -1240,8 +1333,7 @@ mod tests {
         let mut model = crate::engine::model::MockQuiltModel::new();
         model.expect_get_installed_package().returning(|ns| {
             Ok(Some(
-                crate::engine::quilt::LocalDomain::new(std::path::PathBuf::new())
-                    .create_installed_package(ns.clone()),
+                crate::engine::model::mocks::nowhere().create_installed_package(ns.clone()),
             ))
         });
         model
@@ -1467,7 +1559,7 @@ mod tests {
             settings.pull.closed_secs = 33;
             settings.push.idle_timeout_secs = 44;
         }
-        let pull_at = Utc::now() + Duration::from_mins(15);
+        let pull_at = Timestamp::now() + Duration::from_mins(15);
         *watcher.inner_for_test().clocks.next_pull_at.write().await = Some(pull_at);
         // Two namespaces waiting, changed at different moments, each with its
         // own deadline: the last change plus the wait of 44 s.
@@ -1500,7 +1592,7 @@ mod tests {
             .await
             .extend([early.clone(), late.clone()]);
         let deadline = |after: u64| PackageAutosync::Waiting {
-            publish_at: DateTime::<Utc>::from(early_change + Duration::from_secs(after)),
+            publish_at: Timestamp::try_from(early_change + Duration::from_secs(after)).unwrap(),
             changed_while_closed: false,
         };
 
@@ -1559,7 +1651,7 @@ mod tests {
             settings.push.enabled = true;
             settings.push.idle_timeout_secs = 600;
         }
-        let before = DateTime::<Utc>::from(last_change::now());
+        let before = Timestamp::try_from(last_change::now()).unwrap();
 
         watcher
             .note_committed(&ns, last_change::PendingCommit::At(SystemTime::now()))
@@ -1569,6 +1661,28 @@ mod tests {
             .await
             .expect("the card counts down to the push");
         assert!(deadline >= before + Duration::from_secs(600));
+    }
+
+    #[tokio::test]
+    async fn the_last_changes_are_the_times_autopublish_waits_from() {
+        let watcher = Watcher::new_for_test(Arc::new(LogReporter));
+        let ns: Namespace = ("acme", "demo").into();
+        let at = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        watcher
+            .inner_for_test()
+            .last_change
+            .store_for_test()
+            .record_change(
+                &ns,
+                at,
+                crate::engine::quilt::state_store::ChangeSource::Edit,
+            )
+            .await;
+
+        assert_eq!(
+            watcher.main_page_facts().await.last_changes,
+            BTreeMap::from([(ns, at)])
+        );
     }
 
     #[tokio::test]
@@ -1593,14 +1707,14 @@ mod tests {
             .await;
         let unseen: Namespace = ("acme", "unseen").into();
         inner.aggregator.note_status(&unseen, true);
-        let before = DateTime::<Utc>::from(last_change::now());
+        let before = Timestamp::try_from(last_change::now()).unwrap();
 
         watcher.note_publishing_on().await;
 
         for namespace in [&ns, &unseen] {
             let at = inner.last_change.get(namespace).await.expect("moved");
             assert!(
-                DateTime::<Utc>::from(at) >= before,
+                Timestamp::try_from(at).unwrap() >= before,
                 "{namespace} moved to now"
             );
         }
@@ -1664,7 +1778,7 @@ mod tests {
         assert_eq!(
             state_of(&watcher, &ns).await,
             Some(PackageAutosync::Waiting {
-                publish_at: DateTime::<Utc>::from(at + Duration::from_secs(600)),
+                publish_at: Timestamp::try_from(at + Duration::from_secs(600)).unwrap(),
                 changed_while_closed: false,
             })
         );
@@ -1733,14 +1847,14 @@ mod tests {
                 error: "Could not reach S3".to_string(),
             },
         );
-        let before = Utc::now();
+        let before = Timestamp::now();
         let Some(PackageAutosync::Retrying { error, next_try_at }) = state_of(&watcher, &ns).await
         else {
             panic!("expected retrying");
         };
         assert_eq!(error, "Could not reach S3");
         assert!(next_try_at > before + Duration::from_secs(25));
-        assert!(next_try_at <= Utc::now() + Duration::from_secs(30));
+        assert!(next_try_at <= Timestamp::now() + Duration::from_secs(30));
     }
 
     #[tokio::test]

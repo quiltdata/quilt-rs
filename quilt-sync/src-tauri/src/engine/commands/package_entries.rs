@@ -40,8 +40,19 @@ pub struct IgnoredByData {
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum RuleSourceData {
     Default,
-    User { line: u64 },
-    Package { line: u64 },
+    User {
+        line: u64,
+    },
+    Package {
+        line: u64,
+    },
+    Contract,
+    Extend {
+        line: u64,
+    },
+    /// A folder holding a `data.toml` of its own: another dataspace, which
+    /// is never packaged whatever any rule says (25o item 7).
+    NestedDataspace,
 }
 
 impl From<&quilt::quiltignore::IgnoredBy> for IgnoredByData {
@@ -53,6 +64,8 @@ impl From<&quilt::quiltignore::IgnoredBy> for IgnoredByData {
                 RuleSource::Default => RuleSourceData::Default,
                 RuleSource::User { line, .. } => RuleSourceData::User { line },
                 RuleSource::Package { line } => RuleSourceData::Package { line },
+                RuleSource::Contract => RuleSourceData::Contract,
+                RuleSource::Extend { line } => RuleSourceData::Extend { line },
             },
         }
     }
@@ -207,19 +220,25 @@ pub fn entry_list(
         });
     }
 
-    // Sort every entry by path before capping, so the loaded rows are the
-    // first paths rather than whichever change class filled the list first.
-    entries.sort_by(|a, b| a.filename.cmp(&b.filename));
-    let counts = EntryCounts::of(&entries);
-    let total = entries.len();
-    entries.truncate(ENTRIES_CAP);
-    let truncated = total > entries.len();
+    EntryList::of(entries)
+}
 
-    EntryList {
-        entries,
-        counts,
-        total,
-        truncated,
+impl EntryList {
+    /// Every entry a package has, sorted, counted, then capped.
+    pub fn of(mut entries: Vec<InstalledPackageEntryData>) -> Self {
+        // Sort every entry by path before capping, so the loaded rows are the
+        // first paths rather than whichever change class filled the list first.
+        entries.sort_by(|a, b| a.filename.cmp(&b.filename));
+        let counts = EntryCounts::of(&entries);
+        let total = entries.len();
+        entries.truncate(ENTRIES_CAP);
+        let truncated = total > entries.len();
+        Self {
+            entries,
+            counts,
+            total,
+            truncated,
+        }
     }
 }
 

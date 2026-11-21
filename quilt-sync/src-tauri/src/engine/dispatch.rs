@@ -15,12 +15,13 @@ use serde_json::Value;
 use crate::engine::action_needed::Entry as ActionNeededEntry;
 use crate::engine::autopull::activity::AutopullActivity;
 use crate::engine::commands::{
-    AccountHost, AutosyncPatch, CommitData, CommitViolation, CommitWorkflows, FreedSpace,
-    KeepingScope, LoginData, LoginErrorData, MainPageAccounts, MainPagePackageRefresh,
-    MainPagePackages, MainPageRecentFiles, MainPageWatcher, NotDownloaded, PackagePageData,
-    PathCheck, RecordRow, RemotePackageResult, RevisionHistoryData, RolesData, SetRemoteResponse,
-    SettingsData, SetupData, StopIgnoringPreview, StopIgnoringScope, StorageSize,
+    AccountHost, AutosyncPatch, CommitData, CommitResponse, CommitViolation, CommitWorkflows,
+    FreedSpace, KeepingScope, LoginData, LoginErrorData, MainPageAccounts, MainPagePackageRefresh,
+    MainPagePackages, MainPageWatcher, NotDownloaded, PackagePageData, PathCheck, RecordRow,
+    RemotePackageResult, RevisionHistoryData, RolesData, SetRemoteResponse, SettingsData,
+    SetupData, StopIgnoringPreview, StopIgnoringScope, StorageSize,
 };
+use crate::engine::commands::{ConflictRow, Decision, UnattachedCommit};
 use crate::engine::desktop::{Desktop, ForeignHandler, NOT_AVAILABLE};
 use crate::engine::log_settings::LogLevel;
 use crate::engine::navigation::Navigation;
@@ -166,8 +167,7 @@ commands! {
         refresh_main_page_account(host: String) -> AccountHost;
         refresh_main_page_package(namespace: String) -> MainPagePackageRefresh;
         get_main_page_watcher() -> MainPageWatcher;
-        get_main_page_recent_files() -> MainPageRecentFiles;
-        package_commit(namespace: String, message: String, metadata: String, workflow: WorkflowIntent, uri: Option<S3PackageUri>) -> String;
+        package_commit(namespace: String, message: String, metadata: String, workflow: WorkflowIntent, uri: Option<S3PackageUri>) -> CommitResponse;
         certify_latest(namespace: String, uri: Option<S3PackageUri>) -> String;
         reset_local(namespace: String, uri: Option<S3PackageUri>) -> String;
         package_publish(namespace: String, uri: Option<S3PackageUri>) -> String;
@@ -225,6 +225,12 @@ commands! {
         check_for_update() -> Option<UpdateInfo>;
         check_path(path: String) -> PathCheck;
         complete_path(prefix: String) -> Vec<String>;
+        get_conflicts() -> Vec<ConflictRow>;
+        decide_conflict(package: String, key: String, decision: Decision) -> ();
+        get_unattached_commits() -> Vec<UnattachedCommit>;
+        reattach_commit(namespace: String, hash: String) -> String;
+        get_local_registry() -> Option<String>;
+        rename_local_registry(name: String) -> String;
     }
     desktop {
         open_directory_picker() -> PathBuf;

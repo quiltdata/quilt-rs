@@ -42,6 +42,7 @@ pub(super) async fn onto_latest<M: QuiltModel>(
         let Manifest {
             header,
             rows: latest_rows,
+            dir_meta: latest_dir_meta,
         } = model.browse_remote_manifest(&latest_uri).await?;
         let Some(user_meta) = header
             .user_meta
@@ -57,14 +58,35 @@ pub(super) async fn onto_latest<M: QuiltModel>(
             warn!("tasks: {namespace}: latest changed what the run changed; left Diverged");
             return Ok(false);
         };
+        let dir_meta = match quilt::flow::merge_dir_meta(
+            &base.dir_meta,
+            &outcome.dir_meta,
+            &latest_dir_meta,
+            &rows,
+        ) {
+            Ok(dir_meta) => dir_meta,
+            Err(quilt::flow::MergeDirMetaError::Paths(_)) => {
+                warn!("tasks: {namespace}: latest changed what the run changed; left Diverged");
+                return Ok(false);
+            }
+            Err(quilt::flow::MergeDirMetaError::Invalid(err)) => {
+                error!("tasks: {namespace}: merged folder metadata is not a valid tree: {err}");
+                return Err(err.into());
+            }
+        };
         let changes = crate::engine::record::changes_between(&latest_rows, &rows);
         let rebased = Manifest {
             header: ManifestHeader {
                 message: outcome.header.message.clone(),
                 user_meta: Some(user_meta),
+                user_meta_numbers: header
+                    .user_meta_numbers
+                    .without("/agent_exec/claim")
+                    .union(&outcome.header.user_meta_numbers.only("/agent_exec/claim")),
                 ..header
             },
             rows,
+            dir_meta,
         };
         let pushed = model.push_onto(&latest_uri, rebased).await?;
         // Each upload is a revision in the bucket, `latest` or not.

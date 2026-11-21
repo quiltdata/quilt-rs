@@ -15,7 +15,7 @@
    * its parent's. As a flex item without this it sizes to content, and a flex
    * item's automatic minimum is its max-content width, so a long path would push
    * the row past its container instead of ellipsising. Same reasoning, and the
-   * same fix, as `PackageRow` and `FileRow`. */
+   * same fix, as `PackageRow`. */
   width: 100%;
   min-height: var(--q-control-height);
   padding-right: var(--q-space-2);
@@ -50,8 +50,8 @@
 }
 
 /* The name of an openable row: a real button, so Enter and Space are the
- * platform's, wearing the name's own typography. `FileRow`'s path button makes
- * the same trade — the semantics are the button's, the look is the row's. */
+ * platform's, wearing the name's own typography — the semantics are the
+ * button's, the look is the row's. */
 .open {
   flex: 1 1 auto;
   min-width: 0;

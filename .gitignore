@@ -17,3 +17,9 @@ quilt-ui-kit/css/kit-modules.css
 # The storybook's Trunk output.
 quilt-ui-kit/dist/
 quilt-ui-kit/dist-pages/
+
+# What `maturin develop` and pytest leave in quilt-py.
+quilt-py/python/quilt/*.so
+quilt-py/python/quilt/*.pyd
+__pycache__/
+.venv/

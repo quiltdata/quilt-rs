@@ -6,6 +6,7 @@ pub mod error;
 #[cfg(any(test, feature = "test-support"))]
 pub mod fixtures;
 mod host;
+mod local;
 mod manifest;
 mod object;
 mod package;
@@ -14,13 +15,18 @@ mod s3;
 mod tag;
 
 pub use error::UriError;
+pub use error::mask_user;
 pub use host::Host;
+pub use local::LocalPackageUri;
+pub use local::check_local_registry_name;
 pub use manifest::ManifestUri;
 pub use object::ObjectUri;
+pub use package::MIN_HASH_PREFIX_LEN;
 pub use package::Namespace;
 pub use package::RevisionPointer;
 pub use package::S3PackageHandle;
 pub use package::S3PackageUri;
+pub use package::TOP_HASH_LEN;
 pub use package::is_top_hash;
 pub use s3::S3Uri;
 pub use s3::check_bucket;

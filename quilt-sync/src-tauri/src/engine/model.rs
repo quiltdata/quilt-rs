@@ -10,7 +10,6 @@ use tokio_stream::StreamExt;
 
 use crate::engine::error::Error;
 use crate::engine::quilt;
-use crate::engine::telemetry::prelude::*;
 
 use quilt_rs::RoleInfo;
 use quilt_rs::flow::UserMeta;
@@ -53,6 +52,8 @@ pub enum InstallOutcome {
 
 pub struct Model {
     quilt: sync::Mutex<quilt::LocalDomain>,
+    /// The domain's remote, held apart so auth never waits on the domain.
+    remote: std::sync::Arc<quilt::io::remote::RemoteS3>,
 }
 
 #[allow(
@@ -68,6 +69,11 @@ pub trait QuiltModel {
     type Locked: LockedOps;
 
     fn get_quilt(&self) -> &sync::Mutex<quilt::LocalDomain>;
+
+    /// The remote that signs in with the credentials the application's
+    /// folder keeps, shared by every engine: auth and roles go through it
+    /// without the ref path's domain.
+    fn remote(&self) -> std::sync::Arc<quilt::io::remote::RemoteS3>;
 
     /// Takes `package`'s lock if no other writer holds it, in this process or
     /// another; `None` while one does. Never waits.
@@ -197,6 +203,15 @@ pub trait QuiltModel {
             .await
             .browse_remote_manifest(remote_manifest)
             .await?)
+    }
+
+    /// The manifest `uri` names, read from its bucket through
+    /// [`QuiltModel::remote`] with no cache: no domain is opened.
+    async fn fetch_remote_manifest(
+        &self,
+        uri: &quilt_uri::ManifestUri,
+    ) -> Result<quilt::manifest::Manifest, Error> {
+        Ok(quilt::io::manifest::fetch_jsonl(&*self.remote(), uri).await?)
     }
 
     /// [`quilt::LocalDomain::push_onto`], with the domain released before
@@ -377,7 +392,7 @@ pub trait QuiltModel {
         metadata: UserMeta,
         workflow: Option<quilt::manifest::Workflow>,
         host_config: Option<HostConfig>,
-    ) -> Result<quilt::flow::Committed, Error> {
+    ) -> Result<quilt::flow::Recorded, Error> {
         Ok(package
             .commit(message, metadata, workflow, host_config)
             .await?)
@@ -494,8 +509,8 @@ pub trait QuiltModel {
         host: Option<quilt_uri::Host>,
         bucket: &str,
     ) -> Result<Option<WorkflowsConfig>, Error> {
-        let quilt = self.get_quilt().lock().await;
-        Ok(fetch_workflows_config_for_bucket(quilt.get_remote(), host.as_ref(), bucket).await?)
+        let remote = self.remote();
+        Ok(fetch_workflows_config_for_bucket(&*remote, host.as_ref(), bucket).await?)
     }
 
     async fn package_revision_certify_latest(
@@ -553,7 +568,9 @@ pub trait QuiltModel {
         // On a clone, with the domain mutex released: the create waits on the
         // package's lock, and every other command needs the mutex meanwhile.
         let quilt = self.get_quilt().lock().await.clone();
-        Ok(quilt.create_package(namespace, source, message).await?)
+        Ok(quilt
+            .create_package(namespace, source, message, quilt::flow::UserMeta::Clear)
+            .await?)
     }
 
     async fn package_install(
@@ -661,12 +678,10 @@ pub trait QuiltModel {
         &self,
         uri: &quilt_uri::S3PackageUri,
     ) -> Result<quilt_uri::ManifestUri, Error> {
-        Ok(quilt::io::manifest::resolve_manifest_uri(
-            self.get_quilt().lock().await.get_remote(),
-            uri.catalog.as_ref(),
-            uri,
+        Ok(
+            quilt::io::manifest::resolve_manifest_uri(&*self.remote(), uri.catalog.as_ref(), uri)
+                .await?,
         )
-        .await?)
     }
 
     /// Drop the remote's cached S3 clients (and their in-memory
@@ -680,11 +695,7 @@ pub trait QuiltModel {
     /// build an expectation for a reference nested inside another type
     /// (same reason as [`QuiltModel::get_bucket_workflows_config`]).
     async fn clear_remote_client_cache(&self, host: Option<Host>) {
-        self.get_quilt()
-            .lock()
-            .await
-            .get_remote()
-            .clear_client_cache(host.as_ref());
+        self.remote().clear_client_cache(host.as_ref());
     }
 
     /// Buckets the active role can read on `host`.
@@ -701,7 +712,7 @@ pub trait QuiltModel {
     /// holding the lock across it would stall every other command and
     /// the autopull tick behind a registry call.
     async fn readable_buckets(&self, host: &Host) -> Result<Vec<String>, Error> {
-        let remote = self.get_quilt().lock().await.remote_handle();
+        let remote = self.remote();
         Ok(remote.readable_buckets(host).await?)
     }
 
@@ -709,7 +720,7 @@ pub trait QuiltModel {
     /// round trip, for the same reason as
     /// [`QuiltModel::readable_buckets`] — the roster reaches this one too.
     async fn refresh_roles(&self, host: &Host) -> Result<RoleInfo, Error> {
-        let remote = self.get_quilt().lock().await.remote_handle();
+        let remote = self.remote();
         Ok(remote.refresh_roles(host).await?)
     }
 
@@ -725,7 +736,7 @@ pub trait QuiltModel {
     /// other command and the autopull tick behind a slow registry for
     /// as long as the switch takes.
     async fn switch_role(&self, host: &Host, role_name: &str) -> Result<RoleInfo, Error> {
-        let remote = self.get_quilt().lock().await.remote_handle();
+        let remote = self.remote();
         Ok(remote.switch_role(host, role_name).await?)
     }
 }
@@ -735,6 +746,10 @@ impl QuiltModel for Model {
 
     fn get_quilt(&self) -> &sync::Mutex<quilt::LocalDomain> {
         &self.quilt
+    }
+
+    fn remote(&self) -> std::sync::Arc<quilt::io::remote::RemoteS3> {
+        std::sync::Arc::clone(&self.remote)
     }
 }
 
@@ -953,25 +968,12 @@ impl LockedOps for quilt_uri::Namespace {
 impl Model {
     #[cfg(test)]
     pub fn create(data_dir: impl AsRef<Path>) -> Self {
-        debug!("Root directory is {:?}", data_dir.as_ref());
-        let quilt = quilt::LocalDomain::new(data_dir);
-        Model {
-            quilt: sync::Mutex::new(quilt),
-        }
+        Self::from_domain(quilt::LocalDomain::new(data_dir))
     }
 
-    /// [`Self::create`], with the packages' walks using `store`'s stat cache,
-    /// and `hook` told of every write of a package's lineage.
-    pub fn create_with_state_store(
-        data_dir: impl AsRef<Path>,
-        store: std::sync::Arc<quilt::state_store::PackageStateStore>,
-        hook: quilt::lineage::LineageHook,
-    ) -> Self {
-        debug!("Root directory is {:?}", data_dir.as_ref());
-        let quilt = quilt::LocalDomain::new(data_dir)
-            .with_state_store(store)
-            .with_lineage_hook(hook);
+    pub fn from_domain(quilt: quilt::LocalDomain) -> Self {
         Model {
+            remote: quilt.remote_handle(),
             quilt: sync::Mutex::new(quilt),
         }
     }
@@ -994,7 +996,7 @@ impl Model {
         // Takes a handle and drops the domain lock first: the expiry waits on
         // this host's refresh lock, which an in-flight vend can hold across a
         // network round trip. Same rule as [`QuiltModel::switch_role`].
-        let remote = self.quilt.lock().await.remote_handle();
+        let remote = self.remote();
         Ok(remote.expire_credentials(host).await?)
     }
 }

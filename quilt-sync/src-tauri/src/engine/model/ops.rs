@@ -11,6 +11,7 @@ use crate::engine::telemetry::prelude::*;
 use quilt_rs::flow::UserMeta;
 use quilt_rs::io::remote::HostConfig;
 use quilt_rs::io::remote::WorkflowIntent;
+use quilt_rs::manifest::RawNumbers;
 
 use quilt_uri::ManifestUri;
 
@@ -24,10 +25,31 @@ fn parse_metadata(input: &str) -> Result<UserMeta, Error> {
     if input.trim().is_empty() {
         return Ok(UserMeta::Keep);
     }
-    match serde_json::from_str(input) {
-        Ok(json) => Ok(UserMeta::Set(json)),
-        Err(err) => Err(Error::Json(err)),
-    }
+    UserMeta::parse(input).map_err(Error::Json)
+}
+
+/// `default` with the head's `agent_exec` in place of its own, carrying the
+/// exact number text of both sides: the default's, except under `agent_exec`,
+/// and the head's under `agent_exec` when that task is kept.
+fn keep_head_task_with_numbers(
+    default: serde_json::Value,
+    default_numbers: RawNumbers,
+    head: Option<&serde_json::Value>,
+    head_numbers: &RawNumbers,
+) -> (serde_json::Value, RawNumbers) {
+    let task = head.and_then(|head| head.get("agent_exec"));
+    let numbers = match (&default, task) {
+        (serde_json::Value::Object(_), Some(_)) => default_numbers
+            .without("/agent_exec")
+            .union(&head_numbers.only("/agent_exec")),
+        (serde_json::Value::Object(_), None) => default_numbers.without("/agent_exec"),
+        (_, None) => default_numbers,
+        (_, Some(_)) => head_numbers.only("/agent_exec"),
+    };
+    (
+        crate::engine::tasks::agent_exec::keep_head_task(default, head),
+        numbers,
+    )
 }
 
 pub async fn package_commit(
@@ -37,7 +59,7 @@ pub async fn package_commit(
     metadata: &str,
     workflow: WorkflowIntent,
     host_config: Option<HostConfig>,
-) -> Result<quilt::flow::Committed, Error> {
+) -> Result<quilt::flow::Recorded, Error> {
     debug!(
         "Committing the package.\nNamespace:\n{},\nmessage: {},\nuser_meta: {},\nworkflow: {:?}",
         namespace, message, metadata, workflow
@@ -49,8 +71,10 @@ pub async fn package_commit(
         .await?
         .ok_or_else(|| Error::from(quilt::InstallPackageError::NotInstalled(namespace)))?;
 
-    let workflow = installed_package.resolve_workflow(workflow).await?;
-    model
+    let (workflow, unchecked) = installed_package
+        .resolve_workflow_for_commit(workflow)
+        .await?;
+    let recorded = model
         .package_commit(
             &installed_package,
             message.to_string(),
@@ -58,7 +82,8 @@ pub async fn package_commit(
             workflow,
             host_config,
         )
-        .await
+        .await?;
+    Ok(recorded.with_unchecked(unchecked))
 }
 
 pub async fn install_package_only(
@@ -214,15 +239,18 @@ pub async fn publish_locked_with_settings<M: QuiltModel>(
         installed.namespace, message, metadata, workflow
     );
     let metadata = match parse_metadata(&metadata)? {
-        UserMeta::Set(default) if task == HeadTask::Keep => {
+        UserMeta::Set(default, default_numbers) if task == HeadTask::Keep => {
             let lineage = model.get_installed_package_lineage(installed).await?;
             let head = model
                 .get_installed_package_manifest(installed, &lineage)
                 .await?;
-            UserMeta::Set(crate::engine::tasks::agent_exec::keep_head_task(
+            let (value, numbers) = keep_head_task_with_numbers(
                 default,
+                default_numbers,
                 head.header.user_meta.as_ref(),
-            ))
+                &head.header.user_meta_numbers,
+            );
+            UserMeta::Set(value, numbers)
         }
         metadata => metadata,
     };
@@ -318,13 +346,7 @@ pub async fn login(
     host: &quilt_uri::Host,
     code: String,
 ) -> Result<(), Error> {
-    model
-        .get_quilt()
-        .lock()
-        .await
-        .get_remote()
-        .login(host, code)
-        .await?;
+    model.remote().login(host, code).await?;
     Ok(())
 }
 
@@ -333,13 +355,7 @@ pub async fn login_oauth(
     host: &quilt_uri::Host,
     params: quilt::auth::OAuthParams,
 ) -> Result<(), Error> {
-    model
-        .get_quilt()
-        .lock()
-        .await
-        .get_remote()
-        .login_oauth(host, params)
-        .await?;
+    model.remote().login_oauth(host, params).await?;
     Ok(())
 }
 
@@ -354,7 +370,7 @@ pub async fn revision_message(
     model: &impl QuiltModel,
     manifest_uri: ManifestUri,
 ) -> Result<Option<String>, Error> {
-    let manifest = model.browse_remote_manifest(&manifest_uri).await?;
+    let manifest = model.fetch_remote_manifest(&manifest_uri).await?;
     Ok(manifest.header.message().map(str::to_owned))
 }
 
@@ -364,10 +380,7 @@ pub async fn get_or_register_client(
     redirect_uri: &str,
 ) -> Result<String, Error> {
     let client = model
-        .get_quilt()
-        .lock()
-        .await
-        .get_remote()
+        .remote()
         .get_or_register_client(host, redirect_uri)
         .await?;
     Ok(client.client_id)
@@ -416,7 +429,7 @@ mod tests {
         // origin, and hash — not reconstructed from any installed lineage.
         let expected = requested.clone();
         model
-            .expect_browse_remote_manifest()
+            .expect_fetch_remote_manifest()
             .times(1)
             .withf(move |uri| *uri == expected)
             .returning(|_| {
@@ -428,8 +441,10 @@ mod tests {
                         ),
                         user_meta: None,
                         workflow: None,
+                        user_meta_numbers: quilt::manifest::RawNumbers::default(),
                     },
                     rows: Vec::new(),
+                    dir_meta: Vec::new(),
                 })
             });
 
@@ -458,6 +473,7 @@ mod tests {
                 origin: None,
             },
             certified_latest: true,
+            latest_unchecked: false,
         })
     }
 
@@ -479,7 +495,7 @@ mod tests {
 
     /// Publish `settings` through `model` on a mocked lock.
     async fn publish_with(model: &MockQuiltModel, settings: &PublishSettings) -> Result<(), Error> {
-        let installed = quilt::LocalDomain::new(std::path::PathBuf::new())
+        let installed = crate::engine::model::mocks::nowhere()
             .create_installed_package(("acme", "demo").into());
         let locked = installed.namespace.clone();
         let status = quilt::lineage::InstalledPackageStatus::default();
@@ -537,7 +553,7 @@ mod tests {
         let mut model = MockQuiltModel::new();
         model.expect_get_installed_package().returning(|_| {
             Ok(Some(
-                quilt::LocalDomain::new(std::path::PathBuf::new())
+                crate::engine::model::mocks::nowhere()
                     .create_installed_package(("acme", "demo").into()),
             ))
         });
@@ -577,7 +593,7 @@ mod tests {
         let mut model = MockQuiltModel::new();
         model.expect_get_installed_package().returning(|_| {
             Ok(Some(
-                quilt::LocalDomain::new(std::path::PathBuf::new())
+                crate::engine::model::mocks::nowhere()
                     .create_installed_package(("acme", "demo").into()),
             ))
         });
@@ -595,5 +611,39 @@ mod tests {
         let origin = Some(fixtures::host());
         set_remote(&model, &namespace, origin, "my-bucket".to_string(), intent).await?;
         Ok(())
+    }
+
+    #[test]
+    fn parse_metadata_keeps_big_integers() {
+        let UserMeta::Set(value, numbers) =
+            parse_metadata(r#"{"n": 18446744073709551616}"#).expect("json")
+        else {
+            panic!("expected Set");
+        };
+        assert!(!numbers.is_empty());
+        assert!(value["n"].is_number());
+        assert!(matches!(parse_metadata("").unwrap(), UserMeta::Keep));
+        assert!(matches!(parse_metadata("   ").unwrap(), UserMeta::Keep));
+        assert!(parse_metadata("{").is_err());
+    }
+
+    #[test]
+    fn keep_head_task_path_keeps_the_heads_numbers() {
+        let default = UserMeta::parse(r#"{"source":"desktop","n": 18446744073709551616,"agent_exec": {"drop": 36893488147419103232}}"#)
+            .unwrap();
+        let UserMeta::Set(default, default_numbers) = default else {
+            panic!("expected Set");
+        };
+        let (head, head_numbers) =
+            RawNumbers::parse(r#"{"title": "t", "agent_exec": {"m": 36893488147419103232}}"#)
+                .unwrap();
+        let (value, numbers) =
+            keep_head_task_with_numbers(default, default_numbers, Some(&head), &head_numbers);
+        assert!(value["n"].is_number());
+        assert!(value["agent_exec"]["m"].is_number());
+        assert!(!numbers.only("/n").is_empty());
+        assert!(!numbers.only("/agent_exec").is_empty());
+        assert!(numbers.only("/agent_exec/drop").is_empty());
+        assert_eq!(value["source"], "desktop");
     }
 }

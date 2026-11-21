@@ -51,7 +51,9 @@ pub use registry::RemoteTokens;
 
 use graphql::mutate_switch_role;
 use graphql::query_buckets;
+use graphql::query_latest_hashes;
 use graphql::query_me;
+use graphql::query_package_revision_history;
 use graphql::query_package_revisions;
 use oauth::exchange_oauth_code;
 use oauth::refresh_oauth_tokens;
@@ -605,7 +607,7 @@ impl<S: Storage + Send + Sync> Auth<S> {
             .await?
             .ok_or_else(|| LoginError::NoSession(Some(host.to_owned())))?;
 
-        if tokens.expires_at <= chrono::Utc::now() + chrono::Duration::seconds(60) {
+        if tokens.expires_at <= jiff::Timestamp::now() + jiff::SignedDuration::from_secs(60) {
             info!("⏳ Access token expired for {}, refreshing", host);
             let refreshed = self
                 .refresh_tokens_with_retry(http_client, &auth_io, host, &tokens)
@@ -845,6 +847,65 @@ impl<S: Storage + Send + Sync> Auth<S> {
                         &retry_token,
                     )
                     .await,
+                    is_role_auth_error,
+                    ROLE_ENDPOINT,
+                    host,
+                )
+            }
+        }
+    }
+
+    /// [`Auth::package_revisions`], with the time each revision's pointer
+    /// is named for. Locks and retries as it does.
+    pub async fn package_revision_history<T: HttpClient>(
+        &self,
+        http_client: &T,
+        host: &Host,
+        bucket: &str,
+        namespace: &Namespace,
+    ) -> Res<Vec<crate::io::remote::PublishedRevision>> {
+        let _guard = self.lock(host).await?;
+
+        let (registry, access_token) = self.role_call_context(http_client, host).await?;
+        let query = |token: String| {
+            let registry = registry.clone();
+            async move {
+                query_package_revision_history(http_client, &registry, bucket, namespace, &token)
+                    .await
+            }
+        };
+        match query(access_token).await {
+            Ok(revisions) => Ok(revisions),
+            Err(first_err) => {
+                let retry_token = self.role_retry_token(http_client, host, first_err).await?;
+                classify_retry_outcome(
+                    query(retry_token).await,
+                    is_role_auth_error,
+                    ROLE_ENDPOINT,
+                    host,
+                )
+            }
+        }
+    }
+
+    /// Every package in `bucket` with the hash its `latest` names, from the
+    /// registry's search index in one paged query. Locks and retries as
+    /// [`Auth::readable_buckets`] does.
+    pub async fn latest_hashes<T: HttpClient>(
+        &self,
+        http_client: &T,
+        host: &Host,
+        bucket: &str,
+    ) -> Res<Vec<(Namespace, String)>> {
+        let _guard = self.lock(host).await?;
+
+        let (registry, access_token) = self.role_call_context(http_client, host).await?;
+        match query_latest_hashes(http_client, &registry, bucket, &access_token).await {
+            Ok(latest) => Ok(latest),
+            Err(first_err) => {
+                let retry_token = self.role_retry_token(http_client, host, first_err).await?;
+                classify_retry_outcome(
+                    query_latest_hashes(http_client, &registry, bucket, &retry_token).await,
                     is_role_auth_error,
                     ROLE_ENDPOINT,
                     host,

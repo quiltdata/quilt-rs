@@ -1,0 +1,499 @@
+//! `data.lock.toml`, a dataspace's lock: each package's base, once it was
+//! published, and unpushed local commits, under a header that names the
+//! contract, the dataspace and the writer it was written for.
+//!
+//! A tool writes the lock after an operation completes, whole, by renaming a
+//! temporary file over it. No lock file is held, so of two overlapping
+//! writers the second wins.
+
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+
+use aws_sdk_s3::primitives::ByteStream;
+use jiff::Timestamp;
+use serde::Deserialize;
+use serde::Serialize;
+use thiserror::Error;
+use toml::value::Datetime;
+
+use crate::dataspace::contract::Access;
+use crate::dataspace::contract::CONTRACT_FILE;
+use crate::dataspace::contract::Contract;
+use crate::dataspace::contract::PackageKey;
+use crate::dataspace::contract::Registry;
+use crate::domain::LocalNames;
+use crate::io::storage::Storage;
+use crate::io::storage::StorageExt;
+use quilt_uri::is_top_hash;
+use quilt_uri::mask_user;
+
+/// The lock's file name, beside the contract.
+pub const LOCK_FILE: &str = "data.lock.toml";
+
+/// The format version this crate reads and writes.
+pub const LOCK_VERSION: i64 = 1;
+
+/// Who writes a lock.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Writer {
+    pub host: String,
+    pub user: String,
+    /// The name this machine's local registry keeps.
+    pub local_registry: String,
+}
+
+impl Writer {
+    /// The local registry's name, or `None` for a writer with no Domain.
+    #[must_use]
+    pub fn local_registry_name(&self) -> Option<&str> {
+        Some(self.local_registry.as_str()).filter(|name| !name.is_empty())
+    }
+
+    /// This machine's host name and the user running this process.
+    pub fn here(local_registry: impl Into<String>) -> Result<Self, LockError> {
+        let host = hostname::get()
+            .ok()
+            .and_then(|host| host.into_string().ok())
+            .filter(|host| !host.is_empty())
+            .ok_or(LockError::Identity("host name"))?;
+        let user = ["USER", "LOGNAME", "USERNAME"]
+            .iter()
+            .find_map(|var| std::env::var(var).ok().filter(|user| !user.is_empty()))
+            .ok_or(LockError::Identity("user name"))?;
+        Ok(Self {
+            host,
+            user,
+            local_registry: local_registry.into(),
+        })
+    }
+
+    /// [`Writer::here`] with no Domain, so no local registry to name.
+    pub fn without_domain() -> Result<Self, LockError> {
+        Self::here(String::new())
+    }
+}
+
+/// The lock's `[lock]` table, but for its version.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LockHeader {
+    /// The hex SHA-256 of the `data.toml` the lock was written for.
+    pub data_toml_hash: String,
+    /// When the dataspace was first filled; `None` until then.
+    pub filled: Option<Timestamp>,
+    pub modified: Timestamp,
+    pub dataspace: PathBuf,
+    pub writer: Writer,
+}
+
+/// A package's base, and its unpushed local commits, oldest first.
+///
+/// A package with local commits that was never published has no base: its
+/// first publication establishes one. An entry holds a base or a commit.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LockEntry {
+    pub base: Option<String>,
+    pub commits: Vec<String>,
+}
+
+impl LockEntry {
+    /// An entry at `base`, with no unpushed commits.
+    #[must_use]
+    pub fn at(base: impl Into<String>) -> Self {
+        Self {
+            base: Some(base.into()),
+            commits: Vec::new(),
+        }
+    }
+
+    /// The package's current revision: its last commit, or else its base.
+    #[must_use]
+    pub fn current(&self) -> Option<&str> {
+        self.commits
+            .last()
+            .or(self.base.as_ref())
+            .map(String::as_str)
+    }
+}
+
+/// A dataspace's lock.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Lock {
+    pub header: LockHeader,
+    pub packages: BTreeMap<PackageKey, LockEntry>,
+}
+
+/// A part of a lock's header that is not this dataspace's, so that the lock
+/// is not to be used until it is fixed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mismatch {
+    /// `data.toml` changed since the lock was written.
+    DataToml,
+    Dataspace,
+    LocalRegistry,
+    Host,
+    User,
+}
+
+/// What the lock was written for that is not this one's.
+impl std::fmt::Display for Mismatch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::DataToml => CONTRACT_FILE,
+            Self::Dataspace => "dataspace folder",
+            Self::LocalRegistry => "local registry",
+            Self::Host => "host",
+            Self::User => "user",
+        })
+    }
+}
+
+impl Lock {
+    /// An empty lock for `contract`'s dataspace, not yet filled.
+    #[must_use]
+    pub fn new(contract: &Contract, writer: &Writer) -> Self {
+        Self {
+            header: header(contract, writer, None),
+            packages: BTreeMap::new(),
+        }
+    }
+
+    /// The lock beside `contract`, or `None` where there is none.
+    pub async fn read(
+        storage: &(impl Storage + Sync),
+        contract: &Contract,
+    ) -> Result<Option<Self>, LockError> {
+        let path = contract.dataspace().join(LOCK_FILE);
+        match storage.read_bytes(&path).await {
+            Ok(bytes) => parse(&bytes).map(Some),
+            Err(err) if err.is_not_found() => Ok(None),
+            Err(source) => Err(LockError::Read {
+                path,
+                source: Box::new(source),
+            }),
+        }
+    }
+
+    /// What in the header is not `contract`'s dataspace's or `writer`'s.
+    #[must_use]
+    pub fn mismatches(&self, contract: &Contract, writer: &Writer) -> Vec<Mismatch> {
+        let header = &self.header;
+        let written_by = &header.writer;
+        [
+            (
+                header.data_toml_hash != contract.data_toml_hash(),
+                Mismatch::DataToml,
+            ),
+            (
+                header.dataspace != contract.dataspace(),
+                Mismatch::Dataspace,
+            ),
+            (
+                written_by.local_registry != writer.local_registry,
+                Mismatch::LocalRegistry,
+            ),
+            (written_by.host != writer.host, Mismatch::Host),
+            (written_by.user != writer.user, Mismatch::User),
+        ]
+        .into_iter()
+        .filter_map(|(differs, mismatch)| differs.then_some(mismatch))
+        .collect()
+    }
+
+    /// Writes the lock beside `contract`, its header made `contract`'s and
+    /// `writer`'s and `filled` kept. That hides any mismatch, so a caller
+    /// deals with [`Lock::mismatches`] first.
+    ///
+    /// Where the contract has `sync` entries, the lock goes on naming the
+    /// `data.toml` it was written for: an edit is the sync tick's to take,
+    /// once it has read them again.
+    pub async fn write(
+        &mut self,
+        storage: &(impl Storage + Sync),
+        contract: &Contract,
+        writer: &Writer,
+    ) -> Result<(), LockError> {
+        let synced = contract
+            .entries()
+            .iter()
+            .any(|entry| entry.access == Access::Sync);
+        let written_for = if synced {
+            self.header.data_toml_hash.clone()
+        } else {
+            contract.data_toml_hash().to_string()
+        };
+        self.write_for(storage, contract, writer, &written_for)
+            .await
+    }
+
+    /// Names the local registry `names` describes by its current name in
+    /// each key that names it by an alias, so the lock is written with it.
+    /// Where a key already names the package under the current name, that
+    /// key's entry is kept.
+    pub(crate) fn name_local(&mut self, names: &LocalNames) {
+        let aliased: Vec<PackageKey> = self
+            .packages
+            .keys()
+            .filter(|key| {
+                matches!(&key.registry, Registry::Local(name)
+                    if *name != names.name && names.answers_to(name))
+            })
+            .cloned()
+            .collect();
+        for key in aliased {
+            let Some(entry) = self.packages.remove(&key) else {
+                continue;
+            };
+            let current = PackageKey {
+                registry: Registry::Local(names.name.clone()),
+                package: key.package,
+            };
+            self.packages.entry(current).or_insert(entry);
+        }
+    }
+
+    /// [`Lock::write`], naming `data_toml_hash` as the contract it was
+    /// written for, so an edit to `data.toml` still shows as one.
+    pub(crate) async fn write_for(
+        &mut self,
+        storage: &(impl Storage + Sync),
+        contract: &Contract,
+        writer: &Writer,
+        data_toml_hash: &str,
+    ) -> Result<(), LockError> {
+        let mut header = header(contract, writer, self.header.filled);
+        header.data_toml_hash = data_toml_hash.to_string();
+        let text = toml::to_string(&raw(&header, &self.packages)?)?;
+        let path = contract.dataspace().join(LOCK_FILE);
+        // Unique, so two writers never write into one temporary file, and not
+        // hidden, since nothing hidden is written in a dataspace.
+        let temp = format!("{LOCK_FILE}.tmp-{}", uuid::Uuid::new_v4());
+        storage
+            .write_byte_stream_via(&path, temp, ByteStream::from(text.into_bytes()), None)
+            .await
+            .map_err(|source| LockError::Write {
+                path,
+                source: Box::new(source),
+            })?;
+        self.header = header;
+        Ok(())
+    }
+}
+
+fn raw(
+    header: &LockHeader,
+    packages: &BTreeMap<PackageKey, LockEntry>,
+) -> Result<RawLock, LockError> {
+    Ok(RawLock {
+        lock: RawHeader {
+            version: LOCK_VERSION,
+            data_toml_hash: header.data_toml_hash.clone(),
+            filled: header
+                .filled
+                .map(|time| to_toml_time(time, "filled"))
+                .transpose()?,
+            modified: to_toml_time(header.modified, "modified")?,
+            host: header.writer.host.clone(),
+            user: header.writer.user.clone(),
+            dataspace: header.dataspace.clone(),
+            local_registry: header.writer.local_registry.clone(),
+        },
+        packages: packages
+            .iter()
+            .map(|(key, entry)| {
+                // What the reader would refuse is never written over a lock.
+                let text = key.to_string();
+                checked(&text, entry)?;
+                let raw = match &entry.base {
+                    Some(base) if entry.commits.is_empty() => RawEntry::Base(base.clone()),
+                    base => RawEntry::Commits(RawCommits {
+                        base: base.clone(),
+                        commits: entry.commits.clone(),
+                    }),
+                };
+                Ok((text, raw))
+            })
+            .collect::<Result<_, LockError>>()?,
+    })
+}
+
+/// The key `text` names, where it is a canonical package URI and the entry
+/// holds whole top hashes, a base or a commit among them.
+fn checked(text: &str, entry: &LockEntry) -> Result<PackageKey, LockError> {
+    let key = text.parse().map_err(|source| LockError::Key {
+        key: mask_user(text),
+        source,
+    })?;
+    if let Some(hash) = entry
+        .base
+        .iter()
+        .chain(&entry.commits)
+        .find(|hash| !is_top_hash(hash))
+    {
+        return Err(LockError::Hash {
+            package: text.to_string(),
+            hash: hash.clone(),
+        });
+    }
+    if entry.current().is_none() {
+        return Err(LockError::Empty(text.to_string()));
+    }
+    Ok(key)
+}
+
+/// Why a lock could not be read or written.
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum LockError {
+    #[error("can't read {}: {source}", .path.display())]
+    Read {
+        path: PathBuf,
+        #[source]
+        source: Box<crate::Error>,
+    },
+
+    #[error("can't write {}: {source}", .path.display())]
+    Write {
+        path: PathBuf,
+        #[source]
+        source: Box<crate::Error>,
+    },
+
+    #[error("{LOCK_FILE} is version {0}; this build reads version {LOCK_VERSION}")]
+    Version(i64),
+
+    #[error("{LOCK_FILE} is not a valid lock: {0}")]
+    Syntax(#[from] toml::de::Error),
+
+    #[error("{LOCK_FILE} names {key:?}, which is not a package's canonical URI: {source}")]
+    Key {
+        key: String,
+        #[source]
+        source: quilt_uri::UriError,
+    },
+
+    #[error("{LOCK_FILE} holds {hash:?} for {package}, which is not a whole top hash")]
+    Hash { package: String, hash: String },
+
+    #[error("{LOCK_FILE} holds neither a base nor a commit for {0}")]
+    Empty(String),
+
+    #[error("{LOCK_FILE}'s `{0}` is not a UTC time")]
+    Time(&'static str),
+
+    #[error("can't write the lock as TOML: {0}")]
+    Serialize(#[from] toml::ser::Error),
+
+    #[error("can't tell this machine's {0}")]
+    Identity(&'static str),
+}
+
+fn header(contract: &Contract, writer: &Writer, filled: Option<Timestamp>) -> LockHeader {
+    LockHeader {
+        data_toml_hash: contract.data_toml_hash().to_string(),
+        filled: filled.map(crate::time::to_second),
+        modified: crate::time::to_second(Timestamp::now()),
+        dataspace: contract.dataspace().to_path_buf(),
+        writer: writer.clone(),
+    }
+}
+
+fn parse(bytes: &[u8]) -> Result<Lock, LockError> {
+    // The version first, so a later format is refused as one and not as a
+    // lock with fields this build does not know.
+    let table: toml::Table = toml::from_slice(bytes)?;
+    if let Some(version) = table
+        .get("lock")
+        .and_then(|lock| lock.get("version"))
+        .and_then(toml::Value::as_integer)
+        && version != LOCK_VERSION
+    {
+        return Err(LockError::Version(version));
+    }
+
+    let raw: RawLock = toml::Value::Table(table).try_into()?;
+    let header = raw.lock;
+    let mut packages = BTreeMap::new();
+    for (text, raw) in raw.packages {
+        let (base, commits) = match raw {
+            RawEntry::Base(base) => (Some(base), Vec::new()),
+            RawEntry::Commits(RawCommits { base, commits }) => (base, commits),
+        };
+        let entry = LockEntry { base, commits };
+        packages.insert(checked(&text, &entry)?, entry);
+    }
+    Ok(Lock {
+        header: LockHeader {
+            data_toml_hash: header.data_toml_hash,
+            filled: header
+                .filled
+                .map(|time| from_toml_time(time, "filled"))
+                .transpose()?,
+            modified: from_toml_time(header.modified, "modified")?,
+            dataspace: header.dataspace,
+            writer: Writer {
+                host: header.host,
+                user: header.user,
+                local_registry: header.local_registry,
+            },
+        },
+        packages,
+    })
+}
+
+fn to_toml_time(time: Timestamp, field: &'static str) -> Result<Datetime, LockError> {
+    time.strftime("%Y-%m-%dT%H:%M:%SZ")
+        .to_string()
+        .parse()
+        .map_err(|_| LockError::Time(field))
+}
+
+fn from_toml_time(time: Datetime, field: &'static str) -> Result<Timestamp, LockError> {
+    if !matches!(
+        time.offset,
+        Some(toml::value::Offset::Z | toml::value::Offset::Custom { minutes: 0 })
+    ) {
+        return Err(LockError::Time(field));
+    }
+    time.to_string().parse().map_err(|_| LockError::Time(field))
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RawLock {
+    lock: RawHeader,
+    #[serde(default)]
+    packages: BTreeMap<String, RawEntry>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RawHeader {
+    version: i64,
+    data_toml_hash: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    filled: Option<Datetime>,
+    modified: Datetime,
+    host: String,
+    user: String,
+    dataspace: PathBuf,
+    local_registry: String,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(untagged)]
+enum RawEntry {
+    Base(String),
+    Commits(RawCommits),
+}
+
+/// A package's commits, and its base where it was published.
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RawCommits {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    base: Option<String>,
+    commits: Vec<String>,
+}
+
+#[cfg(test)]
+mod tests;

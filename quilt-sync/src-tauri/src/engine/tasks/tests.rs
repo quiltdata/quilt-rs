@@ -49,6 +49,7 @@ fn without_claim(meta: &Value) -> Value {
 /// A revision a check published.
 struct Revision {
     meta: Value,
+    numbers: quilt::manifest::RawNumbers,
     message: String,
     /// The invocation IDs this desktop had on disk when it was pushed.
     own_at_push: BTreeSet<String>,
@@ -99,6 +100,7 @@ fn expect_push_and_reset(
                 origin: Some(fixtures::host()),
             },
             certified_latest,
+            latest_unchecked: false,
         }))
     });
     let reset = Arc::clone(events);
@@ -161,9 +163,18 @@ fn expect_latest(model: &mut MockQuiltModel, meta: Value, paths: &'static [&'sta
 }
 
 fn manifest(meta: &Value, paths: &[&str]) -> Result<quilt::manifest::Manifest, Error> {
+    manifest_with_numbers(meta, quilt::manifest::RawNumbers::default(), paths)
+}
+
+fn manifest_with_numbers(
+    meta: &Value,
+    numbers: quilt::manifest::RawNumbers,
+    paths: &[&str],
+) -> Result<quilt::manifest::Manifest, Error> {
     Ok(quilt::manifest::Manifest {
         header: quilt::manifest::ManifestHeader {
             user_meta: Some(meta.clone()),
+            user_meta_numbers: numbers,
             ..quilt::manifest::ManifestHeader::default()
         },
         rows: paths
@@ -175,6 +186,7 @@ fn manifest(meta: &Value, paths: &[&str]) -> Result<quilt::manifest::Manifest, E
                 })
             })
             .collect::<Result<_, Error>>()?,
+        dir_meta: Vec::new(),
     })
 }
 
@@ -214,6 +226,8 @@ struct Fixture {
     gone: &'static [&'static str],
     /// The paths whose bytes do not match the package's hash.
     mismatched: &'static [&'static str],
+    /// Number text the head's `user_meta` carries, empty unless a test sets it.
+    head_numbers: quilt::manifest::RawNumbers,
 }
 
 impl Fixture {
@@ -247,6 +261,7 @@ impl Fixture {
             rows: &["TASK.md", "sub/TASK.md"],
             gone: &[],
             mismatched: &[],
+            head_numbers: quilt::manifest::RawNumbers::default(),
         }
     }
 
@@ -271,7 +286,7 @@ impl Fixture {
                 Vec::new()
             };
             lineage.commit = Some(quilt::lineage::CommitState {
-                timestamp: chrono::Utc::now(),
+                timestamp: jiff::Timestamp::now(),
                 hash: "c1".to_string(),
                 prev_hashes,
             });
@@ -302,7 +317,7 @@ impl Fixture {
         certified_latest: bool,
     ) {
         let model = self.model(meta, status, certified_latest);
-        let pkg = quilt::LocalDomain::new(PathBuf::new()).create_installed_package(namespace());
+        let pkg = crate::engine::model::mocks::nowhere().create_installed_package(namespace());
         check(&model, &self.tasks, &settings(), &pkg).await;
     }
 
@@ -321,9 +336,10 @@ impl Fixture {
         let latest = self.latest_meta.clone().unwrap_or(meta.clone());
         expect_latest(&mut model, latest, &[]);
         let rows = self.rows;
+        let head_numbers = self.head_numbers.clone();
         model
             .expect_get_installed_package_manifest()
-            .returning(move |_, _| manifest(&meta, rows));
+            .returning(move |_, _| manifest_with_numbers(&meta, head_numbers.clone(), rows));
         model
             .expect_try_lock_package()
             .returning(|p| Ok(Some(p.namespace.clone())));
@@ -350,7 +366,7 @@ impl Fixture {
         model
             .expect_locked_package_publish()
             .returning(move |_, message, meta, _, _, status| {
-                let UserMeta::Set(meta) = meta else {
+                let UserMeta::Set(meta, numbers) = meta else {
                     panic!("a task revision sets its metadata");
                 };
                 // The mock is synchronous, so the file is read without the runtime.
@@ -365,6 +381,7 @@ impl Fixture {
                 events.lock().unwrap().push("publish".to_string());
                 published.lock().unwrap().push(Revision {
                     meta,
+                    numbers,
                     message,
                     own_at_push,
                     paths: changed_paths(status.as_ref()),
@@ -378,6 +395,7 @@ impl Fixture {
                             origin: Some(fixtures::host()),
                         },
                         certified_latest,
+                        latest_unchecked: false,
                     },
                 ))
             });
@@ -416,7 +434,7 @@ async fn a_claim_changes_only_the_claim_and_starts_the_run() {
     let invocation_id = claim["invocation_id"].as_str().expect("an invocation ID");
     assert!(uuid::Uuid::parse_str(invocation_id).is_ok());
     let claimed_at = claim["claimed_at"].as_str().expect("a claim time");
-    assert!(chrono::DateTime::parse_from_rfc3339(claimed_at).is_ok());
+    assert!(claimed_at.parse::<jiff::Timestamp>().is_ok());
     assert!(
         own_at_push.contains(invocation_id),
         "the claim was on disk as ours before it was pushed"
@@ -429,6 +447,32 @@ async fn a_claim_changes_only_the_claim_and_starts_the_run() {
     assert!(
         fixture.tasks.holds(&namespace()),
         "autosync is held while it runs"
+    );
+}
+
+#[tokio::test]
+async fn a_claim_keeps_the_heads_number_text() {
+    let (meta, numbers) = quilt::manifest::RawNumbers::parse(
+        r#"{"title":"kept","n":18446744073709551616,"agent_exec":{"document":"TASK.md","agent":{"id":"kiro"},"claim":{"status":"unclaimed","old":36893488147419103232}}}"#,
+    )
+    .unwrap();
+    let fixture = Fixture {
+        head_numbers: numbers,
+        ..Fixture::new()
+    };
+
+    fixture.check(meta, fresh(BTreeMap::new()), true).await;
+
+    let published = fixture.published.lock().unwrap();
+    assert_eq!(published.len(), 1, "one claim revision");
+    let Revision { numbers, .. } = &published[0];
+    assert!(
+        !numbers.only("/n").is_empty(),
+        "the head's integer beyond 64 bits is kept"
+    );
+    assert!(
+        numbers.only("/agent_exec/claim").is_empty(),
+        "numbers under the replaced claim are dropped"
     );
 }
 
@@ -630,6 +674,36 @@ async fn our_own_interrupted_claim_is_published_failed_with_what_the_agent_left(
     Ok(())
 }
 
+#[tokio::test]
+async fn an_interrupted_claim_keeps_number_text_in_retained_claim_fields() -> Result<(), Error> {
+    let (meta, numbers) = quilt::manifest::RawNumbers::parse(
+        r#"{"title":"kept","n":18446744073709551616,"agent_exec":{"document":"TASK.md","agent":{"id":"kiro"},"claim":{"status":"claimed","invocation_id":"ours","claimed_at":"t","sequence":36893488147419103232}}}"#,
+    )
+    .unwrap();
+    let fixture = Fixture {
+        head_numbers: numbers,
+        ..Fixture::new()
+    };
+    settings::remember_invocation(fixture.dir.path(), "ours").await?;
+
+    fixture.check(meta, fresh(written()), true).await;
+
+    let published = fixture.published.lock().unwrap();
+    assert_eq!(published.len(), 1);
+    let Revision { numbers, meta, .. } = &published[0];
+    assert_eq!(meta["agent_exec"]["claim"]["status"], "failed");
+    assert_eq!(meta["agent_exec"]["claim"]["invocation_id"], "ours");
+    assert!(
+        !numbers.only("/n").is_empty(),
+        "numbers outside the claim are kept"
+    );
+    assert!(
+        !numbers.only("/agent_exec/claim/sequence").is_empty(),
+        "a claim field the interruption kept still has its number text"
+    );
+    Ok(())
+}
+
 /// The run saved its outcome, then its publish never landed, or landed outside
 /// `latest` and was reset onto a `latest` still holding the claim.
 #[tokio::test]
@@ -682,9 +756,10 @@ async fn the_sweeps_outcome_that_is_not_latest_is_rebased_onto_it() -> Result<()
         Ok(quilt::PushOutcome {
             manifest_uri: at("r1"),
             certified_latest: true,
+            latest_unchecked: false,
         })
     });
-    let pkg = quilt::LocalDomain::new(PathBuf::new()).create_installed_package(namespace());
+    let pkg = crate::engine::model::mocks::nowhere().create_installed_package(namespace());
 
     check(&model, &fixture.tasks, &settings(), &pkg).await;
 
@@ -866,7 +941,7 @@ async fn an_interrupted_claim_waits_while_latest_cannot_be_read() -> Result<(), 
 async fn autosync_leaves_our_own_interrupted_claim_to_the_sweep() -> Result<(), Error> {
     let fixture = Fixture::new();
     settings::remember_invocation(fixture.dir.path(), "ours").await?;
-    let pkg = quilt::LocalDomain::new(PathBuf::new()).create_installed_package(namespace());
+    let pkg = crate::engine::model::mocks::nowhere().create_installed_package(namespace());
     let awaits =
         async |model: &MockQuiltModel| fixture.tasks.awaits_sweep(model, &settings(), &pkg).await;
 
@@ -898,6 +973,13 @@ async fn autosync_leaves_our_own_interrupted_claim_to_the_sweep() -> Result<(), 
     assert!(
         awaits(&unread).await,
         "while latest can't be read, the sweep waits and autosync with it"
+    );
+    let mut missing = fresh(written());
+    missing.working_copy = quilt::lineage::WorkingCopy::Unavailable("/Volumes/gone".into());
+    let ours_missing = fixture.model(ours_claimed(), missing, true);
+    assert!(
+        !awaits(&ours_missing).await,
+        "a missing folder is autosync's to report; no sweep acts on it"
     );
     let _running = fixture.tasks.hold(&namespace());
     assert!(
@@ -1009,7 +1091,7 @@ fn rereading_model(
     );
     model.expect_get_installed_package().returning(|ns| {
         Ok(Some(
-            quilt::LocalDomain::new(PathBuf::new()).create_installed_package(ns.clone()),
+            crate::engine::model::mocks::nowhere().create_installed_package(ns.clone()),
         ))
     });
     let status = quilt::lineage::InstalledPackageStatus {
@@ -1241,7 +1323,7 @@ fn finishing_model(
     let mut model = MockQuiltModel::new();
     model.expect_get_installed_package().returning(|ns| {
         Ok(Some(
-            quilt::LocalDomain::new(PathBuf::new()).create_installed_package(ns.clone()),
+            crate::engine::model::mocks::nowhere().create_installed_package(ns.clone()),
         ))
     });
     model
@@ -1303,6 +1385,7 @@ fn finishing_model(
                     ..quilt::manifest::ManifestHeader::default()
                 },
                 rows: Vec::new(),
+                dir_meta: Vec::new(),
             })
         });
     model
@@ -1315,13 +1398,14 @@ fn finishing_model(
     model
         .expect_locked_package_publish()
         .returning(move |_, message, meta, _, _, status| {
-            let UserMeta::Set(meta) = meta else {
+            let UserMeta::Set(meta, numbers) = meta else {
                 panic!("a task revision sets its metadata");
             };
             events.lock().unwrap().push("publish".to_string());
             committed.store(true, std::sync::atomic::Ordering::SeqCst);
             published.lock().unwrap().push(Revision {
                 meta,
+                numbers,
                 message,
                 own_at_push: BTreeSet::new(),
                 paths: changed_paths(status.as_ref()),
@@ -1330,6 +1414,7 @@ fn finishing_model(
                 quilt::PushOutcome {
                     manifest_uri: at("h3"),
                     certified_latest,
+                    latest_unchecked: false,
                 },
             ))
         });
@@ -1585,6 +1670,7 @@ fn file(key: &str, content: &str) -> Result<quilt::manifest::ManifestRow, Error>
             .into(),
         size: content.len() as u64,
         meta: None,
+        meta_numbers: quilt::manifest::RawNumbers::default(),
     })
 }
 
@@ -1595,6 +1681,7 @@ fn revision(meta: Value, rows: Vec<quilt::manifest::ManifestRow>) -> quilt::mani
             ..quilt::manifest::ManifestHeader::default()
         },
         rows,
+        dir_meta: Vec::new(),
     }
 }
 
@@ -1711,6 +1798,7 @@ async fn finish_among(fixture: &Fixture, revisions: Revisions) -> Arc<Mutex<Remo
         Ok(quilt::PushOutcome {
             manifest_uri: at(&hash),
             certified_latest,
+            latest_unchecked: false,
         })
     });
 
@@ -2029,6 +2117,29 @@ async fn the_rebased_outcome_keeps_latests_workflow_under_its_own_message() -> R
     let remote = remote.lock().unwrap();
     assert_eq!(remote.latest().header.workflow, switched);
     assert_eq!(remote.latest().header.message(), Some(message.as_str()));
+    Ok(())
+}
+
+/// Another writer gave a folder metadata during the run.
+#[tokio::test]
+async fn the_rebased_outcome_keeps_latests_folder_metadata() -> Result<(), Error> {
+    let fixture = Fixture::new();
+    let task = file("TASK.md", "do it")?;
+    let folder_meta = vec![quilt::manifest::DirMeta::new(
+        quilt::LogicalKey::new("data")?,
+        serde_json::json!({"owner": "team"}),
+    )];
+    let mut latest = revision(edited_head(), vec![task.clone()]);
+    latest.dir_meta.clone_from(&folder_meta);
+    let revisions = Revisions {
+        latest,
+        ..Revisions::new(vec![task.clone()], vec![task.clone()], Vec::new())
+    };
+
+    let remote = finish_among(&fixture, revisions).await;
+
+    let remote = remote.lock().unwrap();
+    assert_eq!(remote.latest().dir_meta, folder_meta);
     Ok(())
 }
 

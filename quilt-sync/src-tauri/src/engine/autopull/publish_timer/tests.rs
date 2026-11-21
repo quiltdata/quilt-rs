@@ -19,7 +19,7 @@ fn ns() -> Namespace {
 }
 
 fn package() -> quilt::InstalledPackage {
-    quilt::LocalDomain::new(std::path::PathBuf::new()).create_installed_package(ns())
+    crate::engine::model::mocks::nowhere().create_installed_package(ns())
 }
 
 fn status(files: usize) -> quilt::lineage::InstalledPackageStatus {
@@ -83,6 +83,7 @@ fn model_on(
                         origin: None,
                     },
                     certified_latest: true,
+                    latest_unchecked: false,
                 },
             ))
         });

@@ -35,7 +35,7 @@ async fn test_auth_refresh_credentials() -> Res {
     assert_eq!(credentials.token, "test-session-token");
     assert_eq!(
         credentials.expires_at,
-        chrono::DateTime::from_timestamp(TIMESTAMP, 0).unwrap()
+        jiff::Timestamp::from_second(TIMESTAMP).unwrap()
     );
 
     // Verify credentials were persisted. Note: read_credentials() filters
@@ -84,7 +84,7 @@ async fn test_get_credentials_or_refresh_with_expired_token() -> Res {
         .write_tokens(&Tokens {
             access_token: "expired-access-token".to_string(),
             refresh_token: REFRESH_TOKEN.to_string(),
-            expires_at: chrono::Utc::now() - chrono::Duration::seconds(300),
+            expires_at: jiff::Timestamp::now() - jiff::SignedDuration::from_secs(300),
         })
         .await?;
     auth_io
@@ -209,7 +209,7 @@ impl HttpClient for RetryMockClient {
                 access_key_id: "oauth-access-key".to_string(),
                 secret_access_key: "oauth-secret-key".to_string(),
                 session_token: "oauth-session-token".to_string(),
-                expiration: chrono::DateTime::from_timestamp(TIMESTAMP, 0).unwrap(),
+                expiration: jiff::Timestamp::from_second(TIMESTAMP).unwrap(),
             };
             return Ok(serde_json::from_value(serde_json::to_value(creds)?)?);
         }
@@ -267,7 +267,7 @@ async fn seed_fresh_tokens(storage: &Arc<MockStorage>, paths: &DomainPaths, host
             access_token: ACCESS_TOKEN.to_string(),
             refresh_token: REFRESH_TOKEN.to_string(),
             // Well inside the 60-second buffer → proactive refresh skipped.
-            expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+            expires_at: jiff::Timestamp::now() + jiff::SignedDuration::from_hours(1),
         })
         .await
         .unwrap();
@@ -349,7 +349,7 @@ async fn test_token_refresh_transient_401_recovers() -> Res {
         .write_tokens(&Tokens {
             access_token: "expired-access-token".to_string(),
             refresh_token: REFRESH_TOKEN.to_string(),
-            expires_at: chrono::Utc::now() - chrono::Duration::seconds(300),
+            expires_at: jiff::Timestamp::now() - jiff::SignedDuration::from_secs(300),
         })
         .await?;
     auth_io
@@ -423,8 +423,8 @@ impl HttpClient for CountingCredsClient {
                 "AccessKeyId": "refreshed-key",
                 "SecretAccessKey": "refreshed-secret",
                 "SessionToken": "refreshed-session",
-                "Expiration": (chrono::Utc::now() + chrono::Duration::hours(1))
-                    .to_rfc3339(),
+                "Expiration": (jiff::Timestamp::now() + jiff::SignedDuration::from_hours(1))
+                    .to_string(),
             });
             return Ok(serde_json::from_value(body)?);
         }
@@ -473,14 +473,14 @@ async fn seed_expired_creds_fresh_tokens(auth_io: &AuthIo<Arc<MockStorage>>) -> 
             access_key: "stale".to_string(),
             secret_key: "stale-secret".to_string(),
             token: "stale-session".to_string(),
-            expires_at: chrono::Utc::now() - chrono::Duration::hours(1),
+            expires_at: jiff::Timestamp::now() - jiff::SignedDuration::from_hours(1),
         })
         .await?;
     auth_io
         .write_tokens(&Tokens {
             access_token: ACCESS_TOKEN.to_string(),
             refresh_token: REFRESH_TOKEN.to_string(),
-            expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+            expires_at: jiff::Timestamp::now() + jiff::SignedDuration::from_hours(1),
         })
         .await?;
     Ok(())
@@ -673,7 +673,7 @@ async fn a_refresh_waits_for_another_process_and_uses_the_tokens_it_rotated() ->
         .write_tokens(&Tokens {
             access_token: "expired-access-token".to_string(),
             refresh_token: REFRESH_TOKEN.to_string(),
-            expires_at: chrono::Utc::now() - chrono::Duration::seconds(300),
+            expires_at: jiff::Timestamp::now() - jiff::SignedDuration::from_secs(300),
         })
         .await?;
     auth_io
@@ -701,7 +701,7 @@ async fn a_refresh_waits_for_another_process_and_uses_the_tokens_it_rotated() ->
         .write_tokens(&Tokens {
             access_token: "rotated-access-token".to_string(),
             refresh_token: "rotated-refresh-token".to_string(),
-            expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+            expires_at: jiff::Timestamp::now() + jiff::SignedDuration::from_hours(1),
         })
         .await?;
     other.release()?;
@@ -820,7 +820,7 @@ async fn auth_with_cached_credentials()
         .write_tokens(&Tokens {
             access_token: ACCESS_TOKEN.to_string(),
             refresh_token: REFRESH_TOKEN.to_string(),
-            expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+            expires_at: jiff::Timestamp::now() + jiff::SignedDuration::from_hours(1),
         })
         .await?;
     auth_io
@@ -834,7 +834,7 @@ async fn auth_with_cached_credentials()
             access_key: "cached".to_string(),
             secret_key: "cached".to_string(),
             token: "cached".to_string(),
-            expires_at: chrono::Utc::now() + chrono::Duration::minutes(30),
+            expires_at: jiff::Timestamp::now() + jiff::SignedDuration::from_mins(30),
         })
         .await?;
 
@@ -870,7 +870,7 @@ async fn second_refresh_roles_with_an_unchanged_role_does_not_flush() -> Res {
             access_key: "revended".to_string(),
             secret_key: "revended".to_string(),
             token: "revended".to_string(),
-            expires_at: chrono::Utc::now() + chrono::Duration::minutes(30),
+            expires_at: jiff::Timestamp::now() + jiff::SignedDuration::from_mins(30),
         })
         .await?;
 
@@ -900,7 +900,7 @@ async fn refresh_roles_flushes_when_the_role_changed_mid_session() -> Res {
             access_key: "readwrite-creds".to_string(),
             secret_key: "readwrite-creds".to_string(),
             token: "readwrite-creds".to_string(),
-            expires_at: chrono::Utc::now() + chrono::Duration::minutes(30),
+            expires_at: jiff::Timestamp::now() + jiff::SignedDuration::from_mins(30),
         })
         .await?;
 
@@ -953,7 +953,7 @@ async fn a_failed_flush_leaves_the_role_unknown_so_the_next_call_retries() -> Re
             access_key: "stale-old-role".to_string(),
             secret_key: "stale-old-role".to_string(),
             token: "stale-old-role".to_string(),
-            expires_at: chrono::Utc::now() + chrono::Duration::minutes(30),
+            expires_at: jiff::Timestamp::now() + jiff::SignedDuration::from_mins(30),
         })
         .await?;
 
@@ -987,7 +987,7 @@ async fn switch_role_flushes_credentials_and_reports_the_new_role() -> Res {
             access_key: "readwrite-creds".to_string(),
             secret_key: "readwrite-creds".to_string(),
             token: "readwrite-creds".to_string(),
-            expires_at: chrono::Utc::now() + chrono::Duration::minutes(30),
+            expires_at: jiff::Timestamp::now() + jiff::SignedDuration::from_mins(30),
         })
         .await?;
 
@@ -1020,7 +1020,7 @@ async fn switch_role_to_the_role_already_active_still_flushes() -> Res {
             access_key: "readwrite-creds".to_string(),
             secret_key: "readwrite-creds".to_string(),
             token: "readwrite-creds".to_string(),
-            expires_at: chrono::Utc::now() + chrono::Duration::minutes(30),
+            expires_at: jiff::Timestamp::now() + jiff::SignedDuration::from_mins(30),
         })
         .await?;
 
@@ -1271,6 +1271,24 @@ async fn package_revisions_maps_a_persistent_401_to_login_required() -> Res {
     Ok(())
 }
 
+/// The bucket's latest hashes ride the same retry as the revision listing.
+#[test(tokio::test)]
+async fn latest_hashes_recovers_from_a_revoked_token_by_forcing_a_refresh() -> Res {
+    let (auth, _storage, _paths, host) = auth_with_cached_credentials().await?;
+    let hash = "a".repeat(64);
+    let client = GraphQlTestHttpClient {
+        latest_pointers: vec![("team/data".to_string(), hash.clone())],
+        graphql_fail_first_n: 1,
+        ..GraphQlTestHttpClient::default()
+    };
+
+    let latest = auth.latest_hashes(&client, &host, "bucket").await;
+
+    assert_eq!(latest.ok(), Some(vec![(("team", "data").into(), hash)]));
+    assert_eq!(client.token_calls.load(Ordering::SeqCst), 1);
+    Ok(())
+}
+
 #[test(tokio::test)]
 async fn expire_credentials_forces_a_revend_without_touching_tokens() -> Res {
     let storage = Arc::new(MockStorage::default());
@@ -1283,7 +1301,7 @@ async fn expire_credentials_forces_a_revend_without_touching_tokens() -> Res {
         .write_tokens(&Tokens {
             access_token: ACCESS_TOKEN.to_string(),
             refresh_token: REFRESH_TOKEN.to_string(),
-            expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+            expires_at: jiff::Timestamp::now() + jiff::SignedDuration::from_hours(1),
         })
         .await?;
     auth_io
@@ -1291,7 +1309,7 @@ async fn expire_credentials_forces_a_revend_without_touching_tokens() -> Res {
             access_key: "stale".to_string(),
             secret_key: "stale".to_string(),
             token: "stale".to_string(),
-            expires_at: chrono::Utc::now() + chrono::Duration::minutes(30),
+            expires_at: jiff::Timestamp::now() + jiff::SignedDuration::from_mins(30),
         })
         .await?;
 

@@ -20,17 +20,21 @@ use tokio::sync::Mutex;
 use tracing::info;
 use tracing::warn;
 
+use crate::dataspace::contract::LOCAL_SUFFIX;
+use crate::dataspace::contract::Registry;
 use crate::file_stamp::FileId;
 use crate::file_stamp::FileStamp;
 use crate::object_hash::ObjectHash;
+use crate::sqlite::Connection;
+use crate::sqlite::ConnectionError;
 use crate::stat_cache::CachedHash;
 use crate::stat_cache::FULL_HASH_EVERY;
 use crate::stat_cache::StatCache;
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 /// Each step takes the schema from the version before it to its own.
-const MIGRATIONS: [&str; 2] = [
+const MIGRATIONS: [&str; 3] = [
     "
 CREATE TABLE package_activity (
   namespace      TEXT PRIMARY KEY,
@@ -59,7 +63,116 @@ CREATE TABLE stat_walk (
   full_hash_at INTEGER NOT NULL
 );
 ",
+    // Stat records gain the registry and the folder, which earlier ones lack,
+    // so they are dropped. `registry` is the bucket, `<name>@local` for a
+    // local registry, or '' for none; `folder` is the path as the OS spells
+    // it, so no two paths share one. Keys start with the folder, which a full
+    // walk clears of other buckets by.
+    "
+DROP TABLE file_stat;
+DROP TABLE stat_walk;
+CREATE TABLE file_stat (
+  registry  TEXT NOT NULL,
+  namespace TEXT NOT NULL,
+  folder    BLOB NOT NULL,
+  path      TEXT NOT NULL,
+  algorithm INTEGER NOT NULL,
+  size      INTEGER NOT NULL,
+  mtime     INTEGER NOT NULL,
+  ctime     INTEGER NOT NULL,
+  volume    INTEGER NOT NULL,
+  inode     BLOB NOT NULL,
+  hash      BLOB NOT NULL,
+  saved_at  INTEGER NOT NULL,
+  PRIMARY KEY (folder, registry, namespace, path, algorithm)
+) WITHOUT ROWID;
+CREATE TABLE stat_walk (
+  registry     TEXT NOT NULL,
+  namespace    TEXT NOT NULL,
+  folder       BLOB NOT NULL,
+  full_hash_at INTEGER NOT NULL,
+  PRIMARY KEY (folder, registry, namespace)
+);
+",
 ];
+
+/// One working folder of one package, from one registry: what a walk's stat
+/// records are kept under, so a walk of one copy of a package never touches
+/// another's.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FolderKey {
+    /// `None` for a package with no remote.
+    pub registry: Option<Registry>,
+    pub package: Namespace,
+    pub folder: PathBuf,
+}
+
+impl FolderKey {
+    /// The key's columns, `registry`, `namespace` and `folder`. `queue.db`
+    /// stores them too, and is never rebuilt: changing them needs its
+    /// migration as well.
+    pub(crate) fn columns(&self) -> (String, String, Vec<u8>) {
+        let registry = self
+            .registry
+            .as_ref()
+            .map_or_else(String::new, Registry::dir_name);
+        (registry, self.package.to_string(), os_bytes(&self.folder))
+    }
+
+    /// The key [`Self::columns`] gave, or `None` for columns no key gives.
+    pub(crate) fn from_columns(registry: String, namespace: &str, folder: &[u8]) -> Option<Self> {
+        let registry = if registry.is_empty() {
+            None
+        } else if let Some(name) = registry.strip_suffix(LOCAL_SUFFIX) {
+            if name.is_empty() {
+                return None;
+            }
+            Some(Registry::Local(name.to_string()))
+        } else {
+            Some(Registry::S3(registry))
+        };
+        Some(Self {
+            registry,
+            package: Namespace::try_from(namespace).ok()?,
+            folder: os_path(folder)?,
+        })
+    }
+}
+
+/// The path as the OS spells it: bytes on Unix, UTF-16 on Windows. Not
+/// `as_encoded_bytes`, whose encoding may change and must not be stored.
+#[cfg(unix)]
+pub(crate) fn os_bytes(path: &Path) -> Vec<u8> {
+    use std::os::unix::ffi::OsStrExt;
+    path.as_os_str().as_bytes().to_vec()
+}
+
+#[cfg(windows)]
+pub(crate) fn os_bytes(path: &Path) -> Vec<u8> {
+    use std::os::windows::ffi::OsStrExt;
+    path.as_os_str()
+        .encode_wide()
+        .flat_map(u16::to_le_bytes)
+        .collect()
+}
+
+#[cfg(unix)]
+#[allow(clippy::unnecessary_wraps, reason = "Windows can refuse the bytes")]
+pub(crate) fn os_path(bytes: &[u8]) -> Option<PathBuf> {
+    use std::os::unix::ffi::OsStrExt;
+    Some(PathBuf::from(std::ffi::OsStr::from_bytes(bytes)))
+}
+
+#[cfg(windows)]
+pub(crate) fn os_path(bytes: &[u8]) -> Option<PathBuf> {
+    use std::os::windows::ffi::OsStringExt;
+    let (pairs, rest) = bytes.as_chunks::<2>();
+    if !rest.is_empty() {
+        return None;
+    }
+    let wide: Vec<u16> = pairs.iter().map(|pair| u16::from_le_bytes(*pair)).collect();
+    Some(PathBuf::from(std::ffi::OsString::from_wide(&wide)))
+}
 
 /// What moved a package's last-change time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -116,6 +229,15 @@ enum StoreError {
 impl From<rusqlite::Error> for StoreError {
     fn from(err: rusqlite::Error) -> Self {
         Self::Sqlite(err)
+    }
+}
+
+impl From<ConnectionError> for StoreError {
+    fn from(err: ConnectionError) -> Self {
+        match err {
+            ConnectionError::Sqlite(err) => Self::Sqlite(err),
+            ConnectionError::Closed => Self::Closed,
+        }
     }
 }
 
@@ -266,25 +388,27 @@ impl PackageStateStore {
         .collect()
     }
 
-    /// The package's [`StatCache`] for one walk. A walk a day hashes every
+    /// The folder's [`StatCache`] for one walk. A walk a day hashes every
     /// file anyway; so does one the store can't answer.
-    pub async fn stat_cache(&self, namespace: &Namespace) -> StatCache {
-        let key = namespace.to_string();
+    pub async fn stat_cache(&self, key: &FolderKey) -> StatCache {
+        let (registry, namespace, folder) = key.columns();
         let loaded = self
             .run(move |db| {
+                let key = rusqlite::params![registry, namespace, folder];
                 let full_hash_at = db
                     .query_row(
-                        "SELECT full_hash_at FROM stat_walk WHERE namespace = ?1",
-                        [&key],
+                        "SELECT full_hash_at FROM stat_walk
+                         WHERE registry = ?1 AND namespace = ?2 AND folder = ?3",
+                        key,
                         |row| row.get::<_, i64>(0),
                     )
                     .optional()?;
                 let mut query = db.prepare(
                     "SELECT path, algorithm, size, mtime, ctime, volume, inode, hash, saved_at
-                     FROM file_stat WHERE namespace = ?1",
+                     FROM file_stat WHERE registry = ?1 AND namespace = ?2 AND folder = ?3",
                 )?;
                 let rows = query
-                    .query_map([&key], |row| {
+                    .query_map(key, |row| {
                         Ok(StatRow {
                             path: row.get(0)?,
                             algorithm: row.get(1)?,
@@ -315,12 +439,12 @@ impl PackageStateStore {
 
     /// Write what a walk with `cache` changed: new and changed entries, and
     /// the deletion of files it did not find.
-    pub async fn save_stat_cache(&self, namespace: &Namespace, cache: &StatCache) {
+    pub async fn save_stat_cache(&self, key: &FolderKey, cache: &StatCache) {
         let gone = cache.gone();
         if cache.updates().is_empty() && gone.is_empty() && !cache.is_full() {
             return;
         }
-        let key = namespace.to_string();
+        let (registry, namespace, folder) = key.columns();
         let updates: Arc<Vec<StatRow>> = Arc::new(
             cache
                 .updates()
@@ -337,19 +461,24 @@ impl PackageStateStore {
         self.run(move |db| {
             let tx = db.unchecked_transaction()?;
             {
-                let mut delete =
-                    tx.prepare_cached("DELETE FROM file_stat WHERE namespace = ?1 AND path = ?2")?;
+                let mut delete = tx.prepare_cached(
+                    "DELETE FROM file_stat
+                     WHERE registry = ?1 AND namespace = ?2 AND folder = ?3 AND path = ?4",
+                )?;
                 for path in gone.iter() {
-                    delete.execute(rusqlite::params![key, path])?;
+                    delete.execute(rusqlite::params![registry, namespace, folder, path])?;
                 }
                 let mut upsert = tx.prepare_cached(
                     "INSERT OR REPLACE INTO file_stat
-                     (namespace, path, algorithm, size, mtime, ctime, volume, inode, hash, saved_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                     (registry, namespace, folder, path, algorithm, size, mtime, ctime, volume,
+                      inode, hash, saved_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                 )?;
                 for row in updates.iter() {
                     upsert.execute(rusqlite::params![
-                        key,
+                        registry,
+                        namespace,
+                        folder,
                         row.path,
                         row.algorithm,
                         row.size,
@@ -362,9 +491,18 @@ impl PackageStateStore {
                     ])?;
                 }
                 if let Some(at) = full_hash_at {
+                    // What another bucket left in the folder is never read
+                    // again: the package moved to this one.
+                    for table in ["file_stat", "stat_walk"] {
+                        tx.execute(
+                            &format!("DELETE FROM {table} WHERE folder = ?1 AND registry <> ?2"),
+                            rusqlite::params![folder, registry],
+                        )?;
+                    }
                     tx.execute(
-                        "INSERT OR REPLACE INTO stat_walk (namespace, full_hash_at) VALUES (?1, ?2)",
-                        rusqlite::params![key, at],
+                        "INSERT OR REPLACE INTO stat_walk (registry, namespace, folder, full_hash_at)
+                         VALUES (?1, ?2, ?3, ?4)",
+                        rusqlite::params![registry, namespace, folder, at],
                     )?;
                 }
             }
@@ -550,58 +688,6 @@ async fn migrate(connection: &Connection) -> Result<(), StoreError> {
         .await
 }
 
-/// A SQLite connection whose work runs on tokio's blocking threads.
-#[derive(Clone)]
-struct Connection(Arc<std::sync::Mutex<Option<rusqlite::Connection>>>);
-
-impl Connection {
-    async fn open(path: &Path) -> Result<Self, StoreError> {
-        let path = path.to_owned();
-        Self::open_with(move || rusqlite::Connection::open(path)).await
-    }
-
-    async fn open_in_memory() -> Result<Self, StoreError> {
-        Self::open_with(rusqlite::Connection::open_in_memory).await
-    }
-
-    async fn open_with<F>(open: F) -> Result<Self, StoreError>
-    where
-        F: FnOnce() -> rusqlite::Result<rusqlite::Connection> + Send + 'static,
-    {
-        let db = tokio::task::spawn_blocking(open)
-            .await
-            .map_err(|_| StoreError::Closed)??;
-        Ok(Self(Arc::new(std::sync::Mutex::new(Some(db)))))
-    }
-
-    async fn call<T, F>(&self, f: F) -> Result<T, StoreError>
-    where
-        T: Send + 'static,
-        F: FnOnce(&mut rusqlite::Connection) -> Result<T, StoreError> + Send + 'static,
-    {
-        let inner = self.0.clone();
-        tokio::task::spawn_blocking(move || {
-            let mut guard = inner.lock().map_err(|_| StoreError::Closed)?;
-            f(guard.as_mut().ok_or(StoreError::Closed)?)
-        })
-        .await
-        .map_err(|_| StoreError::Closed)?
-    }
-
-    async fn close(&self) -> Result<(), StoreError> {
-        let inner = self.0.clone();
-        tokio::task::spawn_blocking(move || {
-            let db = inner.lock().map_err(|_| StoreError::Closed)?.take();
-            match db {
-                Some(db) => db.close().map_err(|(_, err)| err.into()),
-                None => Ok(()),
-            }
-        })
-        .await
-        .map_err(|_| StoreError::Closed)?
-    }
-}
-
 /// A `file_stat` row as SQLite holds it.
 struct StatRow {
     path: String,
@@ -669,12 +755,12 @@ fn from_nanos(ns: i64) -> SystemTime {
     }
 }
 
-fn to_millis(at: SystemTime) -> i64 {
+pub(crate) fn to_millis(at: SystemTime) -> i64 {
     at.duration_since(UNIX_EPOCH)
         .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
 }
 
-fn from_millis(ms: i64) -> SystemTime {
+pub(crate) fn from_millis(ms: i64) -> SystemTime {
     UNIX_EPOCH + Duration::from_millis(u64::try_from(ms).unwrap_or(0))
 }
 
@@ -690,8 +776,56 @@ mod tests {
         ("acme", "demo").into()
     }
 
+    /// `acme/demo` from `bucket`, in the dataspace `dataspace`.
+    fn copy(bucket: &str, dataspace: &str) -> FolderKey {
+        FolderKey {
+            registry: Some(Registry::S3(bucket.to_string())),
+            package: ns(),
+            folder: [dataspace, bucket, "acme", "demo"].iter().collect(),
+        }
+    }
+
+    fn key() -> FolderKey {
+        copy("bucket-a", "one")
+    }
+
     fn at(secs: u64) -> SystemTime {
         UNIX_EPOCH + Duration::from_secs(secs)
+    }
+
+    /// A local registry's column holds `@`, so no bucket's can match it.
+    #[test]
+    fn a_local_registrys_column_is_no_buckets() {
+        let local = FolderKey {
+            registry: Some(Registry::Local("lab-mac".to_string())),
+            ..key()
+        };
+        assert_eq!(local.columns().0, "lab-mac@local");
+        assert!(quilt_uri::check_bucket(&local.columns().0).is_err());
+    }
+
+    /// `queue.db` is never rebuilt, so every key reads back from its
+    /// columns as it was written: a bucket's, a local registry's, and none.
+    #[test]
+    fn a_key_reads_back_from_its_columns() {
+        for registry in [
+            Some(Registry::S3("bucket-a".to_string())),
+            Some(Registry::Local("lab-mac".to_string())),
+            None,
+        ] {
+            let written = FolderKey { registry, ..key() };
+            let (registry, namespace, folder) = written.columns();
+            assert_eq!(
+                FolderKey::from_columns(registry, &namespace, &folder),
+                Some(written)
+            );
+        }
+        // A local registry has a name, so no key gives a bare `@local`.
+        let (_, namespace, folder) = key().columns();
+        assert_eq!(
+            FolderKey::from_columns("@local".to_string(), &namespace, &folder),
+            None
+        );
     }
 
     #[test(tokio::test)]
@@ -736,6 +870,82 @@ mod tests {
                 last_change_at: at(20),
                 source: ChangeSource::PublishingOn,
             })
+        );
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn walking_a_clean_copy_leaves_a_changed_copys_stat_cache() -> Res {
+        let store = PackageStateStore::in_memory();
+        let changed = key();
+        let mut cache = store.stat_cache(&changed).await;
+        cache.record(std::path::Path::new("a"), cached());
+        store.save_stat_cache(&changed, &cache).await;
+        let entry = cached();
+        for clean in [copy("bucket-b", "one"), copy("bucket-a", "two")] {
+            let mut cache = store.stat_cache(&clean).await;
+            assert_eq!(cache.gone(), Vec::<PathBuf>::new(), "it read no entry");
+            cache.record(std::path::Path::new("a"), cached());
+            store.save_stat_cache(&clean, &cache).await;
+            // A walk that found no `a` deletes its own entry.
+            let cache = store.stat_cache(&clean).await;
+            store.save_stat_cache(&clean, &cache).await;
+            assert_eq!(store.stat_cache(&clean).await.gone(), Vec::<PathBuf>::new());
+        }
+        let cache = store.stat_cache(&changed).await;
+        assert_eq!(
+            cache.lookup(
+                std::path::Path::new("a"),
+                &entry.stamp,
+                entry.hash.algorithm()
+            ),
+            Some(&entry.hash)
+        );
+        Ok(())
+    }
+
+    /// Folders whose names are not UTF-8 and differ in one byte.
+    #[cfg(unix)]
+    #[test(tokio::test)]
+    async fn folders_whose_names_are_not_utf8_keep_their_own_stat_cache() -> Res {
+        use std::os::unix::ffi::OsStrExt;
+        let store = PackageStateStore::in_memory();
+        let in_folder = |name: &[u8]| FolderKey {
+            folder: PathBuf::from(std::ffi::OsStr::from_bytes(name)),
+            ..key()
+        };
+        let (one, two) = (in_folder(b"data\x80"), in_folder(b"data\x81"));
+        let mut cache = store.stat_cache(&one).await;
+        cache.record(std::path::Path::new("a"), cached());
+        store.save_stat_cache(&one, &cache).await;
+        assert_eq!(store.stat_cache(&two).await.gone(), Vec::<PathBuf>::new());
+        Ok(())
+    }
+
+    /// The package gained a remote, or moved to another bucket.
+    #[test(tokio::test)]
+    async fn a_full_walk_drops_what_another_bucket_left_in_its_folder() -> Res {
+        let store = PackageStateStore::in_memory();
+        let mut cache = store.stat_cache(&key()).await;
+        cache.record(std::path::Path::new("a"), cached());
+        store.save_stat_cache(&key(), &cache).await;
+
+        let moved = FolderKey {
+            registry: Some(Registry::S3("bucket-b".to_string())),
+            ..key()
+        };
+        let mut cache = store.stat_cache(&moved).await;
+        assert!(cache.is_full(), "never walked");
+        assert_eq!(cache.gone(), Vec::<PathBuf>::new(), "it read no entry");
+        cache.record(std::path::Path::new("a"), cached());
+        store.save_stat_cache(&moved, &cache).await;
+
+        let old = store.stat_cache(&key()).await;
+        assert!(old.is_full(), "its full walk was dropped");
+        assert_eq!(
+            old.gone(),
+            Vec::<PathBuf>::new(),
+            "its entries were dropped"
         );
         Ok(())
     }
@@ -859,7 +1069,33 @@ mod tests {
             store.last_change(&ns()).await.map(|a| a.last_change_at),
             Some(at(5))
         );
-        assert!(store.stat_cache(&ns()).await.is_full(), "never walked");
+        assert!(store.stat_cache(&key()).await.is_full(), "never walked");
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn a_version_2_file_with_a_stat_cache_keeps_its_times() -> Res {
+        let dir = tempfile::TempDir::new()?;
+        let path = dir.path().join("state.db");
+        {
+            let db = rusqlite::Connection::open(&path)?;
+            db.execute_batch(MIGRATIONS[0])?;
+            db.execute_batch(MIGRATIONS[1])?;
+            db.pragma_update(None, "user_version", 2)?;
+            db.execute(
+                "INSERT INTO package_activity VALUES ('acme/demo', 5000, 'edit')",
+                [],
+            )?;
+            db.execute(
+                "INSERT INTO stat_walk VALUES ('acme/demo', ?1)",
+                [to_nanos(SystemTime::now())],
+            )?;
+        }
+        let store = PackageStateStore::new(path);
+        assert_eq!(
+            store.last_change(&ns()).await.map(|a| a.last_change_at),
+            Some(at(5))
+        );
         Ok(())
     }
 
@@ -882,35 +1118,31 @@ mod tests {
     #[test(tokio::test)]
     async fn a_walk_a_day_hashes_everything() -> Res {
         let store = PackageStateStore::in_memory();
-        let first = store.stat_cache(&ns()).await;
+        let first = store.stat_cache(&key()).await;
         assert!(first.is_full(), "no full walk yet");
-        store.save_stat_cache(&ns(), &first).await;
-        assert!(!store.stat_cache(&ns()).await.is_full());
+        store.save_stat_cache(&key(), &first).await;
+        assert!(!store.stat_cache(&key()).await.is_full());
 
         let a_day_ago = to_nanos(SystemTime::now() - FULL_HASH_EVERY);
-        let key = ns().to_string();
         store
             .run(move |db| {
-                db.execute(
-                    "UPDATE stat_walk SET full_hash_at = ?2 WHERE namespace = ?1",
-                    rusqlite::params![key, a_day_ago],
-                )?;
+                db.execute("UPDATE stat_walk SET full_hash_at = ?1", [a_day_ago])?;
                 Ok(())
             })
             .await;
-        assert!(store.stat_cache(&ns()).await.is_full());
+        assert!(store.stat_cache(&key()).await.is_full());
         Ok(())
     }
 
     #[test(tokio::test)]
     async fn stat_entries_round_trip_and_unseen_ones_are_deleted() -> Res {
         let store = PackageStateStore::in_memory();
-        let mut cache = store.stat_cache(&ns()).await;
+        let mut cache = store.stat_cache(&key()).await;
         cache.record(std::path::Path::new("a"), cached());
         cache.record(std::path::Path::new("b"), cached());
-        store.save_stat_cache(&ns(), &cache).await;
+        store.save_stat_cache(&key(), &cache).await;
 
-        let mut cache = store.stat_cache(&ns()).await;
+        let mut cache = store.stat_cache(&key()).await;
         let entry = cached();
         assert_eq!(
             cache.lookup(
@@ -921,9 +1153,9 @@ mod tests {
             Some(&entry.hash)
         );
         cache.see(std::path::Path::new("a"));
-        store.save_stat_cache(&ns(), &cache).await;
+        store.save_stat_cache(&key(), &cache).await;
 
-        let cache = store.stat_cache(&ns()).await;
+        let cache = store.stat_cache(&key()).await;
         assert_eq!(
             cache.lookup(
                 std::path::Path::new("b"),

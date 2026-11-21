@@ -81,6 +81,18 @@ fn in_front(app: &AppHandle) -> bool {
     })
 }
 
+/// Post what the cutover's import did on this start, or why it fell back to
+/// the ref engine, once.
+pub fn post_cutover(app: &AppHandle, services: &Services) {
+    let Some(body) = services.cutover_notice.as_deref() else {
+        return;
+    };
+    let title = "Dataspace engine";
+    if let Err(err) = app.notification().builder().title(title).body(body).show() {
+        warn!("could not post a notification: {err}");
+    }
+}
+
 fn post(app: &AppHandle, entry: &Entry) {
     let (title, body) = entry.notice();
     if let Err(err) = app
@@ -111,8 +123,7 @@ pub(super) fn open(app: &AppHandle, page: Option<&str>) {
 
 #[cfg(test)]
 mod tests {
-    use chrono::DateTime;
-    use chrono::Utc;
+    use jiff::Timestamp;
 
     use super::*;
     use crate::engine::action_needed::Cause;
@@ -122,7 +133,7 @@ mod tests {
         Entry {
             subject,
             cause,
-            since: DateTime::from_timestamp(0, 0).unwrap(),
+            since: Timestamp::from_second(0).unwrap(),
         }
     }
 
@@ -151,7 +162,7 @@ mod tests {
     fn an_entry_that_came_back_enters_again() {
         let before = [entry(Subject::App, Cause::Credentials)];
         let back = Entry {
-            since: Utc::now(),
+            since: Timestamp::now(),
             ..before[0].clone()
         };
         assert_eq!(

@@ -9,6 +9,8 @@ use crate::cli::output::Render;
 use crate::cli::output::Std;
 use crate::cli::text::printable_line;
 
+pub mod dataspace;
+
 #[derive(Debug)]
 pub struct Input {
     pub namespace: Namespace,
@@ -162,6 +164,7 @@ pub async fn keep(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quilt_rs::flow::UserMeta;
 
     use test_log::test;
 
@@ -255,6 +258,7 @@ mod tests {
             namespace: ("team", "plates").into(),
             source: Some(source),
             message: None,
+            user_meta: UserMeta::Clear,
         })
         .await?;
         let input = |scope| Input {

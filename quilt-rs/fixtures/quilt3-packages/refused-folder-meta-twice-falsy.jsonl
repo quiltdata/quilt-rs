@@ -1,0 +1,4 @@
+{"version": "v0", "message": "", "user_meta": {}}
+{"logical_key": "a/", "meta": {}}
+{"logical_key": "a/", "meta": {"y": 2}}
+{"logical_key": "a/x.txt", "physical_keys": ["s3://bucket/a/x.txt"], "hash": {"type": "SHA256", "value": "0000000000000000000000000000000000000000000000000000000000000000"}, "size": 1, "meta": {}}

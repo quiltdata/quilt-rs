@@ -32,7 +32,7 @@ fn fixture_with_lineage_and_status(
     let mut model = MockQuiltModel::new();
     model.expect_get_installed_packages_list().returning(|| {
         Ok(vec![
-            quilt::LocalDomain::new(std::path::PathBuf::new())
+            crate::engine::model::mocks::nowhere()
                 .create_installed_package(("acme", "demo").into()),
         ])
     });
@@ -45,7 +45,7 @@ fn fixture_with_lineage_and_status(
         .returning(|p| Ok(Some(p.namespace.clone())));
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
-            quilt::LocalDomain::new(std::path::PathBuf::new())
+            crate::engine::model::mocks::nowhere()
                 .create_installed_package(("acme", "demo").into()),
         ))
     });
@@ -80,6 +80,7 @@ fn fake_push_outcome(ns: &Namespace) -> quilt::PushOutcome {
             origin: None,
         },
         certified_latest: true,
+        latest_unchecked: false,
     }
 }
 
@@ -294,6 +295,7 @@ async fn autosync_default_metadata_keeps_the_heads_agent_exec() -> Result<(), Er
                         ..quilt::manifest::ManifestHeader::default()
                     },
                     rows: Vec::new(),
+                    dir_meta: Vec::new(),
                 })
             });
         let published = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -318,7 +320,7 @@ async fn autosync_default_metadata_keeps_the_heads_agent_exec() -> Result<(), Er
 
         let published = published.lock().unwrap();
         assert!(
-            matches!(published.as_slice(), [quilt::flow::UserMeta::Set(meta)] if *meta == expected),
+            matches!(published.as_slice(), [quilt::flow::UserMeta::Set(meta, _)] if *meta == expected),
             "expected {expected}, got {published:?}"
         );
     }
@@ -394,9 +396,9 @@ async fn run_once_skips_publish_while_the_wait_runs() -> Result<(), Error> {
     let card = crate::engine::autopull::next_publish_at(&inner, Duration::from_secs(300))
         .await
         .expect("waiting");
-    let expected = chrono::DateTime::<chrono::Utc>::from(changed_at + Duration::from_secs(300));
+    let expected = jiff::Timestamp::try_from(changed_at + Duration::from_secs(300)).unwrap();
     assert!(
-        (card - expected).abs() < chrono::Duration::seconds(2),
+        (card - expected).abs() < jiff::SignedDuration::from_secs(2),
         "the last change plus the wait, got {card}, expected {expected}"
     );
 

@@ -94,14 +94,16 @@ pub(crate) async fn apply_latest_update(
     // only moment that means anything once the whole touch set is staged first.
     // Untracked paths keep their rows too: a file found at one is safe to
     // replace only while it still holds `base`'s bytes.
-    let base_rows: BTreeMap<PathBuf, ManifestRow> = touched
-        .iter()
-        .filter_map(|path| {
-            manifest
-                .get_record(path)
-                .map(|row| (path.clone(), row.clone()))
-        })
-        .collect();
+    let base_rows: BTreeMap<PathBuf, ManifestRow> = {
+        let rows = manifest.rows_by_key();
+        touched
+            .iter()
+            .filter_map(|path| {
+                rows.get(path.as_path())
+                    .map(|&row| (path.clone(), row.clone()))
+            })
+            .collect()
+    };
 
     debug!("⏳ Advancing lineage to latest {}", latest.hash);
     lineage.remote_mut()?.hash.clone_from(&latest.hash);
@@ -128,14 +130,15 @@ pub(crate) async fn apply_latest_update(
 
     // Split the touch set by presence in the new base: what `latest` still has
     // is written over, what it no longer has is deleted afterwards.
+    let latest_rows = manifest.rows_by_key();
     let to_install: Vec<PathBuf> = touched
         .iter()
-        .filter(|p| manifest.contains_record(p))
+        .filter(|p| latest_rows.contains_key(p.as_path()))
         .cloned()
         .collect();
     let to_uninstall: Vec<PathBuf> = touched
         .iter()
-        .filter(|p| !manifest.contains_record(p))
+        .filter(|p| !latest_rows.contains_key(p.as_path()))
         .filter(|p| lineage.paths.contains_key(*p))
         .cloned()
         .collect();
@@ -212,9 +215,10 @@ pub(crate) async fn apply_latest_update(
     //
     // AFTER the uninstall, not before: pruning first would drop the very rows
     // `uninstall_paths` looks up, and it errors on a path whose row is gone.
+    let latest_rows = manifest.rows_by_key();
     lineage
         .paths
-        .retain(|path, _| manifest.contains_record(path));
+        .retain(|path, _| latest_rows.contains_key(path.as_path()));
 
     Ok((
         lineage,
@@ -348,6 +352,7 @@ mod tests {
                 .unwrap(),
             size: body.len() as u64,
             meta: None,
+            meta_numbers: crate::manifest::RawNumbers::default(),
         })
     }
 
@@ -1444,10 +1449,7 @@ mod tests {
         async fn is_file(&self, path: impl AsRef<Path>) -> bool {
             self.inner.is_file(path).await
         }
-        async fn modified_timestamp(
-            &self,
-            path: impl AsRef<Path>,
-        ) -> Res<chrono::DateTime<chrono::Utc>> {
+        async fn modified_timestamp(&self, path: impl AsRef<Path>) -> Res<jiff::Timestamp> {
             self.inner.modified_timestamp(path).await
         }
         async fn open_file(&self, path: impl AsRef<Path> + Send) -> Res<tokio::fs::File> {

@@ -20,8 +20,10 @@ use quilt_uri::{S3PackageUri, ManifestUri};
 let path = PathBuf::from("/foo/bar");
 let local_domain = LocalDomain::new(path);
 
-// Create a manifest URI from a package URI
-let package_uri = S3PackageUri::try_from("quilt+s3://bucket#package=namespace@hash")?;
+// Create a manifest URI from a package URI with a whole hash
+let package_uri = S3PackageUri::try_from(
+    "quilt+s3://bucket#package=team/dataset@0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+)?;
 let manifest_uri = ManifestUri::try_from(package_uri)?;
 
 // Install the package
@@ -38,6 +40,167 @@ let installed_package = local_domain.install_package(&manifest_uri).await?;
 4. **Status** — detect modifications (`flow::status`)
 5. **Commit** — create a local package version (`flow::commit_package`)
 6. **Push** — upload changes to remote (`flow::push_package`)
+
+## Short hashes
+
+A package URI may name a revision by a short hash, as in quilt3:
+`quilt+s3://bucket#package=team/dataset@abcdef`, 6 to 63 lowercase hex
+characters. Parsing keeps it as written (`RevisionPointer::HashPrefix`) and
+never touches the network; `ManifestUri::try_from` refuses it. Use
+`io::manifest::resolve_manifest_uri`, which asks the bucket's registry through
+`flow::resolve_hash` and returns a `ManifestUri` with the whole hash, so
+displaying or storing the result never carries the prefix. A prefix that no
+revision starts with, or that several do, is a `HashPrefixError`, as is one
+built by hand that is the wrong length or not hex; the parser refuses those
+two itself.
+
+A package's own revisions resolve without a remote:
+`LocalDomain::resolve_local_hash` (or `flow::resolve_local_hash`, given the
+package's manifests folder) matches a prefix against the manifests installed
+for that package, with the same rules and errors. Only that package's
+revisions count, so a prefix another package shares is not ambiguous.
+
+## Reading an object
+
+`flow::read_object` streams one object's bytes, and checks them against the
+row's hash as they arrive. The check is on by default;
+`ReadOptions::unverified()` turns it off.
+
+The stream's last item says how a read that fails did so:
+
+- `ChecksumError::HashMismatch`: the bytes do not hash to the row. For a
+  `physical_key` with no `versionId` it says the object may have been replaced
+  since, as install does; for a pinned version, that the package may be corrupt.
+- `ChecksumError::SizeMismatch`: the object is not the size the row records;
+  with no `versionId` it also says the object may have been replaced.
+- Any other error (a failed read, a hasher that could not run) is not a verdict
+  on the bytes.
+
+Bytes from the object store are **not** hash-checked. The store holds files
+install verified, and also the copies a commit files of the working files it
+hashed, which are not hashed again. So `read_object` only compares a stored
+file's length to the row's size; when they differ it ignores the stored file and
+reads, and verifies, the remote object instead. A stored file of the right
+length but wrong bytes is not caught.
+
+## Without a package home
+
+These calls work with no `InstalledPackage`, lineage or managed working
+folder:
+
+- `flow::push_files` uploads rows from files or bytes the caller supplies, and
+  publishes the manifest. A row with no hash gets S3's checksum of the host's
+  configured type (sha2-256-chunked unless the host enables `crc64Checksums`,
+  the preferred direction); a row that already carries a real hash keeps it,
+  and the upload is an error unless the bytes hash to it. `latest` moves to
+  the new revision only if it still names the revision the push was built on
+  when read just before the tag write, or names nothing. The write is
+  conditional on that read, so a push that lands between the read and the
+  write is not overwritten; a role that may not read `latest` writes it
+  unchecked, and
+  says so in `PushOutcome::latest_unchecked`. If `latest` has moved past the
+  parent, the revision is still saved, `latest` is left alone, and the error
+  (`PackageOpError::PushedNotLatest`) carries the pushed top hash. If writing
+  a tag fails after the manifest is stored, `PackageOpError::PushTagFailed`
+  carries the top hash too.
+- `flow::install_to` places a manifest's files in any folder, checking each
+  against its row's hash first, and refusing a folder that is a symbolic link
+  between the destination and a target. Fetching is all-or-nothing, but the
+  renames into place are not: a failure partway leaves the files already
+  placed.
+- `dataspace::read::read` reads a `data.toml` entry under `read` or `sync`
+  into its working folder: the revision's files under the entry's paths, and
+  all that is not a file as `metadata.toml`. A file unchanged since the base
+  the lock names takes the revision's version, and a local change to a file
+  the revision also changed blocks the read before anything is written. Under
+  `sync` a file deleted from the folder is a local change like any other, kept
+  or colliding, and a missing or empty folder, or a base the bucket no longer
+  holds, is refused. A `quilt+local://` entry is read from the local registry
+  given.
+- `dataspace::install::install` adds a package to `data.toml` under an
+  access, unpinned, then reads it and writes `data.lock.toml` last; a revision
+  named goes in the lock. `dataspace::uninstall::uninstall` removes the
+  package from both files and its working folder, leaving unpushed commits in
+  the Domain, and `dataspace::prune::prune` clears what a bucket's store holds
+  of it that the bucket holds too.
+- `dataspace::read_all::read_all` reads every `read` entry of a dataspace,
+  then writes `data.lock.toml`, moving a package's base only where its read
+  completed. A missing or empty working folder is filled at the revision the
+  lock names, where that can still be read whole. A lock written for another
+  `data.toml` is used; one written for another folder, host or user only while
+  no working folder holds files and it names no unpushed commits.
+- `dataspace::sync::sync` ticks every `sync` entry of a dataspace with a
+  Domain: it reads `latest` where it moved past the lock's base, commits the
+  working folder's changes, deletions included and without what the ignore
+  rules leave out of a commit, into the Domain's store for the bucket, and
+  pushes the lock's last commit against the base, writing the lock after each
+  step. A package never published is locked with its commits and no base, and
+  its first push expects no `latest`. A push `latest` moved past, or that the
+  bucket's workflow refuses, is still stored, and kept in the Domain's queue
+  so that it is not uploaded again. A working folder that is missing or empty
+  is read back at the lock's revision, and nothing is published from it.
+- `dataspace::publish::publish` publishes a `data.toml` entry under `write`
+  or `replace` from its working folder, against the `latest` read just before.
+  `write` lays the files under the entry's paths over `latest` and keeps its
+  other keys, composing again on a `latest` that moves meanwhile; `replace`
+  publishes the folder as the whole package. `metadata.toml` sets the message
+  and the metadata whole, under the entry's paths for its files and folders,
+  and with no such file the metadata is kept. What the ignore rules leave out
+  of a commit is not published. On `Base::Locked` it publishes only while
+  `latest` is that base, and `Published::Behind` says when it is not. A
+  revision that does not become `latest` is still stored, and
+  `Published::Stored` carries its hash.
+- `dataspace::publish_all::publish_all` publishes every `write` and `replace`
+  entry of a dataspace, then writes `data.lock.toml`, moving a package's base
+  only where its revision became `latest`. A package also under `read`
+  publishes only on its base, read first where `latest` has moved past it.
+  A lock written for another folder, host or user is refused.
+- `dataspace::reattach::unattached` lists a package's commits in its bucket's
+  `RegistryStore` that the bucket does not hold and `data.lock.toml` does not
+  name, as after the lock was deleted. `dataspace::reattach::reattach`
+  attaches one to the lock on a base the caller names, which the next publish
+  expects `latest` to be, or with no base for a package never published,
+  whose next publish expects no `latest`.
+- `dataspace::hooks` runs the one script `data.toml` declares for each of
+  `pre-read`, `post-read`, `pre-write` and `post-write`, as `command`, `args`
+  and `env`, from `read_all`, `publish_all` and `sync`. `post-read` follows a
+  read that moved the lock to a newer revision, even one whose files are
+  unchanged, and `post-write` a publish that stored a revision. A `pre-` hook
+  that fails stops its entry, and a `pre-write` hook may rewrite
+  `metadata.toml` before the publish takes it.
+- `dataspace::ignore` reads the `[ignore]` table of `data.toml`, which sets
+  what packaging any folder of the dataspace leaves out, in a publish and in
+  the sync tick's commit. `packages` and `lockfile`, both on by default, leave
+  out the folders of the packages `data.toml` declares and `data.lock.toml`,
+  and no `!` line brings them back; `data.toml`, `conflict.json`,
+  `metadata.toml` and any folder holding a `data.toml` of its own are always
+  left out. `standard_patterns = false` turns off the built-in rules but the
+  secrets (`.*/`, `.env`, `.env.*`, `.netrc`, `*.pem`). `extend_patterns`
+  adds gitignore lines just above the built-in rules, for new files only, so
+  the user-wide and the package's `.quiltignore` win over them. The table
+  changes nothing a read writes, and no `.quiltignore` is written for it.
+- `dataspace::status::status` reads each entry of a dataspace and writes
+  nothing, not even the Domain's caches: its four hashes and their
+  `UpstreamState`, its working folder's changes as the tick's commit would
+  take them, its rows in `conflict.json`, the revision `queue.db` kept, its
+  unpushed commits, whether the dataspace is filled and what in the lock's
+  header does not fit. `dataspace::list` summarises each declared package,
+  lists every package the Domain's stores hold, and a registry's packages
+  from its latest index. `dataspace::history` lists a package's revisions
+  newest first, from its bucket or the local registry, with local commits
+  not pushed yet marked.
+
+## Upgrading: the dataspace cutover
+
+`quilt` and `QuiltSync` now run on dataspaces by default, and the ref API
+(`LocalDomain`) stays for one release behind their opt-outs:
+`QUILT_DATASPACES=0` and `"dataspace_opt_out": true`. An application moves
+its users with `domain::import::cutover`, which imports the domain an older
+build kept in the application's folder into the Domain once, makes the old
+home the default dataspace, and falls back without writing the old folder
+where the import is refused or stops. `dataspace::hooks::register` gives an
+application its own in-process hook at a point, as `QuiltSync` dispatches
+`agent_exec` from `post-read`.
 
 ## Hash Algorithms
 

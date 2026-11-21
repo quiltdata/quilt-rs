@@ -35,6 +35,10 @@ use super::package_entries::InstalledPackageEntryData;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "the command's flags, as it sends them"
+)]
 pub struct CommitData {
     pub namespace: quilt_uri::Namespace,
     pub uri: Option<quilt_uri::S3PackageUri>,
@@ -63,6 +67,9 @@ pub struct CommitData {
     /// Whether the publish settings set a message template, so the form can
     /// say where its message comes from.
     pub has_message_template: bool,
+    /// The commit takes a message only: metadata comes from the dataspace's
+    /// `metadata.toml`, so the form shows no editor.
+    pub message_only: bool,
     pub workflow: Option<CommitWorkflowData>,
     pub workflows: CommitWorkflows,
     /// Why the active role cannot reach this package's bucket, worded exactly
@@ -156,9 +163,10 @@ pub struct CommitWorkflowInfo {
 /// - `NotConfigured` — no config (or no remote); the bucket is ungoverned.
 /// - `Unavailable` — a transient/network failure loading the config; a commit
 ///   will retry resolving the bucket default.
-/// - `Invalid` — the config exists but is malformed (schema violation). Every
-///   commit to this bucket will FAIL until it is fixed, so the UI must not
-///   promise a fallback; `reason` names the violation succinctly.
+/// - `Invalid` — the config exists but is malformed (schema violation).
+///   `reason` names the violation succinctly. A local `quilt commit` records
+///   the revision as unchecked; the Commit page currently still disables
+///   Save, and must not promise a bucket-default fallback.
 #[derive(Serialize)]
 #[serde(
     tag = "state",
@@ -188,7 +196,7 @@ pub enum CommitWorkflows {
 /// Format the catalog HTTPS link for an S3 object, or `None` when there is no
 /// catalog host to link against. Reuses [`S3Uri::display_for_host`] — the same
 /// on-demand catalog-link formatting the rest of the app uses.
-fn catalog_object_url(uri: &S3Uri, host: Option<&Host>) -> Option<String> {
+pub(super) fn catalog_object_url(uri: &S3Uri, host: Option<&Host>) -> Option<String> {
     let host = host?;
     uri.display_for_host(host).ok().map(|u| u.to_string())
 }
@@ -272,9 +280,8 @@ fn workflows_config_to_commit_workflows(
         Ok(None) => CommitWorkflows::NotConfigured,
         // A malformed config is not a load failure — the file is present and
         // readable, it just violates the schema. Distinguish it by variant (not
-        // by message text) so the UI can tell the user commits will fail until
-        // the config is fixed, instead of promising a bucket-default fallback
-        // that would actually error.
+        // by message text) so the UI can tell a broken config from a transient
+        // load failure, instead of promising a bucket-default fallback.
         Err(Error::Quilt(quilt::Error::RemoteCatalog(
             quilt::RemoteCatalogError::InvalidWorkflowsConfig(reason),
         ))) => CommitWorkflows::Invalid {
@@ -547,6 +554,7 @@ async fn get_commit_data_from_model(
         settings_user_meta,
         settings_workflow,
         has_message_template,
+        message_only: false,
         workflow,
         workflows,
         no_access_reason,
@@ -567,7 +575,7 @@ const JUNK_NAMES_SHOWN: usize = 3;
 
 /// The system files among the changes, uncapped, or `None` when there are
 /// none.
-fn junk_summary(junky: &[(std::path::PathBuf, String)]) -> Option<JunkSummary> {
+pub(super) fn junk_summary(junky: &[(std::path::PathBuf, String)]) -> Option<JunkSummary> {
     let mut sorted: Vec<_> = junky.iter().collect();
     sorted.sort_by(|a, b| a.0.cmp(&b.0));
     let (first_path, first_pattern) = sorted.first()?;
@@ -595,7 +603,7 @@ fn junk_summary(junky: &[(std::path::PathBuf, String)]) -> Option<JunkSummary> {
 }
 
 /// What the new and changed files weigh; a deletion adds nothing.
-fn changed_bytes(changes: &quilt::lineage::ChangeSet) -> u64 {
+pub(super) fn changed_bytes(changes: &quilt::lineage::ChangeSet) -> u64 {
     changes
         .values()
         .map(|change| match change {
@@ -615,6 +623,11 @@ pub async fn get_commit_data(s: &Services, namespace: String) -> Result<CommitDa
         .map_err(|e: quilt_uri::UriError| e.to_string())?;
 
     let settings = publish_settings.read().await.clone();
+    if let Some(ds) = &s.dataspace {
+        return super::dataspace::pages::commit_data(ds, &settings, &namespace.to_string())
+            .await
+            .map_err(|e| e.to_frontend_string());
+    }
     get_commit_data_from_model(m, roles, tracing, &settings, &namespace)
         .await
         .map_err(|e| e.to_frontend_string())
@@ -640,6 +653,11 @@ pub async fn get_bucket_workflows(
     host: Option<String>,
     bucket: String,
 ) -> Result<CommitWorkflows, String> {
+    // A dataspace's move to a bucket takes no workflow: the bucket's is
+    // applied when it is published.
+    if s.dataspace.is_some() {
+        return Ok(CommitWorkflows::NotConfigured);
+    }
     let m = &*s.model;
     let host = match host {
         Some(host) => Some(quilt_uri::Host::from_str(&host).map_err(|e| e.to_string())?),
@@ -652,15 +670,18 @@ pub async fn get_bucket_workflows(
 //
 // The commit dialog validates the user's input against the selected workflow's
 // rules as they type (debounced), showing advisory inline errors before the
-// commit attempt. This is a convenience layer only — the commit-time gate in
-// quilt-rs remains the authority and is unchanged; the buttons stay enabled.
+// commit attempt. This is a convenience layer only — the buttons stay enabled.
+// quilt-rs remains the authority: a local commit records the revision and
+// warns about what the bucket's workflows reject, and Publish and push refuse
+// it.
 //
 // Two commands split the work so the per-keystroke path never touches the
 // network: `load_workflow_rules` fetches + compiles a workflow's rules once and
 // caches them; `validate_commit_candidate` validates {message, user_meta, name}
 // against the CACHED rules with no I/O. The entries schema is deliberately NOT
 // validated live — projecting a candidate's entries needs the built manifest's
-// rows (the heavier flow machinery), so entries stay the commit gate's job.
+// rows (the heavier flow machinery), so entries stay quilt-rs's job: the
+// commit's warning, and the refusal at Publish and push.
 
 /// Which commit-dialog input a [`CommitViolation`] belongs under, so the UI can
 /// render each violation beneath the field the user must fix.
@@ -874,6 +895,11 @@ pub async fn load_workflow_rules(
     workflow_id: String,
     refresh: bool,
 ) -> Result<bool, String> {
+    // A dataspace commit takes no workflow, so there are no rules to check
+    // the form against.
+    if s.dataspace.is_some() {
+        return Ok(false);
+    }
     let m = &*s.model;
     let cache = &s.workflow_rules;
     cache
@@ -1413,8 +1439,10 @@ mod tests {
                             schemas: std::collections::BTreeMap::new(),
                         }),
                     }),
+                    user_meta_numbers: quilt::manifest::RawNumbers::default(),
                 },
                 rows: Vec::new(),
+                dir_meta: Vec::new(),
             })
         });
 
@@ -1479,8 +1507,10 @@ mod tests {
                         config: config_uri,
                         id: None,
                     }),
+                    user_meta_numbers: quilt::manifest::RawNumbers::default(),
                 },
                 rows: Vec::new(),
+                dir_meta: Vec::new(),
             })
         });
 
@@ -1543,8 +1573,10 @@ mod tests {
                     message: quilt::manifest::HeaderMessage::Null,
                     user_meta: None,
                     workflow: None,
+                    user_meta_numbers: quilt::manifest::RawNumbers::default(),
                 },
                 rows: Vec::new(),
+                dir_meta: Vec::new(),
             })
         });
 
@@ -1604,8 +1636,10 @@ mod tests {
                     message: quilt::manifest::HeaderMessage::Null,
                     user_meta: None,
                     workflow: None,
+                    user_meta_numbers: quilt::manifest::RawNumbers::default(),
                 },
                 rows: Vec::new(),
+                dir_meta: Vec::new(),
             })
         });
         model
@@ -1929,7 +1963,7 @@ workflows:
 
     /// A malformed workflows config (`InvalidWorkflowsConfig`) must map to the
     /// distinct `Invalid` case carrying the reason — NOT `Unavailable` — so the
-    /// dialog can warn that commits will fail until the config is fixed.
+    /// dialog can distinguish a broken config from a load failure.
     #[tokio::test]
     async fn test_get_commit_data_workflows_invalid() -> Result<(), String> {
         let mut model = base_commit_model();

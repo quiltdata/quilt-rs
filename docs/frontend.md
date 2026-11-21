@@ -509,7 +509,7 @@ string props.
 | `ToggleRow` | — (wraps `ToggleSwitch`) | ours |
 | `ListToolbar` | — | ours |
 | `Countdown` | — | ours |
-| `PackageRow`, `QueueRow`, `CauseRow`, `HostRow`, `FileRow`, `ZeroLine` | — | ours |
+| `PackageRow`, `QueueRow`, `CauseRow`, `HostRow`, `ZeroLine` | — | ours |
 
 The bottom group is domain composition, not kit primitives. Primer's
 nearest equivalents are `ActionList.Item` and `Timeline.Item`, neither of

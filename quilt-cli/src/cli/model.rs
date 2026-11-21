@@ -8,6 +8,7 @@ use quilt_rs::lineage::Home;
 
 use crate::cli::Error;
 use crate::cli::browse;
+use crate::cli::catalog;
 use crate::cli::commit;
 use crate::cli::create;
 use crate::cli::gc;
@@ -16,11 +17,9 @@ use crate::cli::home;
 use crate::cli::install;
 use crate::cli::keep;
 use crate::cli::list;
-use crate::cli::login;
 use crate::cli::pull;
 use crate::cli::push;
 use crate::cli::remove_revisions;
-use crate::cli::role;
 use crate::cli::status;
 use crate::cli::undo_commit;
 use crate::cli::uninstall;
@@ -35,6 +34,10 @@ pub trait Commands {
     async fn browse(&self, args: browse::Input) -> Result<browse::Output, Error> {
         let local_domain = self.get_local_domain();
         browse::model(local_domain, args).await
+    }
+
+    async fn catalog(&self, args: catalog::Input) -> Result<catalog::Output, Error> {
+        catalog::model(args).await
     }
 
     async fn create(&self, args: create::Input) -> Result<create::Output, Error> {
@@ -76,11 +79,6 @@ pub trait Commands {
         history::model(local_domain, args).await
     }
 
-    async fn login(&self, args: login::Input) -> Result<login::Output, Error> {
-        let local_domain = self.get_local_domain();
-        login::model(local_domain, args).await
-    }
-
     async fn pull(&self, args: pull::Input) -> Result<pull::Output, Error> {
         let local_domain = self.get_local_domain();
         pull::model(local_domain, args).await
@@ -104,11 +102,6 @@ pub trait Commands {
         undo_commit::model(local_domain, args).await
     }
 
-    async fn role(&self, args: role::Input) -> Result<role::Output, Error> {
-        let local_domain = self.get_local_domain();
-        role::model(local_domain, args).await
-    }
-
     async fn status(&self, args: status::Input) -> Result<status::Output, Error> {
         let local_domain = self.get_local_domain();
         status::model(local_domain, args).await
@@ -117,6 +110,10 @@ pub trait Commands {
     async fn uninstall(&self, args: uninstall::Input) -> Result<uninstall::Output, Error> {
         let local_domain = self.get_local_domain();
         uninstall::model(local_domain, args).await
+    }
+
+    async fn lineage_rollback(&self) -> Result<crate::cli::lineage::Output, Error> {
+        crate::cli::lineage::model(self.get_local_domain()).await
     }
 }
 

@@ -125,11 +125,6 @@ const ENTRIES: &[Entry] = &[
         file_toolbar::FileToolbarStories
     ),
     entry!(COMBINED, "Queue parts", queue_parts::QueueStories),
-    entry!(
-        COMBINED,
-        "Recent files parts",
-        recent_files_parts::RecentFilesStories
-    ),
 ];
 
 #[cfg(test)]

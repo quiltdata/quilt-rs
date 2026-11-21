@@ -38,7 +38,7 @@ async fn package_commit_command(
     message: &str,
     metadata: &str,
     workflow: WorkflowIntent,
-) -> Result<(quilt_uri::Namespace, quilt::flow::Committed), Error> {
+) -> Result<(quilt_uri::Namespace, quilt::flow::Recorded), Error> {
     let namespace = quilt_uri::Namespace::try_from(namespace)?;
     if message.is_empty() {
         return Err(Error::Commit("Message is required".to_string()));
@@ -56,12 +56,17 @@ pub async fn package_commit(
     metadata: String,
     workflow: WorkflowIntent,
     uri: Option<S3PackageUri>,
-) -> Result<String, String> {
+) -> Result<CommitResponse, String> {
+    if let Some(ds) = &s.dataspace {
+        return super::dataspace::commit(ds, &namespace, &message).await;
+    }
     let m = &*s.model;
     let tracing = &*s.telemetry;
     let watcher = &s.watcher;
     let result = package_commit_command(m, &namespace, &message, &metadata, workflow).await;
-    if let Ok((ns, quilt::flow::Committed::Recorded(_))) = &result {
+    if let Ok((ns, recorded)) = &result
+        && let quilt::flow::Committed::Recorded(_) = recorded.committed
+    {
         watcher.clear_paused(ns).await;
         watcher
             .note_committed(ns, pending_commit(m, ns).await)
@@ -70,34 +75,75 @@ pub async fn package_commit(
     report_commit(tracing, &namespace, uri.as_ref(), result.map(|(_, c)| c))
 }
 
-/// The Commit button's answer to a commit: its event and its line.
+/// What `package_commit` answers: its line, and apart from it, as in
+/// [`SetRemoteResponse`], the warnings the bucket's workflows gave a
+/// revision it recorded anyway.
+#[derive(Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitResponse {
+    pub message: String,
+    /// `Some(reasons)` when the revision was committed with workflow
+    /// warnings.
+    pub workflow_warning: Option<String>,
+    /// The revision was the package's already, so nothing was recorded.
+    pub nothing_to_commit: bool,
+}
+
+/// The Commit button's answer to a commit: its event, its line and its
+/// workflow warning.
 fn report_commit(
     tracing: &crate::engine::telemetry::Telemetry,
     namespace: &str,
     uri: Option<&S3PackageUri>,
-    result: Result<quilt::flow::Committed, Error>,
-) -> Result<String, String> {
+    result: Result<quilt::flow::Recorded, Error>,
+) -> Result<CommitResponse, String> {
     let mut notify = Notify::new(format!("Committing package {namespace}"));
     // Nothing committed, so no commit event. A failure keeps the event, which
     // is what reports a refusal.
-    if !matches!(result, Ok(quilt::flow::Committed::NothingToCommit)) {
+    if !matches!(
+        &result,
+        Ok(quilt::flow::Recorded {
+            committed: quilt::flow::Committed::NothingToCommit,
+            ..
+        })
+    ) {
         notify = notify.on_success(
             tracing,
             MixpanelEvent::PackageCommitted(PackageEvent::for_uri(uri)),
         );
     }
-    let msg_ok = match &result {
-        Ok(quilt::flow::Committed::NothingToCommit) => {
+    // A local commit is not refused for the bucket's workflows; it passes
+    // their warnings on.
+    let workflow_warning = match &result {
+        Ok(recorded) if !recorded.warnings.is_empty() => {
+            let warnings: Vec<String> = recorded.warnings.iter().map(ToString::to_string).collect();
+            Some(warnings.join("; "))
+        }
+        _ => None,
+    };
+    let nothing_to_commit = matches!(
+        &result,
+        Ok(recorded) if recorded.committed == quilt::flow::Committed::NothingToCommit
+    );
+    let msg_ok = match (&result, &workflow_warning) {
+        (Ok(recorded), _) if recorded.committed == quilt::flow::Committed::NothingToCommit => {
             format!("Package {namespace} has nothing to commit")
         }
+        (_, Some(warning)) => format!("Committed {namespace}, but {warning}"),
         _ => format!("Successfully committed {namespace}"),
     };
-    // Committing is not offline (the workflow gate reads the bucket's config),
-    // so a dead session lands here, where the user's typed work is.
+    // Resolving the workflow reads the bucket's config, so a dead session
+    // lands here, where the user's typed work is.
     let msg_err = |err: &Error| {
         auth_failure_message(err).unwrap_or_else(|| format!("Failed to commit: {err}"))
     };
-    notify.map(result.map(|_| ()), msg_ok, msg_err)
+    notify
+        .map(result.map(|_| ()), msg_ok, msg_err)
+        .map(|message| CommitResponse {
+            message,
+            workflow_warning,
+            nothing_to_commit,
+        })
 }
 
 async fn certify_latest_command(
@@ -126,6 +172,9 @@ pub async fn certify_latest(
     namespace: String,
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
+    if let Some(ds) = &s.dataspace {
+        return super::dataspace::certify(ds, &namespace).await;
+    }
     let m = &*s.model;
     let tracing = &*s.telemetry;
     let watcher = &s.watcher;
@@ -176,6 +225,9 @@ pub async fn reset_local(
     namespace: String,
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
+    if let Some(ds) = &s.dataspace {
+        return super::dataspace::reset(ds, &namespace).await;
+    }
     let m = &*s.model;
     let tracing = &*s.telemetry;
     let watcher = &s.watcher;
@@ -231,8 +283,8 @@ fn auth_failure_message(err: &Error) -> Option<String> {
     if !err.is_session_absent() {
         return None;
     }
-    let host = match err {
-        Error::Quilt(quilt::Error::Login(quilt::LoginError::NoSession(host))) => host.as_ref(),
+    let host = match err.quilt_cause() {
+        Some(quilt::Error::Login(quilt::LoginError::NoSession(host))) => host.as_ref(),
         _ => err.s3_host(),
     };
     Some(match host {
@@ -322,6 +374,9 @@ pub async fn package_publish(
     namespace: String,
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
+    if let Some(ds) = &s.dataspace {
+        return super::dataspace::publish(ds, &namespace, super::dataspace::PUBLISH_MESSAGE).await;
+    }
     let m = &*s.model;
     let settings = &s.publish_settings;
     let tracing = &*s.telemetry;
@@ -416,6 +471,9 @@ pub async fn package_commit_and_push(
     workflow: WorkflowIntent,
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
+    if let Some(ds) = &s.dataspace {
+        return super::dataspace::commit_and_push(ds, &namespace, &message).await;
+    }
     let m = &*s.model;
     let tracing = &*s.telemetry;
     let watcher = &s.watcher;
@@ -513,6 +571,11 @@ pub async fn package_set_sync_scope(
     scope: KeepingScope,
     folders: Vec<String>,
 ) -> Result<(), String> {
+    if let Some(ds) = &s.dataspace {
+        // Boxed: keep's state machine is past the `large_futures` budget on
+        // Windows.
+        return Box::pin(super::dataspace::set_scope(ds, &namespace, scope, folders)).await;
+    }
     let m = &*s.model;
     let namespace = quilt_uri::Namespace::try_from(namespace.as_str())
         .map_err(|e: quilt_uri::UriError| e.to_string())?;
@@ -543,6 +606,9 @@ pub async fn package_pull(
     namespace: String,
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
+    if let Some(ds) = &s.dataspace {
+        return super::dataspace::pull(ds, &namespace, super::dataspace::PUBLISH_MESSAGE).await;
+    }
     Box::pin(pull_and_report(
         &*s.model,
         &s.telemetry,
@@ -671,6 +737,11 @@ pub async fn package_pull_outcome(
     s: &Services,
     namespace: String,
 ) -> Result<quilt::flow::PullPreview, String> {
+    if let Some(ds) = &s.dataspace {
+        return super::dataspace::pages::pull_preview(ds, &namespace)
+            .await
+            .map_err(|e| e.to_string());
+    }
     let m = &*s.model;
     let watcher = &s.watcher;
     package_pull_outcome_command(m, watcher, &namespace)
@@ -698,6 +769,13 @@ pub async fn package_uninstall(
     uri: Option<S3PackageUri>,
     prune: bool,
 ) -> Result<String, String> {
+    if let Some(ds) = &s.dataspace {
+        let result = super::dataspace::uninstall(ds, &namespace, prune).await;
+        if result.is_ok() {
+            s.events.emit(PACKAGES_CHANGED_EVENT, ());
+        }
+        return result;
+    }
     let m = &*s.model;
     let tracing = &*s.telemetry;
     let msg_init = format!("Uninstalling package {namespace}");
@@ -750,6 +828,9 @@ fn settle_uninstall(
 /// consumes it — so the engine refuses there, which is why the surface
 /// offering this gates on the package having none.
 pub async fn undo_commit(s: &Services, namespace: String) -> Result<String, String> {
+    if let Some(ds) = &s.dataspace {
+        return super::dataspace::undo(ds, &namespace).await;
+    }
     let m = &*s.model;
     let namespace =
         quilt_uri::Namespace::try_from(namespace.as_str()).map_err(|e| e.to_string())?;
@@ -777,7 +858,7 @@ pub struct SetRemoteResponse {
 }
 
 /// The catalog field is optional: left blank, the remote has no host.
-fn remote_origin(origin: &str) -> Result<Option<Host>, Error> {
+pub(super) fn remote_origin(origin: &str) -> Result<Option<Host>, Error> {
     let origin = origin.trim();
     if origin.is_empty() {
         return Ok(None);
@@ -821,6 +902,25 @@ pub async fn set_remote(
     // `Notify::new` logs the init line; on success/failure we log explicitly so
     // the success payload can be the typed struct rather than a bare string.
     Notify::new(format!("Setting remote for {namespace}"));
+    if let Some(ds) = &s.dataspace {
+        // The dataspace's contract carries no workflow: the bucket's is
+        // applied when the move is published.
+        let _ = workflow;
+        let moved = Box::pin(super::dataspace::edits::set_remote(
+            ds, &namespace, &origin, &bucket,
+        ));
+        return match moved.await {
+            Ok(()) => Ok(SetRemoteResponse {
+                message: format!("Successfully set remote for {namespace}"),
+                resolution_warning: None,
+            }),
+            Err(err) => {
+                let msg = set_remote_refusal(&bucket, &err);
+                ::tracing::error!("{msg}");
+                Err(msg)
+            }
+        };
+    }
     match set_remote_command(m, &namespace, &origin, &bucket, workflow).await {
         Ok((ns, resolution_warning)) => {
             // Reported here rather than through `Notify::on_success`, because this
@@ -867,6 +967,19 @@ pub async fn change_catalog(
 ) -> Result<String, String> {
     let watcher = &s.watcher;
     Notify::new(format!("Changing the catalog of {namespace}"));
+    if let Some(ds) = &s.dataspace {
+        let changed = Box::pin(super::dataspace::edits::change_catalog(
+            ds, &namespace, &origin,
+        ));
+        return match changed.await {
+            Ok(()) => Ok(format!("Changed the catalog of {namespace}")),
+            Err(err) => {
+                let msg = format!("Could not change the catalog: {err}");
+                ::tracing::error!("{msg}");
+                Err(msg)
+            }
+        };
+    }
     match change_catalog_command(&*s.model, &namespace, &origin).await {
         Ok(ns) => {
             // What the old catalog refused is not the new one's.
@@ -955,6 +1068,13 @@ pub async fn package_create(
     message: Option<String>,
 ) -> Result<String, String> {
     let source = source_folder(source)?;
+    if let Some(ds) = &s.dataspace {
+        let result = super::dataspace::create(ds, &namespace, source, message).await;
+        if result.is_ok() {
+            s.events.emit(PACKAGES_CHANGED_EVENT, ());
+        }
+        return result;
+    }
     let m = &*s.model;
     let tracing = &*s.telemetry;
     // A package created here has no remote yet, so it belongs to no deployment.
@@ -990,10 +1110,15 @@ async fn add_to_quiltignore_command(
     pattern: &str,
 ) -> Result<(), Error> {
     let namespace = quilt_uri::Namespace::try_from(namespace)?;
-    let package_home = m.package_home(&namespace).await?;
+    // Refuses when the folder is missing, as every other open of it does.
+    m.package_home(&namespace).await?;
+    let installed = installed_package(m, &namespace).await?;
     // Take only the first line to prevent injecting multiple rules
     let pattern = pattern.lines().next().unwrap_or(pattern);
-    quilt::quiltignore::append_lines(&package_home.join(".quiltignore"), &[pattern.to_string()])?;
+    // Not `append_lines` on the folder's path: that creates the folder when it
+    // went missing after the check above, and a folder holding only the rules
+    // file reads as every tracked file removed.
+    installed.add_to_quiltignore(&[pattern.to_string()]).await?;
     Ok(())
 }
 
@@ -1008,17 +1133,17 @@ pub async fn add_to_quiltignore(
     let msg_init = format!("Adding {pattern} to .quiltignore");
     let msg_ok = format!("Added {pattern} to .quiltignore");
     let msg_err = |err: &Error| format!("Failed to update .quiltignore: {err}");
+    let result = match &s.dataspace {
+        Some(ds) => super::dataspace::edits::add_to_quiltignore(ds, &namespace, &pattern).await,
+        None => add_to_quiltignore_command(m, &namespace, &pattern).await,
+    };
 
     Notify::new(msg_init)
         .on_success(
             tracing,
             MixpanelEvent::QuiltignorePatternAdded(PackageEvent::for_uri(uri.as_ref())),
         )
-        .map(
-            add_to_quiltignore_command(m, &namespace, &pattern).await,
-            msg_ok,
-            msg_err,
-        )
+        .map(result, msg_ok, msg_err)
 }
 
 /// What *Stop ignoring* writes in one scope, and what the next sync adds.
@@ -1109,12 +1234,16 @@ pub async fn stop_ignoring_preview(
     folder: bool,
 ) -> Result<StopIgnoringPreview, String> {
     let m = &*s.model;
-    Box::pin(stop_ignoring_preview_command(m, &namespace, &path, folder))
-        .await
-        .map_err(|err| match err {
-            Error::General(msg) => msg,
-            err => format!("Could not count the files to add: {err}"),
-        })
+    let preview = match &s.dataspace {
+        Some(ds) => {
+            super::dataspace::edits::stop_ignoring_preview(ds, &namespace, &path, folder).await
+        }
+        None => Box::pin(stop_ignoring_preview_command(m, &namespace, &path, folder)).await,
+    };
+    preview.map_err(|err| match err {
+        Error::General(msg) => msg,
+        err => format!("Could not count the files to add: {err}"),
+    })
 }
 
 async fn stop_ignoring_command(
@@ -1146,7 +1275,13 @@ pub async fn stop_ignoring(
         tracing,
         MixpanelEvent::QuiltignorePatternAdded(PackageEvent::for_uri(uri.as_ref())),
     );
-    let result = stop_ignoring_command(m, &namespace, &path, folder, scope).await;
+    let result = match &s.dataspace {
+        Some(ds) => {
+            super::dataspace::edits::stop_ignoring(ds, &namespace, &path, folder, scope.into())
+                .await
+        }
+        None => stop_ignoring_command(m, &namespace, &path, folder, scope).await,
+    };
     let msg_ok = match (&result, scope) {
         (Ok(Some(lines)), _) if lines.is_empty() => format!("{shown} is no longer ignored"),
         (_, StopIgnoringScope::ThisPackage) => format!("Stopped ignoring {shown} in this package"),
@@ -1233,6 +1368,12 @@ pub async fn handle_remote_package(
         .map_err(|e: quilt_uri::UriError| e.to_string())?;
     let namespace = s3_uri.namespace.clone();
     let _ = &tracing;
+    if let Some(ds) = &s.dataspace {
+        let result = super::dataspace::install(ds, &uri, namespace).await;
+        // Declared even where the read did not complete.
+        s.events.emit(PACKAGES_CHANGED_EVENT, ());
+        return result;
+    }
 
     let outcome = model::install_package_only(m, &s3_uri)
         .await
@@ -1749,12 +1890,19 @@ mod tests {
             &telemetry,
             "acme/demo",
             None,
-            Ok(quilt::flow::Committed::NothingToCommit),
+            Ok(quilt::flow::Recorded {
+                committed: quilt::flow::Committed::NothingToCommit,
+                warnings: Vec::new(),
+            }),
         );
 
         assert_eq!(
             said,
-            Ok("Package acme/demo has nothing to commit".to_string())
+            Ok(super::CommitResponse {
+                message: "Package acme/demo has nothing to commit".to_string(),
+                workflow_warning: None,
+                nothing_to_commit: true,
+            })
         );
         assert_eq!(telemetry.queued_events(), Vec::<String>::new());
     }
@@ -1768,12 +1916,54 @@ mod tests {
             &telemetry,
             "acme/demo",
             None,
-            Ok(quilt::flow::Committed::Recorded(
-                quilt::lineage::CommitState::default(),
-            )),
+            Ok(quilt::flow::Recorded {
+                committed: quilt::flow::Committed::Recorded(quilt::lineage::CommitState::default()),
+                warnings: Vec::new(),
+            }),
         );
 
-        assert_eq!(said, Ok("Successfully committed acme/demo".to_string()));
+        assert_eq!(
+            said,
+            Ok(super::CommitResponse {
+                message: "Successfully committed acme/demo".to_string(),
+                workflow_warning: None,
+                nothing_to_commit: false,
+            })
+        );
+        assert_eq!(
+            telemetry.queued_events(),
+            vec!["package_committed".to_owned()]
+        );
+    }
+
+    /// A commit inconsistent with the bucket's workflows is recorded, and the
+    /// line says a push of it will be refused.
+    #[test]
+    fn a_commit_with_workflow_warnings_says_a_push_will_be_refused() {
+        let telemetry = crate::engine::telemetry::Telemetry::default();
+
+        let said = super::report_commit(
+            &telemetry,
+            "acme/demo",
+            None,
+            Ok(quilt::flow::Recorded {
+                committed: quilt::flow::Committed::Recorded(quilt::lineage::CommitState::default()),
+                warnings: vec![quilt::flow::WorkflowWarning::Inconsistent {
+                    bucket: "b".to_string(),
+                    reason: "a workflow is required".to_string(),
+                }],
+            }),
+        );
+
+        let said = said.expect("a recorded commit");
+        assert!(
+            said.message.starts_with("Committed acme/demo, but "),
+            "{said:?}"
+        );
+        let warning = said.workflow_warning.clone().expect("the page is told");
+        assert!(warning.contains("s3://b"), "{warning}");
+        assert!(warning.contains("a workflow is required"), "{warning}");
+        assert!(said.message.ends_with(&warning), "{said:?}");
         assert_eq!(
             telemetry.queued_events(),
             vec!["package_committed".to_owned()]
@@ -1831,6 +2021,7 @@ mod tests {
                 origin: None,
             },
             certified_latest: true,
+            latest_unchecked: false,
         });
 
         let said = super::report_publish(&telemetry, "acme/demo", None, Ok((namespace, outcome)));
@@ -2117,6 +2308,7 @@ mod tests {
                 origin: None,
             },
             certified_latest: true,
+            latest_unchecked: false,
         })
     }
 
@@ -2129,6 +2321,10 @@ mod tests {
 
         fn get_quilt(&self) -> &tokio::sync::Mutex<quilt::LocalDomain> {
             &self.domain
+        }
+
+        fn remote(&self) -> std::sync::Arc<quilt::io::remote::RemoteS3> {
+            crate::engine::model::mocks::nowhere().remote_handle()
         }
 
         async fn resolve_workflow(
@@ -2151,7 +2347,7 @@ mod tests {
             let commit = package
                 .commit(message, metadata, workflow, host_config)
                 .await?;
-            Ok(committed(&("acme", "demo").into(), &commit))
+            Ok(committed(&("acme", "demo").into(), &commit.committed))
         }
     }
 
@@ -2199,7 +2395,7 @@ mod tests {
         let mut model = MockQuiltModel::new();
         model.expect_get_installed_package().returning(|_| {
             Ok(Some(
-                quilt::LocalDomain::new(std::path::PathBuf::new())
+                crate::engine::model::mocks::nowhere()
                     .create_installed_package(("acme", "demo").into()),
             ))
         });
@@ -2394,6 +2590,27 @@ mod tests {
         assert!(msg.contains("sign in again"), "got: {msg}");
         assert!(msg.contains("quilt.test"), "must name the host: {msg}");
         assert!(!msg.contains("Failed to commit"), "fell through: {msg}");
+    }
+
+    /// A session lost during an upload arrives wrapped with the file it stopped
+    /// on; the remedy is still signing in to that deployment, not `~/.aws`.
+    #[test]
+    fn publish_signed_out_during_an_upload_names_signing_in() {
+        let host = fixtures::host();
+        let err = Error::from(quilt::Error::Upload {
+            key: quilt::LogicalKey::new("b.txt").expect("valid key"),
+            source: Box::new(quilt::Error::Login(quilt::LoginError::NoSession(Some(
+                host.clone(),
+            )))),
+        });
+        let msg = super::write_failure_message("publish package", &err);
+
+        assert!(msg.contains("sign in again"), "got: {msg}");
+        assert!(msg.contains("quilt.test"), "must name the host: {msg}");
+        assert!(
+            !msg.contains("aws"),
+            "ambient advice for a deployment: {msg}"
+        );
     }
 
     /// Anything that is not an auth failure must keep its existing text, so the

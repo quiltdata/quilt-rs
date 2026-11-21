@@ -20,16 +20,23 @@
 
 ### Added
 
+- `mask_user` writes an address with the user and password before its host shown as `***`, for an error to repeat (<https://github.com/quiltdata/quilt-rs/pull/1474>)
+- `LocalPackageUri` reads and writes `quilt+local://<name>#package=owner/name`, a package in a local registry, with a revision and a path but no catalog; `quilt+local://#package=owner/name` names this machine's. `check_local_registry_name` holds a name to letters, digits, `-` and `.`, and not `.` or `..` (<https://github.com/quiltdata/quilt-rs/pull/1458>)
+- `paths::TAGS_PREFIX` is the prefix every package's tags share, `.quilt/named_packages/` (<https://github.com/quiltdata/quilt-rs/pull/1452>)
+- A package URI's `@` may be a short hash of 6 to 63 lowercase hex characters, as in quilt3. It parses to the new `RevisionPointer::HashPrefix` and displays as written, `ManifestUri::try_from` refuses it, and a hash of any other length, or not lowercase hex, is an error that says which; `MIN_HASH_PREFIX_LEN` and `TOP_HASH_LEN` are exported (<https://github.com/quiltdata/quilt-rs/pull/1392>)
 - `VERSION` holds the crate's version (<https://github.com/quiltdata/quilt-rs/pull/1371>)
 
 ### Changed
 
 - `Host::from_user_input` reads a catalog name a person typed by quiltx's rule, so quilt-rs and quiltx name a catalog alike: `https://host/` and `host/path` become `host`, surrounding whitespace and an empty port are dropped, a Unicode name is kept as typed instead of becoming punycode, and an IP address (in any spelling), a port, a percent escape and an invisible character are refused. `Host::from_str`, which reads names back from disk and from `quilt+s3://` URIs, takes all of that and still takes what it took before, an IP address included. Both refuse a name that is only dots, such as `..` (<https://github.com/quiltdata/quilt-rs/pull/1381>, <https://github.com/quiltdata/quilt-rs/pull/1382>)
+- **Breaking:** `RevisionPointer` has a new variant, `HashPrefix`, so an exhaustive match on it needs an arm, and its JSON form has a new `_tag` (<https://github.com/quiltdata/quilt-rs/pull/1392>)
 - Building from source now requires Rust 1.99 or newer (<https://github.com/quiltdata/quilt-rs/pull/1370>)
 
 ### Fixed
 
+- URI and namespace errors no longer repeat the user and password given in the address: they show it as `***`, and an unexpected fragment parameter is named without its value (<https://github.com/quiltdata/quilt-rs/pull/1474>)
 - In a `quilt+s3://` fragment, `+` is a literal `+`, so `path=C++.csv` names `C++.csv`, and a %-escape that is not UTF-8, such as `%FF`, is an error instead of U+FFFD (<https://github.com/quiltdata/quilt-rs/pull/1372>)
+- A `path=` with leading or trailing whitespace, or an empty `path=`, is accepted the way quilt3 accepts it, then trimmed (with a warning) so the URI does not silently name a different entry; an empty path is no path (<https://github.com/quiltdata/quilt-rs/pull/1385>)
 
 ## [v0.5.0] - 2026-11-12
 

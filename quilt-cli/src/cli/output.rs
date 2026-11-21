@@ -16,6 +16,12 @@ pub enum Format {
 /// without a checklist to maintain.
 pub trait Render: std::fmt::Display {
     fn to_json(&self) -> serde_json::Value;
+
+    /// Whether the command did all it was asked. An output that did not is
+    /// still printed as a result, and the process exits non-zero.
+    fn completed(&self) -> bool {
+        true
+    }
 }
 
 pub enum Std {
@@ -37,6 +43,14 @@ impl std::fmt::Debug for Std {
 }
 
 impl Std {
+    /// Whether the process exits non-zero.
+    pub fn failed(&self) -> bool {
+        match self {
+            Std::Out(rendered) => !rendered.completed(),
+            Std::Err(_) => true,
+        }
+    }
+
     pub fn from_result<T: Render + 'static>(result: Result<T, Error>) -> Self {
         match result {
             Ok(r) => Std::Out(Box::new(r)),
@@ -155,10 +169,14 @@ mod tests {
 
         let commit_out = commit::Output {
             commit: Some(CommitState::default()),
+            warnings: Vec::new(),
         };
         assert!(commit_out.to_json().is_object());
 
-        let nothing_to_commit_out = commit::Output { commit: None };
+        let nothing_to_commit_out = commit::Output {
+            commit: None,
+            warnings: Vec::new(),
+        };
         assert!(nothing_to_commit_out.to_json().is_object());
 
         let undo_commit_out = undo_commit::Output {
@@ -176,6 +194,7 @@ mod tests {
             outcome: Some(quilt_rs::PushOutcome {
                 manifest_uri: manifest_uri.clone(),
                 certified_latest: true,
+                latest_unchecked: false,
             }),
         };
         assert!(push_out.to_json().is_object());
@@ -204,6 +223,43 @@ mod tests {
             list_ignored: false,
         };
         assert!(status_out.to_json().is_object());
+    }
+
+    /// An output whose command did only part of its work.
+    struct Partial;
+
+    impl std::fmt::Display for Partial {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "part")
+        }
+    }
+
+    impl Render for Partial {
+        fn to_json(&self) -> serde_json::Value {
+            serde_json::json!({ "machine": true })
+        }
+
+        fn completed(&self) -> bool {
+            false
+        }
+    }
+
+    /// A command that did part of its work prints that part where a success
+    /// prints, and still fails.
+    #[test]
+    fn an_incomplete_result_goes_to_stdout_and_fails() {
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let output = Std::Out(Box::new(Partial));
+        assert!(output.failed());
+
+        print(output, Format::Json, &mut stdout, &mut stderr).expect("write succeeds");
+
+        assert_eq!(stderr, [] as [u8; 0]);
+        let parsed: serde_json::Value =
+            serde_json::from_slice(&stdout).expect("stdout is valid JSON");
+        assert_eq!(parsed["machine"], true);
+        assert!(!Std::Out(Box::new(Fake)).failed());
     }
 
     #[test]

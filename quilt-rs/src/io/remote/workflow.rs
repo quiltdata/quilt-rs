@@ -497,6 +497,16 @@ mod tests {
         ) -> Res {
             unreachable!("not part of the gate")
         }
+
+        async fn put_object_if(
+            &self,
+            _host: Option<&Host>,
+            _s3_uri: &S3Uri,
+            _contents: impl Into<aws_sdk_s3::primitives::ByteStream>,
+            _condition: &crate::io::remote::WriteCondition,
+        ) -> Res<crate::io::remote::ConditionalPut> {
+            unreachable!("not part of the gate")
+        }
         async fn upload_file(
             &self,
             _host_config: &HostConfig,
@@ -518,6 +528,22 @@ mod tests {
             _bucket: &str,
             _namespace: &quilt_uri::Namespace,
         ) -> Res<Vec<String>> {
+            unreachable!("not part of the gate")
+        }
+        async fn manifest_hashes_with_prefix(
+            &self,
+            _host: Option<&Host>,
+            _bucket: &str,
+            _prefix: &str,
+        ) -> Res<Vec<String>> {
+            unreachable!("not part of the gate")
+        }
+
+        async fn latest_hashes(
+            &self,
+            _host: Option<&Host>,
+            _bucket: &str,
+        ) -> Res<Vec<(quilt_uri::Namespace, String)>> {
             unreachable!("not part of the gate")
         }
     }
@@ -1203,6 +1229,7 @@ workflows:
             hash: ObjectHash::default(),
             size: 1,
             meta: None,
+            meta_numbers: crate::manifest::RawNumbers::default(),
         };
         let view = entry_view(&row);
         assert_eq!(view.logical_key, "bad-\u{FFFD}.txt");

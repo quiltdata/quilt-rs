@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -10,15 +11,24 @@ use crate::Error;
 use crate::error::FsError;
 use crate::error::S3Error;
 use crate::error::S3ErrorKind;
+use crate::flow::list_dirs;
+use crate::io::remote::ConditionalPut;
 use crate::io::remote::HostConfig;
 use crate::io::remote::RemoteObjectStream;
+use crate::io::remote::WriteCondition;
+use crate::io::storage::LocalStorage;
 use crate::io::storage::Storage;
+use crate::io::storage::StorageExt;
 use crate::io::storage::mocks::MockStorage;
 use crate::object_hash::ObjectHash;
 use quilt_uri::Host;
 use quilt_uri::Namespace;
 use quilt_uri::S3Uri;
+use quilt_uri::is_top_hash;
+use quilt_uri::paths::TAGS_PREFIX;
+use quilt_uri::paths::get_manifest_key;
 use quilt_uri::paths::tag_key;
+use sha2::Digest;
 
 use crate::Res;
 
@@ -33,6 +43,9 @@ pub struct MockRemote {
     get_object_calls: Arc<Mutex<HashMap<String, usize>>>,
     /// Fetches held until a test lets them go; see [`MockRemote::park`].
     parked: Arc<Mutex<HashMap<String, Arc<Gate>>>>,
+    /// Objects this remote's role may write but not read; see
+    /// [`MockRemote::deny_reads`].
+    unreadable: Arc<Mutex<HashSet<String>>>,
 }
 
 /// One parked operation: it says when it arrives, then waits to be let go.
@@ -64,6 +77,20 @@ impl Gate {
 }
 
 impl MockRemote {
+    /// A remote whose objects are kept in `root`, which every `MockRemote` at
+    /// the same `root` shares, in this process or another.
+    #[cfg(test)]
+    pub(crate) fn at(root: std::path::PathBuf) -> Self {
+        Self {
+            storage: MockStorage {
+                temp_dir: crate::io::storage::mocks::Root::Shared(root),
+            },
+            get_object_calls: Arc::default(),
+            parked: Arc::default(),
+            unreadable: Arc::default(),
+        }
+    }
+
     /// How many times `get_object_stream` was called for `uri`.
     ///
     /// # Panics
@@ -79,9 +106,9 @@ impl MockRemote {
             .unwrap_or(0)
     }
 
-    /// Holds the next `get_object_stream` or `put_object` of `uri` until the
-    /// returned gate is released, so a test can land another operation inside
-    /// this one. Only the next call parks; later ones pass.
+    /// Holds the next `get_object_stream`, `put_object` or `put_object_if` of
+    /// `uri` until the returned gate is released, so a test can land another
+    /// operation inside this one. Only the next call parks; later ones pass.
     ///
     /// # Panics
     ///
@@ -95,6 +122,48 @@ impl MockRemote {
             .insert(uri.to_string(), Arc::clone(&gate));
         gate
     }
+
+    /// Refuses reads of `uri` as S3 refuses a role without read access to
+    /// it: `exists`, `get_object_stream` and the conditional `put_object_if`,
+    /// which S3 evaluates against the object, are denied, and a plain
+    /// `put_object` still writes.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal mutex is poisoned.
+    pub fn deny_reads(&self, uri: &str) {
+        self.unreadable.lock().unwrap().insert(uri.to_string());
+    }
+
+    fn denied(&self, key: &str) -> Option<Error> {
+        self.unreadable
+            .lock()
+            .unwrap()
+            .contains(key)
+            .then(|| S3Error::new(S3ErrorKind::AccessDenied(key.to_string())).into())
+    }
+
+    /// The object's contents, or `None` when there is none, whatever
+    /// [`MockRemote::deny_reads`] refuses.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the backing storage cannot be read.
+    pub async fn current(&self, key: &str) -> Res<Option<Vec<u8>>> {
+        let path = storage_path(key);
+        if !self.storage.exists(&path).await {
+            return Ok(None);
+        }
+        let stream = self.storage.read_byte_stream(&path).await?;
+        Ok(Some(stream.collect().await?.to_vec()))
+    }
+}
+
+/// The mock's `ETag`: derived from the contents, as S3's is for an object
+/// written in one part, so a rewrite with other contents changes it.
+fn etag_of(contents: &[u8]) -> String {
+    use sha2::Digest;
+    format!("\"{}\"", hex::encode(sha2::Sha256::digest(contents)))
 }
 
 /// Where the backing storage keeps the object at `uri`.
@@ -105,6 +174,22 @@ fn storage_path(uri: &str) -> String {
     uri.strip_prefix("s3://").unwrap_or(uri).replace('?', "#")
 }
 
+/// The S3 version an upload of `body` gets. New bytes get a new version, as
+/// on a versioned bucket, and mocks sharing one root agree on it.
+pub(crate) fn version_of(body: &[u8]) -> String {
+    hex::encode(sha2::Sha256::digest(body))
+}
+
+/// The file's hash, of the checksum type S3 would answer with, and its bytes.
+async fn hash_and_read(
+    storage: &(impl Storage + Sync),
+    path: &Path,
+    algorithm: u64,
+) -> Res<(ObjectHash, Vec<u8>)> {
+    let (hash, _) = crate::checksum::hash_file(storage, path, algorithm).await?;
+    Ok((hash, storage.read_bytes(path).await?))
+}
+
 #[allow(
     clippy::unused_async_trait_impl,
     reason = "seven of this impl's methods do await; only `host_config` and `verify_bucket` do not. Rewriting just those two would leave one impl split between `async fn` and `fn -> impl Future`, which reads worse than either consistent choice."
@@ -113,6 +198,9 @@ impl Remote for MockRemote {
     async fn exists(&self, _host: Option<&Host>, s3_uri: &S3Uri) -> Res<bool> {
         let key = s3_uri.to_string();
         log::debug!("Mocking {key} exists request");
+        if let Some(err) = self.denied(&key) {
+            return Err(err);
+        }
         Ok(self.storage.exists(storage_path(&key)).await)
     }
 
@@ -133,6 +221,9 @@ impl Remote for MockRemote {
         if let Some(gate) = parked {
             gate.hold().await;
         }
+        if let Some(denied) = self.denied(&key) {
+            return Err(denied);
+        }
 
         let body = self
             .storage
@@ -147,8 +238,10 @@ impl Remote for MockRemote {
                 }
                 other => other,
             });
+        let contents = body?.collect().await?.to_vec();
         Ok(RemoteObjectStream {
-            body: body?,
+            etag: Some(etag_of(&contents)),
+            body: ByteStream::from(contents),
             uri: s3_uri.clone(),
         })
     }
@@ -170,6 +263,39 @@ impl Remote for MockRemote {
             .await
     }
 
+    async fn put_object_if(
+        &self,
+        _host: Option<&Host>,
+        s3_uri: &S3Uri,
+        contents: impl Into<ByteStream>,
+        condition: &WriteCondition,
+    ) -> Res<ConditionalPut> {
+        let key = s3_uri.to_string();
+        log::debug!("Mocking {key} conditional put request");
+        // Parked before the condition is evaluated, so a test can move the
+        // object between the read the condition came from and this write.
+        let parked = self.parked.lock().unwrap().remove(&key);
+        if let Some(gate) = parked {
+            gate.hold().await;
+        }
+        if let Some(denied) = self.denied(&key) {
+            return Err(denied);
+        }
+        let current = self.current(&key).await?;
+        let holds = match (condition, &current) {
+            (WriteCondition::Absent, None) => true,
+            (WriteCondition::Matches(etag), Some(contents)) => *etag == etag_of(contents),
+            _ => false,
+        };
+        if !holds {
+            return Ok(ConditionalPut::Moved);
+        }
+        self.storage
+            .write_byte_stream(storage_path(&key), contents.into())
+            .await?;
+        Ok(ConditionalPut::Written)
+    }
+
     async fn resolve_url(&self, _host: Option<&Host>, s3_uri: &S3Uri) -> Res<S3Uri> {
         let key = s3_uri.to_string();
         log::debug!("Mocking {key} HEAD request");
@@ -187,20 +313,24 @@ impl Remote for MockRemote {
         dest_uri: &S3Uri,
         _size: u64,
     ) -> Res<(S3Uri, ObjectHash)> {
-        // S3 answers with the checksum type the upload asked for.
-        let (hash, _) = crate::checksum::hash_file(
-            &self.storage,
-            source_path.as_ref(),
-            host_config.checksums.algorithm_code(),
-        )
-        .await?;
-        Ok((
-            S3Uri {
-                version: Some("version".to_string()),
-                ..dest_uri.clone()
-            },
-            hash,
-        ))
+        // A domain on the real file system hands over a path this mock's
+        // storage would re-root, so read such a file where it is.
+        let source = source_path.as_ref();
+        let algorithm = host_config.checksums.algorithm_code();
+        let (hash, body) = if tokio::fs::try_exists(source).await? {
+            hash_and_read(&LocalStorage::new(), source, algorithm).await?
+        } else {
+            hash_and_read(&self.storage, source, algorithm).await?
+        };
+        let uploaded = S3Uri {
+            version: Some(version_of(&body)),
+            ..dest_uri.clone()
+        };
+        // Kept, so another domain on this remote can download what was pushed.
+        self.storage
+            .write_byte_stream(storage_path(&uploaded.to_string()), body.into())
+            .await?;
+        Ok((uploaded, hash))
     }
 
     async fn host_config(&self, _host: Option<&Host>) -> Res<HostConfig> {
@@ -236,6 +366,143 @@ impl Remote for MockRemote {
             hashes.push(pointer.trim().to_string());
         }
         Ok(hashes)
+    }
+
+    /// [`MockRemote::published_revisions`], each with the time its pointer
+    /// is named for.
+    async fn published_revision_history(
+        &self,
+        _host: Option<&Host>,
+        bucket: &str,
+        namespace: &Namespace,
+    ) -> Res<Vec<super::PublishedRevision>> {
+        let dir = format!("s3://{bucket}/{}", tag_key(namespace, ""));
+        if !self.storage.exists(storage_path(&dir)).await {
+            return Ok(Vec::new());
+        }
+        let mut entries = self.storage.read_dir(storage_path(&dir)).await?;
+        let mut revisions = Vec::new();
+        while let Some(entry) = entries.next_entry().await? {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let Some(modified) = super::s3::pointer_time(&name, "") else {
+                continue;
+            };
+            let pointer = tokio::fs::read_to_string(entry.path()).await?;
+            revisions.push(super::PublishedRevision {
+                hash: pointer.trim().to_string(),
+                modified: Some(modified),
+                message: None,
+            });
+        }
+        Ok(revisions)
+    }
+
+    /// The names under `<bucket>/.quilt/packages/` that start with `prefix`
+    /// and are a whole top hash, as `put_object` stored them.
+    async fn manifest_hashes_with_prefix(
+        &self,
+        _host: Option<&Host>,
+        bucket: &str,
+        prefix: &str,
+    ) -> Res<Vec<String>> {
+        let dir = format!("s3://{bucket}/{}", get_manifest_key(""));
+        log::debug!("Mocking {dir}{prefix}* manifest listing");
+        if !self.storage.exists(storage_path(&dir)).await {
+            return Ok(Vec::new());
+        }
+        let mut entries = self.storage.read_dir(storage_path(&dir)).await?;
+        let mut hashes = Vec::new();
+        while let Some(entry) = entries.next_entry().await? {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            // A key nested under a hash-named name makes that name a directory,
+            // which S3 would not list as an object of its own.
+            if is_top_hash(&name) && name.starts_with(prefix) && entry.file_type().await?.is_file()
+            {
+                hashes.push(name);
+            }
+        }
+        Ok(hashes)
+    }
+
+    /// Each `<bucket>/.quilt/named_packages/<owner>/<name>/latest` that
+    /// `put_object` stored, with the top hash it holds. One that
+    /// [`MockRemote::deny_reads`] refuses fails the listing.
+    async fn latest_hashes(
+        &self,
+        _host: Option<&Host>,
+        bucket: &str,
+    ) -> Res<Vec<(Namespace, String)>> {
+        let root = format!("s3://{bucket}/{TAGS_PREFIX}");
+        log::debug!("Mocking {root} latest listing");
+        let mut latest = Vec::new();
+        for owner in list_dirs(&self.storage, Path::new(&storage_path(&root))).await? {
+            for package in list_dirs(&self.storage, &owner).await? {
+                let name = |dir: &Path| {
+                    dir.file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .into_owned()
+                };
+                let Ok(namespace) =
+                    Namespace::try_from(format!("{}/{}", name(&owner), name(&package)))
+                else {
+                    continue;
+                };
+                let pointer = format!("s3://{bucket}/{}", tag_key(&namespace, "latest"));
+                if let Some(err) = self.denied(&pointer) {
+                    return Err(err);
+                }
+                let Some(bytes) = self.current(&pointer).await? else {
+                    continue;
+                };
+                let hash = String::from_utf8_lossy(&bytes).into_owned();
+                if is_top_hash(&hash) {
+                    latest.push((namespace, hash));
+                }
+            }
+        }
+        Ok(latest)
+    }
+
+    /// Each file `put_object` stored under
+    /// `<bucket>/.quilt/named_packages/<namespace>/`, by name, with what it
+    /// holds.
+    async fn package_tags(
+        &self,
+        _host: Option<&Host>,
+        bucket: &str,
+        namespace: &Namespace,
+    ) -> Res<Vec<(String, String)>> {
+        let dir = format!("s3://{bucket}/{}", tag_key(namespace, ""));
+        log::debug!("Mocking {dir} tag listing");
+        if !self.storage.exists(storage_path(&dir)).await {
+            return Ok(Vec::new());
+        }
+        let mut entries = self.storage.read_dir(storage_path(&dir)).await?;
+        let mut tags = Vec::new();
+        while let Some(entry) = entries.next_entry().await? {
+            if !entry.file_type().await?.is_file() {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let Some(bytes) = self.current(&format!("{dir}{name}")).await? else {
+                continue;
+            };
+            tags.push((name, String::from_utf8_lossy(&bytes).trim().to_string()));
+        }
+        Ok(tags)
+    }
+
+    async fn delete_object(&self, _host: Option<&Host>, s3_uri: &S3Uri) -> Res {
+        let key = s3_uri.to_string();
+        log::debug!("Mocking {key} delete request");
+        if let Some(err) = self.denied(&key) {
+            return Err(err);
+        }
+        match self.storage.remove_file(storage_path(&key)).await {
+            Err(err) if err.kind() != std::io::ErrorKind::NotFound => Err(err.into()),
+            _ => Ok(()),
+        }
     }
 }
 

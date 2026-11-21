@@ -1,14 +1,24 @@
 use quilt_uri::Host;
 
+use quilt_rs::io::remote::RemoteS3;
+
 use crate::cli::Error;
-use crate::cli::model::Commands;
 use crate::cli::output::Render;
 use crate::cli::output::Std;
 
-#[derive(Debug)]
 pub struct Input {
     pub code: String,
     pub host: Host,
+}
+
+// The code is a reusable refresh token, and debug logs get shared, so Debug hides it.
+impl std::fmt::Debug for Input {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Input")
+            .field("code", &"<redacted>")
+            .field("host", &self.host)
+            .finish()
+    }
 }
 
 pub struct Output {
@@ -29,15 +39,13 @@ impl Render for Output {
     }
 }
 
-pub async fn command(m: impl Commands, args: Input) -> Std {
-    Std::from_result(m.login(args).await)
+/// Signs in on `remote`, which keeps its credentials in the application's
+/// folder: no domain is opened.
+pub async fn command(remote: &RemoteS3, args: Input) -> Std {
+    Std::from_result(model(remote, args).await)
 }
 
-pub async fn model(
-    local_domain: &quilt_rs::LocalDomain,
-    Input { code, host }: Input,
-) -> Result<Output, Error> {
-    let remote = local_domain.get_remote();
+async fn model(remote: &RemoteS3, Input { code, host }: Input) -> Result<Output, Error> {
     remote.login(&host, code).await?;
     Ok(Output { host })
 }
@@ -58,6 +66,18 @@ mod tests {
 
         let display_string = format!("{output}");
         assert_eq!(display_string, "Successfully logged in to quilt.test");
+    }
+
+    #[test]
+    fn debug_hides_the_code() {
+        let input = Input {
+            code: "secret-refresh-token".to_string(),
+            host: fixtures::host(),
+        };
+
+        let debug_string = format!("{input:?}");
+        assert!(!debug_string.contains("secret-refresh-token"));
+        assert!(debug_string.contains("quilt.test"));
     }
 
     #[test]

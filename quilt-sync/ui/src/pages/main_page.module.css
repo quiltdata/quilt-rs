@@ -1,4 +1,4 @@
-/* Region 4 is one region. Its toolbar names the view directly below it, so the
+/* Region 4 is one region. Its toolbar sits directly above its list, so the
  * pair is a single child of `PageLayout`'s column — `.main`'s gap separates
  * REGIONS, and letting it fall between the toolbar and its own list drew them as
  * two, spaced further apart than the toolbar was from the queue above it.

@@ -1,8 +1,6 @@
 use std::path::Path;
 
 use aws_sdk_s3::primitives::ByteStream;
-use chrono::DateTime;
-use chrono::Utc;
 use tempfile::TempDir;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
@@ -13,14 +11,42 @@ use super::Storage;
 
 /// A mock implementation of the `Storage` trait.
 pub(crate) struct MockStorage {
-    pub(crate) temp_dir: TempDir,
+    pub(crate) temp_dir: Root,
+}
+
+/// The folder a [`MockStorage`] keeps its files in.
+pub(crate) enum Root {
+    /// Its own, removed with it.
+    Owned(TempDir),
+    /// One that outlives it, so storages in several processes can share it.
+    #[cfg(test)]
+    Shared(std::path::PathBuf),
+}
+
+impl Root {
+    pub(crate) fn path(&self) -> &Path {
+        match self {
+            Root::Owned(dir) => dir.path(),
+            #[cfg(test)]
+            Root::Shared(path) => path,
+        }
+    }
+}
+
+impl AsRef<Path> for Root {
+    fn as_ref(&self) -> &Path {
+        self.path()
+    }
 }
 
 impl Clone for MockStorage {
     fn clone(&self) -> Self {
         MockStorage {
-            temp_dir: TempDir::new_in(self.temp_dir.path())
-                .expect("Failed to create temporary directory inside another temporary directory"),
+            temp_dir: Root::Owned(
+                TempDir::new_in(&self.temp_dir).expect(
+                    "Failed to create temporary directory inside another temporary directory",
+                ),
+            ),
         }
     }
 }
@@ -28,7 +54,7 @@ impl Clone for MockStorage {
 impl Default for MockStorage {
     fn default() -> Self {
         MockStorage {
-            temp_dir: TempDir::new().expect("Failed to create temporary directory"),
+            temp_dir: Root::Owned(TempDir::new().expect("Failed to create temporary directory")),
         }
     }
 }
@@ -83,6 +109,18 @@ impl Storage for MockStorage {
         Ok(fs::create_dir_all(rel_path).await?)
     }
 
+    async fn remove_dir(&self, path: impl AsRef<Path> + Send) -> Res {
+        let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
+        Ok(fs::remove_dir(rel_path).await?)
+    }
+
+    async fn is_symlink(&self, path: impl AsRef<Path> + Send) -> bool {
+        let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
+        fs::symlink_metadata(rel_path)
+            .await
+            .is_ok_and(|m| m.file_type().is_symlink())
+    }
+
     async fn remove_dir_all(&self, path: impl AsRef<Path>) -> Res {
         let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
         Ok(fs::remove_dir_all(rel_path).await?)
@@ -106,14 +144,11 @@ impl Storage for MockStorage {
     }
 
     /// Return the current time as the modified timestamp.
-    async fn modified_timestamp(
-        &self,
-        path: impl AsRef<Path>,
-    ) -> Res<chrono::DateTime<chrono::Utc>> {
+    async fn modified_timestamp(&self, path: impl AsRef<Path>) -> Res<jiff::Timestamp> {
         let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
         create_parent(&rel_path).await?;
         let modified = fs::metadata(rel_path).await.map(|m| m.modified())??;
-        Ok(DateTime::<Utc>::from(modified))
+        Ok(crate::time::from_system(modified)?)
     }
 
     async fn open_file(&self, path: impl AsRef<Path>) -> Res<fs::File> {
@@ -164,7 +199,30 @@ impl Storage for MockStorage {
         body: ByteStream,
     ) -> Res {
         let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
-        super::local::write(rel_path.as_ref(), body, true).await
+        super::local::write(rel_path.as_ref(), body, true, true).await
+    }
+
+    async fn write_byte_stream_via(
+        &self,
+        path: impl AsRef<Path> + Send + Sync,
+        temp_name: impl AsRef<Path> + Send + Sync,
+        body: ByteStream,
+        tag: Option<&'static str>,
+    ) -> Res {
+        let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
+        super::LocalStorage::new()
+            .write_byte_stream_via(rel_path, temp_name, body, tag)
+            .await
+    }
+
+    async fn sync_dir(&self, path: impl AsRef<Path> + Send) {
+        let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
+        super::LocalStorage::new().sync_dir(rel_path).await;
+    }
+
+    async fn sync_file(&self, path: impl AsRef<Path> + Send) -> Res {
+        let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
+        super::LocalStorage::new().sync_file(rel_path).await
     }
 
     /// The same real lock as [`LocalStorage`](super::LocalStorage)'s, on the

@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -471,8 +471,8 @@ async fn role_remedy(
     clippy::cast_precision_loss,
     reason = "epoch millis fit f64 exactly for any date this program can see"
 )]
-fn epoch_millis(at: DateTime<Utc>) -> f64 {
-    at.timestamp_millis() as f64
+fn epoch_millis(at: Timestamp) -> f64 {
+    at.as_millisecond() as f64
 }
 
 /// A listed path is outstanding when this copy neither tracks it nor has a
@@ -671,6 +671,11 @@ pub async fn get_package_page_data(
     s: &Services,
     namespace: String,
 ) -> Result<PackagePageData, String> {
+    if let Some(ds) = &s.dataspace {
+        return super::dataspace::pages::package_page(ds, &namespace)
+            .await
+            .map_err(|err| err.to_frontend_string());
+    }
     let m = &*s.model;
     let roles = &*s.roles;
     let watcher = &s.watcher;
@@ -756,15 +761,10 @@ async fn get_package_page_data_from_model(
             } else if let Some(files) = conflict_files(paused) {
                 PackageStateDto::PullConflict { files }
             } else {
-                quilt::lineage::PackageState::resolve(
-                    status.upstream_state,
-                    has_local_commit,
-                    has_remote,
-                    // The count is measured, not guessed. This page reads one
-                    // package, so it has no light phase to be provisional for.
-                    Some(status.changes.len()),
-                )
-                .into()
+                // The count is measured, not guessed. This page reads one
+                // package, so it has no light phase to be provisional for.
+                quilt::lineage::PackageState::of_status(&status, has_local_commit, has_remote)
+                    .into()
             };
             (state, Ok(status))
         }
@@ -915,6 +915,9 @@ pub async fn get_revision_history(
     namespace: String,
     measure: bool,
 ) -> Result<RevisionHistoryData, String> {
+    if let Some(ds) = &s.dataspace {
+        return super::dataspace::revision_history(ds, &namespace).await;
+    }
     let m = &*s.model;
     let namespace: quilt_uri::Namespace = namespace
         .try_into()
@@ -978,6 +981,9 @@ pub async fn remove_revisions(
     namespace: String,
     hashes: Vec<String>,
 ) -> Result<String, String> {
+    if let Some(ds) = &s.dataspace {
+        return super::dataspace::remove_revisions(ds, &namespace, &hashes).await;
+    }
     let m = &*s.model;
     remove_revisions_command(m, &s.record, namespace, hashes).await
 }
@@ -1037,12 +1043,19 @@ pub async fn package_download_backlog(
     let m = &*s.model;
     let tracing = &*s.telemetry;
     let watcher = &s.watcher;
+    let downloaded = match &s.dataspace {
+        Some(ds) => Some(Box::pin(super::dataspace::pages::download(ds, &namespace, &paths)).await),
+        None => None,
+    };
     let namespace: quilt_uri::Namespace = namespace
         .try_into()
         .map_err(|e: quilt_uri::UriError| e.to_string())?;
 
-    let (result, left_out) = match download_backlog_from_model(m, watcher, &namespace, &paths).await
-    {
+    let downloaded = match downloaded {
+        Some(downloaded) => downloaded,
+        None => download_backlog_from_model(m, watcher, &namespace, &paths).await,
+    };
+    let (result, left_out) = match downloaded {
         Ok(left_out) => (Ok(()), left_out),
         Err(err) => (Err(err), NotDownloaded::default()),
     };
@@ -1203,7 +1216,7 @@ mod tests {
                 );
                 Ok(Some(quilt::flow::Revision {
                     hash: "abcdef".to_string(),
-                    obtained: DateTime::from_timestamp_millis(1_758_500_000_000).unwrap(),
+                    obtained: Timestamp::from_millisecond(1_758_500_000_000).unwrap(),
                     message: Some("Initial upload".to_string()),
                     meta: None,
                     workflow: None,
@@ -1301,7 +1314,7 @@ mod tests {
         let mut lineage = quilt::lineage::PackageLineage::from_remote(uri, "l".to_string());
         lineage.base_hash = "b".to_string();
         lineage.commit = Some(quilt::lineage::CommitState {
-            timestamp: DateTime::from_timestamp_millis(1_758_500_000_000).unwrap(),
+            timestamp: Timestamp::from_millisecond(1_758_500_000_000).unwrap(),
             hash: "c".to_string(),
             prev_hashes: Vec::new(),
         });
@@ -1502,7 +1515,7 @@ mod tests {
     fn revision(message: &str) -> quilt::flow::Revision {
         quilt::flow::Revision {
             hash: "pending-hash".to_string(),
-            obtained: DateTime::from_timestamp_millis(1_758_500_000_000).unwrap(),
+            obtained: Timestamp::from_millisecond(1_758_500_000_000).unwrap(),
             message: Some(message.to_string()),
             meta: None,
             workflow: None,
@@ -2505,7 +2518,7 @@ mod tests {
         quilt::flow::HistoryEntry {
             revision: quilt::flow::Revision {
                 hash: hash.to_string(),
-                obtained: DateTime::from_timestamp_millis(at_millis).unwrap(),
+                obtained: Timestamp::from_millisecond(at_millis).unwrap(),
                 message: message.map(ToString::to_string),
                 meta: None,
                 workflow: None,

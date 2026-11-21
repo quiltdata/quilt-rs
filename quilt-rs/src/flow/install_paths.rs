@@ -28,6 +28,9 @@ use quilt_uri::Host;
 use quilt_uri::Namespace;
 use quilt_uri::S3Uri;
 
+use super::install_to::refuse_linked_ancestors;
+use super::install_to::refuse_linked_targets;
+
 /// What [`InstalledPackage::install_paths`](crate::InstalledPackage::install_paths)
 /// did: the paths the copy now tracks, and the requested ones it left out.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -48,7 +51,7 @@ pub struct InstallPathsReport {
 }
 
 /// Why fetched bytes were not stored: they do not hash to the row.
-enum Mismatch {
+pub(super) enum Mismatch {
     /// The `physical_key` has no `versionId`, or the `null` one S3 writes while
     /// versioning is suspended, so a later revision may have replaced the
     /// object it names.
@@ -78,7 +81,7 @@ impl Mismatch {
 /// read as a local modification nobody made, and a retry would take them from
 /// the store as a cache hit. So the fetch lands in this apply's staging
 /// directory and moves into the store only once it hashes to the row.
-async fn cache_immutable_object(
+pub(super) async fn cache_immutable_object(
     storage: &impl Storage,
     remote: &impl Remote,
     host: Option<&Host>,
@@ -89,7 +92,9 @@ async fn cache_immutable_object(
     let uri: S3Uri = row.physical_key.parse()?;
     let stream = remote.get_object_stream(host, &uri).await?;
     let fetched = run_staging.join(uuid::Uuid::new_v4().to_string());
-    storage.write_byte_stream(&fetched, stream.body).await?;
+    storage
+        .write_staged_byte_stream(&fetched, stream.body)
+        .await?;
     if let Some(computed) = refresh_hash(storage, &fetched, row.clone()).await? {
         debug!(
             "❌ Fetched bytes for {} do not match its row: expected {}, computed {}",
@@ -137,7 +142,7 @@ async fn commit_staged(
     storage: &impl Storage,
     staged: &Path,
     mutable_target: &Path,
-) -> Res<chrono::DateTime<chrono::Utc>> {
+) -> Res<jiff::Timestamp> {
     if let Some(parent) = mutable_target.parent() {
         storage.create_dir_all(parent).await?;
     }
@@ -145,22 +150,18 @@ async fn commit_staged(
     storage.modified_timestamp(&mutable_target).await
 }
 
-/// Places every staged file where nothing is, or none of them: anything already
-/// at a destination is a file this copy does not track, the user's own, and it
-/// must survive.
-///
-/// Every destination is checked before the first rename, so a refusal places
-/// nothing. The rename replaces what it finds, so a file created during the
-/// renames themselves, a window of milliseconds, is not caught.
-async fn place_where_absent(
+/// Refuses, naming each logical key, when any of the destinations already holds
+/// a file: it is not one this install placed, so it is the user's own, and a
+/// rename would replace it. The check [`place_where_absent`] makes before its
+/// first rename, and [`install_to`](super::install_to) makes before its own.
+pub(super) async fn refuse_if_present<'a, P: AsRef<Path>>(
     storage: &(impl Storage + Sync),
-    staged: &[(PathBuf, PathBuf, ManifestRow)],
-    lineage: &mut PackageLineage,
+    destinations: impl Iterator<Item = (P, &'a LogicalKey)>,
 ) -> Res {
     let mut existing = Vec::new();
-    for (_, working_dest, row) in staged {
-        if storage.exists(working_dest).await {
-            existing.push(row.logical_key.to_path_buf());
+    for (working_dest, key) in destinations {
+        if storage.exists(working_dest.as_ref()).await {
+            existing.push(key.to_path_buf());
         }
     }
     if !existing.is_empty() {
@@ -169,13 +170,52 @@ async fn place_where_absent(
             existing,
         )));
     }
+    Ok(())
+}
+
+/// Places every staged file where nothing is, or none of them: anything already
+/// at a destination is a file this copy does not track, the user's own, and it
+/// must survive.
+///
+/// Every destination, and every folder between `working_dir` and it, is
+/// checked before the first rename, so a refusal places nothing. The rename
+/// replaces what it finds, so a file created during the renames themselves, a
+/// window of milliseconds, is not caught.
+async fn place_where_absent(
+    storage: &(impl Storage + Sync),
+    staged: &[(PathBuf, PathBuf, ManifestRow)],
+    working_dir: &Path,
+    lineage: &mut PackageLineage,
+) -> Res {
+    // A folder may have become a link during the fetch, as `install_paths`
+    // checked before it.
+    refuse_linked_ancestors(
+        storage,
+        working_dir,
+        staged.iter().map(|(_, _, row)| &row.logical_key),
+    )
+    .await?;
+    refuse_linked_targets(
+        storage,
+        staged
+            .iter()
+            .map(|(_, working_dest, row)| (working_dest.clone(), &row.logical_key)),
+    )
+    .await?;
+    refuse_if_present(
+        storage,
+        staged
+            .iter()
+            .map(|(_, working_dest, row)| (working_dest.as_path(), &row.logical_key)),
+    )
+    .await?;
     for (staged_path, working_dest, row) in staged {
         let last_modified = commit_staged(storage, staged_path, working_dest).await?;
         lineage.paths.insert(
             row.logical_key.to_path_buf(),
             PathState {
                 timestamp: last_modified,
-                hash: row.hash.clone().into(),
+                hash: Some(row.hash.clone().into()),
             },
         );
         debug!("✔️ Swapped in {}", working_dest.display());
@@ -199,7 +239,11 @@ async fn holds(storage: &impl Storage, working_dest: &Path, row: ManifestRow) ->
 /// that moved during the hash counts as an edit, and so does a file that was
 /// there when the check began and is gone by its end, as an editor that moves
 /// the old file aside before writing the new one leaves it.
-async fn edited(storage: &impl Storage, working_dest: &Path, row: &ManifestRow) -> Res<bool> {
+pub(crate) async fn edited(
+    storage: &impl Storage,
+    working_dest: &Path,
+    row: &ManifestRow,
+) -> Res<bool> {
     let modified = || async {
         match storage.modified_timestamp(working_dest).await {
             Ok(at) => Ok(Some(at)),
@@ -216,6 +260,28 @@ async fn edited(storage: &impl Storage, working_dest: &Path, row: &ManifestRow) 
         Err(err) => return Err(err),
     };
     Ok(changed || modified().await? != Some(before))
+}
+
+/// Refuses when this apply would recreate a missing package folder that still
+/// tracks files. A rename would leave it holding only the files being placed,
+/// so the tracked rest would read as removed. [`Protect::Nothing`] is exempt:
+/// an explicit reset may recreate the folder. A package that tracks nothing
+/// loses nothing to a recreated folder, so it passes.
+async fn refuse_if_working_copy_unavailable(
+    storage: &impl Storage,
+    working_dir: &Path,
+    protect: &Protect<'_>,
+    lineage: &PackageLineage,
+) -> Res {
+    if matches!(protect, Protect::Nothing) || lineage.paths.is_empty() {
+        return Ok(());
+    }
+    if storage.read_dir(working_dir).await.is_err() {
+        return Err(Error::PackageOp(PackageOpError::WorkingCopyUnavailable(
+            working_dir.to_path_buf(),
+        )));
+    }
+    Ok(())
 }
 
 /// Renames each staged file onto its destination, refusing to overwrite one a
@@ -238,9 +304,11 @@ async fn swap_staged_into_place(
     protect: &Protect<'_>,
     lineage: &mut PackageLineage,
 ) -> Res {
+    // Before removals: a missing folder is unavailable, not a set of edits.
+    refuse_if_working_copy_unavailable(storage, working_dir, protect, lineage).await?;
     protect.check_removals(storage, working_dir).await?;
     if let Protect::Absent = protect {
-        return place_where_absent(storage, staged, lineage).await;
+        return place_where_absent(storage, staged, working_dir, lineage).await;
     }
     for (staged_path, working_dest, row) in staged {
         if let Protect::BaseContent { rows, .. } = protect {
@@ -274,11 +342,32 @@ async fn swap_staged_into_place(
             row.logical_key.to_path_buf(),
             PathState {
                 timestamp: last_modified,
-                hash: row.hash.clone().into(),
+                hash: Some(row.hash.clone().into()),
             },
         );
         debug!("✔️ Swapped in {}", working_dest.display());
     }
+    Ok(())
+}
+
+/// Writes `manifest` as the installed one, its rows replaced by the installed
+/// ones in `local_entries`.
+async fn write_installed_manifest(
+    storage: &impl Storage,
+    paths: &DomainPaths,
+    namespace: &Namespace,
+    manifest: &Manifest,
+    local_entries: BTreeMap<PathBuf, ManifestRow>,
+) -> Res {
+    let stream = stream_remote_with_installed_rows(manifest, local_entries).await;
+    build_manifest_from_rows_stream(
+        storage,
+        paths.installed_manifests_dir(namespace),
+        manifest.header.clone(),
+        manifest.dir_meta.clone(),
+        stream,
+    )
+    .await?;
     Ok(())
 }
 
@@ -422,7 +511,10 @@ async fn refuse_existing_working_files(
 /// Installs paths this copy does not already hold. A path it already tracks is
 /// left as it is and reported in
 /// [`already_installed`](InstallPathsReport::already_installed). The whole call
-/// is refused if an untracked path already has a file in the working folder.
+/// is refused if an untracked path already has a file or a symbolic link in the
+/// working folder, or if a folder between the working folder and it is a
+/// symbolic link, which would put the file outside the working folder, as
+/// [`install_to`](super::install_to) refuses.
 ///
 /// Returns the new lineage and the report. Its `skipped` paths are rows whose
 /// bytes the remote no longer holds, and its `hash_mismatch` paths are rows
@@ -452,9 +544,19 @@ pub async fn install_paths(
     let (already_installed, untracked): (Vec<&PathBuf>, Vec<&PathBuf>) = entries_paths
         .iter()
         .partition(|path| lineage.paths.contains_key(**path));
+    let keys = untracked
+        .iter()
+        .map(|path| LogicalKey::new(path.as_path()))
+        .collect::<Result<Vec<_>, _>>()?;
+    refuse_linked_ancestors(storage, &working_dir, keys.iter()).await?;
+    refuse_linked_targets(
+        storage,
+        keys.iter().map(|key| (key.join_to(&working_dir), key)),
+    )
+    .await?;
     refuse_existing_working_files(storage, &working_dir, &untracked).await?;
     // Checked up front so a refusal fetches nothing, and again at placement
-    // (`Protect::Absent`) because a file can appear during the fetch.
+    // (`Protect::Absent`) because a file or a link can appear during the fetch.
     let (lineage, report) = install_paths_over(
         lineage,
         manifest,
@@ -483,7 +585,7 @@ pub async fn install_paths(
 /// Sorted by those names, a path that is also a folder comes right before one
 /// of the paths inside it, and a repeated path right before its twin, so
 /// comparing neighbours is enough.
-fn refuse_clashing_local_paths(rows: &[ManifestRow]) -> Res {
+pub(crate) fn refuse_clashing_local_paths(rows: &[ManifestRow]) -> Res {
     let mut local: Vec<(Vec<Component>, &LogicalKey)> = rows
         .iter()
         .map(|row| {
@@ -549,6 +651,7 @@ pub(crate) async fn install_paths_over(
     refuse_clashing_local_paths(&manifest.rows)?;
     if entries_paths.is_empty() {
         info!("No paths to install");
+        refuse_if_working_copy_unavailable(storage, &working_dir, protect, &lineage).await?;
         protect.check_removals(storage, &working_dir).await?;
         let report = InstallPathsReport {
             paths: lineage.paths.clone(),
@@ -593,10 +696,10 @@ pub(crate) async fn install_paths_over(
     // the shape instead of a list of call sites to remember.
     let staging: Res<Vec<(PathBuf, PathBuf, ManifestRow)>> = async {
         let mut staged: Vec<(PathBuf, PathBuf, ManifestRow)> = Vec::new();
+        let rows = manifest.rows_by_key();
 
         for path in entries_paths {
-            // TODO: Consider using a hashmap or treemap for manifest.rows
-            let row = manifest.get_record(path).ok_or_else(|| {
+            let row = *rows.get(path.as_path()).ok_or_else(|| {
                 Error::InstallPath(InstallPathError::NotInRevision((*path).clone()))
             })?;
 
@@ -679,9 +782,7 @@ pub(crate) async fn install_paths_over(
     swapped?;
 
     debug!("⏳ Building manifest with installed rows");
-    let stream = stream_remote_with_installed_rows(manifest, entries).await;
-    let dest_dir = paths.installed_manifests_dir(&namespace);
-    build_manifest_from_rows_stream(storage, dest_dir, manifest.header.clone(), stream).await?;
+    write_installed_manifest(storage, paths, &namespace, manifest, entries).await?;
 
     info!(
         "✔️ Installed {} paths, skipped {}, hash mismatch {}",
@@ -725,6 +826,160 @@ mod tests {
     // Verify installing the path that is already fetched to the `.quilt/objects`
     // Practically it is useful when we try to install identical files. Then we can re-use cache (because files are located by hash).
     // In other cases, it tests implementation details.
+    /// A folder that vanished while the files were fetched is not recreated
+    /// holding only them: the tracked files it lost would read as removed.
+    async fn swap_refuses_a_missing_folder(protect: &Protect<'_>) -> Res {
+        let storage = MockStorage::default();
+        let working_dir = storage.temp_dir.as_ref().join("gone");
+        let mut lineage = PackageLineage::default();
+        lineage
+            .paths
+            .insert(PathBuf::from("tracked.txt"), PathState::default());
+
+        let staged_path = PathBuf::from("staging/new");
+        storage
+            .write_byte_stream(&staged_path, ByteStream::from_static(b"new"))
+            .await?;
+        let staged = vec![(staged_path, working_dir.join("new.txt"), row("new.txt")?)];
+
+        let error =
+            swap_staged_into_place(&storage, &staged, &working_dir, protect, &mut lineage).await;
+
+        assert!(matches!(
+            error,
+            Err(Error::PackageOp(PackageOpError::WorkingCopyUnavailable(named)))
+                if named == working_dir
+        ));
+        assert!(!working_dir.exists());
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_swap_refuses_a_folder_that_went_missing_during_the_fetch() -> Res {
+        swap_refuses_a_missing_folder(&Protect::Absent).await
+    }
+
+    /// A pull uses [`Protect::BaseContent`], so the same late check must refuse
+    /// there too: otherwise a new file would recreate the folder without the
+    /// unchanged tracked files, and the next status would report them removed.
+    #[test(tokio::test)]
+    async fn test_swap_refuses_a_folder_that_went_missing_during_a_pull() -> Res {
+        let rows = std::collections::BTreeMap::new();
+        let removing: [PathBuf; 0] = [];
+        swap_refuses_a_missing_folder(&Protect::BaseContent {
+            rows: &rows,
+            removing: &removing,
+        })
+        .await
+    }
+
+    /// An explicit reset may recreate a missing folder: discarding local work
+    /// is the operation, and there is nothing to protect.
+    #[test(tokio::test)]
+    async fn test_swap_reset_recreates_a_folder_that_went_missing() -> Res {
+        let storage = MockStorage::default();
+        let working_dir = storage.temp_dir.as_ref().join("gone");
+        let mut lineage = PackageLineage::default();
+        lineage
+            .paths
+            .insert(PathBuf::from("tracked.txt"), PathState::default());
+
+        let staged_path = PathBuf::from("staging/new");
+        storage
+            .write_byte_stream(&staged_path, ByteStream::from_static(b"new"))
+            .await?;
+        let dest = working_dir.join("new.txt");
+        let staged = vec![(staged_path, dest.clone(), row("new.txt")?)];
+
+        swap_staged_into_place(
+            &storage,
+            &staged,
+            &working_dir,
+            &Protect::Nothing,
+            &mut lineage,
+        )
+        .await?;
+
+        assert_eq!(storage.read_bytes(&dest).await?, b"new");
+        assert!(working_dir.exists());
+        Ok(())
+    }
+
+    async fn empty_install(
+        protect: &Protect<'_>,
+        working_dir: PathBuf,
+        storage: &MockStorage,
+        lineage: PackageLineage,
+    ) -> Res<(PackageLineage, InstallPathsReport)> {
+        let (paths, _tmp) = DomainPaths::from_temp_dir()?;
+        let mut manifest = Manifest::default();
+        install_paths_over(
+            lineage,
+            &mut manifest,
+            &paths,
+            working_dir,
+            Namespace::default(),
+            storage,
+            &MockRemote::default(),
+            &[],
+            protect,
+            OnMismatch::Refuse,
+        )
+        .await
+    }
+
+    /// The no-install path must make the same check: it never reaches
+    /// [`swap_staged_into_place`], and a pull or download with nothing to write
+    /// would otherwise succeed as if the folder were still there.
+    async fn empty_install_refuses_a_missing_folder(protect: &Protect<'_>) -> Res {
+        let storage = MockStorage::default();
+        let working_dir = storage.temp_dir.as_ref().join("gone");
+        let mut lineage = PackageLineage::default();
+        lineage
+            .paths
+            .insert(PathBuf::from("tracked.txt"), PathState::default());
+
+        let error = empty_install(protect, working_dir.clone(), &storage, lineage).await;
+
+        assert!(matches!(
+            error,
+            Err(Error::PackageOp(PackageOpError::WorkingCopyUnavailable(named)))
+                if named == working_dir
+        ));
+        assert!(!working_dir.exists());
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_empty_install_refuses_a_folder_that_went_missing() -> Res {
+        let rows = std::collections::BTreeMap::new();
+        let removing: [PathBuf; 0] = [];
+        empty_install_refuses_a_missing_folder(&Protect::BaseContent {
+            rows: &rows,
+            removing: &removing,
+        })
+        .await
+    }
+
+    #[test(tokio::test)]
+    async fn test_empty_install_download_refuses_a_folder_that_went_missing() -> Res {
+        empty_install_refuses_a_missing_folder(&Protect::Absent).await
+    }
+
+    #[test(tokio::test)]
+    async fn test_empty_install_reset_allows_a_folder_that_went_missing() -> Res {
+        let storage = MockStorage::default();
+        let working_dir = storage.temp_dir.as_ref().join("gone");
+        let mut lineage = PackageLineage::default();
+        lineage
+            .paths
+            .insert(PathBuf::from("tracked.txt"), PathState::default());
+
+        empty_install(&Protect::Nothing, working_dir.clone(), &storage, lineage).await?;
+        assert!(!working_dir.exists());
+        Ok(())
+    }
+
     #[test(tokio::test)]
     async fn test_installing_one_cached_path() -> Res {
         let (home, _temp_dir1) = Home::from_temp_dir()?;
@@ -1231,6 +1486,9 @@ mod tests {
             ..PackageLineage::default()
         };
         lineage.paths.insert(tracked.clone(), PathState::default());
+        // The folder must be there: with nothing to fetch, install still
+        // checks that a tracked working copy has not vanished.
+        storage.create_dir_all("work").await?;
 
         // The manifest has no row for the path, so a fetch would fail
         let (lineage, report) = install_paths(
@@ -1345,6 +1603,38 @@ mod tests {
         Ok(())
     }
 
+    /// A folder that became a link after the download, before placing: every
+    /// path is checked before the first rename, so nothing is placed, and
+    /// nothing is written through the link.
+    #[cfg(unix)]
+    #[test(tokio::test)]
+    async fn a_folder_that_became_a_link_after_the_download_refuses_before_any_rename() -> Res {
+        let storage = MockStorage::default();
+        let staged = two_staged(&storage).await?;
+        storage.create_dir_all("work").await?;
+        storage.create_dir_all("outside").await?;
+        let root = storage.temp_dir.path();
+        std::os::unix::fs::symlink(root.join("outside"), root.join("work/sub"))?;
+        let mut lineage = PackageLineage::default();
+
+        let result = swap_staged_into_place(
+            &storage,
+            &staged,
+            Path::new("work"),
+            &Protect::Absent,
+            &mut lineage,
+        )
+        .await;
+
+        let message = result.expect_err("a link is refused").to_string();
+        assert!(message.contains("symbolic link"), "{message}");
+        assert!(!storage.exists("outside/b").await);
+        assert!(!storage.exists("work/a").await, "nothing is renamed");
+        assert!(lineage.paths.is_empty());
+
+        Ok(())
+    }
+
     // TODO: fail if manifest entry has invalid URL
 }
 
@@ -1364,6 +1654,15 @@ mod keys_outside_the_package {
     /// Reads a one-row manifest keyed `key` and installs that row into a real
     /// folder. Returns what the read-and-install returned.
     async fn read_and_install(key: &str) -> Res<Res<(PackageLineage, InstallPathsReport)>> {
+        Ok(read_and_install_into(key, |_| Ok(())).await?.0)
+    }
+
+    /// [`read_and_install`] after `prepare` has had the package folder, which
+    /// exists by then. Returns also how many times the object was fetched.
+    async fn read_and_install_into(
+        key: &str,
+        prepare: impl FnOnce(&Path) -> std::io::Result<()>,
+    ) -> Res<(Res<(PackageLineage, InstallPathsReport)>, usize)> {
         use sha2::Digest;
 
         let (home, _home_dir) = Home::from_temp_dir()?;
@@ -1374,6 +1673,8 @@ mod keys_outside_the_package {
         domain_paths
             .scaffold_for_installing(&storage, &home, &namespace)
             .await?;
+        storage.create_dir_all(&package_home).await?;
+        prepare(&package_home)?;
 
         let body = b"planted";
         let digest = sha2::Sha256::digest(body);
@@ -1393,7 +1694,7 @@ mod keys_outside_the_package {
             })
         );
 
-        Ok(async {
+        let installed = async {
             let mut manifest = Manifest::from_reader(jsonl.as_bytes()).await?;
             let path = manifest.rows[0].logical_key.to_path_buf();
             install_paths(
@@ -1411,7 +1712,8 @@ mod keys_outside_the_package {
             )
             .await
         }
-        .await)
+        .await;
+        Ok((installed, remote.get_object_count(physical_key)))
     }
 
     #[test(tokio::test)]
@@ -1435,6 +1737,47 @@ mod keys_outside_the_package {
         let result = read_and_install(&key).await?;
         assert!(result.is_err(), "installed an absolute key: {key}");
         assert!(!outside.path().join("planted").exists());
+        Ok(())
+    }
+
+    /// A folder in the package folder that links elsewhere would put the file
+    /// outside it, so it is refused before anything is fetched.
+    #[cfg(unix)]
+    #[test(tokio::test)]
+    async fn a_key_under_a_linked_folder_is_refused_before_any_fetch() -> Res {
+        let outside = tempfile::TempDir::new()?;
+        let (result, fetches) = read_and_install_into("sub/planted", |package_home| {
+            std::os::unix::fs::symlink(outside.path(), package_home.join("sub"))
+        })
+        .await?;
+        let message = result.expect_err("a link is refused").to_string();
+        assert!(message.contains("symbolic link"), "{message}");
+        assert!(!outside.path().join("planted").exists());
+        assert_eq!(fetches, 0);
+        Ok(())
+    }
+
+    /// A link at the requested path, even one that leads nowhere, is the
+    /// user's own and is not replaced.
+    #[cfg(unix)]
+    #[test(tokio::test)]
+    async fn a_dangling_link_at_the_requested_path_is_refused_before_any_fetch() -> Res {
+        let outside = tempfile::TempDir::new()?;
+        let nowhere = outside.path().join("nowhere");
+        let (result, fetches) = read_and_install_into("planted", |package_home| {
+            std::os::unix::fs::symlink(&nowhere, package_home.join("planted"))
+        })
+        .await?;
+        assert!(
+            matches!(
+                &result,
+                Err(Error::InstallPath(InstallPathError::LocalFileExists(paths)))
+                    if paths == &vec![PathBuf::from("planted")]
+            ),
+            "{result:?}"
+        );
+        assert!(!nowhere.exists());
+        assert_eq!(fetches, 0);
         Ok(())
     }
 }
@@ -1485,6 +1828,7 @@ mod keys_holding_a_backslash {
 
         let remote = MockRemote::default();
         let mut jsonl = String::from("{\"version\":\"v0\",\"message\":\"\"}\n");
+        jsonl.push_str("{\"logical_key\":\"folder-meta/\",\"meta\":{\"owner\":\"team\",\"n\":18446744073709551617}}\n");
         for (i, key) in keys.iter().enumerate() {
             let body = format!("body of {key}");
             let physical_key = format!("s3://bucket/{i}");
@@ -1521,7 +1865,19 @@ mod keys_holding_a_backslash {
             &keys.iter().collect::<Vec<_>>(),
         )
         .await;
+        let installed_dir = domain_paths.installed_manifests_dir(&Namespace::from(("foo", "bar")));
         let result = result.map(|(lineage, _)| {
+            // The installed manifest still holds the folders' metadata.
+            let installed: Vec<_> = std::fs::read_dir(&installed_dir).unwrap().collect();
+            let [installed] = installed.as_slice() else {
+                panic!("expected one installed manifest, got {installed:?}");
+            };
+            let installed = std::fs::read_to_string(installed.as_ref().unwrap().path()).unwrap();
+            assert!(
+                installed.contains(r#""logical_key":"folder-meta/""#),
+                "{installed}"
+            );
+            assert!(installed.contains("18446744073709551617"), "{installed}");
             assert_eq!(lineage.paths.len(), manifest.rows.len());
             for row in &manifest.rows {
                 let body = std::fs::read(row.logical_key.join_to(&package_home)).unwrap();

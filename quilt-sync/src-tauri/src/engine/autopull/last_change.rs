@@ -48,10 +48,10 @@ pub enum PendingCommit {
 impl PendingCommit {
     #[must_use]
     pub fn of(lineage: &crate::engine::quilt::lineage::PackageLineage) -> Self {
-        lineage
-            .commit
-            .as_ref()
-            .map_or(Self::None, |commit| Self::At(commit.timestamp.into()))
+        match &lineage.commit {
+            None => Self::None,
+            Some(commit) => SystemTime::try_from(commit.timestamp).map_or(Self::Unknown, Self::At),
+        }
     }
 }
 

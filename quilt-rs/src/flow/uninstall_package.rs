@@ -5,28 +5,27 @@ use crate::Error;
 use crate::InstallPackageError;
 use crate::Res;
 use crate::io::storage::Storage;
-use crate::lineage::DomainLineage;
+use crate::lineage::Home;
 use crate::paths;
 use quilt_uri::Namespace;
 
-/// Uninstall package: remove files from working directory, manifest from `.quilt` and from
-/// `.quilt/lineage.json`.
+/// Uninstall package: remove files from working directory and manifests from
+/// `.quilt`. `installed` says whether the domain has the package; the caller
+/// removes its lineage.
 pub async fn uninstall_package(
-    mut lineage: DomainLineage,
+    home: &Home,
+    installed: bool,
     paths: &paths::DomainPaths,
     storage: &impl Storage,
     namespace: Namespace,
-) -> Res<DomainLineage> {
+) -> Res {
     info!("⏳ Uninstalling package {}", namespace);
 
-    debug!("🔍 Checking if package exists in lineage");
-    lineage
-        .packages
-        .remove(&namespace)
-        .ok_or(Error::InstallPackage(InstallPackageError::NotInstalled(
-            namespace.clone(),
-        )))?;
-    debug!("✔️ Package removed from lineage");
+    if !installed {
+        return Err(Error::InstallPackage(InstallPackageError::NotInstalled(
+            namespace,
+        )));
+    }
 
     debug!("⏳ Removing installed manifests");
     let manifest_path = paths.installed_manifests_dir(&namespace);
@@ -34,7 +33,7 @@ pub async fn uninstall_package(
     debug!("✔️ Removed manifests at: {}", manifest_path.display());
 
     debug!("⏳ Removing working directory");
-    let package_home = paths::package_home(&lineage.home, &namespace);
+    let package_home = paths::package_home(home, &namespace);
     storage.remove_dir_all(&package_home).await?;
     debug!("✔️ Removed working directory: {}", package_home.display());
 
@@ -42,28 +41,25 @@ pub async fn uninstall_package(
     // ones no other manifest uses afterwards; see `flow::gc::prune`.
 
     info!("✔️ Successfully uninstalled package {}", namespace);
-    Ok(lineage)
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
     use test_log::test;
 
     use super::*;
 
     use crate::io::storage::mocks::MockStorage;
-    use crate::lineage::Home;
-    use crate::lineage::PackageLineage;
 
     #[test(tokio::test)]
     async fn test_panic_if_no_installed_package() {
-        let lineage = DomainLineage::default();
         let storage = MockStorage::default();
         let paths = paths::DomainPaths::default();
 
         let namespace: Namespace = ("foo", "bar").into();
-        let result = uninstall_package(lineage, &paths, &storage, namespace.clone()).await;
+        let result =
+            uninstall_package(&Home::default(), false, &paths, &storage, namespace.clone()).await;
         assert!(matches!(
             result.unwrap_err(),
             Error::InstallPackage(InstallPackageError::NotInstalled(ns)) if ns == namespace
@@ -83,13 +79,13 @@ mod tests {
             .scaffold_for_installing(&storage, &home, &namespace)
             .await?;
 
-        let lineage = DomainLineage {
-            home,
-            packages: BTreeMap::from([(namespace.clone(), PackageLineage::default())]),
-        };
-
-        let lineage = uninstall_package(lineage, &paths, &storage, namespace).await?;
-        assert!(lineage.packages.is_empty());
+        uninstall_package(&home, true, &paths, &storage, namespace.clone()).await?;
+        assert!(!storage.exists(paths::package_home(&home, &namespace)).await);
+        assert!(
+            !storage
+                .exists(paths.installed_manifests_dir(&namespace))
+                .await
+        );
         Ok(())
     }
 }

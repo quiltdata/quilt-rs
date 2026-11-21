@@ -167,6 +167,7 @@ fn main() -> ExitCode {
             }
 
             desktop::action_needed::spawn(app.handle(), &services);
+            desktop::action_needed::post_cutover(app.handle(), &services);
             uri::setup_deep_link_handler(app.handle());
             // Holds the data folder's lock for the life of the app.
             app.manage(engine);

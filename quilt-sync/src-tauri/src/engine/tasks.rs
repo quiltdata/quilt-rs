@@ -9,6 +9,7 @@ use std::sync::Mutex;
 
 use quilt_rs::flow::UserMeta;
 use quilt_rs::io::remote::WorkflowIntent;
+use quilt_rs::manifest::RawNumbers;
 use quilt_uri::Namespace;
 use serde_json::Value;
 use serde_json::json;
@@ -23,6 +24,7 @@ use crate::engine::telemetry::prelude::*;
 pub mod acp;
 pub mod agent_exec;
 pub mod agent_process;
+pub mod dataspace;
 pub mod login_path;
 mod rebase;
 pub mod settings;
@@ -129,14 +131,23 @@ pub async fn check<M: QuiltModel>(
     settings: &TaskSettings,
     pkg: &quilt::InstalledPackage,
 ) {
-    if let Err(err) = try_check(model, tasks, settings, pkg).await {
-        warn!("tasks: {}: {err}", pkg.namespace);
+    match try_check(model, tasks, settings, pkg).await {
+        Ok(()) => {}
+        // The folder went between autosync's pass and this check, which the
+        // next pass logs once; this one would every tick.
+        Err(
+            err @ Error::Quilt(quilt::Error::PackageOp(
+                quilt::PackageOpError::WorkingCopyUnavailable(_),
+            )),
+        ) => debug!("tasks: {}: {err}", pkg.namespace),
+        Err(err) => warn!("tasks: {}: {err}", pkg.namespace),
     }
 }
 
 struct Head {
     lineage: quilt::lineage::PackageLineage,
     user_meta: Value,
+    user_meta_numbers: RawNumbers,
     workflow: Option<quilt::manifest::Workflow>,
     rows: Vec<quilt::manifest::ManifestRow>,
     verdict: Verdict,
@@ -172,6 +183,7 @@ async fn read_head<M: QuiltModel>(
     );
     Ok(Some(Head {
         user_meta: user_meta.clone(),
+        user_meta_numbers: manifest.header.user_meta_numbers.clone(),
         workflow: manifest.header.workflow,
         rows: manifest.rows,
         lineage,
@@ -213,7 +225,10 @@ impl Tasks {
             return true;
         };
         match fresh_at_head(model, pkg, &locked, &lineage).await {
-            Ok(Some(tree)) => sweepable(tree.status.upstream_state),
+            // Autosync's pass reports a missing folder; no sweep acts on it.
+            Ok(Some(tree)) => {
+                tree.status.unavailable_home().is_none() && sweepable(tree.status.upstream_state)
+            }
             _ => true,
         }
     }
@@ -236,6 +251,7 @@ async fn try_check<M: QuiltModel>(
     let Some(Head {
         lineage,
         user_meta,
+        user_meta_numbers,
         workflow,
         rows,
         verdict,
@@ -244,6 +260,7 @@ async fn try_check<M: QuiltModel>(
         return Ok(());
     };
     let user_meta = &user_meta;
+    let user_meta_numbers = &user_meta_numbers;
     if verdict == Verdict::LeaveAlone {
         return Ok(());
     }
@@ -265,11 +282,31 @@ async fn try_check<M: QuiltModel>(
     let Some(tree) = fresh_at_head(model, pkg, &locked, &lineage).await? else {
         return Ok(());
     };
+    // A folder that could not be read lists no change because nothing was
+    // checked: no claim, sweep or reset acts on it. Autosync's pass logs the
+    // missing folder once; the next check after it is back carries on.
+    if let Some(home) = tree.status.unavailable_home() {
+        debug!(
+            "tasks: {}: working folder {} unavailable, skipped",
+            pkg.namespace,
+            home.display()
+        );
+        return Ok(());
+    }
     let workflow = carried_workflow(workflow.as_ref());
     if verdict == Verdict::Interrupted {
         let record = &tasks.record;
         return sweep(
-            model, data_dir, &locked, pkg, workflow, &lineage, user_meta, tree, record,
+            model,
+            data_dir,
+            &locked,
+            pkg,
+            workflow,
+            &lineage,
+            user_meta,
+            user_meta_numbers,
+            tree,
+            record,
         )
         .await;
     }
@@ -294,14 +331,23 @@ async fn try_check<M: QuiltModel>(
             let hold = tasks.hold(&pkg.namespace);
             let claim = Claim {
                 invocation_id: uuid::Uuid::new_v4().to_string(),
-                claimed_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+                claimed_at: agent_exec::claim_time(jiff::Timestamp::now()),
             };
             // Before the push, so a crash after it still knows the claim as ours.
             settings::remember_invocation(data_dir, &claim.invocation_id).await?;
             let claimed_meta = agent_exec::with_claim(user_meta, claim.claimed());
             let message = format!("Task {document} claimed");
-            let outcome =
-                publish(model, &locked, pkg, workflow, claimed_meta, message, status).await?;
+            let outcome = publish(
+                model,
+                &locked,
+                pkg,
+                workflow,
+                claimed_meta,
+                user_meta_numbers.clone(),
+                message,
+                status,
+            )
+            .await?;
             // A claim's metadata is new each time, so its publish always pushes.
             let Some(push) = outcome.push() else {
                 warn!("tasks: {}: the claim published nothing", pkg.namespace);
@@ -330,7 +376,17 @@ async fn try_check<M: QuiltModel>(
             return Ok(());
         }
     };
-    let outcome = publish(model, &locked, pkg, workflow, meta, message, status).await?;
+    let outcome = publish(
+        model,
+        &locked,
+        pkg,
+        workflow,
+        meta,
+        user_meta_numbers.clone(),
+        message,
+        status,
+    )
+    .await?;
     if outcome.push().is_some_and(|push| !push.certified_latest) {
         reset_if_clean(model, pkg, &locked).await?;
     }
@@ -383,7 +439,14 @@ async fn reset_if_clean<M: QuiltModel>(
     locked: &M::Locked,
 ) -> Result<(), Error> {
     let (tree, _) = walk(model, pkg, locked).await?;
-    if tree.status.changes.is_empty() && tree.commit.is_none() {
+    // An unreadable folder lists no change, but nothing was checked in it.
+    if let Some(home) = tree.status.unavailable_home() {
+        warn!(
+            "tasks: {}: left Diverged, its working folder {} is unavailable",
+            pkg.namespace,
+            home.display()
+        );
+    } else if tree.status.changes.is_empty() && tree.commit.is_none() {
         model.locked_package_reset_local(locked).await?;
     } else {
         warn!(
@@ -447,6 +510,7 @@ async fn sweep<M: QuiltModel>(
     workflow: WorkflowIntent,
     head: &quilt::lineage::PackageLineage,
     user_meta: &Value,
+    user_meta_numbers: &RawNumbers,
     Tree { status, commit }: Tree,
     record: &Record,
 ) -> Result<(), Error> {
@@ -463,7 +527,7 @@ async fn sweep<M: QuiltModel>(
         // A claim that never left here is the one commit pending, and
         // changed only the metadata.
         let only_the_claim = commit.is_none_or(|commit| commit.prev_hashes.is_empty());
-        if status.changes.is_empty() && only_the_claim {
+        if status.changes.is_empty() && status.unavailable_home().is_none() && only_the_claim {
             model.locked_package_reset_local(locked).await?;
         } else {
             warn!(
@@ -509,7 +573,17 @@ async fn sweep<M: QuiltModel>(
     };
     let tree = Tree { status, commit };
     publish_outcome(
-        model, locked, pkg, workflow, head, user_meta, claim, message, tree, record,
+        model,
+        locked,
+        pkg,
+        workflow,
+        head,
+        user_meta,
+        user_meta_numbers,
+        claim,
+        message,
+        tree,
+        record,
     )
     .await
 }
@@ -546,6 +620,7 @@ async fn publish_outcome<M: QuiltModel>(
     workflow: WorkflowIntent,
     head: &quilt::lineage::PackageLineage,
     user_meta: &Value,
+    user_meta_numbers: &RawNumbers,
     mut claim: Value,
     mut message: String,
     Tree { status, commit }: Tree,
@@ -572,7 +647,17 @@ async fn publish_outcome<M: QuiltModel>(
         .filter(|uri| counted && uri.hash == head.base_hash);
     let meta = agent_exec::with_claim(user_meta, claim);
     let changes = status.changes.clone();
-    let published = publish(model, locked, pkg, workflow, meta, message, status).await?;
+    let published = publish(
+        model,
+        locked,
+        pkg,
+        workflow,
+        meta,
+        user_meta_numbers.clone(),
+        message,
+        status,
+    )
+    .await?;
     let Some(push) = published.push() else {
         return Ok(());
     };
@@ -690,21 +775,25 @@ fn carried_workflow(workflow: Option<&quilt::manifest::Workflow>) -> WorkflowInt
     }
 }
 
+#[allow(clippy::too_many_arguments, reason = "one publish's inputs")]
 async fn publish<M: QuiltModel>(
     model: &M,
     locked: &M::Locked,
     pkg: &quilt::InstalledPackage,
     workflow: WorkflowIntent,
     meta: Value,
+    numbers: RawNumbers,
     message: String,
     status: quilt::lineage::InstalledPackageStatus,
 ) -> Result<quilt::PublishOutcome, Error> {
     let workflow = model.resolve_workflow(pkg, workflow).await?;
+    // Keep numbers the new value still holds, including claim fields an
+    // interruption leaves in place, and drop ones a replaced claim left behind.
     model
         .locked_package_publish(
             locked,
             message,
-            UserMeta::Set(meta),
+            UserMeta::Set(meta.clone(), numbers.still_in(&meta)),
             workflow,
             None,
             Some(status),
@@ -805,7 +894,7 @@ async fn recheck_claim<M: QuiltModel>(
     Ok(rechecked)
 }
 
-fn lists(manifest: &quilt::manifest::Manifest, path: &std::path::Path) -> bool {
+pub(crate) fn lists(manifest: &quilt::manifest::Manifest, path: &std::path::Path) -> bool {
     manifest
         .rows
         .iter()
@@ -880,6 +969,7 @@ async fn finish<M: QuiltModel>(
         workflow,
         &lineage,
         &base,
+        &head.header.user_meta_numbers,
         claim,
         message,
         tree,

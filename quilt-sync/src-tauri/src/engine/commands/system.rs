@@ -95,9 +95,14 @@ pub async fn open_home_dir(s: &Services) -> Result<String, String> {
     let msg_ok = "Successfully opened home directory".to_string();
     let msg_err = |err: &Error| format!("Failed to open home directory: {err}");
 
+    // With the dataspace engine on, home is the default dataspace.
+    let result = match &s.dataspace {
+        Some(ds) => opener::open_browser(ds.dataspace()).map_err(Error::from),
+        None => open_home_dir_command(m).await,
+    };
     Notify::new(msg_init)
         .on_success(tracing, MixpanelEvent::HomeDirOpened)
-        .map(open_home_dir_command(m).await, msg_ok, msg_err)
+        .map(result, msg_ok, msg_err)
 }
 
 fn open_data_dir_command(local_data_dir: &std::path::Path) -> Result<(), Error> {
@@ -145,6 +150,9 @@ async fn run_gc_command(m: &impl QuiltModel) -> Result<FreedSpace, String> {
 
 /// Delete what the domain holds for nothing, answering with what was freed.
 pub async fn run_gc(s: &Services) -> Result<FreedSpace, String> {
+    if let Some(ds) = &s.dataspace {
+        return super::dataspace::gc(ds).await;
+    }
     let m = &*s.model;
     run_gc_command(m).await
 }
@@ -173,29 +181,32 @@ async fn measure_storage_command(m: &impl QuiltModel) -> Result<StorageSize, Str
 /// Measure local storage without deleting anything or taking package locks;
 /// run only when the user asks.
 pub async fn measure_storage(s: &Services) -> Result<StorageSize, String> {
+    if let Some(ds) = &s.dataspace {
+        return super::dataspace::measure(ds).await;
+    }
     let m = &*s.model;
     measure_storage_command(m).await
 }
 
 async fn collect_diagnostic_logs_command(
     data_dir: &std::path::Path,
-    m: &model::Model,
+    home_dir: Option<&std::path::Path>,
     app: &app::App,
     tracing: &crate::engine::telemetry::Telemetry,
 ) -> Result<PathBuf, Error> {
-    let info = diagnostics::collect(data_dir, m, app, tracing.install_id()).await?;
+    let info = diagnostics::collect(data_dir, home_dir, app, tracing.install_id());
     tokio::task::spawn_blocking(move || diagnostics::save_diagnostic_zip(&info))
         .await
         .map_err(|e| e.to_string())?
 }
 
 pub async fn collect_diagnostic_logs(s: &Services) -> Result<String, String> {
-    let m = &*s.model;
     let app = &s.app;
     let tracing = &*s.telemetry;
     let app: &app::App = app;
+    let home_dir = s.home_dir().await;
 
-    match collect_diagnostic_logs_command(&s.data_dir, m, app, tracing).await {
+    match collect_diagnostic_logs_command(&s.data_dir, home_dir.as_deref(), app, tracing).await {
         Ok(zip_path) => {
             // Reported here rather than through `Notify::on_success`, because this
             // command returns the archive's path and so does not route its outcome
@@ -256,17 +267,19 @@ pub async fn reveal_in_file_browser(
     let msg_init = format!("Revealing {path} in file browser for {namespace}");
     let msg_ok = format!("Successfully opened {path} in file browser");
     let msg_err = |err: &Error| format!("Failed to open directory: {err}");
+    let result = match &s.dataspace {
+        Some(ds) => super::dataspace::edits::file_path(ds, &namespace, &path)
+            .await
+            .and_then(|file| Ok(opener::reveal(&file)?)),
+        None => reveal_in_file_browser_command(m, &namespace, &path).await,
+    };
 
     Notify::new(msg_init)
         .on_success(
             tracing,
             MixpanelEvent::FileRevealed(PackageFileEvent::for_uri(uri.as_ref())),
         )
-        .map(
-            reveal_in_file_browser_command(m, &namespace, &path).await,
-            msg_ok,
-            msg_err,
-        )
+        .map(result, msg_ok, msg_err)
 }
 
 async fn open_in_file_browser_command(m: &model::Model, namespace: &str) -> Result<(), Error> {
@@ -285,17 +298,19 @@ pub async fn open_in_file_browser(
     let msg_init = format!("Opening file manager for {namespace}");
     let msg_ok = format!("Successfully opened file manager for {namespace}");
     let msg_err = |err: &Error| format!("Failed to open file manager: {err}");
+    let result = match &s.dataspace {
+        Some(ds) => super::dataspace::edits::folder(ds, &namespace)
+            .await
+            .and_then(|folder| Ok(opener::open_browser(&folder)?)),
+        None => open_in_file_browser_command(m, &namespace).await,
+    };
 
     Notify::new(msg_init)
         .on_success(
             tracing,
             MixpanelEvent::PackageDirOpened(PackageFileEvent::for_uri(uri.as_ref())),
         )
-        .map(
-            open_in_file_browser_command(m, &namespace).await,
-            msg_ok,
-            msg_err,
-        )
+        .map(result, msg_ok, msg_err)
 }
 
 async fn open_in_default_application_command(
@@ -319,17 +334,19 @@ pub async fn open_in_default_application(
     let msg_init = format!("Opening {path} with default application for {namespace}");
     let msg_ok = format!("Successfully opened {path} with default application");
     let msg_err = |err: &Error| format!("Failed to open application: {err}");
+    let result = match &s.dataspace {
+        Some(ds) => super::dataspace::edits::file_path(ds, &namespace, &path)
+            .await
+            .and_then(|file| Ok(opener::open(&file)?)),
+        None => open_in_default_application_command(m, &namespace, &path).await,
+    };
 
     Notify::new(msg_init)
         .on_success(
             tracing,
             MixpanelEvent::DefaultApplicationOpened(PackageFileEvent::for_uri(uri.as_ref())),
         )
-        .map(
-            open_in_default_application_command(m, &namespace, &path).await,
-            msg_ok,
-            msg_err,
-        )
+        .map(result, msg_ok, msg_err)
 }
 
 /// Where a package's file is on disk: the package's home joined with its
@@ -354,8 +371,11 @@ pub async fn package_file_path(
     path: quilt::LogicalKey,
 ) -> Result<String, String> {
     let m = &*s.model;
-    package_file_path_command(m, &namespace, &path)
-        .await
+    let found = match &s.dataspace {
+        Some(ds) => super::dataspace::edits::file_path(ds, &namespace, &path).await,
+        None => package_file_path_command(m, &namespace, &path).await,
+    };
+    found
         .map(|p| p.display().to_string())
         .map_err(|err| err.to_string())
 }
@@ -421,6 +441,13 @@ pub async fn setup(s: &Services, directory: String) -> Result<String, String> {
                 |home| home.display().to_string()
             )
         ));
+    }
+    if let Some(ds) = &s.dataspace {
+        let result = super::dataspace::setup(ds, &directory).await;
+        if result.is_ok() {
+            s.rewatch_dataspace().await;
+        }
+        return result;
     }
     let m = &*s.model;
     let tracing = &*s.telemetry;

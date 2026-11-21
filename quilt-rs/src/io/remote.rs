@@ -28,6 +28,15 @@ mod object;
 mod s3;
 mod workflow;
 
+/// What a remote that does not do `what` answers.
+fn unsupported(what: &str) -> Error {
+    std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        format!("this remote cannot {what}"),
+    )
+    .into()
+}
+
 /// Render an S3 SDK error into a short, diagnosable string.
 ///
 /// Three tiers, in order of preference:
@@ -121,6 +130,29 @@ pub mod mocks;
 pub struct RemoteObjectStream {
     pub body: ByteStream,
     pub uri: S3Uri,
+    /// The object's `ETag` as this read returned it, so a later write can be
+    /// made conditional on the object being unchanged since. `None` when the
+    /// store gave none.
+    pub etag: Option<String>,
+}
+
+/// The state an object must be in for [`Remote::put_object_if`] to write it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WriteCondition {
+    /// No object at the key: S3's `If-None-Match: *`.
+    Absent,
+    /// The object still has this `ETag`, taken from an earlier read: S3's
+    /// `If-Match`.
+    Matches(String),
+}
+
+/// What a conditional write did when the request itself succeeded.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConditionalPut {
+    /// The condition held and the object was written.
+    Written,
+    /// The condition failed, so nothing was written.
+    Moved,
 }
 
 pub type StreamObjectChunk = Vec<Res<Object>>;
@@ -130,6 +162,28 @@ pub type StreamItem = Res<StreamObjectChunk>;
 pub trait ObjectsStream: Stream<Item = StreamItem> {}
 
 impl<T: Stream<Item = StreamItem>> ObjectsStream for T {}
+
+/// One revision a registry lists for a package.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PublishedRevision {
+    /// Top hash of the revision's manifest.
+    pub hash: String,
+    /// When its pointer under `.quilt/named_packages/` says it was made,
+    /// where the listing says.
+    pub modified: Option<jiff::Timestamp>,
+    /// Its commit message, where the listing gives it.
+    pub message: Option<String>,
+}
+
+impl From<String> for PublishedRevision {
+    fn from(hash: String) -> Self {
+        Self {
+            hash,
+            modified: None,
+            message: None,
+        }
+    }
+}
 
 /// This trait encapsulates the S3 operations that Quilt needs to perform.
 pub trait Remote {
@@ -158,6 +212,18 @@ pub trait Remote {
         s3_uri: &S3Uri,
         contents: impl Into<ByteStream>,
     ) -> impl Future<Output = Res>;
+
+    /// Write `contents` only if the object is in the state `condition`
+    /// names, in one request. A denial is an error, as for
+    /// [`Remote::put_object`]; callers that can do without the check read it
+    /// with [`Error::is_access_denied`] and fall back to a plain write.
+    fn put_object_if(
+        &self,
+        host: Option<&Host>,
+        s3_uri: &S3Uri,
+        contents: impl Into<ByteStream>,
+        condition: &WriteCondition,
+    ) -> impl Future<Output = Res<ConditionalPut>>;
 
     /// Upload file and request checkum from S3
     fn upload_file(
@@ -190,6 +256,78 @@ pub trait Remote {
         bucket: &str,
         namespace: &Namespace,
     ) -> impl Future<Output = Res<Vec<String>>> + Send;
+
+    /// [`Remote::published_revisions`], with each revision's time and
+    /// message where the listing gives them: a timestamped pointer names its
+    /// time, and `host`'s registry answers both. By default, the hashes
+    /// alone.
+    fn published_revision_history(
+        &self,
+        host: Option<&Host>,
+        bucket: &str,
+        namespace: &Namespace,
+    ) -> impl Future<Output = Res<Vec<PublishedRevision>>> + Send
+    where
+        Self: Sync,
+    {
+        async move {
+            let hashes = self.published_revisions(host, bucket, namespace).await?;
+            Ok(hashes.into_iter().map(PublishedRevision::from).collect())
+        }
+    }
+
+    /// The hashes of the manifests in `bucket`'s registry whose names start
+    /// with `prefix`: the objects `.quilt/packages/<prefix>*`, whatever
+    /// package they belong to, as quilt3 reads its registry. Asked of S3 on
+    /// `host`'s credentials, or on this computer's AWS ones with no host.
+    /// Only names that are a whole top hash count; the list is not sorted, and
+    /// an error if the listing fails partway, never a short list.
+    fn manifest_hashes_with_prefix(
+        &self,
+        host: Option<&Host>,
+        bucket: &str,
+        prefix: &str,
+    ) -> impl Future<Output = Res<Vec<String>>> + Send;
+
+    /// Every package in `bucket`'s registry whose `latest` names a top hash,
+    /// with that hash. Asks `host`'s registry, in one paged query of its
+    /// search index. With no host, or where that search fails or cannot
+    /// list the bucket whole, lists the folders under `.quilt/named_packages/`, on
+    /// `host`'s credentials or this computer's AWS ones, and reads each
+    /// one's `latest`. Unsorted; an error if a listing or a read fails,
+    /// never a short list.
+    fn latest_hashes(
+        &self,
+        host: Option<&Host>,
+        bucket: &str,
+    ) -> impl Future<Output = Res<Vec<(Namespace, String)>>> + Send;
+
+    /// Each tag of `namespace` in `bucket`'s registry, the objects under
+    /// `.quilt/named_packages/<namespace>/`, `latest` among them, by name,
+    /// with the hash it holds. Listed in S3 on `host`'s credentials, or this
+    /// computer's AWS ones with no host. Empty for a package never pushed;
+    /// an error if the listing or a read fails partway, never a short list.
+    /// A remote that cannot list them says so.
+    fn package_tags(
+        &self,
+        host: Option<&Host>,
+        bucket: &str,
+        namespace: &Namespace,
+    ) -> impl Future<Output = Res<Vec<(String, String)>>> + Send {
+        let _ = (host, bucket, namespace);
+        std::future::ready(Err(unsupported("list a package's tags")))
+    }
+
+    /// Deletes the object `s3_uri`; one already gone is no error. A remote
+    /// that cannot delete says so.
+    fn delete_object(
+        &self,
+        host: Option<&Host>,
+        s3_uri: &S3Uri,
+    ) -> impl Future<Output = Res> + Send {
+        let _ = (host, s3_uri);
+        std::future::ready(Err(unsupported("delete an object")))
+    }
 
     /// Drop any cached clients (and their in-memory credentials) for the
     /// given `host`, or for all hosts when `None`. Lets callers invalidate

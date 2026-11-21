@@ -392,7 +392,7 @@ mod tests {
                     &quilt_uri::Namespace::try_from(format!("team/p{i}").as_str()).unwrap(),
                 ),
                 cause: Cause::NoAccess { role: None },
-                since: chrono::Utc::now(),
+                since: jiff::Timestamp::now(),
             })
             .collect()
     }

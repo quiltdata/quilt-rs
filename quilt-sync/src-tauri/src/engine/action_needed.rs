@@ -11,8 +11,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 use std::time::Instant;
 
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use quilt_uri::Host;
 use quilt_uri::Namespace;
 use serde::Serialize;
@@ -121,7 +120,7 @@ pub struct Entry {
     pub subject: Subject,
     pub cause: Cause,
     /// When the cause started. Kept while its details change.
-    pub since: DateTime<Utc>,
+    pub since: Timestamp,
 }
 
 #[derive(Serialize)]
@@ -129,7 +128,8 @@ pub struct Entry {
 struct Wire {
     subject: Subject,
     cause: Cause,
-    since: DateTime<Utc>,
+    #[serde(with = "quilt_rs::time::json")]
+    since: Timestamp,
     line: String,
     page: String,
 }
@@ -286,7 +286,7 @@ impl ActionNeeded {
                     set.push(Entry {
                         subject,
                         cause,
-                        since: Utc::now(),
+                        since: Timestamp::now(),
                     });
                     true
                 }
@@ -509,7 +509,7 @@ mod tests {
         let entry = |subject, cause| Entry {
             subject,
             cause,
-            since: Utc::now(),
+            since: Timestamp::now(),
         };
         assert_eq!(
             entry(
@@ -546,7 +546,7 @@ mod tests {
         let entry = |subject, cause| Entry {
             subject,
             cause,
-            since: Utc::now(),
+            since: Timestamp::now(),
         };
         assert_eq!(
             entry(
@@ -577,7 +577,7 @@ mod tests {
         let entry = |subject, cause| Entry {
             subject,
             cause,
-            since: Utc::now(),
+            since: Timestamp::now(),
         };
         assert_eq!(
             routes::page(
@@ -615,12 +615,34 @@ mod tests {
         );
     }
 
+    /// `since` goes to the window in RFC 3339 with `Z`, its sub-second
+    /// digits in groups of three.
+    #[test]
+    fn the_wire_form_writes_since_in_the_json_shape() {
+        for (since, text) in [
+            ("2026-11-20T14:05:09Z", "2026-11-20T14:05:09Z"),
+            ("2026-11-20T14:05:09.1Z", "2026-11-20T14:05:09.100Z"),
+            ("2026-11-20T14:05:09.1234Z", "2026-11-20T14:05:09.123400Z"),
+        ] {
+            let entry = Entry {
+                subject: Subject::App,
+                cause: Cause::Credentials,
+                since: since.parse().expect("a time"),
+            };
+            assert_eq!(
+                serde_json::to_value(&entry).unwrap()["since"],
+                text,
+                "{since}"
+            );
+        }
+    }
+
     #[test]
     fn the_wire_form_names_subject_and_cause_by_kind() {
         let entry = Entry {
             subject: Subject::package(&ns("a/b")),
             cause: Cause::of_pause(&PausedReason::PullConflict(vec!["x".into()])),
-            since: DateTime::from_timestamp(0, 0).unwrap(),
+            since: Timestamp::from_second(0).unwrap(),
         };
         assert_eq!(
             serde_json::to_value(&entry).unwrap(),

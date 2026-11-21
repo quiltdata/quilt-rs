@@ -5,9 +5,11 @@ use crate::Error;
 use crate::Res;
 use crate::error::PackageOpError;
 use crate::installed_package::PushOutcome;
+use crate::io::manifest::LatestAdvance;
+use crate::io::manifest::LatestSeen;
+use crate::io::manifest::advance_latest;
 use crate::io::manifest::build_manifest_from_rows_stream;
-use crate::io::manifest::resolve_tag;
-use crate::io::manifest::tag_latest;
+use crate::io::manifest::read_latest;
 use crate::io::manifest::tag_timestamp;
 use crate::io::manifest::upload_manifest;
 use crate::io::remote::Remote;
@@ -18,11 +20,11 @@ use crate::manifest::Manifest;
 use crate::manifest::ManifestRow;
 use crate::paths::DomainPaths;
 use quilt_uri::ManifestUri;
-use quilt_uri::Tag;
 
 /// Publish `manifest`, whose rows are already on the remote, as the revision
-/// after `parent`, and tag it `latest` only if `latest` still names `parent`
-/// when read just before the tag write.
+/// after `parent`, and tag it `latest` only if `latest` still names `parent`.
+/// The tag write is conditional on the read that found `parent`; see
+/// [`advance_latest`].
 pub async fn push_onto(
     paths: &DomainPaths,
     storage: &(impl Storage + Sync),
@@ -60,6 +62,7 @@ pub async fn push_onto(
         storage,
         paths.cached_manifests_dir(&parent.bucket),
         manifest.header.clone(),
+        manifest.dir_meta.clone(),
         stream,
     )
     .await?;
@@ -68,12 +71,24 @@ pub async fn push_onto(
         ..parent.clone()
     };
     upload_manifest(storage, remote, &manifest_uri, &cache_path).await?;
-    tag_timestamp(remote, &manifest_uri, chrono::Utc::now()).await?;
+    tag_timestamp(remote, &manifest_uri, jiff::Timestamp::now()).await?;
 
-    let latest = resolve_tag(remote, parent.origin.as_ref(), parent.clone(), Tag::Latest).await?;
-    let certified_latest = latest.hash == parent.hash;
+    let latest = read_latest(remote, parent.origin.as_ref(), parent.clone()).await?;
+    let on_parent = match &latest {
+        LatestSeen::Tagged { uri, .. } => uri.hash == parent.hash,
+        LatestSeen::Unreadable => true,
+        LatestSeen::Absent => false,
+    };
+    let advance = if on_parent {
+        Some(advance_latest(remote, &manifest_uri, &latest).await?)
+    } else {
+        None
+    };
+    let certified_latest = matches!(
+        advance,
+        Some(LatestAdvance::Checked | LatestAdvance::Unchecked)
+    );
     if certified_latest {
-        tag_latest(remote, &manifest_uri).await?;
         info!("✔️ Certified {} as latest", manifest_uri.display());
     } else {
         warn!(
@@ -85,6 +100,7 @@ pub async fn push_onto(
     Ok(PushOutcome {
         manifest_uri,
         certified_latest,
+        latest_unchecked: advance == Some(LatestAdvance::Unchecked),
     })
 }
 
@@ -96,6 +112,7 @@ mod tests {
 
     use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::mocks::MockStorage;
+    use crate::manifest::DirMeta;
     use crate::manifest::HeaderMessage;
     use crate::manifest::ManifestHeader;
     use quilt_uri::S3Uri;
@@ -129,7 +146,9 @@ mod tests {
                 .into(),
                 size: 29,
                 meta: None,
+                meta_numbers: crate::manifest::RawNumbers::default(),
             }],
+            dir_meta: Vec::new(),
         })
     }
 
@@ -185,6 +204,51 @@ mod tests {
     }
 
     #[test(tokio::test)]
+    async fn a_latest_moved_between_the_read_and_the_write_is_kept() -> Res {
+        let remote = remote_with_latest(PARENT).await?;
+        let read_gate = remote.park(LATEST);
+        let compete = async {
+            read_gate.arrived().await;
+            let write_gate = remote.park(LATEST);
+            read_gate.release();
+            write_gate.arrived().await;
+            remote
+                .put_object(
+                    None,
+                    &S3Uri::try_from(LATEST)?,
+                    SOMEONE_ELSE.as_bytes().to_vec(),
+                )
+                .await?;
+            write_gate.release();
+            Ok::<_, Error>(())
+        };
+
+        let (pushed, competed) = tokio::join!(
+            push(&remote, manifest("s3://b/a/c/out.md?versionId=v1")?),
+            compete
+        );
+        competed?;
+        let pushed = pushed?;
+
+        assert!(!pushed.certified_latest);
+        assert_eq!(read(&remote, LATEST).await?, SOMEONE_ELSE);
+        assert!(uploaded(&remote, &pushed).await?, "the revision is kept");
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn a_parent_with_no_latest_is_kept_uncertified() -> Res {
+        let remote = MockRemote::default();
+
+        let pushed = push(&remote, manifest("s3://b/a/c/out.md?versionId=v1")?).await;
+
+        let pushed = pushed.expect("a missing latest does not fail the push");
+        assert!(!pushed.certified_latest);
+        assert!(uploaded(&remote, &pushed).await?, "the revision is kept");
+        Ok(())
+    }
+
+    #[test(tokio::test)]
     async fn a_row_not_on_the_remote_publishes_nothing() -> Res {
         let remote = remote_with_latest(PARENT).await?;
 
@@ -231,6 +295,30 @@ mod tests {
             "expected a workflow rejection, got: {pushed:?}"
         );
         assert_eq!(read(&remote, LATEST).await?, PARENT);
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn the_folder_metadata_is_published_and_not_hashed() -> Res {
+        let remote = remote_with_latest(PARENT).await?;
+        let physical_key = "s3://b/a/c/out.md?versionId=v1";
+        let mut with_dirs = manifest(physical_key)?;
+        with_dirs.dir_meta = vec![DirMeta::new(
+            crate::LogicalKey::new("data")?,
+            serde_json::json!({"owner": "team"}),
+        )];
+
+        let plain = push(&remote, manifest(physical_key)?).await?;
+        let pushed = push(&remote, with_dirs.clone()).await?;
+
+        assert_eq!(pushed.manifest_uri.hash, plain.manifest_uri.hash);
+        let body = read(
+            &remote,
+            &format!("s3://b/.quilt/packages/{}", pushed.manifest_uri.hash),
+        )
+        .await?;
+        let published = Manifest::from_reader(body.as_bytes()).await?;
+        assert_eq!(published.dir_meta, with_dirs.dir_meta);
         Ok(())
     }
 }
