@@ -311,24 +311,27 @@ impl Watcher {
             last_change,
             tasks,
         });
-        // Its own task: a package whose catalog is slow to answer its host
-        // config must not hold back the loop.
-        let walk_inner = Arc::clone(&inner);
-        let walk_model = Arc::clone(&model);
-        crate::engine::events::spawn(async move {
-            Box::pin(walk_every_package(&*walk_model, &walk_inner)).await;
-        });
-        let timer_inner = Arc::clone(&inner);
-        let timer_model = Arc::clone(&model);
-        let timer_roles = Arc::clone(&roles);
-        crate::engine::events::spawn(async move {
-            Box::pin(publish_timer::run(
-                &*timer_model,
-                &timer_roles,
-                &timer_inner,
-            ))
-            .await;
-        });
+        // The ref engine's own walk and timer; the dataspace engine has its runner.
+        if dataspace.is_none() {
+            // Its own task: a package whose catalog is slow to answer its host
+            // config must not hold back the loop.
+            let walk_inner = Arc::clone(&inner);
+            let walk_model = Arc::clone(&model);
+            crate::engine::events::spawn(async move {
+                Box::pin(walk_every_package(&*walk_model, &walk_inner)).await;
+            });
+            let timer_inner = Arc::clone(&inner);
+            let timer_model = Arc::clone(&model);
+            let timer_roles = Arc::clone(&roles);
+            crate::engine::events::spawn(async move {
+                Box::pin(publish_timer::run(
+                    &*timer_model,
+                    &timer_roles,
+                    &timer_inner,
+                ))
+                .await;
+            });
+        }
         let task_inner = Arc::clone(&inner);
         crate::engine::events::spawn(async move {
             loop {

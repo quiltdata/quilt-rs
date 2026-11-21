@@ -382,3 +382,27 @@ async fn a_commit_follows_a_package_moved_to_a_bucket_until_the_move_lands() -> 
     assert_eq!(world.latest().await?, hash);
     Ok(())
 }
+
+/// The move a tick makes holds the bucket's package lock, so a commit that
+/// follows the pending move takes that lock rather than the local one's.
+#[test(tokio::test)]
+async fn a_commit_on_a_moved_package_waits_for_the_bucket_lock() -> Res {
+    let (world, _, _) = moving().await?;
+    world.local_named("lab-mac").await?;
+    gate(&world, r#"{"type": "object"}"#).await?;
+    world.tick().await?;
+    world.write("b.txt", "v1")?;
+    let store = world.domain().registry("b")?;
+    let _held = world
+        .storage
+        .lock_exclusive(store.package_lock(&package()))
+        .await?;
+
+    let committed = world.commit_as(&key(), "while the move runs").await;
+
+    assert!(
+        matches!(committed, Err(CommitError::Busy(_))),
+        "{committed:?}"
+    );
+    Ok(())
+}

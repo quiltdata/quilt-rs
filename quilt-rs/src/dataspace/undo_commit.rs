@@ -171,11 +171,14 @@ pub async fn undo_commit(
         .find(|entry| entry.key() == key)
         .cloned()
         .ok_or_else(|| UndoError::NotDeclared(Box::new(key.clone())))?;
+    let declared = entry.clone();
     let entry = pending_move(&lock, &contract, &writer, entry);
     let key = entry.key();
     let store = Store::of(storage, domain, &entry).await?;
+    // The lock a tick moving the package takes: the bucket's.
+    let lock_store = Store::of(storage, domain, &declared).await?;
     let Some(_held) = storage
-        .try_lock_exclusive(store.package_lock(&entry.package))
+        .try_lock_exclusive(lock_store.package_lock(&declared.package))
         .await?
     else {
         return Err(UndoError::Busy(Box::new(key)));

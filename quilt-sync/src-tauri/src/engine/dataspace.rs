@@ -268,17 +268,16 @@ impl<R: Remote + Sync> Dataspace<R> {
             .map_err(fail)?
         };
         let pruned = if prune {
-            Some(
-                quilt_rs::dataspace::prune::prune(
-                    &self.storage,
-                    &*self.remote,
-                    &self.domain,
-                    &key,
-                    entry.catalog.as_ref(),
-                )
-                .await
-                .map_err(fail)?,
+            quilt_rs::dataspace::prune::prune(
+                &self.storage,
+                &*self.remote,
+                &self.domain,
+                &key,
+                entry.catalog.as_ref(),
             )
+            .await
+            .map_err(|err| tracing::warn!("Failed to prune {key} after uninstalling it: {err}"))
+            .ok()
         } else {
             None
         };

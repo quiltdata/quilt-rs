@@ -97,6 +97,11 @@ async fn sync_package<R: Remote + Sync>(
     }
     // Boxed: the sync's state machine is past the `large_futures` budget.
     let synced = Box::pin(ds.sync(message)).await?;
+    if synced.read_only {
+        return Err(Error::Dataspace(format!(
+            "{namespace} was read, not published: the dataspace is not read in full yet; try again"
+        )));
+    }
     match synced.entries.iter().find(|(synced, _)| *synced == entry) {
         Some((entry, outcome)) => settled(entry, outcome),
         None => Ok(()),
@@ -518,14 +523,13 @@ pub async fn get_unattached_commits(s: &Services) -> Result<Vec<UnattachedCommit
 }
 
 async fn unattached<R: Remote + Sync>(ds: &Dataspace<R>) -> Result<Vec<UnattachedCommit>, Error> {
-    let mut namespaces: Vec<Namespace> = ds
+    let namespaces: std::collections::BTreeSet<Namespace> = ds
         .contract()
         .await?
         .entries()
         .iter()
         .map(|entry| entry.package.clone())
         .collect();
-    namespaces.dedup();
     let mut commits = Vec::new();
     for namespace in namespaces {
         for commit in ds.unattached(&namespace).await? {

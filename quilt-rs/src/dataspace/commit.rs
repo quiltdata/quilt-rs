@@ -168,15 +168,17 @@ pub async fn commit(
         Some(access) => CommitError::Access(access),
         None => CommitError::NotDeclared(Box::new(key.clone())),
     })?;
-    let declared = entry.registry.clone();
+    let declared = entry.clone();
     let entry = pending_move(&lock, &contract, &writer, entry);
     let key = entry.key();
     // The edit that moved a whole package is what keeps its move pending,
     // and no sync takes it until the move lands; it added no path to read.
-    let moving_whole = entry.registry != declared && entry.paths == Paths::Whole;
+    let moving_whole = entry.registry != declared.registry && entry.paths == Paths::Whole;
     let store = Store::of(storage, domain, &entry).await?;
+    // The lock a tick moving the package takes: the bucket's.
+    let lock_store = Store::of(storage, domain, &declared).await?;
     let Some(_held) = storage
-        .try_lock_exclusive(store.package_lock(&entry.package))
+        .try_lock_exclusive(lock_store.package_lock(&declared.package))
         .await?
     else {
         return Err(CommitError::Busy(Box::new(key)));
