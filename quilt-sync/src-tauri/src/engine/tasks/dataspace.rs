@@ -283,6 +283,8 @@ impl<R: Spawn> DataspaceTasks<R> {
         if entry.access != Access::Sync {
             return;
         }
+        // A hook fires inside the sync that read the revision: wait for it to end.
+        drop(self.ds.hold_writes().await);
         // Held for the whole check, so a scan and a hook never act together.
         let Some(hold) = self.try_hold(entry.key()) else {
             return;
@@ -404,7 +406,7 @@ impl<R: Spawn> DataspaceTasks<R> {
                 return Ok(Some(base));
             }
         }
-        if status.changes.is_empty() && status.unpushed.len() <= 1 {
+        if status.changes.is_empty() && !status.metadata_changed && status.unpushed.len() <= 1 {
             let _writes = self.ds.hold_writes().await;
             Box::pin(self.ds.reset(&entry.package)).await?;
         } else {
