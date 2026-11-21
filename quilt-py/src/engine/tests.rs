@@ -422,7 +422,10 @@ async fn the_entries_are_listed_and_nothing_is_written() -> Test {
 
     let declared = entries(&domain, &space).await?;
 
-    let folder = |name: &str| space.join(name).display().to_string();
+    // Join each package segment: Path::join("team/other") keeps the slash
+    // as one component on Windows, while the contract's folder uses the OS
+    // separator between owner and name.
+    let folder = |owner: &str, name: &str| space.join(owner).join(name).display().to_string();
     assert_eq!(
         declared,
         [
@@ -431,7 +434,7 @@ async fn the_entries_are_listed_and_nothing_is_written() -> Test {
                 "registry": "s3://b",
                 "name": "team/other",
                 "access": "read",
-                "folder": folder("team/other"),
+                "folder": folder("team", "other"),
                 "paths": ["src/"],
             }),
             json!({
@@ -439,7 +442,7 @@ async fn the_entries_are_listed_and_nothing_is_written() -> Test {
                 "registry": "s3://b",
                 "name": "team/raw",
                 "access": "sync",
-                "folder": folder("team/raw"),
+                "folder": folder("team", "raw"),
                 "paths": null,
             }),
         ]
