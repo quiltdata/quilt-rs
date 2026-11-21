@@ -81,26 +81,22 @@ fn an_explicit_domain_and_home_are_used_as_given() -> Test {
 }
 
 #[test(tokio::test)]
-async fn a_dataspace_named_is_used_and_none_takes_the_default() -> Test {
+async fn a_dataspace_named_is_used_and_none_takes_the_one_chosen() -> Test {
     let dir = tempfile::TempDir::new()?;
-    let domain = DomainRoot::new(dir.path().join("domain"));
+    let home = dir.path().join("home");
 
-    assert!(default_dataspace(&domain).await?.is_none());
+    assert_eq!(default_dataspace(&home).await?, None);
     assert!(matches!(
-        dataspace(None, &domain).await,
+        dataspace(None, &home).await,
         Err(Error::NoDefaultDataspace)
     ));
     let named = dir.path().join("named");
-    assert_eq!(dataspace(Some(named.clone()), &domain).await?, named);
+    assert_eq!(dataspace(Some(named.clone()), &home).await?, named);
 
-    let home = dir.path().join("home");
-    std::fs::create_dir_all(domain.root())?;
-    std::fs::write(
-        domain.domain_file(),
-        serde_json::to_vec(&json!({"format": 2, "default_dataspace": home}))?,
-    )?;
-    assert_eq!(dataspace(None, &domain).await?, home);
-    assert_eq!(dataspace(Some(named.clone()), &domain).await?, named);
+    let chosen = dir.path().join("chosen");
+    quilt_rs::dataspace::home::set_home(&LocalStorage::new(), &home, &chosen).await?;
+    assert_eq!(dataspace(None, &home).await?, chosen);
+    assert_eq!(dataspace(Some(named.clone()), &home).await?, named);
     Ok(())
 }
 
@@ -229,6 +225,72 @@ async fn a_name_the_contract_does_not_give_one_package_is_refused() -> Test {
     assert_eq!(
         package_key(&contract, "quilt+s3://c#package=team/raw")?.to_string(),
         "quilt+s3://c#package=team/raw"
+    );
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_created_package_is_declared_under_sync_and_committed_once() -> Test {
+    let dir = tempfile::TempDir::new()?;
+    let space = space(dir.path(), "")?;
+    std::fs::create_dir_all(space.join("team/new"))?;
+    std::fs::write(space.join("team/new/a.txt"), b"alpha")?;
+    let domain = DomainRoot::new(dir.path().join("domain"));
+    let home = dir.path().join("home");
+    let remote = MockRemote::default();
+    let request = CreateRequest {
+        uri: "quilt+s3://b#package=team/new".to_string(),
+        access: "sync".to_string(),
+        folder: None,
+        message: Some("first".to_string()),
+    };
+
+    let created = create(&remote, &domain, &home, &space, request.clone()).await?;
+    let again = create(&remote, &domain, &home, &space, request).await;
+
+    assert_eq!(created["package"], "quilt+s3://b#package=team/new");
+    assert_eq!(created["access"], "sync");
+    assert!(created["commit"].is_string(), "{created}");
+    assert!(
+        matches!(again, Err(Error::Create(CreateError::Declared(_)))),
+        "{again:?}"
+    );
+    let contract = std::fs::read_to_string(space.join("data.toml"))?;
+    assert!(contract.contains("team/new"), "{contract}");
+    let packages = list_stored(&domain).await?;
+    assert_eq!(packages.len(), 1, "{packages:?}");
+    assert_eq!(packages[0]["name"], "team/new");
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_package_is_not_created_under_read() -> Test {
+    let dir = tempfile::TempDir::new()?;
+    let space = space(dir.path(), "")?;
+    let domain = DomainRoot::new(dir.path().join("domain"));
+    let request = CreateRequest {
+        uri: "quilt+s3://b#package=team/new".to_string(),
+        access: "read".to_string(),
+        folder: None,
+        message: None,
+    };
+
+    let result = create(
+        &MockRemote::default(),
+        &domain,
+        &dir.path().join("home"),
+        &space,
+        request,
+    )
+    .await;
+
+    assert!(
+        matches!(result, Err(Error::Create(CreateError::Read))),
+        "{result:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(space.join("data.toml"))?,
+        "registry = \"s3://b\"\n"
     );
     Ok(())
 }

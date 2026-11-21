@@ -21,6 +21,10 @@ use quilt_rs::dataspace::contract::Entry;
 use quilt_rs::dataspace::contract::PackageKey;
 use quilt_rs::dataspace::contract::Registry;
 use quilt_rs::dataspace::contract::UnknownAccess;
+use quilt_rs::dataspace::create::Create;
+use quilt_rs::dataspace::create::CreateError;
+use quilt_rs::dataspace::create::create as create_package;
+use quilt_rs::dataspace::home::default_dataspace as chosen_dataspace;
 use quilt_rs::dataspace::install::Install;
 use quilt_rs::dataspace::install::InstallError;
 use quilt_rs::dataspace::install::InstallRead;
@@ -51,7 +55,7 @@ pub enum Error {
     #[error("this OS has no local data folder; name the {0} folder")]
     NoDataFolder(&'static str),
 
-    #[error("no dataspace was named, and the Domain names no default dataspace")]
+    #[error("no dataspace was named, and no default dataspace was chosen")]
     NoDefaultDataspace,
 
     #[error("{0} is not a package of the dataspace's contract")]
@@ -79,6 +83,9 @@ pub enum Error {
     Commit(#[from] CommitError),
 
     #[error(transparent)]
+    Create(#[from] CreateError),
+
+    #[error(transparent)]
     Quilt(#[from] quilt_rs::Error),
 }
 
@@ -93,8 +100,9 @@ pub fn domain(explicit: Option<&Path>) -> Result<DomainRoot> {
         .ok_or(Error::NoDataFolder("Domain"))
 }
 
-/// The credentials folder: `explicit`, else [`HOME_DIR_NAME`] in the OS's
-/// local data folder.
+/// The application folder, which holds the credentials and the choice of a
+/// default dataspace: `explicit`, else [`HOME_DIR_NAME`] in the OS's local
+/// data folder.
 pub fn home(explicit: Option<&Path>) -> Result<PathBuf> {
     match explicit {
         Some(home) => Ok(home.to_path_buf()),
@@ -104,20 +112,18 @@ pub fn home(explicit: Option<&Path>) -> Result<PathBuf> {
     }
 }
 
-/// The dataspace a call with none named uses: the Domain's default, from
-/// `domain.json`; `None` where it names none.
-pub async fn default_dataspace(domain: &DomainRoot) -> Result<Option<PathBuf>> {
-    Ok(domain
-        .read_file(&LocalStorage::new())
-        .await?
-        .and_then(|file| file.default_dataspace))
+/// The dataspace a call with none named uses: the default dataspace chosen
+/// for the application whose folder is `home`, as `quilt home` chooses it;
+/// `None` where none was chosen.
+pub async fn default_dataspace(home: &Path) -> Result<Option<PathBuf>> {
+    Ok(chosen_dataspace(&LocalStorage::new(), home).await?)
 }
 
-/// `given`, else the Domain's default dataspace.
-pub async fn dataspace(given: Option<PathBuf>, domain: &DomainRoot) -> Result<PathBuf> {
+/// `given`, else the default dataspace chosen for `home`.
+pub async fn dataspace(given: Option<PathBuf>, home: &Path) -> Result<PathBuf> {
     match given {
         Some(dataspace) => Ok(dataspace),
-        None => default_dataspace(domain)
+        None => default_dataspace(home)
             .await?
             .ok_or(Error::NoDefaultDataspace),
     }
@@ -206,6 +212,49 @@ pub async fn install(
         InstallRead::Failed(err) => err.to_string().into(),
         _ => Value::Null,
     };
+    Ok(value)
+}
+
+/// What [`create`] is asked to do.
+#[derive(Clone, Debug)]
+pub struct CreateRequest {
+    pub uri: String,
+    /// `sync`, `write` or `replace`.
+    pub access: String,
+    pub folder: Option<PathBuf>,
+    pub message: Option<String>,
+}
+
+/// Creates a package in `dataspace`, as a build does (25.14): declares it,
+/// with no revision, under the access asked, and under `sync` commits its
+/// working folder as its first commit, kept in `domain`'s store for the
+/// bucket, or in its local registry. Nothing is pushed.
+pub async fn create(
+    remote: &impl Remote,
+    domain: &DomainRoot,
+    home: &Path,
+    dataspace: &Path,
+    request: CreateRequest,
+) -> Result<Value> {
+    let local = domain.local();
+    let writer = writer(Some(&local)).await?;
+    let mut create = Create::new(request.uri);
+    create.access = request.access.parse::<Access>()?;
+    create.folder = request.folder;
+    create.message = request.message;
+    let user_rules = home.join(".quiltignore");
+    let created = Box::pin(create_package(
+        &LocalStorage::new(),
+        remote,
+        domain,
+        dataspace,
+        &writer,
+        &create,
+        &user_rules,
+    ))
+    .await?;
+    let mut value = entry_json(&created.entry);
+    value["commit"] = created.commit.into();
     Ok(value)
 }
 

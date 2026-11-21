@@ -15,18 +15,16 @@ def test_a_domain_that_is_not_there_holds_nothing(tmp_path):
     domain = tmp_path / "domain"
     assert quilt.list_registries(domain=domain) == []
     assert quilt.list_stored(domain=domain) == []
-    assert quilt.default_dataspace(domain=domain) is None
     assert not domain.exists()
 
 
-def test_the_default_dataspace_comes_from_domain_json(tmp_path):
-    domain = tmp_path / "domain"
-    domain.mkdir()
+def test_the_default_dataspace_is_the_one_chosen_for_the_app(tmp_path):
     home = tmp_path / "home"
-    (domain / "domain.json").write_text(
-        json.dumps({"format": 2, "default_dataspace": str(home)})
-    )
-    assert quilt.default_dataspace(domain=domain) == home
+    assert quilt.default_dataspace(home=home) is None
+    home.mkdir()
+    chosen = tmp_path / "chosen"
+    (home / "default_dataspace.json").write_text(json.dumps({"dataspace": str(chosen)}))
+    assert quilt.default_dataspace(home=home) == chosen
 
 
 def test_no_dataspace_and_no_default_raises(tmp_path):
@@ -64,6 +62,20 @@ def test_a_commit_of_a_package_not_declared_raises(tmp_path):
             "team/other",
             "first",
             dataspace=space,
+            domain=tmp_path / "domain",
+            home=tmp_path / "home",
+        )
+
+
+def test_a_package_is_not_created_under_read(tmp_path):
+    space = tmp_path / "space"
+    space.mkdir()
+    (space / "data.toml").write_text('registry = "s3://b"\n')
+    with pytest.raises(quilt.QuiltError, match="no revision to `read`"):
+        quilt.create(
+            "quilt+s3://b#package=team/new",
+            dataspace=space,
+            access="read",
             domain=tmp_path / "domain",
             home=tmp_path / "home",
         )

@@ -55,11 +55,11 @@ fn remote(home: PathBuf) -> RemoteS3 {
 
 /// The dataspace a call that names none uses, or None.
 #[pyfunction]
-#[pyo3(signature = (*, domain=None))]
-fn default_dataspace(py: Python<'_>, domain: Option<PathBuf>) -> PyResult<Option<PathBuf>> {
+#[pyo3(signature = (*, home=None))]
+fn default_dataspace(py: Python<'_>, home: Option<PathBuf>) -> PyResult<Option<PathBuf>> {
     block_on(py, async move {
-        let domain = engine::domain(domain.as_deref())?;
-        engine::default_dataspace(&domain).await
+        let home = engine::home(home.as_deref())?;
+        engine::default_dataspace(&home).await
     })
 }
 
@@ -103,7 +103,7 @@ fn install(
     let installed = block_on(py, async move {
         let domain = engine::domain(domain.as_deref())?;
         let home = engine::home(home.as_deref())?;
-        let dataspace = engine::dataspace(dataspace, &domain).await?;
+        let dataspace = engine::dataspace(dataspace, &home).await?;
         let request = engine::InstallRequest {
             uri,
             access,
@@ -113,6 +113,36 @@ fn install(
         engine::install(&remote(home), &domain, &dataspace, request).await
     })?;
     to_python(py, &installed)
+}
+
+/// Creates a package in a dataspace, as a build: declares it and, under
+/// `sync`, commits its working folder as its first commit.
+#[pyfunction]
+#[pyo3(signature = (uri, *, dataspace=None, access="sync".to_string(), folder=None, message=None, domain=None, home=None))]
+#[allow(clippy::too_many_arguments, reason = "Python keyword arguments")]
+fn create(
+    py: Python<'_>,
+    uri: String,
+    dataspace: Option<PathBuf>,
+    access: String,
+    folder: Option<PathBuf>,
+    message: Option<String>,
+    domain: Option<PathBuf>,
+    home: Option<PathBuf>,
+) -> PyResult<Py<PyAny>> {
+    let created = block_on(py, async move {
+        let domain = engine::domain(domain.as_deref())?;
+        let home = engine::home(home.as_deref())?;
+        let dataspace = engine::dataspace(dataspace, &home).await?;
+        let request = engine::CreateRequest {
+            uri,
+            access,
+            folder,
+            message,
+        };
+        engine::create(&remote(home.clone()), &domain, &home, &dataspace, request).await
+    })?;
+    to_python(py, &created)
 }
 
 /// Commits a package's working folder in a dataspace as a local commit.
@@ -129,7 +159,7 @@ fn commit(
     let committed = block_on(py, async move {
         let domain = engine::domain(domain.as_deref())?;
         let home = engine::home(home.as_deref())?;
-        let dataspace = engine::dataspace(dataspace, &domain).await?;
+        let dataspace = engine::dataspace(dataspace, &home).await?;
         let remote = remote(home.clone());
         engine::commit(&remote, &domain, &home, &dataspace, &package, &message).await
     })?;
@@ -145,6 +175,7 @@ fn native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(list_registries, m)?)?;
     m.add_function(wrap_pyfunction!(list_stored, m)?)?;
     m.add_function(wrap_pyfunction!(install, m)?)?;
+    m.add_function(wrap_pyfunction!(create, m)?)?;
     m.add_function(wrap_pyfunction!(commit, m)?)?;
     Ok(())
 }

@@ -9,6 +9,6 @@
 
 ### Added
 
-- The `quilt` Python module over quilt-rs's dataspaces: `install` (with `access`, default `sync`), `commit`, `default_dataspace`, `list_registries` and `list_stored`, each blocking on a runtime the module owns with the GIL released; failures raise `quilt.QuiltError`. Wheels are built for macOS (arm64, x86_64), manylinux (x86_64, aarch64) and Windows; nothing is published to PyPI yet. #1490
+- The `quilt` Python module over quilt-rs's dataspaces: `install` (with `access`, default `sync`), `create` (a build: a new package and its first commit), `commit`, `default_dataspace` (the one chosen for the application folder), `list_registries` and `list_stored`, each blocking on a runtime the module owns with the GIL released; failures raise `quilt.QuiltError`. Wheels are built for macOS (arm64, x86_64), manylinux (x86_64, aarch64) and Windows; nothing is published to PyPI yet. #1490
 
 [v3.0.0-dev]: https://github.com/quiltdata/quilt-rs/tree/main/quilt-py

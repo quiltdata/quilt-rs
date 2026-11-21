@@ -11,15 +11,18 @@ rules. It replaces the legacy Quilt 2 library on PyPI (2.9.15), so
 import quilt
 
 quilt.install("quilt+s3://bucket#package=team/raw", dataspace="~/data")
+quilt.create("quilt+s3://bucket#package=team/new", dataspace="~/data")
 quilt.commit("team/raw", "first", dataspace="~/data")
 quilt.list_registries()
 ```
 
 Every call blocks until the engine is done, without holding the GIL, on a
 Tokio runtime the module owns. A call that names no `dataspace` uses the
-Domain's default one; one that names no `domain` uses `QUILT_DOMAIN`, else
-`bio.quilt.dataspace` in the OS's local data folder. A failure raises
-`quilt.QuiltError`.
+default dataspace chosen for the application folder, `home`, as `quilt home`
+chooses it; `home` defaults to the folder the `quilt` CLI and QuiltSync keep,
+which also holds the credentials. A call that names no `domain` uses
+`QUILT_DOMAIN`, else `bio.quilt.dataspace` in the OS's local data folder. A
+failure raises `quilt.QuiltError`.
 
 ## Develop
 

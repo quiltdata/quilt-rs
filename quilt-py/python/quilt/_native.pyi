@@ -8,7 +8,7 @@ __version__: str
 
 class QuiltError(Exception): ...
 
-def default_dataspace(*, domain: _Path | None = None) -> Path | None: ...
+def default_dataspace(*, home: _Path | None = None) -> Path | None: ...
 def list_registries(*, domain: _Path | None = None) -> list[str]: ...
 def list_stored(*, domain: _Path | None = None) -> list[dict[str, Any]]: ...
 def install(
@@ -18,6 +18,16 @@ def install(
     access: str = "sync",
     paths: list[str] = ...,
     folder: _Path | None = None,
+    domain: _Path | None = None,
+    home: _Path | None = None,
+) -> dict[str, Any]: ...
+def create(
+    uri: str,
+    *,
+    dataspace: _Path | None = None,
+    access: str = "sync",
+    folder: _Path | None = None,
+    message: str | None = None,
     domain: _Path | None = None,
     home: _Path | None = None,
 ) -> dict[str, Any]: ...
