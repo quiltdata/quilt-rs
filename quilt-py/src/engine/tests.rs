@@ -1,0 +1,234 @@
+use super::*;
+
+use test_log::test;
+
+use quilt_rs::io::remote::mocks::MockRemote;
+use quilt_rs::manifest::Manifest;
+use quilt_rs::manifest::ManifestRow;
+use quilt_uri::S3Uri;
+
+const FIRST: &str = "1111111111111111111111111111111111111111111111111111111111111111";
+
+type Test = std::result::Result<(), Box<dyn std::error::Error>>;
+
+/// Stores `a.txt` holding `alpha` as revision [`FIRST`] of `team/raw` in
+/// bucket `b`, and tags it `latest`.
+async fn publish(remote: &MockRemote) -> Test {
+    let body = b"alpha";
+    let physical_key = format!("s3://b/team/raw/a.txt?versionId={FIRST}");
+    remote
+        .put_object(
+            None,
+            &S3Uri::try_from(physical_key.as_str())?,
+            body.to_vec(),
+        )
+        .await?;
+    let manifest = Manifest {
+        rows: vec![ManifestRow {
+            logical_key: quilt_rs::LogicalKey::new("a.txt")?,
+            physical_key,
+            hash: quilt_rs::checksum::hash_reader(&body[..], body.len() as u64, 0x12).await?,
+            size: body.len() as u64,
+            ..ManifestRow::default()
+        }],
+        ..Manifest::default()
+    };
+    remote
+        .put_object(
+            None,
+            &S3Uri::try_from(format!("s3://b/.quilt/packages/{FIRST}").as_str())?,
+            manifest.to_jsonlines().into_bytes(),
+        )
+        .await?;
+    remote
+        .put_object(
+            None,
+            &S3Uri::try_from("s3://b/.quilt/named_packages/team/raw/latest")?,
+            FIRST.as_bytes().to_vec(),
+        )
+        .await?;
+    Ok(())
+}
+
+fn request(access: &str) -> InstallRequest {
+    InstallRequest {
+        uri: "quilt+s3://b#package=team/raw".to_string(),
+        access: access.to_string(),
+        paths: Vec::new(),
+        folder: None,
+    }
+}
+
+/// A dataspace whose contract names bucket `b` and `contract`'s packages.
+fn space(dir: &Path, packages: &str) -> std::io::Result<PathBuf> {
+    let space = dir.join("space");
+    std::fs::create_dir_all(&space)?;
+    std::fs::write(
+        space.join("data.toml"),
+        format!("registry = \"s3://b\"\n{packages}"),
+    )?;
+    Ok(space)
+}
+
+#[test]
+fn an_explicit_domain_and_home_are_used_as_given() -> Test {
+    let dir = tempfile::TempDir::new()?;
+
+    assert_eq!(domain(Some(dir.path()))?.root(), dir.path());
+    assert_eq!(home(Some(dir.path()))?, dir.path());
+    assert!(home(None)?.ends_with(HOME_DIR_NAME));
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_dataspace_named_is_used_and_none_takes_the_default() -> Test {
+    let dir = tempfile::TempDir::new()?;
+    let domain = DomainRoot::new(dir.path().join("domain"));
+
+    assert!(default_dataspace(&domain).await?.is_none());
+    assert!(matches!(
+        dataspace(None, &domain).await,
+        Err(Error::NoDefaultDataspace)
+    ));
+    let named = dir.path().join("named");
+    assert_eq!(dataspace(Some(named.clone()), &domain).await?, named);
+
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(domain.root())?;
+    std::fs::write(
+        domain.domain_file(),
+        serde_json::to_vec(&json!({"format": 2, "default_dataspace": home}))?,
+    )?;
+    assert_eq!(dataspace(None, &domain).await?, home);
+    assert_eq!(dataspace(Some(named.clone()), &domain).await?, named);
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_domain_that_is_not_there_holds_nothing_and_is_not_made() -> Test {
+    let dir = tempfile::TempDir::new()?;
+    let domain = DomainRoot::new(dir.path().join("domain"));
+
+    assert_eq!(list_registries(&domain).await?, Vec::<String>::new());
+    assert_eq!(list_stored(&domain).await?, Vec::<Value>::new());
+    assert!(!domain.root().exists());
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn an_install_adds_a_sync_entry_reads_it_and_does_nothing_again() -> Test {
+    let remote = MockRemote::default();
+    publish(&remote).await?;
+    let dir = tempfile::TempDir::new()?;
+    let space = space(dir.path(), "")?;
+    let domain = DomainRoot::new(dir.path().join("domain"));
+
+    let first = install(&remote, &domain, &space, request("sync")).await?;
+    let again = install(&remote, &domain, &space, request("sync")).await?;
+
+    assert_eq!(first["package"], "quilt+s3://b#package=team/raw");
+    assert_eq!(first["access"], "sync");
+    assert_eq!(first["declared"], true);
+    assert_eq!(first["outcome"], "read", "{first}");
+    assert_eq!(first["completed"], true);
+    assert_eq!(first["revision"], FIRST);
+    assert_eq!(first["error"], Value::Null);
+    assert_eq!(again["declared"], false);
+    assert_eq!(again["outcome"], "unchanged", "{again}");
+    assert_eq!(std::fs::read(space.join("team/raw/a.txt"))?, b"alpha");
+    let contract = std::fs::read_to_string(space.join("data.toml"))?;
+    assert!(contract.contains("sync"), "{contract}");
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn an_install_under_another_access_than_declared_fails() -> Test {
+    let remote = MockRemote::default();
+    publish(&remote).await?;
+    let dir = tempfile::TempDir::new()?;
+    let space = space(dir.path(), "[packages]\nread = [\"team/raw\"]\n")?;
+    let domain = DomainRoot::new(dir.path().join("domain"));
+
+    let result = install(&remote, &domain, &space, request("sync")).await;
+
+    assert!(matches!(result, Err(Error::Install(_))), "{result:?}");
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn an_access_that_is_not_one_is_refused_before_anything_is_written() -> Test {
+    let remote = MockRemote::default();
+    let dir = tempfile::TempDir::new()?;
+    let space = space(dir.path(), "")?;
+    let domain = DomainRoot::new(dir.path().join("domain"));
+
+    let result = install(&remote, &domain, &space, request("pull")).await;
+
+    assert!(matches!(result, Err(Error::Access(_))), "{result:?}");
+    assert_eq!(
+        std::fs::read_to_string(space.join("data.toml"))?,
+        "registry = \"s3://b\"\n"
+    );
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_commit_is_kept_in_the_domain_and_listed_with_its_registry() -> Test {
+    let dir = tempfile::TempDir::new()?;
+    let space = space(dir.path(), "[packages]\nsync = [\"team/raw\"]\n")?;
+    std::fs::create_dir_all(space.join("team/raw"))?;
+    std::fs::write(space.join("team/raw/a.txt"), b"alpha")?;
+    let domain = DomainRoot::new(dir.path().join("domain"));
+    let home = dir.path().join("home");
+
+    let committed = commit(
+        &MockRemote::default(),
+        &domain,
+        &home,
+        &space,
+        "team/raw",
+        "first",
+    )
+    .await?;
+
+    let hash = committed["commit"].as_str().ok_or("no commit")?.to_string();
+    assert_eq!(committed["package"], "quilt+s3://b#package=team/raw");
+    assert_eq!(committed["base"], Value::Null);
+    assert_eq!(committed["commits"], json!([hash]));
+    let registries = list_registries(&domain).await?;
+    assert_eq!(registries.first().map(String::as_str), Some("s3://b"));
+    assert!(
+        registries
+            .get(1)
+            .is_some_and(|local| local.starts_with("quilt+local://")),
+        "{registries:?}"
+    );
+    let packages = list_stored(&domain).await?;
+    assert_eq!(packages.len(), 1, "{packages:?}");
+    assert_eq!(packages[0]["package"], "quilt+s3://b#package=team/raw");
+    assert_eq!(packages[0]["registry"], "s3://b");
+    assert_eq!(packages[0]["name"], "team/raw");
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn a_name_the_contract_does_not_give_one_package_is_refused() -> Test {
+    let dir = tempfile::TempDir::new()?;
+    let space = space(dir.path(), "[packages]\nsync = [\"team/raw\"]\n")?;
+    let storage = LocalStorage::new();
+    let contract = Contract::read(&storage, &space, None).await?;
+
+    assert!(matches!(
+        package_key(&contract, "team/other"),
+        Err(Error::NotDeclared(_))
+    ));
+    assert_eq!(
+        package_key(&contract, "team/raw")?.to_string(),
+        "quilt+s3://b#package=team/raw"
+    );
+    assert_eq!(
+        package_key(&contract, "quilt+s3://c#package=team/raw")?.to_string(),
+        "quilt+s3://c#package=team/raw"
+    );
+    Ok(())
+}

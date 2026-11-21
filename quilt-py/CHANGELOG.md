@@ -1,0 +1,14 @@
+<!--
+     Follow keepachangelog.com format, as quilt-rs/CHANGELOG.md does.
+     Head unreleased changes with the Cargo.toml version.
+-->
+<!-- markdownlint-disable MD013 -->
+# Changelog
+
+## [v3.0.0-dev]
+
+### Added
+
+- The `quilt` Python module over quilt-rs's dataspaces: `install` (with `access`, default `sync`), `commit`, `default_dataspace`, `list_registries` and `list_stored`, each blocking on a runtime the module owns with the GIL released; failures raise `quilt.QuiltError`. Wheels are built for macOS (arm64, x86_64), manylinux (x86_64, aarch64) and Windows; nothing is published to PyPI yet.
+
+[v3.0.0-dev]: https://github.com/quiltdata/quilt-rs/tree/main/quilt-py

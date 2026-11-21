@@ -1,0 +1,94 @@
+name: Python wheels
+
+# Builds the `quilt` wheels (quilt-py) for every platform quilt3 supports,
+# installs each on its own runner, and runs the smoke tests against it. It
+# publishes nothing: the wheels are only kept as workflow artifacts. Publishing
+# to PyPI as `quilt` 3.0 is a later, separate step (quilt-specs#297, entry 27e).
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - quilt-py/**
+      - quilt-rs/**
+      - quilt-uri/**
+      - Cargo.toml
+      - Cargo.lock
+      - rust-toolchain.toml
+      - .github/workflows/python-wheels.yaml
+  push:
+    branches: [main]
+    paths:
+      - quilt-py/**
+      - quilt-rs/**
+      - quilt-uri/**
+      - Cargo.toml
+      - Cargo.lock
+      - rust-toolchain.toml
+      - .github/workflows/python-wheels.yaml
+
+# Read-only: third-party actions run with this token.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  wheel:
+    name: wheel (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Native runners throughout, so no leg cross-compiles aws-lc-rs's C.
+          - name: manylinux x86_64
+            runner: ubuntu-24.04
+            manylinux: "2_28"
+          - name: manylinux aarch64
+            runner: ubuntu-24.04-arm
+            manylinux: "2_28"
+          - name: macOS arm64
+            runner: macos-15
+          - name: macOS x86_64
+            runner: macos-15-intel
+          - name: Windows x86_64
+            runner: windows-latest
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7.0.1
+
+      # abi3 from 3.10: one wheel per platform serves every CPython from 3.10.
+      - name: Setup Python
+        uses: actions/setup-python@v7.1.0
+        with:
+          python-version: "3.10"
+
+      # maturin installs the toolchain `rust-toolchain.toml` pins. On Linux it
+      # builds inside the manylinux container.
+      - name: Build the wheel
+        uses: PyO3/maturin-action@v1.51.0
+        with:
+          working-directory: quilt-py
+          args: --release --out dist
+          manylinux: ${{ matrix.manylinux || 'off' }}
+
+      - name: Install the wheel and run the smoke tests
+        working-directory: quilt-py
+        run: |
+          python -m pip install pytest
+          python -m pip install --pre --no-index --find-links dist quilt
+          python -m pytest tests
+
+      - name: Keep the wheel
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: wheel-${{ matrix.runner }}
+          path: quilt-py/dist/*.whl
+          if-no-files-found: error
