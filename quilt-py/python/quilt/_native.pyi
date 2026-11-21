@@ -5,6 +5,8 @@ from typing import Any, TypeAlias
 _Path: TypeAlias = str | PathLike[str]
 
 __version__: str
+# Whether this build stops at quilt-rs's failpoints (a crash-test wheel).
+FAILPOINTS: bool
 
 class QuiltError(Exception): ...
 

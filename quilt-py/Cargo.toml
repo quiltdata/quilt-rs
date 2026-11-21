@@ -25,6 +25,9 @@ crate-type = ["cdylib", "rlib"]
 # builds and tests the engine layer without a Python to link; maturin turns
 # it on (pyproject.toml), and clippy's `--all-features` lints it.
 python = ["dep:pyo3"]
+# The crash points of quilt-rs's `failpoints`, for a test wheel a crash test
+# kills at (`quilt.FAILPOINTS` says which build it is). Never in a release.
+failpoints = ["quilt-rs/failpoints"]
 
 [dependencies]
 quilt-rs = { path = "../quilt-rs", version = "0.54.0-dev" }

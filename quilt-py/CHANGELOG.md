@@ -18,6 +18,7 @@
 
 ### Added
 
+- A `failpoints` feature, for crash-test wheels only, that compiles in quilt-rs's failpoints (including the new ones at a dataspace's `data.toml` and `data.lock.toml` writes), and `quilt.FAILPOINTS`, which says whether a build has them. #1502
 - `browse` also returns `base`, the lock's base revision of the package, or `None`. #1501
 - `browse` opens a dataspace's package at its last local commit, else its base, returning its manifest as JSON Lines; `resolve_hash` resolves a short top hash in a package's local store; `delete` removes a package, or one revision of it, from every local Package Store. #1498
 - `entries` lists the packages a dataspace's contract declares, with their access, folder and paths; `set_package_metadata` replaces the package metadata in a working folder's `metadata.toml` for its next commit to publish. #1499

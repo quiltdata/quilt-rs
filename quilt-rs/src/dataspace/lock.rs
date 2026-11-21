@@ -268,7 +268,12 @@ impl Lock {
         // hidden, since nothing hidden is written in a dataspace.
         let temp = format!("{LOCK_FILE}.tmp-{}", uuid::Uuid::new_v4());
         storage
-            .write_byte_stream_via(&path, temp, ByteStream::from(text.into_bytes()), None)
+            .write_byte_stream_via(
+                &path,
+                temp,
+                ByteStream::from(text.into_bytes()),
+                Some(LOCK_FILE),
+            )
             .await
             .map_err(|source| LockError::Write {
                 path,
