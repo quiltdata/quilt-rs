@@ -162,3 +162,17 @@ def test_metadata_keeps_its_types(tmp_path):
     assert "x = 0.5" in text
     assert "ok = true" in text
     assert 'tags = ["a", "b"]' in text
+
+
+def test_metadata_holding_itself_raises_and_writes_nothing(tmp_path):
+    folder = tmp_path / "raw"
+    folder.mkdir()
+    looped = []
+    looped.append(looped)
+    with pytest.raises(quilt.QuiltError, match="nests deeper than 128 levels"):
+        quilt.set_package_metadata(folder, {"loop": looped})
+    deep = "leaf"
+    for _ in range(127):
+        deep = [deep]
+    quilt.set_package_metadata(folder, {"deep": deep})
+    assert (folder / "metadata.toml").exists()

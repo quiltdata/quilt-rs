@@ -188,9 +188,18 @@ fn entries(
 /// `object` as JSON: dicts with string keys, lists and tuples, strings,
 /// booleans, `None`, floats, and integers within TOML's signed 64 bits. A
 /// larger integer is refused rather than rounded to a float, as reading it
-/// through `json.dumps` would round it; so are a float that is not finite
-/// and any other type.
+/// through `json.dumps` would round it; so are a float that is not finite,
+/// any other type, and nesting deeper than [`MAX_METADATA_DEPTH`], which a
+/// container holding itself reaches.
 fn to_json(object: &Bound<'_, PyAny>) -> PyResult<Value> {
+    to_json_at(object, 0)
+}
+
+/// The deepest metadata [`to_json`] follows: `serde_json`'s own limit when it
+/// parses JSON.
+const MAX_METADATA_DEPTH: usize = 128;
+
+fn to_json_at(object: &Bound<'_, PyAny>, depth: usize) -> PyResult<Value> {
     use pyo3::types::PyBool;
     use pyo3::types::PyDict;
     use pyo3::types::PyFloat;
@@ -199,6 +208,11 @@ fn to_json(object: &Bound<'_, PyAny>) -> PyResult<Value> {
     use pyo3::types::PyString;
     use pyo3::types::PyTuple;
 
+    if depth > MAX_METADATA_DEPTH {
+        return Err(QuiltError::new_err(format!(
+            "metadata nests deeper than {MAX_METADATA_DEPTH} levels"
+        )));
+    }
     if object.is_none() {
         Ok(Value::Null)
     } else if let Ok(flag) = object.cast::<PyBool>() {
@@ -221,13 +235,18 @@ fn to_json(object: &Bound<'_, PyAny>) -> PyResult<Value> {
             let key = key
                 .cast::<PyString>()
                 .map_err(|_| QuiltError::new_err(format!("metadata key {key} is not a string")))?;
-            map.insert(key.to_str()?.to_string(), to_json(&value)?);
+            map.insert(key.to_str()?.to_string(), to_json_at(&value, depth + 1)?);
         }
         Ok(Value::Object(map))
     } else if let Ok(list) = object.cast::<PyList>() {
-        list.iter().map(|item| to_json(&item)).collect()
+        list.iter()
+            .map(|item| to_json_at(&item, depth + 1))
+            .collect()
     } else if let Ok(tuple) = object.cast::<PyTuple>() {
-        tuple.iter().map(|item| to_json(&item)).collect()
+        tuple
+            .iter()
+            .map(|item| to_json_at(&item, depth + 1))
+            .collect()
     } else {
         Err(QuiltError::new_err(format!(
             "metadata of type {} is not JSON",
