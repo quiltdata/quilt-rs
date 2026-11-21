@@ -22,6 +22,8 @@ use quilt_rs::dataspace::contract::Contract;
 use quilt_rs::dataspace::contract::ContractError;
 use quilt_rs::dataspace::contract::Entry;
 use quilt_rs::dataspace::contract::PackageKey;
+use quilt_rs::dataspace::contract::PackagePath;
+use quilt_rs::dataspace::contract::Paths;
 use quilt_rs::dataspace::contract::Registry;
 use quilt_rs::dataspace::contract::UnknownAccess;
 use quilt_rs::dataspace::create::Create;
@@ -40,6 +42,7 @@ use quilt_rs::dataspace::lock::Writer;
 use quilt_rs::dataspace::read::ReadOutcome;
 use quilt_rs::dataspace::remove_revisions::LatestAfter;
 use quilt_rs::dataspace::resolve::resolve_hash as resolve_stored_hash;
+use quilt_rs::dataspace::set_package_metadata as set_metadata;
 use quilt_rs::domain::DomainRoot;
 use quilt_rs::domain::LocalRegistry;
 use quilt_rs::domain::locate;
@@ -381,6 +384,49 @@ pub async fn delete(domain: &DomainRoot, name: &str, top_hash: Option<&str>) -> 
             })
         })
         .collect())
+}
+
+/// The packages `dataspace`'s contract declares, as it orders its entries,
+/// each as `{"package", "registry", "name", "access", "folder", "paths"}`,
+/// `paths` being `null` for the whole package or the paths an entry is
+/// scoped to.
+/// A package listed under two accesses is listed twice. quilt3's build
+/// reads it to tell a build onto an existing entry from a new package.
+/// Nothing is written: the local registry is not named here.
+pub async fn entries(domain: &DomainRoot, dataspace: &Path) -> Result<Vec<Value>> {
+    let storage = LocalStorage::new();
+    let local_name = if domain.root().is_dir() {
+        domain
+            .local()
+            .read_names(&storage)
+            .await?
+            .map(|names| names.name)
+    } else {
+        None
+    };
+    let contract = Contract::read(&storage, dataspace, local_name.as_deref()).await?;
+    Ok(contract
+        .entries()
+        .iter()
+        .map(|entry| {
+            let mut value = entry_json(entry);
+            value["registry"] = entry.registry.spelled().into();
+            value["name"] = entry.package.to_string().into();
+            value["paths"] = match &entry.paths {
+                Paths::Whole => Value::Null,
+                Paths::Only(paths) => paths.iter().map(PackagePath::spelled).collect(),
+            };
+            value
+        })
+        .collect())
+}
+
+/// Replaces the package's metadata in `folder`'s `metadata.toml` with
+/// `metadata`, keeping all else the file says, for the folder's next
+/// commit to publish: quilt3's build passing `Package.set_meta` through to
+/// the engine.
+pub async fn set_package_metadata(folder: &Path, metadata: &Value) -> Result<()> {
+    Ok(set_metadata(&LocalStorage::new(), folder, metadata).await?)
 }
 
 /// The writer of a lock on this machine, naming `local`'s name, or none

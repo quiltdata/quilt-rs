@@ -166,6 +166,109 @@ fn commit(
     to_python(py, &committed)
 }
 
+/// The packages a dataspace's contract declares, each with its access,
+/// working folder and paths.
+#[pyfunction]
+#[pyo3(signature = (*, dataspace=None, domain=None, home=None))]
+fn entries(
+    py: Python<'_>,
+    dataspace: Option<PathBuf>,
+    domain: Option<PathBuf>,
+    home: Option<PathBuf>,
+) -> PyResult<Py<PyAny>> {
+    let declared = block_on(py, async move {
+        let domain = engine::domain(domain.as_deref())?;
+        let home = engine::home(home.as_deref())?;
+        let dataspace = engine::dataspace(dataspace, &home).await?;
+        engine::entries(&domain, &dataspace).await
+    })?;
+    to_python(py, &Value::Array(declared))
+}
+
+/// `object` as JSON: dicts with string keys, lists and tuples, strings,
+/// booleans, `None`, floats, and integers within TOML's signed 64 bits. A
+/// larger integer is refused rather than rounded to a float, as reading it
+/// through `json.dumps` would round it; so are a float that is not finite,
+/// any other type, and nesting deeper than [`MAX_METADATA_DEPTH`], which a
+/// container holding itself reaches.
+fn to_json(object: &Bound<'_, PyAny>) -> PyResult<Value> {
+    to_json_at(object, 0)
+}
+
+/// The deepest metadata [`to_json`] follows: `serde_json`'s own limit when it
+/// parses JSON.
+const MAX_METADATA_DEPTH: usize = 128;
+
+fn to_json_at(object: &Bound<'_, PyAny>, depth: usize) -> PyResult<Value> {
+    use pyo3::types::PyBool;
+    use pyo3::types::PyDict;
+    use pyo3::types::PyFloat;
+    use pyo3::types::PyInt;
+    use pyo3::types::PyList;
+    use pyo3::types::PyString;
+    use pyo3::types::PyTuple;
+
+    if depth > MAX_METADATA_DEPTH {
+        return Err(QuiltError::new_err(format!(
+            "metadata nests deeper than {MAX_METADATA_DEPTH} levels"
+        )));
+    }
+    if object.is_none() {
+        Ok(Value::Null)
+    } else if let Ok(flag) = object.cast::<PyBool>() {
+        Ok(Value::Bool(flag.is_true()))
+    } else if let Ok(int) = object.cast::<PyInt>() {
+        int.extract::<i64>().map(Value::from).map_err(|_| {
+            QuiltError::new_err(format!(
+                "metadata integer {int} is beyond TOML's signed 64 bits"
+            ))
+        })
+    } else if let Ok(float) = object.cast::<PyFloat>() {
+        serde_json::Number::from_f64(float.value())
+            .map(Value::Number)
+            .ok_or_else(|| QuiltError::new_err(format!("metadata float {float} is not finite")))
+    } else if let Ok(text) = object.cast::<PyString>() {
+        Ok(Value::String(text.to_str()?.to_string()))
+    } else if let Ok(dict) = object.cast::<PyDict>() {
+        let mut map = serde_json::Map::new();
+        for (key, value) in dict.iter() {
+            let key = key
+                .cast::<PyString>()
+                .map_err(|_| QuiltError::new_err(format!("metadata key {key} is not a string")))?;
+            map.insert(key.to_str()?.to_string(), to_json_at(&value, depth + 1)?);
+        }
+        Ok(Value::Object(map))
+    } else if let Ok(list) = object.cast::<PyList>() {
+        list.iter()
+            .map(|item| to_json_at(&item, depth + 1))
+            .collect()
+    } else if let Ok(tuple) = object.cast::<PyTuple>() {
+        tuple
+            .iter()
+            .map(|item| to_json_at(&item, depth + 1))
+            .collect()
+    } else {
+        Err(QuiltError::new_err(format!(
+            "metadata of type {} is not JSON",
+            object.get_type().name()?
+        )))
+    }
+}
+
+/// Replaces the package metadata in a working folder's `metadata.toml`, for
+/// its next commit to publish. `metadata` is JSON as [`to_json`] takes it.
+#[pyfunction]
+fn set_package_metadata(
+    py: Python<'_>,
+    folder: PathBuf,
+    metadata: &Bound<'_, PyAny>,
+) -> PyResult<()> {
+    let metadata = to_json(metadata)?;
+    block_on(py, async move {
+        engine::set_package_metadata(&folder, &metadata).await
+    })
+}
+
 /// Opens a package of a dataspace at the revision its lock holds: the last
 /// local commit, else the base. The manifest comes back as JSON Lines text.
 #[pyfunction]
@@ -232,5 +335,7 @@ fn native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(browse, m)?)?;
     m.add_function(wrap_pyfunction!(resolve_hash, m)?)?;
     m.add_function(wrap_pyfunction!(delete, m)?)?;
+    m.add_function(wrap_pyfunction!(entries, m)?)?;
+    m.add_function(wrap_pyfunction!(set_package_metadata, m)?)?;
     Ok(())
 }

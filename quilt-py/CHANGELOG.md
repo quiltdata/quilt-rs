@@ -18,6 +18,7 @@
 ### Added
 
 - `browse` opens a dataspace's package at its last local commit, else its base, returning its manifest as JSON Lines; `resolve_hash` resolves a short top hash in a package's local store; `delete` removes a package, or one revision of it, from every local Package Store. #1498
+- `entries` lists the packages a dataspace's contract declares, with their access, folder and paths; `set_package_metadata` replaces the package metadata in a working folder's `metadata.toml` for its next commit to publish. #1499
 - The `quilt` Python module over quilt-rs's dataspaces: `install` (with `access`, default `sync`), `create` (a build: a new package and its first commit), `commit`, `default_dataspace` (the one chosen for the application folder), `list_registries` and `list_stored`, each blocking on a runtime the module owns with the GIL released; failures raise `quilt.QuiltError`. Wheels are built for macOS (arm64, x86_64), manylinux (x86_64, aarch64) and Windows; nothing is published to PyPI yet. #1490
 
 [v3.0.0-dev]: https://github.com/quiltdata/quilt-rs/tree/main/quilt-py
