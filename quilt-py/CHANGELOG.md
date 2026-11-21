@@ -9,7 +9,7 @@
 
 ### Changed
 
-- The version is `3.0.0-rc.1` (`3.0.0rc1` on PyPI), the first release candidate of `quilt` 3.0: a pre-release, so `pip install quilt` keeps resolving to Quilt 2 until 3.0.0 ships with the quilt3 major release.
+- The version is `3.0.0-rc.1` (`3.0.0rc1` on PyPI), the first release candidate of `quilt` 3.0: a pre-release, so `pip install quilt` keeps resolving to Quilt 2 until 3.0.0 ships with the quilt3 major release. #1500
 - `create` and `commit` return a `warnings` list: what checking the commit against its bucket's current workflows config found (`inconsistent` or `unchecked`), the commit being recorded either way. #1495
 
 ### Fixed
