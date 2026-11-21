@@ -4,7 +4,9 @@
 //! the package's rows in `conflict.json`, and the revision `queue.db` kept.
 
 use std::collections::BTreeMap;
+use std::collections::VecDeque;
 use std::path::Path;
+use std::path::PathBuf;
 
 use jiff::Timestamp;
 use thiserror::Error;
@@ -14,6 +16,7 @@ use crate::dataspace::EntryError;
 use crate::dataspace::conflict::ConflictMap;
 use crate::dataspace::conflict::Row;
 use crate::dataspace::contract::Access;
+use crate::dataspace::contract::CONTRACT_FILE;
 use crate::dataspace::contract::Contract;
 use crate::dataspace::contract::ContractError;
 use crate::dataspace::contract::Entry;
@@ -121,6 +124,26 @@ pub struct EntryStatus {
     /// What could not be read; the fields it would have filled are left
     /// empty.
     pub problems: Vec<EntryError>,
+    /// The folders inside the working folder that the comparison, as the
+    /// tick's commit, left out whatever any rule says, and why.
+    pub left_out: Vec<LeftOut>,
+}
+
+/// A folder inside an entry's working folder that is never packaged.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LeftOut {
+    /// Its path below the working folder.
+    pub path: PathBuf,
+    pub reason: LeftOutReason,
+}
+
+/// Why a [`LeftOut`] folder is never packaged.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
+#[non_exhaustive]
+pub enum LeftOutReason {
+    /// It holds a `data.toml` of its own (25o item 7).
+    #[error("it holds a {CONTRACT_FILE} of its own, so it is another dataspace")]
+    Dataspace,
 }
 
 impl EntryStatus {
@@ -321,6 +344,7 @@ impl<S: Storage + Sync, R: Remote> Reading<'_, S, R> {
             conflicts: BTreeMap::new(),
             kept: None,
             problems: Vec::new(),
+            left_out: Vec::new(),
         };
         let store = match self.store(entry) {
             Ok(store) => store,
@@ -416,6 +440,7 @@ impl<S: Storage + Sync, R: Remote> Reading<'_, S, R> {
         let policy = self.contract.ignore_policy(folder);
         let rules = Rules::load_with(folder, self.user_rules, &policy)?;
         let taken = take(self.storage, entry, &rules, &current).await?.manifest;
+        status.left_out = nested_dataspaces(self.storage, folder, &rules).await?;
         let deletes = matches!(entry.access, Access::Sync | Access::Replace);
         status.changes = changes(&current, &taken, &entry.paths, deletes);
         let was: std::collections::HashMap<_, _> = current
@@ -552,6 +577,40 @@ fn changes(current: &Manifest, taken: &Manifest, paths: &Paths, deletes: bool) -
         changes.insert(key.as_path().to_path_buf(), Change::Added(row));
     }
     changes
+}
+
+/// The folders inside `folder` that hold a `data.toml` of their own, which
+/// the tick's commit leaves out as other dataspaces, each by its path below
+/// `folder`. A folder `rules` leave out is not looked in.
+async fn nested_dataspaces(
+    storage: &(impl Storage + Sync),
+    folder: &Path,
+    rules: &Rules,
+) -> Result<Vec<LeftOut>, EntryError> {
+    let mut found = Vec::new();
+    let mut queue = VecDeque::from([PathBuf::new()]);
+    while let Some(prefix) = queue.pop_front() {
+        let Ok(mut entries) = storage.read_dir(&folder.join(&prefix)).await else {
+            continue;
+        };
+        // A folder that goes away mid-walk is left out of a list that only informs.
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            if !entry.file_type().await.is_ok_and(|kind| kind.is_dir()) {
+                continue;
+            }
+            let relative = prefix.join(entry.file_name());
+            if storage.is_file(entry.path().join(CONTRACT_FILE)).await {
+                found.push(LeftOut {
+                    path: relative,
+                    reason: LeftOutReason::Dataspace,
+                });
+            } else if rules.dir_ignored_by(&relative, false).is_none() {
+                queue.push_back(relative);
+            }
+        }
+    }
+    found.sort_by(|one, other| one.path.cmp(&other.path));
+    Ok(found)
 }
 
 #[cfg(test)]

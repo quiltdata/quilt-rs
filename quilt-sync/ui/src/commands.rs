@@ -3337,3 +3337,85 @@ pub async fn quit_confirm() -> Result<(), String> {
 pub async fn quit_cancel() -> Result<(), String> {
     engine::invoke_unit("quit_cancel").await
 }
+
+// ── Dataspace decisions ─────────────────────────────────────
+
+/// What found a conflict. Mirrors `src-tauri/src/engine/dataspace/conflicts.rs`.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ConflictKind {
+    Read,
+    Publish,
+}
+
+/// A decision on one conflict. Mirrors the engine's.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum Decision {
+    Mine,
+    Theirs,
+    Delete,
+}
+
+/// One row of the dataspace's `conflict.json`. Mirrors the engine's.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConflictRow {
+    pub package: String,
+    pub namespace: Namespace,
+    pub key: String,
+    pub kind: ConflictKind,
+    pub mine: bool,
+    pub theirs: bool,
+    pub decision: Option<Decision>,
+}
+
+/// A local commit no lock names. Mirrors the engine's.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct UnattachedCommit {
+    pub namespace: Namespace,
+    pub hash: String,
+    pub message: Option<String>,
+}
+
+/// None while the dataspace engine is off.
+pub async fn get_conflicts() -> Result<Vec<ConflictRow>, String> {
+    engine::invoke_unit("get_conflicts").await
+}
+
+pub async fn decide_conflict(
+    package: String,
+    key: String,
+    decision: Decision,
+) -> Result<(), String> {
+    #[derive(Serialize)]
+    struct Args {
+        package: String,
+        key: String,
+        decision: Decision,
+    }
+    engine::invoke(
+        "decide_conflict",
+        &Args {
+            package,
+            key,
+            decision,
+        },
+    )
+    .await
+}
+
+/// None while the dataspace engine is off.
+pub async fn get_unattached_commits() -> Result<Vec<UnattachedCommit>, String> {
+    engine::invoke_unit("get_unattached_commits").await
+}
+
+pub async fn reattach_commit(namespace: String, hash: String) -> Result<String, String> {
+    #[derive(Serialize)]
+    struct Args {
+        namespace: String,
+        hash: String,
+    }
+    engine::invoke("reattach_commit", &Args { namespace, hash }).await
+}

@@ -38,7 +38,9 @@ use crate::dataspace::store::name_local;
 use crate::dataspace::sync::base_manifest;
 use crate::dataspace::sync::covered_rows;
 use crate::dataspace::sync::latest_in;
+use crate::dataspace::sync::local_commit;
 use crate::dataspace::sync::manifest_at;
+use crate::dataspace::sync::moved_from;
 use crate::domain::DomainRoot;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
@@ -139,6 +141,10 @@ impl From<crate::Error> for ResetError {
 /// where [`reattach`](crate::dataspace::reattach) lists them. The package's
 /// rows in `conflict.json` are removed. A current revision that can no
 /// longer be found, as one removed from its registry, is taken as empty.
+/// A package `data.toml` moved from this machine's local registry to its
+/// bucket, whose move has not landed, is reset to the bucket's `latest`:
+/// the move is dropped with its local commits, which stay in the local
+/// registry.
 ///
 /// A `read` or `sync` entry is reset, one pinned to a revision is refused,
 /// and so is a package with no `latest`. The contract's `pre-read` hook runs
@@ -180,20 +186,48 @@ pub async fn reset_to_latest(
         .await?
         .ok_or(ResetError::NoLatest)?;
 
-    let locked = lock.packages.get(&key).cloned();
-    let (base, discarded) = locked
-        .clone()
-        .map_or((None, Vec::new()), |locked| (locked.base, locked.commits));
-    let current = match discarded.last().or(base.as_ref()) {
-        None => Manifest::default(),
-        Some(hash) => match manifest_at(storage, remote, &store, &entry, hash, &discarded).await {
+    // A move to the bucket that has not landed is dropped with its local
+    // commits, which stay in the local registry for reattach.
+    let base = lock
+        .packages
+        .get(&key)
+        .and_then(|locked| locked.base.clone());
+    let moved = moved_from(&lock, &contract, &writer, &entry);
+    let (current, discarded) = if let Some((local_key, head)) = &moved {
+        let current = match local_commit(storage, &local, &entry, head).await {
             Ok(current) => current,
             Err(EntryError::Failed(err)) if err.is_not_found() => {
-                warn!("The revision {hash} the lock names is gone, so it is taken as empty");
+                warn!("The revision {head} the move names is gone, so it is taken as empty");
                 Manifest::default()
             }
             Err(err) => return Err(err.into()),
-        },
+        };
+        let discarded = lock
+            .packages
+            .get(local_key)
+            .map_or_else(Vec::new, |locked| locked.commits.clone());
+        (current, discarded)
+    } else {
+        let discarded = lock
+            .packages
+            .get(&key)
+            .map_or_else(Vec::new, |locked| locked.commits.clone());
+        let current = match discarded.last().or(base.as_ref()) {
+            None => Manifest::default(),
+            Some(hash) => {
+                match manifest_at(storage, remote, &store, &entry, hash, &discarded).await {
+                    Ok(current) => current,
+                    Err(EntryError::Failed(err)) if err.is_not_found() => {
+                        warn!(
+                            "The revision {hash} the lock names is gone, so it is taken as empty"
+                        );
+                        Manifest::default()
+                    }
+                    Err(err) => return Err(err.into()),
+                }
+            }
+        };
+        (current, discarded)
     };
 
     hooks::run(&contract, HookPoint::PreRead, &entry, None)
@@ -208,6 +242,9 @@ pub async fn reset_to_latest(
     let rows = PackageRows::of(storage, store.local(), contract.dataspace(), &entry).await;
     if let Err(err) = rows.write(storage, None).await {
         warn!("The package's rows were left in conflict.json: {err}");
+    }
+    if let Some((local_key, _)) = &moved {
+        lock.packages.remove(local_key);
     }
     lock.packages
         .insert(key.clone(), LockEntry::at(latest.clone()));

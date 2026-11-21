@@ -910,6 +910,9 @@ pub async fn get_revision_history(
     namespace: String,
     measure: bool,
 ) -> Result<RevisionHistoryData, String> {
+    if let Some(ds) = &s.dataspace {
+        return super::dataspace::revision_history(ds, &namespace).await;
+    }
     let m = &*s.model;
     let namespace: quilt_uri::Namespace = namespace
         .try_into()
@@ -973,6 +976,9 @@ pub async fn remove_revisions(
     namespace: String,
     hashes: Vec<String>,
 ) -> Result<String, String> {
+    if let Some(ds) = &s.dataspace {
+        return super::dataspace::remove_revisions(ds, &namespace, &hashes).await;
+    }
     let m = &*s.model;
     remove_revisions_command(m, &s.record, namespace, hashes).await
 }

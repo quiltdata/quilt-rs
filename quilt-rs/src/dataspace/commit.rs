@@ -17,6 +17,7 @@ use crate::dataspace::contract::Contract;
 use crate::dataspace::contract::ContractError;
 use crate::dataspace::contract::Entry;
 use crate::dataspace::contract::PackageKey;
+use crate::dataspace::contract::Paths;
 use crate::dataspace::entry_under;
 use crate::dataspace::lock::LOCK_FILE;
 use crate::dataspace::lock::LockEntry;
@@ -32,6 +33,7 @@ use crate::dataspace::sync::FolderCommit;
 use crate::dataspace::sync::append_commit;
 use crate::dataspace::sync::commit_folder;
 use crate::dataspace::sync::manifest_at;
+use crate::dataspace::sync::pending_move;
 use crate::dataspace::sync::rewrite_metadata;
 use crate::domain::DomainRoot;
 use crate::io::remote::Remote;
@@ -139,6 +141,11 @@ impl From<crate::Error> for CommitError {
 /// added are not read yet (rule 4). So is a folder that is missing or empty
 /// while the lock names a revision. The lock is used as
 /// [`read_all`](crate::dataspace::read_all::read_all) uses it.
+///
+/// A package `data.toml` moved from this machine's local registry to its
+/// bucket, whose move has not landed, is committed in the local registry,
+/// after its last local commit, so the move pushes the new commit. A whole
+/// package's move is not refused for the edit that made it.
 #[allow(clippy::too_many_arguments, reason = "each is a distinct input")]
 pub async fn commit(
     storage: &(impl Storage + Sync),
@@ -161,9 +168,17 @@ pub async fn commit(
         Some(access) => CommitError::Access(access),
         None => CommitError::NotDeclared(Box::new(key.clone())),
     })?;
+    let declared = entry.clone();
+    let entry = pending_move(&lock, &contract, &writer, entry);
+    let key = entry.key();
+    // The edit that moved a whole package is what keeps its move pending,
+    // and no sync takes it until the move lands; it added no path to read.
+    let moving_whole = entry.registry != declared.registry && entry.paths == Paths::Whole;
     let store = Store::of(storage, domain, &entry).await?;
+    // The lock a tick moving the package takes: the bucket's.
+    let lock_store = Store::of(storage, domain, &declared).await?;
     let Some(_held) = storage
-        .try_lock_exclusive(store.package_lock(&entry.package))
+        .try_lock_exclusive(lock_store.package_lock(&declared.package))
         .await?
     else {
         return Err(CommitError::Busy(Box::new(key)));
@@ -177,7 +192,7 @@ pub async fn commit(
     // A base in the lock was read whole first (25.7 rule 2), but paths an
     // edit to `data.toml` added were not yet read (rule 4).
     let edited = lock.header.data_toml_hash != contract.data_toml_hash();
-    if current_hash.is_some() && edited {
+    if current_hash.is_some() && edited && !moving_whole {
         return Err(CommitError::Edited);
     }
     let folder = &entry.folder;

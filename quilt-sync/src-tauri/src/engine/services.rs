@@ -22,6 +22,7 @@ use crate::engine::autopull::reporter::SinkEventReporter;
 use crate::engine::autopull::reporter::TelemetryReporter;
 use crate::engine::commands::RoleCache;
 use crate::engine::commands::WorkflowRulesCache;
+use crate::engine::dataspace::Dataspace;
 use crate::engine::events::EventSink;
 use crate::engine::experimental_settings;
 use crate::engine::experimental_settings::SharedExperimentalSettings;
@@ -44,6 +45,11 @@ use crate::engine::updates::Updates;
 pub struct Services {
     pub data_dir: PathBuf,
     pub model: Arc<Model>,
+    /// The engine on the dataspace API, where the switch turned it on and
+    /// it opened; `None` runs every command on the ref API, as before.
+    pub dataspace: Option<Arc<Dataspace>>,
+    /// The dataspace engine's folder watch, held for as long as the app runs.
+    dataspace_watch: std::sync::Mutex<Option<DataspaceWatch>>,
     pub workflow_rules: WorkflowRulesCache,
     pub roles: Arc<RoleCache>,
     pub app: App,
@@ -72,6 +78,10 @@ impl Services {
     /// # Errors
     ///
     /// When file logging cannot start.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one step per service, in the order they depend on each other"
+    )]
     pub async fn init(data_dir: PathBuf, version: Version) -> Result<Arc<Self>> {
         let app_version = version.clone();
         crate::engine::events::set_runtime(tokio::runtime::Handle::current());
@@ -134,6 +144,7 @@ impl Services {
         // revision that moved without it was moved by another tool.
         let outside =
             Outside::open(&data_dir, domain.lineage_io().clone(), Arc::clone(&record)).await;
+        let dataspace = open_dataspace(&experimental_settings, &data_dir, &domain).await;
         let model = Arc::new(Model::from_domain(domain.with_lineage_hook(outside.hook())));
         let roles = Arc::new(RoleCache::default());
 
@@ -149,13 +160,15 @@ impl Services {
             last_change,
             Arc::clone(&action_needed),
             outside,
+            dataspace.clone(),
         );
         autopull::activity::spawn_forwarder(events.clone(), watcher.subscribe_activity());
         action_needed::spawn_forwarder(events.clone(), action_needed.subscribe());
-        fswatcher::spawn(
-            Arc::clone(&model),
-            watcher.shared_arc(),
-            fswatcher_settings.clone(),
+        let dataspace_watch = watch(
+            dataspace.as_ref(),
+            &model,
+            &watcher,
+            &fswatcher_settings,
             &reporter,
         )
         .await;
@@ -163,6 +176,8 @@ impl Services {
         Ok(Arc::new(Self {
             data_dir,
             model,
+            dataspace,
+            dataspace_watch: std::sync::Mutex::new(dataspace_watch),
             workflow_rules: WorkflowRulesCache::default(),
             roles,
             app: App::new(version, logging),
@@ -181,6 +196,114 @@ impl Services {
             updates: Updates::new(app_version),
             tray_status,
         }))
+    }
+
+    /// Moves the dataspace engine's autosync and folder watch to the default
+    /// dataspace, after a setup changed it.
+    pub async fn rewatch_dataspace(&self) {
+        let Some(ds) = &self.dataspace else {
+            return;
+        };
+        let next = watch_dataspace(ds, &self.fswatcher_settings).await;
+        let mut held = self
+            .dataspace_watch
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *held = next;
+    }
+}
+
+/// The dataspace engine, where the switch in `settings` is on: on the Domain
+/// [`quilt::domain::locate`] names and the default dataspace, else the ref
+/// path's home folder. `None`, logged, where it cannot open, as before a
+/// home folder is chosen: the app then runs on the ref API.
+async fn open_dataspace(
+    settings: &SharedExperimentalSettings,
+    data_dir: &std::path::Path,
+    domain: &quilt::LocalDomain,
+) -> Option<Arc<Dataspace>> {
+    if !settings.read().await.dataspace {
+        return None;
+    }
+    let Some(domain_dir) = quilt::domain::locate(None) else {
+        error!("The dataspace engine is on, but the OS has no local data folder for the Domain");
+        return None;
+    };
+    let home = match domain.get_home().await {
+        Ok(home) => home.as_ref().clone(),
+        Err(err) => {
+            warn!("The dataspace engine waits for a home folder: {err}");
+            return None;
+        }
+    };
+    match Dataspace::open(
+        domain.remote_handle(),
+        domain_dir,
+        data_dir.to_path_buf(),
+        &home,
+        domain.user_quiltignore(),
+    )
+    .await
+    {
+        Ok(dataspace) => Some(Arc::new(dataspace)),
+        Err(err) => {
+            error!("The dataspace engine could not open, so the ref engine runs: {err}");
+            None
+        }
+    }
+}
+
+type DataspaceWatch = notify_debouncer_full::Debouncer<
+    notify::RecommendedWatcher,
+    notify_debouncer_full::RecommendedCache,
+>;
+
+/// Starts watching folders: the dataspace engine's dataspace for its
+/// runner, or the ref engine's installed packages.
+async fn watch(
+    dataspace: Option<&Arc<Dataspace>>,
+    model: &Arc<Model>,
+    watcher: &Watcher,
+    settings: &SharedFsWatcherSettings,
+    reporter: &Arc<dyn StatusReporter>,
+) -> Option<DataspaceWatch> {
+    if let Some(ds) = dataspace {
+        return watch_dataspace(ds, settings).await;
+    }
+    fswatcher::spawn(
+        Arc::clone(model),
+        watcher.shared_arc(),
+        settings.clone(),
+        reporter,
+    )
+    .await;
+    None
+}
+
+/// Puts the default dataspace on autosync, so the runner ticks it, and
+/// watches its folder where watching is on. `None`, logged, where the
+/// watch cannot start: the tick still finds what `latest` moved.
+async fn watch_dataspace(
+    ds: &Arc<Dataspace>,
+    settings: &SharedFsWatcherSettings,
+) -> Option<DataspaceWatch> {
+    if let Err(err) = ds.autosync_on().await {
+        error!("The default dataspace could not be put on autosync: {err}");
+    }
+    let (enabled, debounce_ms) = {
+        let settings = settings.read().await;
+        (settings.enabled, settings.debounce_ms)
+    };
+    if !enabled {
+        return None;
+    }
+    let debounce = std::time::Duration::from_millis(debounce_ms);
+    match crate::engine::dataspace::autosync::watch(Arc::clone(ds), debounce) {
+        Ok(watch) => Some(watch),
+        Err(err) => {
+            error!("The dataspace watcher could not start: {err}");
+            None
+        }
     }
 }
 

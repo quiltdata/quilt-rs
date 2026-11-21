@@ -126,6 +126,10 @@ pub enum Error {
     #[error("General error: {0}")]
     General(String),
 
+    /// A dataspace call failed; the sentence is quilt-rs's own.
+    #[error("{0}")]
+    Dataspace(String),
+
     #[error("Package name must be prefix/name, using only letters, digits, _ and -; got: {0}")]
     PackageName(String),
 

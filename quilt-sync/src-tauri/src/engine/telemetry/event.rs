@@ -241,6 +241,7 @@ impl From<&crate::engine::error::Error> for Failure {
             | E::ParseUrl(_)
             | E::Commit(_)
             | E::General(_)
+            | E::Dataspace(_)
             | E::Test(_) => Self::Fault,
         }
     }
