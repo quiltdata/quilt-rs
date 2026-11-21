@@ -34,11 +34,13 @@ use crate::dataspace::lock::Writer;
 use crate::dataspace::read_all::usable_lock;
 use crate::dataspace::store::Store;
 use crate::dataspace::store::name_local;
+use crate::dataspace::sync::FolderCheck;
 use crate::dataspace::sync::FolderCommit;
 use crate::dataspace::sync::append_commit;
 use crate::dataspace::sync::commit_folder;
 use crate::dataspace::sync::rewrite_metadata;
 use crate::domain::DomainRoot;
+use crate::flow::WorkflowWarning;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::manifest::Manifest;
@@ -92,6 +94,11 @@ pub struct Created {
     /// The first commit, with no base; `None` where the folder held nothing
     /// to commit, or the entry is not under `sync`.
     pub commit: Option<String>,
+    /// What checking the first commit against its bucket's current workflows
+    /// config found: the commit is recorded either way. Empty where it
+    /// passed, nothing was committed, or the package is in a local registry,
+    /// which has no workflows.
+    pub warnings: Vec<WorkflowWarning>,
 }
 
 /// Why nothing was created. The contract and the lock are as they were.
@@ -257,8 +264,9 @@ pub async fn create(
         storage, remote, domain, &edited, &entry, &mut lock, user_rules, message,
     )
     .await;
-    let commit = match first {
-        Ok(commit) => commit,
+    let (commit, warnings) = match first {
+        Ok(Some(FolderCommit { hash, warnings, .. })) => (Some(hash), warnings),
+        Ok(None) => (None, Vec::new()),
         Err(err) => {
             // The package is not made, so it is not left declared.
             if let Err(undo) = edit.restore(storage).await {
@@ -278,11 +286,19 @@ pub async fn create(
         entry.key(),
         edited.dataspace().display()
     );
-    Ok(Created { entry, commit })
+    for warning in &warnings {
+        warn!("{warning}");
+    }
+    Ok(Created {
+        entry,
+        commit,
+        warnings,
+    })
 }
 
 /// The first commit of a `sync` entry's folder, with no base, added to
 /// `lock`; `None` where the entry is not `sync` or the folder holds nothing.
+/// The commit's `metadata_text` is spent rewriting `metadata.toml`.
 #[allow(clippy::too_many_arguments, reason = "each is a distinct input")]
 async fn first_commit(
     storage: &(impl Storage + Sync),
@@ -293,7 +309,7 @@ async fn first_commit(
     lock: &mut Lock,
     user_rules: &Path,
     message: &str,
-) -> Result<Option<String>, CreateError> {
+) -> Result<Option<FolderCommit>, CreateError> {
     if entry.access != Access::Sync || !storage.exists(&entry.folder).await {
         return Ok(None);
     }
@@ -314,22 +330,26 @@ async fn first_commit(
         user_rules,
         (None, &Manifest::default()),
         message,
+        FolderCheck::Warn,
     )
     .await?;
-    let Some(FolderCommit {
-        hash,
-        metadata_text,
-    }) = committed
-    else {
+    let Some(mut committed) = committed else {
         return Ok(None);
     };
-    append_commit(lock, &key, &hash);
-    if let Err(err) =
-        rewrite_metadata(storage, &store, entry, &hash, metadata_text.as_deref()).await
+    append_commit(lock, &key, &committed.hash);
+    let metadata_text = committed.metadata_text.take();
+    if let Err(err) = rewrite_metadata(
+        storage,
+        &store,
+        entry,
+        &committed.hash,
+        metadata_text.as_deref(),
+    )
+    .await
     {
         warn!("{METADATA_FILE} was left as it is: {err}");
     }
-    Ok(Some(hash))
+    Ok(Some(committed))
 }
 
 /// `path` with its symlinks followed as far as it exists, so a link to the

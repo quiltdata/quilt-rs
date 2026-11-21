@@ -11,6 +11,7 @@ use crate::io::remote::mocks::MockRemote;
 use crate::io::storage::LocalStorage;
 use crate::queue::Queue;
 use quilt_uri::Namespace;
+use quilt_uri::S3Uri;
 
 type Res = Result<(), Box<dyn std::error::Error>>;
 
@@ -179,7 +180,7 @@ async fn a_folder_outside_the_dataspace_is_created_in_the_local_registry() -> Re
 
     let created = world.create(&request).await?;
 
-    let commit = created.commit.ok_or("no commit")?;
+    let commit = created.commit.clone().ok_or("no commit")?;
     assert_eq!(created.entry.folder, folder);
     let local = world.domain().local();
     let namespace = Namespace::try_from("me/analysis")?;
@@ -194,6 +195,11 @@ async fn a_folder_outside_the_dataspace_is_created_in_the_local_registry() -> Re
     let lock = world.lock().await?;
     let new = key(Registry::Local("lab-mac".to_string()), "me/analysis");
     assert_eq!(lock.packages[&new].base, None);
+    assert_eq!(
+        created.warnings,
+        Vec::new(),
+        "a local registry has no workflows"
+    );
     Ok(())
 }
 
@@ -326,5 +332,95 @@ async fn what_is_not_a_new_package_is_refused() -> Res {
             "{why}"
         );
     }
+    Ok(())
+}
+
+/// A package created in a bucket whose default workflow refuses it is
+/// created anyway, its first commit recorded under the workflow with a
+/// warning that a push of it will be refused (#297's warn rulings).
+#[test(tokio::test)]
+async fn a_package_the_buckets_workflow_refuses_is_created_with_an_inconsistent_warning() -> Res {
+    let world = World::new()?;
+    let config = "version: \"1\"\ndefault_workflow: gate\nworkflows:\n  gate:\n    name: Gate\n    metadata_schema: meta\nschemas:\n  meta:\n    url: s3://b/schemas/meta.json\n";
+    for (uri, body) in [
+        ("s3://b/.quilt/workflows/config.yml", config),
+        (
+            "s3://b/schemas/meta.json",
+            r#"{"type": "object", "required": ["owner"]}"#,
+        ),
+    ] {
+        world
+            .remote
+            .put_object(None, &S3Uri::try_from(uri)?, body.as_bytes().to_vec())
+            .await?;
+    }
+    let folder = world.dataspace().join("team/new");
+    std::fs::create_dir_all(&folder)?;
+    std::fs::write(folder.join("a.txt"), b"alpha")?;
+
+    let created = world
+        .create(&Create::new("quilt+s3://b#package=team/new"))
+        .await?;
+
+    let commit = created.commit.clone().ok_or("no commit")?;
+    assert!(
+        matches!(
+            created.warnings.as_slice(),
+            [WorkflowWarning::Inconsistent { bucket, .. }] if bucket == "b"
+        ),
+        "{created:?}"
+    );
+    let new = key(Registry::S3("b".to_string()), "team/new");
+    assert_eq!(
+        world.lock().await?.packages[&new].commits,
+        vec![commit.clone()]
+    );
+    let store = world.domain().registry("b")?;
+    let namespace = Namespace::try_from("team/new")?;
+    let manifest = Manifest::from_path(
+        &world.storage,
+        &store.installed_manifest(&namespace, &commit),
+    )
+    .await?;
+    assert_eq!(
+        manifest
+            .header
+            .workflow
+            .and_then(|w| w.id)
+            .map(|id| id.id)
+            .as_deref(),
+        Some("gate")
+    );
+    assert!(
+        world.remote.current(LATEST).await?.is_none(),
+        "nothing is pushed"
+    );
+    Ok(())
+}
+
+/// A package created where the workflows config cannot be read is created
+/// with no workflow, and a warning that it went unchecked.
+#[test(tokio::test)]
+async fn a_package_whose_workflows_config_cannot_be_read_is_created_unchecked() -> Res {
+    let world = World::new()?;
+    world
+        .remote
+        .deny_reads("s3://b/.quilt/workflows/config.yml");
+    let folder = world.dataspace().join("team/new");
+    std::fs::create_dir_all(&folder)?;
+    std::fs::write(folder.join("a.txt"), b"alpha")?;
+
+    let created = world
+        .create(&Create::new("quilt+s3://b#package=team/new"))
+        .await?;
+
+    assert!(created.commit.is_some(), "{created:?}");
+    assert!(
+        matches!(
+            created.warnings.as_slice(),
+            [WorkflowWarning::Unchecked { bucket, .. }] if bucket == "b"
+        ),
+        "{created:?}"
+    );
     Ok(())
 }

@@ -37,6 +37,7 @@ use quilt_rs::dataspace::read::ReadOutcome;
 use quilt_rs::domain::DomainRoot;
 use quilt_rs::domain::LocalRegistry;
 use quilt_rs::domain::locate;
+use quilt_rs::flow::WorkflowWarning;
 use quilt_rs::io::remote::Remote;
 use quilt_rs::io::storage::LocalStorage;
 use quilt_uri::Namespace;
@@ -264,6 +265,7 @@ pub async fn create(
     .await?;
     let mut value = entry_json(&created.entry);
     value["commit"] = created.commit.into();
+    value["warnings"] = warnings_json(&created.warnings);
     Ok(value)
 }
 
@@ -302,6 +304,7 @@ pub async fn commit(
         .map_or((None, Vec::new()), |locked| (locked.base, locked.commits));
     value["base"] = base.into();
     value["commits"] = commits.into();
+    value["warnings"] = warnings_json(&committed.warnings);
     Ok(value)
 }
 
@@ -342,6 +345,29 @@ fn entry_json(entry: &Entry) -> Value {
         "access": entry.access.to_string(),
         "folder": entry.folder.display().to_string(),
     })
+}
+
+/// What checking a commit against its bucket's workflows found, each as
+/// `kind` (`inconsistent` or `unchecked`), `bucket`, `reason` and the
+/// `message` the CLI prints. The commit was recorded either way.
+fn warnings_json(warnings: &[WorkflowWarning]) -> Value {
+    warnings
+        .iter()
+        .map(|warning| {
+            let (kind, bucket, reason) = match warning {
+                WorkflowWarning::Inconsistent { bucket, reason } => {
+                    ("inconsistent", bucket, reason)
+                }
+                WorkflowWarning::Unchecked { bucket, reason } => ("unchecked", bucket, reason),
+            };
+            json!({
+                "kind": kind,
+                "bucket": bucket,
+                "reason": reason,
+                "message": warning.to_string(),
+            })
+        })
+        .collect()
 }
 
 /// The install's read, named as `quilt install --json` names it.

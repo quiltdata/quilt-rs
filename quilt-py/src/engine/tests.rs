@@ -191,6 +191,7 @@ async fn a_commit_is_kept_in_the_domain_and_listed_with_its_registry() -> Test {
     assert_eq!(committed["package"], "quilt+s3://b#package=team/raw");
     assert_eq!(committed["base"], Value::Null);
     assert_eq!(committed["commits"], json!([hash]));
+    assert_eq!(committed["warnings"], json!([]));
     let registries = list_registries(&domain).await?;
     assert_eq!(registries.first().map(String::as_str), Some("s3://b"));
     assert!(
@@ -251,6 +252,7 @@ async fn a_created_package_is_declared_under_sync_and_committed_once() -> Test {
     assert_eq!(created["package"], "quilt+s3://b#package=team/new");
     assert_eq!(created["access"], "sync");
     assert!(created["commit"].is_string(), "{created}");
+    assert_eq!(created["warnings"], json!([]));
     assert!(
         matches!(again, Err(Error::Create(CreateError::Declared(_)))),
         "{again:?}"
@@ -312,5 +314,97 @@ async fn an_install_whose_read_fails_is_an_error() -> Test {
     let contract = std::fs::read_to_string(space.join("data.toml"))?;
     assert!(contract.contains("sync"), "{contract}");
     assert!(!space.join("team/raw/a.txt").exists());
+    Ok(())
+}
+
+/// Makes bucket `b`'s default workflow `gate`, which requires `owner` in
+/// the package metadata.
+async fn gate(remote: &MockRemote) -> Test {
+    let config = "version: \"1\"\ndefault_workflow: gate\nworkflows:\n  gate:\n    name: Gate\n    metadata_schema: meta\nschemas:\n  meta:\n    url: s3://b/schemas/meta.json\n";
+    let schema = r#"{"type": "object", "required": ["owner"]}"#;
+    for (uri, body) in [
+        ("s3://b/.quilt/workflows/config.yml", config),
+        ("s3://b/schemas/meta.json", schema),
+    ] {
+        remote
+            .put_object(None, &S3Uri::try_from(uri)?, body.as_bytes().to_vec())
+            .await?;
+    }
+    Ok(())
+}
+
+/// A commit the bucket's workflow refuses is still made, and says so in
+/// `warnings` rather than raising.
+#[test(tokio::test)]
+async fn a_commit_the_workflow_refuses_is_made_and_warns() -> Test {
+    let dir = tempfile::TempDir::new()?;
+    let space = space(dir.path(), "[packages]\nsync = [\"team/raw\"]\n")?;
+    std::fs::create_dir_all(space.join("team/raw"))?;
+    std::fs::write(space.join("team/raw/a.txt"), b"alpha")?;
+    let domain = DomainRoot::new(dir.path().join("domain"));
+    let remote = MockRemote::default();
+    gate(&remote).await?;
+
+    let committed = commit(
+        &remote,
+        &domain,
+        &dir.path().join("home"),
+        &space,
+        "team/raw",
+        "first",
+    )
+    .await?;
+
+    assert!(committed["commit"].is_string(), "{committed}");
+    let warnings = committed["warnings"].as_array().ok_or("no warnings")?;
+    assert_eq!(warnings.len(), 1, "{committed}");
+    assert_eq!(warnings[0]["kind"], "inconsistent");
+    assert_eq!(warnings[0]["bucket"], "b");
+    assert!(
+        warnings[0]["reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("owner")),
+        "{committed}"
+    );
+    assert!(
+        warnings[0]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("s3://b")),
+        "{committed}"
+    );
+    Ok(())
+}
+
+/// A package created where the workflows config cannot be read is created,
+/// with an `unchecked` warning.
+#[test(tokio::test)]
+async fn a_package_created_unchecked_warns() -> Test {
+    let dir = tempfile::TempDir::new()?;
+    let space = space(dir.path(), "")?;
+    std::fs::create_dir_all(space.join("team/new"))?;
+    std::fs::write(space.join("team/new/a.txt"), b"alpha")?;
+    let remote = MockRemote::default();
+    remote.deny_reads("s3://b/.quilt/workflows/config.yml");
+    let request = CreateRequest {
+        uri: "quilt+s3://b#package=team/new".to_string(),
+        access: "sync".to_string(),
+        folder: None,
+        message: None,
+    };
+
+    let created = create(
+        &remote,
+        &DomainRoot::new(dir.path().join("domain")),
+        &dir.path().join("home"),
+        &space,
+        request,
+    )
+    .await?;
+
+    assert!(created["commit"].is_string(), "{created}");
+    let warnings = created["warnings"].as_array().ok_or("no warnings")?;
+    assert_eq!(warnings.len(), 1, "{created}");
+    assert_eq!(warnings[0]["kind"], "unchecked");
+    assert_eq!(warnings[0]["bucket"], "b");
     Ok(())
 }

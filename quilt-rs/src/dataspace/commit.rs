@@ -29,6 +29,7 @@ use crate::dataspace::read_all::usable_lock;
 use crate::dataspace::store::Store;
 use crate::dataspace::store::current_key;
 use crate::dataspace::store::name_local;
+use crate::dataspace::sync::FolderCheck;
 use crate::dataspace::sync::FolderCommit;
 use crate::dataspace::sync::append_commit;
 use crate::dataspace::sync::commit_folder;
@@ -36,6 +37,7 @@ use crate::dataspace::sync::manifest_at;
 use crate::dataspace::sync::pending_move;
 use crate::dataspace::sync::rewrite_metadata;
 use crate::domain::DomainRoot;
+use crate::flow::WorkflowWarning;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::manifest::Manifest;
@@ -51,6 +53,11 @@ pub struct Committed {
     pub commit: Option<String>,
     /// The package's lock entry after the commit.
     pub locked: Option<LockEntry>,
+    /// What checking the commit against its bucket's current workflows
+    /// config found: the commit is recorded either way. Empty where it
+    /// passed, nothing was committed, or the package is in a local registry,
+    /// which has no workflows.
+    pub warnings: Vec<WorkflowWarning>,
 }
 
 /// Why nothing was committed.
@@ -219,17 +226,20 @@ pub async fn commit(
         user_rules,
         (current_hash.as_deref(), &current),
         message,
+        FolderCheck::Warn,
     )
     .await?;
     let Some(FolderCommit {
         hash,
         metadata_text,
+        warnings,
     }) = committed
     else {
         return Ok(Committed {
             entry,
             commit: None,
             locked,
+            warnings: Vec::new(),
         });
     };
     if base.as_deref() == Some(hash.as_str()) {
@@ -246,10 +256,14 @@ pub async fn commit(
         warn!("{METADATA_FILE} was left as it is: {err}");
     }
     info!("✔️ Committed {key} as {hash}");
+    for warning in &warnings {
+        warn!("{warning}");
+    }
     Ok(Committed {
         entry,
         commit: Some(hash),
         locked: lock.packages.get(&key).cloned(),
+        warnings,
     })
 }
 

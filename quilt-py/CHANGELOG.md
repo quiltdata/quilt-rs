@@ -7,6 +7,10 @@
 
 ## [v3.0.0-dev]
 
+### Changed
+
+- `create` and `commit` return a `warnings` list: what checking the commit against its bucket's current workflows config found (`inconsistent` or `unchecked`), the commit being recorded either way. #1495
+
 ### Fixed
 
 - An install whose read fails (a `pre-read` hook, or the remote) raises `quilt.QuiltError` instead of returning a dict with `"outcome": "failed"`, so quilt3's `try`/`except` sees it. #1490

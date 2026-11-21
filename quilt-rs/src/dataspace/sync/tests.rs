@@ -2407,3 +2407,24 @@ async fn post_write_follows_a_blocked_revision_once_and_not_its_push_again() -> 
 }
 
 mod merge;
+
+/// The tick checks a commit's workflow at push only (#299's
+/// sync-keep-blocked): a workflows config it cannot read stops its commit,
+/// rather than recording one unchecked as `commit` and `create` do.
+#[test(tokio::test)]
+async fn a_tick_whose_workflows_config_cannot_be_read_commits_nothing() -> Res {
+    let world = World::filled(&[("a.txt", b"v1")]).await?;
+    world
+        .remote
+        .deny_reads("s3://b/.quilt/workflows/config.yml");
+    world.write("a.txt", "v2")?;
+
+    let outcome = world.tick().await?;
+
+    assert!(matches!(&outcome, EntrySync::Failed(_)), "{outcome:?}");
+    assert_eq!(
+        world.locked().await?,
+        Some(LockEntry::at(FIRST.to_string()))
+    );
+    Ok(())
+}
