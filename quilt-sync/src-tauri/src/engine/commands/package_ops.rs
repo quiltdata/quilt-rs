@@ -572,7 +572,9 @@ pub async fn package_set_sync_scope(
     folders: Vec<String>,
 ) -> Result<(), String> {
     if let Some(ds) = &s.dataspace {
-        return super::dataspace::set_scope(ds, &namespace, scope, folders).await;
+        // Boxed: keep's state machine is past the `large_futures` budget on
+        // Windows.
+        return Box::pin(super::dataspace::set_scope(ds, &namespace, scope, folders)).await;
     }
     let m = &*s.model;
     let namespace = quilt_uri::Namespace::try_from(namespace.as_str())
