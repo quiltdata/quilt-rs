@@ -748,6 +748,9 @@ async fn load_main_page_package(
 /// package is warned-and-skipped, per `package_list.rs:198-206` — one bad
 /// lineage must not blank the whole list.
 pub async fn get_main_page_packages(s: &Services) -> Result<MainPagePackages, String> {
+    if let Some(ds) = &s.dataspace {
+        return super::dataspace::main_page_packages(ds).await;
+    }
     let m = &*s.model;
     let roles = &*s.roles;
     let tracing = &*s.telemetry;
@@ -1079,6 +1082,9 @@ pub async fn refresh_main_page_package(
     s: &Services,
     namespace: String,
 ) -> Result<MainPagePackageRefresh, String> {
+    if let Some(ds) = &s.dataspace {
+        return super::dataspace::refresh_package(ds, &namespace).await;
+    }
     let m = &*s.model;
     let roles = &*s.roles;
     let tracing = &*s.telemetry;

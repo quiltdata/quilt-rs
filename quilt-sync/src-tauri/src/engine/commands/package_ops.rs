@@ -57,6 +57,9 @@ pub async fn package_commit(
     workflow: WorkflowIntent,
     uri: Option<S3PackageUri>,
 ) -> Result<CommitResponse, String> {
+    if let Some(ds) = &s.dataspace {
+        return super::dataspace::commit(ds, &namespace, &message).await;
+    }
     let m = &*s.model;
     let tracing = &*s.telemetry;
     let watcher = &s.watcher;
@@ -169,6 +172,9 @@ pub async fn certify_latest(
     namespace: String,
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
+    if let Some(ds) = &s.dataspace {
+        return super::dataspace::certify(ds, &namespace).await;
+    }
     let m = &*s.model;
     let tracing = &*s.telemetry;
     let watcher = &s.watcher;
@@ -219,6 +225,9 @@ pub async fn reset_local(
     namespace: String,
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
+    if let Some(ds) = &s.dataspace {
+        return super::dataspace::reset(ds, &namespace).await;
+    }
     let m = &*s.model;
     let tracing = &*s.telemetry;
     let watcher = &s.watcher;
@@ -365,6 +374,9 @@ pub async fn package_publish(
     namespace: String,
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
+    if let Some(ds) = &s.dataspace {
+        return super::dataspace::publish(ds, &namespace, super::dataspace::PUBLISH_MESSAGE).await;
+    }
     let m = &*s.model;
     let settings = &s.publish_settings;
     let tracing = &*s.telemetry;
@@ -459,6 +471,9 @@ pub async fn package_commit_and_push(
     workflow: WorkflowIntent,
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
+    if let Some(ds) = &s.dataspace {
+        return super::dataspace::commit_and_push(ds, &namespace, &message).await;
+    }
     let m = &*s.model;
     let tracing = &*s.telemetry;
     let watcher = &s.watcher;
@@ -556,6 +571,9 @@ pub async fn package_set_sync_scope(
     scope: KeepingScope,
     folders: Vec<String>,
 ) -> Result<(), String> {
+    if let Some(ds) = &s.dataspace {
+        return super::dataspace::set_scope(ds, &namespace, scope, folders).await;
+    }
     let m = &*s.model;
     let namespace = quilt_uri::Namespace::try_from(namespace.as_str())
         .map_err(|e: quilt_uri::UriError| e.to_string())?;
@@ -586,6 +604,9 @@ pub async fn package_pull(
     namespace: String,
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
+    if let Some(ds) = &s.dataspace {
+        return super::dataspace::pull(ds, &namespace, super::dataspace::PUBLISH_MESSAGE).await;
+    }
     Box::pin(pull_and_report(
         &*s.model,
         &s.telemetry,
@@ -741,6 +762,13 @@ pub async fn package_uninstall(
     uri: Option<S3PackageUri>,
     prune: bool,
 ) -> Result<String, String> {
+    if let Some(ds) = &s.dataspace {
+        let result = super::dataspace::uninstall(ds, &namespace, prune).await;
+        if result.is_ok() {
+            s.events.emit(PACKAGES_CHANGED_EVENT, ());
+        }
+        return result;
+    }
     let m = &*s.model;
     let tracing = &*s.telemetry;
     let msg_init = format!("Uninstalling package {namespace}");
@@ -793,6 +821,9 @@ fn settle_uninstall(
 /// consumes it — so the engine refuses there, which is why the surface
 /// offering this gates on the package having none.
 pub async fn undo_commit(s: &Services, namespace: String) -> Result<String, String> {
+    if let Some(ds) = &s.dataspace {
+        return super::dataspace::undo(ds, &namespace).await;
+    }
     let m = &*s.model;
     let namespace =
         quilt_uri::Namespace::try_from(namespace.as_str()).map_err(|e| e.to_string())?;
@@ -998,6 +1029,13 @@ pub async fn package_create(
     message: Option<String>,
 ) -> Result<String, String> {
     let source = source_folder(source)?;
+    if let Some(ds) = &s.dataspace {
+        let result = super::dataspace::create(ds, &namespace, source, message).await;
+        if result.is_ok() {
+            s.events.emit(PACKAGES_CHANGED_EVENT, ());
+        }
+        return result;
+    }
     let m = &*s.model;
     let tracing = &*s.telemetry;
     // A package created here has no remote yet, so it belongs to no deployment.
@@ -1281,6 +1319,13 @@ pub async fn handle_remote_package(
         .map_err(|e: quilt_uri::UriError| e.to_string())?;
     let namespace = s3_uri.namespace.clone();
     let _ = &tracing;
+    if let Some(ds) = &s.dataspace {
+        let result = super::dataspace::install(ds, &uri, namespace).await;
+        if result.is_ok() {
+            s.events.emit(PACKAGES_CHANGED_EVENT, ());
+        }
+        return result;
+    }
 
     let outcome = model::install_package_only(m, &s3_uri)
         .await

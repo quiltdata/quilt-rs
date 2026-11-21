@@ -280,6 +280,7 @@ impl Watcher {
         last_change: last_change::LastChange,
         action_needed: Arc<ActionNeeded>,
         outside: Arc<crate::engine::record::Outside>,
+        dataspace: Option<Arc<crate::engine::dataspace::Dataspace>>,
     ) -> (Self, watch::Receiver<SyncTrayStatus>) {
         let (tx, rx) = watch::channel(SyncTrayStatus::default());
         let aggregator = Arc::new(SyncTrayAggregator::new(tx));
@@ -342,6 +343,23 @@ impl Watcher {
                 tokio::time::sleep(cadence).await;
                 let _passes = task_inner.clocks.passes.lock().await;
                 task_inner.aggregator.note_tick_started();
+                // With the dataspace engine on, its runner ticks in place of
+                // the ref engine's: the Domain's dataspaces on autosync, each
+                // entry as its access says.
+                if let Some(ds) = &dataspace {
+                    let (pull, push) = {
+                        let settings = task_inner.settings.read().await;
+                        (settings.pull.enabled, settings.push.enabled)
+                    };
+                    match Box::pin(crate::engine::dataspace::autosync::tick(ds, pull, push)).await {
+                        Ok(_) => task_inner.aggregator.note_tick_ended_ok(),
+                        Err(err) => {
+                            warn!("autosync: dataspace tick error: {err}");
+                            task_inner.aggregator.note_tick_ended_err();
+                        }
+                    }
+                    continue;
+                }
                 // Box the tick future: it is the largest in the app and lives
                 // on the spawn task's stack across every iteration of this
                 // loop, so it exceeds the `large_futures` budget. See

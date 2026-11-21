@@ -29,6 +29,12 @@ pub struct ExperimentalSettings {
     /// turning it off leaves that file as it is.
     #[serde(default)]
     pub agent_tasks: bool,
+    /// Whether the engine runs on the dataspace API rather than the ref
+    /// API: see [`crate::engine::dataspace`]. Read once, when the app
+    /// starts, so a change takes effect at the next start. No page sets it:
+    /// it is for whoever edits the file, until the ref API is retired.
+    #[serde(default)]
+    pub dataspace: bool,
 }
 
 impl ExperimentalSettings {
@@ -85,7 +91,10 @@ mod tests {
     #[tokio::test]
     async fn roundtrip() -> Result<(), Error> {
         let dir = TempDir::new().unwrap();
-        let settings = ExperimentalSettings { agent_tasks: true };
+        let settings = ExperimentalSettings {
+            agent_tasks: true,
+            dataspace: true,
+        };
         settings.save(dir.path()).await?;
         assert_eq!(ExperimentalSettings::load(dir.path()).await?, settings);
         Ok(())
@@ -112,9 +121,25 @@ mod tests {
         Ok(())
     }
 
+    /// The dataspace engine is off unless the file turns it on: the ref
+    /// path stays the default.
+    #[tokio::test]
+    async fn the_dataspace_switch_is_off_unless_the_file_turns_it_on() -> Result<(), Error> {
+        let dir = TempDir::new().unwrap();
+        assert!(!ExperimentalSettings::load(dir.path()).await?.dataspace);
+        tokio::fs::write(dir.path().join(FILE_NAME), br#"{"agent_tasks":true}"#).await?;
+        assert!(!ExperimentalSettings::load(dir.path()).await?.dataspace);
+        tokio::fs::write(dir.path().join(FILE_NAME), br#"{"dataspace":true}"#).await?;
+        assert!(ExperimentalSettings::load(dir.path()).await?.dataspace);
+        Ok(())
+    }
+
     #[test]
     fn patch_leaves_untouched_flags_alone() {
-        let mut s = ExperimentalSettings { agent_tasks: true };
+        let mut s = ExperimentalSettings {
+            agent_tasks: true,
+            dataspace: true,
+        };
         s.patch(None);
         assert!(
             s.agent_tasks,
@@ -122,6 +147,7 @@ mod tests {
         );
         s.patch(Some(false));
         assert!(!s.agent_tasks);
+        assert!(s.dataspace, "the switch has no patch, so none resets it");
     }
 
     /// A retired experiment leaves its key in files written before it went.
@@ -138,7 +164,13 @@ mod tests {
         .await?;
 
         let loaded = ExperimentalSettings::load(dir.path()).await?;
-        assert_eq!(loaded, ExperimentalSettings { agent_tasks: true });
+        assert_eq!(
+            loaded,
+            ExperimentalSettings {
+                agent_tasks: true,
+                dataspace: false,
+            }
+        );
 
         loaded.save(dir.path()).await?;
         let written = tokio::fs::read_to_string(&path).await?;

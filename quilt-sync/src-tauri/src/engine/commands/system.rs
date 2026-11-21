@@ -145,6 +145,9 @@ async fn run_gc_command(m: &impl QuiltModel) -> Result<FreedSpace, String> {
 
 /// Delete what the domain holds for nothing, answering with what was freed.
 pub async fn run_gc(s: &Services) -> Result<FreedSpace, String> {
+    if let Some(ds) = &s.dataspace {
+        return super::dataspace::gc(ds).await;
+    }
     let m = &*s.model;
     run_gc_command(m).await
 }
@@ -173,6 +176,9 @@ async fn measure_storage_command(m: &impl QuiltModel) -> Result<StorageSize, Str
 /// Measure local storage without deleting anything or taking package locks;
 /// run only when the user asks.
 pub async fn measure_storage(s: &Services) -> Result<StorageSize, String> {
+    if let Some(ds) = &s.dataspace {
+        return super::dataspace::measure(ds).await;
+    }
     let m = &*s.model;
     measure_storage_command(m).await
 }
@@ -421,6 +427,9 @@ pub async fn setup(s: &Services, directory: String) -> Result<String, String> {
                 |home| home.display().to_string()
             )
         ));
+    }
+    if let Some(ds) = &s.dataspace {
+        return super::dataspace::setup(ds, &directory).await;
     }
     let m = &*s.model;
     let tracing = &*s.telemetry;
