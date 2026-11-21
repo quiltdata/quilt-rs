@@ -13,11 +13,13 @@
 //! of a default dataspace are here too (`gc`, `measure`, `rename`, `home`).
 
 pub mod autosync;
+pub mod browse;
 pub mod certify_latest;
 pub mod commit;
 pub mod conflict;
 pub mod contract;
 pub mod create;
+pub mod delete_stored;
 mod edit;
 pub mod gc;
 pub mod history;
@@ -40,6 +42,7 @@ pub mod remove_revisions;
 pub mod rename;
 mod replace;
 pub mod reset_to_latest;
+pub mod resolve;
 pub mod status;
 mod store;
 pub mod sync;
