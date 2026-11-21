@@ -51,7 +51,6 @@ existing entry from a new package. `set_package_metadata` replaces the
 package metadata in a working folder's `metadata.toml`, which its next
 commit publishes.
 
-
 ## Develop
 
 ```sh
