@@ -118,3 +118,32 @@ def test_a_local_package_is_created_with_no_warnings(tmp_path):
     )
     assert isinstance(created["commit"], str)
     assert created["warnings"] == []
+
+
+def test_deleting_a_package_no_store_holds_raises(tmp_path):
+    domain = tmp_path / "domain"
+    with pytest.raises(quilt.QuiltError, match="no local Package Store holds"):
+        quilt.delete("team/raw", domain=domain)
+    assert not domain.exists()
+
+
+def test_a_short_prefix_raises(tmp_path):
+    with pytest.raises(quilt.QuiltError, match="Invalid hash"):
+        quilt.resolve_hash(
+            "quilt+s3://b#package=team/raw", "12", domain=tmp_path / "domain"
+        )
+
+
+def test_browsing_a_package_never_read_raises(tmp_path):
+    space = tmp_path / "space"
+    space.mkdir()
+    (space / "data.toml").write_text(
+        'registry = "s3://b"\n[packages]\nsync = ["team/raw"]\n'
+    )
+    with pytest.raises(quilt.QuiltError, match="no revision in the lock"):
+        quilt.browse(
+            "team/raw",
+            dataspace=space,
+            domain=tmp_path / "domain",
+            home=tmp_path / "home",
+        )

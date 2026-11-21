@@ -13,6 +13,8 @@ use serde_json::json;
 use thiserror::Error;
 
 use quilt_rs::dataspace::EntryError;
+use quilt_rs::dataspace::browse::BrowseError;
+use quilt_rs::dataspace::browse::browse as browse_package;
 use quilt_rs::dataspace::commit::CommitError;
 use quilt_rs::dataspace::commit::commit as commit_package;
 use quilt_rs::dataspace::contract::Access;
@@ -25,6 +27,8 @@ use quilt_rs::dataspace::contract::UnknownAccess;
 use quilt_rs::dataspace::create::Create;
 use quilt_rs::dataspace::create::CreateError;
 use quilt_rs::dataspace::create::create as create_package;
+use quilt_rs::dataspace::delete_stored::DeleteError;
+use quilt_rs::dataspace::delete_stored::delete_stored;
 use quilt_rs::dataspace::home::default_dataspace as chosen_dataspace;
 use quilt_rs::dataspace::install::Install;
 use quilt_rs::dataspace::install::InstallError;
@@ -34,6 +38,8 @@ use quilt_rs::dataspace::list::stored;
 use quilt_rs::dataspace::lock::LockError;
 use quilt_rs::dataspace::lock::Writer;
 use quilt_rs::dataspace::read::ReadOutcome;
+use quilt_rs::dataspace::remove_revisions::LatestAfter;
+use quilt_rs::dataspace::resolve::resolve_hash as resolve_stored_hash;
 use quilt_rs::domain::DomainRoot;
 use quilt_rs::domain::LocalRegistry;
 use quilt_rs::domain::locate;
@@ -92,6 +98,12 @@ pub enum Error {
 
     #[error(transparent)]
     Create(#[from] CreateError),
+
+    #[error(transparent)]
+    Browse(#[from] BrowseError),
+
+    #[error(transparent)]
+    Delete(#[from] DeleteError),
 
     #[error(transparent)]
     Quilt(#[from] quilt_rs::Error),
@@ -306,6 +318,69 @@ pub async fn commit(
     value["commits"] = commits.into();
     value["warnings"] = warnings_json(&committed.warnings);
     Ok(value)
+}
+
+/// Opens `package` in `dataspace` at the revision its lock holds, the last
+/// local commit, else the base (quilt-specs#297's browse-revision), as
+/// `{"package", "registry", "name", "hash", "manifest"}`, the manifest as
+/// its JSON Lines text, which quilt3 loads as a `Package`. `package` is a
+/// URI, or a name the contract gives one package. Nothing in the dataspace
+/// is written.
+pub async fn browse(
+    remote: &impl Remote,
+    domain: &DomainRoot,
+    dataspace: &Path,
+    package: &str,
+) -> Result<Value> {
+    let storage = LocalStorage::new();
+    let local = domain.root().is_dir().then(|| domain.local());
+    let writer = writer(local.as_ref()).await?;
+    let contract = Contract::read(&storage, dataspace, writer.local_registry_name()).await?;
+    let key = package_key(&contract, package)?;
+    let browsed = browse_package(&storage, remote, domain, dataspace, &writer, &key).await?;
+    let key = browsed.entry.key();
+    Ok(json!({
+        "package": key.to_string(),
+        "registry": key.registry.spelled(),
+        "name": key.package.to_string(),
+        "hash": browsed.hash,
+        "manifest": browsed.manifest.to_jsonlines(),
+    }))
+}
+
+/// The one revision of the package `uri` names, in its store in `domain`,
+/// whose top hash starts with `prefix`, matched among the package's own
+/// installed manifests (quilt-specs#297's unit-local-hash). Nothing is
+/// written.
+pub async fn resolve_hash(domain: &DomainRoot, uri: &str, prefix: &str) -> Result<String> {
+    let key: PackageKey = uri.parse()?;
+    Ok(resolve_stored_hash(&LocalStorage::new(), domain, &key, prefix).await?)
+}
+
+/// Deletes the package `name` from every local Package Store of `domain`,
+/// or with `top_hash`, a whole hash or a unique prefix, that one revision
+/// (quilt-specs#297's delete ruling). Dataspaces are not touched, nor any
+/// bucket. Returns one `{"package", "registry", "revisions", "latest"}` per
+/// store, `latest` as `{"after": "kept" | "moved" | "removed", "hash"}`.
+pub async fn delete(domain: &DomainRoot, name: &str, top_hash: Option<&str>) -> Result<Vec<Value>> {
+    let namespace = Namespace::try_from(name)?;
+    let deleted = delete_stored(&LocalStorage::new(), domain, &namespace, top_hash).await?;
+    Ok(deleted
+        .into_iter()
+        .map(|store| {
+            let (after, hash) = match store.latest {
+                LatestAfter::Kept => ("kept", None),
+                LatestAfter::Moved(hash) => ("moved", Some(hash)),
+                _ => ("removed", None),
+            };
+            json!({
+                "package": store.key.to_string(),
+                "registry": store.key.registry.spelled(),
+                "revisions": store.revisions,
+                "latest": {"after": after, "hash": hash},
+            })
+        })
+        .collect())
 }
 
 /// The writer of a lock on this machine, naming `local`'s name, or none
