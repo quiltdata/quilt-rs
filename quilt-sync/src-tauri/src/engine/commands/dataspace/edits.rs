@@ -16,14 +16,11 @@ use crate::engine::commands::ScopePreview;
 use crate::engine::commands::StopIgnoringPreview;
 use crate::engine::commands::package_ops::remote_origin;
 use crate::engine::dataspace::Dataspace;
+use crate::engine::dataspace::fail;
 use crate::engine::error::Error;
 
 use super::namespace;
 use super::pages::PackageRead;
-
-fn failed(err: impl std::fmt::Display) -> Error {
-    Error::Dataspace(err.to_string())
-}
 
 /// Moves the package to `bucket`, with the catalog `origin` names: an edit
 /// of its entry in `data.toml`, its folder staying where it is (25.4). The
@@ -115,7 +112,7 @@ pub(in crate::engine::commands) async fn add_to_quiltignore<R: Remote + Sync>(
     let folder = folder(ds, text).await?;
     let line = pattern.lines().next().unwrap_or(pattern).to_string();
     let rules = ds.ignore_rules(&folder).await?;
-    quilt_rs::quiltignore::append_lines(&rules.file(Scope::Package), &[line]).map_err(failed)
+    quilt_rs::quiltignore::append_lines(&rules.file(Scope::Package), &[line]).map_err(fail)
 }
 
 /// The rules, the files of the current revision, and `path` checked not to
@@ -157,7 +154,7 @@ fn lines_for(
     };
     rules
         .stop_ignoring_lines(path, is_dir, tracked, scope)
-        .map_err(failed)
+        .map_err(fail)
 }
 
 /// The files `before` leaves out of `folder` and `after` does not, and
@@ -204,7 +201,7 @@ fn preview(
     let Some(lines) = lines_for(rules, tracked, path, is_dir, scope)? else {
         return Ok(None);
     };
-    let after = rules.with_lines(scope, &lines).map_err(failed)?;
+    let after = rules.with_lines(scope, &lines).map_err(fail)?;
     let (files, bytes) = brought_in(folder, rules, &after, tracked);
     Ok(Some(ScopePreview {
         lines,
@@ -250,7 +247,7 @@ pub(in crate::engine::commands) async fn stop_ignoring<R: Remote + Sync>(
     if let Some(lines) = &lines
         && !lines.is_empty()
     {
-        quilt_rs::quiltignore::append_lines(&rules.file(scope), lines).map_err(failed)?;
+        quilt_rs::quiltignore::append_lines(&rules.file(scope), lines).map_err(fail)?;
     }
     Ok(lines)
 }

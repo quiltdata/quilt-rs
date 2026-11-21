@@ -14,6 +14,7 @@ use std::path::PathBuf;
 
 use quilt_rs::LogicalKey;
 use quilt_rs::dataspace::contract::Access;
+use quilt_rs::dataspace::contract::CONTRACT_FILE;
 use quilt_rs::dataspace::contract::Entry;
 use quilt_rs::dataspace::contract::PackagePath;
 use quilt_rs::dataspace::contract::Paths;
@@ -58,6 +59,7 @@ use crate::engine::commands::package_entries::InstalledPackageEntryData;
 use crate::engine::commands::package_entries::RuleSourceData;
 use crate::engine::commit_message;
 use crate::engine::dataspace::Dataspace;
+use crate::engine::dataspace::fail;
 use crate::engine::error::Error;
 use crate::engine::publish_settings::PublishSettings;
 use crate::engine::quilt;
@@ -193,7 +195,7 @@ fn ignored_in(folder: &Path, rules: &Rules, tracked: &BTreeSet<PathBuf>) -> Igno
             if kind.is_dir() {
                 if let Some(by) = rules.dir_ignored_by(&key, tracked_dir(&key)) {
                     dirs.push((key, by));
-                } else if !item.path().join("data.toml").is_file() {
+                } else if !item.path().join(CONTRACT_FILE).is_file() {
                     queue.push(key);
                 }
             } else if kind.is_file()
@@ -255,7 +257,7 @@ async fn entries<R: Remote + Sync>(
         .collect();
     let (files, dirs) = tokio::task::spawn_blocking(move || ignored_in(&folder, &rules, &tracked))
         .await
-        .map_err(|err| Error::Dataspace(err.to_string()))?;
+        .map_err(fail)?;
     for (path, by, size) in files {
         entries.push(InstalledPackageEntryData {
             ignored_by: Some((&by).into()),
@@ -266,7 +268,7 @@ async fn entries<R: Remote + Sync>(
         (
             left.path.clone(),
             IgnoredByData {
-                pattern: quilt_rs::dataspace::contract::CONTRACT_FILE.to_string(),
+                pattern: CONTRACT_FILE.to_string(),
                 source: RuleSourceData::NestedDataspace,
             },
         )
@@ -635,7 +637,7 @@ pub(in crate::engine::commands) async fn download<R: Remote + Sync>(
             "{} has local commits not yet published; publish them, then download",
             entry.package
         ))),
-        KeepRead::Failed(err) => Err(Error::Dataspace(err.to_string())),
+        KeepRead::Failed(err) => Err(fail(err)),
         other => Err(Error::Dataspace(format!("{other:?}"))),
     }
 }

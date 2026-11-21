@@ -264,8 +264,7 @@ pub async fn keep(
 
     let entry = chosen(&contract, &key, request.from)?;
     let wanted = wanted(&entry, request, contract.default_catalog())?;
-    // A move keeps the package's lock entry under its old key: the tick
-    // finds the move there, and pushes it (25.10).
+    // The lock stays under the old key: the tick finds a move there and pushes it.
     let moved_to = wanted.key();
     if wanted == entry {
         return Ok(Kept {

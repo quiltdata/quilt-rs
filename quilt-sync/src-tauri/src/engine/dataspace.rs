@@ -65,7 +65,7 @@ use crate::engine::telemetry::prelude::*;
 /// The message of each revision the autosync tick commits.
 pub const AUTOSYNC_MESSAGE: &str = "Autosync";
 
-fn fail(err: impl Display) -> Error {
+pub(crate) fn fail(err: impl Display) -> Error {
     Error::Dataspace(err.to_string())
 }
 
