@@ -40,16 +40,24 @@ pub struct Output {
     synced: DataspaceSync,
 }
 
+/// Whether an entry's tick read whole and pushed what it had. Only a tick
+/// that ran can have; a read back into an emptied folder published nothing.
+fn is_synced(outcome: &EntrySync) -> bool {
+    let EntrySync::Ran { read, published } = outcome else {
+        return false;
+    };
+    read.as_ref().is_none_or(ReadReport::complete)
+        && matches!(
+            published,
+            None | Some(Published::Advanced { .. } | Published::Unchanged { .. })
+        )
+}
+
 /// One word for how an entry's tick ended, as `--json` gives it.
 fn outcome_word(outcome: &EntrySync) -> &'static str {
     match outcome {
-        EntrySync::Ran { read, published } => {
-            let read_whole = read.as_ref().is_none_or(ReadReport::complete);
-            let pushed = matches!(
-                published,
-                None | Some(Published::Advanced { .. } | Published::Unchanged { .. })
-            );
-            if read_whole && pushed {
+        EntrySync::Ran { .. } => {
+            if is_synced(outcome) {
                 "synced"
             } else {
                 "incomplete"
@@ -71,6 +79,13 @@ fn outcome_text(outcome: &EntrySync) -> String {
             let mut said = Vec::new();
             if let Some(read) = read {
                 said.push(format!("read {}", read.revision));
+                if !read.complete() {
+                    said.push(format!(
+                        "{} files missing from the remote and {} not matching their hash, not placed",
+                        read.skipped.len(),
+                        read.hash_mismatch.len()
+                    ));
+                }
             }
             match published {
                 Some(Published::Advanced { revision, .. }) => {
@@ -157,13 +172,13 @@ impl Render for Output {
         })
     }
 
-    /// Whether every entry ran to the end: read whole where it read, and
-    /// pushed where it published.
+    /// Whether every entry synced; one that was blocked, diverged, busy,
+    /// failed or read back does not count.
     fn completed(&self) -> bool {
         self.synced
             .entries
             .iter()
-            .all(|(_, outcome)| outcome_word(outcome) == "synced")
+            .all(|(_, outcome)| is_synced(outcome))
     }
 }
 
@@ -206,6 +221,26 @@ mod tests {
     use quilt_rs::io::remote::mocks::MockRemote;
     use quilt_rs::manifest::Manifest;
     use quilt_rs::manifest::ManifestRow;
+
+    /// A tick that read with a file the remote lost is not synced, and says so.
+    #[test]
+    fn an_incomplete_read_is_not_synced_and_names_what_was_missed() {
+        let mut read = ReadReport::default();
+        let whole = EntrySync::Ran {
+            read: Some(read.clone()),
+            published: None,
+        };
+        assert!(is_synced(&whole));
+        read.skipped.push(PathBuf::from("a.txt"));
+        let partial = EntrySync::Ran {
+            read: Some(read),
+            published: None,
+        };
+        assert!(!is_synced(&partial));
+        assert_eq!(outcome_word(&partial), "incomplete");
+        assert!(outcome_text(&partial).contains("1 files missing"));
+        assert!(!is_synced(&EntrySync::Busy));
+    }
     use quilt_uri::S3Uri;
 
     const FIRST: &str = "1111111111111111111111111111111111111111111111111111111111111111";

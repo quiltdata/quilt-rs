@@ -195,7 +195,7 @@ async fn each_family_runs_on_the_default_dataspace_and_the_located_domain() -> R
     std::fs::create_dir_all(&folder)?;
     std::fs::write(folder.join("a.txt"), b"alpha")?;
 
-    // Keep and create.
+    // create
     let created = run(
         &places,
         &["create", key, "--source", &folder.to_string_lossy()],
@@ -204,7 +204,7 @@ async fn each_family_runs_on_the_default_dataspace_and_the_located_domain() -> R
     assert!(created["commit"].is_string(), "{created}");
     assert!(std::fs::read_to_string(space.join("data.toml"))?.contains("team/new"));
 
-    // Commit, undo, reset, certify and remove.
+    // commit
     std::fs::write(folder.join("a.txt"), b"beta")?;
     let committed = run(&places, &["commit", "-m", "second", "-n", "team/new"]).await?;
     let commit = committed["commit"]
@@ -212,12 +212,11 @@ async fn each_family_runs_on_the_default_dataspace_and_the_located_domain() -> R
         .ok_or(Error::Test(format!("no commit: {committed}")))?;
     assert_eq!(committed["commits"].as_array().map(Vec::len), Some(2));
 
-    // Status, list and log.
+    // list
     let listed = run(&places, &["list"]).await?;
     assert_eq!(listed["packages"][0]["unpushed"], 2, "{listed}");
 
-    // gc, storage and the local registry: the Domain located holds the
-    // commits.
+    // storage; the located Domain holds the commits.
     let measured = run(&places, &["storage"]).await?;
     assert!(
         measured["total_bytes"].as_u64().unwrap_or(0) > 0,
@@ -230,7 +229,7 @@ async fn each_family_runs_on_the_default_dataspace_and_the_located_domain() -> R
         domain.root().display()
     );
 
-    // Install, uninstall, read and publish.
+    // uninstall
     run(&places, &["uninstall", "-n", "team/new"]).await?;
     assert!(!std::fs::read_to_string(space.join("data.toml"))?.contains("team/new"));
     Ok(())
