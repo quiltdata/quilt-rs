@@ -34,6 +34,13 @@ async fn setting_a_remote_moves_a_local_package_to_the_bucket() -> Res {
         Some(Host::from_str("example.quiltdata.com")?)
     );
     assert_eq!(entry.folder, folder);
+    // Until then the page reads the package where its commits are, and still
+    // names the bucket, so the commit page keeps Publish.
+    let pending = super::super::pages::package_page(&ds, "me/mine").await?;
+    assert_eq!(
+        pending.header.uri.as_ref().map(|uri| uri.bucket.as_str()),
+        Some("b2")
+    );
     // The next sync finds the move and publishes it (25.10).
     ds.sync("moved").await?;
     let moved = ds.entry_status(&mine, true).await?;

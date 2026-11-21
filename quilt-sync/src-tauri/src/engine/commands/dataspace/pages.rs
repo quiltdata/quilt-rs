@@ -74,6 +74,9 @@ const UNREACHED: &str = "The bucket couldn't be reached to compare the two revis
 /// lock names as current, empty where it names none.
 pub(super) struct PackageRead {
     pub status: EntryStatus,
+    /// The entry as `data.toml` declares it: the bucket of a package whose
+    /// move there has not landed, which the status reads under its local key.
+    declared: Entry,
     pub current: Manifest,
 }
 
@@ -83,12 +86,17 @@ impl PackageRead {
         namespace: &Namespace,
         fetch: bool,
     ) -> Result<Self, Error> {
+        let declared = ds.entry(namespace).await?;
         let status = ds.entry_status(namespace, fetch).await?;
         let current = match &status.hashes.current {
             Some(hash) => ds.revision_manifest(&status.entry, hash).await?,
             None => Manifest::default(),
         };
-        Ok(Self { status, current })
+        Ok(Self {
+            status,
+            declared,
+            current,
+        })
     }
 
     fn entry(&self) -> &Entry {
@@ -114,19 +122,19 @@ impl PackageRead {
     }
 
     fn uri(&self) -> Option<quilt_uri::S3PackageUri> {
-        let Registry::S3(bucket) = &self.entry().registry else {
+        let Registry::S3(bucket) = &self.declared.registry else {
             return None;
         };
         Some(quilt_uri::S3PackageUri {
-            catalog: self.entry().catalog.clone(),
+            catalog: self.declared.catalog.clone(),
             bucket: bucket.clone(),
-            namespace: self.entry().package.clone(),
+            namespace: self.declared.package.clone(),
             revision: self
                 .status
                 .hashes
                 .base
                 .clone()
-                .map_or_else(|| self.entry().revision.clone(), RevisionPointer::Hash),
+                .map_or_else(|| self.declared.revision.clone(), RevisionPointer::Hash),
             path: None,
         })
     }

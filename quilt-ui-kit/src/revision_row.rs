@@ -138,6 +138,8 @@ pub fn RevisionRow(
     #[prop(optional)]
     trailing: Option<AnyView>,
 ) -> impl IntoView {
+    // The commands send 0 for a time they could not read, which is not 1970.
+    let at = at.filter(|at| *at > 0.0);
     // An empty message is reachable — nothing stops a publish without one — and
     // it must not render as a pair of bare quotes.
     let quoted = {
