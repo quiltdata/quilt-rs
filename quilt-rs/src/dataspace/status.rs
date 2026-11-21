@@ -465,37 +465,75 @@ impl<S: Storage + Sync, R: Remote> Reading<'_, S, R> {
         entry: &Entry,
         hash: &str,
     ) -> Result<Manifest, EntryError> {
-        match store {
-            Some(Store::Local(local)) => {
-                let installed = local.installed_manifest(&entry.package, hash);
-                let path = if self.storage.exists(&installed).await {
-                    installed
-                } else {
-                    local.revision(hash)
-                };
-                return Ok(Manifest::from_path(self.storage, &path).await?);
-            }
-            Some(Store::Bucket(store)) => {
-                let installed = store.installed_manifest(&entry.package, hash);
-                for path in [installed, store.cached_manifest(hash)] {
-                    if self.storage.exists(&path).await {
-                        return Ok(Manifest::from_path(self.storage, &path).await?);
-                    }
+        manifest_in(self.storage, self.remote, store, entry, hash).await
+    }
+}
+
+/// The manifest of the revision `hash` of `entry`'s package, as [`status`]
+/// reads it: from `domain`'s store for the package, where it holds one, else
+/// from the bucket. Nothing is cached. A front end reads a revision's rows
+/// with it, as the file list of a package's page.
+pub async fn revision_manifest(
+    storage: &(impl Storage + Sync),
+    remote: &impl Remote,
+    domain: Option<&DomainRoot>,
+    entry: &Entry,
+    hash: &str,
+) -> Result<Manifest, EntryError> {
+    let names = match domain {
+        Some(domain) => domain.local().read_names(storage).await.ok().flatten(),
+        None => None,
+    };
+    let store = match (&entry.registry, domain) {
+        (Registry::S3(bucket), Some(domain)) => Some(Store::Bucket(domain.registry(bucket)?)),
+        (Registry::Local(name), Some(domain))
+            if names.as_ref().is_some_and(|names| names.answers_to(name)) =>
+        {
+            Some(Store::Local(domain.local()))
+        }
+        (Registry::Local(_), _) => return Err(EntryError::LocalRegistry),
+        (_, None) => None,
+    };
+    manifest_in(storage, remote, store.as_ref(), entry, hash).await
+}
+
+async fn manifest_in(
+    storage: &(impl Storage + Sync),
+    remote: &impl Remote,
+    store: Option<&Store>,
+    entry: &Entry,
+    hash: &str,
+) -> Result<Manifest, EntryError> {
+    match store {
+        Some(Store::Local(local)) => {
+            let installed = local.installed_manifest(&entry.package, hash);
+            let path = if storage.exists(&installed).await {
+                installed
+            } else {
+                local.revision(hash)
+            };
+            return Ok(Manifest::from_path(storage, &path).await?);
+        }
+        Some(Store::Bucket(store)) => {
+            let installed = store.installed_manifest(&entry.package, hash);
+            for path in [installed, store.cached_manifest(hash)] {
+                if storage.exists(&path).await {
+                    return Ok(Manifest::from_path(storage, &path).await?);
                 }
             }
-            None => {}
         }
-        let Registry::S3(bucket) = &entry.registry else {
-            return Err(EntryError::LocalRegistry);
-        };
-        let uri = ManifestUri {
-            origin: entry.catalog.clone(),
-            bucket: bucket.clone(),
-            namespace: entry.package.clone(),
-            hash: hash.to_string(),
-        };
-        Ok(fetch_jsonl(self.remote, &uri).await?)
+        None => {}
     }
+    let Registry::S3(bucket) = &entry.registry else {
+        return Err(EntryError::LocalRegistry);
+    };
+    let uri = ManifestUri {
+        origin: entry.catalog.clone(),
+        bucket: bucket.clone(),
+        namespace: entry.package.clone(),
+        hash: hash.to_string(),
+    };
+    Ok(fetch_jsonl(remote, &uri).await?)
 }
 
 /// The verdict over `hashes`, with `unpushed` the lock's commits; see

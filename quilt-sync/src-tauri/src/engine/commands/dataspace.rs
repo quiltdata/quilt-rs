@@ -586,5 +586,34 @@ pub async fn reattach_commit(
     )
 }
 
+/// This machine's local registry's name; `None` with the dataspace engine
+/// off, and the settings page then draws no rename.
+pub async fn get_local_registry(s: &Services) -> Result<Option<String>, String> {
+    match &s.dataspace {
+        Some(ds) => ds
+            .local_name()
+            .await
+            .map(Some)
+            .map_err(|err| err.to_string()),
+        None => Ok(None),
+    }
+}
+
+/// Renames this machine's local registry (25.10); the old name stays an
+/// alias, so contracts and locks naming it still read. The engine's own
+/// writer takes the new name at the next start.
+pub async fn rename_local_registry(s: &Services, name: String) -> Result<String, String> {
+    let ds = s.dataspace.as_ref().ok_or(ENGINE_OFF)?;
+    let result = edits::rename(ds, &name).await;
+    Notify::new(format!("Renaming the local registry to {name}")).map(
+        result,
+        format!("Renamed the local registry to {name}"),
+        |err| format!("Failed to rename the local registry: {err}"),
+    )
+}
+
+pub(super) mod edits;
+pub(super) mod pages;
+
 #[cfg(test)]
 mod tests;

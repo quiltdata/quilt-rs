@@ -1259,7 +1259,7 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
         let home_dir = f.home_dir.clone();
         let storage_card = move || {
             let home_dir = home_dir.clone();
-            match freed.get() {
+            let card = match freed.get() {
                 Some(words) => view! {
                     <StorageCard
                         home_dir=home_dir
@@ -1283,7 +1283,13 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
                     />
                 }
                 .into_any(),
+            };
+            // Drawn only with the dataspace engine on.
+            view! {
+                {card}
+                <super::super::local_registry::LocalRegistryCard />
             }
+            .into_any()
         };
         view! {
             <SettingsLayout

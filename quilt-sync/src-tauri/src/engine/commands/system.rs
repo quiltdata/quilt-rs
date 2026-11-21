@@ -95,9 +95,14 @@ pub async fn open_home_dir(s: &Services) -> Result<String, String> {
     let msg_ok = "Successfully opened home directory".to_string();
     let msg_err = |err: &Error| format!("Failed to open home directory: {err}");
 
+    // With the dataspace engine on, home is the default dataspace.
+    let result = match &s.dataspace {
+        Some(ds) => opener::open_browser(ds.dataspace()).map_err(Error::from),
+        None => open_home_dir_command(m).await,
+    };
     Notify::new(msg_init)
         .on_success(tracing, MixpanelEvent::HomeDirOpened)
-        .map(open_home_dir_command(m).await, msg_ok, msg_err)
+        .map(result, msg_ok, msg_err)
 }
 
 fn open_data_dir_command(local_data_dir: &std::path::Path) -> Result<(), Error> {
@@ -262,17 +267,19 @@ pub async fn reveal_in_file_browser(
     let msg_init = format!("Revealing {path} in file browser for {namespace}");
     let msg_ok = format!("Successfully opened {path} in file browser");
     let msg_err = |err: &Error| format!("Failed to open directory: {err}");
+    let result = match &s.dataspace {
+        Some(ds) => super::dataspace::edits::file_path(ds, &namespace, &path)
+            .await
+            .and_then(|file| Ok(opener::reveal(&file)?)),
+        None => reveal_in_file_browser_command(m, &namespace, &path).await,
+    };
 
     Notify::new(msg_init)
         .on_success(
             tracing,
             MixpanelEvent::FileRevealed(PackageFileEvent::for_uri(uri.as_ref())),
         )
-        .map(
-            reveal_in_file_browser_command(m, &namespace, &path).await,
-            msg_ok,
-            msg_err,
-        )
+        .map(result, msg_ok, msg_err)
 }
 
 async fn open_in_file_browser_command(m: &model::Model, namespace: &str) -> Result<(), Error> {
@@ -291,17 +298,19 @@ pub async fn open_in_file_browser(
     let msg_init = format!("Opening file manager for {namespace}");
     let msg_ok = format!("Successfully opened file manager for {namespace}");
     let msg_err = |err: &Error| format!("Failed to open file manager: {err}");
+    let result = match &s.dataspace {
+        Some(ds) => super::dataspace::edits::folder(ds, &namespace)
+            .await
+            .and_then(|folder| Ok(opener::open_browser(&folder)?)),
+        None => open_in_file_browser_command(m, &namespace).await,
+    };
 
     Notify::new(msg_init)
         .on_success(
             tracing,
             MixpanelEvent::PackageDirOpened(PackageFileEvent::for_uri(uri.as_ref())),
         )
-        .map(
-            open_in_file_browser_command(m, &namespace).await,
-            msg_ok,
-            msg_err,
-        )
+        .map(result, msg_ok, msg_err)
 }
 
 async fn open_in_default_application_command(
@@ -325,17 +334,19 @@ pub async fn open_in_default_application(
     let msg_init = format!("Opening {path} with default application for {namespace}");
     let msg_ok = format!("Successfully opened {path} with default application");
     let msg_err = |err: &Error| format!("Failed to open application: {err}");
+    let result = match &s.dataspace {
+        Some(ds) => super::dataspace::edits::file_path(ds, &namespace, &path)
+            .await
+            .and_then(|file| Ok(opener::open(&file)?)),
+        None => open_in_default_application_command(m, &namespace, &path).await,
+    };
 
     Notify::new(msg_init)
         .on_success(
             tracing,
             MixpanelEvent::DefaultApplicationOpened(PackageFileEvent::for_uri(uri.as_ref())),
         )
-        .map(
-            open_in_default_application_command(m, &namespace, &path).await,
-            msg_ok,
-            msg_err,
-        )
+        .map(result, msg_ok, msg_err)
 }
 
 /// Where a package's file is on disk: the package's home joined with its
@@ -360,8 +371,11 @@ pub async fn package_file_path(
     path: quilt::LogicalKey,
 ) -> Result<String, String> {
     let m = &*s.model;
-    package_file_path_command(m, &namespace, &path)
-        .await
+    let found = match &s.dataspace {
+        Some(ds) => super::dataspace::edits::file_path(ds, &namespace, &path).await,
+        None => package_file_path_command(m, &namespace, &path).await,
+    };
+    found
         .map(|p| p.display().to_string())
         .map_err(|err| err.to_string())
 }

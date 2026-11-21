@@ -42,6 +42,7 @@ use quilt_rs::dataspace::measure::DomainSize;
 use quilt_rs::dataspace::prune::Pruned;
 use quilt_rs::dataspace::reattach::Unattached;
 use quilt_rs::dataspace::remove_revisions::Removed;
+use quilt_rs::dataspace::rename::Renamed;
 use quilt_rs::dataspace::reset_to_latest::Reset;
 use quilt_rs::dataspace::status::DataspaceStatus;
 use quilt_rs::dataspace::status::EntryStatus;
@@ -53,6 +54,7 @@ use quilt_rs::io::remote::Remote;
 use quilt_rs::io::remote::RemoteS3;
 use quilt_rs::io::storage::LocalStorage;
 use quilt_rs::io::storage::Storage;
+use quilt_rs::manifest::Manifest;
 use quilt_rs::queue::Queue;
 use quilt_rs::quiltignore::Rules;
 use quilt_uri::Host;
@@ -601,6 +603,39 @@ impl<R: Remote + Sync> Dataspace<R> {
     /// decisions the next read or sync validates and takes.
     pub async fn write_conflicts(&self, map: &ConflictMap) -> Result<(), Error> {
         map.write(&self.storage, &self.dataspace())
+            .await
+            .map_err(fail)
+    }
+
+    /// The manifest of revision `hash` of `entry`'s package: from the
+    /// Domain's store where it holds one, else from the bucket.
+    pub async fn revision_manifest(&self, entry: &Entry, hash: &str) -> Result<Manifest, Error> {
+        quilt_rs::dataspace::status::revision_manifest(
+            &self.storage,
+            &*self.remote,
+            Some(&self.domain),
+            entry,
+            hash,
+        )
+        .await
+        .map_err(fail)
+    }
+
+    /// This machine's local registry's name.
+    pub async fn local_name(&self) -> Result<String, Error> {
+        Ok(self
+            .domain
+            .local()
+            .names(&self.storage)
+            .await
+            .map_err(fail)?
+            .name)
+    }
+
+    /// Renames this machine's local registry, its old name kept as an alias,
+    /// and moves what the queue keeps under any name it had (25t item 8).
+    pub async fn rename(&self, name: &str) -> Result<Renamed, Error> {
+        quilt_rs::dataspace::rename::rename(&self.storage, &self.domain, self.runner.queue(), name)
             .await
             .map_err(fail)
     }

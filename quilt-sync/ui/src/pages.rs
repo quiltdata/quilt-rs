@@ -6,6 +6,7 @@ mod decisions;
 pub mod error;
 mod installed_package;
 mod json_editor;
+mod local_registry;
 pub mod login;
 mod main_page;
 mod path_field;

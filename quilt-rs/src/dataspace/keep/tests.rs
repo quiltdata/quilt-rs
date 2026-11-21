@@ -1,6 +1,7 @@
 use super::*;
 
 use std::path::PathBuf;
+use std::str::FromStr;
 
 use test_log::test;
 
@@ -510,5 +511,60 @@ async fn no_change_writes_nothing() -> Res {
         matches!(missing, Err(KeepError::NotDeclared(_))),
         "{missing:?}"
     );
+    Ok(())
+}
+
+/// Moving a package to another registry is an edit of its declaration: the
+/// folder stays where it was, written as the entry's `folder`, nothing is
+/// read, and the lock keeps the package under its old key, where the tick
+/// finds the move (25.4, 25.10). A catalog is set, then taken off.
+#[test(tokio::test)]
+async fn a_move_to_another_registry_keeps_the_folder_and_the_lock() -> Res {
+    let (storage, remote) = (MockStorage::default(), MockRemote::default());
+    publish(&remote, FIRST, &[("a.txt", b"alpha")]).await?;
+    let root = empty(&storage)?;
+    installed(&storage, &remote, &root, Access::Sync, &[]).await?;
+    let host = Host::from_str("example.quiltdata.com")?;
+
+    let kept = run(
+        &storage,
+        &remote,
+        &root,
+        &Keep {
+            registry: Some(Registry::S3("c".to_string())),
+            catalog: Some(Some(host.clone())),
+            ..Keep::new(raw())
+        },
+    )
+    .await?;
+
+    assert!(kept.declared);
+    assert!(matches!(kept.read, KeepRead::Nothing), "{kept:?}");
+    assert_eq!(kept.entry.registry, Registry::S3("c".to_string()));
+    assert_eq!(kept.entry.catalog, Some(host));
+    assert_eq!(kept.entry.folder, root.join("team/raw"));
+    let text = std::fs::read_to_string(root.join(CONTRACT_FILE))?;
+    assert!(text.contains("registry = \"s3://c\""), "{text}");
+    assert!(text.contains("folder = \"team/raw\""), "{text}");
+    let lock = lock(&storage, &root).await?;
+    assert_eq!(lock.packages[&raw()], LockEntry::at(FIRST));
+
+    let moved = PackageKey {
+        registry: Registry::S3("c".to_string()),
+        ..raw()
+    };
+    let kept = run(
+        &storage,
+        &remote,
+        &root,
+        &Keep {
+            catalog: Some(None),
+            ..Keep::new(moved)
+        },
+    )
+    .await?;
+    assert_eq!(kept.entry.catalog, None);
+    let text = std::fs::read_to_string(root.join(CONTRACT_FILE))?;
+    assert!(!text.contains("catalog"), "{text}");
     Ok(())
 }

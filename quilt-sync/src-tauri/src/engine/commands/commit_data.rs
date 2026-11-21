@@ -189,7 +189,7 @@ pub enum CommitWorkflows {
 /// Format the catalog HTTPS link for an S3 object, or `None` when there is no
 /// catalog host to link against. Reuses [`S3Uri::display_for_host`] — the same
 /// on-demand catalog-link formatting the rest of the app uses.
-fn catalog_object_url(uri: &S3Uri, host: Option<&Host>) -> Option<String> {
+pub(super) fn catalog_object_url(uri: &S3Uri, host: Option<&Host>) -> Option<String> {
     let host = host?;
     uri.display_for_host(host).ok().map(|u| u.to_string())
 }
@@ -567,7 +567,7 @@ const JUNK_NAMES_SHOWN: usize = 3;
 
 /// The system files among the changes, uncapped, or `None` when there are
 /// none.
-fn junk_summary(junky: &[(std::path::PathBuf, String)]) -> Option<JunkSummary> {
+pub(super) fn junk_summary(junky: &[(std::path::PathBuf, String)]) -> Option<JunkSummary> {
     let mut sorted: Vec<_> = junky.iter().collect();
     sorted.sort_by(|a, b| a.0.cmp(&b.0));
     let (first_path, first_pattern) = sorted.first()?;
@@ -595,7 +595,7 @@ fn junk_summary(junky: &[(std::path::PathBuf, String)]) -> Option<JunkSummary> {
 }
 
 /// What the new and changed files weigh; a deletion adds nothing.
-fn changed_bytes(changes: &quilt::lineage::ChangeSet) -> u64 {
+pub(super) fn changed_bytes(changes: &quilt::lineage::ChangeSet) -> u64 {
     changes
         .values()
         .map(|change| match change {
@@ -615,6 +615,11 @@ pub async fn get_commit_data(s: &Services, namespace: String) -> Result<CommitDa
         .map_err(|e: quilt_uri::UriError| e.to_string())?;
 
     let settings = publish_settings.read().await.clone();
+    if let Some(ds) = &s.dataspace {
+        return super::dataspace::pages::commit_data(ds, &settings, &namespace.to_string())
+            .await
+            .map_err(|e| e.to_frontend_string());
+    }
     get_commit_data_from_model(m, roles, tracing, &settings, &namespace)
         .await
         .map_err(|e| e.to_frontend_string())
@@ -640,6 +645,11 @@ pub async fn get_bucket_workflows(
     host: Option<String>,
     bucket: String,
 ) -> Result<CommitWorkflows, String> {
+    // A dataspace's move to a bucket takes no workflow: the bucket's is
+    // applied when it is published.
+    if s.dataspace.is_some() {
+        return Ok(CommitWorkflows::NotConfigured);
+    }
     let m = &*s.model;
     let host = match host {
         Some(host) => Some(quilt_uri::Host::from_str(&host).map_err(|e| e.to_string())?),
@@ -877,6 +887,11 @@ pub async fn load_workflow_rules(
     workflow_id: String,
     refresh: bool,
 ) -> Result<bool, String> {
+    // A dataspace commit takes no workflow, so there are no rules to check
+    // the form against.
+    if s.dataspace.is_some() {
+        return Ok(false);
+    }
     let m = &*s.model;
     let cache = &s.workflow_rules;
     cache
