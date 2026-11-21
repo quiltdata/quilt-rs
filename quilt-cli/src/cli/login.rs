@@ -1,7 +1,8 @@
 use quilt_uri::Host;
 
+use quilt_rs::io::remote::RemoteS3;
+
 use crate::cli::Error;
-use crate::cli::model::Commands;
 use crate::cli::output::Render;
 use crate::cli::output::Std;
 
@@ -38,15 +39,13 @@ impl Render for Output {
     }
 }
 
-pub async fn command(m: impl Commands, args: Input) -> Std {
-    Std::from_result(m.login(args).await)
+/// Signs in on `remote`, which keeps its credentials in the application's
+/// folder: no domain is opened.
+pub async fn command(remote: &RemoteS3, args: Input) -> Std {
+    Std::from_result(model(remote, args).await)
 }
 
-pub async fn model(
-    local_domain: &quilt_rs::LocalDomain,
-    Input { code, host }: Input,
-) -> Result<Output, Error> {
-    let remote = local_domain.get_remote();
+async fn model(remote: &RemoteS3, Input { code, host }: Input) -> Result<Output, Error> {
     remote.login(&host, code).await?;
     Ok(Output { host })
 }

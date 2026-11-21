@@ -1040,6 +1040,10 @@ mod tests {
             &self.quilt
         }
 
+        fn remote(&self) -> Arc<crate::engine::quilt::io::remote::RemoteS3> {
+            crate::engine::model::mocks::nowhere().remote_handle()
+        }
+
         async fn get_installed_packages_list(
             &self,
         ) -> Result<Vec<crate::engine::quilt::InstalledPackage>, crate::engine::error::Error>

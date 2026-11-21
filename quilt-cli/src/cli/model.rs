@@ -17,11 +17,9 @@ use crate::cli::home;
 use crate::cli::install;
 use crate::cli::keep;
 use crate::cli::list;
-use crate::cli::login;
 use crate::cli::pull;
 use crate::cli::push;
 use crate::cli::remove_revisions;
-use crate::cli::role;
 use crate::cli::status;
 use crate::cli::undo_commit;
 use crate::cli::uninstall;
@@ -81,11 +79,6 @@ pub trait Commands {
         history::model(local_domain, args).await
     }
 
-    async fn login(&self, args: login::Input) -> Result<login::Output, Error> {
-        let local_domain = self.get_local_domain();
-        login::model(local_domain, args).await
-    }
-
     async fn pull(&self, args: pull::Input) -> Result<pull::Output, Error> {
         let local_domain = self.get_local_domain();
         pull::model(local_domain, args).await
@@ -107,11 +100,6 @@ pub trait Commands {
     async fn undo_commit(&self, args: undo_commit::Input) -> Result<undo_commit::Output, Error> {
         let local_domain = self.get_local_domain();
         undo_commit::model(local_domain, args).await
-    }
-
-    async fn role(&self, args: role::Input) -> Result<role::Output, Error> {
-        let local_domain = self.get_local_domain();
-        role::model(local_domain, args).await
     }
 
     async fn status(&self, args: status::Input) -> Result<status::Output, Error> {

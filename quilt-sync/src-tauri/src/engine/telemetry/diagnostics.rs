@@ -6,8 +6,6 @@ use sentry::protocol::Attachment;
 
 use crate::engine::app::App;
 use crate::engine::error::Error;
-use crate::engine::model::Model;
-use crate::engine::model::QuiltModel;
 use crate::engine::quilt;
 use crate::engine::quilt::paths::DomainPaths;
 
@@ -57,26 +55,19 @@ impl DiagnosticMetadata {
     }
 }
 
-/// Gather diagnostic info from the app state, model, and filesystem.
-pub async fn collect(
+/// Gather diagnostic info from the app state, the home folder the engine
+/// runs on, and the app's folder: no domain is opened.
+pub fn collect(
     local_data_dir: &std::path::Path,
-    m: &Model,
+    home_dir: Option<&Path>,
     app: &App,
     install_id: Option<&crate::engine::telemetry::InstallId>,
-) -> Result<DiagnosticInfo, Error> {
+) -> DiagnosticInfo {
     let local_data_dir = local_data_dir.to_path_buf();
     let auth_hosts = quilt::paths::list_auth_hosts(&local_data_dir);
+    let home_dir = home_dir.map_or_default(|home| home.display().to_string());
 
-    let home_dir = m
-        .get_quilt()
-        .lock()
-        .await
-        .get_home()
-        .await
-        .ok()
-        .map_or_default(|h| h.as_ref().display().to_string());
-
-    Ok(DiagnosticInfo {
+    DiagnosticInfo {
         version: app.version.to_string(),
         os: format!("{} {}", std::env::consts::OS, std::env::consts::ARCH),
         data_dir: local_data_dir,
@@ -84,7 +75,7 @@ pub async fn collect(
         logs_dir: app.logging.dir.path().to_path_buf(),
         auth_hosts,
         install_id: install_id.map(|id| id.as_str().to_owned()),
-    })
+    }
 }
 
 /// Send a Sentry crash report with the diagnostic zip attached.

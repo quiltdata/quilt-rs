@@ -24,6 +24,7 @@ use crate::engine::telemetry::prelude::*;
 pub mod acp;
 pub mod agent_exec;
 pub mod agent_process;
+pub mod dataspace;
 pub mod login_path;
 mod rebase;
 pub mod settings;
@@ -893,7 +894,7 @@ async fn recheck_claim<M: QuiltModel>(
     Ok(rechecked)
 }
 
-fn lists(manifest: &quilt::manifest::Manifest, path: &std::path::Path) -> bool {
+pub(crate) fn lists(manifest: &quilt::manifest::Manifest, path: &std::path::Path) -> bool {
     manifest
         .rows
         .iter()

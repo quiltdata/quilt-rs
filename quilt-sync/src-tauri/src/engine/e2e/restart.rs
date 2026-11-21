@@ -8,6 +8,14 @@ use super::*;
 #[test]
 fn an_open_page_reconnects_after_quiltsync_restarts() {
     test(|base| async move {
+        // The package made while the engine is away is made on the ref
+        // engine, so the engine runs on it too.
+        std::fs::create_dir_all(base.join("domain")).expect("the data folder");
+        std::fs::write(
+            base.join("domain").join("experimental_settings.json"),
+            br#"{"dataspace_opt_out":true}"#,
+        )
+        .expect("the opt-out");
         let mut quiltsync = QuiltSync::start(&base, true).await;
         quiltsync.create_package("e2e/before").await;
         let driver = browser().await;

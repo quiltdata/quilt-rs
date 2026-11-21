@@ -29,6 +29,7 @@ use crate::engine::experimental_settings::SharedExperimentalSettings;
 use crate::engine::fswatcher;
 use crate::engine::fswatcher::SharedFsWatcherSettings;
 use crate::engine::model::Model;
+use crate::engine::model::QuiltModel;
 use crate::engine::navigation::Navigations;
 use crate::engine::oauth::OAuthState;
 use crate::engine::publish_settings;
@@ -48,7 +49,12 @@ pub struct Services {
     /// The engine on the dataspace API, where the switch turned it on and
     /// it opened; `None` runs every command on the ref API, as before.
     pub dataspace: Option<Arc<Dataspace>>,
-    /// The dataspace engine's folder watch, held for as long as the app runs.
+    /// What the cutover's import did on this start, or why it fell back to
+    /// the ref engine, for the desktop to show once; `None` where nothing
+    /// happened.
+    pub cutover_notice: Option<String>,
+    /// The dataspace engine's folder watch and task dispatch, held for as
+    /// long as the app runs.
     dataspace_watch: std::sync::Mutex<Option<DataspaceWatch>>,
     pub workflow_rules: WorkflowRulesCache,
     pub roles: Arc<RoleCache>,
@@ -136,7 +142,15 @@ impl Services {
         let events = EventSink::new();
         let record = Arc::new(Record::open(&data_dir, events.clone()).await);
         debug!("Root directory is {data_dir:?}");
-        let domain = quilt::LocalDomain::new(&data_dir).with_state_store(state_store);
+        // Built on the app's folder apart from the ref path, and shared by
+        // both engines: signing in reaches each through one cache.
+        let remote = Arc::new(quilt::io::remote::RemoteS3::new(
+            paths.clone(),
+            quilt::io::storage::LocalStorage::new(),
+        ));
+        let domain = quilt::LocalDomain::new(&data_dir)
+            .with_remote(Arc::clone(&remote))
+            .with_state_store(state_store);
         if let Err(err) = domain.sweep_leftovers().await {
             error!("Failed to sweep what killed lineage writes left: {err}");
         }
@@ -144,7 +158,8 @@ impl Services {
         // revision that moved without it was moved by another tool.
         let outside =
             Outside::open(&data_dir, domain.lineage_io().clone(), Arc::clone(&record)).await;
-        let dataspace = open_dataspace(&experimental_settings, &data_dir, &domain).await;
+        let (dataspace, cutover_notice) =
+            open_dataspace(&experimental_settings, &data_dir, &domain, &remote).await;
         let model = Arc::new(Model::from_domain(domain.with_lineage_hook(outside.hook())));
         let roles = Arc::new(RoleCache::default());
 
@@ -166,6 +181,7 @@ impl Services {
         action_needed::spawn_forwarder(events.clone(), action_needed.subscribe());
         let dataspace_watch = watch(
             dataspace.as_ref(),
+            &data_dir,
             &model,
             &watcher,
             &fswatcher_settings,
@@ -177,6 +193,7 @@ impl Services {
             data_dir,
             model,
             dataspace,
+            cutover_notice,
             dataspace_watch: std::sync::Mutex::new(dataspace_watch),
             workflow_rules: WorkflowRulesCache::default(),
             roles,
@@ -204,71 +221,144 @@ impl Services {
         let Some(ds) = &self.dataspace else {
             return;
         };
-        let next = watch_dataspace(ds, &self.fswatcher_settings).await;
+        let next = watch_dataspace(ds, &self.data_dir, &self.fswatcher_settings).await;
         let mut held = self
             .dataspace_watch
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        *held = next;
+        // The old dispatch goes first, so it never runs beside the new one.
+        *held = None;
+        *held = Some(next);
     }
+
+    /// The home folder the Settings page and the diagnostics show: the
+    /// default dataspace with the dataspace engine on, else the ref engine's.
+    pub async fn home_dir(&self) -> Option<PathBuf> {
+        match &self.dataspace {
+            Some(ds) => Some(ds.dataspace()),
+            None => self
+                .model
+                .get_quilt()
+                .lock()
+                .await
+                .get_home()
+                .await
+                .ok()
+                .map(|home| home.as_ref().clone()),
+        }
+    }
+
+    /// The user-wide ignore rules file, in the app's folder.
+    pub fn user_rules(&self) -> PathBuf {
+        user_rules(&self.data_dir)
+    }
+}
+
+/// The user-wide ignore rules file of the app whose folder is `data_dir`.
+fn user_rules(data_dir: &std::path::Path) -> PathBuf {
+    quilt::paths::DomainPaths::new(data_dir.to_path_buf()).user_quiltignore()
+}
+
+/// The Domain's folder: the one [`quilt::domain::locate`] names.
+#[cfg(not(test))]
+fn domain_dir(_data_dir: &std::path::Path) -> Option<PathBuf> {
+    quilt::domain::locate(None)
+}
+
+/// The Domain's folder under test: inside the test's own app folder, never
+/// the user's.
+#[cfg(test)]
+#[allow(clippy::unnecessary_wraps, reason = "the signature of the real lookup")]
+fn domain_dir(data_dir: &std::path::Path) -> Option<PathBuf> {
+    Some(data_dir.join(quilt::domain::DOMAIN_DIR_NAME))
 }
 
 /// The dataspace engine, where the switch in `settings` is on: on the Domain
 /// [`quilt::domain::locate`] names and the default dataspace, else the ref
-/// path's home folder. `None`, logged, where it cannot open, as before a
-/// home folder is chosen: the app then runs on the ref API.
+/// path's home folder. On the first start with the switch on, the packages
+/// the ref engine kept are imported first, once; with them the notice to
+/// show. `None`, logged, where the import falls back or the engine cannot
+/// open, as before a home folder is chosen: the app then runs on the ref
+/// API.
 async fn open_dataspace(
     settings: &SharedExperimentalSettings,
     data_dir: &std::path::Path,
     domain: &quilt::LocalDomain,
-) -> Option<Arc<Dataspace>> {
-    if !settings.read().await.dataspace {
-        return None;
+    remote: &Arc<quilt::io::remote::RemoteS3>,
+) -> (Option<Arc<Dataspace>>, Option<String>) {
+    if !settings.read().await.dataspace() {
+        return (None, None);
     }
-    let Some(domain_dir) = quilt::domain::locate(None) else {
+    let Some(domain_dir) = domain_dir(data_dir) else {
         error!("The dataspace engine is on, but the OS has no local data folder for the Domain");
-        return None;
+        return (None, None);
     };
+    let found = Box::pin(quilt::domain::import::cutover(
+        &quilt::io::storage::LocalStorage::new(),
+        data_dir,
+        &quilt::domain::DomainRoot::new(&domain_dir),
+    ))
+    .await;
+    let notice = found.report();
+    if let Some(report) = &notice {
+        if found.on() {
+            info!("{report}");
+        } else {
+            error!("{report}");
+        }
+    }
+    if !found.on() {
+        return (None, notice);
+    }
     let home = match domain.get_home().await {
         Ok(home) => home.as_ref().clone(),
         Err(err) => {
             warn!("The dataspace engine waits for a home folder: {err}");
-            return None;
+            return (None, notice);
         }
     };
-    match Dataspace::open(
-        domain.remote_handle(),
+    let opened = Dataspace::open(
+        Arc::clone(remote),
         domain_dir,
         data_dir.to_path_buf(),
         &home,
-        domain.user_quiltignore(),
+        user_rules(data_dir),
     )
-    .await
-    {
-        Ok(dataspace) => Some(Arc::new(dataspace)),
+    .await;
+    match opened {
+        Ok(dataspace) => (Some(Arc::new(dataspace)), notice),
         Err(err) => {
             error!("The dataspace engine could not open, so the ref engine runs: {err}");
-            None
+            (None, notice)
         }
     }
 }
 
-type DataspaceWatch = notify_debouncer_full::Debouncer<
+type FolderWatch = notify_debouncer_full::Debouncer<
     notify::RecommendedWatcher,
     notify_debouncer_full::RecommendedCache,
 >;
+
+/// What the dataspace engine holds for its default dataspace while it runs.
+struct DataspaceWatch {
+    /// `None` where watching is off or could not start.
+    _folders: Option<FolderWatch>,
+    /// `agent_exec`'s dispatch from the `post-read` hook.
+    _tasks: quilt::dataspace::hooks::Registration,
+}
 
 /// Starts watching folders: the dataspace engine's dataspace for its
 /// runner, or the ref engine's installed packages.
 async fn watch(
     dataspace: Option<&Arc<Dataspace>>,
+    data_dir: &std::path::Path,
     model: &Arc<Model>,
     watcher: &Watcher,
     settings: &SharedFsWatcherSettings,
     reporter: &Arc<dyn StatusReporter>,
 ) -> Option<DataspaceWatch> {
     if let Some(ds) = dataspace {
-        return watch_dataspace(ds, settings).await;
+        return Some(watch_dataspace(ds, data_dir, settings).await);
     }
     fswatcher::spawn(
         Arc::clone(model),
@@ -280,30 +370,38 @@ async fn watch(
     None
 }
 
-/// Puts the default dataspace on autosync, so the runner ticks it, and
-/// watches its folder where watching is on. `None`, logged, where the
-/// watch cannot start: the tick still finds what `latest` moved.
+/// Puts the default dataspace on autosync, so the runner ticks it, watches
+/// its folder where watching is on, and dispatches `agent_exec` from its
+/// `post-read` hook. The folder watch is `None`, logged, where it cannot
+/// start: the tick still finds what `latest` moved.
 async fn watch_dataspace(
     ds: &Arc<Dataspace>,
+    data_dir: &std::path::Path,
     settings: &SharedFsWatcherSettings,
-) -> Option<DataspaceWatch> {
+) -> DataspaceWatch {
     if let Err(err) = ds.autosync_on().await {
         error!("The default dataspace could not be put on autosync: {err}");
     }
+    let tasks = crate::engine::tasks::dataspace::register(
+        ds,
+        data_dir.to_path_buf(),
+        Arc::new(crate::engine::tasks::dataspace::log_task),
+    );
     let (enabled, debounce_ms) = {
         let settings = settings.read().await;
         (settings.enabled, settings.debounce_ms)
     };
-    if !enabled {
-        return None;
-    }
-    let debounce = std::time::Duration::from_millis(debounce_ms);
-    match crate::engine::dataspace::autosync::watch(Arc::clone(ds), debounce) {
-        Ok(watch) => Some(watch),
-        Err(err) => {
-            error!("The dataspace watcher could not start: {err}");
-            None
-        }
+    let folders = if enabled {
+        let debounce = std::time::Duration::from_millis(debounce_ms);
+        crate::engine::dataspace::autosync::watch(Arc::clone(ds), debounce)
+            .inspect_err(|err| error!("The dataspace watcher could not start: {err}"))
+            .ok()
+    } else {
+        None
+    };
+    DataspaceWatch {
+        _folders: folders,
+        _tasks: tasks,
     }
 }
 
@@ -330,6 +428,120 @@ fn reporter(
 mod tests {
     use super::*;
     use crate::engine::commands;
+
+    /// An app folder whose ref engine has a home, as an older `QuiltSync`
+    /// left it: `home/` beside it.
+    async fn older_app() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let data_dir = dir.path().join("app");
+        quilt::LocalDomain::new(&data_dir)
+            .set_home(dir.path().join("home"))
+            .await
+            .expect("a home");
+        dir
+    }
+
+    async fn start(dir: &tempfile::TempDir) -> Arc<Services> {
+        Services::init(dir.path().join("app"), Version::new(0, 0, 0))
+            .await
+            .expect("services")
+    }
+
+    /// The dataspace engine is on by default: the first start imports what
+    /// the ref engine kept and says so, and the next imports nothing.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_dataspace_engine_is_on_by_default_and_imports_once() {
+        let dir = older_app().await;
+
+        let first = start(&dir).await;
+        let notice = first.cutover_notice.clone();
+        let opened = first.dataspace.as_ref().map(|ds| ds.dataspace());
+        drop(first);
+        let second = start(&dir).await;
+
+        assert!(notice.is_some_and(|notice| notice.starts_with("Imported")));
+        assert_eq!(opened, Some(dir.path().join("home")));
+        assert!(second.dataspace.is_some());
+        assert_eq!(second.cutover_notice, None);
+    }
+
+    /// `"dataspace_opt_out": true` keeps the ref engine, and imports nothing.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_opt_out_keeps_the_ref_engine() {
+        let dir = older_app().await;
+        let data_dir = dir.path().join("app");
+        std::fs::write(
+            data_dir.join("experimental_settings.json"),
+            br#"{"dataspace_opt_out":true}"#,
+        )
+        .expect("settings");
+
+        let s = start(&dir).await;
+
+        assert!(s.dataspace.is_none());
+        assert_eq!(s.cutover_notice, None);
+        assert!(!data_dir.join(quilt::domain::DOMAIN_DIR_NAME).exists());
+        assert_eq!(s.home_dir().await, Some(dir.path().join("home")));
+    }
+
+    /// An import that is refused falls back to the ref engine, and says why.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_refused_import_falls_back_to_the_ref_engine() {
+        let dir = older_app().await;
+        let domain = quilt::domain::DomainRoot::new(
+            dir.path().join("app").join(quilt::domain::DOMAIN_DIR_NAME),
+        );
+        domain
+            .set_autosync(
+                &quilt::io::storage::LocalStorage::new(),
+                &dir.path().join("elsewhere"),
+                true,
+            )
+            .await
+            .expect("a Domain in use");
+
+        let s = start(&dir).await;
+
+        assert!(s.dataspace.is_none());
+        assert!(
+            s.cutover_notice
+                .as_deref()
+                .is_some_and(|notice| notice.contains("ref path")),
+            "{:?}",
+            s.cutover_notice
+        );
+    }
+
+    /// With the dataspace engine on, signing in goes through the app's own
+    /// remote, which the dataspace engine shares: no domain is locked, and a
+    /// logout reaches both engines.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn auth_works_with_the_dataspace_engine_on() {
+        let dir = older_app().await;
+        let data_dir = dir.path().join("app");
+        let auth = quilt::paths::DomainPaths::new(data_dir.clone()).auth_dir();
+        std::fs::create_dir_all(auth.join("one.quilt.test")).expect("an account");
+
+        let s = start(&dir).await;
+        let ds = s.dataspace.as_ref().expect("the dataspace engine");
+        let _held = s.model.get_quilt().lock().await;
+        let rows = quilt::paths::list_auth_hosts(&data_dir);
+        let erased = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            commands::erase_auth(&s, "one.quilt.test".to_string()),
+        )
+        .await
+        .expect("a logout that waits on no domain");
+
+        let shared = s.model.remote();
+        assert!(std::ptr::eq(
+            std::ptr::from_ref(&*shared),
+            std::ptr::from_ref(ds.remote())
+        ));
+        assert_eq!(rows, ["one.quilt.test"]);
+        assert!(erased.is_ok(), "{erased:?}");
+        assert!(!auth.join("one.quilt.test").exists());
+    }
 
     /// The services start with no Tauri app, answer commands as plain
     /// functions and announce on the event sink.

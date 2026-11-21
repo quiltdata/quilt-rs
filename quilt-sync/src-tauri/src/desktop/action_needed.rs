@@ -81,6 +81,22 @@ fn in_front(app: &AppHandle) -> bool {
     })
 }
 
+/// Post what the cutover's import did on this start, or why it fell back to
+/// the ref engine, once.
+pub fn post_cutover(app: &AppHandle, services: &Services) {
+    let Some(body) = services.cutover_notice.as_deref() else {
+        return;
+    };
+    let title = if services.dataspace.is_some() {
+        "Your packages moved to the dataspace engine"
+    } else {
+        "Your packages stay on the ref engine"
+    };
+    if let Err(err) = app.notification().builder().title(title).body(body).show() {
+        warn!("could not post a notification: {err}");
+    }
+}
+
 fn post(app: &AppHandle, entry: &Entry) {
     let (title, body) = entry.notice();
     if let Err(err) = app

@@ -2342,6 +2342,10 @@ mod tests {
             &self.domain
         }
 
+        fn remote(&self) -> std::sync::Arc<quilt::io::remote::RemoteS3> {
+            crate::engine::model::mocks::nowhere().remote_handle()
+        }
+
         async fn get_installed_packages_list(&self) -> Result<Vec<quilt::InstalledPackage>, Error> {
             Ok(vec![
                 make_installed_package(("team", "open")),
@@ -2416,6 +2420,10 @@ mod tests {
 
         fn get_quilt(&self) -> &tokio::sync::Mutex<quilt::LocalDomain> {
             &self.domain
+        }
+
+        fn remote(&self) -> std::sync::Arc<quilt::io::remote::RemoteS3> {
+            crate::engine::model::mocks::nowhere().remote_handle()
         }
 
         async fn get_installed_packages_list(&self) -> Result<Vec<quilt::InstalledPackage>, Error> {

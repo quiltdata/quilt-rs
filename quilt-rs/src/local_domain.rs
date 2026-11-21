@@ -126,6 +126,15 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
         }
     }
 
+    /// The domain on `remote`, shared with whoever else holds it: the desktop
+    /// app builds its remote on its own folder, apart from the ref path, so
+    /// signing in and switching roles reach every engine through one cache.
+    #[must_use]
+    pub fn with_remote(mut self, remote: Arc<R>) -> Self {
+        self.remote = remote;
+        self
+    }
+
     /// The domain with its packages' walks using `store`'s stat cache. Only
     /// the desktop app opens a store.
     #[must_use]
@@ -188,11 +197,7 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
     /// its lock so *Stop ignoring* for all packages never writes between the
     /// read and the write.
     pub async fn set_default_rules(&self, off: &[&str]) -> Res {
-        let _held = self
-            .storage
-            .lock_exclusive(self.paths.user_quiltignore_lock())
-            .await?;
-        crate::quiltignore::set_default_rules(&self.paths.user_quiltignore(), off)
+        crate::quiltignore::set_user_default_rules(&self.storage, &self.paths, off).await
     }
 
     pub async fn get_home(&self) -> Res<Home> {

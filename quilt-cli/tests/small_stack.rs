@@ -22,6 +22,8 @@ fn quilt(domain: &Path, args: &[&str]) {
         .arg(format!(r#"ulimit -s {MAIN_THREAD_STACK_KB} && exec "$@""#))
         .arg("sh")
         .arg(env!("CARGO_BIN_EXE_quilt"))
+        // The ref path's commands, which the switch off keeps.
+        .env("QUILT_DATASPACES", "0")
         .arg("--domain")
         .arg(domain)
         .args(args)

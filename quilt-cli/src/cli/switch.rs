@@ -1,15 +1,18 @@
 //! The switch that makes the dataspace path the default (25u).
 //!
-//! Off, the default, every verb is as it was: a dataspace is named with
-//! `--dataspace`, `--domain` and `QUILT_DOMAIN` name the application's folder,
-//! and the Domain is `bio.quilt.dataspace` in the OS's local data folder.
-//!
-//! On, with [`SWITCH_ENV`] set to `1`, a verb that has a dataspace form runs
+//! On, the default since the cutover, a verb that has a dataspace form runs
 //! it with no `--dataspace`, on the default dataspace `quilt home --dataspace`
 //! chose; `--domain` and `QUILT_DOMAIN` name the Domain, found by
 //! [`quilt_rs::domain::locate`]; and the application's folder is the one the
 //! OS's local data folder holds. A verb with no dataspace form keeps the ref
-//! path.
+//! path. Before the first such verb runs, [`cutover`] imports the packages
+//! the ref path kept, once.
+//!
+//! Off, with [`SWITCH_ENV`] set to `0`, every verb is as it was before the
+//! cutover: a dataspace is named with `--dataspace`, `--domain` and
+//! `QUILT_DOMAIN` name the application's folder, and the Domain is
+//! `bio.quilt.dataspace` in the OS's local data folder. An import that fails
+//! leaves the run off too.
 
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -25,14 +28,104 @@ use crate::cli::Args;
 use crate::cli::Error;
 use crate::cli::dataspace;
 
-/// The variable that turns the switch on, set to `1`. Unset, or any other
-/// value, leaves it off.
+/// The variable that turns the switch off, set to `0`, `false` or `off`, for
+/// one release after the cutover. Unset, or any other value, leaves it on.
 pub const SWITCH_ENV: &str = "QUILT_DATASPACES";
 
-/// Whether [`SWITCH_ENV`] turns the switch on, read once per process.
+/// Whether this run is on the dataspace path, as [`settle`] set it.
+static SETTLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+/// Records whether this run is on the dataspace path: [`from_env`] and
+/// [`cutover`] together, as `main` finds it before the command runs.
+pub fn settle(on: bool) {
+    let _ = SETTLED.set(on);
+}
+
+/// Whether this run is on the dataspace path: off where [`settle`] was never
+/// called, as in a test that runs a command.
+pub fn settled() -> bool {
+    SETTLED.get().copied().unwrap_or(false)
+}
+
+/// Whether [`SWITCH_ENV`] leaves the switch on, read once per process.
 pub fn from_env() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os(SWITCH_ENV).is_some_and(|value| value == "1"))
+    *ON.get_or_init(|| on_for(std::env::var_os(SWITCH_ENV).as_deref()))
+}
+
+/// Whether the switch is on with [`SWITCH_ENV`] set to `value`: on unless
+/// it opts out.
+pub(super) fn on_for(value: Option<&std::ffi::OsStr>) -> bool {
+    !value
+        .and_then(std::ffi::OsStr::to_str)
+        .map(str::trim)
+        .is_some_and(|value| ["0", "false", "off"].contains(&value.to_ascii_lowercase().as_str()))
+}
+
+/// The verbs that run on the Domain with the switch on, and so run the
+/// cutover's import first.
+fn on_the_domain(verb: &str) -> bool {
+    FLAG_VERBS.contains(&verb)
+        || POSITIONAL_VERBS.contains(&verb)
+        || BOOL_VERBS.contains(&verb)
+        || ["sync", "local-registry"].contains(&verb)
+}
+
+/// Whether this run is on the dataspace path: the switch is on, and, where
+/// the verb runs on the Domain, the cutover's import has run, on this start
+/// or before. What the import did, or why it fell back, goes to `stderr`;
+/// a run that falls back takes the ref path, as the switch off does.
+pub async fn cutover(argv: &[OsString], stderr: &mut impl std::io::Write) -> bool {
+    if !from_env() {
+        return false;
+    }
+    let Ok(probe) = Args::command()
+        .ignore_errors(true)
+        .try_get_matches_from(argv)
+    else {
+        return true;
+    };
+    let flag = probe.get_one::<PathBuf>("domain").cloned();
+    let Ok(places) = Places::new(true, flag) else {
+        // The command reports the missing folder itself.
+        return true;
+    };
+    let Some(domain) = places.domain.as_ref().map(DomainRoot::new) else {
+        return true;
+    };
+    let storage = LocalStorage::new();
+    let found = if probe.subcommand_name().is_some_and(on_the_domain) {
+        Box::pin(quilt_rs::domain::import::cutover(
+            &storage,
+            &places.app,
+            &domain,
+        ))
+        .await
+    } else {
+        // A verb with no dataspace form imports nothing, but still refuses a
+        // `--domain` that names a folder the ref path keeps packages in.
+        match quilt_rs::domain::import::check_domain(&storage, &places.app, &domain).await {
+            Ok(()) => return true,
+            Err(err) => quilt_rs::domain::import::Cutover::FellBack(err),
+        }
+    };
+    report(&found, stderr);
+    found.on()
+}
+
+/// Writes what the cutover did to `stderr`, with how to keep the ref path
+/// where it fell back.
+pub(super) fn report(found: &quilt_rs::domain::import::Cutover, stderr: &mut impl std::io::Write) {
+    let Some(report) = found.report() else {
+        return;
+    };
+    let _ = writeln!(stderr, "{report}");
+    if !found.on() {
+        let _ = writeln!(
+            stderr,
+            "Set {SWITCH_ENV}=0 to keep the ref path without trying the import again."
+        );
+    }
 }
 
 /// What stands for the default dataspace in the arguments until `init`

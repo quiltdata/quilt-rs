@@ -40,6 +40,23 @@ sudo cp -rf src-tauri/target/release/bundle/macos/QuiltSync.app ~/Applications
 open ~/Applications/QuiltSync.app
 ```
 
+## Upgrading: the dataspace cutover
+
+QuiltSync now runs on the dataspace engine by default. Its first start imports,
+once, the packages an older QuiltSync kept into the dataspace Domain, which it
+finds as `quilt` does (`QUILT_DOMAIN`, else `bio.quilt.dataspace` in the OS's
+local data folder). The old home becomes the default dataspace. QuiltSync
+logs what it imported and shows it in a notice.
+
+The old `.quilt/` folder is only read, so nothing is lost. An import that is
+refused or stops is logged and shown, and QuiltSync runs on the ref engine
+until a later start finishes it.
+
+To keep the ref engine for one more release, put
+`"dataspace_opt_out": true` in `experimental_settings.json` in the app's data
+folder and restart QuiltSync. The `"dataspace"` key earlier builds read is
+ignored.
+
 ## Repository Contents
 
 ### src: Static Web Frontend

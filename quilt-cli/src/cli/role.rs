@@ -1,8 +1,8 @@
 use quilt_rs::RoleInfo;
+use quilt_rs::io::remote::RemoteS3;
 use quilt_uri::Host;
 
 use crate::cli::Error;
-use crate::cli::model::Commands;
 use crate::cli::output::Render;
 use crate::cli::output::Std;
 
@@ -40,8 +40,10 @@ impl Render for Output {
     }
 }
 
-pub async fn command(m: impl Commands, args: Input) -> Std {
-    Std::from_result(m.role(args).await)
+/// Reports or switches the role on `remote`, which keeps its credentials in
+/// the application's folder: no domain is opened.
+pub async fn command(remote: &RemoteS3, args: Input) -> Std {
+    Std::from_result(model(remote, args).await)
 }
 
 /// Report the roles the user holds on `host`, or make `set` the active one.
@@ -55,11 +57,7 @@ pub async fn command(m: impl Commands, args: Input) -> Std {
 /// Every invocation is a fresh process, and it builds its clients after the
 /// switch has already landed — so there is deliberately no
 /// `clear_client_cache` call here to mirror the desktop path.
-pub async fn model(
-    local_domain: &quilt_rs::LocalDomain,
-    Input { host, set }: Input,
-) -> Result<Output, Error> {
-    let remote = local_domain.get_remote();
+async fn model(remote: &RemoteS3, Input { host, set }: Input) -> Result<Output, Error> {
     let info = match &set {
         Some(role_name) => remote.switch_role(&host, role_name).await?,
         None => remote.refresh_roles(&host).await?,

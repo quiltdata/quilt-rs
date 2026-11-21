@@ -1,11 +1,14 @@
-//! The app's engine on quilt-rs's dataspace API, behind the switch.
+//! The app's engine on quilt-rs's dataspace API, on by default since the
+//! cutover.
 //!
-//! The switch is the `dataspace` key of `experimental_settings.json`, read
-//! once when the app starts ([`crate::engine::services::Services::init`]).
-//! It defaults to off: the engine then runs on the ref API (`LocalDomain`)
-//! as it always has, and nothing here is built. With it on, the app opens
-//! the Domain [`quilt_rs::domain::locate`] names and its default dataspace, and the
+//! The switch is read once when the app starts
+//! ([`crate::engine::services::Services::init`]). On, the app imports what
+//! the ref engine kept, once, then opens the Domain
+//! [`quilt_rs::domain::locate`] names and its default dataspace, and the
 //! commands that have a dataspace counterpart route through [`Dataspace`].
+//! `"dataspace_opt_out": true` in `experimental_settings.json`, or an import
+//! that falls back, leaves it off: the engine then runs on the ref API
+//! (`LocalDomain`) as before, and nothing here is built.
 //!
 //! A command names a package by its namespace, as the pages do; here that
 //! is the first entry of the default dataspace's `data.toml` that declares
