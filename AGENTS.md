@@ -1,5 +1,13 @@
 # Notes for coding agents
 
+> [!IMPORTANT]
+> **This repository is read-only for development.** All new work on
+> quilt-rs, the `quilt` CLI, QuiltSync, quilt-auth, quilt-uri and the quilt-py
+> binding happens in
+> [quiltdata/deployment](https://github.com/quiltdata/deployment), a private
+> repository, where this Cargo workspace is copied whole into `quilt-rs/`. Do
+> not open pull requests here.
+
 [CONTRIBUTING.md](CONTRIBUTING.md) is the guide for everyone; read it first.
 This file adds what costs an agent more than a person, who rebuilds far less
 often in one session.

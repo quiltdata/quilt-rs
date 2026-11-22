@@ -1,5 +1,13 @@
 # Contributing to Quilt Workspace
 
+> [!IMPORTANT]
+> **This repository is read-only for development.** All new work on
+> quilt-rs, the `quilt` CLI, QuiltSync, quilt-auth, quilt-uri and the quilt-py
+> binding happens in
+> [quiltdata/deployment](https://github.com/quiltdata/deployment), a private
+> repository, where this Cargo workspace is copied whole into `quilt-rs/`. Do
+> not open pull requests here.
+
 This repository contains multiple projects in a unified workspace:
 
 - **[quilt-rs](quilt-rs/)** - Rust library for accessing Quilt data packages

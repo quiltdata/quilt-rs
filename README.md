@@ -1,5 +1,13 @@
 # quilt
 
+> [!IMPORTANT]
+> **This repository is read-only for development.** All new work on
+> quilt-rs, the `quilt` CLI, QuiltSync, quilt-auth, quilt-uri and the quilt-py
+> binding happens in
+> [quiltdata/deployment](https://github.com/quiltdata/deployment), a private
+> repository, where this Cargo workspace is copied whole into `quilt-rs/`. Do
+> not open pull requests here.
+
 **Version your data like code — on your own laptop.** `quilt` gives the files
 your scripts and AI agents read and write real revisions: each one immutable
 and content-addressed, pushable to S3 when you want it shared. No server and
