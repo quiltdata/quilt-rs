@@ -344,7 +344,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       # renovate: datasource=github-releases depName=github/gh-actions-lock
-      GH_ACTIONS_LOCK_VERSION: v0.4.1
+      GH_ACTIONS_LOCK_VERSION: v0.5.1
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7.0.1
