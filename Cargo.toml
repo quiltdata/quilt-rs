@@ -42,7 +42,7 @@ hostname = "0.4.2"
 http-body = "1.1.0"
 ignore = "0.4"
 jiff = { version = "1.0.1", features = ["serde"] }
-jsonschema = { version = "0.61.0", default-features = false }
+jsonschema = { version = "0.63.0", default-features = false }
 multibase = "0.9.3"
 multihash = "0.19.5"
 percent-encoding = "2.3.2"
@@ -50,7 +50,7 @@ regex = "1.13.1"
 reqwest = { version = "0.13.5", features = ["form", "json"] }
 reqwest-middleware = { version = "0.5.2", features = ["form", "json"] }
 reqwest-retry = "0.9.1"
-rusqlite = { version = "0.42", features = ["bundled"] }
+rusqlite = { version = "0.43", features = ["bundled"] }
 ryu = "1.0.23"
 serde = { version = "1.0.229", features = ["derive", "serde_derive"] }
 serde_json = { version = "1.0.154", features = ["preserve_order", "float_roundtrip"] }
